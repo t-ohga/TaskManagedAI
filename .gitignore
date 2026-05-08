@@ -1,0 +1,34 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.alembic_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+.next/
+dist/
+build/
+
+# Local environment and logs
+.env
+.env.*
+!.env.example
+.env.local
+*.log
+
+# Local databases
+*.sqlite3
+*.db
+
+# System files
+.DS_Store
+
+# Claude Code hook state (session-local)
+.claude/.hook-state/
+

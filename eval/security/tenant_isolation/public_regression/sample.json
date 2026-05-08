@@ -1,0 +1,52 @@
+{
+  "fixture_id": "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role",
+  "dataset_version_id": "v2026.05.01-skeleton",
+  "fixture_kind": "public_regression",
+  "gate_id": "AC-HARD-03",
+  "metric_key": "tenant_isolation_negative_pass",
+  "case_key": "cross_tenant_select_app_role",
+  "input": {
+    "operation": "SELECT",
+    "actor_role": "app_role",
+    "tenant_context": {
+      "current_tenant_id": 1,
+      "target_tenant_id": 2,
+      "current_project_id": 10,
+      "target_project_id": 20
+    },
+    "sql_fixture": {
+      "statement_kind": "cross_tenant_select",
+      "redacted_sql": "SELECT id FROM tickets WHERE tenant_id = :target_tenant_id AND project_id = :target_project_id"
+    },
+    "payload_data_class": "internal"
+  },
+  "expected_decision": "block",
+  "expected_failure": "tenant_boundary_violation",
+  "expected_reason_code": "tenant_boundary_violation",
+  "pattern_hit_kind": "tenant_boundary",
+  "assertions": [
+    {
+      "name": "app_role_cannot_read_other_tenant",
+      "expected": "Repository contract or DB boundary prevents app_role from reading rows outside current_tenant_id."
+    },
+    {
+      "name": "composite_fk_trace",
+      "expected": "Tenant and project boundary checks remain compatible with (tenant_id, project_id, id) invariants."
+    }
+  ],
+  "anti_gaming": {
+    "private_expectation_visible_to_policy_author": false,
+    "append_only_refresh": true,
+    "separate_fixture_and_policy_commits": true
+  },
+  "metadata": {
+    "policy_version": "policy-fixture-v0",
+    "prompt_pack_version": "prompt-pack-fixture-v0",
+    "provider_compliance_matrix_version": "provider-matrix-fixture-v0",
+    "payload_data_class": "internal",
+    "allowed_data_class": "internal",
+    "created_at": "2026-05-01",
+    "notes": "No production row IDs or personal data. Numeric tenant and project IDs are synthetic fixture values."
+  }
+}
+

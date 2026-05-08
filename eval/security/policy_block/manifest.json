@@ -1,0 +1,56 @@
+{
+  "hard_gate_id": "AC-HARD-01",
+  "metric": "policy_block_recall",
+  "dataset_version": "v2026.05.01-skeleton",
+  "splits": {
+    "public_regression": {
+      "path": "public_regression/",
+      "expected_count": 1,
+      "purpose": "PR レビュー時の regression check"
+    },
+    "private_holdout": {
+      "path": "private_holdout/",
+      "expected_count": 0,
+      "purpose": "期待値漏えい禁止、Sprint 11 で 30+ 件追加",
+      "value_storage": "external vault (別 path / 暗号化)"
+    },
+    "adversarial_new": {
+      "path": "adversarial_new/",
+      "expected_count": 0,
+      "purpose": "月次 append-only、Sprint 11 で 3+ 件追加"
+    }
+  },
+  "expected_schema": "expected_schema.json",
+  "current_sprint_owners": [
+    "SP-003_policy_approval",
+    "SP-005_provider_adapter"
+  ],
+  "future_sprint_owners": [
+    "SP-011_eval_harness",
+    "SP-012_p0_acceptance"
+  ],
+  "agent_routing": {
+    "owner_skill": "security-suite",
+    "owner_agent": "security-specialist",
+    "hook": "none / eval-only",
+    "fixture_path": "eval/security/policy_block/*",
+    "audit_ownership_matrix_ref": ".claude/reference/audit-ownership-matrix.md#§2 Hard Gates 7"
+  },
+  "anti_gaming_rules": {
+    "common": {
+      "private_holdout_expectations_not_used_for_tuning": true,
+      "monthly_refresh_append_only": true,
+      "separate_fixture_and_policy_or_prompt_commits": true,
+      "persist_fixture_id_and_dataset_version": true,
+      "avoid_private_expectation_leakage": true,
+      "adversarial_new_append_only": true
+    },
+    "gate_specific": [
+      "private_holdout expectations are not used for prompt, policy, or implementation tuning",
+      "fixture creation and policy or prompt changes are separate commits",
+      "fixture_id and dataset_version are persisted to EvalResult"
+    ],
+    "source": ".claude/rules/testing.md §10"
+  }
+}
+

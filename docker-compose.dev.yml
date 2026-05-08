@@ -1,0 +1,44 @@
+services:
+  api:
+    volumes:
+      - ./backend:/app/backend:ro
+      - ./migrations:/app/migrations:ro
+      - ./alembic.ini:/app/alembic.ini:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+      - ./uv.lock:/app/uv.lock:ro
+    command: ["uv", "run", "--no-sync", "uvicorn", "backend.app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      TASKMANAGEDAI_ENVIRONMENT: development
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: deps
+    volumes:
+      - ./frontend:/app/frontend
+      - frontend_node_modules:/app/frontend/node_modules
+      - frontend_next:/app/frontend/.next
+    command: ["pnpm", "dev", "--hostname", "0.0.0.0", "--port", "3000"]
+    environment:
+      NODE_ENV: development
+      TASKMANAGEDAI_ENVIRONMENT: development
+      NEXT_TELEMETRY_DISABLED: "1"
+      INTERNAL_API_URL: "http://api:8000"
+      DEV_LOGIN_COOKIE_SECRET: "${TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET:?must be set in .env.local}"
+      TASKMANAGEDAI_DEV_LOGIN_TOKEN: "${TASKMANAGEDAI_DEV_LOGIN_TOKEN:?must be set in .env.local}"
+
+  worker:
+    volumes:
+      - ./backend:/app/backend:ro
+      - ./migrations:/app/migrations:ro
+      - ./alembic.ini:/app/alembic.ini:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+      - ./uv.lock:/app/uv.lock:ro
+    command: ["uv", "run", "--no-sync", "arq", "backend.app.workers.main.WorkerSettings"]
+    environment:
+      TASKMANAGEDAI_ENVIRONMENT: development
+
+volumes:
+  frontend_node_modules:
+  frontend_next:

@@ -1,0 +1,16 @@
+# Project-scoped Codex settings for TaskManagedAI.
+# Codex loads this file only after the project is trusted.
+
+model_reasoning_effort = "xhigh"
+model_verbosity = "medium"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+project_doc_max_bytes = 65536
+
+[sandbox_workspace_write]
+network_access = false
+
+[features]
+memories = true
+codex_hooks = true
+

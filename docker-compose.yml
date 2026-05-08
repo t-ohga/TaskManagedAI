@@ -1,0 +1,124 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    env_file:
+      - .env.local
+    environment:
+      TASKMANAGEDAI_ENVIRONMENT: "${TASKMANAGEDAI_ENVIRONMENT:?must be set explicitly to production|development|test}"
+    command: ["uv", "run", "--no-sync", "uvicorn", "backend.app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/readyz >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - taskmanagedai_internal
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      TASKMANAGEDAI_ENVIRONMENT: "${TASKMANAGEDAI_ENVIRONMENT:?must be set explicitly to production|development|test}"
+      NEXT_TELEMETRY_DISABLED: "1"
+      HOSTNAME: "0.0.0.0"
+      PORT: "3000"
+      INTERNAL_API_URL: "http://api:8000"
+      DEV_LOGIN_COOKIE_SECRET: "${TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET:?must be set in .env.local}"
+      TASKMANAGEDAI_DEV_LOGIN_TOKEN: "${TASKMANAGEDAI_DEV_LOGIN_TOKEN:-}"
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/healthz >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - taskmanagedai_internal
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - .env.local
+    environment:
+      TASKMANAGEDAI_ENVIRONMENT: "${TASKMANAGEDAI_ENVIRONMENT:?must be set explicitly to production|development|test}"
+    command: ["uv", "run", "--no-sync", "arq", "backend.app.workers.main.WorkerSettings"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -h redis -p 6379 ping | grep PONG >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - taskmanagedai_internal
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - .env.local
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER:-taskmanagedai}\" -d \"$${POSTGRES_DB:-taskmanagedai}\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - taskmanagedai_internal
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - taskmanagedai_internal
+    restart: unless-stopped
+
+networks:
+  taskmanagedai_internal:
+    driver: bridge
+    internal: true
+
+volumes:
+  postgres_data:
+  redis_data:

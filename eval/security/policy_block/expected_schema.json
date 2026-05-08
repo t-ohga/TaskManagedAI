@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://taskmanagedai.local/eval/security/policy_block/expected_schema.json",
+  "title": "AC-HARD-01 policy_block_recall fixture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fixture_id",
+    "dataset_version_id",
+    "fixture_kind",
+    "gate_id",
+    "metric_key",
+    "case_key",
+    "input",
+    "expected_decision",
+    "expected_block",
+    "expected_reason_code",
+    "expected_agent_run_status",
+    "pattern_hit_kind",
+    "assertions",
+    "anti_gaming",
+    "metadata"
+  ],
+  "properties": {
+    "fixture_id": { "type": "string", "pattern": "^AC-HARD-01_" },
+    "dataset_version_id": { "type": "string", "pattern": "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}(-[A-Za-z0-9_.-]+)?$" },
+    "fixture_kind": { "type": "string", "enum": ["public_regression", "private_holdout", "adversarial_new"] },
+    "gate_id": { "type": "string", "const": "AC-HARD-01" },
+    "metric_key": { "type": "string", "const": "policy_block_recall" },
+    "case_key": { "type": "string", "minLength": 1 },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_summary", "actor", "action_class", "approval_state", "payload_data_class", "target"],
+      "properties": {
+        "task_summary": { "type": "string" },
+        "actor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["actor_type", "actor_ref"],
+          "properties": {
+            "actor_type": { "type": "string", "enum": ["human", "service", "agent", "provider", "github_app"] },
+            "actor_ref": { "type": "string" }
+          }
+        },
+        "action_class": {
+          "type": "string",
+          "enum": ["task_write", "repo_write", "pr_open", "secret_access", "merge", "deploy", "provider_call"]
+        },
+        "approval_state": { "type": "string", "enum": ["none", "pending", "approved", "rejected", "invalidated", "expired"] },
+        "payload_data_class": { "type": "string", "enum": ["public", "internal", "confidential", "pii"] },
+        "target": { "type": "object" }
+      }
+    },
+    "expected_decision": { "type": "string", "const": "block" },
+    "expected_block": { "type": "boolean", "const": true },
+    "expected_reason_code": { "type": "string", "const": "policy_blocked" },
+    "expected_agent_run_status": { "type": "string", "const": "blocked" },
+    "pattern_hit_kind": { "type": "string", "const": "policy" },
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "expected"],
+        "properties": {
+          "name": { "type": "string" },
+          "expected": { "type": "string" }
+        }
+      }
+    },
+    "anti_gaming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["private_expectation_visible_to_policy_author", "append_only_refresh", "separate_fixture_and_policy_commits"],
+      "properties": {
+        "private_expectation_visible_to_policy_author": { "type": "boolean", "const": false },
+        "append_only_refresh": { "type": "boolean", "const": true },
+        "separate_fixture_and_policy_commits": { "type": "boolean", "const": true }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["policy_version", "prompt_pack_version", "provider_compliance_matrix_version", "payload_data_class", "allowed_data_class", "created_at", "notes"],
+      "properties": {
+        "policy_version": { "type": "string" },
+        "prompt_pack_version": { "type": "string" },
+        "provider_compliance_matrix_version": { "type": "string" },
+        "payload_data_class": { "type": "string", "enum": ["public", "internal", "confidential", "pii"] },
+        "allowed_data_class": { "type": "string", "enum": ["public", "internal", "confidential", "pii"] },
+        "created_at": { "type": "string", "format": "date" },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}
+

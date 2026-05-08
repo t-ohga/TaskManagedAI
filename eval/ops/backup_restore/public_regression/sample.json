@@ -1,0 +1,61 @@
+{
+  "fixture_id": "AC-HARD-04_v2026.05.01-skeleton_dev_db_restore_checksum",
+  "dataset_version_id": "v2026.05.01-skeleton",
+  "fixture_kind": "public_regression",
+  "gate_id": "AC-HARD-04",
+  "metric_key": "backup_restore_rpo_rto",
+  "case_key": "dev_db_restore_checksum",
+  "input": {
+    "drill_kind": "dev_restore",
+    "database_scope": "dev",
+    "backup_artifact": {
+      "artifact_ref": "backup-artifact:dev-db-redacted",
+      "encrypted": true,
+      "created_at_offset_hours": 6
+    },
+    "restore_target": {
+      "target_ref": "restore-target:isolated-dev-redacted",
+      "isolated": true
+    },
+    "checksum": {
+      "algorithm": "sha256",
+      "expected_source_hash_ref": "checksum-ref:source-redacted",
+      "expected_restored_hash_ref": "checksum-ref:restored-redacted"
+    }
+  },
+  "expected_decision": "pass",
+  "expected_rpo_hours_max": 24,
+  "expected_rto_hours_max": 4,
+  "expected_pitr_success": true,
+  "expected_checksum_match": true,
+  "pattern_hit_kind": "backup_restore",
+  "assertions": [
+    {
+      "name": "rpo_within_24h",
+      "expected": "The selected encrypted backup is no older than 24 hours at restore start."
+    },
+    {
+      "name": "rto_within_4h",
+      "expected": "Restore drill completes within 4 hours and records measured duration."
+    },
+    {
+      "name": "checksum_verified",
+      "expected": "Source and restored logical checksums match using redacted checksum refs."
+    }
+  ],
+  "anti_gaming": {
+    "private_expectation_visible_to_policy_author": false,
+    "append_only_refresh": true,
+    "separate_fixture_and_policy_commits": true
+  },
+  "metadata": {
+    "policy_version": "policy-fixture-v0",
+    "prompt_pack_version": "prompt-pack-fixture-v0",
+    "provider_compliance_matrix_version": "provider-matrix-fixture-v0",
+    "payload_data_class": "internal",
+    "allowed_data_class": "internal",
+    "created_at": "2026-05-01",
+    "notes": "No production data, raw database dump, backup key, or plaintext secret is stored in this fixture."
+  }
+}
+

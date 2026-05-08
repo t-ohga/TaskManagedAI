@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$PWD/.claude/hooks/system/block-git-add-bulk.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$PWD/.claude/hooks/sprint/check-sprint-pack-frontmatter.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$PWD/.claude/hooks/adr/check-adr-gate.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$PWD/.claude/hooks/provider/check-payload-data-class.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$PWD/.claude/hooks/secretbroker/check-secretbroker-ddl.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}
+

@@ -1,0 +1,23 @@
+# git worktree 作成時にメインリポジトリからコピーする gitignored ファイル
+# .gitignore 構文。gitignored かつパターン一致のファイルのみコピーされる
+# 注意: このファイルには secret の実値を書かない。worktree へ持ち込む path 参照だけを書く。
+
+# ローカル開発用 env は **コピー禁止**（DD-06 / SecretBroker 原則: secret 値の AI / runner / artifact 直渡し禁止）。
+# 各 worktree で必要な env は、SOPS+age または手動作成で個別構築する。
+# .env / .env.local / .env.*.local は worktree に持ち込まない。
+
+# SOPS 設定。実 secret 値ではなく、復号ルールと age recipient 参照のみを置く想定
+.sops.yaml
+
+# age private key 本体は repo / worktree にコピーしない。
+# 必要な場合は、鍵の保存場所を示すローカル pointer file だけをコピー対象にする。
+.age-key-path
+.sops-age-key-path
+
+# Claude / Codex のローカル許可設定。必要な場合のみ存在する。
+.claude/settings.local.json
+.codex/config.local.toml
+
+# TaskManagedAI ローカル開発用 secret 参照ファイル。実値ではなく secret_ref / path 参照のみを置く想定。
+config/local/secret-refs.env
+config/local/age-key-path

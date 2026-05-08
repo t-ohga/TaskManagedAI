@@ -1,0 +1,346 @@
+name: CI Smoke
+
+"on":
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend-quality:
+    name: Backend quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: taskmanagedai
+          POSTGRES_PASSWORD: taskmanagedai
+          POSTGRES_DB: taskmanagedai_test
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U taskmanagedai -d taskmanagedai_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd "redis-cli ping | grep PONG"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TASKMANAGEDAI_ENVIRONMENT: test
+      TASKMANAGEDAI_DATABASE_URL: postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test
+      TASKMANAGEDAI_REDIS_URL: redis://127.0.0.1:6379/1
+      TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET: test-cookie-secret-for-ci-only
+      TASKMANAGEDAI_DEV_LOGIN_TOKEN: test-dev-login-token-for-ci-only
+      TASKMANAGEDAI_RUN_DB_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-${{ matrix.python-version }}-
+
+      - name: Write fixed CI env file
+        run: |
+          # Secret restore is intentionally omitted in Sprint 1. Trusted-event
+          # restore is planned for Sprint 11.5 only on push to main or release tags
+          # with Tailscale GitHub Action and private staging.
+          cat > .env.ci <<'ENV'
+          POSTGRES_USER=taskmanagedai
+          POSTGRES_PASSWORD=taskmanagedai
+          POSTGRES_DB=taskmanagedai_test
+          TASKMANAGEDAI_ENVIRONMENT=test
+          TASKMANAGEDAI_DATABASE_URL=postgresql+asyncpg://taskmanagedai:taskmanagedai@postgres:5432/taskmanagedai_test
+          TASKMANAGEDAI_REDIS_URL=redis://redis:6379/1
+          TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET=test-cookie-secret-for-ci-only
+          TASKMANAGEDAI_DEV_LOGIN_TOKEN=test-dev-login-token-for-ci-only
+          ENV
+
+      - name: Install backend dependencies
+        run: uv sync --locked
+
+      - name: Ruff
+        run: uv run ruff check backend tests
+
+      - name: Mypy
+        run: uv run mypy backend
+
+      - name: Pytest
+        run: uv run pytest tests/ -q -x
+
+  frontend-quality:
+    name: Frontend quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["22"]
+    env:
+      CI: "true"
+      TASKMANAGEDAI_ENVIRONMENT: test
+      TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET: test-cookie-secret-for-ci-only
+      TASKMANAGEDAI_DEV_LOGIN_TOKEN: test-dev-login-token-for-ci-only
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write fixed CI env file
+        run: |
+          # Secret restore is intentionally omitted in Sprint 1. Trusted-event
+          # restore is planned for Sprint 11.5 only on push to main or release tags
+          # with Tailscale GitHub Action and private staging.
+          cat > .env.ci <<'ENV'
+          POSTGRES_USER=taskmanagedai
+          POSTGRES_PASSWORD=taskmanagedai
+          POSTGRES_DB=taskmanagedai_test
+          TASKMANAGEDAI_ENVIRONMENT=test
+          TASKMANAGEDAI_DATABASE_URL=postgresql+asyncpg://taskmanagedai:taskmanagedai@postgres:5432/taskmanagedai_test
+          TASKMANAGEDAI_REDIS_URL=redis://redis:6379/1
+          TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET=test-cookie-secret-for-ci-only
+          TASKMANAGEDAI_DEV_LOGIN_TOKEN=test-dev-login-token-for-ci-only
+          ENV
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        working-directory: frontend
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.STORE_PATH }}
+          key: pnpm-${{ runner.os }}-${{ matrix.node-version }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-${{ matrix.node-version }}-
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: frontend
+        run: pnpm exec tsc --noEmit
+
+      - name: ESLint
+        working-directory: frontend
+        run: pnpm exec eslint . --max-warnings=0
+
+      - name: Vitest
+        working-directory: frontend
+        run: pnpm exec vitest run
+
+  frontend-e2e:
+    name: Frontend Playwright E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: taskmanagedai
+          POSTGRES_PASSWORD: taskmanagedai
+          POSTGRES_DB: taskmanagedai_test
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U taskmanagedai -d taskmanagedai_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd "redis-cli ping | grep PONG"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CI: "true"
+      TASKMANAGEDAI_ENVIRONMENT: test
+      TASKMANAGEDAI_DATABASE_URL: postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test
+      TASKMANAGEDAI_REDIS_URL: redis://127.0.0.1:6379/1
+      TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET: test-cookie-secret-for-ci-only
+      TASKMANAGEDAI_DEV_LOGIN_TOKEN: test-dev-login-token-for-ci-only
+      TASKMANAGEDAI_RUN_DB_TESTS: "1"
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+      PLAYWRIGHT_BACKEND_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-3.12-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-3.12-
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Write fixed CI env file
+        run: |
+          # Secret restore is intentionally omitted in Sprint 1. Trusted-event
+          # restore is planned for Sprint 11.5 only on push to main or release tags
+          # with Tailscale GitHub Action and private staging.
+          cat > .env.ci <<'ENV'
+          POSTGRES_USER=taskmanagedai
+          POSTGRES_PASSWORD=taskmanagedai
+          POSTGRES_DB=taskmanagedai_test
+          TASKMANAGEDAI_ENVIRONMENT=test
+          TASKMANAGEDAI_DATABASE_URL=postgresql+asyncpg://taskmanagedai:taskmanagedai@postgres:5432/taskmanagedai_test
+          TASKMANAGEDAI_REDIS_URL=redis://redis:6379/1
+          TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET=test-cookie-secret-for-ci-only
+          TASKMANAGEDAI_DEV_LOGIN_TOKEN=test-dev-login-token-for-ci-only
+          ENV
+
+      - name: Install backend dependencies
+        run: uv sync --locked
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        working-directory: frontend
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.STORE_PATH }}
+          key: pnpm-${{ runner.os }}-22-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-22-
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Migrate and seed test database
+        run: |
+          uv run alembic upgrade head
+          uv run python -m backend.app.seeds.runner
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Playwright
+        working-directory: frontend
+        run: pnpm exec playwright test
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+  docker-smoke:
+    name: Docker Compose smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        compose-file: ["docker-compose.yml"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Write fixed CI env file
+        run: |
+          # Secret restore is intentionally omitted in Sprint 1. Trusted-event
+          # restore is planned for Sprint 11.5 only on push to main or release tags
+          # with Tailscale GitHub Action and private staging.
+          cat > .env.ci <<'ENV'
+          POSTGRES_USER=taskmanagedai
+          POSTGRES_PASSWORD=taskmanagedai
+          POSTGRES_DB=taskmanagedai_test
+          TASKMANAGEDAI_ENVIRONMENT=test
+          TASKMANAGEDAI_DATABASE_URL=postgresql+asyncpg://taskmanagedai:taskmanagedai@postgres:5432/taskmanagedai_test
+          TASKMANAGEDAI_REDIS_URL=redis://redis:6379/1
+          TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET=test-cookie-secret-for-ci-only
+          TASKMANAGEDAI_DEV_LOGIN_TOKEN=test-dev-login-token-for-ci-only
+          ENV
+          cp .env.ci .env.local
+
+      - name: Validate Compose config
+        run: docker compose -f ${{ matrix.compose-file }} --env-file .env.ci config
+
+      - name: Validate healthcheck specs
+        run: |
+          docker compose -f ${{ matrix.compose-file }} --env-file .env.ci config --format json > /tmp/taskmanagedai-compose.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path("/tmp/taskmanagedai-compose.json").read_text())
+          services = config.get("services", {})
+          expected = {"api", "frontend", "worker", "postgres", "redis"}
+
+          missing_services = sorted(expected.difference(services))
+          if missing_services:
+              raise SystemExit(f"missing compose services: {missing_services}")
+
+          missing_healthchecks = sorted(
+              name
+              for name in expected
+              if not isinstance(services[name].get("healthcheck"), dict)
+              or not services[name]["healthcheck"].get("test")
+          )
+          if missing_healthchecks:
+              raise SystemExit(f"missing healthcheck specs: {missing_healthchecks}")
+
+          print("compose healthcheck specs verified")
+          PY
+

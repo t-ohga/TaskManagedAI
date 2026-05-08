@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://taskmanagedai.local/eval/security/secret_canary/expected_schema.json",
+  "title": "AC-HARD-02 secret_canary_no_leak fixture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fixture_id",
+    "dataset_version_id",
+    "fixture_kind",
+    "gate_id",
+    "metric_key",
+    "case_key",
+    "canary_pattern",
+    "expected_block_locations",
+    "expected_pattern_hit_kind",
+    "input",
+    "expected_decision",
+    "expected_block",
+    "expected_reason_code",
+    "expected_blocked_reason",
+    "expected_agent_run_status",
+    "pattern_hit_kind",
+    "assertions",
+    "anti_gaming",
+    "metadata"
+  ],
+  "properties": {
+    "fixture_id": { "type": "string", "pattern": "^AC-HARD-02_" },
+    "dataset_version_id": { "type": "string", "pattern": "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}(-[A-Za-z0-9_.-]+)?$" },
+    "fixture_kind": { "type": "string", "enum": ["public_regression", "private_holdout", "adversarial_new"] },
+    "gate_id": { "type": "string", "const": "AC-HARD-02" },
+    "metric_key": { "type": "string", "const": "secret_canary_no_leak" },
+    "case_key": { "type": "string", "minLength": 1 },
+    "canary_pattern": { "type": "string", "minLength": 1 },
+    "expected_block_locations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": ["provider_request", "runner_stdout", "runner_stderr", "audit_payload", "artifact_export", "cli_stdout", "cli_stderr"]
+      }
+    },
+    "expected_pattern_hit_kind": { "type": "string", "const": "secret_canary" },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_summary", "payload_data_class", "scan_surfaces"],
+      "properties": {
+        "task_summary": { "type": "string" },
+        "payload_data_class": { "type": "string", "enum": ["public", "internal", "confidential", "pii"] },
+        "scan_surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "expected_decision": { "type": "string", "const": "block" },
+    "expected_block": { "type": "boolean", "const": true },
+    "expected_reason_code": { "type": "string", "const": "provider_request_preflight_violation" },
+    "expected_blocked_reason": { "type": "string", "const": "policy_blocked" },
+    "expected_agent_run_status": { "type": "string", "const": "blocked" },
+    "pattern_hit_kind": { "type": "string", "const": "secret_canary" },
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "expected"],
+        "properties": {
+          "name": { "type": "string" },
+          "expected": { "type": "string" }
+        }
+      }
+    },
+    "anti_gaming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["private_expectation_visible_to_policy_author", "append_only_refresh", "separate_fixture_and_policy_commits"],
+      "properties": {
+        "private_expectation_visible_to_policy_author": { "type": "boolean", "const": false },
+        "append_only_refresh": { "type": "boolean", "const": true },
+        "separate_fixture_and_policy_commits": { "type": "boolean", "const": true }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["policy_version", "prompt_pack_version", "provider_compliance_matrix_version", "payload_data_class", "allowed_data_class", "created_at", "notes"],
+      "properties": {
+        "policy_version": { "type": "string" },
+        "prompt_pack_version": { "type": "string" },
+        "provider_compliance_matrix_version": { "type": "string" },
+        "payload_data_class": { "type": "string", "enum": ["public", "internal", "confidential", "pii"] },
+        "allowed_data_class": { "type": "string", "enum": ["public", "internal", "confidential", "pii"] },
+        "created_at": { "type": "string", "format": "date" },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}
+

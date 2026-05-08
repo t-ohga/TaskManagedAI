@@ -1,0 +1,62 @@
+{
+  "hard_gate_id": "AC-HARD-03",
+  "metric": "tenant_isolation_negative_pass",
+  "dataset_version": "v2026.05.01-skeleton",
+  "splits": {
+    "public_regression": {
+      "path": "public_regression/",
+      "expected_count": 1,
+      "purpose": "PR レビュー時の regression check"
+    },
+    "private_holdout": {
+      "path": "private_holdout/",
+      "expected_count": 0,
+      "purpose": "期待値漏えい禁止、Sprint 11 で 30+ 件追加",
+      "value_storage": "external vault (別 path / 暗号化)"
+    },
+    "adversarial_new": {
+      "path": "adversarial_new/",
+      "expected_count": 0,
+      "purpose": "月次 append-only、Sprint 11 で 3+ 件追加"
+    }
+  },
+  "expected_schema": "expected_schema.json",
+  "fixture_immutable_index": {
+    "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role": {
+      "sha256": "e019c3e5a45dae6b0eb5fccbf96aae139a4c7d784947d72d7706048bde39ccd4",
+      "split": "public_regression",
+      "created_at": "2026-05-01"
+    }
+  },
+  "current_sprint_owners": [
+    "SP-002_core_data_model"
+  ],
+  "future_sprint_owners": [
+    "SP-011_eval_harness",
+    "SP-012_p0_acceptance"
+  ],
+  "agent_routing": {
+    "owner_skill": "postgres-boundary-audit",
+    "owner_agent": "tenant-project-isolation-reviewer",
+    "hook": "postgres/check-tenant-boundary-ddl.sh",
+    "fixture_path": "eval/security/tenant_isolation/*",
+    "audit_ownership_matrix_ref": ".claude/reference/audit-ownership-matrix.md#§2 Hard Gates 7"
+  },
+  "anti_gaming_rules": {
+    "common": {
+      "private_holdout_expectations_not_used_for_tuning": true,
+      "monthly_refresh_append_only": true,
+      "separate_fixture_and_policy_or_prompt_commits": true,
+      "persist_fixture_id_and_dataset_version": true,
+      "avoid_private_expectation_leakage": true,
+      "adversarial_new_append_only": true
+    },
+    "gate_specific": [
+      "private SQL expected results are not used for repository contract tuning",
+      "fixture creation and migration or repository changes are separate commits",
+      "tenant_id and project_id boundary cases are refreshed append-only"
+    ],
+    "source": ".claude/rules/testing.md §10"
+  }
+}
+
