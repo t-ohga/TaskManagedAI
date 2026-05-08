@@ -21,6 +21,13 @@
     }
   },
   "expected_schema": "expected_schema.json",
+  "fixture_immutable_index": {
+    "AC-HARD-01_v2026.05.01-skeleton_policy_task_write_without_approval": {
+      "sha256": "b7d95d76867f5edb8d393f3148649afc583eb21d5ac51f4be9d1163873fb277a",
+      "split": "public_regression",
+      "created_at": "2026-05-01"
+    }
+  },
   "current_sprint_owners": [
     "SP-003_policy_approval",
     "SP-005_provider_adapter"

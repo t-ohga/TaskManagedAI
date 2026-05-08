@@ -3,9 +3,12 @@ from backend.app.db.models.acceptance_criteria import (
     AcceptanceCriteriaStatus,
 )
 from backend.app.db.models.actor import Actor, ActorType
+from backend.app.db.models.approval_request import ApprovalRequest, ApprovalStatus, RiskLevel
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.base import Base
 from backend.app.db.models.notification_event import NotificationEvent
+from backend.app.db.models.policy_decision import PolicyDecision
+from backend.app.db.models.policy_rule import PolicyRule
 from backend.app.db.models.principal import Principal, PrincipalType
 from backend.app.db.models.project import Project
 from backend.app.db.models.repository import Repository
@@ -24,13 +27,18 @@ __all__ = [
     "AcceptanceCriteriaStatus",
     "Actor",
     "ActorType",
+    "ApprovalRequest",
+    "ApprovalStatus",
     "AuditEvent",
     "Base",
     "NotificationEvent",
+    "PolicyDecision",
+    "PolicyRule",
     "Principal",
     "PrincipalType",
     "Project",
     "Repository",
+    "RiskLevel",
     "SecretCapabilityToken",
     "SecretCapabilityTokenStatus",
     "SecretRef",

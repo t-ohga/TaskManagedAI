@@ -1,0 +1,54 @@
+{
+  "fixture_id": "AC-KPI-03_v2026.05.08-skeleton_approval_wait_ms_minimal",
+  "dataset_version_id": "v2026.05.08-skeleton",
+  "fixture_kind": "public_regression",
+  "kpi_id": "AC-KPI-03",
+  "metric_key": "approval_wait_ms",
+  "case_key": "approval_wait_ms_minimal_three_samples",
+  "input": {
+    "sample_approvals": [
+      {
+        "requested_at": "2026-05-01T10:00:00+00:00",
+        "decided_at": "2026-05-01T10:30:00+00:00",
+        "status": "approved"
+      },
+      {
+        "requested_at": "2026-05-01T11:00:00+00:00",
+        "decided_at": "2026-05-01T13:00:00+00:00",
+        "status": "approved"
+      },
+      {
+        "requested_at": "2026-05-01T12:00:00+00:00",
+        "decided_at": "2026-05-01T16:00:00+00:00",
+        "status": "rejected"
+      }
+    ]
+  },
+  "expected_aggregate": {
+    "sample_count": 3,
+    "median_ms": 7200000.0,
+    "p95_ms": 13680000.0,
+    "min_ms": 1800000.0,
+    "max_ms": 14400000.0
+  },
+  "assertions": [
+    {
+      "name": "median_below_kpi_threshold",
+      "expected": "median_ms <= 14400000 (4 hours, AC-KPI-03 threshold)"
+    },
+    {
+      "name": "source_of_truth_db",
+      "expected": "median calculated from approval_requests.requested_at / decided_at, not UI events"
+    }
+  ],
+  "anti_gaming": {
+    "private_expectation_visible_to_policy_author": false,
+    "append_only_refresh": true,
+    "separate_fixture_and_policy_commits": true
+  },
+  "metadata": {
+    "created_at": "2026-05-08",
+    "notes": "Sprint 3 Batch 4 (BL-0039) 用の deterministic minimal fixture。3 サンプル (30 min, 120 min, 240 min) で median = 120 min = 7,200,000 ms。PostgreSQL percentile_cont(0.95) の linear interpolation では p95 = 13,680,000 ms。Sprint 11 で private_holdout / adversarial_new に追加予定。"
+  }
+}
+

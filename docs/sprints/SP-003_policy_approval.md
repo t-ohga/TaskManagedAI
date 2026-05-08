@@ -4,12 +4,12 @@ type: "heavy"
 status: "draft"
 sprint_no: 3
 created_at: "2026-05-08"
-updated_at: "2026-05-08"
+updated_at: "2026-05-09"
 target_days: 5.3
 max_days: 7
-adr_refs: []
-planned_adr_refs:
-  - "[ADR-00009](../adr/00009_action_class_taxonomy.md) # Sprint 3 で proposed 化、action class 7 種 + initial policy matrix"
+adr_refs:
+  - "[ADR-00009](../adr/00009_action_class_taxonomy.md) # Sprint 3 着手で proposed → 2026-05-09 accepted (Batch 4 R3 F-010 fix)、action class 7 種 + initial policy matrix"
+planned_adr_refs: []
 related_sprints:
   - "SP-002_core_data_model"
   - "SP-004_agent_runtime"
@@ -21,7 +21,7 @@ risks:
 
 このテンプレの使い方: Sprint 3 の Policy / Approval で、AI 操作の action class、policy matrix、approval request、self-approval 禁止、Approval Inbox vertical slice、In-App Notification、approval KPI source を実装するための heavy Sprint Pack。ADR Gate Criteria #4 AI エージェント権限、#3 API / event schema、#1 actor binding に触れるため、ADR-00009 を proposed 化してから実装へ入る。
 
-最終更新: 2026-05-08
+最終更新: 2026-05-09 (Sprint 3 Batch 4 R3 F-010 fix で ADR-00009 を accepted 化、`adr_refs` に移送)
 
 ## 目的
 
@@ -120,7 +120,7 @@ risks:
 
 ## 受け入れ条件
 
-- [ ] ADR-00009 が proposed 状態で存在し、action class 7 種、P0 default、legacy `read/search` の移行扱い、policy matrix、negative test、rollback を含む。
+- [ ] ADR-00009 が **accepted** 状態で存在し (Sprint 3 着手で proposed 化、2026-05-09 Batch 4 R3 F-010 fix で accepted 化)、action class 7 種、P0 default、legacy `read/search` の移行扱い、policy matrix、negative test、rollback を含む。
 - [ ] action class enum が backend、DB、frontend、fixture schema で一致し、`provider_call` を含む。
 - [ ] `policy_rules`、`approval_requests`、`policy_decisions` が `tenant_id` を持ち、Sprint 2 の actors / principals と複合 FK で接続されている。
 - [ ] 初期 policy matrix は deny-by-default で、`merge` / `deploy` を P0 常時 deny する。
@@ -206,8 +206,118 @@ DB schema 変更 (Alembic migration) を伴う場合、以下を必ず満たす:
 
 ## Review
 
-- changed: Sprint 完了後に、action class enum、policy_rules、approval_requests、policy_decisions、stale invalidation、self-approval guard、Approval Inbox、notification、KPI fixture の実変更ファイルを追記する。
-- verified: Sprint 完了後に、migration、policy matrix test、AC-HARD-01 policy source test、approval invalidation test、self-approval negative、delegated actor negative、UI vertical slice、KPI aggregation、raw secret 非露出確認を追記する。
-- deferred: analytics drill-down、Approval Inbox full UI、external notification、provider adapter、AgentRun runtime、merge / deploy 実行、AC-HARD-01 fixture loader 接続を後続 Sprint へ送った理由を追記する。
-- risks: Sprint 完了後に、action class drift、policy block trace drift、approval bypass、stale approval、KPI source drift、notification race の残リスクと検知方法を追記する。
+完了日: 2026-05-09 (Batch 1-4 + Sprint Exit)
+
+### 実装方式
+
+Codex multi-round adversarial review pattern (Sprint 1/2 から継続):
+
+| Batch | 実装 round | 累計 review round | findings 累計 |
+|-------|----------|------------------|----------------|
+| Batch 1 (action class enum + policy_rules) | 1 | R1 → R2 fix → R3 (clean) | 2 件 |
+| Batch 2 (approval_requests + policy_decisions + stale invalidation + self-approval) | 1 | R1 → R2 fix → R3 (clean) | 3 件 |
+| Batch 3 (delegated actor negative + Approval Inbox UI + In-App Notification) | 1 | R1 → R2 → R3 → R4 → R5 → R6 (clean) | 8 件 (BLOCKER 含む) |
+| Batch 4 (approval_wait_ms KPI + AC-KPI-03 fixture + AC-HARD-01 policy source) | 1 | R1 → R2 → R3 → R4 → R5 (clean、F-011 LOW Claude直接 fix) | 11 件 |
+
+**累計 ~24 round / 24 findings**。clean gate は `findings: []` の Codex JSON response で判定。
+
+### changed (実装ファイル群)
+
+- **Batch 1** (BL-0031, BL-0032):
+  - `backend/app/domain/policy/action_class.py` (ActionClass Literal 7 種 + ALL_ACTION_CLASSES + P0 always-denied / fail-closed / conditional + PolicyEffect Literal)
+  - `backend/app/db/models/policy_rule.py` (ORM model with composite FK + action_class CHECK)
+  - `backend/app/repositories/policy_rule.py` (read-only repository、mutating API NotImplementedError 抑制)
+  - `migrations/versions/0005_policy_rules.py` (table + 7 行 deny-by-default seed)
+  - `tests/policy/test_action_class_enum.py`、`test_initial_policy_matrix.py`
+
+- **Batch 2** (BL-0033, BL-0034, BL-0035):
+  - `backend/app/db/models/approval_request.py` (ApprovalStatus 5 種 + RiskLevel Literal + 5 種 stale invalidation + self-approval CHECK + decided_at consistency CHECK + decision_completeness CHECK)
+  - `backend/app/db/models/policy_decision.py` (append-only event)
+  - `backend/app/repositories/approval_request.py` (`_UPDATE_FORBIDDEN_FIELDS` + `create_pending_approval` notifier wiring)
+  - `backend/app/repositories/policy_decision.py` (append-only)
+  - `backend/app/services/policy/decision_service.py` (atomic UPDATE returning + ORM refresh)
+  - `backend/app/services/policy/invalidation.py` (5 種 stale invalidation + returning() check)
+  - `backend/app/services/policy/self_approval_guard.py` (`effective_human_actor_id` 双方向 normalization)
+  - `migrations/versions/0006_approval_policy_decisions.py`
+  - `tests/policy/test_approval_decision_service.py`、`test_approval_stale_invalidation.py`、`test_self_approval_negative.py`、`test_approval_requests_append_only.py`、`test_policy_decisions_append_only.py`
+
+- **Batch 3** (BL-0036, BL-0037):
+  - `backend/app/services/notifications/approval_notifier.py`
+  - `backend/app/api/approval_inbox.py` (3 endpoints: list/detail/decide)
+  - `backend/app/api/notifications.py` (3 endpoints: list/badge_count/mark_read)
+  - `frontend/app/(admin)/approvals/page.tsx`、`[id]/page.tsx` (Server Component)
+  - `frontend/app/(admin)/approvals/[id]/_components/approval-decide-form.tsx` (Client Component minimal)
+  - `frontend/app/(admin)/notifications/page.tsx` + `_components/` + `_actions/mark-read.ts`
+  - `frontend/components/notification-badge.tsx` (link 化 + unread count)
+  - `frontend/lib/api/approvals.ts`、`notifications.ts` (Zod enum 固定 type-safe API client)
+  - `frontend/vitest.setup.ts` + `vitest.config.ts` + `tsconfig.json` + `package.json` (jest-dom matchers)
+  - `tests/policy/test_delegated_actor_negative.py`
+  - `tests/e2e/test_approval_flow_e2e.py` (httpx ASGITransport で Server Component fetch interception 不能問題を回避)
+  - `frontend/__tests__/notification-list.test.tsx`、`approval-decide-form.test.tsx`
+
+- **Batch 4** (BL-0038, BL-0039):
+  - `backend/app/services/metrics/approval_wait_ms.py` (PostgreSQL `percentile_cont(0.5/0.95).within_group()` + `decided_at >= requested_at` filter)
+  - `migrations/versions/0007_approval_temporal_check.py` (DB CHECK `approval_requests_ck_decided_at_after_requested_at`、F-004 fix)
+  - `backend/app/db/models/approval_request.py` (CheckConstraint 同期)
+  - `eval/security/policy_block/` (manifest.json + expected_schema.json + public_regression/sample.json + loader.py: AC-HARD-01 reason_code = `task_write_requires_approval`、ADR-00009 + migration 0005 整合)
+  - `eval/quality/approval_wait_ms/` (manifest.json + expected_schema.json + public_regression/sample.json + loader.py: p95=13,680,000.0 PostgreSQL `percentile_cont` 仕様準拠、status enum 5 種 + decided_at optional + if-then-else、`_validate_aggregate_consistency` で tampered fixture fail-closed)
+  - `tests/eval/test_policy_block_loader.py` (新規、48 test、Sprint 2 Batch 4 23 invariant pattern 完全踏襲)
+  - `tests/eval/test_approval_wait_ms_loader.py` (`TestPercentileContBoundaries` class 8 test + 既存 5 test + tamper 3 test)
+  - `tests/eval/test_policy_block_recall_policy_source.py` (migration 0005 から regex 動的抽出 reason_code subset)
+  - `tests/policy/test_approval_wait_ms.py` (median + p95 + negative wait_ms reject)
+  - `docs/adr/00009_action_class_taxonomy.md` (status: proposed → accepted at 2026-05-09)
+  - `docs/sprints/SP-003_policy_approval.md` (adr_refs 移送 + 受け入れ条件 accepted 文言整合)
+
+### verified (検証実績)
+
+- migration 0005/0006/0007 全て alembic upgrade head + downgrade base 通過
+- Action class enum 7 種が backend Literal / DB CHECK / frontend Zod / fixture schema で完全一致
+- Initial policy matrix が deny-by-default、`merge`/`deploy` P0 deny、`task_write`/`repo_write`/`pr_open`/`secret_access`/`provider_call` が approval requirement を保有
+- `policy_rules` / `approval_requests` / `policy_decisions` 全て `tenant_id NOT NULL DEFAULT 1` + composite FK 接続
+- self-approval CHECK が DB level で違反 INSERT を IntegrityError reject、`effective_human_actor_id` 双方向 normalization で delegated impersonation 経路も block
+- 5 種 stale invalidation (artifact_hash / diff_hash / policy_version / policy_pack_lock / provider_request_fingerprint) が `returning()` rowcount check で空更新を fail-closed
+- decided_at consistency CHECK + decision_completeness CHECK + temporal CHECK (decided_at >= requested_at) の **三重 CHECK** で approval state machine integrity を DB 層で保護
+- Approval Inbox UI vertical slice (Server Component default + minimal Client Component + Server Action mutation) + In-App Notification (link 化 + unread count + mark_read action)
+- `approval_wait_ms` aggregate query: PostgreSQL `percentile_cont(0.5/0.95).within_group()` で median/p95/min/max/sample_count 集計、status='approved'/'rejected' + decided_at IS NOT NULL + decided_at >= requested_at の triple defense
+- AC-HARD-01 fixture: reason_code = `task_write_requires_approval`、policy source = ADR-00009 + migration 0005 seed 整合、loader 23 invariant defense-in-depth 完備 (48 test)
+- AC-KPI-03 fixture: p95 = 13,680,000.0 (PostgreSQL `percentile_cont(0.95)` linear interpolation 仕様)、`_validate_aggregate_consistency` で input から再計算 + tampered fixture fail-closed (median/p95/min/max/sample_count 改変全 reject)
+- sha256 immutable index 双方向 verification: AC-HARD-01 (`b7d95d76867f5edb...`) + AC-KPI-03 (`b28614eb3fd6c7a2...`) 両 fixture の actual = expected MATCH
+- raw secret / capability_token / api_key 等 13 種 nested key leak が PublicFixture / RedactedFixture 全 path で reject (anti-gaming)
+- ADR-00009 accepted 化 + SP-003 `adr_refs` 移送 (planned → accepted) で ADR Gate Criteria #4 / #3 / #1 整合
+
+### deferred (P0 後続 Sprint へ送った項目)
+
+- **Approval Inbox full UI** (filtering / pagination / bulk approve / virtualized list): Sprint 9 (UI sprint) で本格化
+- **External notification** (email / Slack / Webhook): P1 以降、外部送信は `payload_data_class` Matrix 通過必須なため P0 範囲外
+- **AC-HARD-01 fixture loader を Eval Harness に接続**: Sprint 11 (eval harness) で `eval/runner/` 経由で load + score + report
+- **AC-KPI-03 KPI dashboard / drill-down**: Sprint 11.5 (Eval Dashboard) で OTel + Loki + Grafana 統合
+- **Provider call 直前 deny の policy enforcement**: Sprint 5 (provider adapter) で `provider_request_preflight` 実装時に AC-HARD-01 trace 完成
+- **AgentRun runtime 経路から policy / approval を呼ぶ**: Sprint 4 (agent runtime) で AgentRun 16 状態 + state machine + ContextSnapshot 実装時に統合
+- **merge / deploy 実行**: P0 全期間 deny。Sprint 12 P0 Acceptance で `merge` / `deploy` policy_decision 実行不可確認のみ
+- **analytics drill-down**: Sprint 11.5 で Approval funnel / time-to-merge / cost dashboard と一緒に
+- **Approval expiration auto-handler** (worker job): Sprint 4.5 (worker / arq job) で expired auto-transition
+
+### risks (残リスク + 検知方法)
+
+| risk | 検知方法 | 対応 Sprint |
+|------|---------|-----------|
+| action class drift (backend Literal / DB CHECK / frontend Zod / fixture schema 間で乖離) | `tests/policy/test_action_class_enum.py` の cross-source enum 一致 test | 現状 PASS、Sprint ごとに maintenance |
+| policy block trace drift (AC-HARD-01 reason_code が ADR/migration から乖離) | `tests/eval/test_policy_block_recall_policy_source.py` で migration 0005 から regex 動的抽出 + ADR extra reasons subset 確認 | 現状 PASS、新 reason_code 追加時に毎回 |
+| approval bypass via status-only update | `_UPDATE_FORBIDDEN_FIELDS` + DB `approval_requests_ck_decision_completeness` CHECK + `ApprovalDecisionService` atomic UPDATE returning | 三重防御済 |
+| stale approval (artifact / diff / policy / provider_request_fingerprint 変化検知漏れ) | 5 種 stale invalidation + returning() rowcount + 0件 detection | Sprint 5 (provider call) で fingerprint 計算実装時に確認 |
+| KPI source drift (approval_wait_ms 計算が PostgreSQL `percentile_cont` 仕様と乖離) | `TestPercentileContBoundaries` 8 test + `_validate_aggregate_consistency` deterministic recompute | 現状 PASS |
+| notification race (notify_approval_pending と approval insert の transaction 不整合) | `create_pending_approval` で同一 transaction wiring (Batch 3 R3 F-003 fix) | 現状 PASS、external notification で再評価 |
+| 負値 wait_ms KPI gaming (decided_at < requested_at で median 偽造) | DB CHECK `approval_requests_ck_decided_at_after_requested_at` + service filter `decided_at >= requested_at` + `_compute_expected_aggregate` で除外 | 三重防御済 |
+| jest-dom matchers TypeScript drift (vitest.config / tsconfig / setup files の整合) | `pnpm exec tsc --noEmit` で TS2339 errors detect | Sprint 9 UI 実装増強時に再評価 |
+
+### Sprint Exit 判定
+
+- ✅ **must_ship 全達成**: action class taxonomy + initial policy matrix + approval workflow + Approval Inbox vertical slice + notification + AC-HARD-01 policy source + AC-KPI-03 KPI source + 5 種 stale invalidation + self-approval (incl. delegated impersonation) + 三重 CHECK temporal integrity
+- ✅ **ADR-00009 accepted 化** (2026-05-09 Batch 4 R3 F-010 fix)、`adr_refs` 移送完了
+- ✅ **Codex multi-round review で全 batch clean 達成** (累計 ~24 round / 24 findings)
+- ✅ **AC-HARD-01 + AC-KPI-03 fixture skeleton ready** (loader 接続は Sprint 11)
+- ✅ **DB CHECK / ORM / service / loader / test の defense-in-depth** が approval / KPI 全 boundary で揃う
+- ✅ **既存 Sprint (1, 2) との regression なし** (action class enum / actor_id / `tenant_id` 整合維持)
+
+→ **Sprint 3 完了**。次 Sprint は Sprint 4 (Agent Runtime: AgentRun 16 状態 + ContextSnapshot 10 カラム + state machine + provider adapter integration)。
 

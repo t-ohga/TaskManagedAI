@@ -1,9 +1,11 @@
 import Link from "next/link";
 
+import { NotificationBadge } from "@/components/notification-badge";
+
 const navItems = [
   { href: "/dashboard", label: "Dashboard", current: true },
   { href: "/dashboard/tickets", label: "Tickets", current: false },
-  { href: "/dashboard/approvals", label: "Approvals", current: false },
+  { href: "/approvals", label: "Approvals", current: false },
   { href: "/dashboard/agent-runs", label: "Agent Runs", current: false },
   { href: "/dashboard/audit", label: "Audit", current: false },
   { href: "/dashboard/settings", label: "Settings", current: false }
@@ -24,9 +26,12 @@ export function Navigation({ actorLabel }: NavigationProps) {
           >
             TaskManagedAI
           </Link>
-          <p className="rounded-md border border-line px-2 py-1 font-mono text-xs text-muted">
-            {actorLabel}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="rounded-md border border-line px-2 py-1 font-mono text-xs text-muted">
+              {actorLabel}
+            </p>
+            <NotificationBadge />
+          </div>
         </div>
 
         <nav aria-label="Admin">

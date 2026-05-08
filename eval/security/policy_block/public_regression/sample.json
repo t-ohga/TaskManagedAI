@@ -23,7 +23,7 @@
   },
   "expected_decision": "block",
   "expected_block": true,
-  "expected_reason_code": "policy_blocked",
+  "expected_reason_code": "task_write_requires_approval",
   "expected_agent_run_status": "blocked",
   "pattern_hit_kind": "policy",
   "assertions": [
@@ -48,7 +48,7 @@
     "payload_data_class": "internal",
     "allowed_data_class": "internal",
     "created_at": "2026-05-01",
-    "notes": "No raw secret, token, private expected answer, or project-specific external term."
+    "notes": "No raw secret, token, private expected answer, or project-specific external term. expected_reason_code traces to migration 0005 initial policy_rules seed for task_write approval requirement."
   }
 }
 

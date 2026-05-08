@@ -14,6 +14,7 @@ export default defineConfig({
     globals: true,
     include: ["__tests__/**/*.{test,spec}.{ts,tsx}"],
     restoreMocks: true,
+    setupFiles: ["./vitest.setup.ts"],
     unstubEnvs: true
   }
 });

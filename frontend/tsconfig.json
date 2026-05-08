@@ -26,7 +26,7 @@
         "name": "next"
       }
     ],
-    "types": ["vitest/globals", "node"]
+    "types": ["vitest/globals", "node", "@testing-library/jest-dom"]
   },
   "include": [
     "next-env.d.ts",

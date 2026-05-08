@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.app_role import (
@@ -37,6 +37,15 @@ class NotificationEventRepository:
         await self.session.flush()
         return event
 
+    async def get(self, tenant_id: int, id: UUID) -> NotificationEvent | None:
+        await self._ensure_tenant_context(tenant_id)
+        return await self.session.scalar(
+            select(NotificationEvent).where(
+                NotificationEvent.tenant_id == tenant_id,
+                NotificationEvent.id == id,
+            )
+        )
+
     async def mark_read(self, tenant_id: int, event_id: UUID) -> NotificationEvent | None:
         await self._ensure_tenant_context(tenant_id)
         result = await self.session.execute(
@@ -45,7 +54,12 @@ class NotificationEventRepository:
                 NotificationEvent.tenant_id == tenant_id,
                 NotificationEvent.id == event_id,
             )
-            .values(read_at=datetime.now(tz=UTC))
+            .values(
+                read_at=func.coalesce(
+                    NotificationEvent.read_at,
+                    datetime.now(tz=UTC),
+                )
+            )
             .returning(NotificationEvent)
         )
         return result.scalar_one_or_none()
@@ -66,6 +80,37 @@ class NotificationEventRepository:
             .order_by(NotificationEvent.created_at, NotificationEvent.id)
         )
         return list(result.scalars().all())
+
+    async def list_for_recipient(
+        self,
+        tenant_id: int,
+        recipient_actor_id: UUID,
+        *,
+        limit: int = 50,
+    ) -> list[NotificationEvent]:
+        await self._ensure_tenant_context(tenant_id)
+        bounded_limit = min(max(limit, 1), 200)
+        result = await self.session.execute(
+            select(NotificationEvent)
+            .where(
+                NotificationEvent.tenant_id == tenant_id,
+                NotificationEvent.recipient_actor_id == recipient_actor_id,
+            )
+            .order_by(NotificationEvent.created_at.desc(), NotificationEvent.id.desc())
+            .limit(bounded_limit)
+        )
+        return list(result.scalars().all())
+
+    async def count_unread(self, tenant_id: int, recipient_actor_id: UUID) -> int:
+        await self._ensure_tenant_context(tenant_id)
+        count = await self.session.scalar(
+            select(func.count(NotificationEvent.id)).where(
+                NotificationEvent.tenant_id == tenant_id,
+                NotificationEvent.recipient_actor_id == recipient_actor_id,
+                NotificationEvent.read_at.is_(None),
+            )
+        )
+        return int(count or 0)
 
     async def _ensure_tenant_context(self, tenant_id: int) -> None:
         self._require_tenant_id(tenant_id)

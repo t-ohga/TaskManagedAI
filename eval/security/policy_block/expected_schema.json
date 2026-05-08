@@ -54,7 +54,20 @@
     },
     "expected_decision": { "type": "string", "const": "block" },
     "expected_block": { "type": "boolean", "const": true },
-    "expected_reason_code": { "type": "string", "const": "policy_blocked" },
+    "expected_reason_code": {
+      "type": "string",
+      "enum": [
+        "p0_merge_deploy_disabled",
+        "policy_matrix_default_deny",
+        "task_write_requires_approval",
+        "repo_write_requires_approval",
+        "pr_open_requires_approval",
+        "unknown_action_class_denied",
+        "provider_not_in_matrix",
+        "dangerous_command_denied",
+        "unknown_resource_ref_denied"
+      ]
+    },
     "expected_agent_run_status": { "type": "string", "const": "blocked" },
     "pattern_hit_kind": { "type": "string", "const": "policy" },
     "assertions": {

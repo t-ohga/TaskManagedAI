@@ -32,3 +32,6 @@ build/
 # Claude Code hook state (session-local)
 .claude/.hook-state/
 
+
+# Python build artifacts
+*.egg-info/

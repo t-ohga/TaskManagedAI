@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,23 @@ BATCH2_TENANT_SCOPED_TABLES = frozenset(
         "notification_events",
     }
 )
-TENANT_SCOPED_TABLES = BATCH1_TENANT_SCOPED_TABLES | BATCH2_TENANT_SCOPED_TABLES
+BATCH3_TENANT_SCOPED_TABLES = frozenset(
+    {
+        "policy_rules",
+    }
+)
+BATCH4_TENANT_SCOPED_TABLES = frozenset(
+    {
+        "approval_requests",
+        "policy_decisions",
+    }
+)
+TENANT_SCOPED_TABLES = (
+    BATCH1_TENANT_SCOPED_TABLES
+    | BATCH2_TENANT_SCOPED_TABLES
+    | BATCH3_TENANT_SCOPED_TABLES
+    | BATCH4_TENANT_SCOPED_TABLES
+)
 METADATA_TABLES = frozenset(
     {
         "tenants",
@@ -53,8 +70,25 @@ METADATA_TABLES = frozenset(
         "tickets",
         "acceptance_criteria",
         "ticket_relations",
+        "policy_rules",
+        "approval_requests",
+        "policy_decisions",
     }
 )
+POLICY_ACTION_CLASSES = frozenset(
+    {
+        "task_write",
+        "repo_write",
+        "pr_open",
+        "secret_access",
+        "merge",
+        "deploy",
+        "provider_call",
+    }
+)
+POLICY_EFFECTS = frozenset({"allow", "deny", "require_approval"})
+APPROVAL_STATUSES = frozenset({"pending", "approved", "rejected", "expired", "invalidated"})
+RISK_LEVELS = frozenset({"low", "medium", "high", "critical"})
 ALL_CORE_TABLES = TENANT_SCOPED_TABLES | {"tenants"}
 ForeignKeySignature = tuple[str, tuple[str, ...], str, tuple[str, ...]]
 
@@ -235,6 +269,28 @@ async def _constraint_definition(
     return definition
 
 
+async def _index_definitions(
+    session: AsyncSession,
+    table_names: frozenset[str],
+) -> dict[str, str]:
+    result = await session.execute(
+        text(
+            """
+            select indexname, indexdef
+            from pg_indexes
+            where schemaname = 'public'
+              and tablename = any(:table_names)
+            """
+        ),
+        {"table_names": sorted(table_names)},
+    )
+    return {str(row["indexname"]): str(row["indexdef"]) for row in result.mappings()}
+
+
+def _check_constraint_values(definition: str) -> set[str]:
+    return set(re.findall(r"'([^']+)'", definition))
+
+
 @pytest.mark.asyncio
 async def test_tenant_scoped_tables_have_tenant_id_not_null(
     session_factory: async_sessionmaker[AsyncSession],
@@ -374,6 +430,26 @@ async def test_required_composite_foreign_keys_exist(
             "actors",
             ("tenant_id", "id"),
         ),
+        ("policy_rules", ("tenant_id", "project_id"), "projects", ("tenant_id", "id")),
+        (
+            "approval_requests",
+            ("tenant_id", "requested_by_actor_id"),
+            "actors",
+            ("tenant_id", "id"),
+        ),
+        (
+            "approval_requests",
+            ("tenant_id", "decided_by_actor_id"),
+            "actors",
+            ("tenant_id", "id"),
+        ),
+        (
+            "policy_decisions",
+            ("tenant_id", "approval_request_id"),
+            "approval_requests",
+            ("tenant_id", "id"),
+        ),
+        ("policy_decisions", ("tenant_id", "actor_id"), "actors", ("tenant_id", "id")),
     }
 
     async with session_factory() as session:
@@ -428,6 +504,387 @@ async def test_id_only_foreign_keys_to_tenant_scoped_tables_are_rejected(
             bad_constraints.append(dict(row))
 
     assert bad_constraints == []
+
+
+@pytest.mark.asyncio
+async def test_policy_rules_has_tenant_id_and_composite_fk(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    policy_rule_column_names = (
+        "id",
+        "tenant_id",
+        "project_id",
+        "action_class",
+        "effect",
+        "rule_json",
+        "policy_version",
+        "metadata",
+        "created_at",
+        "updated_at",
+    )
+
+    async with session_factory() as session:
+        policy_rule_columns = await _table_columns(
+            session,
+            "policy_rules",
+            policy_rule_column_names,
+        )
+        policy_rule_unique = await _constraint_columns(
+            session,
+            table_name="policy_rules",
+            constraint_name="policy_rules_uq_tenant_id",
+            constraint_type="u",
+        )
+        actual = await _foreign_key_signatures(session)
+        indexes = await _index_definitions(session, frozenset({"policy_rules"}))
+
+    assert set(policy_rule_columns) == set(policy_rule_column_names)
+    assert policy_rule_columns["id"]["data_type"] == "uuid"
+    assert policy_rule_columns["id"]["is_nullable"] == "NO"
+    assert "uuid_generate_v4" in str(policy_rule_columns["id"]["column_default"])
+    assert policy_rule_columns["tenant_id"]["data_type"] == "bigint"
+    assert policy_rule_columns["tenant_id"]["is_nullable"] == "NO"
+    assert policy_rule_columns["tenant_id"]["column_default"] == "1"
+    assert policy_rule_columns["project_id"]["data_type"] == "uuid"
+    assert policy_rule_columns["project_id"]["is_nullable"] == "YES"
+    assert policy_rule_columns["action_class"]["data_type"] == "text"
+    assert policy_rule_columns["action_class"]["is_nullable"] == "NO"
+    assert policy_rule_columns["effect"]["data_type"] == "text"
+    assert policy_rule_columns["effect"]["is_nullable"] == "NO"
+    assert policy_rule_columns["rule_json"]["data_type"] == "jsonb"
+    assert policy_rule_columns["rule_json"]["is_nullable"] == "NO"
+    assert policy_rule_columns["policy_version"]["data_type"] == "text"
+    assert policy_rule_columns["policy_version"]["is_nullable"] == "NO"
+    assert policy_rule_columns["metadata"]["data_type"] == "jsonb"
+    assert policy_rule_columns["metadata"]["is_nullable"] == "NO"
+    assert "rls_ready" in str(policy_rule_columns["metadata"]["column_default"])
+    assert policy_rule_columns["created_at"]["is_nullable"] == "NO"
+    assert policy_rule_columns["updated_at"]["is_nullable"] == "NO"
+    assert policy_rule_unique == ("tenant_id", "id")
+
+    assert ("policy_rules", ("tenant_id",), "tenants", ("id",)) in actual
+    assert ("policy_rules", ("tenant_id", "project_id"), "projects", ("tenant_id", "id")) in actual
+
+    policy_rule_bad_fks: list[ForeignKeySignature] = []
+    for signature in actual:
+        table_name, constrained_columns, referenced_table, referred_columns = signature
+        if table_name == "policy_rules" and referenced_table != "tenants" and (
+            constrained_columns == ("id",)
+            or "tenant_id" not in constrained_columns
+            or referred_columns == ("id",)
+        ):
+            policy_rule_bad_fks.append(signature)
+
+    assert policy_rule_bad_fks == []
+
+    assert indexes["policy_rules_idx_tenant_action_class"].startswith("CREATE INDEX")
+    assert "(tenant_id, action_class)" in indexes["policy_rules_idx_tenant_action_class"]
+    assert indexes["policy_rules_idx_policy_version"].startswith("CREATE INDEX")
+    assert "(tenant_id, policy_version)" in indexes["policy_rules_idx_policy_version"]
+
+
+@pytest.mark.asyncio
+async def test_policy_rules_action_class_check_enum(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        action_class_check = await _constraint_definition(
+            session,
+            table_name="policy_rules",
+            constraint_name="policy_rules_ck_action_class",
+        )
+
+    assert _check_constraint_values(action_class_check) == POLICY_ACTION_CLASSES
+
+
+@pytest.mark.asyncio
+async def test_policy_rules_effect_check_enum(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        effect_check = await _constraint_definition(
+            session,
+            table_name="policy_rules",
+            constraint_name="policy_rules_ck_effect",
+        )
+
+    assert _check_constraint_values(effect_check) == POLICY_EFFECTS
+
+
+@pytest.mark.asyncio
+async def test_approval_requests_has_tenant_id_and_composite_fk(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    approval_column_names = (
+        "id",
+        "tenant_id",
+        "run_id",
+        "action_class",
+        "resource_ref",
+        "risk_level",
+        "artifact_hash",
+        "diff_hash",
+        "policy_version",
+        "policy_pack_lock",
+        "provider_request_fingerprint",
+        "stale_after_event_seq",
+        "status",
+        "requested_by_actor_id",
+        "decided_by_actor_id",
+        "requested_at",
+        "decided_at",
+        "rationale",
+        "metadata",
+    )
+
+    async with session_factory() as session:
+        approval_columns = await _table_columns(
+            session,
+            "approval_requests",
+            approval_column_names,
+        )
+        approval_unique = await _constraint_columns(
+            session,
+            table_name="approval_requests",
+            constraint_name="approval_requests_uq_tenant_id",
+            constraint_type="u",
+        )
+        actual = await _foreign_key_signatures(session)
+        indexes = await _index_definitions(session, frozenset({"approval_requests"}))
+
+    assert set(approval_columns) == set(approval_column_names)
+    assert approval_columns["id"]["data_type"] == "uuid"
+    assert approval_columns["id"]["is_nullable"] == "NO"
+    assert "uuid_generate_v4" in str(approval_columns["id"]["column_default"])
+    assert approval_columns["tenant_id"]["data_type"] == "bigint"
+    assert approval_columns["tenant_id"]["is_nullable"] == "NO"
+    assert approval_columns["tenant_id"]["column_default"] == "1"
+    assert approval_columns["run_id"]["data_type"] == "uuid"
+    assert approval_columns["run_id"]["is_nullable"] == "YES"
+    assert approval_columns["action_class"]["data_type"] == "text"
+    assert approval_columns["action_class"]["is_nullable"] == "NO"
+    assert approval_columns["resource_ref"]["data_type"] == "text"
+    assert approval_columns["resource_ref"]["is_nullable"] == "NO"
+    assert approval_columns["risk_level"]["data_type"] == "text"
+    assert approval_columns["risk_level"]["is_nullable"] == "NO"
+    assert approval_columns["artifact_hash"]["data_type"] == "text"
+    assert approval_columns["artifact_hash"]["is_nullable"] == "YES"
+    assert approval_columns["diff_hash"]["data_type"] == "text"
+    assert approval_columns["diff_hash"]["is_nullable"] == "YES"
+    assert approval_columns["policy_version"]["data_type"] == "text"
+    assert approval_columns["policy_version"]["is_nullable"] == "NO"
+    assert approval_columns["policy_pack_lock"]["data_type"] == "text"
+    assert approval_columns["policy_pack_lock"]["is_nullable"] == "YES"
+    assert approval_columns["provider_request_fingerprint"]["data_type"] == "text"
+    assert approval_columns["provider_request_fingerprint"]["is_nullable"] == "YES"
+    assert approval_columns["stale_after_event_seq"]["data_type"] == "bigint"
+    assert approval_columns["stale_after_event_seq"]["is_nullable"] == "YES"
+    assert approval_columns["status"]["data_type"] == "text"
+    assert approval_columns["status"]["is_nullable"] == "NO"
+    assert approval_columns["requested_by_actor_id"]["data_type"] == "uuid"
+    assert approval_columns["requested_by_actor_id"]["is_nullable"] == "NO"
+    assert approval_columns["decided_by_actor_id"]["data_type"] == "uuid"
+    assert approval_columns["decided_by_actor_id"]["is_nullable"] == "YES"
+    assert approval_columns["requested_at"]["is_nullable"] == "NO"
+    assert "now()" in str(approval_columns["requested_at"]["column_default"])
+    assert approval_columns["decided_at"]["is_nullable"] == "YES"
+    assert approval_columns["rationale"]["data_type"] == "text"
+    assert approval_columns["rationale"]["is_nullable"] == "YES"
+    assert approval_columns["metadata"]["data_type"] == "jsonb"
+    assert approval_columns["metadata"]["is_nullable"] == "NO"
+    assert "rls_ready" in str(approval_columns["metadata"]["column_default"])
+    assert approval_unique == ("tenant_id", "id")
+
+    assert ("approval_requests", ("tenant_id",), "tenants", ("id",)) in actual
+    assert (
+        "approval_requests",
+        ("tenant_id", "requested_by_actor_id"),
+        "actors",
+        ("tenant_id", "id"),
+    ) in actual
+    assert (
+        "approval_requests",
+        ("tenant_id", "decided_by_actor_id"),
+        "actors",
+        ("tenant_id", "id"),
+    ) in actual
+    assert not any(
+        table_name == "approval_requests" and constrained_columns == ("tenant_id", "run_id")
+        for table_name, constrained_columns, _referenced_table, _referred_columns in actual
+    )
+
+    assert indexes["approval_requests_idx_tenant_status"].startswith("CREATE INDEX")
+    assert "(tenant_id, status)" in indexes["approval_requests_idx_tenant_status"]
+    assert indexes["approval_requests_idx_tenant_run"].startswith("CREATE INDEX")
+    assert "(tenant_id, run_id)" in indexes["approval_requests_idx_tenant_run"]
+    assert "run_id IS NOT NULL" in indexes["approval_requests_idx_tenant_run"].upper()
+    assert indexes["approval_requests_idx_requested_at"].startswith("CREATE INDEX")
+    assert "(tenant_id, requested_at)" in indexes["approval_requests_idx_requested_at"]
+
+
+@pytest.mark.asyncio
+async def test_approval_requests_action_class_check_enum(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        action_class_check = await _constraint_definition(
+            session,
+            table_name="approval_requests",
+            constraint_name="approval_requests_ck_action_class",
+        )
+
+    assert _check_constraint_values(action_class_check) == POLICY_ACTION_CLASSES
+
+
+@pytest.mark.asyncio
+async def test_approval_requests_status_check_enum(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        status_check = await _constraint_definition(
+            session,
+            table_name="approval_requests",
+            constraint_name="approval_requests_ck_status",
+        )
+        risk_check = await _constraint_definition(
+            session,
+            table_name="approval_requests",
+            constraint_name="approval_requests_ck_risk_level",
+        )
+
+    assert _check_constraint_values(status_check) == APPROVAL_STATUSES
+    assert _check_constraint_values(risk_check) == RISK_LEVELS
+
+
+@pytest.mark.asyncio
+async def test_approval_requests_self_approval_check_constraint(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        self_approval_check = await _constraint_definition(
+            session,
+            table_name="approval_requests",
+            constraint_name="approval_requests_ck_self_approval",
+        )
+        decided_at_check = await _constraint_definition(
+            session,
+            table_name="approval_requests",
+            constraint_name="approval_requests_ck_decided_at_consistency",
+        )
+
+    assert "requested_by_actor_id" in self_approval_check
+    assert "decided_by_actor_id" in self_approval_check
+    assert "<>" in self_approval_check or "!=" in self_approval_check
+    assert "decided_by_actor_id" in decided_at_check
+    assert "decided_at" in decided_at_check
+
+
+@pytest.mark.asyncio
+async def test_policy_decisions_has_tenant_id_and_composite_fk(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    policy_decision_column_names = (
+        "id",
+        "tenant_id",
+        "run_id",
+        "approval_request_id",
+        "actor_id",
+        "action_class",
+        "decision",
+        "reason_code",
+        "policy_version",
+        "input_hash",
+        "metadata",
+        "created_at",
+    )
+
+    async with session_factory() as session:
+        policy_decision_columns = await _table_columns(
+            session,
+            "policy_decisions",
+            policy_decision_column_names,
+        )
+        policy_decision_unique = await _constraint_columns(
+            session,
+            table_name="policy_decisions",
+            constraint_name="policy_decisions_uq_tenant_id",
+            constraint_type="u",
+        )
+        actual = await _foreign_key_signatures(session)
+        indexes = await _index_definitions(session, frozenset({"policy_decisions"}))
+
+    assert set(policy_decision_columns) == set(policy_decision_column_names)
+    assert policy_decision_columns["id"]["data_type"] == "uuid"
+    assert policy_decision_columns["id"]["is_nullable"] == "NO"
+    assert "uuid_generate_v4" in str(policy_decision_columns["id"]["column_default"])
+    assert policy_decision_columns["tenant_id"]["data_type"] == "bigint"
+    assert policy_decision_columns["tenant_id"]["is_nullable"] == "NO"
+    assert policy_decision_columns["tenant_id"]["column_default"] == "1"
+    assert policy_decision_columns["run_id"]["data_type"] == "uuid"
+    assert policy_decision_columns["run_id"]["is_nullable"] == "YES"
+    assert policy_decision_columns["approval_request_id"]["data_type"] == "uuid"
+    assert policy_decision_columns["approval_request_id"]["is_nullable"] == "YES"
+    assert policy_decision_columns["actor_id"]["data_type"] == "uuid"
+    assert policy_decision_columns["actor_id"]["is_nullable"] == "NO"
+    assert policy_decision_columns["action_class"]["data_type"] == "text"
+    assert policy_decision_columns["action_class"]["is_nullable"] == "NO"
+    assert policy_decision_columns["decision"]["data_type"] == "text"
+    assert policy_decision_columns["decision"]["is_nullable"] == "NO"
+    assert policy_decision_columns["reason_code"]["data_type"] == "text"
+    assert policy_decision_columns["reason_code"]["is_nullable"] == "NO"
+    assert policy_decision_columns["policy_version"]["data_type"] == "text"
+    assert policy_decision_columns["policy_version"]["is_nullable"] == "NO"
+    assert policy_decision_columns["input_hash"]["data_type"] == "text"
+    assert policy_decision_columns["input_hash"]["is_nullable"] == "NO"
+    assert policy_decision_columns["metadata"]["data_type"] == "jsonb"
+    assert policy_decision_columns["metadata"]["is_nullable"] == "NO"
+    assert "rls_ready" in str(policy_decision_columns["metadata"]["column_default"])
+    assert policy_decision_columns["created_at"]["is_nullable"] == "NO"
+    assert "now()" in str(policy_decision_columns["created_at"]["column_default"])
+    assert policy_decision_unique == ("tenant_id", "id")
+
+    assert ("policy_decisions", ("tenant_id",), "tenants", ("id",)) in actual
+    assert (
+        "policy_decisions",
+        ("tenant_id", "approval_request_id"),
+        "approval_requests",
+        ("tenant_id", "id"),
+    ) in actual
+    assert ("policy_decisions", ("tenant_id", "actor_id"), "actors", ("tenant_id", "id")) in actual
+    assert not any(
+        table_name == "policy_decisions" and constrained_columns == ("tenant_id", "run_id")
+        for table_name, constrained_columns, _referenced_table, _referred_columns in actual
+    )
+
+    assert indexes["policy_decisions_idx_tenant_action_class"].startswith("CREATE INDEX")
+    assert "(tenant_id, action_class)" in indexes["policy_decisions_idx_tenant_action_class"]
+    assert indexes["policy_decisions_idx_tenant_approval"].startswith("CREATE INDEX")
+    assert "(tenant_id, approval_request_id)" in indexes["policy_decisions_idx_tenant_approval"]
+    assert "APPROVAL_REQUEST_ID IS NOT NULL" in indexes[
+        "policy_decisions_idx_tenant_approval"
+    ].upper()
+    assert indexes["policy_decisions_idx_created_at"].startswith("CREATE INDEX")
+    assert "(tenant_id, created_at)" in indexes["policy_decisions_idx_created_at"]
+
+
+@pytest.mark.asyncio
+async def test_policy_decisions_decision_check_enum(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        action_class_check = await _constraint_definition(
+            session,
+            table_name="policy_decisions",
+            constraint_name="policy_decisions_ck_action_class",
+        )
+        decision_check = await _constraint_definition(
+            session,
+            table_name="policy_decisions",
+            constraint_name="policy_decisions_ck_decision",
+        )
+
+    assert _check_constraint_values(action_class_check) == POLICY_ACTION_CLASSES
+    assert _check_constraint_values(decision_check) == POLICY_EFFECTS
 
 
 @pytest.mark.asyncio
