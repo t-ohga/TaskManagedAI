@@ -1,0 +1,726 @@
+from __future__ import annotations
+
+import hashlib
+import inspect
+import re
+import secrets
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any, Generic, Literal, TypeVar
+from uuid import UUID
+
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.db.models.approval_request import ApprovalRequest
+from backend.app.db.models.secret_capability_token import SecretCapabilityToken
+from backend.app.db.models.secret_ref import SecretRef
+from backend.app.domain.agent_runtime.operation_context import (
+    OperationContext,
+    RequestedOperation,
+    compute_fingerprint,
+    compute_payload_hash,
+)
+from backend.app.repositories.audit_event import AuditEventRepository
+from backend.app.repositories.secret_capability_token import (
+    ClaimDenyReason,
+    ClaimResult,
+    SecretCapabilityTokenRepository,
+)
+
+IssueDenyReason = Literal[
+    "secret_ref_not_found",
+    "secret_ref_not_active",
+    "operation_mismatch",
+    "consumer_mismatch",
+    "approval_required",
+    "approval_not_found",
+    "approval_not_approved",
+    "approval_action_class_mismatch",
+    "approval_diff_hash_mismatch",
+    "approval_target_mismatch",
+    "approval_tenant_mismatch",
+    "ttl_out_of_bounds",
+]
+RedeemDenyReason = Literal[
+    "not_found",
+    "expired",
+    "token_used",
+    "actor_mismatch",
+    "run_mismatch",
+    "fingerprint_mismatch",
+    "operation_mismatch",
+    "secret_ref_revoked",
+    "secret_ref_deprecated",
+    "scope_constraint_invalid",
+    "scope_mismatch",
+    "name_mismatch",
+    "version_mismatch",
+    "consumer_mismatch",
+]
+
+T = TypeVar("T")
+_SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerIssueResult:
+    raw_token: str
+    token_id: UUID
+    secret_ref_id: UUID
+    expires_at: datetime
+
+    @property
+    def capability_token(self) -> str:
+        return self.raw_token
+
+    @property
+    def capability_id(self) -> UUID:
+        return self.token_id
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerRedeemDenied:
+    reason_code: RedeemDenyReason
+    requested_operation: RequestedOperation
+    computed_fingerprint: str | None = None
+    capability_id: UUID | None = None
+    secret_ref_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerRedeemResult(Generic[T]):
+    capability_id: UUID
+    secret_ref_id: UUID
+    requested_operation: RequestedOperation
+    operation_result: T | None
+
+
+@dataclass(frozen=True, slots=True)
+class SecretHandle:
+    secret_ref_id: UUID
+    scope: str
+    name: str
+    version: str
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerOperationContext:
+    tenant_id: int
+    actor_id: UUID
+    run_id: UUID | None
+    requested_operation: RequestedOperation
+    target: Mapping[str, Any]
+    payload_hash: str
+    secret_handle: SecretHandle
+
+
+class BrokerIssueDenied(ValueError):
+    def __init__(self, reason_code: IssueDenyReason) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+
+
+SecretResolver = Callable[[SecretRef], object | Awaitable[object]]
+OperationCallback = Callable[[BrokerOperationContext], T | Awaitable[T]]
+
+
+class SecretBroker:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        secret_resolver: SecretResolver | None = None,
+    ) -> None:
+        self.session = session
+        self.secret_resolver = secret_resolver
+
+    async def issue_capability_token(
+        self,
+        *,
+        tenant_id: int,
+        actor_id: UUID,
+        run_id: UUID | None,
+        secret_ref_id: UUID,
+        requested_operation: RequestedOperation,
+        target: Mapping[str, Any],
+        payload: Any | None = None,
+        payload_hash: str | None = None,
+        approval_id: UUID | None = None,
+        policy_version: str,
+        provider_compliance_matrix_version: str | None = None,
+        ttl: timedelta = timedelta(minutes=15),
+    ) -> BrokerIssueResult:
+        if ttl < timedelta(minutes=5) or ttl > timedelta(minutes=30):
+            raise BrokerIssueDenied("ttl_out_of_bounds")
+
+        resolved_payload_hash = _resolve_payload_hash(payload=payload, payload_hash=payload_hash)
+
+        secret_ref = await self._get_secret_ref(
+            tenant_id=tenant_id,
+            secret_ref_id=secret_ref_id,
+            lock=False,
+        )
+        if secret_ref is None:
+            raise BrokerIssueDenied("secret_ref_not_found")
+
+        self._validate_secret_ref_for_issue(
+            secret_ref=secret_ref,
+            actor_id=actor_id,
+            requested_operation=requested_operation,
+        )
+        await self._validate_approval(
+            tenant_id=tenant_id,
+            approval_id=approval_id,
+            requested_operation=requested_operation,
+            target=target,
+            payload_hash=resolved_payload_hash,
+        )
+
+        operation_context = OperationContext(
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            run_id=run_id,
+            secret_ref_id=secret_ref.id,
+            requested_operation=requested_operation,
+            target=dict(target),
+            payload_hash=resolved_payload_hash,
+            approval_id=approval_id,
+            policy_version=policy_version,
+            provider_compliance_matrix_version=provider_compliance_matrix_version,
+        )
+        expected_fingerprint = compute_fingerprint(operation_context)
+
+        raw_capability = secrets.token_urlsafe(32)
+        capability_hash = hashlib.sha256(raw_capability.encode("utf-8")).hexdigest()
+        now = datetime.now(tz=UTC)
+        expires_at = now + ttl
+
+        capability = SecretCapabilityToken(
+            tenant_id=tenant_id,
+            secret_ref_id=secret_ref.id,
+            token_hash=capability_hash,
+            allowed_operations=[requested_operation],
+            scope_constraint={
+                "scope": secret_ref.scope,
+                "name": secret_ref.name,
+                "version": secret_ref.version,
+            },
+            issued_to_actor_id=actor_id,
+            issued_run_id=run_id,
+            expected_request_fingerprint=expected_fingerprint,
+            expires_at=expires_at,
+            used_at=None,
+            status="issued",
+            created_at=now,
+            metadata_={"rls_ready": True, "audience": "SecretBroker"},
+        )
+        self.session.add(capability)
+        await self.session.flush()
+
+        await AuditEventRepository(self.session).append(
+            tenant_id=tenant_id,
+            event_type="secret_capability_issued",
+            actor_id=actor_id,
+            payload={
+                "capability_id": str(capability.id),
+                "secret_ref_id": str(secret_ref.id),
+                "run_id": None if run_id is None else str(run_id),
+                "requested_operation": requested_operation,
+                "expected_request_fingerprint_hash": _fingerprint_audit_hash(
+                    expected_fingerprint
+                ),
+                "expires_at": expires_at.isoformat(),
+            },
+        )
+
+        return BrokerIssueResult(
+            raw_token=raw_capability,
+            token_id=capability.id,
+            secret_ref_id=secret_ref.id,
+            expires_at=expires_at,
+        )
+
+    async def redeem_capability_token(
+        self,
+        *,
+        tenant_id: int,
+        actor_id: UUID,
+        run_id: UUID | None,
+        raw_token: str,
+        requested_operation: RequestedOperation,
+        target: Mapping[str, Any],
+        payload: Any | None = None,
+        payload_hash: str | None = None,
+        approval_id: UUID | None = None,
+        policy_version: str,
+        provider_compliance_matrix_version: str | None = None,
+        operation: OperationCallback[T] | None = None,
+    ) -> BrokerRedeemResult[T] | BrokerRedeemDenied:
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        token = await self.session.scalar(
+            sa.select(SecretCapabilityToken).where(
+                SecretCapabilityToken.tenant_id == tenant_id,
+                SecretCapabilityToken.token_hash == token_hash,
+            )
+        )
+        if token is None:
+            denied = BrokerRedeemDenied(
+                reason_code="not_found",
+                requested_operation=requested_operation,
+            )
+            await self._audit_redeem_denied(tenant_id, actor_id, denied, run_id)
+            return denied
+
+        try:
+            resolved_payload_hash = _resolve_payload_hash(
+                payload=payload,
+                payload_hash=payload_hash,
+            )
+            operation_context = OperationContext(
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                run_id=run_id,
+                secret_ref_id=token.secret_ref_id,
+                requested_operation=requested_operation,
+                target=dict(target),
+                payload_hash=resolved_payload_hash,
+                approval_id=approval_id,
+                policy_version=policy_version,
+                provider_compliance_matrix_version=provider_compliance_matrix_version,
+            )
+            computed_fingerprint = compute_fingerprint(operation_context)
+        except ValueError:
+            denied = BrokerRedeemDenied(
+                reason_code="fingerprint_mismatch",
+                requested_operation=requested_operation,
+                capability_id=token.id,
+                secret_ref_id=token.secret_ref_id,
+            )
+            await self._audit_redeem_denied(tenant_id, actor_id, denied, run_id)
+            return denied
+
+        claim = await SecretCapabilityTokenRepository(self.session).atomic_claim(
+            tenant_id=tenant_id,
+            token_hash=token_hash,
+            actor_id=actor_id,
+            run_id=run_id,
+            requested_operation=requested_operation,
+            computed_fingerprint=computed_fingerprint,
+        )
+        if not claim.claimed:
+            denied = _claim_denial_to_broker_denial(
+                claim=claim,
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+            )
+            await self._audit_redeem_denied(tenant_id, actor_id, denied, run_id)
+            return denied
+
+        secret_ref = await self._get_secret_ref(
+            tenant_id=tenant_id,
+            secret_ref_id=claim.secret_ref_id,
+            lock=True,
+        )
+        post_claim_denial = self._validate_secret_ref_after_claim(
+            secret_ref=secret_ref,
+            actor_id=actor_id,
+            requested_operation=requested_operation,
+            claim=claim,
+            computed_fingerprint=computed_fingerprint,
+        )
+        if post_claim_denial is not None:
+            await self._mark_claimed_token_revoked(tenant_id, claim.capability_id)
+            await self._audit_redeem_denied(tenant_id, actor_id, post_claim_denial, run_id)
+            return post_claim_denial
+
+        assert secret_ref is not None
+        resolved_secret = await self._resolve_secret(secret_ref)
+        del resolved_secret
+
+        result: T | None = None
+        if operation is not None:
+            context = BrokerOperationContext(
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                run_id=run_id,
+                requested_operation=requested_operation,
+                target=dict(target),
+                payload_hash=resolved_payload_hash,
+                secret_handle=SecretHandle(
+                    secret_ref_id=secret_ref.id,
+                    scope=secret_ref.scope,
+                    name=secret_ref.name,
+                    version=secret_ref.version,
+                ),
+            )
+            result = await _maybe_await(operation(context))
+
+        await self._mark_claimed_token_used(tenant_id, claim.capability_id)
+        await AuditEventRepository(self.session).append(
+            tenant_id=tenant_id,
+            event_type="secret_capability_redeemed",
+            actor_id=actor_id,
+            payload={
+                "capability_id": str(claim.capability_id),
+                "secret_ref_id": str(claim.secret_ref_id),
+                "run_id": None if run_id is None else str(run_id),
+                "requested_operation": requested_operation,
+                "expected_request_fingerprint_hash": _fingerprint_audit_hash(
+                    computed_fingerprint
+                ),
+            },
+        )
+
+        return BrokerRedeemResult(
+            capability_id=claim.capability_id,
+            secret_ref_id=claim.secret_ref_id,
+            requested_operation=requested_operation,
+            operation_result=result,
+        )
+
+    async def _get_secret_ref(
+        self,
+        *,
+        tenant_id: int,
+        secret_ref_id: UUID,
+        lock: bool,
+    ) -> SecretRef | None:
+        stmt = sa.select(SecretRef).where(
+            SecretRef.tenant_id == tenant_id,
+            SecretRef.id == secret_ref_id,
+        )
+        if lock:
+            stmt = stmt.with_for_update()
+        return await self.session.scalar(stmt)
+
+    def _validate_secret_ref_for_issue(
+        self,
+        *,
+        secret_ref: SecretRef,
+        actor_id: UUID,
+        requested_operation: RequestedOperation,
+    ) -> None:
+        if secret_ref.status != "active":
+            raise BrokerIssueDenied("secret_ref_not_active")
+        if requested_operation not in secret_ref.allowed_operations:
+            raise BrokerIssueDenied("operation_mismatch")
+        if not _actor_allowed(actor_id, secret_ref.allowed_consumers):
+            raise BrokerIssueDenied("consumer_mismatch")
+
+    async def _validate_approval(
+        self,
+        *,
+        tenant_id: int,
+        approval_id: UUID | None,
+        requested_operation: RequestedOperation,
+        target: Mapping[str, Any],
+        payload_hash: str,
+    ) -> None:
+        if approval_id is None:
+            if _operation_requires_approval(requested_operation):
+                raise BrokerIssueDenied("approval_required")
+            return
+
+        approval = await self.session.scalar(
+            sa.select(ApprovalRequest).where(
+                ApprovalRequest.tenant_id == tenant_id,
+                ApprovalRequest.id == approval_id,
+            )
+        )
+        if approval is None:
+            raise BrokerIssueDenied("approval_not_found")
+        if approval.tenant_id != tenant_id:
+            raise BrokerIssueDenied("approval_tenant_mismatch")
+        if approval.status != "approved":
+            raise BrokerIssueDenied("approval_not_approved")
+
+        expected_action_class = _operation_to_action_class(requested_operation)
+        if approval.action_class != expected_action_class:
+            raise BrokerIssueDenied("approval_action_class_mismatch")
+
+        if requested_operation in {"repo.push", "repo.pr_open"}:
+            if approval.diff_hash != payload_hash:
+                raise BrokerIssueDenied("approval_diff_hash_mismatch")
+        elif requested_operation == "provider.call":
+            if approval.provider_request_fingerprint != payload_hash:
+                raise BrokerIssueDenied("approval_diff_hash_mismatch")
+
+        if approval.resource_ref != _operation_target_to_ref(target, requested_operation):
+            raise BrokerIssueDenied("approval_target_mismatch")
+
+    def _validate_secret_ref_after_claim(
+        self,
+        *,
+        secret_ref: SecretRef | None,
+        actor_id: UUID,
+        requested_operation: RequestedOperation,
+        claim: ClaimResult,
+        computed_fingerprint: str,
+    ) -> BrokerRedeemDenied | None:
+        if secret_ref is None:
+            return BrokerRedeemDenied(
+                reason_code="secret_ref_revoked",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=claim.capability_id,
+                secret_ref_id=claim.secret_ref_id,
+            )
+        if secret_ref.status == "revoked":
+            return BrokerRedeemDenied(
+                reason_code="secret_ref_revoked",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=claim.capability_id,
+                secret_ref_id=claim.secret_ref_id,
+            )
+        if secret_ref.status == "deprecated":
+            return BrokerRedeemDenied(
+                reason_code="secret_ref_deprecated",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=claim.capability_id,
+                secret_ref_id=claim.secret_ref_id,
+            )
+        if secret_ref.status != "active":
+            return BrokerRedeemDenied(
+                reason_code="secret_ref_revoked",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=claim.capability_id,
+                secret_ref_id=claim.secret_ref_id,
+            )
+
+        constraint = claim.scope_constraint
+        if not isinstance(constraint, dict):
+            return BrokerRedeemDenied(
+                reason_code="scope_constraint_invalid",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=claim.capability_id,
+                secret_ref_id=claim.secret_ref_id,
+            )
+        if constraint.get("scope") != secret_ref.scope:
+            return BrokerRedeemDenied(
+                reason_code="scope_mismatch",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=claim.capability_id,
+                secret_ref_id=claim.secret_ref_id,
+            )
+        if constraint.get("name") != secret_ref.name:
+            return BrokerRedeemDenied(
+                reason_code="name_mismatch",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=claim.capability_id,
+                secret_ref_id=claim.secret_ref_id,
+            )
+        if constraint.get("version") != secret_ref.version:
+            return BrokerRedeemDenied(
+                reason_code="version_mismatch",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=claim.capability_id,
+                secret_ref_id=claim.secret_ref_id,
+            )
+        if requested_operation not in secret_ref.allowed_operations:
+            return BrokerRedeemDenied(
+                reason_code="operation_mismatch",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=claim.capability_id,
+                secret_ref_id=claim.secret_ref_id,
+            )
+        if not _actor_allowed(actor_id, secret_ref.allowed_consumers):
+            return BrokerRedeemDenied(
+                reason_code="consumer_mismatch",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=claim.capability_id,
+                secret_ref_id=claim.secret_ref_id,
+            )
+        return None
+
+    async def _resolve_secret(self, secret_ref: SecretRef) -> object:
+        if self.secret_resolver is None:
+            return SecretHandle(
+                secret_ref_id=secret_ref.id,
+                scope=secret_ref.scope,
+                name=secret_ref.name,
+                version=secret_ref.version,
+            )
+        return await _maybe_await(self.secret_resolver(secret_ref))
+
+    async def _mark_claimed_token_used(self, tenant_id: int, capability_id: UUID) -> None:
+        await self.session.execute(
+            sa.update(SecretCapabilityToken)
+            .where(
+                SecretCapabilityToken.tenant_id == tenant_id,
+                SecretCapabilityToken.id == capability_id,
+            )
+            .values(status="used")
+        )
+
+    async def _mark_claimed_token_revoked(self, tenant_id: int, capability_id: UUID) -> None:
+        await self.session.execute(
+            sa.update(SecretCapabilityToken)
+            .where(
+                SecretCapabilityToken.tenant_id == tenant_id,
+                SecretCapabilityToken.id == capability_id,
+            )
+            .values(status="revoked")
+        )
+
+    async def _audit_redeem_denied(
+        self,
+        tenant_id: int,
+        actor_id: UUID,
+        denied: BrokerRedeemDenied,
+        run_id: UUID | None,
+    ) -> None:
+        await AuditEventRepository(self.session).append(
+            tenant_id=tenant_id,
+            event_type="secret_capability_denied",
+            actor_id=actor_id,
+            payload={
+                "reason_code": denied.reason_code,
+                "capability_id": None
+                if denied.capability_id is None
+                else str(denied.capability_id),
+                "secret_ref_id": None if denied.secret_ref_id is None else str(denied.secret_ref_id),
+                "run_id": None if run_id is None else str(run_id),
+                "requested_operation": denied.requested_operation,
+                "expected_request_fingerprint_hash": _fingerprint_audit_hash(
+                    denied.computed_fingerprint
+                ),
+            },
+        )
+
+
+def _claim_denial_to_broker_denial(
+    *,
+    claim: ClaimResult,
+    requested_operation: RequestedOperation,
+    computed_fingerprint: str,
+) -> BrokerRedeemDenied:
+    reason: RedeemDenyReason = _claim_reason_to_redeem_reason(claim.reason_code)
+    return BrokerRedeemDenied(
+        reason_code=reason,
+        requested_operation=requested_operation,
+        computed_fingerprint=computed_fingerprint,
+        capability_id=claim.capability_id,
+        secret_ref_id=claim.secret_ref_id,
+    )
+
+
+def _claim_reason_to_redeem_reason(reason: ClaimDenyReason | None) -> RedeemDenyReason:
+    if reason in {
+        "not_found",
+        "expired",
+        "token_used",
+        "actor_mismatch",
+        "run_mismatch",
+        "fingerprint_mismatch",
+        "operation_mismatch",
+    }:
+        return reason
+    return "not_found"
+
+
+def _actor_allowed(actor_id: UUID, allowed_consumers: list[str]) -> bool:
+    actor = str(actor_id)
+    return actor in allowed_consumers or f"actor:{actor}" in allowed_consumers
+
+
+def _operation_requires_approval(requested_operation: RequestedOperation) -> bool:
+    return requested_operation in {
+        "repo.push",
+        "repo.pr_open",
+        "rotation.read_old",
+        "rotation.read_new",
+    }
+
+
+def _operation_to_action_class(requested_operation: RequestedOperation) -> str:
+    mapping: dict[RequestedOperation, str] = {
+        "provider.call": "provider_call",
+        "repo.push": "repo_write",
+        "repo.pr_open": "pr_open",
+        "secret.verify": "secret_access",
+        "rotation.read_old": "secret_access",
+        "rotation.read_new": "secret_access",
+    }
+    return mapping[requested_operation]
+
+
+def _operation_target_to_ref(
+    target: Mapping[str, Any],
+    requested_operation: RequestedOperation,
+) -> str:
+    if requested_operation == "provider.call":
+        return (
+            f"provider:{_target_string(target, 'provider')}:"
+            f"{_target_string(target, 'api_or_feature')}:"
+            f"{_target_string(target, 'model_resolved')}"
+        )
+    if requested_operation == "repo.push":
+        return (
+            f"repo:{_target_string(target, 'repo_full_name')}:"
+            f"{_target_string(target, 'branch')}"
+        )
+    if requested_operation == "repo.pr_open":
+        draft = target.get("draft")
+        if draft is not True:
+            raise BrokerIssueDenied("approval_target_mismatch")
+        return (
+            f"repo:{_target_string(target, 'repo_full_name')}:pr:"
+            f"{_target_string(target, 'base_branch')}:"
+            f"{_target_string(target, 'head_branch')}:draft"
+        )
+    return (
+        f"secret_ref:{_target_string(target, 'secret_ref_id')}:"
+        f"{_target_string(target, 'version')}"
+    )
+
+
+def _target_string(target: Mapping[str, Any], key: str) -> str:
+    value = target.get(key)
+    if not isinstance(value, str) or not value:
+        raise BrokerIssueDenied("approval_target_mismatch")
+    return value
+
+
+def _resolve_payload_hash(*, payload: Any | None, payload_hash: str | None) -> str:
+    if payload_hash is None:
+        return compute_payload_hash(payload)
+    if not _SHA256_RE.fullmatch(payload_hash):
+        raise ValueError("payload_hash must be a SHA-256 lowercase hex digest.")
+    if payload is not None and compute_payload_hash(payload) != payload_hash:
+        raise ValueError("payload and payload_hash do not match.")
+    return payload_hash
+
+
+def _fingerprint_audit_hash(fingerprint: str | None) -> str | None:
+    if fingerprint is None:
+        return None
+    return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
+
+
+async def _maybe_await(value: T | Awaitable[T]) -> T:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+__all__ = [
+    "BrokerIssueDenied",
+    "BrokerIssueResult",
+    "BrokerOperationContext",
+    "BrokerRedeemDenied",
+    "BrokerRedeemResult",
+    "SecretBroker",
+    "SecretHandle",
+]
+

@@ -1,17 +1,20 @@
 ---
 id: "ADR-00006"
 title: "秘密管理方式: SOPS + age + FastAPI 内 SecretBroker (atomic claim redeem)"
-status: "proposed"
+status: "accepted"
 date: "2026-05-07"
+accepted_at: "2026-05-09"
 authors:
   - "t-ohga"
 related_sprints:
   - "SP-000_bootstrap"
+  - "SP-002_core_data_model"
+  - "SP-004_agent_runtime"
 supersedes: null
 superseded_by: null
 ---
 
-最終更新: 2026-05-07
+最終更新: 2026-05-09 (Sprint 4 着手前 ADR Gate で accepted 化、SP-002 で secret_refs/secret_capability_tokens schema 実装済、SP-004 で SecretBroker issue/redeem 本実装の前提)
 
 ## 背景
 

@@ -87,6 +87,9 @@ queued
 - `running -> blocked`
 - `running -> failed`
 - `running -> cancelled`
+- `waiting_approval -> cancelled`
+- `blocked -> cancelled`
+- `provider_incomplete -> cancelled`
 - `generated_artifact -> validation_failed`
 - `validation_failed -> running`
 - `validation_failed -> repair_exhausted`

@@ -1,0 +1,73 @@
+{
+  "fixture_id": "AC-KPI-04_v2026.05.09-skeleton_citation_coverage_minimal",
+  "dataset_version_id": "v2026.05.09-skeleton",
+  "fixture_kind": "public_regression",
+  "kpi_id": "AC-KPI-04",
+  "metric_key": "citation_coverage",
+  "case_key": "citation_coverage_minimal_five_claims",
+  "input": {
+    "evidence_set_hash": "0d5f2c6c3b750c9c2cf23f5e8af58c4f7f4a7d1b2cdb3d1f1a3f1d1cf87f4d13",
+    "dataset_version": "v2026.05.09-skeleton",
+    "sample_claims": [
+      {
+        "claim_id": "claim-001",
+        "claim_text": "Task execution should record the provider result classification.",
+        "evidence_ids": ["ev-001"],
+        "citation_ids": ["cit-001"]
+      },
+      {
+        "claim_id": "claim-002",
+        "claim_text": "Blocked provider preflight decisions should retain a redacted audit trace.",
+        "evidence_ids": ["ev-002"],
+        "citation_ids": ["cit-002"]
+      },
+      {
+        "claim_id": "claim-003",
+        "claim_text": "A repair retry should be based on validation errors and redacted context.",
+        "evidence_ids": ["ev-003"],
+        "citation_ids": []
+      },
+      {
+        "claim_id": "claim-004",
+        "claim_text": "Context snapshots include the evidence set hash for reproducibility.",
+        "evidence_ids": ["ev-004"],
+        "citation_ids": ["cit-003"]
+      },
+      {
+        "claim_id": "claim-005",
+        "claim_text": "The final summary should distinguish observed evidence from inferred judgement.",
+        "evidence_ids": [],
+        "citation_ids": []
+      }
+    ]
+  },
+  "expected_aggregate": {
+    "total_claims": 5,
+    "claims_with_citation": 3,
+    "coverage_ratio": 0.6
+  },
+  "threshold": {
+    "operator": ">=",
+    "value": 0.9
+  },
+  "assertions": [
+    {
+      "name": "deterministic_ratio",
+      "expected": "claims_with_citation / total_claims = 3 / 5 = 0.60"
+    },
+    {
+      "name": "evidence_set_hash_persisted",
+      "expected": "evidence_set_hash is a 64-character SHA-256 hex string carried into EvalResult trace."
+    }
+  ],
+  "anti_gaming": {
+    "private_expectation_visible_to_policy_author": false,
+    "append_only_refresh": true,
+    "separate_fixture_and_policy_commits": true
+  },
+  "metadata": {
+    "created_at": "2026-05-09",
+    "notes": "Sprint 4 Batch 4 deterministic skeleton. Five claims, four evidence IDs, and three cited claims produce citation_coverage = 0.60."
+  }
+}
+

@@ -13,6 +13,7 @@ from backend.app.db.app_role import (
 )
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.principal import Principal
+from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 
 
 class AuditEventRepository:
@@ -29,6 +30,7 @@ class AuditEventRepository:
         correlation_id: str | None = None,
         trace_id: str | None = None,
     ) -> AuditEvent:
+        assert_no_raw_secret(payload, path="$audit_payload")
         await self._ensure_tenant_context(tenant_id)
         await self._assert_principal_matches_actor(
             tenant_id=tenant_id,

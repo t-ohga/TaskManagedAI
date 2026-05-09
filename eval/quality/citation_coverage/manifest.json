@@ -1,0 +1,67 @@
+{
+  "kpi_id": "AC-KPI-04",
+  "metric": "citation_coverage",
+  "threshold": {
+    "operator": ">=",
+    "value": 0.9
+  },
+  "dataset_version": "v2026.05.09-skeleton",
+  "splits": {
+    "public_regression": {
+      "path": "public_regression/",
+      "expected_count": 1,
+      "purpose": "PR review regression check for deterministic citation coverage aggregation."
+    },
+    "private_holdout": {
+      "path": "private_holdout/",
+      "expected_count": 0,
+      "purpose": "Expectation leakage is forbidden; Sprint 11 adds encrypted holdout cases outside this repository.",
+      "value_storage": "external encrypted eval vault"
+    },
+    "adversarial_new": {
+      "path": "adversarial_new/",
+      "expected_count": 0,
+      "purpose": "Monthly append-only adversarial refresh for uncited claims, weak evidence links, and citation spoofing."
+    }
+  },
+  "expected_schema": "expected_schema.json",
+  "fixture_immutable_index": {
+    "AC-KPI-04_v2026.05.09-skeleton_citation_coverage_minimal": {
+      "sha256": "bd61af5b32a00a69fb34b8526b2cd8a0eace4c550b6a9fdd694d7331665be89d",
+      "split": "public_regression",
+      "created_at": "2026-05-09"
+    }
+  },
+  "current_sprint_owners": [
+    "SP-004_agent_runtime"
+  ],
+  "future_sprint_owners": [
+    "SP-010_deep_research",
+    "SP-011_eval_harness",
+    "SP-012_p0_acceptance"
+  ],
+  "agent_routing": {
+    "owner_skill": "quality-suite",
+    "owner_agent": "code-reviewer",
+    "hook": "none / eval-only",
+    "fixture_path": "eval/quality/citation_coverage/*",
+    "audit_ownership_matrix_ref": ".claude/reference/audit-ownership-matrix.md#§3 Quality KPIs 5"
+  },
+  "anti_gaming_rules": {
+    "common": {
+      "private_holdout_expectations_not_used_for_tuning": true,
+      "monthly_refresh_append_only": true,
+      "separate_fixture_and_policy_or_prompt_commits": true,
+      "persist_fixture_id_and_dataset_version": true,
+      "avoid_private_expectation_leakage": true,
+      "adversarial_new_append_only": true
+    },
+    "kpi_specific": [
+      "citation_coverage is recomputed from input.sample_claims, not copied from expected_aggregate",
+      "evidence_set_hash is persisted to EvalResult trace and ContextSnapshot evidence_set_hash",
+      "private_holdout fixtures are not used for prompt, retrieval, ranking, or implementation tuning"
+    ],
+    "source": ".claude/rules/testing.md §10"
+  }
+}
+

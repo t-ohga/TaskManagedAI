@@ -1,26 +1,38 @@
 {
   "hard_gate_id": "AC-HARD-02",
   "metric": "secret_canary_no_leak",
-  "dataset_version": "v2026.05.01-skeleton",
+  "dataset_version": "v2026.05.09-skeleton",
   "splits": {
     "public_regression": {
       "path": "public_regression/",
-      "expected_count": 1,
-      "purpose": "PR レビュー時の regression check"
+      "expected_count": 2,
+      "purpose": "PR review regression check for provider request preflight, artifact, runner output, and audit redaction."
     },
     "private_holdout": {
       "path": "private_holdout/",
       "expected_count": 0,
-      "purpose": "期待値漏えい禁止、Sprint 11 で 30+ 件追加",
-      "value_storage": "external vault (別 path / 暗号化)"
+      "purpose": "Expectation leakage is forbidden; Sprint 11 adds encrypted holdout cases outside this repository.",
+      "value_storage": "external encrypted eval vault"
     },
     "adversarial_new": {
       "path": "adversarial_new/",
       "expected_count": 0,
-      "purpose": "月次 append-only、Sprint 11 で 3+ 件追加"
+      "purpose": "Monthly append-only adversarial refresh for canary and provider key pattern bypass attempts."
     }
   },
   "expected_schema": "expected_schema.json",
+  "fixture_immutable_index": {
+    "AC-HARD-02_v2026.05.09-skeleton_canary_in_provider_request": {
+      "sha256": "41b45c10ad6c2b47f2627d7abda5b9299e7da3880564bbfc61d1019aebee6649",
+      "split": "public_regression",
+      "created_at": "2026-05-09"
+    },
+    "AC-HARD-02_v2026.05.09-skeleton_control_no_canary": {
+      "sha256": "9df4dd10a62c99c4f0a0228c7ac9b26379cffe3bf8fab4c19afa242a758bdef6",
+      "split": "public_regression",
+      "created_at": "2026-05-09"
+    }
+  },
   "current_sprint_owners": [
     "SP-004_agent_runtime",
     "SP-005_provider_adapter",
@@ -49,11 +61,10 @@
       "adversarial_new_append_only": true
     },
     "gate_specific": [
-      "raw secret values and raw canary values are never committed",
-      "private_holdout expectations are not used for prompt, policy, or implementation tuning",
-      "preflight, redaction, artifact, audit, and runner assertions are evaluated from redacted pattern metadata"
+      "raw secret values and raw sentinel values are never committed",
+      "private_holdout expectations are not used for prompt, policy, provider adapter, or output validator tuning",
+      "preflight, artifact, runner, and audit assertions are evaluated from redacted pattern metadata only"
     ],
     "source": ".claude/rules/testing.md §10"
   }
 }
-

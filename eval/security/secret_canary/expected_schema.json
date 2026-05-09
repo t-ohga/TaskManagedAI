@@ -9,96 +9,383 @@
     "dataset_version_id",
     "fixture_kind",
     "gate_id",
+    "kpi_id",
     "metric_key",
     "case_key",
-    "canary_pattern",
-    "expected_block_locations",
-    "expected_pattern_hit_kind",
     "input",
     "expected_decision",
     "expected_block",
     "expected_reason_code",
     "expected_blocked_reason",
     "expected_agent_run_status",
-    "pattern_hit_kind",
+    "expected_pattern_hit_kind",
+    "expected_audit_events",
+    "expected_redaction",
     "assertions",
     "anti_gaming",
     "metadata"
   ],
   "properties": {
-    "fixture_id": { "type": "string", "pattern": "^AC-HARD-02_" },
-    "dataset_version_id": { "type": "string", "pattern": "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}(-[A-Za-z0-9_.-]+)?$" },
-    "fixture_kind": { "type": "string", "enum": ["public_regression", "private_holdout", "adversarial_new"] },
-    "gate_id": { "type": "string", "const": "AC-HARD-02" },
-    "metric_key": { "type": "string", "const": "secret_canary_no_leak" },
-    "case_key": { "type": "string", "minLength": 1 },
-    "canary_pattern": { "type": "string", "minLength": 1 },
-    "expected_block_locations": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "enum": ["provider_request", "runner_stdout", "runner_stderr", "audit_payload", "artifact_export", "cli_stdout", "cli_stderr"]
-      }
+    "fixture_id": {
+      "type": "string",
+      "pattern": "^AC-HARD-02_"
     },
-    "expected_pattern_hit_kind": { "type": "string", "const": "secret_canary" },
+    "dataset_version_id": {
+      "type": "string",
+      "pattern": "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}(-[A-Za-z0-9_.-]+)?$"
+    },
+    "fixture_kind": {
+      "type": "string",
+      "const": "public_regression"
+    },
+    "gate_id": {
+      "type": "string",
+      "const": "AC-HARD-02"
+    },
+    "kpi_id": {
+      "type": "null"
+    },
+    "metric_key": {
+      "type": "string",
+      "const": "secret_canary_no_leak"
+    },
+    "case_key": {
+      "type": "string",
+      "minLength": 1
+    },
     "input": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["task_summary", "payload_data_class", "scan_surfaces"],
+      "required": [
+        "task_summary",
+        "payload_data_class",
+        "provider_name",
+        "redacted_plan_artifact",
+        "scan_surfaces"
+      ],
       "properties": {
-        "task_summary": { "type": "string" },
-        "payload_data_class": { "type": "string", "enum": ["public", "internal", "confidential", "pii"] },
+        "task_summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload_data_class": {
+          "type": "string",
+          "enum": [
+            "public",
+            "internal",
+            "confidential",
+            "pii"
+          ]
+        },
+        "provider_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "redacted_plan_artifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "artifact_ref",
+            "scanner_pattern_ref",
+            "fingerprint_sha256",
+            "contains_scanner_detectable_marker"
+          ],
+          "properties": {
+            "artifact_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scanner_pattern_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "fingerprint_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "contains_scanner_detectable_marker": {
+              "type": "boolean"
+            }
+          }
+        },
         "scan_surfaces": {
           "type": "array",
-          "minItems": 1,
-          "items": { "type": "string" }
+          "minItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "provider_request_preflight",
+              "artifact",
+              "runner_stdout_stderr",
+              "audit"
+            ]
+          }
         }
       }
     },
-    "expected_decision": { "type": "string", "const": "block" },
-    "expected_block": { "type": "boolean", "const": true },
-    "expected_reason_code": { "type": "string", "const": "provider_request_preflight_violation" },
-    "expected_blocked_reason": { "type": "string", "const": "policy_blocked" },
-    "expected_agent_run_status": { "type": "string", "const": "blocked" },
-    "pattern_hit_kind": { "type": "string", "const": "secret_canary" },
+    "expected_decision": {
+      "type": "string",
+      "enum": [
+        "block",
+        "allow"
+      ]
+    },
+    "expected_block": {
+      "type": "boolean"
+    },
+    "expected_reason_code": {
+      "type": "string",
+      "enum": [
+        "provider_request_preflight_violation",
+        "allow"
+      ]
+    },
+    "expected_blocked_reason": {
+      "type": "string",
+      "enum": [
+        "policy_blocked",
+        "not_blocked"
+      ]
+    },
+    "expected_agent_run_status": {
+      "type": "string",
+      "enum": [
+        "blocked",
+        "provider_requested"
+      ]
+    },
+    "expected_pattern_hit_kind": {
+      "type": "string",
+      "enum": [
+        "canary_pattern",
+        "provider_key_pattern",
+        "secret_pattern",
+        "none"
+      ]
+    },
+    "expected_audit_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_type",
+          "redacted"
+        ],
+        "properties": {
+          "event_type": {
+            "type": "string",
+            "enum": [
+              "provider_blocked",
+              "policy_decision_created",
+              "runtime_blocked",
+              "secret_capability_denied"
+            ]
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "deny",
+              "allow"
+            ]
+          },
+          "reason_code": {
+            "type": "string",
+            "enum": [
+              "provider_request_preflight_violation",
+              "allow"
+            ]
+          },
+          "pattern_hit_kind": {
+            "type": "string",
+            "enum": [
+              "canary_pattern",
+              "provider_key_pattern",
+              "secret_pattern",
+              "none"
+            ]
+          },
+          "redacted": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "reason_code": {
+                  "const": "provider_request_preflight_violation"
+                }
+              },
+              "required": [
+                "reason_code"
+              ]
+            },
+            "then": {
+              "required": [
+                "event_type",
+                "redacted",
+                "reason_code",
+                "pattern_hit_kind"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "expected_redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_request_preflight",
+        "artifact",
+        "runner_stdout_stderr",
+        "audit"
+      ],
+      "properties": {
+        "provider_request_preflight": {
+          "$ref": "#/definitions/redaction_result"
+        },
+        "artifact": {
+          "$ref": "#/definitions/redaction_result"
+        },
+        "runner_stdout_stderr": {
+          "$ref": "#/definitions/redaction_result"
+        },
+        "audit": {
+          "$ref": "#/definitions/redaction_result"
+        }
+      }
+    },
     "assertions": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "expected"],
+        "required": [
+          "name",
+          "expected"
+        ],
         "properties": {
-          "name": { "type": "string" },
-          "expected": { "type": "string" }
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
     "anti_gaming": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["private_expectation_visible_to_policy_author", "append_only_refresh", "separate_fixture_and_policy_commits"],
+      "required": [
+        "private_expectation_visible_to_policy_author",
+        "append_only_refresh",
+        "separate_fixture_and_policy_commits"
+      ],
       "properties": {
-        "private_expectation_visible_to_policy_author": { "type": "boolean", "const": false },
-        "append_only_refresh": { "type": "boolean", "const": true },
-        "separate_fixture_and_policy_commits": { "type": "boolean", "const": true }
+        "private_expectation_visible_to_policy_author": {
+          "type": "boolean",
+          "const": false
+        },
+        "append_only_refresh": {
+          "type": "boolean",
+          "const": true
+        },
+        "separate_fixture_and_policy_commits": {
+          "type": "boolean",
+          "const": true
+        }
       }
     },
     "metadata": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["policy_version", "prompt_pack_version", "provider_compliance_matrix_version", "payload_data_class", "allowed_data_class", "created_at", "notes"],
+      "required": [
+        "policy_version",
+        "prompt_pack_version",
+        "provider_compliance_matrix_version",
+        "payload_data_class",
+        "allowed_data_class",
+        "created_at",
+        "notes"
+      ],
       "properties": {
-        "policy_version": { "type": "string" },
-        "prompt_pack_version": { "type": "string" },
-        "provider_compliance_matrix_version": { "type": "string" },
-        "payload_data_class": { "type": "string", "enum": ["public", "internal", "confidential", "pii"] },
-        "allowed_data_class": { "type": "string", "enum": ["public", "internal", "confidential", "pii"] },
-        "created_at": { "type": "string", "format": "date" },
-        "notes": { "type": "string" }
+        "policy_version": {
+          "type": "string"
+        },
+        "prompt_pack_version": {
+          "type": "string"
+        },
+        "provider_compliance_matrix_version": {
+          "type": "string"
+        },
+        "payload_data_class": {
+          "type": "string",
+          "enum": [
+            "public",
+            "internal",
+            "confidential",
+            "pii"
+          ]
+        },
+        "allowed_data_class": {
+          "type": "string",
+          "enum": [
+            "public",
+            "internal",
+            "confidential",
+            "pii"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "redaction_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "redacted",
+        "raw_value_present",
+        "fingerprint_sha256",
+        "pattern_hit_kind"
+      ],
+      "properties": {
+        "redacted": {
+          "type": "boolean"
+        },
+        "raw_value_present": {
+          "type": "boolean",
+          "const": false
+        },
+        "fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "pattern_hit_kind": {
+          "type": "string",
+          "enum": [
+            "canary_pattern",
+            "provider_key_pattern",
+            "secret_pattern",
+            "none"
+          ]
+        }
       }
     }
   }
 }
-

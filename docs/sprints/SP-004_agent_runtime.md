@@ -4,13 +4,13 @@ type: "heavy"
 status: "draft"
 sprint_no: 4
 created_at: "2026-05-08"
-updated_at: "2026-05-08"
+updated_at: "2026-05-09"
 target_days: 7.8
 max_days: 10
 adr_refs:
-  - "[ADR-00006](../adr/00006_secrets_management.md)"
-planned_adr_refs:
-  - "[ADR-00004](../adr/00004_agentrun_state_machine.md) # Sprint 4 で proposed 化、AgentRun 16 状態 + blocked サブ 3 + ContextSnapshot 10 カラム"
+  - "[ADR-00006](../adr/00006_secrets_management.md) # 2026-05-09 accepted (proposed → accepted、SecretBroker SP-004 本実装の前提)"
+  - "[ADR-00004](../adr/00004_agentrun_state_machine.md) # 2026-05-09 proposed 化新規作成 (R2 clean、AgentRun 16 状態 + blocked サブ 3 + ContextSnapshot 10 カラム + transition guard + event schema)"
+planned_adr_refs: []
 related_sprints:
   - "SP-003_policy_approval"
   - "SP-005_provider_adapter"
@@ -24,7 +24,7 @@ risks:
 
 このテンプレの使い方: Sprint 4 の Agent Runtime で、AgentRun lifecycle、AgentRunEvent、Artifact、ContextSnapshot、BudgetGuard、SecretBroker issue / redeem、plan artifact schema、secret canary fixture、`agent_runs.parent_run_id` project 境界 follow-up を実装するための heavy Sprint Pack。ADR Gate Criteria #3 API / event schema、#6 Secrets 管理方式、#2 DB schema、#4 AI エージェント権限に該当するため、ADR-00006 を accepted 化し、ADR-00004 を proposed 化してから着手する。
 
-最終更新: 2026-05-08
+最終更新: 2026-05-09 (Sprint 4 着手前 ADR Gate: ADR-00006 proposed → accepted、ADR-00004 新規 proposed 化、planned_adr_refs から adr_refs に移送)
 
 ## 目的
 
@@ -224,8 +224,117 @@ DB schema 変更 (Alembic migration) を伴う場合、以下を必ず満たす:
 
 ## Review
 
-- changed: Sprint 完了後に、AgentRun DDL、event writer、artifact model、ContextSnapshot、BudgetGuard、SecretBroker issue / redeem、plan schema、cancel propagation、secret canary fixture、parent_run_id cross-project test の実変更ファイルを追記する。
-- verified: Sprint 完了後に、migration、status enum test、transition test、event idempotency、ContextSnapshot contract、BudgetGuard、atomic claim parallel negative、plan schema、cancel、secret canary、parent_run_id negative を追記する。
-- deferred: replay UI、span export、Run timeline full UI、ProviderAdapter 本実装、Output Validator full pipeline、Tool Registry、Runner 本実装を後続 Sprint へ送った理由を追記する。
-- risks: Sprint 完了後に、enum drift、snapshot 欠落、budget hierarchy、atomic claim race、canary fixture 過学習、parent lineage FK の残リスクと検知方法を追記する。
+完了日: 2026-05-09 (Batch 1-4 + Sprint Exit、全 Batch clean 達成)
+
+### 実装方式
+
+Codex multi-round adversarial review pattern (Sprint 1-3 から継続):
+
+| Batch | 累計 review round | findings 累計 |
+|-------|------------------|----------------|
+| Batch 1 (AgentRun 16 状態 + transitions + AgentRunEvent + parent_run_id) | R1 → R2 → R3 → R4 → R5 (clean) | 8 件 (HIGH 4 + MEDIUM 3 + LOW 1) |
+| Batch 2 (Artifact + ContextSnapshot 10 カラム + plan artifact schema) | R1 → R2 → R3 → R5 (clean、R3 stale test Claude 直接) | 6 件 (BLOCKER 1 + HIGH 2 + MEDIUM 2 + LOW 1) |
+| Batch 3 (BudgetGuard + SecretBroker issue/redeem atomic claim + cancel) | R1 → R2 → R3 → R5 (clean、Claude 直接 fix 2 round) | 12 件 (BLOCKER 1 + HIGH 8 + MEDIUM 2 + LOW 1) |
+| Batch 4 (secret canary fixture + AC-KPI-04 + provider result mapping) | R1 → R2 → R3 → R5 (clean、R3 で Claude 直接 fix) | 6 件 (BLOCKER 1 + HIGH 1 + MEDIUM 3 + LOW 1) |
+
+**累計 ~22 round / 32 findings**。Sprint 1-4 全体で約 100 round / 100+ findings 解消。
+
+### changed (実装ファイル群)
+
+- **Batch 1** (BL-0040, BL-0041, BL-0042, BL-0029b):
+  - `backend/app/domain/agent_runtime/status.py` (16 状態 Literal + ALL_AGENT_RUN_STATUSES + TERMINAL_STATES 5 種)
+  - `backend/app/domain/agent_runtime/event_type.py` (22 event types Literal)
+  - `backend/app/db/models/agent_run.py` (composite FK + parent_run_id `(tenant_id, project_id, parent_run_id)` cross-project + blocked_reason consistency CHECK)
+  - `backend/app/db/models/agent_run_event.py` (append-only + seq_no UNIQUE + idempotency_key partial UNIQUE)
+  - `backend/app/repositories/agent_run_event.py` (append-only + 18 prohibited keys + 8 regex pattern + recursive scan + max_depth=32 + visited set)
+  - `backend/app/services/agent_runtime/state_machine.py` (validate_transition + EVENT_TYPE_FOR_TRANSITION mapping + BLOCKED_EVENT_TYPE_REASON_MAPPING)
+  - `backend/app/services/agent_runtime/event_log.py` (transition_with_event 三重 guard + 同一 transaction)
+  - `migrations/versions/0008_agent_runs_lifecycle.py`
+
+- **Batch 2** (BL-0043, BL-0044, BL-0048):
+  - `backend/app/domain/artifact/data_class.py` (PayloadDataClass Literal + DATA_CLASS_ORDINAL `{public:0, internal:1, confidential:2, pii:3}`)
+  - `backend/app/domain/artifact/plan.py` (PlanArtifact + PlanStep + 12 forbidden path patterns + path traversal reject + leading dot 維持 normalize + MAX_REPAIR_RETRIES=3)
+  - `backend/app/domain/agent_runtime/snapshot_kind.py` (SnapshotKind 5 種 + 各 kind 運用意味 docstring)
+  - `backend/app/db/models/artifact.py` (immutable + content_hash 64 hex CHECK + payload_data_class CHECK + exportable + parent_artifact_id composite FK)
+  - `backend/app/db/models/context_snapshot.py` (10 必須カラム + provider_continuation_ref exportable=false 強制 + JSONB 内部 schema 4 CHECK)
+  - `backend/app/repositories/_payload_secret_scan.py` (共通 module、Batch 1+2+3 三 repository drift 防止)
+  - `backend/app/services/agent_runtime/plan_validator.py` (Pydantic + JSON Schema + forbidden path)
+  - `backend/app/services/agent_runtime/repair_policy.py` (should_repair + MAX_REPAIR_RETRIES)
+  - `migrations/versions/0009_artifacts_context_snapshots.py`
+
+- **Batch 3** (BL-0045, BL-0046, BL-0047, BL-0049):
+  - `backend/app/domain/agent_runtime/budget.py` (BudgetLevel + BudgetCheckResult + BudgetExceedReason 5 種 + 全 reason の current/limit field)
+  - `backend/app/domain/agent_runtime/operation_context.py` (OperationContext canonical schema + RequestedOperation 6 種 + compute_fingerprint NFC + JCS + SHA-256)
+  - `backend/app/db/models/budget.py` (4 階層 budget + level_id consistency CHECK + partial UNIQUE per level + global_kill_switch)
+  - `backend/app/services/agent_runtime/budget_guard.py` (4 階層 evaluate + enforce_budget_or_block via transition_with_event)
+  - `backend/app/services/agent_runtime/cancel.py` (cancel_agent_run + transition_with_event 経由 + Redis publish skeleton)
+  - `backend/app/services/secrets/broker.py` (SecretBroker issue/redeem + caller-supplied fingerprint 禁止 signature + approval target/action_class/diff_hash/tenant 4 整合 + secret_refs `for update` 同一 transaction 再検証 scope+name+version)
+  - `backend/app/repositories/secret_capability_token.py` (atomic_claim 本実装、Sprint 2 Batch 3 NotImplementedError 解除、computed_fingerprint のみ受付)
+  - `backend/app/repositories/audit_event.py` (assert_no_raw_secret 適用、recursive scan)
+  - `backend/app/api/agent_runs.py` (POST /api/v1/agent_runs/{id}/cancel)
+  - `backend/app/main.py` (agent_runs router 登録)
+  - `migrations/versions/0010_budget_secret_runtime.py`
+
+- **Batch 4** (BL-0050, BL-0051, provider result mapping):
+  - `eval/security/secret_canary/` (AC-HARD-02 fixture skeleton、4 path 全 redact、23 invariant defense-in-depth、control_no_canary fixture 含む 2 fixture sha256 immutable index 双方向 MATCH)
+  - `eval/quality/citation_coverage/` (AC-KPI-04 fixture skeleton、`_compute_expected_aggregate` deterministic recompute、coverage_ratio 検証、evidence_set_hash trace、_MANIFEST_EXPECTATION_LEAK_ALLOWED_PATHS で manifest standard fields allowlist)
+  - `backend/app/services/agent_runtime/provider_result_mapping.py` (ProviderResultKind 11 種 → AgentRun status mapping、`.claude/rules/agentrun-state-machine.md` §7 完全一致)
+  - 各 fixture loader: 23 invariant + dummy literal helper (8 種 `_make_dummy_*`) で test file 内 raw secret literal を repo 全体 secret scan の false positive から保護
+
+### verified (検証実績)
+
+- migration 0008/0009/0010 全て alembic upgrade head + downgrade base 通過
+- AgentRun status 16 状態 + blocked_reason 3 種 + terminal 5 種 が DB CHECK / ORM Literal / Python Literal / fixture schema / cross-source 完全整合
+- AgentRunEvent: `(tenant_id, run_id, seq_no)` UNIQUE + idempotency partial UNIQUE + 22 event types CHECK
+- ContextSnapshot 必須 10 カラム全実装 + 5 種 snapshot_kind + DB CHECK 4 種 (repo_state / tool_manifest / fingerprint / continuation_ref required)
+- transition_with_event 三重 guard (validate_transition + validate_event_type_for_transition + blocked_reason consistency) で status update + event append が同一 transaction
+- agent_runs.parent_run_id `(tenant_id, project_id, parent_run_id)` 複合 FK で cross-tenant / cross-project 全 reject (Sprint 2 Batch 4 BL-0029b follow-up)
+- 共通 `_payload_secret_scan.py` で 18 prohibited keys + 8 regex pattern + recursive + max_depth=32 + visited set (Batch 1+2+3 三 repository が同 module を import、parity test で identity 確認)
+- BudgetGuard 4 階層 (global / tenant / project / agent_run) + global_kill_switch + hard exceed → blocked + budget_blocked + soft → warning notification
+- SecretBroker: caller-supplied fingerprint 禁止 (signature レベルで物理削除、BrokerIssueResult から expected_request_fingerprint 削除) + atomic_claim SQL の WHERE で actor/run/fingerprint/operation/TTL/status 一括 binding + secret_refs `for update` 同一 transaction 再検証 scope+name+version + raw secret broker 内のみ resolve
+- §8.1 必須 5 種 negative test (operation/target/payload/approval/secret_ref substitution → 全 fingerprint_mismatch)、実 issue/redeem flow 経由
+- 並行 redeem `asyncio.gather` で 1 success / 1 denied (token_used) one-time guarantee
+- cancel transition: running/blocked/waiting_approval/provider_incomplete → cancelled、`.claude/rules/agentrun-state-machine.md` §4 例外遷移に 3 種 cancel transitions 追加 (R5 F-003)
+- AC-HARD-02 secret canary fixture: 4 path (provider_request_preflight / artifact / runner_stdout_stderr / audit) 全 redact、raw value 非含む、`policy_decision_created decision=deny + provider_blocked` event_type、reason_code = `provider_request_preflight_violation`、control_no_canary 双 fixture sha256 双方向 MATCH
+- AC-KPI-04 citation_coverage fixture: claim/evidence/citation 構造、coverage_ratio = claims_with_citation / total_claims = 3/5 = 0.60、threshold >= 0.9、`_validate_aggregate_consistency` で input から deterministic recompute
+- provider_result_mapping 11 種 (success/refusal/safety_refusal/max_token/incomplete/timeout_retryable/unsupported_schema/schema_mismatch/preflight_deny/data_class_deny/budget_exceeded) → AgentRun status mapping
+- ADR-00006 (Secrets) accepted (2026-05-09)、ADR-00004 (AgentRun state machine) proposed → accepted (2026-05-09 Sprint Exit)
+
+### deferred (P0 後続 Sprint へ送った項目)
+
+- **replay UI / span export / Run timeline full UI**: Sprint 9 (UI sprint) で本格化
+- **ProviderAdapter 本実装**: Sprint 5 (Provider Adapter) で `payload_data_class` / `allowed_data_class` boundary + `provider_request_preflight` 完成。本 Sprint は接続点 (provider_result_mapping) と境界 metadata のみ
+- **Output Validator full pipeline**: Sprint 6 で AI artifact pipeline 7 stage 完成。本 Sprint は plan artifact schema validation のみ
+- **Tool Registry 本実装**: Sprint 4.5 (read-only tool 境界) → Sprint 7 (runner sandbox)
+- **Runner 本実装**: Sprint 7 で Docker isolated runner + `runner_mutation_gateway` + forbidden path / dangerous command 完成
+- **AC-HARD-02 / AC-KPI-04 fixture loader を Eval Harness に接続**: Sprint 11 (eval harness) で `eval/runner/` 経由で load + score + report
+- **Approval expiration auto-handler / worker job**: Sprint 4.5 (worker / arq job) で expired auto-transition
+
+### risks (残リスク + 検知方法)
+
+| risk | 検知方法 | 対応 Sprint |
+|------|---------|-----------|
+| AgentRun status enum drift (DB CHECK / Literal / fixture / migration / test 5+ source 間で乖離) | `tests/runtime/test_agentrun_status_enum.py` の cross-source 整合 test (16 状態完全一致 verify) | 現状 PASS、Sprint ごとに maintenance |
+| ContextSnapshot 10 カラム drift | `tests/runtime/test_context_snapshot_invariants.py` で all required + DB CHECK 4 種 + JSONB 内部 schema verify | 現状 PASS |
+| BudgetGuard 階層 + global_kill_switch race condition | composite UNIQUE per level + active=true + level_id consistency CHECK | DB level で防御、worker は Sprint 4.5 で詳細化 |
+| SecretBroker atomic_claim race | `asyncio.gather` 並行 redeem 1 success / 1 denied test、`expected_request_fingerprint` server-owned | 現状 PASS、§8.1 5 種 negative + 並行 test 完備 |
+| canary fixture 過学習 (private holdout 期待値見ながら scanner 調整) | private/public/adversarial split + dataset_version + fixture_id 一意 + monthly refresh + fixture/policy commit 分離 | Sprint 11 で eval harness 接続時に再評価 |
+| parent_run_id lineage FK で cross-project 越境 | `tests/runtime/test_agentrun_parent_run_id_negative.py` で同一 tenant 別 project の INSERT IntegrityError | Sprint 2 Batch 4 BL-0029b follow-up 完了 (Sprint 4 Batch 1) |
+| AC-HARD-02 trace event_type drift | `tests/eval/test_secret_canary_loader.py` で `provider_blocked` / `policy_decision_created` event_type + `provider_request_preflight_violation` reason_code 整合 | Sprint 5 Provider Adapter 実装で再検証 |
+| provider_result_mapping 11 種 drift | `tests/runtime/test_provider_result_mapping.py` で各 kind cross-source 一致 | Sprint 5 Provider Adapter 接続時に最終整合 |
+| Sprint 1-4 知見の memory 局所化 | memory/project_harness_consolidation_plan.md → Sprint 5+ または P0 完了後に `.claude/` ハーネス化 (TaskList #54) | Sprint 5 着手と並行で先行実装、または P0 完了後 |
+
+### Sprint Exit 判定
+
+- ✅ **must_ship 全達成**: AgentRun 16 状態 + blocked サブ 3 + ContextSnapshot 10 カラム + BudgetGuard hierarchy + SecretBroker issue/redeem + plan artifact schema + secret canary fixture
+- ✅ **ADR-00006 accepted** (2026-05-09)、**ADR-00004 accepted** (2026-05-09 Sprint Exit)、SP-004 frontmatter `adr_refs` 移送完了
+- ✅ **Codex multi-round review で全 batch clean 達成** (累計 ~22 round / 32 findings)
+- ✅ **AC-HARD-02 + AC-KPI-04 fixture skeleton ready** (loader 接続は Sprint 11)
+- ✅ **defense-in-depth 4 重防御** が SecretBroker / BudgetGuard / cancel / artifact / context_snapshot 全 boundary で揃う
+- ✅ **既存 Sprint (1, 2, 3) との regression なし** (action class 7 種 / approval workflow / payload_data_class ordinal / 共通 _payload_secret_scan module / 共通 _PROHIBITED_PAYLOAD_KEYS 18 種 / cross-source enum 整合維持)
+- ✅ **markdown fence 出力禁止 prompt** (Batch 4 で完全に機能、Batch 3 R2 反省を活かした)
+
+→ **Sprint 4 完了**。次 Sprint は Sprint 5 (Provider Adapter: ProviderAdapter 本実装 + Provider Compliance Matrix runtime + `provider_request_preflight` + provider_call boundary)。
+
+**重要**: TaskList #54 ([永続] Sprint 1-4 知見の .claude ハーネス恒久化) の実行を Sprint 5 着手と並行で進めることを推奨。詳細計画は `memory/project_harness_consolidation_plan.md`。
 

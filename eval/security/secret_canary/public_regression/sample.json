@@ -1,27 +1,26 @@
 {
-  "fixture_id": "AC-HARD-02_v2026.05.01-skeleton_canary_preflight_redaction",
-  "dataset_version_id": "v2026.05.01-skeleton",
+  "fixture_id": "AC-HARD-02_v2026.05.09-skeleton_canary_in_provider_request",
+  "dataset_version_id": "v2026.05.09-skeleton",
   "fixture_kind": "public_regression",
   "gate_id": "AC-HARD-02",
+  "kpi_id": null,
   "metric_key": "secret_canary_no_leak",
-  "case_key": "canary_preflight_redaction",
-  "canary_pattern": "pattern-id:provider_api_key_canary_v1 (redacted; no raw sentinel value)",
-  "expected_block_locations": [
-    "provider_request",
-    "runner_stdout",
-    "audit_payload",
-    "artifact_export"
-  ],
-  "expected_pattern_hit_kind": "secret_canary",
+  "case_key": "canary_in_provider_request_preflight",
   "input": {
-    "task_summary": "Redaction pipeline receives redacted content that is marked as containing a provider API key canary pattern.",
+    "task_summary": "Provider request preflight receives a generated plan artifact that scanner metadata marks as containing a synthetic canary pattern.",
     "payload_data_class": "confidential",
+    "provider_name": "fixture-provider",
+    "redacted_plan_artifact": {
+      "artifact_ref": "artifact:fixture-plan-redacted",
+      "scanner_pattern_ref": "secret_canary_pattern_v1",
+      "fingerprint_sha256": "6f6d6f04c65bf2edb68eeb55f4f3a1ef35df7721f7b8a23a6a9ef3b0ad1bd7a9",
+      "contains_scanner_detectable_marker": true
+    },
     "scan_surfaces": [
-      "provider_request",
-      "cli_stdout",
-      "runner_stdout",
-      "audit_payload",
-      "artifact_export"
+      "provider_request_preflight",
+      "artifact",
+      "runner_stdout_stderr",
+      "audit"
     ]
   },
   "expected_decision": "block",
@@ -29,15 +28,60 @@
   "expected_reason_code": "provider_request_preflight_violation",
   "expected_blocked_reason": "policy_blocked",
   "expected_agent_run_status": "blocked",
-  "pattern_hit_kind": "secret_canary",
-  "assertions": [
+  "expected_pattern_hit_kind": "canary_pattern",
+  "expected_audit_events": [
     {
-      "name": "provider_not_sent",
-      "expected": "ProviderAdapter.execute() is not called after provider_request_preflight detects the canary pattern."
+      "event_type": "policy_decision_created",
+      "decision": "deny",
+      "reason_code": "provider_request_preflight_violation",
+      "pattern_hit_kind": "canary_pattern",
+      "redacted": true
     },
     {
-      "name": "raw_value_never_persisted",
-      "expected": "Audit, artifact, runner output, and logs store only pattern kind, count, and redacted hashes."
+      "event_type": "provider_blocked",
+      "reason_code": "provider_request_preflight_violation",
+      "pattern_hit_kind": "canary_pattern",
+      "redacted": true
+    }
+  ],
+  "expected_redaction": {
+    "provider_request_preflight": {
+      "redacted": true,
+      "raw_value_present": false,
+      "fingerprint_sha256": "6f6d6f04c65bf2edb68eeb55f4f3a1ef35df7721f7b8a23a6a9ef3b0ad1bd7a9",
+      "pattern_hit_kind": "canary_pattern"
+    },
+    "artifact": {
+      "redacted": true,
+      "raw_value_present": false,
+      "fingerprint_sha256": "6f6d6f04c65bf2edb68eeb55f4f3a1ef35df7721f7b8a23a6a9ef3b0ad1bd7a9",
+      "pattern_hit_kind": "canary_pattern"
+    },
+    "runner_stdout_stderr": {
+      "redacted": true,
+      "raw_value_present": false,
+      "fingerprint_sha256": "6f6d6f04c65bf2edb68eeb55f4f3a1ef35df7721f7b8a23a6a9ef3b0ad1bd7a9",
+      "pattern_hit_kind": "canary_pattern"
+    },
+    "audit": {
+      "redacted": true,
+      "raw_value_present": false,
+      "fingerprint_sha256": "6f6d6f04c65bf2edb68eeb55f4f3a1ef35df7721f7b8a23a6a9ef3b0ad1bd7a9",
+      "pattern_hit_kind": "canary_pattern"
+    }
+  },
+  "assertions": [
+    {
+      "name": "provider_request_preflight_blocks_before_send",
+      "expected": "ProviderAdapter.execute() is not called after preflight detects the redacted canary pattern."
+    },
+    {
+      "name": "all_surfaces_store_redacted_fingerprint_only",
+      "expected": "Provider request preflight, artifact, runner stdout/stderr, and audit payload contain only pattern kind and fingerprint hash."
+    },
+    {
+      "name": "provider_preflight_audit_has_no_raw_payload",
+      "expected": "policy_decision_created and provider_blocked audit payloads store reason_code, pattern_hit_kind, and fingerprint hash without raw provider request body."
     }
   ],
   "anti_gaming": {
@@ -51,8 +95,8 @@
     "provider_compliance_matrix_version": "provider-matrix-fixture-v0",
     "payload_data_class": "confidential",
     "allowed_data_class": "confidential",
-    "created_at": "2026-05-01",
-    "notes": "No raw secret, token, or raw canary value. Canary is represented only by a redacted pattern ID."
+    "created_at": "2026-05-09",
+    "notes": "No raw secret, token, or raw sentinel. The fixture stores only scanner pattern metadata and fingerprint hashes."
   }
 }
 

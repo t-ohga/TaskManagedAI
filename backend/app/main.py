@@ -9,6 +9,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 from starlette.types import ASGIApp
 
+from backend.app.api import agent_runs as agent_runs_api
 from backend.app.api import approval_inbox, notifications
 from backend.app.api.router import api_router
 from backend.app.config import Settings, get_settings
@@ -64,6 +65,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(api_router)
     app.include_router(approval_inbox.router)
     app.include_router(notifications.router)
+    app.include_router(agent_runs_api.router)
     return app
 
 
