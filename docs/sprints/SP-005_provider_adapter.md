@@ -4,11 +4,11 @@ type: "heavy"
 status: "draft"
 sprint_no: 5
 created_at: "2026-05-08"
-updated_at: "2026-05-08"
+updated_at: "2026-05-09"
 target_days: 5.1
 max_days: 7
 adr_refs:
-  - "[ADR-00010](../adr/00010_provider_change.md)"
+  - "[ADR-00010](../adr/00010_provider_change.md) # 2026-05-09 accepted (proposed → accepted、Provider Compliance Matrix v2 + ordinal + preflight 運用方針)"
 planned_adr_refs: []
 related_sprints:
   - "SP-004_agent_runtime"
@@ -22,7 +22,7 @@ risks:
 
 このテンプレの使い方: Sprint 5 の Provider Adapter Foundation で、Mock / OpenAI Responses / Anthropic Messages / Gemini ProviderAdapter、Structured Outputs、Provider Compliance Gate、`provider_request_preflight`、BudgetGuard 連動、provider_request_fingerprint、Gold Task v0 contract test、AC-HARD-01 / AC-HARD-02 統合を実装するための heavy Sprint Pack。ADR Gate Criteria #10 Provider 追加 / 切替、#3 API / event schema、#4 AI エージェント権限、#6 Secrets 境界に該当するため、ADR-00010 を accepted 化してから着手する。
 
-最終更新: 2026-05-08
+最終更新: 2026-05-09 (Sprint 5 着手前 ADR Gate: ADR-00010 proposed → accepted)
 
 ## 目的
 
@@ -201,8 +201,77 @@ risks:
 
 ## Review
 
-- changed: Sprint 完了後に、ProviderAdapter contract、Mock / OpenAI Responses / Anthropic Messages / Gemini adapter、Compliance Gate、preflight、fingerprint、BudgetGuard 連動、Gold Task contract、AC-HARD-01 / 02 fixture 統合の実変更ファイルを追記する。
-- verified: Sprint 完了後に、adapter contract、structured output、status mapping、Compliance Gate、preflight raw 値非露出、fingerprint、budget exceeded、Gold Task、Hard Gate fixture の検証結果を追記する。
-- deferred: bake-off 詳細比較、provider ranking、モデル自動選択、Output Validator full pipeline、provider settings full UI、Codex App Server / remote adapter 候補を後続 Sprint へ送った理由を追記する。
-- risks: Sprint 完了後に、Matrix drift、preflight bypass、schema mismatch、SDK 仕様変更、過剰 block、cost source normalization の残リスクと検知方法を追記する。
+完了日: 2026-05-09 (Batch 1-4 + Sprint Exit)
+
+### 実装方式
+
+Codex multi-round adversarial review pattern (Sprint 1-4 から継続):
+
+| Batch | round | findings |
+|-------|------|----------|
+| Batch 1 (ProviderAdapter contract + Mock + fingerprint + BudgetGuard) | R1→R2→R3→R5 (clean) | 9 (HIGH 4 + MEDIUM 4 + LOW 1) |
+| Batch 2 (Compliance Gate + preflight + AC-HARD-02 統合) | R1→R2→R3→R5 (clean) | 11 (BLOCKER 2 + HIGH 4 + MEDIUM 5) |
+| Batch 3 (OpenAI + Anthropic + Gemini 3 adapter) | R1→R2→R3→R4→R5 (clean) | 8 (HIGH 4 + MEDIUM 3 + LOW 1) |
+| Batch 4 (Gold Task v0 + AC-HARD-01 + AC-KPI-05) | R1→R2→R3 (clean) | 4 (BLOCKER 1 + HIGH 3) |
+
+**累計 ~16 round / 32 findings**。Sprint 1-5 全体で約 175+ findings 解消。
+
+### changed (実装ファイル群)
+
+- **Batch 1** (BL-0052/0053/0059/0060): ProviderRequest/Result/Adapter Protocol + Mock 8 marker + compute_provider_request_fingerprint NFC+JCS+SHA-256 + record_provider_usage で BudgetGuard 連動。共通 `_payload_secret_scan.py` を 18→21 種に拡張 (secret_capability_token / raw_token / session_token 追加)、PEM regex を generic + typed 両対応 (`-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----`)
+- **Batch 2** (BL-0057/0058/0063): `config/provider_compliance.toml` 新規 (5 entries)、ComplianceGate.evaluate (13 reason_code + 6 downgrade rule + zdr_eligible='n/a' fail-closed) + enforce (transition_with_event 三重 guard) + provider_request_preflight (canary marker + 共通 21 keys + 8 regex) + AC-HARD-02 fixture loader 統合
+- **Batch 3** (BL-0054/0055/0056): OpenAIResponsesAdapter + AnthropicMessagesAdapter + GeminiAdapter (structured output limited、`secret_capability_token` broker-mediated、redact_response_summary、HTTP error mapping、Gemini unsupported_schema 4 check pre-check + RECITATION finish_reason)
+- **Batch 4** (BL-0061/0062/AC-KPI-05): Gold Task v0 dataset/runner/contract test (4 adapter × 3 case)、AC-HARD-01 fixture loader 統合 test (PolicyRule lookup + reason_code strict assert)、AC-KPI-05 (`cost_per_completed_task`) fixture skeleton (23 invariant + _compute_expected_aggregate + _RAW_SECRET_VALUE_PATTERNS)
+
+### verified
+
+- 4 adapter (Mock / OpenAI / Anthropic / Gemini) 全て同 ProviderAdapter Protocol、ProviderResultKind 11 種で statu mapping
+- Provider Compliance Matrix v2 (`config/provider_compliance.toml`、5 entries) からのみ `allowed_data_class` 解決、caller 入力 (`extra="forbid"` schema reject) で物理禁止
+- effective_allowed_data_class 6 downgrade rule (training_use_not_no / zdr_ineligible / condition_unverified / retention_unverified / region_unverified / plan_unverified)
+- 13 reason_code (provider-compliance.md §9 と完全一致)
+- OperationContext-style fingerprint (NFC + JCS + SHA-256) で provider_compliance_matrix_version + model_resolved + api_version + sdk_version を含めた deterministic
+- preflight が共通 `assert_no_raw_secret` 経由で 21 keys + 8 regex pattern (PEM generic + typed) + canary marker pattern を全 4 path (request body / messages / structured_output_schema / safety_settings) で recursive scan
+- ComplianceGate.enforce が AuditEvent (`policy_decision_created` / `provider_blocked`) と AgentRunEvent (`policy_blocked` via transition_with_event 三重 guard) の 2 taxonomy で audit
+- AC-HARD-01 fixture が PolicyRule lookup 経由で `task_write_requires_approval` reason_code を strict assert (Sprint 5 Batch 2 ComplianceGate ではなく Sprint 3 Batch 1 PolicyRule 経由、reason_code false positive 防止)
+- AC-HARD-02 fixture が ComplianceGate + preflight で 4 path 全 redact + raw value 非含む audit
+- Gold Task v0 で 4 adapter × 3 case = 12 contract test、structured_output_body validate (redacted summary でなく)
+- AC-KPI-05 fixture が deterministic recompute (`_compute_expected_aggregate`) + 11 種 _PROHIBITED_REDACTED_KEYS + 8 種 _RAW_SECRET_VALUE_PATTERNS recursive scan
+- ADR-00010 accepted (2026-05-09 着手前)
+- markdown fence 出力禁止 prompt が全 Codex round で完全機能 (Sprint 4 Batch 3 R2 反省を活用)
+
+### deferred (Sprint 6+ へ送った項目)
+
+- **bake-off 詳細比較 / provider ranking / モデル自動選択**: Sprint 11 Eval Harness で本格化
+- **Output Validator full pipeline**: Sprint 6 (`SP-005-5_output_validator`) で完成
+- **provider settings full UI**: Sprint 9 (UI sprint) で本格化
+- **AC-KPI-05 KPI dashboard**: Sprint 11.5 (OTel + Loki + Grafana) で
+- **AC-HARD-01 fixture loader を Eval Harness 経由で score / report**: Sprint 11
+- **bake-off / provider routing optimization**: Sprint 11 Eval Harness または Sprint 12 P0 Acceptance
+- **AgentRun retry policy で error_code (http_4xx_*) を見て retry 抑制**: Sprint 6 worker retry policy で本格化 (Batch 3 R2 で defer)
+- **Codex App Server / remote adapter 候補**: P1+
+
+### risks (残リスク + 検知方法)
+
+| risk | 検知方法 | 対応 Sprint |
+|------|---------|-----------|
+| Matrix drift (TOML と Pydantic schema / runtime gate 不整合) | ComplianceMatrixEntry `extra="forbid"` + matrix_version mismatch deny | 現状 PASS、Sprint 11 で eval harness 経由再検証 |
+| preflight bypass (新 secret pattern を共通 module に追加忘れ) | parity test (`test_payload_secret_scan_drift.py`) で 3+ repository identity 確認 + Sprint 5 Batch 1 R3 PEM regex generic + typed 拡張 | Sprint 6+ で新 provider/secret 追加時に再評価 |
+| schema mismatch / unsupported_schema (Gemini 仕様制限) | Gemini 4 check (depth + unsupported types + array-of-array + excessive properties) + Gold Task v0 contract test | 現状 PASS、Sprint 11 で実 Gemini API integration |
+| SDK 仕様変更 (api_version / sdk_version drift) | provider_request_fingerprint に matrix_version + api_version + sdk_version 含める (stale request 検出) | 現状 PASS |
+| 過剰 block (legitimate fixture が新 _RAW_SECRET_VALUE_PATTERNS で false positive reject) | parametrized test 8 種 + control fixtures (Sprint 4 Batch 4 control_no_canary pattern) | 現状 PASS |
+| cost source normalization (各 adapter の usage 計算が drift) | Gold Task v0 で 4 adapter 同 contract、usage_logger で BudgetGuard 連動 | 現状 PASS、Sprint 11 で実 provider integration |
+| AC-HARD-01 false positive (data-class deny で通る) | PolicyRule lookup 経由 + reason_code strict assert (R1-F001 fix) | 現状 PASS |
+
+### Sprint Exit 判定
+
+- ✅ **must_ship 全達成**: Mock + OpenAI + Anthropic + Gemini adapter + structured output + budget exceeded 試験 + Compliance Gate + provider_request_preflight
+- ✅ **ADR-00010 accepted** (2026-05-09)、SP-005 frontmatter 移送完了
+- ✅ **Codex multi-round review で全 batch clean 達成** (累計 ~16 round / 32 findings)
+- ✅ **AC-HARD-01 + AC-HARD-02 + AC-KPI-05 fixture 統合 ready** (loader / fixture skeleton 全て、Sprint 11 で eval harness 接続)
+- ✅ **defense-in-depth 4 重防御** (DB + ORM + service + loader + test) が Compliance Gate / preflight / SecretBroker 全 boundary で揃う
+- ✅ **既存 Sprint (1-4) との regression なし** (cross-source enum 整合 / 共通 _payload_secret_scan / transition_with_event 三重 guard / fingerprint NFC+JCS+SHA-256 維持)
+
+→ **Sprint 5 完了**。次 Sprint は Sprint 5.5 (Output Validator full pipeline) または Sprint 6 (Worker / arq job、AgentRun runtime 経路完成)。
+
+**重要**: Sprint 1-4 知見の `.claude/` ハーネス恒久化 task #54 は別セッションで進行中。Sprint 5 終了時点で memory 更新 (`project_taskmanagedai_sprint5_progress.md`) とハーネス化進捗確認は次セッションでも継続。
 

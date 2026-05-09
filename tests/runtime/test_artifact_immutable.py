@@ -49,6 +49,32 @@ TENANT_ONE_RUN_B_ID = UUID("00000000-0000-4000-8000-000000007032")
 TENANT_TWO_RUN_ID = UUID("00000000-0000-4000-8000-000000007033")
 PARENT_ARTIFACT_ID = UUID("00000000-0000-4000-8000-000000007041")
 
+_EXPECTED_PROHIBITED_PAYLOAD_KEYS = frozenset(
+    {
+        "api_key",
+        "api_token",
+        "raw_secret",
+        "secret",
+        "secret_value",
+        "private_key",
+        "auth_token",
+        "bearer_token",
+        "capability_token",
+        "capability_token_value",
+        "provider_key",
+        "github_installation_token",
+        "github_app_private_key",
+        "tailscale_auth_key",
+        "sops_age_key",
+        "age_private_key",
+        "canary_value",
+        "raw_canary",
+        "secret_capability_token",
+        "raw_token",
+        "session_token",
+    }
+)
+
 
 class _DummySession:
     pass
@@ -395,7 +421,8 @@ def test_migration_and_repository_prohibited_keys_match() -> None:
     assert match, "migration _PROHIBITED_PAYLOAD_KEYS was not found"
     migration_keys = set(re.findall(r'"([a-z_]+)"', match.group(1)))
     assert migration_keys == _PROHIBITED_PAYLOAD_KEYS
-    assert len(_PROHIBITED_PAYLOAD_KEYS) == 18
+    assert _PROHIBITED_PAYLOAD_KEYS == _EXPECTED_PROHIBITED_PAYLOAD_KEYS
+    assert len(_PROHIBITED_PAYLOAD_KEYS) == 21
     # R3-F-001 (R4): R2 で共通 _payload_secret_scan に統合され 8 pattern に拡張された
     # (sk-ant-... + PEM private key 追加)。drift detection のため exact name で確認する。
     assert len(_RAW_SECRET_PATTERNS) == 8
@@ -550,4 +577,3 @@ async def test_parent_artifact_cross_run_and_cross_tenant_are_rejected(
             constraint_name="artifacts_parent_artifact_fkey",
         )
         await session.rollback()
-

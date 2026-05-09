@@ -1,0 +1,68 @@
+{
+  "dataset_version_id": "ac-kpi-05-v2026.05.09-skeleton",
+  "dataset_version": "ac-kpi-05-v2026.05.09-skeleton",
+  "kpi_id": "AC-KPI-05",
+  "metric_key": "cost_per_completed_task",
+  "metric": "cost_per_completed_task",
+  "threshold": {
+    "cost_per_completed_task_usd_max": 0.5,
+    "currency": "USD"
+  },
+  "splits": {
+    "public_regression": {
+      "path": "public_regression/",
+      "expected_count": 1,
+      "purpose": "PR regression check for BudgetGuard usage normalization"
+    },
+    "private_holdout": {
+      "path": "private_holdout/",
+      "expected_count": 0,
+      "purpose": "Expectation leakage forbidden; encrypted external values are added in Sprint 11"
+    },
+    "adversarial_new": {
+      "path": "adversarial_new/",
+      "expected_count": 0,
+      "purpose": "Monthly append-only adversarial cost fixtures are added in Sprint 11"
+    }
+  },
+  "expected_schema": "expected_schema.json",
+  "fixture_immutable_index": {
+    "AC-KPI-05_ac-kpi-05-v2026.05.09-skeleton_cost_per_completed_task_minimal": {
+      "sha256": "bd0bc62e0a9d3fa58d3db74491035cd7bfb082e3653ad052c347def8acce8853",
+      "split": "public_regression",
+      "created_at": "2026-05-09"
+    }
+  },
+  "current_sprint_owners": [
+    "SP-005_provider_adapter"
+  ],
+  "future_sprint_owners": [
+    "SP-011_eval_harness",
+    "SP-012_p0_acceptance"
+  ],
+  "agent_routing": {
+    "owner_skill": "release-suite",
+    "owner_agent": "release-auditor",
+    "hook": "none / eval-only",
+    "fixture_path": "eval/quality/cost_per_completed_task/*",
+    "audit_ownership_matrix_ref": ".claude/reference/audit-ownership-matrix.md#Quality KPIs 5"
+  },
+  "anti_gaming_rules": {
+    "common": {
+      "private_holdout_expectations_not_used_for_tuning": true,
+      "monthly_refresh_append_only": true,
+      "separate_fixture_and_policy_or_prompt_commits": true,
+      "persist_fixture_id_and_dataset_version": true,
+      "avoid_private_expectation_leakage": true,
+      "adversarial_new_append_only": true
+    },
+    "kpi_specific": [
+      "cost_per_completed_task is calculated from normalized provider usage after BudgetGuard accounting",
+      "only AgentRun status=completed contributes to numerator and denominator",
+      "fixture_id and dataset_version_id are persisted to EvalResult",
+      "private_holdout fixtures are not used for prompt or implementation tuning"
+    ],
+    "source": ".claude/rules/testing.md §10"
+  }
+}
+

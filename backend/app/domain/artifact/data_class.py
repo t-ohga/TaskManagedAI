@@ -19,9 +19,15 @@ DATA_CLASS_ORDINAL: Mapping[PayloadDataClass, int] = {
     "pii": 3,
 }
 
+
+def data_class_ordinal(value: PayloadDataClass) -> int:
+    return DATA_CLASS_ORDINAL[value]
+
+
 __all__ = [
     "ALL_PAYLOAD_DATA_CLASSES",
     "DATA_CLASS_ORDINAL",
     "PayloadDataClass",
+    "data_class_ordinal",
 ]
 

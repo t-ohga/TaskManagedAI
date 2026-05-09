@@ -1,6 +1,6 @@
 """共通 raw secret scanner module (Sprint 4 Batch 1 / Batch 2 共有).
 
-F-002 (Batch 2 R2): AgentRunEvent / Artifact / ContextSnapshot で同 18 prohibited
+F-002 (Batch 2 R2): AgentRunEvent / Artifact / ContextSnapshot で同 21 prohibited
 keys + 8 regex pattern + recursive + max_depth + visited set を使う。drift 防止。
 """
 
@@ -29,6 +29,9 @@ _PROHIBITED_PAYLOAD_KEYS: frozenset[str] = frozenset(
         "age_private_key",
         "canary_value",
         "raw_canary",
+        "secret_capability_token",
+        "raw_token",
+        "session_token",
     }
 )
 
@@ -40,7 +43,10 @@ _RAW_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("github_personal_token", re.compile(r"ghp_[A-Za-z0-9]{20,}")),
     ("tailscale_auth_key", re.compile(r"tskey-[a-z0-9]{16,}-[a-z0-9]{16,}")),
     ("age_private_key", re.compile(r"AGE-SECRET-KEY-1[A-Z0-9]{50,}")),
-    ("pem_private_key", re.compile(r"-----BEGIN [A-Z ]+PRIVATE KEY-----")),
+    # Sprint 5 Batch 1 R3-F-001 (R4): generic PKCS#8 `-----BEGIN PRIVATE KEY-----` と
+    # typed (`-----BEGIN RSA PRIVATE KEY-----` 等) の両方 match。
+    # `(?:[A-Z0-9]+ )*` で 0 回以上のキーワード前置を許容。
+    ("pem_private_key", re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")),
 )
 
 _DEFAULT_MAX_DEPTH = 32
@@ -57,7 +63,7 @@ def assert_no_raw_secret(
     """payload を recursive に raw secret pattern + prohibited key scan。
 
     Sprint 4 Batch 1 / Batch 2 共通実装。AgentRunEvent / Artifact / ContextSnapshot
-    全体で同一 18 key + 8 regex pattern を使う (drift 防止)。
+    全体で同一 21 key + 8 regex pattern を使う (drift 防止)。
 
     Raises:
         ValueError: prohibited key, raw secret pattern, max_depth 超過, 循環参照

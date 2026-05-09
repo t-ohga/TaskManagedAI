@@ -1,17 +1,19 @@
 ---
 id: "ADR-00010"
 title: "Provider Compliance Matrix v2 運用 / 機械判定 enum / data class ordinal 固定"
-status: "proposed"
+status: "accepted"
 date: "2026-05-07"
+accepted_at: "2026-05-09"
 authors:
   - "t-ohga"
 related_sprints:
   - "SP-000_bootstrap"
+  - "SP-005_provider_adapter"
 supersedes: null
 superseded_by: null
 ---
 
-最終更新: 2026-05-07
+最終更新: 2026-05-09 (Sprint 5 着手前 ADR Gate で accepted 化、`config/provider_compliance.toml` 正本 + Pydantic enum + ordinal map + `provider_request_preflight` の運用方針確定)
 
 ## 背景
 

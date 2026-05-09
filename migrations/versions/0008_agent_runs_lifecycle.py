@@ -42,6 +42,9 @@ _PROHIBITED_EVENT_PAYLOAD_KEYS: tuple[str, ...] = (
     "age_private_key",
     "canary_value",
     "raw_canary",
+    "secret_capability_token",
+    "raw_token",
+    "session_token",
 )
 
 

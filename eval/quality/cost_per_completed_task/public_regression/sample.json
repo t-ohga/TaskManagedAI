@@ -1,0 +1,86 @@
+{
+  "fixture_id": "AC-KPI-05_ac-kpi-05-v2026.05.09-skeleton_cost_per_completed_task_minimal",
+  "dataset_version_id": "ac-kpi-05-v2026.05.09-skeleton",
+  "fixture_kind": "public_regression",
+  "kpi_id": "AC-KPI-05",
+  "metric_key": "cost_per_completed_task",
+  "case_key": "cost_per_completed_task_minimal",
+  "input": {
+    "sample_runs": [
+      {
+        "tenant_id": 1,
+        "project_id": 10,
+        "run_id": "00000000-0000-4000-8000-000000005901",
+        "status": "completed",
+        "cost_usd": 0.3,
+        "tokens_input": 1200,
+        "tokens_output": 400
+      },
+      {
+        "tenant_id": 1,
+        "project_id": 10,
+        "run_id": "00000000-0000-4000-8000-000000005902",
+        "status": "completed",
+        "cost_usd": 0.2,
+        "tokens_input": 800,
+        "tokens_output": 300
+      },
+      {
+        "tenant_id": 1,
+        "project_id": 11,
+        "run_id": "00000000-0000-4000-8000-000000005903",
+        "status": "completed",
+        "cost_usd": 0.1,
+        "tokens_input": 500,
+        "tokens_output": 200
+      },
+      {
+        "tenant_id": 1,
+        "project_id": 11,
+        "run_id": "00000000-0000-4000-8000-000000005904",
+        "status": "failed",
+        "cost_usd": 0.4,
+        "tokens_input": 1500,
+        "tokens_output": 100
+      },
+      {
+        "tenant_id": 1,
+        "project_id": 12,
+        "run_id": "00000000-0000-4000-8000-000000005905",
+        "status": "cancelled",
+        "cost_usd": 0.05,
+        "tokens_input": 600,
+        "tokens_output": 0
+      }
+    ]
+  },
+  "expected_aggregate": {
+    "total_completed_runs": 3,
+    "total_cost_usd": 0.6,
+    "cost_per_completed_task_usd": 0.2,
+    "threshold_usd": 0.5,
+    "threshold_passed": true
+  },
+  "assertions": [
+    {
+      "name": "completed_only_denominator",
+      "expected": "Only AgentRun status=completed contributes to total_completed_runs and total_cost_usd."
+    },
+    {
+      "name": "threshold_is_enforced",
+      "expected": "cost_per_completed_task_usd must be <= 0.5 USD for AC-KPI-05."
+    }
+  ],
+  "anti_gaming": {
+    "private_expectation_visible_to_policy_author": false,
+    "append_only_refresh": true,
+    "separate_fixture_and_policy_commits": true
+  },
+  "metadata": {
+    "created_at": "2026-05-09",
+    "notes": "Synthetic public AC-KPI-05 skeleton fixture. No raw secret, API key, token, or canary values are present.",
+    "source": "usage_logger BudgetGuard normalized provider usage",
+    "currency": "USD"
+  }
+}
+
