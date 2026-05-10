@@ -326,3 +326,59 @@ raw secret / app-server token plaintext は **どのカラムにも入らない*
 - SP-006 frontmatter `downstream_sprints: SP-005-5_output_validator` の drift 修正 (`upstream_sprints` に移動済 / Step A-4 完了)
 - SP-006 line 27 「最終更新: 2026-05-08 → 2026-05-10」更新 (R1-F-015 fix)
 - SP-006 frontmatter ADR-00013 行に `reference_only_for_p0: true` 相当の語追加 (R1-F-016 fix)
+
+---
+
+## Phase D R1-R4 + Phase E Multi-Agent vision update (2026-05-10、proposed 追記)
+
+ADR-00014/15/16/17/18/19/20 (Multi-Agent vision) accepted 化に伴う本 ADR の update (Phase D PD-F-008/PD-R2-F-010 + Phase E PE-F-013 反映).
+
+### orchestrator integration boundary (PD-F-008 / PD-R2-F-010 / PE-F-013)
+
+ADR-00014 で導入する orchestrator agent (TaskManagedAI 内、actor_type='agent' + role_id='orchestrator') が `orchestrator_dispatched` event で **remote child** (Codex app-server / Claude Agent SDK) を作成する場合、本 ADR の `remote_agent_gateway` 経由必須:
+
+| 期間 | remote_agent_gateway 状態 | TaskManagedAI 動作 |
+|---|---|---|
+| **P0 (Sprint 1-12)** | 実装 path 完全になし (P0 sealed CI guard で禁止) | Phase C/ADR-00014 spec で「remote child は本期間 deny」と宣言、orchestrator 自体が P0 期間中は単一 actor 想定 |
+| **P0.1 開始時 (SP-014)** | `backend/app/services/remote_agent_gateway.py` deny-only stub 作成 | orchestrator_dispatched で remote child 試行 → 全件 deny + `remote_agent_dispatch_denied` audit_event |
+| **P0.1〜P1 (SP-014 / SP-018+)** | ADR-00013 の段階承認 (本 ADR `acceptance_blocked_by` 7 件すべて満たす) で Codex app-server / Claude SDK を allowlist 拡張 | Thread/Turn/Item ↔ AgentRun mapping table で child AgentRun に変換 |
+
+### P0 sealed CI guard 拡張 (PE-F-013)
+
+Phase C draft §1.6 P0 sealed guard の forbidden glob に以下を追加 (本 ADR の P0 期間禁止 path):
+
+- `backend/app/services/remote_agent_gateway.py`
+- `backend/app/adapters/remote_agent/**`
+- `backend/app/api/remote_agent_router.py`
+- `frontend/app/remote-agent/**`
+- `config/remote_agent_compliance.toml`
+- `tests/**/remote_agent/**`
+- `provider_compliance` の Codex / Claude SDK entry
+
+P0.1 着手時 (TASKHUB_P0_1_OPENED=1) に解除.
+
+### remote_agent_dispatch_denied audit_event payload schema (PE-F-013)
+
+```yaml
+event_type: remote_agent_dispatch_denied
+required_payload:
+  - tenant_id: bigint
+  - project_id: uuid
+  - parent_run_id: uuid (orchestrator run)
+  - attempted_remote_provider: text (e.g. 'codex_app_server', 'claude_agent_sdk')
+  - attempted_action: text (e.g. 'thread_create', 'turn_send')
+  - denial_reason: text (`p0_period`, `p0_1_stub_deny_all`, `acceptance_blocked`)
+  - attempted_actor_id: uuid (orchestrator agent actor)
+prohibited_payload:
+  - raw remote API request body
+  - remote provider auth token
+  - SecretBroker capability token raw value
+```
+
+5+ source 整合: audit_events.event_type CHECK + ORM + Pydantic + pytest + frontend (SP-017).
+
+### 関連 ADR
+
+- ADR-00014 (Multi-Agent Orchestration Foundation) — orchestrator が remote_agent_gateway 経由で child 作成
+- ADR-00018 (Inter-Agent Communication Protocol) — 関連
+- Phase C draft §3.5 / §11.3 PE-F-013

@@ -82,3 +82,43 @@ CT log や screenshot / docs / CI log に非中立 machine 名 / tailnet DNS が
 6. **CT log の不可逆性は残留リスクとして記録**し、本 ADR のリスク表 / Sprint Review に追記する。命名 gate (PR review で `app-<env>-<role>-<NN>` 形式以外を BLOCK) を再強化する。
 7. 同種の漏えいが繰り返される場合は ADR-00007 自体を見直し、Tailscale HTTPS の代替 (private CA など) を別 ADR で検討する。
 
+---
+
+## Host-Portable Deployment update (2026-05-10、ADR-00021 連動)
+
+ADR-00021 (Host-Portable Deployment + Data Migration) accepted 化に伴い、本 ADR の **Tailscale 閉域維持 invariant が host を変えても不変** であることを明示化:
+
+### host 中立 invariant (ADR-00021 §6 と同期)
+
+TaskManagedAI の backend host が Mac / Linux / VPS いずれであっても、以下 invariant は **絶対不変**:
+
+| invariant | 強制 |
+|---|---|
+| 公開 IP からの 22/80/443 deny | UFW (Linux/VPS) / pf (Mac) で deny rule、host 設定の SOP 化 |
+| Funnel 不使用 | Tailscale Serve のみ、`tailscale serve --funnel` 禁止 |
+| 127.0.0.1 bind | docker-compose.yml で全 service の host port を 127.0.0.1 固定 |
+| Tailscale device approval 必須 | tailnet 管理画面で device 承認 + tag:taskhub grants |
+| grants minimum | `tag:taskhub`, `tag:taskhub-ci`, `tag:taskhub-cli` (P0.1 SP-016 で追加) のみ |
+| Cloudflare / 他公開経路の deny | 同 |
+
+### host 別の追加考慮 (Mac / Linux laptop の sleep 対策)
+
+| host | 公開 IP block 手段 | sleep / shutdown 対策 |
+|---|---|---|
+| Mac | macOS pf (Packet Filter) で 22/80/443 incoming deny + Tailscale 経由のみ | `caffeinate -i docker compose ...` または `pmset -a sleep 0 disablesleep 1` (電源接続中) |
+| Linux (laptop) | UFW deny | `systemd-inhibit` または `systemctl mask sleep.target suspend.target` |
+| Linux (desktop / 24/7) | UFW deny | (常時稼働、対策不要) |
+| VPS | UFW deny + プロバイダ console で raw IP block 確認 | (常時稼働) |
+
+### host 切替時の Tailscale Serve URL drift
+
+- host が変われば Tailscale Serve URL も変わる (例: `taskhub.t-ohga-mac.tail-xxxxx.ts.net` → `taskhub.t-ohga-vps.tail-xxxxx.ts.net`)
+- 全機械の `tm` CLI profile を `tm auth login --backend <new-url>` で再 issue
+- ADR-00015 で短命 capability token (TTL 5-30 分) を採用しているため、host 切替の影響軽微 (再 login で済む)
+
+### 関連 ADR
+
+- ADR-00021 (Host-Portable Deployment + Data Migration)
+- ADR-00006 update (age key 運搬、ADR-00021 §5 で詳細化)
+- ADR-00015 (UI/CLI Parity、`tm auth login --backend` で host 切替対応)
+

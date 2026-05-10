@@ -273,3 +273,43 @@ Sprint 1 Exit では P0 Hard Gate の最終 PASS 判定ではなく、後続 Spr
 - `frontend/pnpm-lock.yaml` が手動 `pnpm install` で生成されている。CI 上での再現性は `--frozen-lockfile` に依存するため、Sprint 11.5 で trusted CI 環境での lockfile 検証が必要。
 - 実 pytest / Playwright runtime は local runner 環境依存で未走。CI smoke の `backend-quality` / `frontend-quality` / `frontend-e2e` / `docker-smoke` が代替計画だが、trusted event での実行 evidence を Sprint 1.5 または Sprint 2 着手前に保存する。
 
+---
+
+## Host-Portable Deployment update (2026-05-10、ADR-00021 連動)
+
+ADR-00021 (Host-Portable Deployment + Data Migration) accepted 化に伴い、SP-001 must_ship に **`taskhub` admin CLI 最小実装** を追加.
+
+### 追加 must_ship (SP-001 範囲)
+
+- **`taskhub init`**: 新 host で初回 setup (Docker volume / age key / .env.encrypted 雛形 / Tailscale Serve config) を 1 コマンドで実行
+- **`taskhub backup` 最小実装**: pg_dump + Redis BGSAVE + artifacts tar + age 暗号化、`<path>.tar.age` 出力
+- **`taskhub status`**: 現 host name / Docker service health / data size / last backup 時刻 / age key fingerprint / Tailscale Serve URL を表示
+- **docker-compose.yml host-portable 化**: volume path を env var で吸収 (`${TASKHUB_DATA_DIR:-./data}`)、PostgreSQL/Redis image tag pinning (`postgres:17-alpine` / `redis:7-alpine`)
+- **`docs/deploy/host-setup.md`**: Mac / Linux / VPS の各 host SOP (公開 IP block / sleep 制御 / Tailscale Serve 設定)
+
+### 追加実装ファイル
+
+- `cli/taskhub/main.py` / `cli/taskhub/commands/{init,backup,status}.py`
+- `cli/setup.py` (`taskhub` entry point、`uv tool install` で各 host に install 可)
+- `docker-compose.yml` (host-portable 化) / `docker-compose.override.yml.example`
+- `.env.example` (env var 整理)
+- `docs/deploy/host-setup.md`
+- `tests/deploy/test_taskhub_init.py` / `test_taskhub_backup.py` / `test_postgres_version_pin.py` / `test_tailscale_only_post_migration.py`
+
+### 受け入れ条件 (追加)
+
+- Mac で `taskhub init` → `docker compose up` → `tm` CLI で smoke (Tailscale Serve URL 経由でアクセス可、127.0.0.1 bind verify、公開 IP からの 22/80/443 deny verify)
+- `taskhub backup` で pg_dump + Redis RDB + artifacts tar + age 暗号化、checksums.txt 整合
+- `taskhub status` で host name / service health / data size / age fingerprint 表示
+
+### defer (SP-012 まで)
+
+- `taskhub restore` / `migrate` / `age-rotate` / `verify --integrity` 本実装
+- host migration drill (Mac → VPS) 自動化
+- 全 contract test smoke の host migration 後実行
+
+### 関連 ADR
+
+- ADR-00021 (Host-Portable Deployment + Data Migration、SP-001 着手時 proposed → accepted)
+- ADR-00007 update (host 中立 invariant 明示化、同期 accepted)
+

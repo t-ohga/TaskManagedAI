@@ -97,3 +97,47 @@ superseded_by: null
 3. production migration 後に unknown action_class が保存可能、初期 matrix が deny-by-default でない、`merge` / `deploy` が allow、self-approval が成功、orphan `approval_requests` / `policy_decisions`、`approval_wait_ms` source 欠落のいずれかを検出したら rollback trigger とする。
 4. `uv run alembic downgrade -1` を実行する。downgrade で data loss / inconsistent state になる場合は forward-fix migration を新規作成し、staging で検証してから production 適用する。最終手段として age 暗号化 backup から restore する。
 5. rollback verification は `uv run pytest tests/policy/test_action_class_enum.py tests/policy/test_initial_policy_matrix.py tests/policy/test_self_approval_negative.py tests/policy/test_approval_stale_invalidation.py tests/metrics/test_approval_wait_ms.py tests/eval/test_policy_block_recall_policy_source.py -q` で実行して確認する (Sprint 3 完了後に Sprint Pack 検証手順と合わせて整合確認)。
+
+---
+
+## Phase D R1-R4 + Phase E Multi-Agent vision update (2026-05-10、proposed 追記)
+
+ADR-00014/15/16/17/18/19/20 (Multi-Agent vision) accepted 化に伴う本 ADR の update (Phase D PD-F-004/PD-R2-F-005/PD-R2-F-014/PD-R3-F-003/PD-R4-F-005 + Phase E PE-F-003/PE-F-016 反映、計 7 finding 関連)。
+
+### action_class 7 種は不変 (AP-8 reject 永続化)
+
+`orchestrator_dispatch` / `inter_agent_message` / `auto_approve_low_risk` / `read_only_research` / `read_only_audit` の 5 種を action_class として追加することは禁止 (Phase D PD-F-004 で reject)。代わりに以下 4 boundary に分散:
+
+| 旧 (rejected) | 新 (採用) |
+|---|---|
+| `orchestrator_dispatch` | `agent_run_event_type='orchestrator_dispatched'` (ADR-00004 update event 23) |
+| `inter_agent_message` | `agent_run_event_type='inter_agent_message_sent_ref/consumed_ref'` + audit_events (ADR-00018) |
+| `auto_approve_low_risk` | `policy_profile='low_risk_auto_allow'` (本 ADR で新規定義) |
+| `read_only_research` | Tool Registry `allowed_actions=['web_fetch','docs_search']` (P0.1 Tool Registry network ADR) |
+| `read_only_audit` | Tool Registry `allowed_actions=['trace_read','metric_read']` |
+
+### policy_profile schema (PD-R3-F-003 / PE-F-016 fix)
+
+P0.1 で `policy_profiles` + `policy_profile_action_effects` を追加 (DDL は Phase C draft §3.9 参照)。`projects.policy_profile` の許可値 enum:
+
+- `default` (P0 既存): `task_write` require_approval / 既存 7 種 effect 不変
+- `low_risk_auto_allow` (P0.1 新規): `task_write` (artifact のみ + review_artifact 必須) と `provider_call` (zdr_eligible=yes only + payload_data_class<=internal) のみ allow、`repo_write/pr_open/secret_access/merge/deploy` は deny
+
+**14 rows exact seed** (default × 7 + low_risk_auto_allow × 7、PE-F-016 fix):
+unknown profile / missing seed row / secret_access allow drift / provider_call without ZDR / task_write without review_artifact を AC-HARD-01 multi-agent fixture で全件 deny verify.
+
+### policy_decisions 拡張列
+
+P0.1 で追加: `policy_profile text not null`、`profile_resolved_effect text not null check (effect in ('allow','deny','require_approval'))`、`required_review_artifact_id uuid null` + review_artifacts FK (PE-F-003).
+
+### Tier 2 = approval_requests を作らない (PD-F-005 / PE-F-003)
+
+Tier 2 (`policy_profile=low_risk_auto_allow` で effect=allow) は **approval_requests に row を作らない**。Policy Engine が policy_decisions に effect=allow を直接記録、agent reviewer は `review_artifacts` を作成して Policy Engine の input にする。**`approval_requests.decided_by_actor_id` は引き続き human のみ** (DB CHECK + service guard 4 重防御、本 ADR の self-approval 禁止 invariant + decider human-only invariant 不変).
+
+### DD-02 / DD-03 / DD-04 enum 同期 (PD-R2-F-014 / PD-R4-F-005 fix、Phase F-0 前提 task)
+
+Phase F-0 で DD-02 の `policy_rules` / `approval_requests` / `policy_decisions` の `action_class` CHECK を本 ADR accepted enum 7 種 (`task_write` / `repo_write` / `pr_open` / `secret_access` / `merge` / `deploy` / `provider_call`) に同期 (legacy `read/search` 削除 + `provider_call` 追加)。`read/search` を action_class として持つ既存 row は Tool Registry `allowed_actions` 経由に migration、または非該当として archive.
+
+### 関連 ADR
+
+- ADR-00014 / ADR-00018 / Tool Registry network ADR (P0.1 新規) / Phase C draft §3.9

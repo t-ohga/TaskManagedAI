@@ -272,9 +272,20 @@ Step 7: Sprint Exit 判定 (Claude `release-auditor` agent + `release-suite` ski
   - VPS deploy smoke (Sprint 1 以降は VPS 起動確認を Sprint Exit に含める、§6.5.3 参照)
 ```
 
-### 6.5.3 VPS deployment 前提 (Sprint 1 以降の全実装で考慮)
+### 6.5.3 Host-Portable deployment 前提 (Sprint 1 以降の全実装で考慮、ADR-00021 で正式化)
 
-最終的な実行環境は **Hostinger VPS (`t-ohga-vps`、Tailscale 内 IP `100.115.27.116`)**。Sprint 1 以降のすべての実装で以下を前提にする:
+**ADR-00021 (Host-Portable Deployment + Data Migration、2026-05-10 起票)** により、TaskManagedAI backend は **Mac / Linux / VPS のいずれか 1 箇所** をメイン基盤として選択可能 (旧 VPS 固定前提から拡張).
+
+| 運用フェーズ | 推奨 host | 理由 |
+|---|---|---|
+| 開発初期 (Sprint 1-N) | **Mac (`t-ohga-mac`)** | docker-compose をそのまま起動、修正サイクル早い、他端末から Tailscale 経由でアクセス可 |
+| 開発中盤〜後半 | Mac か Linux 24/7 機 | sleep 制御 + SOP 整備で安定稼働、本番想定の検証 |
+| 運用フェーズ (P0.1+) | **VPS (`t-ohga-vps`、Hostinger)** | 24/7 安定、専用環境、出先可用性 |
+| host 切替時 | `taskhub migrate --target <host>` | data + secret 込みで自動移行 (ADR-00021 §3) |
+
+最終的な実行環境候補は **Hostinger VPS (`t-ohga-vps`、Tailscale 内 IP `100.115.27.116`)** だが、Sprint 1 では **Mac で起動して動作確認**、Sprint 12 で **host migration drill** を実施して VPS 移行を verify する流れとする (AC-HARD-04 拡張).
+
+Sprint 1 以降のすべての実装で以下を前提にする:
 
 - **Network boundary** (DD-05 / ADR-00007 準拠):
   - VPS は Tailscale 閉域のみ public ingress なし (`tag:taskhub` -> TCP/443、`tag:taskhub-ci` -> TCP/443 の 2 系統のみ)
