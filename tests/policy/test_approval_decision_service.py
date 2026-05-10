@@ -136,7 +136,11 @@ def _assert_integrity_error(
     constraint_name: str,
 ) -> None:
     assert _sqlstate(error) == sqlstate
-    assert constraint_name in str(error)
+    actual_constraint_name = (
+        getattr(error.orig, "constraint_name", None)
+        or getattr(getattr(error.orig, "__cause__", None), "constraint_name", None)
+    )
+    assert actual_constraint_name == constraint_name
 
 
 def _assert_integrity_error_with_any_constraint(
@@ -146,7 +150,11 @@ def _assert_integrity_error_with_any_constraint(
     constraint_names: set[str],
 ) -> None:
     assert _sqlstate(error) == sqlstate
-    assert any(constraint_name in str(error) for constraint_name in constraint_names)
+    actual_constraint_name = (
+        getattr(error.orig, "constraint_name", None)
+        or getattr(getattr(error.orig, "__cause__", None), "constraint_name", None)
+    )
+    assert actual_constraint_name in constraint_names
 
 
 async def _reset_approval_tables(session: AsyncSession) -> None:

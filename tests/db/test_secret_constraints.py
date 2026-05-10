@@ -149,12 +149,18 @@ def _assert_integrity_error(
     constraint_name: str | tuple[str, ...],
 ) -> None:
     assert _sqlstate(error) == sqlstate
-    error_message = str(error)
+    # asyncpg の CheckViolationError 等は str(error) に constraint_name を必ずしも含めない。
+    # 構造化属性 error.orig.constraint_name (または error.orig.__cause__.constraint_name)
+    # から取得して assert する。
+    actual_constraint_name = (
+        getattr(error.orig, "constraint_name", None)
+        or getattr(getattr(error.orig, "__cause__", None), "constraint_name", None)
+    )
     if isinstance(constraint_name, str):
-        assert constraint_name in error_message
+        assert actual_constraint_name == constraint_name
         return
 
-    assert any(name in error_message for name in constraint_name), error_message
+    assert actual_constraint_name in constraint_name, actual_constraint_name
 
 
 async def _reset_secret_tables(session: AsyncSession) -> None:
@@ -691,7 +697,15 @@ async def test_secret_refs_uri_format_rejects_unknown_scope(
             sqlstate="23514",
             constraint_name=("secret_refs_ck_secret_uri_format", "secret_refs_ck_scope"),
         )
-        assert "secret_refs_ck_secret_uri_components_match" not in str(exc_info.value)
+        actual_constraint_name = (
+            getattr(exc_info.value.orig, "constraint_name", None)
+            or getattr(
+                getattr(exc_info.value.orig, "__cause__", None),
+                "constraint_name",
+                None,
+            )
+        )
+        assert actual_constraint_name != "secret_refs_ck_secret_uri_components_match"
         await session.rollback()
 
 

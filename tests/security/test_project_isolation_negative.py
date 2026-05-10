@@ -133,7 +133,11 @@ def _assert_integrity_error(
     constraint_name: str,
 ) -> None:
     assert _sqlstate(error) == sqlstate
-    assert constraint_name in str(error)
+    actual_constraint_name = (
+        getattr(error.orig, 'constraint_name', None)
+        or getattr(getattr(error.orig, '__cause__', None), 'constraint_name', None)
+    )
+    assert actual_constraint_name == constraint_name
 
 
 async def _reset_tables(session: AsyncSession) -> None:
