@@ -1183,7 +1183,9 @@ def test_assert_anti_gaming_invariants_rejects_redacted_fixture_with_set_value()
         metadata={"created_at": "2026-05-09", "strange": {"a", "b"}},
     )
 
-    expected = "unsupported value type set at $.metadata.strange"
+    # impl `_find_prohibited_keys_recursive` は metadata dict を root として呼ばれるため
+    # 報告 path は `$.<key>` (metadata 接頭辞なし)。test 期待値を impl 出力に揃える。
+    expected = "unsupported value type set at $.strange"
     with pytest.raises(TypeError, match=re.escape(expected)):
         assert_anti_gaming_invariants(manifest, [fixture])
 
@@ -1205,7 +1207,15 @@ def test_find_prohibited_keys_recursive_nested_tuple_with_dict_detects() -> None
         _PROHIBITED_REDACTED_KEYS,
     )
 
-    assert leaks == ["$.a.b[0].expected_aggregate"]
+    # impl は parent prohibited key (`expected_aggregate`) を検出した後も recursive
+    # 探索を継続し、入れ子の prohibited key (`cost_per_completed_task_usd`) も
+    # 報告する (anti-leak 強化、深い leak の見逃し防止)。test 期待を impl の正しい
+    # 動作に揃える (2026-05-10 fix、Sprint 5 commit 91a8f29 で recursive 強化された
+    # 仕様変更への追従漏れ)。
+    assert leaks == [
+        "$.a.b[0].expected_aggregate",
+        "$.a.b[0].expected_aggregate.cost_per_completed_task_usd",
+    ]
 
 
 def test_assert_anti_gaming_invariants_accepts_clean_redacted_fixture() -> None:

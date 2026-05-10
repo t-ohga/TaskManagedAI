@@ -56,7 +56,10 @@ def test_standard_transition_path_reaches_completed() -> None:
         "completed",
     )
 
-    for from_state, to_state in zip(standard_path, standard_path[1:], strict=True):
+    # `zip(seq, seq[1:], strict=True)` は数学的に必ず fail する (seq[1:] は seq より 1 短い)。
+    # 隣接ペアの iterate には strict=True 不可、strict=False を明示 (B905) で意図を明確化。
+    # 2026-05-10 fix (Sprint 4 commit 88dece3 由来の test bug)。
+    for from_state, to_state in zip(standard_path, standard_path[1:], strict=False):
         assert validate_transition(from_state, to_state) == to_state
 
 

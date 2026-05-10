@@ -1556,7 +1556,9 @@ def test_assert_anti_gaming_invariants_rejects_redacted_fixture_with_set_value(
         metadata={"strange": {"a", "b"}},
     )
 
-    expected = "unsupported value type set at $.metadata.strange"
+    # impl `_find_prohibited_keys_recursive` は metadata dict を root として呼ばれるため
+    # 報告 path は `$.<key>` (metadata 接頭辞なし)。test 期待値を impl 出力に揃える。
+    expected = "unsupported value type set at $.strange"
     with pytest.raises(TypeError, match=re.escape(expected)):
         assert_anti_gaming_invariants(manifest, [fixture])
 

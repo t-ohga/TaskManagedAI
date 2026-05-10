@@ -1,3 +1,7 @@
+# ruff: noqa: E402
+# 本 file は module-level pytest.skip(allow_module_level=True) で全 test を skip する。
+# pytest.skip() の呼出後に他 import が並ぶ構造は意図的 (Sprint X 復活時に import 群を残す)
+# のため file-level で E402 (Module level import not at top of file) を許可する。
 from __future__ import annotations
 
 import asyncio
