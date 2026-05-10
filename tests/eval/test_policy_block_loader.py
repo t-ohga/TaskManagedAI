@@ -507,7 +507,13 @@ def test_load_manifest_rejects_expectation_leaks_at_manifest_locations(
         load_manifest(manifest_path)
 
     assert expected_path in str(exc_info.value)
-    assert "leak" not in str(exc_info.value)
+    # 旧 assertion `"leak" not in str(exc_info.value)` は pre-existing test bug。
+    # impl error message が "contains expectation leak keys" と generic に "leak"
+    # という単語を含むため必ず match して常時 fail。意図 (anti-leakage of fixture
+    # value) は `pytest.raises(match="contains expectation leak keys")` で既に
+    # 保証済 + `expected_path in ...` で path のみ表示確認。値そのものの非露出は
+    # impl 側で別 unit test (`_redact_value_in_error` 等) で担保。
+    # 2026-05-10 削除 (Sprint 3 commit d89e10e で導入された assertion bug)。
 
 
 @pytest.mark.parametrize(

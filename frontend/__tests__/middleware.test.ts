@@ -55,13 +55,15 @@ afterEach(() => {
 
 describe("middleware", () => {
   it("redirects unauthenticated dashboard requests to login with next path", async () => {
+    // Next.js 16 NextRequest は host を `127.0.0.1` -> `localhost` に正規化するため、
+    // expected location は `localhost` で記述。(2026-05-10 host normalization fix)
     const request = new NextRequest("http://127.0.0.1:3000/dashboard");
 
     const response = await middleware(request);
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "http://127.0.0.1:3000/login?next=%2Fdashboard"
+      "http://localhost:3000/login?next=%2Fdashboard"
     );
   });
 
@@ -72,7 +74,7 @@ describe("middleware", () => {
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "http://127.0.0.1:3000/login?next=%2Fsettings"
+      "http://localhost:3000/login?next=%2Fsettings"
     );
   });
 
@@ -92,9 +94,10 @@ describe("middleware", () => {
 
   it("allows dashboard requests with a valid signed session cookie", async () => {
     vi.stubEnv("DEV_LOGIN_COOKIE_SECRET", COOKIE_SECRET);
+    // verifyDevSessionCookie は wall-clock now を使うため、test cookie の exp も
+    // 現在時刻起点で生成する (2026-05-10 fix: 旧 fixed now=2026-05-08 だと verify 時に expired)
     const sessionCookie = await createSignedSessionCookie({
-      secret: COOKIE_SECRET,
-      now: new Date("2026-05-08T00:00:00.000Z")
+      secret: COOKIE_SECRET
     });
     const request = new NextRequest("http://127.0.0.1:3000/dashboard", {
       headers: {
@@ -118,8 +121,7 @@ describe("middleware", () => {
   it("preserves existing request headers and cookies when adding actor context", async () => {
     vi.stubEnv("DEV_LOGIN_COOKIE_SECRET", COOKIE_SECRET);
     const sessionCookie = await createSignedSessionCookie({
-      secret: COOKIE_SECRET,
-      now: new Date("2026-05-08T00:00:00.000Z")
+      secret: COOKIE_SECRET
     });
     const request = new NextRequest("http://127.0.0.1:3000/dashboard", {
       headers: {
@@ -163,15 +165,14 @@ describe("middleware", () => {
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "http://127.0.0.1:3000/login?next=%2Fdashboard"
+      "http://localhost:3000/login?next=%2Fdashboard"
     );
   });
 
   it("redirects and clears an invalid session cookie", async () => {
     vi.stubEnv("DEV_LOGIN_COOKIE_SECRET", COOKIE_SECRET);
     const sessionCookie = await createSignedSessionCookie({
-      secret: COOKIE_SECRET,
-      now: new Date("2026-05-08T00:00:00.000Z")
+      secret: COOKIE_SECRET
     });
     const request = new NextRequest("http://127.0.0.1:3000/dashboard", {
       headers: {
@@ -183,7 +184,7 @@ describe("middleware", () => {
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "http://127.0.0.1:3000/login?next=%2Fdashboard"
+      "http://localhost:3000/login?next=%2Fdashboard"
     );
     expect(response.cookies.get(DEV_SESSION_COOKIE_NAME)?.value).toBe("");
   });
