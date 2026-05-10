@@ -7,7 +7,6 @@ keys + 8 regex pattern + recursive + max_depth + visited set を使う。drift �
 from __future__ import annotations
 
 import re
-from typing import Any
 
 _PROHIBITED_PAYLOAD_KEYS: frozenset[str] = frozenset(
     {
@@ -53,7 +52,7 @@ _DEFAULT_MAX_DEPTH = 32
 
 
 def assert_no_raw_secret(
-    obj: Any,
+    obj: object,
     *,
     path: str = "$",
     max_depth: int = _DEFAULT_MAX_DEPTH,

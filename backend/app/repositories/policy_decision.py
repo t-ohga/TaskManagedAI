@@ -17,7 +17,7 @@ class PolicyDecisionRepository(BaseRepository[PolicyDecision]):
     def __init__(self, session: AsyncSession, tenant_id: int | None = None) -> None:
         super().__init__(session, PolicyDecision, tenant_id=tenant_id)
 
-    async def append(self, tenant_id: int, **payload: Any) -> PolicyDecision:
+    async def append(self, tenant_id: int, **payload: object) -> PolicyDecision:
         return await super().create(tenant_id=tenant_id, payload=payload)
 
     async def update(

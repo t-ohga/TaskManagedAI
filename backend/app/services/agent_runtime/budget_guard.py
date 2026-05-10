@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -308,7 +307,7 @@ def _decimal_or_none(value: Decimal | int | str | float | None) -> Decimal | Non
     return Decimal(str(value))
 
 
-def _string_or_none(value: Any) -> str | None:
+def _string_or_none(value: object) -> str | None:
     return None if value is None else str(value)
 
 

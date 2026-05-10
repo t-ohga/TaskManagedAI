@@ -6,6 +6,9 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.db.models.agent_run import AgentRun
 from backend.app.domain.agent_runtime.operation_context import compute_payload_hash
 from backend.app.domain.artifact.data_class import PayloadDataClass
 from backend.app.domain.provider.compliance import (
@@ -32,7 +35,7 @@ class ComplianceGate:
     def __init__(
         self,
         matrix_loader: MatrixLoader,
-        audit_emitter: Any | None = None,
+        audit_emitter: object | None = None,
     ) -> None:
         self._matrix_loader = matrix_loader
         self._audit_emitter = audit_emitter
@@ -149,9 +152,9 @@ class ComplianceGate:
 
     async def enforce(
         self,
-        session: Any,
+        session: AsyncSession,
         *,
-        run: Any,
+        run: AgentRun,
         request: ProviderRequest,
         actor_id: UUID,
     ) -> tuple[ComplianceDecision, ProviderResult | None]:
@@ -280,17 +283,18 @@ class ComplianceGate:
 
     async def _emit_audit_event(
         self,
-        session: Any,
+        session: AsyncSession,
         *,
         tenant_id: int,
         event_type: str,
         payload: dict[str, Any],
         actor_id: UUID,
-        run: Any,
-    ) -> Any:
+        run: AgentRun,
+    ) -> object:
         assert_no_raw_secret(payload, path="$provider_compliance_audit_payload")
 
         emitter = self._audit_emitter
+        result: object
         if emitter is None:
             result = AuditEventRepository(session).append(
                 tenant_id=tenant_id,
@@ -315,7 +319,8 @@ class ComplianceGate:
                 trace_id=_string_or_none(getattr(run, "trace_id", None)),
             )
         elif callable(emitter):
-            result = emitter(
+            callback = cast(Callable[..., object], emitter)
+            result = callback(
                 session=session,
                 tenant_id=tenant_id,
                 event_type=event_type,
@@ -416,7 +421,7 @@ def _audit_payload(
     *,
     event_type: str,
     request: ProviderRequest,
-    run: Any,
+    run: AgentRun,
     decision: ComplianceDecision,
     audit_decision: Literal["allow", "deny"],
     actor_id: UUID,
@@ -456,8 +461,8 @@ def _audit_payload(
 
 async def _transition_policy_blocked(
     *,
-    session: Any,
-    run: Any,
+    session: AsyncSession,
+    run: AgentRun,
     request: ProviderRequest,
     decision: ComplianceDecision,
     actor_id: UUID,
@@ -557,7 +562,7 @@ def _safe_provider_request_fingerprint(
         return compute_payload_hash(payload)
 
 
-def _assert_run_tenant_matches_request(run: Any, request: ProviderRequest) -> None:
+def _assert_run_tenant_matches_request(run: AgentRun, request: ProviderRequest) -> None:
     run_tenant_id = getattr(run, "tenant_id", None)
     if run_tenant_id != request.tenant_id:
         raise ValueError("run tenant_id must match request tenant_id.")
@@ -587,7 +592,7 @@ def _matrix_version_mismatch(request: ProviderRequest, decision: ComplianceDecis
     return _request_matrix_version(request) != decision.provider_compliance_matrix_version
 
 
-def _audit_event_id(event: Any) -> str | None:
+def _audit_event_id(event: object) -> str | None:
     event_id = getattr(event, "id", None)
     if event_id is None:
         return None

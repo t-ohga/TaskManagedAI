@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import inspect
 from decimal import Decimal
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,7 +82,7 @@ async def _maybe_add_and_flush(session: AsyncSession, run: AgentRun) -> None:
             await result
 
 
-def _decimal_or_zero(value: Any) -> Decimal:
+def _decimal_or_zero(value: object) -> Decimal:
     if value is None:
         return Decimal("0")
     if isinstance(value, Decimal):
@@ -91,7 +90,7 @@ def _decimal_or_zero(value: Any) -> Decimal:
     return Decimal(str(value))
 
 
-def _int_or_zero(value: Any) -> int:
+def _int_or_zero(value: object) -> int:
     if value is None:
         return 0
     return int(value)

@@ -181,7 +181,7 @@ def _synthesize_schema_value(schema: dict[str, Any]) -> dict[str, Any]:
     return {"value": value}
 
 
-def _synthesize_value(schema: dict[str, Any]) -> Any:
+def _synthesize_value(schema: dict[str, Any]) -> object:
     if "const" in schema:
         return schema["const"]
     if isinstance(schema.get("enum"), list) and schema["enum"]:
@@ -259,7 +259,7 @@ def _usage_for(messages: list[ProviderMessage], response_summary: dict[str, Any]
     )
 
 
-def _content_to_text(value: Any) -> str:
+def _content_to_text(value: object) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, ProviderMessageContentBlock):

@@ -10,7 +10,6 @@ from backend.app.db.models.actor import Actor
 from backend.app.db.models.approval_request import ApprovalRequest
 from backend.app.domain.policy.action_class import ActionClass
 
-
 # ADR-00009 採用案: independent reviewer 必須 action class
 INDEPENDENT_REVIEWER_REQUIRED_ACTIONS: frozenset[ActionClass] = frozenset(
     {

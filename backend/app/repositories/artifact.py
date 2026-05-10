@@ -8,7 +8,6 @@ from typing import Any, NoReturn, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import Delete, Update
 
 from backend.app.db.models.artifact import ALL_ARTIFACT_KINDS, Artifact, ArtifactKind
 from backend.app.domain.artifact.data_class import (
@@ -43,11 +42,11 @@ def _payload_child_path(path: str, key: str | int) -> str:
 
 
 def _normalize_json_for_hash(
-    obj: Any,
+    obj: object,
     *,
     path: str = "$",
     _seen: set[int] | None = None,
-) -> Any:
+) -> object:
     if _seen is None:
         _seen = set()
 
@@ -57,7 +56,7 @@ def _normalize_json_for_hash(
             raise ValueError(f"artifact content_jsonb has cyclic reference at {path}.")
         _seen.add(oid)
 
-        normalized: dict[str, Any] = {}
+        normalized: dict[str, object] = {}
         for key, value in obj.items():
             if not isinstance(key, str):
                 raise ValueError(

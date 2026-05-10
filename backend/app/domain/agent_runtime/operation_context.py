@@ -4,8 +4,9 @@ import hashlib
 import json
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from typing import Any, Literal, Mapping
+from typing import Literal
 from uuid import UUID
 
 RequestedOperation = Literal[
@@ -36,7 +37,7 @@ class OperationContext:
     run_id: UUID | None
     secret_ref_id: UUID
     requested_operation: RequestedOperation
-    target: Mapping[str, Any]
+    target: Mapping[str, object]
     payload_hash: str
     approval_id: UUID | None
     policy_version: str
@@ -50,7 +51,7 @@ def _normalize_string(value: str) -> str:
     return unicodedata.normalize("NFC", value)
 
 
-def _json_safe(value: Any) -> Any:
+def _json_safe(value: object) -> object:
     if isinstance(value, UUID):
         return str(value)
     if isinstance(value, str):
@@ -62,7 +63,7 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def canonical_json_dumps(value: Any) -> str:
+def canonical_json_dumps(value: object) -> str:
     return json.dumps(
         _json_safe(value),
         ensure_ascii=False,
@@ -71,7 +72,7 @@ def canonical_json_dumps(value: Any) -> str:
     )
 
 
-def compute_payload_hash(payload: Any) -> str:
+def compute_payload_hash(payload: object) -> str:
     if isinstance(payload, bytes):
         payload_bytes = payload
     elif isinstance(payload, str):
@@ -134,7 +135,7 @@ def validate_operation_context(ctx: OperationContext) -> None:
         raise ValueError("secret target secret_ref_id must be a UUID.") from exc
 
 
-def _require_nonempty_string(target: Mapping[str, Any], key: str) -> None:
+def _require_nonempty_string(target: Mapping[str, object], key: str) -> None:
     value = target[key]
     if not isinstance(value, str) or not value:
         raise ValueError(f"target.{key} must be a non-empty string.")

@@ -19,7 +19,7 @@ from backend.app.api.approval_inbox import get_db_session
 from backend.app.config import Settings, get_settings
 from backend.app.db.session import create_engine
 from backend.app.main import create_app
-from backend.app.seeds.initial import DEFAULT_ACTOR_ID, DEFAULT_PROJECT_ID, seed_initial
+from backend.app.seeds.initial import DEFAULT_PROJECT_ID, seed_initial
 from backend.app.services.agent_runtime import cancel as cancel_module
 
 _DEFAULT_DATABASE_URL = (

@@ -11,10 +11,10 @@ import pytest
 
 import eval.security.tenant_isolation.loader as tenant_loader
 from eval.security.tenant_isolation.loader import (
-    PublicFixture,
-    RedactedFixture,
     _PROHIBITED_REDACTED_KEYS,
     _PROHIBITED_SECRET_METADATA_KEYS,
+    PublicFixture,
+    RedactedFixture,
     _canonical_fixture_hash,
     _find_prohibited_keys_recursive,
     _read_json_object,

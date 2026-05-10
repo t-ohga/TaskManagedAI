@@ -48,7 +48,7 @@ def _ctx(**overrides: object) -> OperationContext:
             "api_or_feature": "responses",
             "model_resolved": "gpt-5.4",
         },
-        "payload_hash": hashlib.sha256("payload".encode("utf-8")).hexdigest(),
+        "payload_hash": hashlib.sha256(b"payload").hexdigest(),
         "approval_id": None,
         "policy_version": "policy-v1",
         "provider_compliance_matrix_version": "pcm-v1",
@@ -103,8 +103,18 @@ def test_same_operation_context_has_same_fingerprint() -> None:
 
 
 def test_different_targets_have_different_fingerprints() -> None:
-    left = compute_fingerprint(_ctx(target={"provider": "openai", "api_or_feature": "responses", "model_resolved": "gpt-5.4"}))
-    right = compute_fingerprint(_ctx(target={"provider": "anthropic", "api_or_feature": "messages", "model_resolved": "claude-sonnet-4.5"}))
+    left = compute_fingerprint(
+        _ctx(target={"provider": "openai", "api_or_feature": "responses", "model_resolved": "gpt-5.4"})
+    )
+    right = compute_fingerprint(
+        _ctx(
+            target={
+                "provider": "anthropic",
+                "api_or_feature": "messages",
+                "model_resolved": "claude-sonnet-4.5",
+            }
+        )
+    )
     assert left != right
 
 

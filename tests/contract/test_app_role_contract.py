@@ -22,10 +22,8 @@ from backend.app.db.app_role import (
     get_tenant_context,
     set_tenant_context,
 )
-from backend.app.db.models.acceptance_criteria import AcceptanceCriteria
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.ticket import Ticket
-from backend.app.db.models.ticket_relation import TicketRelation
 from backend.app.db.session import create_engine
 from backend.app.repositories.acceptance_criteria import AcceptanceCriteriaRepository
 from backend.app.repositories.audit_event import AuditEventRepository

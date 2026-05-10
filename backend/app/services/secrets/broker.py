@@ -7,7 +7,7 @@ import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Literal, TypeVar
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -90,7 +90,7 @@ class BrokerRedeemDenied:
 
 
 @dataclass(frozen=True, slots=True)
-class BrokerRedeemResult(Generic[T]):
+class BrokerRedeemResult[T]:
     capability_id: UUID
     secret_ref_id: UUID
     requested_operation: RequestedOperation
@@ -145,7 +145,7 @@ class SecretBroker:
         secret_ref_id: UUID,
         requested_operation: RequestedOperation,
         target: Mapping[str, Any],
-        payload: Any | None = None,
+        payload: object | None = None,
         payload_hash: str | None = None,
         approval_id: UUID | None = None,
         policy_version: str,
@@ -251,7 +251,7 @@ class SecretBroker:
         raw_token: str,
         requested_operation: RequestedOperation,
         target: Mapping[str, Any],
-        payload: Any | None = None,
+        payload: object | None = None,
         payload_hash: str | None = None,
         approval_id: UUID | None = None,
         policy_version: str,
@@ -335,7 +335,8 @@ class SecretBroker:
             await self._audit_redeem_denied(tenant_id, actor_id, post_claim_denial, run_id)
             return post_claim_denial
 
-        assert secret_ref is not None
+        if secret_ref is None:
+            raise RuntimeError("SecretBroker invariant violated: secret_ref missing after claim.")
         resolved_secret = await self._resolve_secret(secret_ref)
         del resolved_secret
 
@@ -692,7 +693,7 @@ def _target_string(target: Mapping[str, Any], key: str) -> str:
     return value
 
 
-def _resolve_payload_hash(*, payload: Any | None, payload_hash: str | None) -> str:
+def _resolve_payload_hash(*, payload: object | None, payload_hash: str | None) -> str:
     if payload_hash is None:
         return compute_payload_hash(payload)
     if not _SHA256_RE.fullmatch(payload_hash):
@@ -708,7 +709,7 @@ def _fingerprint_audit_hash(fingerprint: str | None) -> str | None:
     return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
 
 
-async def _maybe_await(value: T | Awaitable[T]) -> T:
+async def _maybe_await[T](value: T | Awaitable[T]) -> T:
     if inspect.isawaitable(value):
         return await value
     return value

@@ -8,7 +8,6 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import Delete, Update
 
 from backend.app.db.models.agent_run_event import AgentRunEvent
 from backend.app.domain.agent_runtime.event_type import AgentRunEventType

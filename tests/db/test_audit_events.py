@@ -330,9 +330,9 @@ def test_audit_event_repository_does_not_expose_update_or_delete_methods() -> No
     assert not hasattr(repository, "update")
     assert not hasattr(repository, "delete")
     with pytest.raises(AttributeError):
-        getattr(repository, "update")
+        _ = repository.update
     with pytest.raises(AttributeError):
-        getattr(repository, "delete")
+        _ = repository.delete
 
 
 @pytest.mark.asyncio

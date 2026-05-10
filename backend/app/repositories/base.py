@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from sqlalchemy import delete, select, update
@@ -17,7 +17,7 @@ from backend.app.db.models.base import Base
 ModelT = TypeVar("ModelT", bound=Base)
 
 
-class BaseRepository(Generic[ModelT]):
+class BaseRepository[ModelT: Base]:
     def __init__(
         self,
         session: AsyncSession,
@@ -32,14 +32,16 @@ class BaseRepository(Generic[ModelT]):
 
     def statement_for_get(self, tenant_id: int, id: UUID) -> Select[tuple[ModelT]]:
         self._require_tenant_id(tenant_id)
+        model = cast(Any, self.model)
         return select(self.model).where(
-            getattr(self.model, "tenant_id") == tenant_id,
-            getattr(self.model, "id") == id,
+            model.tenant_id == tenant_id,
+            model.id == id,
         )
 
     def statement_for_list(self, tenant_id: int) -> Select[tuple[ModelT]]:
         self._require_tenant_id(tenant_id)
-        return select(self.model).where(getattr(self.model, "tenant_id") == tenant_id)
+        model = cast(Any, self.model)
+        return select(self.model).where(model.tenant_id == tenant_id)
 
     def statement_for_update(
         self,
@@ -49,11 +51,12 @@ class BaseRepository(Generic[ModelT]):
     ) -> Update:
         self._require_tenant_id(tenant_id)
         data = self._payload_for_update(tenant_id, id, payload)
+        model = cast(Any, self.model)
         return (
             update(self.model)
             .where(
-                getattr(self.model, "tenant_id") == tenant_id,
-                getattr(self.model, "id") == id,
+                model.tenant_id == tenant_id,
+                model.id == id,
             )
             .values(**data)
             .returning(self.model)
@@ -61,13 +64,14 @@ class BaseRepository(Generic[ModelT]):
 
     def statement_for_delete(self, tenant_id: int, id: UUID) -> Delete:
         self._require_tenant_id(tenant_id)
+        model = cast(Any, self.model)
         return (
             delete(self.model)
             .where(
-                getattr(self.model, "tenant_id") == tenant_id,
-                getattr(self.model, "id") == id,
+                model.tenant_id == tenant_id,
+                model.id == id,
             )
-            .returning(getattr(self.model, "id"))
+            .returning(model.id)
         )
 
     async def get(self, tenant_id: int, id: UUID) -> ModelT | None:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -362,7 +361,10 @@ def test_canonical_fixture_hash_rejects_nan_value() -> None:
         _canonical_fixture_hash({"foo": float("nan")})
 
 
-@pytest.mark.parametrize("path", ["/etc/passwd", "../expected_schema.json", "schema.json", "nested/expected_schema.json"])
+@pytest.mark.parametrize(
+    "path",
+    ["/etc/passwd", "../expected_schema.json", "schema.json", "nested/expected_schema.json"],
+)
 def test_resolve_expected_schema_path_rejects_noncanonical_paths(
     tmp_path: Path,
     path: str,
@@ -520,7 +522,10 @@ def test_validate_aggregate_consistency_rejects_tampered_expected_aggregate(
 def test_validate_aggregate_consistency_direct_rejects_ratio_drift() -> None:
     raw = _sample_public_fixture()
     fixture = _load_public_fixture_direct(raw)
-    tampered = replace(fixture, expected_aggregate={**fixture.expected_aggregate, "coverage_ratio": 0.6015})
+    tampered = replace(
+        fixture,
+        expected_aggregate={**fixture.expected_aggregate, "coverage_ratio": 0.6015},
+    )
 
     with pytest.raises(ValueError, match="coverage_ratio mismatch"):
         _validate_aggregate_consistency(tampered, Path("sample.json"))

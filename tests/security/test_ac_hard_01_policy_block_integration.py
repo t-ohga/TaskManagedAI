@@ -208,7 +208,7 @@ async def _evaluate_policy_rule_lookup(
         )
 
     rule = rules[0]
-    rule_json = getattr(rule, "rule_json")
+    rule_json = rule.rule_json
     if not isinstance(rule_json, dict):
         raise AssertionError(
             f"Fixture {policy_input.fixture_id}: policy_rule.rule_json must be an object"

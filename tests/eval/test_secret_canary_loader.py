@@ -8,7 +8,6 @@ from typing import Any, cast
 
 import pytest
 
-import eval.security.secret_canary.loader as canary_loader
 from eval.security.secret_canary.loader import (
     _PROHIBITED_REDACTED_KEYS,
     _PROHIBITED_SECRET_METADATA_KEYS,
@@ -410,7 +409,10 @@ def test_canonical_fixture_hash_rejects_nan_value() -> None:
         _canonical_fixture_hash({"foo": float("nan")})
 
 
-@pytest.mark.parametrize("path", ["/etc/passwd", "../expected_schema.json", "schema.json", "nested/expected_schema.json"])
+@pytest.mark.parametrize(
+    "path",
+    ["/etc/passwd", "../expected_schema.json", "schema.json", "nested/expected_schema.json"],
+)
 def test_resolve_expected_schema_path_rejects_noncanonical_paths(
     tmp_path: Path,
     path: str,

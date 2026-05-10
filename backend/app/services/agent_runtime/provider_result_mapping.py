@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from backend.app.domain.agent_runtime.status import (
+    TERMINAL_STATES,
     AgentRunStatus,
     BlockedReason,
-    TERMINAL_STATES,
 )
 
 ProviderResultKind = Literal[

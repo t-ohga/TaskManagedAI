@@ -41,7 +41,7 @@ SecretTokenResolver = Callable[[str], str | Awaitable[str]]
 
 
 class GeminiAdapter:
-    def __init__(self, http_client: Any, secret_token_resolver: SecretTokenResolver) -> None:
+    def __init__(self, http_client: object, secret_token_resolver: SecretTokenResolver) -> None:
         self._http_client = http_client
         self._secret_token_resolver = secret_token_resolver
 
@@ -266,7 +266,7 @@ def _unsupported_schema_reason(schema: dict[str, Any] | None) -> str | None:
     return None
 
 
-def _schema_container_depth(schema: Any, depth: int = 0) -> int:
+def _schema_container_depth(schema: object, depth: int = 0) -> int:
     """Return JSON Schema container nesting depth without crashing on list types.
 
     R3-F-001 (R4): JSON Schema type may be an array, for example
@@ -298,7 +298,7 @@ def _schema_container_depth(schema: Any, depth: int = 0) -> int:
     return max_depth
 
 
-def _schema_find_unsupported_types(schema: Any, path: str = "$") -> str | None:
+def _schema_find_unsupported_types(schema: object, path: str = "$") -> str | None:
     if not isinstance(schema, Mapping):
         return None
 
@@ -327,7 +327,7 @@ def _schema_find_unsupported_types(schema: Any, path: str = "$") -> str | None:
     return None
 
 
-def _schema_has_array_of_array_of_object(schema: Any) -> bool:
+def _schema_has_array_of_array_of_object(schema: object) -> bool:
     if not isinstance(schema, Mapping):
         return False
 
@@ -349,7 +349,7 @@ def _schema_has_array_of_array_of_object(schema: Any) -> bool:
     return False
 
 
-def _schema_has_excessive_properties(schema: Any, *, max_props: int) -> bool:
+def _schema_has_excessive_properties(schema: object, *, max_props: int) -> bool:
     if not isinstance(schema, Mapping):
         return False
 
@@ -368,8 +368,8 @@ def _schema_has_excessive_properties(schema: Any, *, max_props: int) -> bool:
     return False
 
 
-def _iter_schema_children(schema: Mapping[str, Any], path: str) -> list[tuple[str, Any]]:
-    children: list[tuple[str, Any]] = []
+def _iter_schema_children(schema: Mapping[object, object], path: str) -> list[tuple[str, object]]:
+    children: list[tuple[str, object]] = []
 
     properties = schema.get("properties")
     if isinstance(properties, Mapping):
@@ -398,12 +398,12 @@ def _iter_schema_children(schema: Mapping[str, Any], path: str) -> list[tuple[st
     return children
 
 
-def _is_array_schema(schema: Mapping[str, Any]) -> bool:
+def _is_array_schema(schema: Mapping[object, object]) -> bool:
     schema_type = schema.get("type")
     return isinstance(schema_type, str) and schema_type == "array"
 
 
-def _is_object_schema(schema: Mapping[str, Any]) -> bool:
+def _is_object_schema(schema: Mapping[object, object]) -> bool:
     schema_type = schema.get("type")
     if schema_type is not None and not isinstance(schema_type, str):
         return False

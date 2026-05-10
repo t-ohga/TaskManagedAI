@@ -17,9 +17,9 @@ from backend.app.db.models.agent_run_event import AgentRunEvent
 from backend.app.domain.agent_runtime.event_type import AgentRunEventType
 from backend.app.domain.agent_runtime.status import (
     ALL_BLOCKED_REASONS,
+    TERMINAL_STATES,
     AgentRunStatus,
     BlockedReason,
-    TERMINAL_STATES,
 )
 from backend.app.repositories.agent_run_event import append_event
 from backend.app.services.agent_runtime.state_machine import (

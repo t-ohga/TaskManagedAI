@@ -33,7 +33,7 @@ SecretTokenResolver = Callable[[str], str | Awaitable[str]]
 
 
 class OpenAIResponsesAdapter:
-    def __init__(self, http_client: Any, secret_token_resolver: SecretTokenResolver) -> None:
+    def __init__(self, http_client: object, secret_token_resolver: SecretTokenResolver) -> None:
         self._http_client = http_client
         self._secret_token_resolver = secret_token_resolver
 

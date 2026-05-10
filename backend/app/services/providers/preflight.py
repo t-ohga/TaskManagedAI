@@ -47,7 +47,7 @@ def _request_to_scan_payload(request: ProviderRequest) -> dict[str, Any]:
     }
 
 
-def _scan_string_payload(obj: Any, regex: re.Pattern[str]) -> bool:
+def _scan_string_payload(obj: object, regex: re.Pattern[str]) -> bool:
     if isinstance(obj, dict):
         return any(
             regex.search(str(key)) is not None or _scan_string_payload(value, regex)
@@ -60,15 +60,17 @@ def _scan_string_payload(obj: Any, regex: re.Pattern[str]) -> bool:
     return False
 
 
-def _json_safe_message(message: Any) -> Any:
-    if hasattr(message, "model_dump"):
-        return message.model_dump(mode="json")
+def _json_safe_message(message: object) -> object:
+    model_dump = getattr(message, "model_dump", None)
+    if callable(model_dump):
+        return model_dump(mode="json")
     return _json_safe_value(message)
 
 
-def _json_safe_value(value: Any) -> Any:
-    if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json")
+def _json_safe_value(value: object) -> object:
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return model_dump(mode="json")
     if isinstance(value, dict):
         return {str(key): _json_safe_value(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
@@ -76,7 +78,7 @@ def _json_safe_value(value: Any) -> Any:
     return value
 
 
-def _find_redacted_scanner_metadata(obj: Any) -> str | None:
+def _find_redacted_scanner_metadata(obj: object) -> str | None:
     if isinstance(obj, dict):
         direct_hit = obj.get("pattern_hit_kind")
         if direct_hit in {"canary_pattern", "provider_key_pattern", "secret_pattern"}:

@@ -482,7 +482,12 @@ def test_load_manifest_rejects_invalid_calendar_day(tmp_path: Path) -> None:
     ("path", "key", "value", "expected_path"),
     [
         ((), "expected_decision", "block", "$.expected_decision"),
-        (("splits", "private_holdout"), "expected_reason_code", "leak", "$.splits.private_holdout.expected_reason_code"),
+        (
+            ("splits", "private_holdout"),
+            "expected_reason_code",
+            "leak",
+            "$.splits.private_holdout.expected_reason_code",
+        ),
         (("agent_routing",), "assertions", [{"name": "leak"}], "$.agent_routing.assertions"),
     ],
 )

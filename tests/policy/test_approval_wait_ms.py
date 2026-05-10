@@ -125,19 +125,22 @@ def _assert_integrity_error(
 
 
 async def _restore_temporal_check_constraint(session: AsyncSession) -> None:
+    if _TEMPORAL_CHECK_NAME != "approval_requests_ck_decided_at_after_requested_at":
+        raise AssertionError("approval wait temporal check constraint name drifted.")
+
     await session.execute(
         text(
-            f"""
+            """
             do $$
             begin
               if not exists (
                 select 1
                 from pg_constraint
-                where conname = '{_TEMPORAL_CHECK_NAME}'
+                where conname = 'approval_requests_ck_decided_at_after_requested_at'
                   and conrelid = 'approval_requests'::regclass
               ) then
                 alter table approval_requests
-                  add constraint {_TEMPORAL_CHECK_NAME}
+                  add constraint approval_requests_ck_decided_at_after_requested_at
                   check (decided_at is null or decided_at >= requested_at);
               end if;
             end

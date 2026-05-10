@@ -5,9 +5,9 @@ from collections.abc import Mapping
 from backend.app.domain.agent_runtime.event_type import AgentRunEventType
 from backend.app.domain.agent_runtime.status import (
     ALL_AGENT_RUN_STATUSES,
+    TERMINAL_STATES,
     AgentRunStatus,
     BlockedReason,
-    TERMINAL_STATES,
 )
 
 ALLOWED_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = {

@@ -41,7 +41,9 @@ markers = [
 
 [tool.ruff]
 target-version = "py312"
-line-length = 100
+# core.md / testing.md do not pin 100 chars. 120 keeps provider/test literals readable
+# while still forcing true outliers to be wrapped manually.
+line-length = 120
 exclude = [
   ".git",
   ".mypy_cache",
@@ -58,9 +60,16 @@ select = ["E", "F", "I", "B", "UP", "ANN", "ASYNC", "S", "T20"]
 # (https://fastapi.tiangolo.com/tutorial/dependencies/) のため project-wide で許可。
 # 該当: backend/app/api/*.py の `Depends(get_*)` / `Query(...)` / `Header(...)` 全箇所。
 ignore = ["B008"]
+# UP046/UP047 は Python 3.12 専用 repo の TypeVar/Generic 機械変換のみ。
+# `uv run ruff check --fix backend tests` でこの 5 件も適用できるよう rule 単位で安全扱いする。
+extend-safe-fixes = ["UP046", "UP047"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "S105", "S106"]
+# tests は fixture / mock / parametrize で Any と dummy secret literal を使うため、production とは分離する。
+"tests/**/*.py" = ["ANN401", "S101", "S105", "S106"]
+"tests/db/test_secret_constraints.py" = ["S107"]
+"tests/eval/test_citation_coverage_loader.py" = ["S108"]
+"tests/eval/test_secret_canary_loader.py" = ["S108"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -71,4 +80,3 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = ["arq.*"]
 ignore_missing_imports = true
-

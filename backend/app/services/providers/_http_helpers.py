@@ -5,7 +5,7 @@ import inspect
 import json
 from collections.abc import Awaitable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any, TypeVar, cast
+from typing import Any, TypeGuard, TypeVar, cast
 
 from jsonschema.exceptions import SchemaError
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
@@ -22,13 +22,13 @@ T = TypeVar("T")
 _DEFAULT_HTTP_TIMEOUT_SECONDS = 30.0
 
 
-def resolve_maybe_awaitable(value: T | Awaitable[T]) -> T:
+def resolve_maybe_awaitable[T](value: T | Awaitable[T]) -> T:
     if inspect.isawaitable(value):
         return _run_awaitable_sync(cast(Awaitable[T], value))
     return cast(T, value)
 
 
-def _run_awaitable_sync(awaitable: Awaitable[T]) -> T:
+def _run_awaitable_sync[T](awaitable: Awaitable[T]) -> T:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -43,7 +43,7 @@ def _run_awaitable_sync(awaitable: Awaitable[T]) -> T:
 
 
 def post_json(
-    http_client: Any,
+    http_client: object,
     url: str,
     *,
     headers: Mapping[str, str],
@@ -60,7 +60,7 @@ def post_json(
     return coerce_http_response(response)
 
 
-def coerce_http_response(response: Any) -> tuple[int, dict[str, Any]]:
+def coerce_http_response(response: object) -> tuple[int, dict[str, Any]]:
     if isinstance(response, tuple) and len(response) == 2:
         return _coerce_status_code(response[0]), _coerce_response_body(response[1])
 
@@ -72,7 +72,7 @@ def coerce_http_response(response: Any) -> tuple[int, dict[str, Any]]:
     return status_code, _coerce_response_body(response)
 
 
-def _coerce_status_code(value: Any) -> int:
+def _coerce_status_code(value: object) -> int:
     if isinstance(value, bool):
         raise TypeError("HTTP status_code must be an integer, not bool.")
     if value is None:
@@ -84,7 +84,7 @@ def _coerce_status_code(value: Any) -> int:
     raise TypeError("HTTP status_code must be an integer.")
 
 
-def _coerce_response_body(value: Any) -> dict[str, Any]:
+def _coerce_response_body(value: object) -> dict[str, Any]:
     if value is None:
         return {}
     if isinstance(value, Mapping):
@@ -236,13 +236,13 @@ def extract_structured_output(
     return structured, "success"
 
 
-def _structured_output_as_dict(value: Any) -> dict[str, Any]:
+def _structured_output_as_dict(value: object) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return {str(key): item for key, item in value.items()}
     return {"value": value}
 
 
-def _find_structured_candidate(response: dict[str, Any]) -> Any | None:
+def _find_structured_candidate(response: dict[str, Any]) -> object | None:
     for key in ("structured_output", "output_parsed", "output_json", "parsed"):
         candidate = _coerce_structured_candidate(response.get(key))
         if candidate is not None:
@@ -260,7 +260,7 @@ def _find_structured_candidate(response: dict[str, Any]) -> Any | None:
     return None
 
 
-def _extract_candidate_from_sequence(value: Any) -> Any | None:
+def _extract_candidate_from_sequence(value: object) -> object | None:
     if not _is_sequence(value):
         return None
 
@@ -296,7 +296,7 @@ def _extract_candidate_from_sequence(value: Any) -> Any | None:
     return None
 
 
-def _candidate_from_mapping(value: Mapping[str, Any]) -> Any | None:
+def _candidate_from_mapping(value: Mapping[str, Any]) -> object | None:
     for key in ("parsed", "input", "arguments", "args"):
         candidate = _coerce_structured_candidate(value.get(key))
         if candidate is not None:
@@ -348,7 +348,7 @@ def _candidate_from_mapping(value: Mapping[str, Any]) -> Any | None:
     return None
 
 
-def _candidate_from_gemini_parts(value: Any) -> Any | None:
+def _candidate_from_gemini_parts(value: object) -> object | None:
     """Extract structured JSON from Gemini content.parts.
 
     R3-F-002 (R4): Gemini canonical responses put JSON text under
@@ -380,7 +380,7 @@ def _candidate_from_gemini_parts(value: Any) -> Any | None:
     return _coerce_structured_candidate("".join(text_parts))
 
 
-def _coerce_structured_candidate(value: Any) -> Any | None:
+def _coerce_structured_candidate(value: object) -> object | None:
     if isinstance(value, Mapping):
         return {str(key): item for key, item in value.items()}
     if isinstance(value, list):
@@ -390,7 +390,7 @@ def _coerce_structured_candidate(value: Any) -> Any | None:
     return None
 
 
-def _parse_json_string(value: str) -> Any | None:
+def _parse_json_string(value: str) -> object | None:
     if not value.strip():
         return None
     try:
@@ -561,14 +561,14 @@ def _finish_reason_from_response(response: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _first_string(*values: Any) -> str | None:
+def _first_string(*values: object) -> str | None:
     for value in values:
         if isinstance(value, str) and value:
             return value
     return None
 
 
-def _optional_int(value: Any) -> int | None:
+def _optional_int(value: object) -> int | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
@@ -576,19 +576,19 @@ def _optional_int(value: Any) -> int | None:
     return None
 
 
-def _safe_scalar(value: Any) -> str | int | float | bool | None:
+def _safe_scalar(value: object) -> str | int | float | bool | None:
     if value is None or isinstance(value, str | int | float | bool):
         return value
     return None
 
 
-def _count_sequence(value: Any) -> int | None:
+def _count_sequence(value: object) -> int | None:
     if _is_sequence(value):
         return len(value)
     return None
 
 
-def _is_sequence(value: Any) -> bool:
+def _is_sequence(value: object) -> TypeGuard[Sequence[object]]:
     return isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray)
 
 
