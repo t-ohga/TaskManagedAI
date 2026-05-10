@@ -134,6 +134,10 @@ async def _constraint_columns(
     constraint_name: str,
     constraint_type: str,
 ) -> tuple[str, ...]:
+    # pg_constraint.contype は PostgreSQL "char" 型 (1-byte 内部単一バイト型)。
+    # asyncpg prepared statement type inference が $1 を "char" と推論し str -> bytes encode
+    # で fail するため、column 側を `::text` cast して $1 を text 推論させる。
+    # (test_schema_introspection.py で検出した同 pattern を適用)
     result = await session.execute(
         text(
             """
@@ -143,7 +147,7 @@ async def _constraint_columns(
             join unnest(con.conkey) with ordinality as keys(attnum, ord) on true
             join pg_attribute att
               on att.attrelid = con.conrelid and att.attnum = keys.attnum
-            where con.contype = :constraint_type
+            where con.contype::text = :constraint_type
               and rel.relname = :table_name
               and con.conname = :constraint_name
             group by con.conname
