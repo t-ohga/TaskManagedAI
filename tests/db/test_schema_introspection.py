@@ -722,7 +722,9 @@ async def test_approval_requests_has_tenant_id_and_composite_fk(
     assert "(tenant_id, status)" in indexes["approval_requests_idx_tenant_status"]
     assert indexes["approval_requests_idx_tenant_run"].startswith("CREATE INDEX")
     assert "(tenant_id, run_id)" in indexes["approval_requests_idx_tenant_run"]
-    assert "run_id IS NOT NULL" in indexes["approval_requests_idx_tenant_run"].upper()
+    # `.upper()` で全文 upper case 化するので、検索 substring も upper case に揃える
+    # (`run_id` (lowercase) は upper case 化された string と match しない test bug 修正)。
+    assert "RUN_ID IS NOT NULL" in indexes["approval_requests_idx_tenant_run"].upper()
     assert indexes["approval_requests_idx_requested_at"].startswith("CREATE INDEX")
     assert "(tenant_id, requested_at)" in indexes["approval_requests_idx_requested_at"]
 
