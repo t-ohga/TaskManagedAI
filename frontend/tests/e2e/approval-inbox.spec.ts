@@ -15,6 +15,13 @@ test.describe("Approval Inbox", () => {
     await page.getByRole("button", { name: "Sign in" }).click();
 
     await expect(page).toHaveURL(/\/dashboard$/u);
+    // Server Action redirect (x-action-redirect: /dashboard;push) は RSC payload で URL を
+    // 即時 update する一方、Set-Cookie の browser cookie jar への永続化は後追いで完了する。
+    // toHaveURL は URL match で resolve するが cookie jar は未確定のため、直後の
+    // page.goto("/approvals") が cookie 無しで送信されて middleware に /login redirect される。
+    // dashboard の heading が visible になるまで wait することで cookie 永続化を保証する
+    // (admin-shell.spec.ts が同 pattern で安定動作している実績の踏襲)。
+    await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible();
 
     await page.goto("/approvals");
     await expect(page.getByRole("heading", { name: /approval inbox/i })).toBeVisible();

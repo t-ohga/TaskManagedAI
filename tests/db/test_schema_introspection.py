@@ -220,6 +220,10 @@ async def _constraint_columns(
     constraint_name: str,
     constraint_type: str,
 ) -> tuple[str, ...]:
+    # pg_constraint.contype は PostgreSQL "char" 型 (1-byte)。asyncpg は Python str を直接
+     # bind すると `invalid input for query argument: 'u' (a bytes-like object is required)`
+    # で fail するため、明示的に `::"char"` cast を入れて driver の type coercion を回避する。
+    # 引用符付き "char" は内部単一バイト型、引用符なし char は char(1) で別 type。
     result = await session.execute(
         text(
             """
@@ -229,7 +233,7 @@ async def _constraint_columns(
             join unnest(con.conkey) with ordinality as keys(attnum, ord) on true
             join pg_attribute att
               on att.attrelid = con.conrelid and att.attnum = keys.attnum
-            where con.contype = :constraint_type
+            where con.contype = (:constraint_type)::"char"
               and rel.relname = :table_name
               and con.conname = :constraint_name
             group by con.conname
