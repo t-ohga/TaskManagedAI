@@ -490,6 +490,14 @@ async def test_tenant_repository_create_duplicate_raises_integrity_error(
         )
         await session.commit()
 
+        # session.rollback() は expire_on_commit=False を無視して instance attributes を
+        # 必ず expire させる SQLAlchemy 仕様 (https://sqlalche.me/e/20/bhk3) のため、
+        # rollback 前に created の identity attrs を local variable に capture する。
+        # 後続 assert は detached instance を参照しないので DetachedInstanceError を回避。
+        created_kind: type[Tenant] = type(created)
+        created_id = created.id
+        created_name = created.name
+
         with pytest.raises(IntegrityError):
             await repository.create(
                 tenant_id=1,
@@ -499,7 +507,7 @@ async def test_tenant_repository_create_duplicate_raises_integrity_error(
 
         await session.rollback()
 
-    assert isinstance(created, Tenant)
-    assert created.id == 1
-    assert created.name == "tenant-one"
+    assert created_kind is Tenant
+    assert created_id == 1
+    assert created_name == "tenant-one"
 

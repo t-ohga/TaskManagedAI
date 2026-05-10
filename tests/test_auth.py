@@ -110,7 +110,11 @@ async def test_dev_login_issues_signed_cookie_with_fixed_actor(
     set_cookie = set_cookie_headers[0]
     assert f"{DEV_SESSION_COOKIE_NAME}=" in set_cookie
     assert "HttpOnly" in set_cookie
-    assert "Secure" in set_cookie
+    # backend.app.api.auth で environment="test"/"development" は secure=False、
+    # production のみ secure=True となる env-conditional 設計。
+    # CI Playwright が HTTP loopback (127.0.0.1) で Chromium に Secure 属性を
+    # silently drop される問題を回避する目的。XSS / CSRF 防御は HttpOnly + SameSite=lax で維持。
+    assert "Secure" not in set_cookie
     assert "SameSite=lax" in set_cookie
     assert "Path=/" in set_cookie
 
@@ -123,6 +127,37 @@ async def test_dev_login_issues_signed_cookie_with_fixed_actor(
     assert claims is not None
     assert claims.actor_id == "human:default"
     assert claims.principal_type == "session"
+
+
+@pytest.mark.parametrize("environment", ["development", "test"])
+async def test_dev_login_cookie_secure_attribute_omitted_for_non_production_environments(
+    monkeypatch: pytest.MonkeyPatch,
+    environment: Environment,
+) -> None:
+    """env-conditional secure attribute: dev/test では HTTP loopback 動作のため secure=False。
+
+    backend/app/api/auth.py の `is_production = settings.environment == "production"` が
+    "test" / "development" で False になることを 2 環境横断で verify する。
+    Chromium 147 が HTTP context で Secure 属性付き cookie を silently drop する事象 (CI
+    Playwright で /approvals 遷移時に session 喪失 → /login redirect) を防ぐ目的の境界。
+    """
+    monkeypatch.setenv("TASKMANAGEDAI_DEV_LOGIN_TOKEN", "correct-dev-login-token")
+    settings = _settings_for(environment)
+    app = create_app(settings)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/auth/dev-login",
+            json={"token": "correct-dev-login-token"},
+        )
+
+    assert response.status_code == 200
+    set_cookie = response.headers.get_list("set-cookie")[0]
+    assert f"{DEV_SESSION_COOKIE_NAME}=" in set_cookie
+    assert "Secure" not in set_cookie  # XSS / CSRF 防御は HttpOnly + SameSite=lax で維持
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=lax" in set_cookie
 
 
 async def test_dev_login_rejects_wrong_token_without_cookie(

@@ -101,13 +101,19 @@ async def dev_login(
     cookie_value, expires_at = create_signed_session_cookie(
         secret=settings.dev_login_cookie_secret,
     )
+    # P0 boundary: production は HTTPS 必須 (Tailscale Serve TLS 終端) のため secure=True 固定。
+    # development / test は CI Playwright が HTTP loopback (127.0.0.1:3000) で走るため、
+    # Chromium が HTTP context で Secure 属性を持つ cookie を silently drop する事象を
+    # 回避する目的で secure=False とする。Cookie boundary 自体は HttpOnly + SameSite=lax で
+    # XSS / CSRF 防御を維持する。
+    is_production = settings.environment == "production"
     response.set_cookie(
         key=DEV_SESSION_COOKIE_NAME,
         value=cookie_value,
         max_age=SESSION_TTL_SECONDS,
         expires=expires_at,
         path="/",
-        secure=True,
+        secure=is_production,
         httponly=True,
         samesite="lax",
     )
