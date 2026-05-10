@@ -562,7 +562,7 @@ async def test_transition_with_event_rolls_back_event_when_status_update_fails(
         await session.commit()
         run = await _load_run(session)
         initial_status = run.status
-        initial_event_count = await _event_count_for_run(session, run.id)
+        initial_event_count = await _event_count_for_run(session, RUN_ID)
         await session.commit()
 
         with pytest.raises((IntegrityError, ValueError)):
@@ -580,7 +580,7 @@ async def test_transition_with_event_rolls_back_event_when_status_update_fails(
 
         await session.refresh(run)
         assert run.status == initial_status
-        final_event_count = await _event_count_for_run(session, run.id)
+        final_event_count = await _event_count_for_run(session, RUN_ID)
         assert final_event_count == initial_event_count
 
 
@@ -593,7 +593,7 @@ async def test_transition_with_event_rejects_event_type_transition_mismatch(
         await session.commit()
         run = await _load_run(session)
         initial_status = run.status
-        initial_event_count = await _event_count_for_run(session, run.id)
+        initial_event_count = await _event_count_for_run(session, RUN_ID)
         await session.commit()
 
         with pytest.raises(ValueError, match="event_type.*not allowed"):
@@ -610,7 +610,7 @@ async def test_transition_with_event_rejects_event_type_transition_mismatch(
 
         await session.refresh(run)
         assert run.status == initial_status
-        final_event_count = await _event_count_for_run(session, run.id)
+        final_event_count = await _event_count_for_run(session, RUN_ID)
         assert final_event_count == initial_event_count
 
 
@@ -648,7 +648,7 @@ async def test_transition_with_event_rejects_blocked_event_reason_mismatch(
         await _setup_runtime_fixture(session, run_status="running")
         await session.commit()
         run = await _load_run(session)
-        initial_event_count = await _event_count_for_run(session, run.id)
+        initial_event_count = await _event_count_for_run(session, RUN_ID)
         await session.commit()
 
         with pytest.raises(ValueError, match="event_type.*requires blocked_reason"):
@@ -666,7 +666,7 @@ async def test_transition_with_event_rejects_blocked_event_reason_mismatch(
 
         await session.refresh(run)
         assert run.status == "running"
-        assert await _event_count_for_run(session, run.id) == initial_event_count
+        assert await _event_count_for_run(session, RUN_ID) == initial_event_count
 
 
 @pytest.mark.asyncio
@@ -706,7 +706,7 @@ async def test_transition_with_event_rejects_non_blocked_with_reason(
         await _setup_runtime_fixture(session, run_status="running")
         await session.commit()
         run = await _load_run(session)
-        initial_event_count = await _event_count_for_run(session, run.id)
+        initial_event_count = await _event_count_for_run(session, RUN_ID)
         await session.commit()
 
         with pytest.raises(ValueError, match="blocked_reason must be None"):
@@ -722,7 +722,7 @@ async def test_transition_with_event_rejects_non_blocked_with_reason(
                     blocked_reason="policy_blocked",
                 )
 
-        final_event_count = await _event_count_for_run(session, run.id)
+        final_event_count = await _event_count_for_run(session, RUN_ID)
         assert final_event_count == initial_event_count
 
 
