@@ -104,11 +104,12 @@ uv run pytest tests/metrics/test_acceptance_pass_rate.py tests/metrics/test_time
               tests/metrics/test_approval_wait_ms.py tests/metrics/test_citation_coverage.py \
               tests/metrics/test_cost_per_completed_task.py -q
 
-# backup / restore / host migration drill
-$ taskhub backup --output /tmp/sp012-backup.tar.age   # Mac で
+# backup / restore / host migration drill (PH-F-003 fix: tm 不使用、taskhub + curl ベース)
+$ taskhub backup --output /tmp/sp012-backup.tar.age   # Mac (selected host) で
 $ taskhub migrate --target t-ohga-vps --via tailscale # Mac → VPS one-shot
-$ ssh vps 'taskhub status'                             # VPS で service up verify
-$ tm --backend https://taskhub.t-ohga-vps.tail-xxxxx.ts.net ticket list   # smoke
+$ ssh vps 'taskhub status'                             # VPS で service up + health verify
+$ curl -s https://taskhub.t-ohga-vps.tail-xxxxx.ts.net/api/v1/healthz   # smoke (tm 不使用、PH-F-003)
+$ taskhub verify --integrity --multi-agent             # restore 後 integrity verify
 $ uv run pytest tests/deploy/test_host_migration_drill.py -q
 
 # private staging CI/E2E

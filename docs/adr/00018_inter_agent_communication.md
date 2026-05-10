@@ -77,7 +77,11 @@ create table inter_agent_messages (
     foreign key (tenant_id, project_id, consumed_by_run_id) references agent_runs(tenant_id, project_id, id),
     foreign key (tenant_id, sender_actor_id) references actors(tenant_id, id),
     foreign key (tenant_id, approval_request_id) references approval_requests(tenant_id, id),
-    foreign key (tenant_id, source_artifact_id) references artifacts(tenant_id, id),  -- Phase F-0 後 (tenant_id, project_id, source_artifact_id)
+    foreign key (tenant_id, source_artifact_id) references artifacts(tenant_id, id),
+    -- Phase H PH-F-008 fix: SP-013 の artifacts.project_id materialize hard gate (ADR-00021 §11.5 + §3.11) 完了後に
+    -- 上記 FK を `(tenant_id, project_id, source_artifact_id) references artifacts(tenant_id, project_id, id)` に変更
+    -- それまで (P0.1 SP-013 着手前) は service layer guard で cross-project artifact reference を reject、
+    -- DB CHECK / FK で完全防御は SP-013 hard gate 完了後に確立
     unique (tenant_id, parent_run_id, seq_no),
     unique (tenant_id, parent_run_id, idempotency_key),
     check (sender_run_id <> consumed_by_run_id or consumed_by_run_id is null),

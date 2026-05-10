@@ -298,8 +298,13 @@ ADR-00021 (Host-Portable Deployment + Data Migration) accepted 化に伴い、SP
 
 ### 受け入れ条件 (追加)
 
-- Mac で `taskhub init` → `docker compose up` → `tm` CLI で smoke (Tailscale Serve URL 経由でアクセス可、127.0.0.1 bind verify、公開 IP からの 22/80/443 deny verify)
-- `taskhub backup` で pg_dump + Redis RDB + artifacts tar + age 暗号化、checksums.txt 整合
+> **Phase H PH-F-001 / PH-F-003 fix**: 本 SP-001 既完了内容は **不変**、host-portable 関連の追加 must_ship は **新 SP-001.5 (`docs/sprints/SP-001-5_host_portable_amendment.md`) に移送**. 本 section は **reference 用** で残し、実装は SP-001.5 で実施.
+
+(SP-001.5 の受け入れ条件 reference)
+- Mac で `taskhub init` → `docker compose up -d` → **`taskhub status`** で smoke (`tm` CLI は P0.1 SP-016 まで存在しないため不使用、PH-F-003 fix)
+- `curl -s http://127.0.0.1:8000/healthz` で api healthcheck
+- 127.0.0.1 bind verify、公開 IP からの 22/80/443 deny verify、Tailscale Serve URL 経由のみアクセス
+- `taskhub backup` で pg_dump + Redis BGSAVE + artifacts tar + age 暗号化、checksums.txt 整合
 - `taskhub status` で host name / service health / data size / age fingerprint 表示
 
 ### defer (SP-012 まで)

@@ -175,6 +175,9 @@ create table review_artifacts (
     foreign key (tenant_id, project_id, reviewer_run_id) references agent_runs(tenant_id, project_id, id),
     foreign key (tenant_id, review_target_artifact_id) references artifacts(tenant_id, id),
     foreign key (tenant_id, review_artifact_id) references artifacts(tenant_id, id),
+    -- Phase H PH-F-008 fix: SP-013 hard gate (artifacts.project_id materialize、ADR-00021 §11.5/§3.11) 完了後に
+    -- 上記 2 FK を `(tenant_id, project_id, <id>) references artifacts(tenant_id, project_id, id)` に変更
+    -- それまで service layer guard で cross-project artifact reference を reject (DB level 完全防御は SP-013 後)
     check (reviewer_run_id <> requester_run_id)
 );
 -- PE-F-003 4 重防御 (service/Pydantic/contract test):

@@ -134,9 +134,25 @@ P0.1 で追加: `policy_profile text not null`、`profile_resolved_effect text n
 
 Tier 2 (`policy_profile=low_risk_auto_allow` で effect=allow) は **approval_requests に row を作らない**。Policy Engine が policy_decisions に effect=allow を直接記録、agent reviewer は `review_artifacts` を作成して Policy Engine の input にする。**`approval_requests.decided_by_actor_id` は引き続き human のみ** (DB CHECK + service guard 4 重防御、本 ADR の self-approval 禁止 invariant + decider human-only invariant 不変).
 
-### DD-02 / DD-03 / DD-04 enum 同期 (PD-R2-F-014 / PD-R4-F-005 fix、Phase F-0 前提 task)
+### DD-02 / DD-03 / DD-04 enum 同期 (PD-R2-F-014 / PD-R4-F-005 / PH-F-005 fix、Phase F-0 前提 task として正式起票)
 
-Phase F-0 で DD-02 の `policy_rules` / `approval_requests` / `policy_decisions` の `action_class` CHECK を本 ADR accepted enum 7 種 (`task_write` / `repo_write` / `pr_open` / `secret_access` / `merge` / `deploy` / `provider_call`) に同期 (legacy `read/search` 削除 + `provider_call` 追加)。`read/search` を action_class として持つ既存 row は Tool Registry `allowed_actions` 経由に migration、または非該当として archive.
+**Phase F-0 = `action_class` enum 同期 migration**: P0.1 SP-013 着手前に **必ず** 完了する prerequisite Sprint (本 ADR-00009 update 連動). 詳細手順:
+
+| Step | 対象 file | 内容 |
+|---|---|---|
+| 1 | `docs/基本設計/02_データモデル.md` | `policy_rules` / `approval_requests` / `policy_decisions` の `action_class` CHECK を 7 種 (`task_write` / `repo_write` / `pr_open` / `secret_access` / `merge` / `deploy` / `provider_call`) に書換、`read/search` 削除 |
+| 2 | `docs/基本設計/03_AIオーケストレーション設計.md` | action_class 表 (DD-03 で言及されている部分) を 7 種同期 |
+| 3 | `docs/基本設計/04_セキュリティ_権限_監査設計.md` | action_class section の表 (DD-04) を 7 種同期、`read/search` を Tool Registry `allowed_actions` 経由に明記 |
+| 4 | `.claude/rules/server-owned-boundary.md` §5 | action_class 5 種 enum を 7 種に拡張 (`merge` / `deploy` 追加) |
+| 5 | `tests/policy/test_action_class_enum.py` の `EXPECTED_ACTION_CLASSES` | 7 種 frozenset を確認 |
+| 6 | `migrations/versions/00NN_p0_action_class_enum_sync.py` | `policy_rules` / `approval_requests` / `policy_decisions` の `action_class` CHECK 制約を 7 種に変更、既存 `action_class='read/search'` row を Tool Registry path に migration、または非該当として archive (実 row 0 件想定だが migration script で 0 件 verify) |
+
+**Phase F-0 前提 task として SP-013 着手前に必ず完了**。SP-013 / SP-014 / SP-015 / SP-016 の planned_adr_refs / acceptance に Phase F-0 完了 verify を必須含める. 以下の Sprint Pack に reference:
+
+- SP-013 受け入れ条件に「Phase F-0 完了確認 (`uv run pytest tests/db/test_action_class_enum.py`)」追加
+- SP-014 / 015 / 016 acceptance に同様の前提条件 verify 追加
+
+これにより PH-F-005 CRITICAL の cross-source enum drift を完全 closure.
 
 ### 関連 ADR
 

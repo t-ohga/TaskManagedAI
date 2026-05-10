@@ -64,24 +64,15 @@ memory backend は ContextSnapshot を **置き換えない/上書きしない**
 
 DDL は Phase C draft §5.3 参照。raw memory text は AgentRun column / ContextSnapshot column に入れない、artifact store のみ.
 
-### §5: sanitizer_policy_versions (PE-F-005 fix)
+### §5: sanitizer_policy_versions (PE-F-005 fix → Phase G adversarial / Phase H PH-F-009 で正式化)
 
-```sql
-create table sanitizer_policy_versions (
-    tenant_id bigint not null default 1 references tenants(id),
-    version text not null,                                  -- e.g. 'v1.2.3'
-    config_hash text not null,                              -- canonical config の sha256
-    activated_at timestamptz not null default now(),
-    deprecated_at timestamptz,
-    primary key (tenant_id, version)
-);
+> **Phase H PH-F-009 fix (DDL 二重化解消)**: 本 §5 の前段 sample DDL は **末尾 "Phase G adversarial strengthening update §sanitizer_policy_versions table を正本化 + config_hash FK 必須" の DDL に統合**. 後段 (Phase G addendum 版) が **正本**、前段 sample は早期参照用. 後段の DDL ((tenant_id, id) PK + config_hash + ruleset_hash + memory_records / memory_retrieval_artifacts への FK) を採用.
 
-create index ix_sanitizer_policy_active
-    on sanitizer_policy_versions (tenant_id)
-    where deprecated_at is null;
-```
+**実装責務分担 (PH-F-009 fix)**:
+- **SP-013** で `sanitizer_policy_versions` minimal seed table のみ作成 (memory_records / memory_retrieval_artifacts の FK は SP-018 で hermes 取り込み完了後)
+- **SP-018** で memory_records / memory_retrieval_artifacts に sanitizer_version_id FK 接続 + restore drift handling 完成
 
-memory_retrieval_artifacts.sanitizer_version は current `sanitizer_policy_versions` (deprecated_at IS NULL) と一致確認:
+**memory_retrieval_artifacts.sanitizer_version** (P0.1 SP-013 時点) は current `sanitizer_policy_versions` (deprecated_at IS NULL) と一致確認:
 - 一致: そのまま使用
 - 不一致 (deprecated): `stale_sanitizer` deny または re-sanitize (artifact 再生成、新 sanitizer_version で immutable artifact ref 更新)
 - provider prompt の memory snippet は **redaction_status='redacted' 原則**、`raw_with_canary_scan_passed` は明示例外 (local debug 等) に閉じる.

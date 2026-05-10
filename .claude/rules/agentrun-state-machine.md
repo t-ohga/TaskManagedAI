@@ -140,6 +140,33 @@ queued
 | `run_failed` | failure terminal |
 | `run_cancelled` | cancel terminal |
 
+### 6.1 P0.1+ 拡張 event_type (22 → 31、ADR-00004 update / Phase H PH-F-006 fix)
+
+ADR-00014 Multi-Agent Orchestration / ADR-00018 Inter-Agent Communication で導入される追加 event_type 9 種 (event_type 23〜31). P0 期間中は使用しない (P0 sealed CI guard 対象)、P0.1 SP-013/014/015 で実装:
+
+| # | event_type | state transition | 必須 payload (raw secret なし) | audit_events 責務分担 |
+|---|---|---|---|---|
+| 23 | `orchestrator_dispatched` | running | child_run_id, role_id, role_scope, dispatch_reason, recommended_provider | (AgentRunEvent のみ) |
+| 24 | `orchestrator_lease_renewed` | running | lease_token_hash, renewed_at, expires_at | (AgentRunEvent のみ) |
+| 25 | `orchestrator_lease_expired` | running -> blocked or running | old_lease_hash, expired_at, reason_code | (AgentRunEvent のみ) |
+| 26 | `orchestrator_failover_triggered` | running | old_lease_hash, new_orchestrator_run_id, new_lease_hash, reason_code | audit_events `orchestrator_failover` |
+| 27 | `orchestrator_kill_engaged` | running -> blocked (runtime_blocked) | engaged_by_actor_id (human only via UI/CLI), reason | audit_events `orchestrator_kill_engaged` |
+| 28 | `inter_agent_message_sent_ref` | (status 不変) | message_id, payload_hash, seq_no, sender_run_id, receiver_run_id, redaction_status | audit_events `inter_agent_message_sent` |
+| 29 | `inter_agent_message_consumed_ref` | (status 不変) | + previous_hash_match | audit_events `inter_agent_message_consumed` |
+| 30 | `tool_web_fetch_executed` | running | tool_name, domain, provider, payload_data_class, redaction_status | (AgentRunEvent のみ、SP-018 で audit_events 拡張) |
+| 31 | `tool_docs_search_executed` | running | 同上 | 同上 |
+
+**5+ source 整合 (cross-source-enum-integrity §1) 更新先**:
+
+- DB CHECK: `migrations/versions/00NN_p0_1_event_type_31.py` で `agent_run_events.event_type` CHECK 拡張
+- ORM CheckConstraint: `backend/app/db/models/agent_run_event.py`
+- Python Literal: `backend/app/domain/agent_run/event_types.py` の `EVENT_TYPES: frozenset` (22 + 9 = 31)
+- Pydantic: `agent_run_event/schemas.py`
+- pytest: `tests/agent_runtime/test_event_type_enum.py` の `EXPECTED_EVENT_TYPES` (31)
+- frontend: `frontend/lib/domain/agent-run-event.ts` (Sprint 17 で TypeScript enum)
+
+**P0 期間中の sealed**: P0 sealed CI guard で `migrations/versions/*event_type_31*` 等の P0.1 path 追加を禁止 (本 rules + ADR-00021 §11.6 / ADR-00014 §13 で statement 統一).
+
 ## 7. Provider Result Mapping
 
 | provider result | status |

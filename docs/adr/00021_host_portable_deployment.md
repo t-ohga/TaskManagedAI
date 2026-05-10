@@ -15,12 +15,35 @@ related_research:
 supersedes: null
 superseded_by: null
 acceptance_blocked_by:
-  - "P0 (Sprint 1-12) 完了"
   - "Phase G Codex plan-review + adversarial-review clean"
-  - "ADR-00007 update accepted (host-portable 明示化)"
+  - "Phase H Codex second-opinion で 94 finding closure verify"
+  - "ADR-00007 update accepted (host-portable 明示化、Phase H で同期確認)"
+  - "SP-001.5 (host-portable amendment) が proposed で起票済"
+acceptance_target_sprint: "SP-001 着手直前 (Phase F-0 完了 + SP-001.5 着手と同時に proposed → accepted)"
 ---
 
-最終更新: 2026-05-10 (proposed 起票)
+最終更新: 2026-05-10 (proposed 起票 + Phase G plan/adversarial + Phase H second-opinion 反映、§11/§12/§14 が **正本**、§2/§3/§5/§7 は早期 sample で **§11/§12/§14 が後勝ち**)
+
+## 仕様 normative source 序列 (PH-F-004 fix)
+
+本 ADR の本文は段階的に起票されたため、後段で撤回・改定された仕様が前段に残っている。**§11/§12/§14 (Phase G/H reflect 後の仕様) が後勝ちで normative source**:
+
+| §  | 状態 |
+|---|---|
+| §1 (host 選択抽象化) | normative |
+| §2 (docker-compose sample) | **§11.3 / §12.1 / §12.2 で上書き**: postgres:16-alpine@sha256:<digest> + redis:7-alpine@sha256:<digest> + DB/Redis を Docker internal expose のみ + frontend service portable + 127.0.0.1:3000 bind |
+| §3 (`taskhub` admin CLI 仕様) | normative |
+| §4 (backup file 構造) | normative |
+| §5 (age key 安全運搬) | **§11.1 で上書き**: `cat ~/.taskhub/age/key.txt` 表示手順は撤回、secret manager (1Password) default-required、scp/direct write は break-glass 承認付き、`--include-secrets` flag は `--include-sops-env` に rename、age private key は backup file に絶対含めない |
+| §6 (Tailscale 閉域維持) | normative |
+| §7 (PostgreSQL portability) | **§11.3 で上書き**: postgres:16-alpine、image digest pinning |
+| §8 (RTO ≤ 4h) | **§11.4 で上書き**: happy path 3h30m / failure path 4h / 自動化 90m の 3 階層 |
+| §9-10 (Sprint と test) | normative |
+| §11 (Phase G plan-review patch、HIGH 7) | **正本** |
+| §12 (Phase G plan-review patch、MEDIUM 11) | **正本** |
+| §13 (Phase G closure summary) | normative |
+| §14 (Phase G adversarial Strengthening Catalog 14 件) | **正本** |
+| §15 (Phase G review summary) | normative |
 
 ## 背景
 
