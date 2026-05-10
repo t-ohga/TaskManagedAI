@@ -157,3 +157,91 @@ Tier 2 (`policy_profile=low_risk_auto_allow` で effect=allow) は **approval_re
 ### 関連 ADR
 
 - ADR-00014 / ADR-00018 / Tool Registry network ADR (P0.1 新規) / Phase C draft §3.9
+
+---
+
+## Sprint 5.5 Output Validator + Input Trust Layer update (2026-05-10、proposed 追記)
+
+SP-005-5 (Output Validator) accepted 化に伴う本 ADR の update。**action_class 7 種は不変** (Sprint 5.5 で拡張なし)、本 update は (1) `repair_retry_max_attempts` policy を `config/policy_pack.toml` に新規導入、(2) `trusted_instruction` 昇格境界を既存 approval 経路に閉じる方針を Approval 4 整合 + decider human-only で明示、(3) Sprint 5.5 で追加する audit_events を 2 taxonomy で記述、の 3 点を追記する。
+
+### action_class 7 種は不変 (Sprint 5.5 で拡張なし)
+
+Sprint 5.5 (Output Validator + Input Trust Layer + repair retry policy) では action_class を **拡張しない**。Output Validator は既存の `task_write` (artifact 生成 / repair retry) と `provider_call` (provider 再呼出) の延長で扱い、Input Trust Layer の trust_level 昇格は既存の `task_write` (validated_artifact 化) と human approval 経由の昇格 (trusted_instruction 化) で扱う。
+
+### `repair_retry_max_attempts` policy 追加 (`config/policy_pack.toml` 新規導入)
+
+Sprint 5.5 で `config/policy_pack.toml` を新規導入し、以下の policy を追加:
+
+| policy key | default | 役割 |
+|---|---|---|
+| `repair_retry_max_attempts` | 3 | Output Validator の repair retry 上限。BudgetGuard `repair_budget_remaining` との AND で `repair_exhausted` (terminal、ADR-00004 §13 番目の状態) 遷移を制御 |
+| `trust_level_promotion_to_trusted_instruction_requires_human_approval` | true | `validated_artifact -> trusted_instruction` 昇格は human approval 経路 (Approval 4 整合 + decider human-only) のみ許可。boolean toggle (default true) で P0 では常時 true、P0.1+ で条件付き auto-promotion を ADR で議論可 |
+
+`policy_pack.toml` は **append-only / monotonic version increment** (Sprint 3 で確立した policy_decision invariant と同 pattern):
+
+- 新 policy 追加時は `policy_version` bump (e.g., `v1.0` → `v1.1`)、ContextSnapshot.policy_pack_lock も同期 update
+- 既存 policy 変更時は新 row 追加 + 旧 row deprecated marker、policy_decisions は append-only で旧 version 参照保持
+- rollback は forward-fix 戦略 (旧 default に戻す新 row 追加)、file 削除はしない
+
+5+ source 整合:
+- file `config/policy_pack.toml` (新規)
+- Python parser `backend/app/services/policy/policy_pack_loader.py` (新規)
+- Pydantic `PolicyPackConfig` schema (`extra="forbid"` で caller-supplied 経路禁止)
+- pytest `tests/policy/test_policy_pack_loader.py` (新規) で policy_pack_lock 整合 + policy_version monotonic
+- ContextSnapshot `policy_pack_lock` 列 (Sprint 4 で導入済) との接続 verify
+
+### `trusted_instruction` 昇格境界 (Approval 4 整合 + decider human-only)
+
+`untrusted_content -> validated_artifact` (server-owned 自動昇格、schema validation pass + policy lint pass) と `validated_artifact -> trusted_instruction` (human approval 経由) の **2 段階を明確に分離**:
+
+| 昇格経路 | trigger | gate | actor |
+|---|---|---|---|
+| `untrusted_content -> validated_artifact` | schema validation pass + policy lint pass | server-owned (`backend/app/services/input_trust/promotion.py` 新規) | server / agent / system (caller-supplied 経路 signature レベル削除) |
+| `validated_artifact -> trusted_instruction` | human approval | **既存 Approval 4 整合 + decider human-only** + `policy_pack.trust_level_promotion_to_trusted_instruction_requires_human_approval = true` | human only (DB CHECK + service guard 4 重防御、本 ADR の self-approval 禁止 invariant + decider human-only invariant 継続) |
+
+trusted_instruction 昇格時の Approval 4 整合 (本 ADR §採用案 line 57 既存定義の延長):
+1. `artifact_hash` (validated_artifact 状態の hash)
+2. `policy_version` + `policy_pack_lock`
+3. `provider_request_fingerprint` (artifact 生成元 provider call の fingerprint)
+4. `action_class` (`task_write` のサブセット、artifact promotion sub-classification は service layer で扱い、action_class enum 拡張なし)
+
+stale invalidation: 既存 5 ケース (artifact_hash / diff_hash / policy_version / policy_pack_lock / provider_request_fingerprint) のすべてを `tests/policy/test_approval_stale_invalidation.py` で検証済 (Sprint 3 で確立)。Sprint 5.5 で trust_level 昇格 approval を追加しても **invalidation 経路は既存と同 pattern** で動作。
+
+self-approval 禁止: requester != decider 必須、delegated actor が同じ human を `impersonated_by` に持つ場合も reject (本 ADR 既存 invariant 継続、Sprint 5.5 で trust_level 昇格にも適用)。
+
+### Sprint 5.5 audit_events 拡張 (ADR-00004 update §audit_events への追加と整合)
+
+Sprint 5.5 で **2 taxonomy** (Sprint 5 Batch 2 で確立) に従い audit_events に追加する event_type:
+
+| audit_event_type | trigger | payload (raw secret なし) | 関連 AgentRunEvent (ADR-00004 §Sprint 5.5 update) |
+|---|---|---|---|
+| `output_validation_repair_retry_recorded` | repair retry 実行時の policy / budget check 結果 | tenant_id, run_id, retry_count, policy_max_attempts, budget_remaining_before / after, decision (`allow_retry` / `repair_exhausted`), policy_version | (なし、AgentRunEvent 側は `repair_retry_scheduled` 既存または `repair_exhausted` event #23) |
+| `trust_level_promotion_audit` | `validated_artifact -> trusted_instruction` 昇格時 | tenant_id, artifact_id, approval_request_id, decider_actor_id (human only verify), 4 整合 hash 4 種 (artifact_hash / policy_version / provider_request_fingerprint / action_class) | event #24 `trust_level_promoted` |
+| `trust_level_promotion_denial_audit` | 昇格 deny 時 (server-owned 経路違反 / Approval 4 整合 mismatch / self-approval 試行 / caller-supplied 試行) | tenant_id, artifact_id, attempted_trust_level, deny_reason_code, raw_secret_check_passed=true (raw 値非露出 verify) | event #25 `trust_level_promotion_denied` |
+
+audit_events の 3 種は **AgentRunEvent とは別 table** (Sprint 5 Batch 2 確立の 2 taxonomy)、actor / run / trace_id / correlation_id / policy_version / reason_code を必須 payload として持ち、raw secret / raw provider response / capability token 生値を含めない (`tests/security/test_audit_no_raw_secret.py` parametrized で検証)。
+
+### policy_decisions への trust_level 昇格 trace 追加 (P0 期間中、既存列の延長)
+
+policy_decisions table に trust_level 昇格判定を保存する場合、**既存列の延長で対応** (新規列追加なし):
+
+- `action_class = 'task_write'` (既存 enum 値、artifact promotion は task_write のサブセット)
+- `reason_code` に Sprint 5.5 で追加: `trust_level_promotion_allowed` / `trust_level_promotion_denied_*` (deny_reason_code 5 種)
+- `input_hash` に artifact_hash + attempted_trust_level + policy_version の組合せ canonical hash を保存
+
+policy_decisions 列拡張は **行わない** (Sprint 5.5 で additive only 維持、ADR Gate Criteria #2 DB schema は ADR-00002 延長で対応、本 ADR で新規列追加なし)。
+
+### Sprint 5.5 関連 Sprint Pack
+
+- SP-005-5 (Output Validator) 受け入れ条件 + §設計判断 + §Rollback section が本 update と整合
+- SP-005-5 BL-0064 (Output Validator core) で `repair_retry_max_attempts` policy 駆動を実装
+- SP-005-5 BL-0065 (Input Trust Layer) で trust_level enum + 5+ source 整合を実装
+- SP-005-5 BL-0069 (trust_level 昇格 service) で本 update の Approval 4 整合 + decider human-only を実装
+- SP-005-5 BL-0071 (AC-HARD-07 prompt_injection_resist fixture loader) で trust_level 昇格 deny の 5 pattern を verify
+
+### 関連 ADR (Sprint 5.5)
+
+- ADR-00004 update §Sprint 5.5: event_type 22 → 25 拡張 (`repair_exhausted` / `trust_level_promoted` / `trust_level_promotion_denied`)、`repair_exhausted` terminal 強制、artifacts.trust_level 列追加、event_type numbering 整合 (Phase D-E は 26-34 にシフト)
+- ADR-00006 (SecretBroker): repair retry context redaction で `assert_no_raw_secret` を retry prompt builder で必須実行 (Sprint 5.5 で延長)
+- ADR-00010 (Provider Compliance Matrix v2): payload_data_class 算出を Input Trust Layer 側に集約 (Sprint 5.5 で延長、Sprint 5 で確立した caller-supplied 禁止 invariant 継続)
+- ADR-00002 (DB schema): artifacts.trust_level 列追加は ADR-00002 の延長として扱う (de facto accepted via Sprint 2 完了)

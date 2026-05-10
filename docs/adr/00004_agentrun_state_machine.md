@@ -491,3 +491,84 @@ SP-013 で agent_runs に `unique (tenant_id, project_id, id)` 追加 → 後続
 ### 関連 ADR
 
 - ADR-00014 / ADR-00018 / Phase C draft §3.7
+
+---
+
+## Sprint 5.5 Output Validator + Input Trust Layer update (2026-05-10、proposed 追記)
+
+SP-005-5 (Output Validator) accepted 化に伴う本 ADR の update。**P0 期間中** (Sprint 5.5) で event_type を 22 → 25 に拡張、`repair_exhausted` を terminal 強制、Input Trust Layer の `trust_level` enum (artifact 単体) を導入。**Phase D-E update §event_type 22 → 31 (P0.1+ 拡張) は本 Sprint 5.5 update が先行 accepted 化されるため、numbering を 26-34 にシフト**する (詳細は §event_type numbering 整合)。
+
+### event_type 22 → 25 拡張 (P0 期間中、Sprint 5.5 で追加)
+
+既存 22 event_type に Sprint 5.5 で **新規 3 種** を追加 (P0 期間中):
+
+| # | event_type | state transition | 必須 payload (raw secret なし) | 用途 |
+|---|---|---|---|---|
+| 23 | `repair_exhausted` | `validation_failed -> repair_exhausted` (terminal) | retry_count, last_validation_error_summary (redacted), repair_budget_remaining=0 or policy_max_reached, ContextSnapshot.snapshot_kind=resume の最終 ref | repair retry 上限到達 (policy_pack `repair_retry_max_attempts` または BudgetGuard `repair_budget_remaining` 失効)、terminal state |
+| 24 | `trust_level_promoted` | (status 不変) | artifact_id, from_trust_level, to_trust_level, promotion_path (`schema_validation_passed` / `policy_lint_passed` / `human_approval_passed`), approval_request_id (trusted_instruction 昇格時のみ、4 整合 hash) | Input Trust Layer 昇格 (untrusted_content → validated_artifact 自動 / validated_artifact → trusted_instruction = approval) |
+| 25 | `trust_level_promotion_denied` | (status 不変) | artifact_id, attempted_trust_level, deny_reason_code (`schema_validation_failed` / `policy_lint_failed` / `approval_4整合_mismatch` / `decider_not_human` / `caller_supplied_path_attempt`), audit trail | Input Trust Layer 昇格 deny (server-owned 経路違反、caller-supplied 試行、Approval 4 整合 mismatch、self-approval 試行 等) |
+
+5+ source 整合 update (`.claude/rules/cross-source-enum-integrity.md` §1 pattern):
+
+- migration `00NN_p0_event_type_25.py` で `agent_run_events.event_type` CHECK 制約を 22 → 25 に拡張
+- ORM `backend/app/db/models/agent_run_event.py` の `CheckConstraint`
+- Python Literal `backend/app/domain/agent_runtime/event_type.py` の `AgentRunEventType` + `ALL_AGENT_RUN_EVENT_TYPES` (22 → 25)
+- Pydantic `agent_run_event` schema
+- pytest `tests/runtime/test_agent_run_events.py` の `EXPECTED_AGENT_RUN_EVENT_TYPES` (25)
+- frontend TypeScript enum (Sprint 9 で追加、P0 段階では未要)
+
+### Input Trust Layer trust_level enum 追加 (artifact 単体、P0.1 SP-015 で inter_agent_messages 再利用前提)
+
+`artifacts.trust_level` 列追加 (additive only、NOT NULL DEFAULT `'untrusted_content'`):
+
+```sql
+alter table artifacts
+    add column trust_level text not null default 'untrusted_content'
+    check (trust_level in ('untrusted_content', 'validated_artifact', 'trusted_instruction'));
+```
+
+5+ source 整合:
+- DB CHECK (上記 migration)
+- ORM CheckConstraint (`backend/app/db/models/artifact.py`)
+- Python Literal (`backend/app/domain/artifact/trust_level.py` 新規、`TRUST_LEVELS: frozenset = {'untrusted_content', 'validated_artifact', 'trusted_instruction'}`)
+- Pydantic Field validator
+- pytest `tests/input_trust/test_trust_level_enum_drift.py` の `EXPECTED_TRUST_LEVELS`
+
+trust_level 昇格は server-owned のみ (caller-supplied 経路 signature レベル物理削除、`extra="forbid"` schema reject、`.claude/rules/server-owned-boundary.md` §1 invariant 継続)。
+
+### `repair_exhausted` terminal 強制
+
+ADR-00004 §147 terminal state 5 種 (既存定義) に **追加変更なし** (`repair_exhausted` は既存 16 状態の 13 番目で既に terminal 定義済)。Sprint 5.5 では既存 terminal 強制を contract test (`tests/runtime/test_repair_exhausted_terminal.py`) で 16 状態 × invalid transition matrix で full coverage する。
+
+repair retry 上限到達条件 (どちらか一方で `repair_exhausted` 遷移):
+1. `policy_pack.repair_retry_max_attempts` (Sprint 5.5 で新規導入、default 3) 到達
+2. BudgetGuard `repair_budget_remaining` 0 到達
+
+### event_type numbering 整合 (P0 / P0.1+ 衝突回避)
+
+**重要**: Phase D-E update §event_type 22 → 31 (proposed) は本 Sprint 5.5 update が先行 accepted 化されるため、**numbering をシフト**:
+
+- **元の Phase D-E numbering (proposed)**: 23-31 (orchestrator_dispatched 等 9 種)
+- **本 Sprint 5.5 update accepted 化後**: 23-25 (Sprint 5.5)、**26-34 (Phase D-E P0.1+)**
+
+Phase D-E update section (line 461 の §event_type 22 → 31 拡張表) は P0.1 SP-014/015 着手時に numbering 26-34 で再 accepted 化する。本 Sprint 5.5 update は P0 期間中の先行 accepted 化のため、Phase D-E section の numbering 23-31 は **proposed のまま invalidated** とし、SP-014/015 着手時に 26-34 で書換する (PD-R2-F-004 / PE-F-018 反映の意味は不変)。
+
+5+ source 整合の事実上の影響: P0 期間中は 22 → 25、P0.1 着手時に 25 → 34 で 2 段階拡張。
+
+### audit_events への追加 (本 ADR 範囲外、ADR-00009 update §audit_events と整合)
+
+Sprint 5.5 で audit_events に追加する event_type (本 ADR の AgentRunEvent allowlist とは別 taxonomy、Sprint 5 で確立した 2 taxonomy 分離):
+
+- `output_validation_repair_retry_recorded` (audit-only): repair retry の policy_decision / budget_check 結果
+- `trust_level_promotion_audit` (audit-only): trust_level 昇格時の Approval 4 整合 + decider human-only verify
+- `trust_level_promotion_denial_audit` (audit-only): 昇格 deny 時の reason_code + raw secret 非露出 verify
+
+これらは ADR-00009 update §Sprint 5.5 audit_events 拡張 (新規追加予定) で扱う。
+
+### 関連 ADR (Sprint 5.5)
+
+- ADR-00009 (action_class taxonomy) update §Sprint 5.5: `repair_retry_max_attempts` policy + `trusted_instruction` 昇格境界 (Approval 4 整合 + decider human-only)
+- ADR-00010 (Provider Compliance Matrix v2): payload_data_class 算出を Input Trust Layer 側に集約 (本 Sprint 5.5 で延長、Sprint 5 で確立した caller-supplied 禁止 invariant 継続)
+- ADR-00006 (SecretBroker): repair retry context redaction で `assert_no_raw_secret` を retry prompt builder で必須実行
+- SP-005-5 §設計判断 + §Rollback section
+- `.claude/rules/agentrun-state-machine.md` §6 (Sprint 5.5 update で event_type 22 → 25 反映予定、別 commit)

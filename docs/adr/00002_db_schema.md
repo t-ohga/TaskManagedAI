@@ -1,19 +1,21 @@
 ---
 id: "ADR-00002"
 title: "DB schema 基礎: tenant_id + project boundary + actors / principals + RLS-ready (P0 single-tenant、multi-tenant 移行余地維持)"
-status: "proposed"
+status: "accepted"
 date: "2026-05-08"
+accepted_at: "2026-05-08"
 authors:
   - "t-ohga"
 related_sprints:
   - "SP-002_core_data_model"
   - "SP-004_agent_runtime"
+  - "SP-005-5_output_validator"
   - "SP-010_research_evidence"
 supersedes: null
 superseded_by: null
 ---
 
-最終更新: 2026-05-08
+最終更新: 2026-05-10 (Sprint 5.5 prep で status drift fix: proposed → accepted。Sprint 2 完了 commit 74b67cf 経由で de facto accepted 化済みだったが file 上の status field が proposed のまま残存していた drift を修正。Sprint 5.5 では artifacts.trust_level 列追加 (additive only) を本 ADR の延長として扱う)
 
 ## 背景
 
