@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -309,9 +310,9 @@ async def _insert_capability_token(
     expected_request_fingerprint: str = (
         "0000000000000000000000000000000000000000000000000000000000001234"
     ),
-    created_at: str = "2030-01-01 00:00:00+00",
-    expires_at: str = "2030-01-01 00:30:00+00",
-    used_at: str | None = None,
+    created_at: datetime = datetime(2030, 1, 1, 0, 0, tzinfo=UTC),
+    expires_at: datetime = datetime(2030, 1, 1, 0, 30, tzinfo=UTC),
+    used_at: datetime | None = None,
     allowed_operations: str = '["provider.call"]',
     scope_constraint: str = '{"scope": "project"}',
     metadata: str = '{"rls_ready": true}',
@@ -1409,8 +1410,8 @@ async def test_capability_tokens_reject_expires_at_below_ttl_bounds(
             await _insert_capability_token(
                 session,
                 id=TOKEN_ONE_ID,
-                created_at="2030-01-01 00:00:00+00",
-                expires_at="2030-01-01 00:00:00+00",
+                created_at=datetime(2030, 1, 1, 0, 0, tzinfo=UTC),
+                expires_at=datetime(2030, 1, 1, 0, 0, tzinfo=UTC),
             )
             await session.commit()
 
@@ -1433,8 +1434,8 @@ async def test_capability_tokens_reject_expires_at_above_ttl_bounds(
             await _insert_capability_token(
                 session,
                 id=TOKEN_ONE_ID,
-                created_at="2030-01-01 00:00:00+00",
-                expires_at="2030-01-01 01:00:00+00",
+                created_at=datetime(2030, 1, 1, 0, 0, tzinfo=UTC),
+                expires_at=datetime(2030, 1, 1, 1, 0, tzinfo=UTC),
             )
             await session.commit()
 
@@ -1456,8 +1457,8 @@ async def test_capability_tokens_accept_expires_at_within_ttl_bounds(
         await _insert_capability_token(
             session,
             id=TOKEN_ONE_ID,
-            created_at="2030-01-01 00:00:00+00",
-            expires_at="2030-01-01 00:15:00+00",
+            created_at=datetime(2030, 1, 1, 0, 0, tzinfo=UTC),
+            expires_at=datetime(2030, 1, 1, 0, 15, tzinfo=UTC),
         )
         await session.commit()
 
@@ -1486,8 +1487,8 @@ async def test_capability_tokens_accept_expires_at_at_lower_ttl_bound(
         await _insert_capability_token(
             session,
             id=TOKEN_ONE_ID,
-            created_at="2030-01-01 00:00:00+00",
-            expires_at="2030-01-01 00:05:00+00",
+            created_at=datetime(2030, 1, 1, 0, 0, tzinfo=UTC),
+            expires_at=datetime(2030, 1, 1, 0, 5, tzinfo=UTC),
         )
         await session.commit()
 
@@ -1516,8 +1517,8 @@ async def test_capability_tokens_accept_expires_at_at_upper_ttl_bound(
         await _insert_capability_token(
             session,
             id=TOKEN_ONE_ID,
-            created_at="2030-01-01 00:00:00+00",
-            expires_at="2030-01-01 00:30:00+00",
+            created_at=datetime(2030, 1, 1, 0, 0, tzinfo=UTC),
+            expires_at=datetime(2030, 1, 1, 0, 30, tzinfo=UTC),
         )
         await session.commit()
 
@@ -1548,7 +1549,7 @@ async def test_capability_tokens_reject_used_at_with_issued_status(
                 session,
                 id=TOKEN_ONE_ID,
                 status="issued",
-                used_at="2030-01-01 00:01:00+00",
+                used_at=datetime(2030, 1, 1, 0, 1, tzinfo=UTC),
             )
             await session.commit()
 
