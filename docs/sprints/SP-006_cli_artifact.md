@@ -4,25 +4,27 @@ type: "heavy"
 status: "draft"
 sprint_no: 6
 created_at: "2026-05-08"
-updated_at: "2026-05-08"
+updated_at: "2026-05-10"
 target_days: 2.5
 max_days: 5
 adr_refs: []
 planned_adr_refs:
-  - "[ADR-00003](../adr/00003_api_contract.md) # Sprint 6 で proposed 化、CLI artifact orchestration の API 契約 (artifact schema、subprocess launcher、AgentRunEvent 拡張、採否判定 API、AI 出力直結禁止 lint)。Criteria #3 (API 契約 / event schema) 該当"
+  - "[ADR-00003](../adr/00003_api_contract.md) # implementation_gate: SP-006 開始前に proposed → accepted 必須。CLI artifact orchestration の API 契約 (artifact schema、subprocess launcher、AgentRunEvent 拡張、採否判定 API、AI 出力直結禁止 lint)。Criteria #3 (API 契約 / event schema) 該当"
+  - "[ADR-00013](../adr/00013_remote_agent_extension.md) # reference_only_for_p0: true (R1-F-016 fix)。2026-05-10 proposed 化済、Codex app-server / Claude Agent SDK の extension point boundary 仕様。SP-006 では note + extension point に止め、accepted 化は P0.1 で。SP-006 exit の accepted 条件ではない (R1-F-014 fix)。Criteria #4/#5/#6/#7/#10 該当"
+upstream_sprints:
+  - "SP-005-5_output_validator"
 related_sprints:
   - "SP-007_runner_sandbox"
-downstream_sprints:
-  - "SP-005-5_output_validator"
 risks:
   - "AI 出力の subprocess 直結リスク"
   - "stdout / stderr の secret 漏洩"
   - "subprocess timeout / cancel propagation 不備"
+  - "Codex app-server / Claude Agent SDK の extension point note が ADR-00013 と drift するリスク (本 Sprint で extension point note のみ残し、boundary 仕様は ADR-00013 に閉じる)"
 ---
 
 このテンプレの使い方: Sprint 6 の CLI Artifact Orchestration で、`codex exec` / `claude -p` 等の CLI agent を domain に密結合せず、Markdown / JSON artifact、subprocess launcher、stdout / stderr / exit code capture、採否判定 API、direct execution prohibition test として扱うための heavy Sprint Pack。CLI artifact orchestration は ADR Gate Criteria #3 API 契約 / event schema に該当するため、ADR-00003 を proposed 化して artifact schema、subprocess launcher request / result、AgentRunEvent 拡張、採否判定 API、AI 出力直結禁止 lint の境界を固定してから実装する。Sprint 4.5 の registry と `tool_mutating_gateway_stub` deny-only 方針、Sprint 5.5 の Output Validator / Input Trust Layer を前提にする。
 
-最終更新: 2026-05-08
+最終更新: 2026-05-10 (R1-F-015 fix、frontmatter `updated_at` と整合)
 
 ## 目的
 
