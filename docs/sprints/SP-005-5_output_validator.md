@@ -8,7 +8,7 @@ updated_at: "2026-05-10"
 target_days: 4
 max_days: 6
 adr_refs:
-  - "[ADR-00002](../adr/00002_db_schema_foundation.md) # de facto accepted (Sprint 2 完了 commit 74b67cf 経由、status field は drift あり)、DB schema 基礎 / tenant_id + project boundary + 複合 FK / RLS-ready の前提。Sprint 5.5 で artifacts.trust_level 列追加 (additive only、NOT NULL DEFAULT で既存 row 自動 backfill) は ADR-00002 の延長として扱う"
+  - "[ADR-00002](../adr/00002_db_schema.md) # de facto accepted (Sprint 2 完了 commit 74b67cf 経由、status field は drift あり)、DB schema 基礎 / tenant_id + project boundary + 複合 FK / RLS-ready の前提。Sprint 5.5 で artifacts.trust_level 列追加 (additive only、NOT NULL DEFAULT で既存 row 自動 backfill) は ADR-00002 の延長として扱う"
   - "[ADR-00004](../adr/00004_agentrun_state_machine.md) # accepted、AgentRun 16 状態 / blocked サブ 3 / validation_failed / repair_exhausted / repair retry / ContextSnapshot snapshot_kind=resume の前提。**Sprint 5.5 着手前に §6 event allowlist へ本 Sprint 追加 event_type 3 種 (repair_exhausted / trust_level_promoted / trust_level_promotion_denied) の update 追記必須** (新規 ADR proposed なし、Phase D update pattern 踏襲)"
   - "[ADR-00006](../adr/00006_secrets_management.md) # accepted、retry prompt / repair input に raw secret 非露出 + redacted summary のみ"
   - "[ADR-00009](../adr/00009_action_class_taxonomy.md) # accepted、action_class 7 種、Output Validator は action class 拡張なし、trusted_instruction 昇格は既存 approval 経路に閉じる。**Sprint 5.5 着手前に repair_retry_max_attempts policy 追加 + trusted_instruction 昇格境界 (Approval 4 整合 + decider human-only) の update 追記必須**"
@@ -268,7 +268,7 @@ Sprint 5.5 Batch 4 (実装最終 batch) で **dry-run rollback drill** を実施
 
 ## 関連 ADR
 
-- [ADR-00002](../adr/00002_db_schema_foundation.md): de facto accepted (Sprint 2 完了 commit 74b67cf 経由、status field は drift あり)。DB schema 基礎 / tenant_id + project boundary + 複合 FK / RLS-ready。Sprint 5.5 で artifacts.trust_level 列追加 (additive only) は ADR-00002 の延長として扱う。
+- [ADR-00002](../adr/00002_db_schema.md): de facto accepted (Sprint 2 完了 commit 74b67cf 経由、status field は drift あり)。DB schema 基礎 / tenant_id + project boundary + 複合 FK / RLS-ready。Sprint 5.5 で artifacts.trust_level 列追加 (additive only) は ADR-00002 の延長として扱う。
 - [ADR-00004](../adr/00004_agentrun_state_machine.md): accepted (Sprint 4 着手前)。AgentRun 16 状態 / blocked サブ 3 / validation_failed / repair_exhausted / repair retry / ContextSnapshot snapshot_kind=resume の前提。Sprint 5.5 で §6 event allowlist update 追記。
 - [ADR-00006](../adr/00006_secrets_management.md): accepted (Sprint 4 着手前)。SecretBroker / `secret_ref` / capability token / atomic claim / raw secret 非保存。retry prompt に raw secret 非露出を担保。
 - [ADR-00009](../adr/00009_action_class_taxonomy.md): accepted (Sprint 3 着手前)。action_class 7 種、Output Validator は action class 拡張なし、trusted_instruction 昇格は既存 approval 経路に閉じる。Sprint 5.5 で repair_retry_max_attempts policy 追加 + trusted_instruction 昇格境界の update 追記。
