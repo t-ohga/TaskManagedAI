@@ -542,10 +542,19 @@ async def test_provider_continuation_ref_exportable_true_is_rejected_by_db_check
             await _insert_context_snapshot(session, provider_continuation_ref=ref)
             await session.commit()
 
+        # migration 0009 は exportable=false rule を 2 箇所で重複定義する:
+        #   1. _ck_provider_continuation_ref_exportable_false (line 213-217、
+        #      create_table 内、単独 check)
+        #   2. _ck_continuation_ref_required (line 272-287、後追い、composite で
+        #      provider/kind/artifact_ref/sha256/expires_at と共に exportable='false' も検査)
+        # PostgreSQL は composite (_required) を先に評価して fire するため、actual
+        # constraint name は _continuation_ref_required になる。重複は migration 0009 の
+        # append-only 性質から修正不可、test expected を実 fire 側に揃える
+        # (broad audit Codex task で確認済)。
         _assert_integrity_error(
             exc_info.value,
             sqlstate="23514",
-            constraint_name="context_snapshots_ck_provider_continuation_ref_exportable_false",
+            constraint_name="context_snapshots_ck_continuation_ref_required",
         )
         await session.rollback()
 
