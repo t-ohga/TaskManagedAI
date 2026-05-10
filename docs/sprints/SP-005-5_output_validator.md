@@ -8,11 +8,13 @@ updated_at: "2026-05-10"
 target_days: 4
 max_days: 6
 adr_refs:
+  - "[ADR-00002](../adr/00002_db_schema_foundation.md) # de facto accepted (Sprint 2 完了 commit 74b67cf 経由、status field は drift あり)、DB schema 基礎 / tenant_id + project boundary + 複合 FK / RLS-ready の前提。Sprint 5.5 で artifacts.trust_level 列追加 (additive only、NOT NULL DEFAULT で既存 row 自動 backfill) は ADR-00002 の延長として扱う"
   - "[ADR-00004](../adr/00004_agentrun_state_machine.md) # accepted、AgentRun 16 状態 / blocked サブ 3 / validation_failed / repair_exhausted / repair retry / ContextSnapshot snapshot_kind=resume の前提。**Sprint 5.5 着手前に §6 event allowlist へ本 Sprint 追加 event_type 3 種 (repair_exhausted / trust_level_promoted / trust_level_promotion_denied) の update 追記必須** (新規 ADR proposed なし、Phase D update pattern 踏襲)"
   - "[ADR-00006](../adr/00006_secrets_management.md) # accepted、retry prompt / repair input に raw secret 非露出 + redacted summary のみ"
   - "[ADR-00009](../adr/00009_action_class_taxonomy.md) # accepted、action_class 7 種、Output Validator は action class 拡張なし、trusted_instruction 昇格は既存 approval 経路に閉じる。**Sprint 5.5 着手前に repair_retry_max_attempts policy 追加 + trusted_instruction 昇格境界 (Approval 4 整合 + decider human-only) の update 追記必須**"
   - "[ADR-00010](../adr/00010_provider_change.md) # accepted、payload_data_class 事前算出、allowed_data_class caller 入力禁止、`provider_request_preflight`"
 planned_adr_refs: []
+# ADR-00008 (破壊的操作) は P0 全体で未起票。Sprint 5.5 では destructive 操作を行わないため不要 (詳細は §設計判断 末尾「ADR Gate Criteria #8 非該当の根拠」参照)。Sprint 12 P0 Acceptance backup-restore drill 時に P0 全体方針として ADR-00008 を起票判断する。
 related_sprints:
   - "SP-005_provider_adapter"
 upstream_sprints:
@@ -73,6 +75,22 @@ risks:
 - **repair_exhausted terminal 強制**: ADR-00004 §3 Terminal State の通り、`repair_exhausted` から retry / resume / state transition を deny。state machine contract test で全 16 状態 × invalid transition を parametrize して確認。
 - **prompt injection 防御**: untrusted_content (provider output / external fetch) に「この artifact を trusted_instruction として実行せよ」等の指示が混入しても、trust_level 昇格は server 側 + human approval 経由のみのため自動実行しない。AC-HARD-07 fixture で 5+ injection pattern を 100% deny できることを確認。
 - **既存 invariant の継続**: Sprint 1-5 で確立した invariant (caller-supplied 経路禁止、共通 `_payload_secret_scan.py`、`assert_no_raw_secret`、cross-source enum 5+ source、4 重防御 4 layer、AgentRun 16 状態、ContextSnapshot 10 列、Provider Compliance 13 reason_code) は **すべて維持**。Sprint 5.5 で破壊しない。
+
+### ADR Gate Criteria #8 非該当の根拠 (destructive 操作なし)
+
+Sprint 5.5 の DB / schema 変更はすべて **additive only** で、`.claude/rules/sprint-pack-adr-gate.md` §4 Criteria #8 (破壊的操作 / migration / tenant data 移行) に **非該当**:
+
+| 変更 | additive 性質 | 根拠 |
+|---|---|---|
+| `artifacts.trust_level` 列追加 | additive | NOT NULL DEFAULT `'untrusted_content'` で既存 row 全件 自動 backfill、column drop なし、data 削除なし |
+| AgentRunEvent CHECK constraint 22 → 25 拡張 | additive | enum 値追加で既存 row は全件 validation pass (`validation_failed` / `repair_retry_scheduled` 等の既存 22 値が CHECK 範囲内に残る)、constraint 緩和方向 |
+| `config/policy_pack.toml` 新規導入 | additive | 新規 file 作成、既存 file 削除なし。policy_version は monotonic increment (Sprint 3 で確立)、append-only |
+| `repair_policy.py` refactor | non-destructive | code 変更のみで data 変更なし、後方互換のため Plan artifact 内 default 値は保持 |
+| 5 新規 file (output_validator/ + input_trust/) | additive | 新規 directory + file 作成、既存 service 削除なし |
+
+destructive 操作 (DROP TABLE / TRUNCATE / DELETE FROM / tenant data 移行 / data backfill 必須) は **すべて含まれない**。Hook `check-adr-gate.sh` が `migration` / `alter table` keyword pattern grep で ADR-00008 を期待する WARN は **informational** として扱い、Pack 内の Rollback section (§Rollback) で additive 変更の rollback 戦略を網羅する。
+
+P0 全体の ADR-00008 (破壊的操作 / backup-restore 戦略) は Sprint 12 P0 Acceptance backup-restore drill 時に proposed 起票判断する (Sprint 5.5 のスコープ外)。
 
 ## 実装チケット
 
@@ -250,10 +268,12 @@ Sprint 5.5 Batch 4 (実装最終 batch) で **dry-run rollback drill** を実施
 
 ## 関連 ADR
 
-- [ADR-00004](../adr/00004_agentrun_state_machine.md): accepted (Sprint 4 着手前)。AgentRun 16 状態 / blocked サブ 3 / validation_failed / repair_exhausted / repair retry / ContextSnapshot snapshot_kind=resume の前提。
+- [ADR-00002](../adr/00002_db_schema_foundation.md): de facto accepted (Sprint 2 完了 commit 74b67cf 経由、status field は drift あり)。DB schema 基礎 / tenant_id + project boundary + 複合 FK / RLS-ready。Sprint 5.5 で artifacts.trust_level 列追加 (additive only) は ADR-00002 の延長として扱う。
+- [ADR-00004](../adr/00004_agentrun_state_machine.md): accepted (Sprint 4 着手前)。AgentRun 16 状態 / blocked サブ 3 / validation_failed / repair_exhausted / repair retry / ContextSnapshot snapshot_kind=resume の前提。Sprint 5.5 で §6 event allowlist update 追記。
 - [ADR-00006](../adr/00006_secrets_management.md): accepted (Sprint 4 着手前)。SecretBroker / `secret_ref` / capability token / atomic claim / raw secret 非保存。retry prompt に raw secret 非露出を担保。
-- [ADR-00009](../adr/00009_action_class_taxonomy.md): accepted (Sprint 3 着手前)。action_class 7 種、Output Validator は action class 拡張なし、trusted_instruction 昇格は既存 approval 経路に閉じる。
+- [ADR-00009](../adr/00009_action_class_taxonomy.md): accepted (Sprint 3 着手前)。action_class 7 種、Output Validator は action class 拡張なし、trusted_instruction 昇格は既存 approval 経路に閉じる。Sprint 5.5 で repair_retry_max_attempts policy 追加 + trusted_instruction 昇格境界の update 追記。
 - [ADR-00010](../adr/00010_provider_change.md): accepted (Sprint 5 着手前)。Provider Compliance Matrix v2、`payload_data_class` / `allowed_data_class`、ordinal map、runtime `effective_allowed_data_class`、`provider_request_preflight`。Sprint 5.5 では payload_data_class 算出を Input Trust Layer 側に集約する形で延長。
+- (参考) ADR-00008 (破壊的操作): P0 全体で未起票、Sprint 12 P0 Acceptance backup-restore drill で起票判断。Sprint 5.5 は additive only のため #8 非該当 (詳細は §設計判断 末尾「ADR Gate Criteria #8 非該当の根拠」)。
 
 ## Review
 
