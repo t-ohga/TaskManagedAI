@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
+from backend.app.seeds.initial_policy_matrix import INITIAL_POLICY_MATRIX
 from eval.security.policy_block.loader import (
     discover_fixtures,
     load_manifest,
@@ -15,30 +15,15 @@ _BASE_PATH = Path(__file__).resolve().parents[2] / "eval" / "security" / "policy
 
 
 def _extract_reason_codes_from_initial_seed() -> frozenset[str]:
-    """Extract reason_code values from migration 0005 initial policy_rules seed."""
+    """Extract reason_code values from the canonical initial policy matrix seed.
 
-    migration_path = (
-        Path(__file__).resolve().parents[2]
-        / "migrations"
-        / "versions"
-        / "0005_policy_rules.py"
-    )
-    source = migration_path.read_text(encoding="utf-8")
-
-    keys = set(re.findall(r'"reason_code"\s*:\s*"([a-z0-9_]+)"', source))
-    keys.update(
-        re.findall(
-            r"\(\s*'[a-z_]+'\s*,\s*'[a-z_]+'\s*,\s*'([a-z0-9_]+)'\s*,\s*'[^']+'\s*,\s*(?:NULL|'[^']*')\s*\)",
-            source,
-            re.DOTALL,
-        )
-    )
-    if not keys:
-        raise AssertionError(
-            "No reason_code values found in migrations/versions/0005_policy_rules.py "
-            "initial policy_rules seed."
-        )
-    return frozenset(keys)
+    Replaces the legacy regex-parser of migrations/versions/0005_policy_rules.py
+    source text, which is brittle against migration source refactors. The new source
+    of truth is `backend.app.seeds.initial_policy_matrix.INITIAL_POLICY_MATRIX`.
+    Migration 0005 SQL VALUES MUST stay in sync with this constant (see docstring
+    of initial_policy_matrix.py).
+    """
+    return frozenset(seed["reason_code"] for seed in INITIAL_POLICY_MATRIX)
 
 
 def test_policy_block_manifest_gate_id_and_metric() -> None:

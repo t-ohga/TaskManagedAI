@@ -11,7 +11,7 @@ import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
@@ -24,6 +24,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.app.config import Settings, get_settings
 from backend.app.db.models.approval_request import ApprovalRequest
 from backend.app.db.session import create_engine
+from backend.app.seeds.initial_policy_matrix import (
+    INITIAL_POLICY_VERSION,
+    seed_initial_policy_matrix,
+)
 from backend.app.services.policy.decision_service import ApprovalDecisionService
 
 _DEFAULT_DATABASE_URL = (
@@ -31,7 +35,6 @@ _DEFAULT_DATABASE_URL = (
 )
 _DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/1"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_INITIAL_POLICY_VERSION = "2026-05-08-initial"
 
 REQUESTER_ACTOR_ID = UUID("00000000-0000-4000-8000-000000006001")
 DELEGATED_ACTOR_ID = UUID("00000000-0000-4000-8000-000000006002")
@@ -277,35 +280,14 @@ async def _insert_approval(
 
 
 async def _ensure_p0_policy_rule(session: AsyncSession, action_class: str) -> None:
-    await session.execute(
-        text(
-            """
-            insert into policy_rules (
-              id,
-              tenant_id,
-              action_class,
-              effect,
-              rule_json,
-              policy_version,
-              metadata
-            )
-            values (
-              :id,
-              1,
-              :action_class,
-              'deny',
-              '{"reason_code": "p0_merge_deploy_disabled", "scope": "all"}'::jsonb,
-              :policy_version,
-              '{"rls_ready": true}'::jsonb
-            )
-            """
-        ),
-        {
-            "id": uuid4(),
-            "action_class": action_class,
-            "policy_version": _INITIAL_POLICY_VERSION,
-        },
-    )
+    # 旧 ad-hoc INSERT (merge / deploy のみ 1 行ずつ deny insert) は drift の温床に加え、
+    # `truncate cascade` で 7 行 seed が消えた状態で 2 行だけ残し、後続の
+    # test_initial_policy_matrix の `assert 7 == len(rows)` を `2 == 7` で fail させていた。
+    # 共通 seed module で 7 行揃え、`p0_merge_deploy_disabled` deny effect が含まれる
+    # ことを assert で確認するパターンに変更。
+    await seed_initial_policy_matrix(session)
+    effects = await _p0_policy_effects(session, action_class)
+    assert "deny" in effects
 
 
 async def _p0_policy_effects(session: AsyncSession, action_class: str) -> list[str]:
@@ -322,7 +304,7 @@ async def _p0_policy_effects(session: AsyncSession, action_class: str) -> list[s
         ),
         {
             "action_class": action_class,
-            "policy_version": _INITIAL_POLICY_VERSION,
+            "policy_version": INITIAL_POLICY_VERSION,
         },
     )
     return [str(row[0]) for row in result.all()]

@@ -34,6 +34,7 @@ from backend.app.db.session import create_engine
 from backend.app.domain.policy.action_class import ActionClass
 from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 from backend.app.repositories.policy_rule import PolicyRuleRepository
+from backend.app.seeds.initial_policy_matrix import seed_initial_policy_matrix
 from eval.security.policy_block.loader import (
     PublicFixture,
     discover_fixtures,
@@ -150,6 +151,11 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
         class_=AsyncSession,
         expire_on_commit=False,
     )
+
+    # 共通 seed module で migration 0005 の policy_rules 7 行を restore する。
+    # 共有 Postgres container で先行 test の `truncate ... cascade` が wipe している場合の保険。
+    async with factory.begin() as session:
+        await seed_initial_policy_matrix(session)
 
     try:
         yield factory

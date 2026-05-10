@@ -22,13 +22,16 @@ from backend.app.domain.policy.action_class import (
     P0_CONDITIONAL,
     P0_FAIL_CLOSED,
 )
+from backend.app.seeds.initial_policy_matrix import (
+    INITIAL_POLICY_VERSION,
+    seed_initial_policy_matrix,
+)
 
 _DEFAULT_DATABASE_URL = (
     "postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test"
 )
 _DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/1"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_INITIAL_POLICY_VERSION = "2026-05-08-initial"
 
 
 def _integration_settings() -> Settings:
@@ -86,6 +89,13 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
         expire_on_commit=False,
     )
 
+    # 同 Postgres container を共有する CI 環境では、先行する test の `_reset_core_tables`
+    # の `truncate ... cascade` で migration 0005 の policy_rules seed (7 行) が wipe される。
+    # alembic upgrade head は head 到達後の no-op のため再 seed されない。
+    # 共通 seed module から確実に 7 行 restore してから test を始める。
+    async with factory.begin() as session:
+        await seed_initial_policy_matrix(session)
+
     try:
         yield factory
     finally:
@@ -108,7 +118,7 @@ async def _initial_policy_matrix_rows(session: AsyncSession) -> list[dict[str, A
             order by action_class
             """
         ),
-        {"policy_version": _INITIAL_POLICY_VERSION},
+        {"policy_version": INITIAL_POLICY_VERSION},
     )
     return [dict(row) for row in result.mappings()]
 
@@ -134,7 +144,7 @@ async def test_initial_matrix_has_seven_action_classes(
 
     assert len(rows) == 7
     assert {str(row["action_class"]) for row in rows} == set(ALL_ACTION_CLASSES)
-    assert {str(row["policy_version"]) for row in rows} == {_INITIAL_POLICY_VERSION}
+    assert {str(row["policy_version"]) for row in rows} == {INITIAL_POLICY_VERSION}
 
 
 @pytest.mark.asyncio
