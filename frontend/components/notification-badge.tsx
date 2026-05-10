@@ -20,14 +20,14 @@ export async function NotificationBadge() {
     >
       <span aria-hidden="true">🔔</span>
       <span className="sr-only">Notifications</span>
-      {count > 0 && (
+      {count > 0 ? (
         <span
           className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-xs font-bold text-white"
           data-testid="notification-unread-count"
         >
           {count > 99 ? "99+" : count}
         </span>
-      )}
+      ) : null}
     </Link>
   );
 }

@@ -1,7 +1,7 @@
 """Add policy rules table and initial policy matrix.
 
 Revision ID: 0005_policy_rules
-Revises: 0004_secret_refs_capability_tokens
+Revises: 0004_secret_capability_tokens
 Create Date: 2026-05-08 00:00:00.000000
 """
 
@@ -14,7 +14,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0005_policy_rules"
-down_revision: str | None = "0004_secret_refs_capability_tokens"
+down_revision: str | None = "0004_secret_capability_tokens"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

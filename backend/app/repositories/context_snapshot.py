@@ -120,7 +120,7 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
             repo_state=cast(JsonDict, repo_state),
             tool_manifest=cast(JsonDict, tool_manifest),
             evidence_set_hash=cast(str, evidence_set_hash),
-            provider_continuation_ref=cast(JsonDict | None, provider_continuation_ref),
+            provider_continuation_ref=provider_continuation_ref,
             provider_request_fingerprint=cast(JsonDict, provider_request_fingerprint),
             snapshot_kind=cast(SnapshotKind, snapshot_kind),
         )

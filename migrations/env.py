@@ -4,6 +4,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
+from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, pool
 
 from backend.app.config import get_settings
@@ -15,13 +16,32 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = None
+# Alembic default alembic_version.version_num is varchar(32) (hard limit).
+# Project convention recommends <= 30 chars for 2-char safety margin.
+MAX_REVISION_ID_LENGTH = 32
 
 
 def get_database_url() -> str:
     return get_settings().database_url
 
 
+def assert_revision_ids_within_limit() -> None:
+    script = ScriptDirectory.from_config(config)
+    too_long = sorted(
+        revision.revision
+        for revision in script.walk_revisions()
+        if len(revision.revision) > MAX_REVISION_ID_LENGTH
+    )
+    if too_long:
+        details = ", ".join(f"{revision} ({len(revision)} chars)" for revision in too_long)
+        raise RuntimeError(
+            "Alembic revision_id must be <= "
+            f"{MAX_REVISION_ID_LENGTH} chars to fit alembic_version.version_num: {details}"
+        )
+
+
 def run_migrations_offline() -> None:
+    assert_revision_ids_within_limit()
     context.configure(
         url=get_database_url(),
         target_metadata=target_metadata,
@@ -55,6 +75,7 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
+    assert_revision_ids_within_limit()
     config.set_main_option("sqlalchemy.url", get_database_url())
     config.attributes["poolclass"] = pool.NullPool
     asyncio.run(run_async_migrations())

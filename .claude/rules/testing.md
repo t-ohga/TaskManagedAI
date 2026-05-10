@@ -135,18 +135,31 @@ Vitest、pytest、Playwright、contract test、state machine test、Eval fixture
 - Frontend unit: `pnpm test`
 - Frontend coverage: `pnpm test -- --coverage`
 - Frontend E2E: `pnpm test:e2e`
+- Frontend lint: `cd frontend && pnpm exec eslint . --max-warnings=0`
 - Backend unit / contract: `uv run pytest`
 - Backend lint: `uv run ruff check backend tests`
 - Backend type: `uv run mypy backend`
 - DB migration check: `uv run alembic check`
+- DB migration apply: `uv run alembic upgrade head`
 - Full local smoke: `docker compose up --build`
 
-## 12. 完了条件
+## 12. Sprint 着手前 prerequisite
+
+- main push / PR 作成前に CI Smoke と同等の local verification を実行する。
+- dependency 追加時は lockfile を更新し、`uv sync --locked` または `pnpm install --frozen-lockfile` 相当で確認する。
+- 新規 migration commit 前に `uv run alembic upgrade head` を local で実行し、fresh DB で全 migration apply が成功することを確認する。
+- migration `revision` は **30 chars 以内** にする (Alembic default の `alembic_version.version_num` が `varchar(32)` のため、project convention として 30 chars を上限)。`migrations/env.py` の `assert_revision_ids_within_limit()` で fail-fast、hook `.claude/hooks/migration/check-revision-id-length.sh` で PreToolUse BLOCK。
+- frontend 変更時は `cd frontend && pnpm exec eslint . --max-warnings=0` を local で実行する。
+- backend 変更時は `uv run ruff check backend tests` と `uv run mypy backend` を local で実行する。
+- 実行できない検証がある場合は、理由、代替確認、残リスクを Sprint Pack / 最終報告に明記する。
+
+## 13. 完了条件
 
 - [ ] 変更範囲に対応する unit / contract / E2E がある。
 - [ ] 弱い assertion だけのテストがない。
 - [ ] AgentRun 16 状態と ContextSnapshot 10 カラムを壊していない。
 - [ ] Provider Compliance と SecretBroker の negative test がある。
 - [ ] private / public / adversarial fixture が混ざっていない。
+- [ ] CI Smoke と同等の local verification を main push / PR 前に実行している。
 - [ ] 実行できなかった検証は最終報告に理由付きで残す。
 

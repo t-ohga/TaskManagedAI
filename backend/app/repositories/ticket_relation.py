@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 from typing import Any, NoReturn, cast
 from uuid import UUID
 
@@ -19,7 +20,7 @@ class TicketRelationRepository(BaseRepository[TicketRelation]):
     async def get(self, tenant_id: int, id: UUID) -> TicketRelation | None:
         raise NotImplementedError("Use get_in_project(...)")
 
-    async def list(self, tenant_id: int) -> list[TicketRelation]:
+    async def list(self, tenant_id: int) -> builtins.list[TicketRelation]:
         raise NotImplementedError("Use list_in_project(...)")
 
     async def update(
@@ -62,13 +63,13 @@ class TicketRelationRepository(BaseRepository[TicketRelation]):
             TicketRelation.project_id == project_id,
             TicketRelation.id == relation_id,
         )
-        return await self.session.scalar(stmt)
+        return cast(TicketRelation | None, await self.session.scalar(stmt))
 
     async def list_in_project(
         self,
         tenant_id: int,
         project_id: UUID,
-    ) -> list[TicketRelation]:
+    ) -> builtins.list[TicketRelation]:
         await self._ensure_tenant_context(tenant_id)
         result = await self.session.execute(
             select(TicketRelation)
@@ -148,7 +149,7 @@ class TicketRelationRepository(BaseRepository[TicketRelation]):
             .values(**data)
             .returning(TicketRelation)
         )
-        return cast(TicketRelation | None, result.scalar_one_or_none())
+        return result.scalar_one_or_none()
 
     async def delete_in_project(
         self,

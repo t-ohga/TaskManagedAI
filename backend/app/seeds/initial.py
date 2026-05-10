@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, cast
 from uuid import UUID
 
+import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,6 +48,16 @@ DEFAULT_ACCEPTANCE_CRITERIA_STATUS: Final[str] = "pending"
 DEFAULT_AUDIT_EVENT_ID: Final[UUID] = UUID("00000000-0000-4000-8000-000000000008")
 DEFAULT_AUDIT_EVENT_TYPE: Final[str] = "seed_initialized"
 
+TENANT_TABLE: Final[sa.Table] = cast(sa.Table, Tenant.__table__)
+ACTOR_TABLE: Final[sa.Table] = cast(sa.Table, Actor.__table__)
+PRINCIPAL_TABLE: Final[sa.Table] = cast(sa.Table, Principal.__table__)
+WORKSPACE_TABLE: Final[sa.Table] = cast(sa.Table, Workspace.__table__)
+PROJECT_TABLE: Final[sa.Table] = cast(sa.Table, Project.__table__)
+REPOSITORY_TABLE: Final[sa.Table] = cast(sa.Table, Repository.__table__)
+TICKET_TABLE: Final[sa.Table] = cast(sa.Table, Ticket.__table__)
+ACCEPTANCE_CRITERIA_TABLE: Final[sa.Table] = cast(sa.Table, AcceptanceCriteria.__table__)
+AUDIT_EVENT_TABLE: Final[sa.Table] = cast(sa.Table, AuditEvent.__table__)
+
 
 def _metadata(**extra: object) -> dict[str, object]:
     metadata: dict[str, object] = {
@@ -59,7 +70,7 @@ def _metadata(**extra: object) -> dict[str, object]:
 
 async def seed_initial(session: AsyncSession) -> None:
     await session.execute(
-        insert(Tenant.__table__)
+        insert(TENANT_TABLE)
         .values(
             id=DEFAULT_TENANT_ID,
             name=DEFAULT_TENANT_NAME,
@@ -69,7 +80,7 @@ async def seed_initial(session: AsyncSession) -> None:
     )
 
     await session.execute(
-        insert(Actor.__table__)
+        insert(ACTOR_TABLE)
         .values(
             id=DEFAULT_ACTOR_ID,
             tenant_id=DEFAULT_TENANT_ID,
@@ -84,7 +95,7 @@ async def seed_initial(session: AsyncSession) -> None:
     )
 
     await session.execute(
-        insert(Principal.__table__)
+        insert(PRINCIPAL_TABLE)
         .values(
             id=DEFAULT_PRINCIPAL_ID,
             tenant_id=DEFAULT_TENANT_ID,
@@ -98,7 +109,7 @@ async def seed_initial(session: AsyncSession) -> None:
     )
 
     await session.execute(
-        insert(Workspace.__table__)
+        insert(WORKSPACE_TABLE)
         .values(
             id=DEFAULT_WORKSPACE_ID,
             tenant_id=DEFAULT_TENANT_ID,
@@ -111,7 +122,7 @@ async def seed_initial(session: AsyncSession) -> None:
     )
 
     await session.execute(
-        insert(Project.__table__)
+        insert(PROJECT_TABLE)
         .values(
             id=DEFAULT_PROJECT_ID,
             tenant_id=DEFAULT_TENANT_ID,
@@ -126,7 +137,7 @@ async def seed_initial(session: AsyncSession) -> None:
     )
 
     await session.execute(
-        insert(Repository.__table__)
+        insert(REPOSITORY_TABLE)
         .values(
             id=DEFAULT_REPOSITORY_ID,
             tenant_id=DEFAULT_TENANT_ID,
@@ -147,7 +158,7 @@ async def seed_initial(session: AsyncSession) -> None:
     )
 
     await session.execute(
-        insert(Ticket.__table__)
+        insert(TICKET_TABLE)
         .values(
             id=DEFAULT_TICKET_ID,
             tenant_id=DEFAULT_TENANT_ID,
@@ -166,7 +177,7 @@ async def seed_initial(session: AsyncSession) -> None:
     )
 
     await session.execute(
-        insert(AcceptanceCriteria.__table__)
+        insert(ACCEPTANCE_CRITERIA_TABLE)
         .values(
             id=DEFAULT_ACCEPTANCE_CRITERIA_ID,
             tenant_id=DEFAULT_TENANT_ID,
@@ -181,7 +192,7 @@ async def seed_initial(session: AsyncSession) -> None:
     )
 
     await session.execute(
-        insert(AuditEvent.__table__)
+        insert(AUDIT_EVENT_TABLE)
         .values(
             id=DEFAULT_AUDIT_EVENT_ID,
             tenant_id=DEFAULT_TENANT_ID,

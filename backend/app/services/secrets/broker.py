@@ -7,7 +7,7 @@ import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -318,9 +318,10 @@ class SecretBroker:
             await self._audit_redeem_denied(tenant_id, actor_id, denied, run_id)
             return denied
 
+        capability_id, secret_ref_id = _claimed_ids(claim)
         secret_ref = await self._get_secret_ref(
             tenant_id=tenant_id,
-            secret_ref_id=claim.secret_ref_id,
+            secret_ref_id=secret_ref_id,
             lock=True,
         )
         post_claim_denial = self._validate_secret_ref_after_claim(
@@ -331,7 +332,7 @@ class SecretBroker:
             computed_fingerprint=computed_fingerprint,
         )
         if post_claim_denial is not None:
-            await self._mark_claimed_token_revoked(tenant_id, claim.capability_id)
+            await self._mark_claimed_token_revoked(tenant_id, capability_id)
             await self._audit_redeem_denied(tenant_id, actor_id, post_claim_denial, run_id)
             return post_claim_denial
 
@@ -358,14 +359,14 @@ class SecretBroker:
             )
             result = await _maybe_await(operation(context))
 
-        await self._mark_claimed_token_used(tenant_id, claim.capability_id)
+        await self._mark_claimed_token_used(tenant_id, capability_id)
         await AuditEventRepository(self.session).append(
             tenant_id=tenant_id,
             event_type="secret_capability_redeemed",
             actor_id=actor_id,
             payload={
-                "capability_id": str(claim.capability_id),
-                "secret_ref_id": str(claim.secret_ref_id),
+                "capability_id": str(capability_id),
+                "secret_ref_id": str(secret_ref_id),
                 "run_id": None if run_id is None else str(run_id),
                 "requested_operation": requested_operation,
                 "expected_request_fingerprint_hash": _fingerprint_audit_hash(
@@ -375,8 +376,8 @@ class SecretBroker:
         )
 
         return BrokerRedeemResult(
-            capability_id=claim.capability_id,
-            secret_ref_id=claim.secret_ref_id,
+            capability_id=capability_id,
+            secret_ref_id=secret_ref_id,
             requested_operation=requested_operation,
             operation_result=result,
         )
@@ -394,7 +395,7 @@ class SecretBroker:
         )
         if lock:
             stmt = stmt.with_for_update()
-        return await self.session.scalar(stmt)
+        return cast(SecretRef | None, await self.session.scalar(stmt))
 
     def _validate_secret_ref_for_issue(
         self,
@@ -614,6 +615,12 @@ def _claim_denial_to_broker_denial(
         capability_id=claim.capability_id,
         secret_ref_id=claim.secret_ref_id,
     )
+
+
+def _claimed_ids(claim: ClaimResult) -> tuple[UUID, UUID]:
+    if claim.capability_id is None or claim.secret_ref_id is None:
+        raise RuntimeError("SecretBroker invariant violated: claimed token ids are missing.")
+    return claim.capability_id, claim.secret_ref_id
 
 
 def _claim_reason_to_redeem_reason(reason: ClaimDenyReason | None) -> RedeemDenyReason:

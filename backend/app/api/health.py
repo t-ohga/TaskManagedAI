@@ -128,7 +128,7 @@ async def check_redis(settings: Settings) -> DependencyStatus:
         if parsed.scheme not in {"redis", "rediss"}:
             raise ValueError("TASKMANAGEDAI_REDIS_URL must use redis or rediss scheme.")
 
-        reader, writer = await asyncio.wait_for(
+        reader, opened_writer = await asyncio.wait_for(
             asyncio.open_connection(
                 parsed.hostname or "redis",
                 parsed.port or 6379,
@@ -136,25 +136,26 @@ async def check_redis(settings: Settings) -> DependencyStatus:
             ),
             timeout=2.0,
         )
+        writer = opened_writer
 
         if parsed.password is not None:
             password = unquote(parsed.password)
             if parsed.username:
                 await _send_redis_command(
                     reader,
-                    writer,
+                    opened_writer,
                     "AUTH",
                     unquote(parsed.username),
                     password,
                 )
             else:
-                await _send_redis_command(reader, writer, "AUTH", password)
+                await _send_redis_command(reader, opened_writer, "AUTH", password)
 
         database_index = _redis_database_index(parsed.path)
         if database_index is not None:
-            await _send_redis_command(reader, writer, "SELECT", str(database_index))
+            await _send_redis_command(reader, opened_writer, "SELECT", str(database_index))
 
-        response = await _send_redis_command(reader, writer, "PING")
+        response = await _send_redis_command(reader, opened_writer, "PING")
         if response.strip() != b"+PONG":
             raise RuntimeError("Redis readiness check did not return PONG.")
     except Exception:

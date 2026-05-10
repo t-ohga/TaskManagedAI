@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import func, select, update
@@ -39,11 +39,14 @@ class NotificationEventRepository:
 
     async def get(self, tenant_id: int, id: UUID) -> NotificationEvent | None:
         await self._ensure_tenant_context(tenant_id)
-        return await self.session.scalar(
-            select(NotificationEvent).where(
-                NotificationEvent.tenant_id == tenant_id,
-                NotificationEvent.id == id,
-            )
+        return cast(
+            NotificationEvent | None,
+            await self.session.scalar(
+                select(NotificationEvent).where(
+                    NotificationEvent.tenant_id == tenant_id,
+                    NotificationEvent.id == id,
+                )
+            ),
         )
 
     async def mark_read(self, tenant_id: int, event_id: UUID) -> NotificationEvent | None:

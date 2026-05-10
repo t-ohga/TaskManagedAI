@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import select
@@ -26,7 +27,7 @@ class ProjectRepository(BaseRepository[Project]):
             Project.workspace_id == workspace_id,
             Project.id == project_id,
         )
-        return await self.session.scalar(stmt)
+        return cast(Project | None, await self.session.scalar(stmt))
 
     async def workspace_exists(self, tenant_id: int, workspace_id: UUID) -> bool:
         await self._ensure_tenant_context(tenant_id)

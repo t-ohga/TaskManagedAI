@@ -1,6 +1,6 @@
 """Add secret reference and capability token tables.
 
-Revision ID: 0004_secret_refs_capability_tokens
+Revision ID: 0004_secret_capability_tokens
 Revises: 0003_tickets_acceptance_audit
 Create Date: 2026-05-08 00:00:00.000000
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0004_secret_refs_capability_tokens"
+revision: str = "0004_secret_capability_tokens"
 down_revision: str | None = "0003_tickets_acceptance_audit"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

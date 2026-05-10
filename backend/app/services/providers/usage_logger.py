@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from decimal import Decimal
+from typing import SupportsInt
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -93,7 +94,11 @@ def _decimal_or_zero(value: object) -> Decimal:
 def _int_or_zero(value: object) -> int:
     if value is None:
         return 0
-    return int(value)
+    if isinstance(value, str | bytes | bytearray):
+        return int(value)
+    if isinstance(value, SupportsInt):
+        return int(value)
+    raise TypeError("value must be int-compatible.")
 
 
 def _require_positive_tenant_id(tenant_id: int) -> None:

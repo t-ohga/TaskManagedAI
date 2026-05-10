@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 from typing import Any, NoReturn, cast
 from uuid import UUID
 
@@ -17,7 +18,7 @@ class AcceptanceCriteriaRepository(BaseRepository[AcceptanceCriteria]):
     async def get(self, tenant_id: int, id: UUID) -> AcceptanceCriteria | None:
         raise NotImplementedError("Use get_in_ticket(...)")
 
-    async def list(self, tenant_id: int) -> list[AcceptanceCriteria]:
+    async def list(self, tenant_id: int) -> builtins.list[AcceptanceCriteria]:
         raise NotImplementedError("Use list_in_ticket(...)")
 
     async def update(
@@ -62,14 +63,14 @@ class AcceptanceCriteriaRepository(BaseRepository[AcceptanceCriteria]):
             AcceptanceCriteria.ticket_id == ticket_id,
             AcceptanceCriteria.id == ac_id,
         )
-        return await self.session.scalar(stmt)
+        return cast(AcceptanceCriteria | None, await self.session.scalar(stmt))
 
     async def list_in_ticket(
         self,
         tenant_id: int,
         project_id: UUID,
         ticket_id: UUID,
-    ) -> list[AcceptanceCriteria]:
+    ) -> builtins.list[AcceptanceCriteria]:
         await self._ensure_tenant_context(tenant_id)
         result = await self.session.execute(
             select(AcceptanceCriteria)
@@ -136,7 +137,7 @@ class AcceptanceCriteriaRepository(BaseRepository[AcceptanceCriteria]):
             .values(**data)
             .returning(AcceptanceCriteria)
         )
-        return cast(AcceptanceCriteria | None, result.scalar_one_or_none())
+        return result.scalar_one_or_none()
 
     async def delete_in_ticket(
         self,

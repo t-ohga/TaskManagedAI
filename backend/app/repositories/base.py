@@ -5,7 +5,8 @@ from uuid import UUID
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import Delete, Select, Update
+from sqlalchemy.sql import Select, Update
+from sqlalchemy.sql.dml import ReturningDelete
 
 from backend.app.db.app_role import (
     assert_tenant_context,
@@ -62,7 +63,7 @@ class BaseRepository[ModelT: Base]:
             .returning(self.model)
         )
 
-    def statement_for_delete(self, tenant_id: int, id: UUID) -> Delete:
+    def statement_for_delete(self, tenant_id: int, id: UUID) -> ReturningDelete[Any]:
         self._require_tenant_id(tenant_id)
         model = cast(Any, self.model)
         return (
@@ -77,7 +78,7 @@ class BaseRepository[ModelT: Base]:
     async def get(self, tenant_id: int, id: UUID) -> ModelT | None:
         await self._ensure_tenant_context(tenant_id)
         instance = await self.session.scalar(self.statement_for_get(tenant_id, id))
-        return cast(ModelT | None, instance)
+        return instance
 
     async def list(self, tenant_id: int) -> list[ModelT]:
         await self._ensure_tenant_context(tenant_id)

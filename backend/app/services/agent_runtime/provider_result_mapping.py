@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
 from backend.app.domain.agent_runtime.status import (
     TERMINAL_STATES,
@@ -80,7 +80,7 @@ def map_provider_result_to_status(
         status: AgentRunStatus = "failed"
         blocked_reason: BlockedReason | None = None
     else:
-        status, blocked_reason = _PROVIDER_RESULT_MAPPING[cast(ProviderResultKind, kind)]
+        status, blocked_reason = _PROVIDER_RESULT_MAPPING[kind]
 
     return AgentRunStatusTransitionTarget(
         status=status,

@@ -25,14 +25,14 @@ _DEFAULT_HTTP_TIMEOUT_SECONDS = 30.0
 def resolve_maybe_awaitable[T](value: T | Awaitable[T]) -> T:
     if inspect.isawaitable(value):
         return _run_awaitable_sync(cast(Awaitable[T], value))
-    return cast(T, value)
+    return value
 
 
 def _run_awaitable_sync[T](awaitable: Awaitable[T]) -> T:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(awaitable)
+        return asyncio.run(_await_value(awaitable))
 
     if inspect.iscoroutine(awaitable):
         awaitable.close()
@@ -40,6 +40,10 @@ def _run_awaitable_sync[T](awaitable: Awaitable[T]) -> T:
         "ProviderAdapter.execute() received an async dependency while an event loop "
         "is already running; inject a synchronous test client or call it outside the loop."
     )
+
+
+async def _await_value[T](awaitable: Awaitable[T]) -> T:
+    return await awaitable
 
 
 def post_json(
@@ -221,7 +225,7 @@ def extract_structured_output(
         return None, "schema_mismatch"
 
     try:
-        validator_cls(schema).validate(candidate)
+        validator_cls(schema).validate(cast(Any, candidate))
     except SchemaError:
         return None, "unsupported_schema"
     except JsonSchemaValidationError:
@@ -394,7 +398,7 @@ def _parse_json_string(value: str) -> object | None:
     if not value.strip():
         return None
     try:
-        return json.loads(value)
+        return cast(object | None, json.loads(value))
     except json.JSONDecodeError:
         return None
 

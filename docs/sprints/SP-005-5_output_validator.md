@@ -176,10 +176,14 @@ defer (max_days 超過時): dangerous intent classifier 高度化 (LLM 経由 sa
 
 ## 検証手順
 
+- [ ] `uv sync --locked` で backend lockfile が pyproject と一致していることを確認する。
+- [ ] `cd frontend && pnpm install --frozen-lockfile` で frontend lockfile が package.json と一致していることを確認する。
 - [ ] `uv run python -c 'import yaml,sys; doc=open("docs/sprints/SP-005-5_output_validator.md").read(); yaml.safe_load(doc.split("---")[1]); print("frontmatter: valid YAML")'` で frontmatter が valid YAML として読めることを確認する。
 - [ ] `uv run python -c 'import sys; text=open("docs/sprints/SP-005-5_output_validator.md").read(); missing=[id for id in ["BL-0064","BL-0065","BL-0066","BL-0067","BL-0068","BL-0069","BL-0070","BL-0071"] if id not in text]; sys.exit(f"missing: {missing}") if missing else print("tickets: 8 ticket OK")'` で 8 チケットが揃っていることを確認する。
 - [ ] `ls docs/adr/00004_*.md docs/adr/00006_*.md docs/adr/00009_*.md docs/adr/00010_*.md` で関連 ADR が accepted (proposed → accepted 化済) であることを確認する。
+- [ ] migration revision_id が 30 chars 以内であることを確認する (Alembic default `alembic_version.version_num` は `varchar(32)` のため。`migrations/env.py` の `assert_revision_ids_within_limit()` で fail-fast、hook `.claude/hooks/migration/check-revision-id-length.sh` で PreToolUse BLOCK)。
 - [ ] `uv run alembic check` で migration drift がないことを確認する。
+- [ ] `uv run alembic upgrade head` で migration 全 apply が成功することを確認する。
 - [ ] `uv run pytest tests/output_validator/test_output_validator_core.py -q` で validation_failed → repair retry → repair_exhausted transition を確認する。
 - [ ] `uv run pytest tests/runtime/test_repair_retry_policy.py -q` で **既存 unit test (Sprint 4 で導入済) を policy_pack version 駆動に update した結果** を確認する (`MAX_REPAIR_RETRIES` constant test + cross-source consistency)。
 - [ ] `uv run pytest tests/output_validator/test_repair_retry_policy_integration.py -q` で **新規 integration test** (policy_pack.toml 駆動 + BudgetGuard 連動 + AgentRun runtime 経路) を確認する。
@@ -193,6 +197,7 @@ defer (max_days 超過時): dangerous intent classifier 高度化 (LLM 経由 sa
 - [ ] `uv run pytest tests/security/test_audit_no_raw_secret.py -q` (parametrized 拡張) で repair retry / trust_level promotion / payload_classifier の audit に raw secret が含まれないことを確認する。
 - [ ] `uv run mypy backend` で型整合を確認する。
 - [ ] `uv run ruff check backend tests` で lint を確認する。
+- [ ] `cd frontend && pnpm exec eslint . --max-warnings=0` で frontend lint が 0 error / 0 warning であることを確認する。
 - [ ] `rg -n "trust_level\s*=\s*request|trust_level\s*=\s*caller|payload_data_class\s*=\s*request" backend tests --glob '!**/*.md'` で caller-supplied 経路の混入がないことを確認する (Sprint 5 と同 pattern)。
 
 ## レビュー観点

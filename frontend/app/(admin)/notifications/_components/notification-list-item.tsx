@@ -25,7 +25,7 @@ export function NotificationListItem({ notification }: { notification: Notificat
             {new Date(notification.created_at).toLocaleString()}
           </p>
         </div>
-        {!isRead && (
+        {!isRead ? (
           <form
             action={(formData) => {
               startTransition(() => {
@@ -43,7 +43,7 @@ export function NotificationListItem({ notification }: { notification: Notificat
               {isPending ? "Marking..." : "Mark read"}
             </button>
           </form>
-        )}
+        ) : null}
       </div>
     </li>
   );
