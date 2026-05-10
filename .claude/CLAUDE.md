@@ -148,12 +148,16 @@ eval/
 常時判断の正本は `rules/`、必要時参照は `reference/` に分けます。
 
 - `.claude/rules/*.md`
-  - 常時ロードされる行動制約。AI 出力境界、Sprint Pack / ADR Gate、Provider Compliance、SecretBroker、AgentRun、code search、testing、plan review をここに置く。
+  - 常時ロードされる行動制約。AI 出力境界、Sprint Pack / ADR Gate、Provider Compliance、SecretBroker、AgentRun、code search、testing、plan review、**Codex output contract** をここに置く。
   - 実装・レビュー・外部エージェント出力の採否判定では rules を優先する。
+  - 主要 rules:
+    - `codex-output-contract.md`: Codex 出力 truncation 防止 (200 KB 上限 / 分割 output mode / Claude 側 fallback / prompt template への必須文言)。全 Codex 連携 skill で適用。
 
 - `.claude/reference/*.md`
-  - ad-hoc 参照。ハーネス一覧、agent routing、audit ownership、dev commands、directory structure、Provider Compliance Matrix、Hard Gates / KPIs、SecretBroker contract、AgentRun state machine、ADR Gate Criteria を置く。
+  - ad-hoc 参照。ハーネス一覧、agent routing、audit ownership、dev commands、directory structure、Provider Compliance Matrix、Hard Gates / KPIs、SecretBroker contract、AgentRun state machine、ADR Gate Criteria、**MCP DB tools** を置く。
   - 常時ロードしない。該当作業時に必要なファイルだけ読む。
+  - 主要 reference:
+    - `mcp-db-tools.md`: PostgreSQL MCP (採用) / Prisma MCP (TaskManagedAI では使わない、SQLAlchemy + Alembic 採用) の使い分け、適切な使用タイミング、Codex / Claude Code 共通 wrapper の起動確認手順。
 
 - `.claude/skills/`
   - Claude 側 skill。`dev-suite`, `quality-suite`, `review-suite`, `security-suite`, `release-suite` と TaskManagedAI 固有 skill を置く。
