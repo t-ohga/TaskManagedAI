@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -192,9 +193,9 @@ async def _insert_approval(
     policy_pack_lock: str | None = "pack-a",
     provider_request_fingerprint: str | None = "provider-a",
 ) -> ApprovalRequest:
-    decided_at: str | None = None
+    decided_at: datetime | None = None
     if decided_by_actor_id is not None:
-        decided_at = "2030-01-01 00:00:00+00"
+        decided_at = datetime(2030, 1, 1, tzinfo=UTC)
 
     await session.execute(
         text(
