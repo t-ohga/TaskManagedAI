@@ -676,14 +676,17 @@ async def test_cross_tenant_audit_event_actor_insert_fails_by_actor_fk(
         await session.commit()
 
         with pytest.raises(IntegrityError) as exc_info:
+            # audit_events.id は NOT NULL + server_default 無し。id を省略すると 23502
+            # (NOT NULL violation) が先に fire し、目的の actor FK 違反 (23503) を検証できない。
+            # uuid_generate_v4() で明示生成して FK check 経路まで到達させる。
             await session.execute(
                 text(
                     """
                     insert into audit_events (
-                      tenant_id, event_type, event_payload, actor_id, correlation_id
+                      id, tenant_id, event_type, event_payload, actor_id, correlation_id
                     )
                     values (
-                      1, 'tenant_boundary.cross_actor',
+                      uuid_generate_v4(), 1, 'tenant_boundary.cross_actor',
                       '{"rls_ready": true, "result": "blocked"}'::jsonb,
                       :actor_id, 'tenant-boundary-cross-actor'
                     )
