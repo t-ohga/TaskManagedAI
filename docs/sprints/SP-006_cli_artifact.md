@@ -1,15 +1,15 @@
 ---
 id: "SP-006_cli_artifact"
 type: "heavy"
-status: "draft"
+status: "in_progress"
 sprint_no: 6
 created_at: "2026-05-08"
-updated_at: "2026-05-10"
+updated_at: "2026-05-12"
 target_days: 2.5
 max_days: 5
-adr_refs: []
+adr_refs:
+  - "[ADR-00003](../adr/00003_api_contract.md) # 2026-05-12 Sprint 6 batch 0 で proposed 起票、Sprint 6 batch 1 着手前に accepted 化予定。CLI artifact orchestration の API 契約 (artifact schema、subprocess launcher、AgentRunEvent 拡張、採否判定 API、AI 出力直結禁止 lint)。Criteria #3 (API 契約 / event schema) + #4/#5/#6/#10 該当"
 planned_adr_refs:
-  - "[ADR-00003](../adr/00003_api_contract.md) # implementation_gate: SP-006 開始前に proposed → accepted 必須。CLI artifact orchestration の API 契約 (artifact schema、subprocess launcher、AgentRunEvent 拡張、採否判定 API、AI 出力直結禁止 lint)。Criteria #3 (API 契約 / event schema) 該当"
   - "[ADR-00013](../adr/00013_remote_agent_extension.md) # reference_only_for_p0: true (R1-F-016 fix)。2026-05-10 proposed 化済、Codex app-server / Claude Agent SDK の extension point boundary 仕様。SP-006 では note + extension point に止め、accepted 化は P0.1 で。SP-006 exit の accepted 条件ではない (R1-F-014 fix)。Criteria #4/#5/#6/#7/#10 該当"
 upstream_sprints:
   - "SP-005-5_output_validator"
