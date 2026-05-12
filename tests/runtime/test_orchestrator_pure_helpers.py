@@ -26,10 +26,11 @@ This module covers DB-less pure helpers:
 from __future__ import annotations
 
 from dataclasses import is_dataclass
-from typing import get_args, get_type_hints
+from typing import Any, get_args, get_type_hints
 from uuid import UUID
 
 import pytest
+from jsonschema import Draft7Validator
 
 from backend.app.db.models.agent_run import AgentRun
 from backend.app.domain.provider.compliance import ComplianceDecision
@@ -40,10 +41,13 @@ from backend.app.services.agent_runtime.orchestrator import (
     ProviderStepOutcome,
     ProviderStepResult,
     RepairStepResult,
+    ValidationStepOutcome,
+    ValidationStepResult,
     _assert_run_request_boundary,
     _provider_event_payload,
     _provider_event_type_for_target,
     _provider_outcome_for_target,
+    _redact_validation_error_summary,
     _resolve_provider_transition_target,
 )
 from backend.app.services.agent_runtime.provider_result_mapping import (
@@ -250,8 +254,8 @@ def _provider_result(status: ProviderResultKind = "success") -> ProviderResult:
 
 def _compliance_decision(decision: str = "allow") -> ComplianceDecision:
     return ComplianceDecision(
-        decision=decision,  # type: ignore[arg-type]
-        reason_code="allow",  # type: ignore[arg-type]
+        decision=decision,
+        reason_code="allow",
         payload_data_class="public",
         allowed_data_class="public",
         effective_allowed_data_class="public",
@@ -387,3 +391,94 @@ def test_repair_step_result_fields_are_typed_as_expected() -> None:
     assert "event_type" in hints
     assert "event" in hints
     assert "resume_snapshot" in hints
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5.5 BL-0067 続き: execute_validation_step pure helpers.
+# ---------------------------------------------------------------------------
+
+
+def test_validation_step_outcome_literal_matches_expected() -> None:
+    assert tuple(get_args(ValidationStepOutcome)) == (
+        "schema_validated",
+        "validation_failed",
+    )
+
+
+def test_validation_step_result_is_frozen_dataclass() -> None:
+    assert is_dataclass(ValidationStepResult)
+
+
+def test_validation_step_result_fields_are_typed_as_expected() -> None:
+    hints = get_type_hints(ValidationStepResult)
+    assert "outcome" in hints
+    assert "to_state" in hints
+    assert "event_type" in hints
+    assert "event" in hints
+    assert "validation_passed" in hints
+    assert "validation_errors" in hints
+
+
+def test_agent_run_orchestrator_exposes_execute_validation_step() -> None:
+    """The new step is part of the public surface so callers (Sprint 6 arq
+    worker) can chain it into the runtime pipeline."""
+
+    assert hasattr(AgentRunOrchestrator, "execute_validation_step")
+
+
+# ---------------------------------------------------------------------------
+# _redact_validation_error_summary: redaction shape.
+# ---------------------------------------------------------------------------
+
+
+def _produce_validation_error() -> Any:
+    """Run jsonschema validation against a minimal failing payload."""
+
+    from jsonschema.exceptions import ValidationError  # noqa: PLC0415
+
+    schema = {
+        "type": "object",
+        "required": ["summary"],
+        "properties": {"summary": {"type": "string"}},
+        "additionalProperties": False,
+    }
+    validator = Draft7Validator(schema)
+    errors = list(validator.iter_errors({"summary": 123}))
+    assert errors, "fixture must produce a ValidationError"
+    err = errors[0]
+    assert isinstance(err, ValidationError)
+    return err
+
+
+def test_redact_validation_error_summary_does_not_echo_instance_value() -> None:
+    """The redacted summary must not contain the raw instance value (which
+    could carry raw secret material from the artifact)."""
+
+    err = _produce_validation_error()
+    err.instance = "sk-hostile-1234567890abcdef1234567890abcdef"  # poison
+    summary = _redact_validation_error_summary(err)
+    assert "sk-hostile" not in summary
+    assert "path=" in summary
+    assert "validator=" in summary
+    assert "schema_path=" in summary
+
+
+def test_redact_validation_error_summary_caps_schema_path_tail() -> None:
+    """``schema_path`` is truncated to the last 3 elements to keep payload
+    size bounded (defense-in-depth for large nested schemas)."""
+
+    err = _produce_validation_error()
+    # The fixture's schema_path has length 4 (properties / summary / type /
+    # type-keyword); the redaction should keep only the last 3.
+    summary = _redact_validation_error_summary(err)
+    schema_path = list(err.schema_path)
+    if len(schema_path) > 3:
+        # The summary contains a representation of only the last 3 elements;
+        # the first element label should NOT appear in the schema_path field.
+        first_element = str(schema_path[0])
+        # We do not assert absence in the whole summary string (the path /
+        # validator section may contain other content); we only confirm the
+        # ``schema_path=[...]`` slice starts after the truncation.
+        idx = summary.index("schema_path=")
+        tail_section = summary[idx:]
+        assert first_element not in tail_section

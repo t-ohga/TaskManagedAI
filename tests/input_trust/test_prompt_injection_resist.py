@@ -26,14 +26,22 @@ has no path to honor it because the trust_level is server-owned.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
+from backend.app.services.input_trust.approval_integrity import (
+    ApprovalIntegrityExpectation,
+)
 from backend.app.services.input_trust.promotion import (
     PromoteRequest,
     promote_to_trusted_instruction,
 )
 from backend.app.services.policy_pack.loader import PolicyPack
+
+_SHA256_DUMMY = "a" * 64
 
 
 def _pack() -> PolicyPack:
@@ -42,6 +50,36 @@ def _pack() -> PolicyPack:
         policy_pack_lock="0" * 64,
         repair_retry_max_attempts=3,
         trust_level_promotion_to_trusted_instruction_requires_human_approval=True,
+    )
+
+
+def _approval(
+    *,
+    artifact_hash: str = _SHA256_DUMMY,
+    policy_version: str = "v1.0.0",
+    fingerprint: str = "fp-1",
+    action_class: str = "task_write",
+) -> Any:
+    return SimpleNamespace(
+        artifact_hash=artifact_hash,
+        policy_version=policy_version,
+        provider_request_fingerprint=fingerprint,
+        action_class=action_class,
+    )
+
+
+def _expected(
+    *,
+    artifact_hash: str = _SHA256_DUMMY,
+    policy_version: str = "v1.0.0",
+    fingerprint: str = "fp-1",
+    action_class: str = "task_write",
+) -> ApprovalIntegrityExpectation:
+    return ApprovalIntegrityExpectation(
+        artifact_hash=artifact_hash,
+        policy_version=policy_version,
+        provider_request_fingerprint=fingerprint,
+        action_class=action_class,
     )
 
 
@@ -183,8 +221,8 @@ def test_pattern_5_policy_override_injection_rejected_at_schema(
 def test_service_layer_blocks_auto_promotion_when_policy_requires_human_approval() -> None:
     """policy_pack.input_trust.trust_level_promotion_to_trusted_instruction_
     requires_human_approval == True (P0 default) MUST block the promotion
-    even when the caller supplies all four True flags. The gate is the policy
-    pack, not the caller's good faith."""
+    even when the caller supplies all flags suggesting consent. The gate is
+    the policy pack, not the caller's good faith."""
 
     request = PromoteRequest(artifact_id="artifact-001")
     decision = promote_to_trusted_instruction(
@@ -192,7 +230,8 @@ def test_service_layer_blocks_auto_promotion_when_policy_requires_human_approval
         current_trust_level="validated_artifact",
         approval_passed=False,  # hostile caller still has approval False
         decider_is_human=True,
-        approval_4_integrity_ok=True,
+        approval_request=_approval(),
+        expected_integrity=_expected(),
         policy_pack=_pack(),
     )
     assert decision.promoted is False
@@ -209,7 +248,8 @@ def test_service_layer_blocks_promotion_when_decider_not_human_even_with_approva
         current_trust_level="validated_artifact",
         approval_passed=True,
         decider_is_human=False,  # AI decider — must be rejected
-        approval_4_integrity_ok=True,
+        approval_request=_approval(),
+        expected_integrity=_expected(),
         policy_pack=_pack(),
     )
     assert decision.promoted is False
@@ -219,7 +259,8 @@ def test_service_layer_blocks_promotion_when_decider_not_human_even_with_approva
 def test_service_layer_blocks_promotion_when_4_integrity_mismatched_even_with_approval() -> None:
     """Approval 4 integrity (artifact_hash + policy_version +
     provider_request_fingerprint + action_class) MUST hold; stale approvals
-    cannot be reused for trust_level promotion."""
+    cannot be reused for trust_level promotion. SP55-B4-R2-F-001 fix:
+    server-side hash binding is mandatory; the caller cannot bypass."""
 
     request = PromoteRequest(artifact_id="artifact-001")
     decision = promote_to_trusted_instruction(
@@ -227,7 +268,8 @@ def test_service_layer_blocks_promotion_when_4_integrity_mismatched_even_with_ap
         current_trust_level="validated_artifact",
         approval_passed=True,
         decider_is_human=True,
-        approval_4_integrity_ok=False,  # stale approval
+        approval_request=_approval(artifact_hash="b" * 64),  # drifted hash
+        expected_integrity=_expected(),
         policy_pack=_pack(),
     )
     assert decision.promoted is False

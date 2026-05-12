@@ -1,4 +1,4 @@
-"""AgentRun runtime orchestrator (Sprint 5.5 BL-0067).
+"""AgentRun runtime orchestrator (Sprint 5.5 BL-0067 / BL-0067 続き).
 
 provider call → Compliance Gate → preflight → ProviderAdapter.execute →
 record_provider_usage (BudgetGuard) → schema validate → repair retry →
@@ -12,10 +12,11 @@ Sprint 4 Batch 4 で確立した ``transition_with_event`` 三重 guard (status 
 ``EVENT_TYPE_FOR_TRANSITION`` allowlist を経由するため、Sprint 5.5 batch 1 で
 追加した ``repair_exhausted`` event_type が正しく allowlist 経由で append される。
 
-### scope (Sprint 5.5 BL-0067)
+### scope (Sprint 5.5 BL-0067 + BL-0067 続き、batch 1+2+3+4 累積)
 
-- ``execute_provider_step``: running → {generated_artifact, provider_refused,
-  provider_incomplete, blocked + reason, failed} の transition + AgentRunEvent
+- ``execute_provider_step`` (batch 2): running → {generated_artifact,
+  provider_refused, provider_incomplete, blocked + reason, failed} の
+  transition + AgentRunEvent
   - ``ComplianceGate.evaluate`` deny 経路で ``policy_blocked``
   - ``provider_request_preflight`` deny 経路で ``policy_blocked`` (canary / token pattern)
   - ``record_provider_usage`` を ``provider.execute`` 後に呼び、``BudgetGuard``
@@ -23,17 +24,29 @@ Sprint 4 Batch 4 で確立した ``transition_with_event`` 三重 guard (status 
   - ``unsupported_schema`` / ``schema_mismatch`` は orchestrator 内で
     ``generated_artifact`` 経路に override (state machine 既存 allowlist
     `running -> validation_failed` 無いため、schema validation は別 step で実行)
-- ``execute_repair_decision_step``: validation_failed → {running (retry),
-  repair_exhausted (terminal)} の transition + ContextSnapshot snapshot_kind=resume
+- ``execute_repair_decision_step`` (batch 2): validation_failed → {running
+  (retry), repair_exhausted (terminal)} の transition + ContextSnapshot
+  snapshot_kind=resume
+- ``execute_validation_step`` (batch 4 / BL-0067 続き): generated_artifact →
+  {schema_validated, validation_failed} の transition + jsonschema Draft7
+  validation + redacted error summary (raw artifact instance value 非 echo)
 
-### 非 scope (defer)
+### 非 scope (Sprint 5.5 batch 4 で defer、Sprint 11 / 別 batch で対応)
 
-- ``execute_validation_step`` (generated_artifact → schema_validated /
-  validation_failed) の full integration: BL-0067 の続きとして Sprint 5.5
-  batch 3 で実装
-- repair retry context redaction (BL-0068)
-- trust_level 昇格 full Approval 4 整合 (BL-0069)
-- AC-HARD-07 prompt injection fixture (BL-0071)
+- **DB integration full chain test**
+  (``tests/runtime/test_agent_run_full_chain_integration.py``):
+  provider call → Compliance Gate → preflight → execute →
+  record_provider_usage → validate → repair retry → transition_with_event
+  の full chain を実 DB で end-to-end。Docker postgres 起動済みでも host
+  port mapping が確立できなかった batch 4 では unit + pure helper level
+  に閉じる。次 Sprint で実装
+- **audit_events 3 種** (``trust_level_promotion_audit`` /
+  ``trust_level_promotion_denial_audit`` /
+  ``output_validation_repair_retry_recorded``): AuditEventRepository への
+  追加 + emit 経路は Sprint 11 / 別 batch
+- **BL-0071 full eval-harness fixture loader**: Sprint 11 Eval Harness で
+  AC-HARD-02 secret_canary loader (~1300 行) を踏襲して実装、本 batch では
+  service-layer 5+ pattern を batch 3 で済
 """
 
 from __future__ import annotations
@@ -43,10 +56,13 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
+from jsonschema import Draft7Validator
+from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.agent_run_event import AgentRunEvent
+from backend.app.db.models.artifact import Artifact
 from backend.app.db.models.context_snapshot import ContextSnapshot
 from backend.app.domain.agent_runtime.event_type import AgentRunEventType
 from backend.app.domain.agent_runtime.status import AgentRunStatus, BlockedReason
@@ -75,6 +91,28 @@ ProviderStepOutcome = Literal[
     "blocked_runtime",
     "failed_timeout",
 ]
+
+ValidationStepOutcome = Literal[
+    "schema_validated",
+    "validation_failed",
+]
+
+
+@dataclass(frozen=True)
+class ValidationStepResult:
+    """Outcome of one ``execute_validation_step`` invocation (BL-0067 続き).
+
+    The ``validation_errors`` are redacted summaries (jsonschema path +
+    validator + truncated message) so raw secret material from the artifact
+    cannot leak into the event payload.
+    """
+
+    outcome: ValidationStepOutcome
+    to_state: AgentRunStatus
+    event_type: AgentRunEventType
+    event: AgentRunEvent
+    validation_passed: bool
+    validation_errors: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -269,6 +307,109 @@ class AgentRunOrchestrator:
             provider_result=provider_result,
             compliance_decision=decision,
             blocked_reason=target.blocked_reason,
+        )
+
+    async def execute_validation_step(
+        self,
+        *,
+        run: AgentRun,
+        artifact: Artifact,
+        schema: dict[str, Any],
+        actor_id: UUID,
+        idempotency_key: str | None = None,
+    ) -> ValidationStepResult:
+        """Validate a freshly-generated artifact against the response schema.
+
+        Pipeline (Sprint 5.5 BL-0067 続き、Sprint Pack §設計判断
+        "validate → repair retry"):
+
+        1. **tenant / run boundary guard**: ``artifact.tenant_id ==
+           run.tenant_id`` AND ``artifact.run_id == run.id``.
+        2. Run Draft-7 ``jsonschema`` validation on ``artifact.content_jsonb``
+           with the supplied ``schema`` (caller passes the response schema
+           from ProviderRequest.structured_output_schema or PlanArtifact's
+           model_json_schema).
+        3. Validation pass → ``generated_artifact → schema_validated``
+           transition with ``schema_validated`` event_type.
+        4. Validation fail → ``generated_artifact → validation_failed``
+           transition with ``validation_failed`` event_type; redacted error
+           summaries (first 5) are carried in the event payload, raw values
+           are NOT echoed (BL-0068 redaction invariant carry-over).
+
+        The actual ``repair_retry`` decision is owned by
+        ``execute_repair_decision_step`` (Sprint 5.5 batch 2 BL-0064/0067);
+        this step only resolves the schema-validation gate.
+        """
+
+        if artifact.tenant_id != run.tenant_id:
+            raise ValueError(
+                "artifact.tenant_id does not match run.tenant_id "
+                "(validation step tenant boundary guard, BL-0067 続き)."
+            )
+        if artifact.run_id != run.id:
+            raise ValueError(
+                "artifact.run_id does not match run.id "
+                "(validation step run boundary guard, BL-0067 続き)."
+            )
+
+        validator = Draft7Validator(schema)
+        errors = sorted(
+            validator.iter_errors(artifact.content_jsonb),
+            key=lambda e: tuple(str(part) for part in e.absolute_path),
+        )
+
+        if not errors:
+            event_payload: dict[str, Any] = {
+                "artifact_id": str(artifact.id),
+                "content_hash": artifact.content_hash,
+                "payload_data_class": artifact.payload_data_class,
+            }
+            event = await transition_with_event(
+                self._session,
+                run=run,
+                to_state="schema_validated",
+                event_type="schema_validated",
+                payload=event_payload,
+                actor_id=actor_id,
+                idempotency_key=idempotency_key,
+            )
+            return ValidationStepResult(
+                outcome="schema_validated",
+                to_state="schema_validated",
+                event_type="schema_validated",
+                event=event,
+                validation_passed=True,
+                validation_errors=(),
+            )
+
+        # Validation failed: redact error details + cap at first 5 to keep
+        # event payload bounded.
+        error_summaries = tuple(
+            _redact_validation_error_summary(err) for err in errors[:5]
+        )
+        failed_payload: dict[str, Any] = {
+            "artifact_id": str(artifact.id),
+            "content_hash": artifact.content_hash,
+            "payload_data_class": artifact.payload_data_class,
+            "validation_error_count": len(errors),
+            "validation_error_summaries": list(error_summaries),
+        }
+        event = await transition_with_event(
+            self._session,
+            run=run,
+            to_state="validation_failed",
+            event_type="validation_failed",
+            payload=failed_payload,
+            actor_id=actor_id,
+            idempotency_key=idempotency_key,
+        )
+        return ValidationStepResult(
+            outcome="validation_failed",
+            to_state="validation_failed",
+            event_type="validation_failed",
+            event=event,
+            validation_passed=False,
+            validation_errors=error_summaries,
         )
 
     async def execute_repair_decision_step(
@@ -542,9 +683,32 @@ def _provider_event_payload(
     }
 
 
+def _redact_validation_error_summary(error: JsonSchemaValidationError) -> str:
+    """Build a redacted summary of a jsonschema ValidationError.
+
+    Only the JSON path + validator name + schema path is reported, not the
+    instance value (which may contain raw secret material from the artifact
+    even though Artifact's CHECK constraint scans for prohibited keys).
+    """
+
+    path = list(error.absolute_path)
+    validator = error.validator or "<unknown>"
+    schema_path = list(error.schema_path)
+    # Truncate schema_path tail to avoid leaking nested schema labels that
+    # could echo content (defense-in-depth; jsonschema labels are static
+    # but the cap keeps payload size bounded).
+    schema_path_tail = schema_path[-3:] if len(schema_path) > 3 else schema_path
+    return (
+        f"path={path} validator={validator} "
+        f"schema_path={schema_path_tail}"
+    )
+
+
 __all__ = [
     "AgentRunOrchestrator",
     "ProviderStepOutcome",
     "ProviderStepResult",
     "RepairStepResult",
+    "ValidationStepOutcome",
+    "ValidationStepResult",
 ]

@@ -22,12 +22,19 @@ ADR-00009 §Sprint 5.5 update / SP-005-5 BL-0065 設計判断 /
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.domain.artifact.trust_level import TrustLevel
+from backend.app.services.input_trust.approval_integrity import (
+    ApprovalIntegrityExpectation,
+    verify_approval_4_integrity,
+)
 from backend.app.services.policy_pack.loader import PolicyPack, get_policy_pack
+
+if TYPE_CHECKING:
+    from backend.app.db.models.approval_request import ApprovalRequest
 
 PromotionDenialReason = Literal[
     "schema_validation_failed",
@@ -149,7 +156,8 @@ def promote_to_trusted_instruction(
     current_trust_level: TrustLevel,
     approval_passed: bool,
     decider_is_human: bool,
-    approval_4_integrity_ok: bool,
+    approval_request: ApprovalRequest,
+    expected_integrity: ApprovalIntegrityExpectation,
     policy_pack: PolicyPack | None = None,
 ) -> PromotionDecision:
     """Promote ``validated_artifact -> trusted_instruction`` (human approval).
@@ -157,12 +165,21 @@ def promote_to_trusted_instruction(
     ``current_trust_level`` is an internal-only keyword argument (same
     invariant as ``promote_to_validated_artifact``).
 
-    Sprint 5.5 BL-0065 では service skeleton として最小限の gate を実装する。
-    Approval 4 整合 + decider human-only の完全な enforcement は BL-0069 で
-    本 service 経由に統合され、その時点で ``approval_4_integrity_ok`` の
-    判定が ``ApprovalRequest`` の artifact_hash / policy_version /
-    provider_request_fingerprint / action_class hash binding として
-    完成する。
+    Sprint 5.5 BL-0069 (SP55-B4-R2-F-001 fix): both ``approval_request``
+    and ``expected_integrity`` are **required** so the 4 integrity fields
+    (artifact_hash / policy_version / provider_request_fingerprint /
+    action_class) are always verified server-side. There is no legacy
+    bool fallback — every caller MUST supply a real ApprovalRequest
+    record. ``approval_passed`` and ``decider_is_human`` remain
+    caller-supplied because they reflect the approval workflow state /
+    decider Actor type which the orchestrator resolves from the
+    ApprovalRequest + Actor tables before calling this service.
+
+    Approval 4 整合 + decider human-only の完全な enforcement は本 service
+    で完結し、``ApprovalRequest`` record の artifact_hash / policy_version /
+    provider_request_fingerprint / action_class hash binding が drift してい
+    れば deny される (stale approval invalidation)。
+    ``server-owned-boundary.md §3`` (Approval 4 整合) 不変条件継続。
     """
 
     _ = request
@@ -179,6 +196,18 @@ def promote_to_trusted_instruction(
             reason="invalid_current_trust_level",
         )
 
+    # SP55-B4-R2-F-001 / SP55-B4-R3-F-001 fix: server-side 4-integrity
+    # verification is mandatory AND policy-independent. ``server-owned-boundary.md
+    # §3`` requires that ANY of the 4 fields drifting invalidates the
+    # approval; the policy toggle controls only whether human approval is
+    # *additionally* required, never whether the integrity gate runs.
+    if not verify_approval_4_integrity(approval_request, expected_integrity):
+        return _deny(
+            current=current_trust_level,
+            target="trusted_instruction",
+            reason="approval_4_integrity_mismatch",
+        )
+
     pack = policy_pack if policy_pack is not None else get_policy_pack()
     if pack.trust_level_promotion_to_trusted_instruction_requires_human_approval:
         if not approval_passed:
@@ -192,12 +221,6 @@ def promote_to_trusted_instruction(
                 current=current_trust_level,
                 target="trusted_instruction",
                 reason="decider_not_human",
-            )
-        if not approval_4_integrity_ok:
-            return _deny(
-                current=current_trust_level,
-                target="trusted_instruction",
-                reason="approval_4_integrity_mismatch",
             )
 
     return PromotionDecision(

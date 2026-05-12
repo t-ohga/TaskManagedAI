@@ -16,15 +16,23 @@ Focuses on the server-owned promotion decisions:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
+from backend.app.services.input_trust.approval_integrity import (
+    ApprovalIntegrityExpectation,
+)
 from backend.app.services.input_trust.promotion import (
     PromoteRequest,
     promote_to_trusted_instruction,
     promote_to_validated_artifact,
 )
 from backend.app.services.policy_pack.loader import PolicyPack
+
+_SHA256_DUMMY = "a" * 64
 
 
 def _request() -> PromoteRequest:
@@ -39,6 +47,38 @@ def _pack(require_human: bool = True) -> PolicyPack:
         trust_level_promotion_to_trusted_instruction_requires_human_approval=(
             require_human
         ),
+    )
+
+
+def _approval(
+    *,
+    artifact_hash: str = _SHA256_DUMMY,
+    policy_version: str = "v1.0.0",
+    fingerprint: str = "fp-1",
+    action_class: str = "task_write",
+) -> Any:
+    """Minimal ApprovalRequest stand-in (SP55-B4-R2-F-001 fix: required arg)."""
+
+    return SimpleNamespace(
+        artifact_hash=artifact_hash,
+        policy_version=policy_version,
+        provider_request_fingerprint=fingerprint,
+        action_class=action_class,
+    )
+
+
+def _expected(
+    *,
+    artifact_hash: str = _SHA256_DUMMY,
+    policy_version: str = "v1.0.0",
+    fingerprint: str = "fp-1",
+    action_class: str = "task_write",
+) -> ApprovalIntegrityExpectation:
+    return ApprovalIntegrityExpectation(
+        artifact_hash=artifact_hash,
+        policy_version=policy_version,
+        provider_request_fingerprint=fingerprint,
+        action_class=action_class,
     )
 
 
@@ -152,7 +192,8 @@ def test_trusted_instruction_promotion_requires_validated_artifact_starting_poin
         current_trust_level="untrusted_content",
         approval_passed=True,
         decider_is_human=True,
-        approval_4_integrity_ok=True,
+        approval_request=_approval(),
+        expected_integrity=_expected(),
         policy_pack=_pack(),
     )
     assert decision.promoted is False
@@ -165,7 +206,8 @@ def test_trusted_instruction_promotion_denies_without_approval() -> None:
         current_trust_level="validated_artifact",
         approval_passed=False,
         decider_is_human=True,
-        approval_4_integrity_ok=True,
+        approval_request=_approval(),
+        expected_integrity=_expected(),
         policy_pack=_pack(),
     )
     assert decision.promoted is False
@@ -178,7 +220,8 @@ def test_trusted_instruction_promotion_denies_when_decider_not_human() -> None:
         current_trust_level="validated_artifact",
         approval_passed=True,
         decider_is_human=False,
-        approval_4_integrity_ok=True,
+        approval_request=_approval(),
+        expected_integrity=_expected(),
         policy_pack=_pack(),
     )
     assert decision.promoted is False
@@ -186,12 +229,16 @@ def test_trusted_instruction_promotion_denies_when_decider_not_human() -> None:
 
 
 def test_trusted_instruction_promotion_denies_when_4_integrity_mismatch() -> None:
+    """SP55-B4-R2-F-001 fix: server-side hash binding rejects stale approval
+    (e.g. artifact_hash drift after the approval was requested)."""
+
     decision = promote_to_trusted_instruction(
         _request(),
         current_trust_level="validated_artifact",
         approval_passed=True,
         decider_is_human=True,
-        approval_4_integrity_ok=False,
+        approval_request=_approval(artifact_hash="b" * 64),  # drifted
+        expected_integrity=_expected(),
         policy_pack=_pack(),
     )
     assert decision.promoted is False
@@ -204,7 +251,8 @@ def test_trusted_instruction_promotion_succeeds_when_all_gates_pass() -> None:
         current_trust_level="validated_artifact",
         approval_passed=True,
         decider_is_human=True,
-        approval_4_integrity_ok=True,
+        approval_request=_approval(),
+        expected_integrity=_expected(),
         policy_pack=_pack(),
     )
     assert decision.promoted is True
@@ -218,7 +266,8 @@ def test_trusted_instruction_promotion_idempotent_when_already_trusted() -> None
         current_trust_level="trusted_instruction",
         approval_passed=True,
         decider_is_human=True,
-        approval_4_integrity_ok=True,
+        approval_request=_approval(),
+        expected_integrity=_expected(),
         policy_pack=_pack(),
     )
     assert decision.promoted is False
@@ -228,28 +277,32 @@ def test_trusted_instruction_promotion_idempotent_when_already_trusted() -> None
 # --- promote_to_* signatures keep current_trust_level keyword-only ------------
 
 
-def test_promote_to_validated_artifact_rejects_positional_current_trust_level() -> None:
-    """Internal-only argument must be keyword-only to deter accidental passing."""
+def test_promote_to_validated_artifact_keeps_current_trust_level_keyword_only() -> None:
+    """SP55-B4-R4-F-001 fix: same ``inspect.signature`` introspection as
+    ``promote_to_trusted_instruction`` to confirm ``current_trust_level`` is
+    keyword-only without fighting mypy via ``type: ignore``."""
 
-    with pytest.raises(TypeError):
-        # ``current_trust_level`` is keyword-only; passing positionally fails.
-        promote_to_validated_artifact(  # type: ignore[misc]
-            _request(),
-            "untrusted_content",  # type: ignore[arg-type]
-            True,
-            True,
-        )
+    import inspect
+
+    sig = inspect.signature(promote_to_validated_artifact)
+    param = sig.parameters.get("current_trust_level")
+    assert param is not None
+    assert param.kind == inspect.Parameter.KEYWORD_ONLY
 
 
-def test_promote_to_trusted_instruction_rejects_positional_current_trust_level() -> None:
-    with pytest.raises(TypeError):
-        promote_to_trusted_instruction(  # type: ignore[misc]
-            _request(),
-            "validated_artifact",  # type: ignore[arg-type]
-            True,
-            True,
-            True,
-        )
+def test_promote_to_trusted_instruction_keeps_current_trust_level_keyword_only() -> None:
+    """SP55-B4-R3-F-002 fix: replace the positional-negative TypeError test
+    (which leaked the old ``approval_4_integrity_ok`` positional bool and
+    fought mypy) with a signature introspection that confirms
+    ``current_trust_level`` is keyword-only, plus a runtime sanity check
+    that the canonical keyword form succeeds."""
+
+    import inspect
+
+    sig = inspect.signature(promote_to_trusted_instruction)
+    param = sig.parameters.get("current_trust_level")
+    assert param is not None
+    assert param.kind == inspect.Parameter.KEYWORD_ONLY
 
 
 # --- TrustLevel type signature sanity ----------------------------------------
@@ -260,9 +313,11 @@ def test_promote_to_validated_artifact_accepts_all_three_trust_levels() -> None:
 
     for level in ("untrusted_content", "validated_artifact", "trusted_instruction"):
         # Just confirm no signature-level rejection happens for any enum value.
+        # ``level`` is narrowed to the TrustLevel Literal by mypy from the
+        # tuple literal above, so no cast is needed.
         decision = promote_to_validated_artifact(
             _request(),
-            current_trust_level=level,  # type: ignore[arg-type]
+            current_trust_level=level,
             schema_validation_passed=True,
             policy_lint_passed=True,
         )
