@@ -293,3 +293,38 @@ KPI source は **既存正本** に固定:
 - ADR-00004 update (event_type 22→31 + parent/child semantics)
 - ADR-00013 update (orchestrator integration)
 - Phase C draft: `docs/設計検討/phase-c-multi-agent-spec-draft.md` §1, §3
+
+## 外部参照モデル (Symphony cross-reference、2026-05-12 追記)
+
+本 ADR の multi-agent orchestration 設計は、2026-04-27 公開の **OpenAI Symphony** (`https://openai.com/index/open-source-codex-orchestration-symphony/`、`github.com/openai/symphony`、v1.1.0 時点で Kata CLI 経由 Claude Code 対応) の **参照モデル** として位置付ける。
+
+### Symphony との対応関係
+
+| Symphony | TaskManagedAI 対応 | 整合 |
+|---|---|---|
+| Linear ticket | `tickets` table + `agent_runs.ticket_id` | 1:1 mapping |
+| ticket board = control plane | UI Sprint 9 (4 面 UI: Board / Task Detail / Approval / Execution Log) | concept 同一 |
+| agent = worker | `agent_runs` + `actor_type='agent'` + `role_id` (10 standard role) | 既存 |
+| human = reviewer | Approval Workflow + `decider_actor_id` human-only invariant | 既存 |
+| 各 ticket に 1 agent 割当 | orchestrator dispatch + lease/heartbeat/failover (本 ADR §) | 既存 |
+| 自律実行 → human review | AgentRun 16 状態 (`generated_artifact → schema_validated → policy_linted → diff_ready → waiting_approval`) | 既存 |
+
+### 取り入れ方針 (ADR-00020 適用)
+
+- **pattern adoption only**: ticket board → control plane の UX 設計を Sprint 9 / SP-013 で参照する
+- **reference impl は取り込まない**: Symphony は Elixir/BEAM 実装、TaskManagedAI は Python/TypeScript で独自実装、ADR-00020 §3 (No code embed) 遵守
+- **Linear 前提は不採用**: TaskManagedAI は内製 `tickets` table が control plane
+- **OpenAI は Symphony を standalone product として maintain しない**: 仕様 drift リスクあり、本 ADR の参照 spec バージョンは v1.1.0 (2026-05-12 時点)
+
+### 採用済み invariant の不変保証
+
+Symphony 参照モデル採用後も、本 ADR 既存の以下 invariant は不変:
+
+- 10 standard role + role ⊥ capability authorization
+- orchestrator は requester only、approval decider にならない
+- human-only approval (decider_actor_id は actor_type='human' 必須)
+- lease/heartbeat/failover/kill-switch + max_* 上限
+- agent 間 secret pass-through 禁止 (ADR-00018)
+- inter_agent_messages atomic consume + payload_hash + previous_hash chain
+
+詳細統合判定は `docs/設計検討/2026-05-12_external_ai_concept_uiux_integration.md` §3 参照。

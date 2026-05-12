@@ -280,6 +280,13 @@ Sprint 5.5 Batch 4 (実装最終 batch) で **dry-run rollback drill** を実施
 - [ADR-00010](../adr/00010_provider_change.md): accepted (Sprint 5 着手前)。Provider Compliance Matrix v2、`payload_data_class` / `allowed_data_class`、ordinal map、runtime `effective_allowed_data_class`、`provider_request_preflight`。Sprint 5.5 では payload_data_class 算出を Input Trust Layer 側に集約する形で延長。
 - (参考) ADR-00008 (破壊的操作): P0 全体で未起票、Sprint 12 P0 Acceptance backup-restore drill で起票判断。Sprint 5.5 は additive only のため #8 非該当 (詳細は §設計判断 末尾「ADR Gate Criteria #8 非該当の根拠」)。
 
+## Decisions (Sprint 着手中の決定事項、2026-05-12 追記)
+
+- **新 runtime / framework 採用しない**: 2026-05-12 の外部 4 概念 (OpenAI Skills SDK / Symphony / WebSockets in Responses API / Anthropic Managed Agents) + AI-UIUX レポート (LangGraph / CrewAI / Letta / Dapr / AutoGen / Semantic Kernel / Dify / Flowise / OpenHands / TaskingAI) 統合分析の結果、本 Sprint 5.5 では **新 runtime / framework / SaaS / transport の採用を一切行わない**。Sprint 5.5 の must_ship (Output Validator + Input Trust Layer + repair retry + trust_level + AC-HARD-07 fixture) を既存 ADR-00004/00006/00009/00010 の延長として完遂する。
+- **取り入れ判定の source of truth**: `docs/設計検討/2026-05-12_external_ai_concept_uiux_integration.md` §3 + `docs/citations/framework_pattern_candidates.md`
+- **理由**: P0 の本体価値は Output Validator / CLI artifact / runner 境界、外部 framework runtime 取り込みは P0 価値と無関係 + ADR-00020 (Framework Intake Checklist) の 8 verify + No code embed 遵守
+- **再評価タイミング**: Sprint 6 前に Skill packaging boundary 設計、P0.1 Sprint 13 で Symphony cross-reference 追加、P1 / Wave 19+ で Managed Agents SaaS / local LLM / Dapr durable / Hermes memory を再評価
+
 ## Review
 
 (Sprint 5.5 完了後に追記)
