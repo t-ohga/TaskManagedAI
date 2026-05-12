@@ -1,10 +1,10 @@
 ---
 id: "SP-006_cli_artifact"
 type: "heavy"
-status: "in_progress"
+status: "completed"
 sprint_no: 6
 created_at: "2026-05-08"
-updated_at: "2026-05-12"
+updated_at: "2026-05-13"
 target_days: 2.5
 max_days: 5
 adr_refs:
@@ -190,8 +190,80 @@ risks:
 
 ## Review
 
-- changed: Sprint 完了後に、CLI artifact schema、launcher、registry、stdout / stderr redaction、exit status mapping、decision API、direct execution lint、cancel propagation の実変更ファイルを追記する。
-- verified: Sprint 完了後に、ADR-00003 trace、artifact contract、launcher env scrub、redaction、status mapping、decision API、direct execution negative、cancel、raw secret 非露出、固有語なし確認の結果を追記する。
-- deferred: Codex App Server / Remote Control adapter、remote session management、CLI bake-off UI、Docker isolated runner 本実装、`runner_mutation_gateway` を後続 Sprint へ送った理由を追記する。
-- risks: Sprint 完了後に、subprocess bypass、redaction miss、cancel orphan、decision bypass、registry drift、API scope creep の残リスクと検知方法を追記する。
+### changed (2026-05-13 完了)
+
+Sprint 6 を 3 batch 構成で完了。3 commit (`1843054` / `147c433` / 本 commit) を `codex/phase-d-g-multi-agent-vision-host-portable` branch に積み、main へ ff merge する。
+
+**batch 1 (commit `1843054`、14 files / +2381 行)**:
+- `docs/adr/00003_api_contract.md`: proposed → accepted、CLI artifact orchestration boundary 5 種 (CliArtifactAdapter / Subprocess Launcher / Cancel Propagation / Direct Execution Lint / Approval Workflow) 固定。
+- `backend/app/db/models/artifact.py`: ArtifactKind Literal 11 値 (CLI 5 種追加)、ORM CheckConstraint 同期。
+- `migrations/versions/0012_cli_artifact_kind_11.py`: artifacts.kind CHECK 6 → 11 拡張 (additive)。
+- `backend/app/domain/cli_artifact/{__init__,schema}.py`: CliArtifactPayload (Pydantic frozen、SHA-256 hex / semver / raw secret scan)、Markdown frontmatter parser。
+- `backend/app/services/cli_artifact/{__init__,registry,launcher}.py`: 
+  - registry TOML (`config/cli_registry.toml`、binary_path absolute 必須、forbidden ENV denylist 14 種、cwd_allowlist、argv placeholder 3 種制限)
+  - launcher (`shell=False`、`start_new_session=True`、process group SIGTERM→SIGKILL escalation、`O_NOFOLLOW` stdin、path containment + symlink reject + 14 forbidden path fragment)。
+- `tests/cli_artifact/{__init__,test_artifact_contract,test_registry,test_launcher}.py`: 91 test。
+- `.claude/CLAUDE.md §6.5.0`: Codex-first ポリシー明文化。
+
+**batch 2 (commit `147c433`、18 files / +2833 行)**:
+- `backend/app/services/cli_artifact/redaction.py`: stdout/stderr → RedactionResult (raw text 戻り値非含、`unicodedata.category` で Cc/Cf carpet-bomb strip、ANSI / C0 / C1 / ZWJ / ZWNJ / BOM / VS / Plane 14 tags / VSS / CGJ 等 default-ignorable 全 strip、21 prohibited key value redaction、8 regex pattern 置換、`[REDACTED:non-utf8]` marker、bounded drain)。
+- `backend/app/services/cli_artifact/per_run_workdir.py`: server-owned per-run dir (mode=0o700、uid=getuid()、symlink reject、base_dir owner/mode check、`O_CREAT|O_EXCL|O_NOFOLLOW` 事前作成)。
+- `backend/app/services/cli_artifact/exit_mapping.py`: LauncherResult → ExitMappingDecision (cancelled > timeout > non-zero > success priority)、cli_process_completed payload (raw stdout/stderr 非含、redaction hash + hit_count)。
+- `backend/app/services/cli_artifact/cancel_propagation.py`: CancelKey (Redis injection 物理削除)、CancelRegistry (bounded pending_signals=1024)、RedisCancelDispatcher、CancelSubscriberDriver。
+- `backend/app/services/cli_artifact/orchestrator.py`: CliInvocationOrchestrator wiring (allowlist → workdir → atomic write → cancel race → launch → mapping → redaction)、cancel 経路でも output redaction。
+- `backend/app/domain/agent_runtime/event_type.py` + `backend/app/db/models/agent_run_event.py` + `migrations/versions/0013_cli_event_type_28.py` + `tests/runtime/test_agent_run_events.py` + `.claude/rules/agentrun-state-machine.md`: event_type 25 → 28 拡張 (cli_invocation_started / cli_process_completed / cli_decision_recorded)、5+ source 整合維持。
+- `backend/app/db/models/{agent_run_event,artifact}.py` + `migrations/versions/{0014_prohibited_event_keys_21,0015_artifact_prohibited_keys_21}.py`: DB CHECK denylist 18 → 21 keys (`secret_capability_token` / `raw_token` / `session_token`)、repository scanner と整合。
+- `tests/cli_artifact/{test_redaction,test_per_run_workdir,test_exit_mapping,test_cancel_propagation}.py`: 137 test (Codex 委譲生成)。
+
+**batch 3 (本 commit)**:
+- `backend/app/services/cli_artifact/decision.py`: 採否判定 API (record_decision、actor_type=`human` 強制 = self-approval 物理削除、artifact_hash は server-side SHA-256 算出、reason の raw secret + key=value redaction 検証、aware datetime 必須)。
+- `backend/app/services/cli_artifact/direct_execution_lint.py`: AI Output Boundary §1 lint (AI / CLI_LAUNCHER source × 6 sink kind = 12 forbidden edge、graph integrity unknown_node も violation 化)。
+- `tests/cli_artifact/{test_decision,test_direct_execution_lint}.py`: 86 test。
+
+### verified (2026-05-13)
+
+- **ADR-00003 trace**: artifact schema (11 kinds) + subprocess launcher request/result + AgentRunEvent 拡張 (28 events) + 採否判定 API + AI 出力直結禁止 lint を boundary 全 5 種で fail-closed enforcement。
+- **artifact contract**: CliArtifactPayload (Pydantic frozen、SHA-256 hex regex、semver、`extra=forbid`、dict/str body の raw secret scan)。
+- **launcher env scrub**: `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GITHUB_TOKEN` / `TAILSCALE_AUTHKEY` / `SOPS_AGE_KEY` 等 14 種 forbidden ENV を registry __post_init__ で reject、launcher 内部 defense-in-depth + scrubbed env baseline。
+- **redaction**: 8 regex pattern (OpenAI/Anthropic/GitHub×3/Tailscale/age/PEM) + 21 prohibited key value redaction (fail-closed line-end / delimiter terminate) + Cc/Cf category carpet-bomb (per-char unicodedata) + ANSI strip (closed / unterminated CSI / OSC / bare ESC) + bidi isolate + Plane 14 tag + VSS + CGJ + non-utf8 marker noise allowance。
+- **AgentRun 16 状態 mapping**: exit_mapping priority (cancelled > timeout > non-zero > success)。timeout = `blocked + runtime_blocked` (resume 可)、non-zero = `failed` terminal、success = status 維持 (採否判定待ち)。
+- **採否判定 API**: actor_type=`human` 強制 (self-approval 物理削除)、artifact_hash server-side 算出、reason の raw secret + key=value + redaction pipeline 3 段 reject、aware datetime 必須、reason_hash のみ AgentRunEvent payload、raw reason は audit_events 専用。
+- **direct execution negative**: 12 violation pattern + graph integrity unknown_node + Trusted/Runner/Human allowed pattern、合計 86 lint test。
+- **cancel propagation**: process group `os.killpg(pgid, SIGTERM/SIGKILL)` + drain task bounded await + CancelRegistry pending_signals bounded (1024) + Redis pub/sub channel injection 物理削除。
+- **raw secret 非露出**: 8 round Codex adversarial review で AC-HARD-02 漏洩経路 (key=value / quoted / unclosed / ANSI / C0 / C1 / non-utf8 / ZWJ / ZWNJ / BOM / VS / bidi isolate / Plane 14 tag / VSS / CGJ / Cc/Cf full category) を全 closure。Confusable Cyrillic key は Sprint 11 eval harness AC-HARD-02 adversarial fixture で defer 明文化。
+- **5+ source enum integrity**: ArtifactKind 11 / AgentRunEventType 28 / artifact_kind CHECK (migrations 0012) / event_type CHECK (migrations 0013) / prohibited key CHECK 21 (migrations 0014 + 0015) / pytest EXPECTED 全整合。
+- **server-owned-boundary §1**: payload_data_class / content_hash / artifact_hash / cwd / prompt_file / output_file / stream_file 全て server-side で server 側が決定、caller-supplied signature 経路を物理削除。
+- **検証コマンド (1766 / 1766 pass)**:
+  - `uv run pytest -q`: 1766 passed, 279 skipped
+  - `uv run mypy backend`: clean (147 source files)
+  - `uv run ruff check backend tests`: All checks passed
+  - `uv run alembic check`: migrations 0001-0015 整合
+- **固有語なし**: `ruby -e 'forbidden = ["ie","shima"] ...'` で SP-006 自身に旧 project 固有語不在。
+
+### deferred
+
+- **Codex App Server / Claude Remote Control adapter**: P0.1 / P1 で `ADR-00013` accepted 化後 (Sprint 13+)。本 Sprint では subprocess + CLI binary 経由のみ、remote session 管理は scope 外。
+- **Docker isolated runner + runner_mutation_gateway 本実装**: Sprint 7 で `RunnerAdapter` 完成 (forbidden path / dangerous command / resource cap / runner_mutation_gateway 本実装)。CLI launcher は interface 互換、Sprint 7 で RunnerAdapter に接続する。
+- **採否判定後の Output Validator / policy lint / Approval / Runner / RepoProxy gate 連携**: Sprint 7-8 で実装。本 Sprint は decision record のみで mutation は行わない。
+- **AI Output Boundary §1 の lint sink 追加 (secret_ref resolve / URL trust / trusted_instruction 自動昇格)**: 本 Sprint scope は 6 sink kind に限定。Sprint 5.5 Input Trust Layer + Sprint 7 RunnerAdapter で coverage 拡張。
+- **caller-supplied ArtifactNode.source 偽装防止 (TRUSTED / RUNNER / HUMAN source の server-side 由来検証)**: Sprint 8 で provenance binding 実装。本 Sprint は lint validation のみ、actual source は別 module で server 側が決定する旨を docstring 明示。
+- **Confusable Unicode redaction (Cyrillic key spoofing)**: 依存追加なしでは困難、Sprint 11 eval harness AC-HARD-02 adversarial fixture で扱う。
+- **AgentRuntime wiring contract test (CliInvocationOrchestrator caller の AgentRunEvent + artifact persist + status update 同一 transaction)**: 本 Sprint は orchestrator docstring + decision API のみ。Sprint 7 で AgentRuntime に統合し contract test 追加。
+- **Codex App Server / Remote Control adapter**: ADR-00013 で boundary 仕様 proposed 済、P0.1 で accepted 化。
+
+### risks
+
+- **subprocess bypass**: registry __post_init__ + launcher path containment + binary absolute + cwd allowlist の 4 段で fail-closed。検出: `tests/cli_artifact/test_launcher.py` 30 件 + Codex 5 round security review。残: shipped registry `binary_path = /opt/homebrew/bin/codex` は Mac 開発機固定、ADR-00021 host-portable で env-overlay 化を Sprint 6 batch 2+ 想定 (Linux/VPS deployment 時に別 path 指定が必要、ADR-00021 §3 で扱う)。
+- **redaction miss**: 8 round Codex adversarial review で 18 finding 全 closure、Cc/Cf carpet-bomb で将来の Unicode standard update も自動対応。残: Confusable Unicode (`аpi_key` Cyrillic) は依存追加なしで困難、Sprint 11 AC-HARD-02 adversarial fixture で扱う。
+- **cancel orphan**: `start_new_session=True` + `os.killpg(pgid, SIGTERM)` → grace → SIGKILL、drain task bounded await (5s)、CancelRegistry pending_signals bounded。残: subprocess が自身を別 session に move する pathological case は POSIX 仕様上避けられない (acceptable、Sprint 7 RunnerAdapter で Docker cgroup-based termination)。
+- **decision bypass**: actor_type=`human` 強制 + artifact_content server-side hash + reason 3 段 redaction (raw_secret_scan / key=value reject / redaction pipeline) で signature レベル防御。残: idempotency key は本 module の責任外 (caller AgentRuntime が同一 (run_id, actor_id, verdict) の重複を防ぐ contract、Sprint 7 で実装)。
+- **registry drift**: TOML / __post_init__ / pytest で 14 entry × multi-source 整合、Codex review で確認済。残: registry hot-reload 時 `_FORBIDDEN_ENV_NAMES` の import 時 snapshot 問題 (registry hot-reload は本 Sprint scope 外、再起動必須を明文化)。
+- **API scope creep**: ADR-00003 で API 契約を proposed → accepted、breaking change が必要な場合は ADR-00003 update が必要。本 Sprint で API 契約安定化、Sprint 7 以降の internal API 追加は ADR update を介す。
+
+### Codex Adversarial Review Summary
+
+- **batch 1 R1-R5** (5 round): 9 finding (R1 1 HIGH + R2 4 HIGH + R3 3 HIGH + R4 1 HIGH + R5 verdict=clean MEDIUM 1 件)。
+- **batch 2 R1-R8** (8 round): 18 finding (R1 1 CRITICAL + 3 HIGH + 4 MEDIUM + 1 LOW、R2-R8 各 1 CRITICAL / HIGH)。8 round で AC-HARD-02 secret canary 漏洩経路を 6 attack 面で全 closure (key=value / ANSI / C0/C1 / Default_Ignorable / bidi / VSS+CGJ / future Cf)。
+- **batch 3 R1** (1 round): 8 finding (1 CRITICAL + 4 HIGH + 2 MEDIUM + 1 LOW) 全件採否判定 → adopt / partial / defer 文書化。signature 変更追従 test を Codex 委譲。
+- **合計**: 13 round / 35 finding (重複排除後 33 finding)、Claude 単独 review では発見困難な Unicode redaction bypass + caller-supplied path 経路 + self-approval 経路 + graph integrity を Codex multi-round で補完。Codex-first ポリシー §6.5.0 を初期 round から適用。
 
