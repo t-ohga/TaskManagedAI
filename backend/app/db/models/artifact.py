@@ -22,6 +22,11 @@ ArtifactKind = Literal[
     "citation",
     "provider_continuation_ref",
     "other",
+    "cli_input",
+    "cli_stdout",
+    "cli_stderr",
+    "cli_exit",
+    "cli_result_summary",
 ]
 
 ALL_ARTIFACT_KINDS: tuple[ArtifactKind, ...] = (
@@ -31,6 +36,11 @@ ALL_ARTIFACT_KINDS: tuple[ArtifactKind, ...] = (
     "citation",
     "provider_continuation_ref",
     "other",
+    "cli_input",
+    "cli_stdout",
+    "cli_stderr",
+    "cli_exit",
+    "cli_result_summary",
 )
 
 _PROHIBITED_ARTIFACT_PAYLOAD_KEYS: tuple[str, ...] = (
@@ -72,7 +82,8 @@ class Artifact(TenantIdMixin, Base):
     __table_args__ = (
         sa.CheckConstraint(
             "kind in "
-            "('plan','patch','evidence','citation','provider_continuation_ref','other')",
+            "('plan','patch','evidence','citation','provider_continuation_ref','other',"
+            "'cli_input','cli_stdout','cli_stderr','cli_exit','cli_result_summary')",
             name="artifacts_ck_kind",
         ),
         sa.CheckConstraint(

@@ -1,0 +1,72 @@
+# Sprint 6 BL-0065: CLI agent registry (allowlist).
+#
+# 本ファイルは Sprint 6 の Subprocess Launcher 用の **正本**:
+# - 起動可能な CLI binary を ``[[agents]]`` で固定列挙
+# - 各 agent の `argv_template` で許可済 placeholder を限定
+# - `env_passthrough` で許可済 ENV var だけ subprocess へ pass-through
+#
+# 採用方針 (ADR-00003):
+# - Codex / Claude / 任意 CLI を **subprocess** で呼び (ProviderAdapter SDK 経由
+#   ではない) 出力は artifact_kind=cli_* に保存。
+# - 直接 prompt をユーザー入力で動的 expand しない (forbidden command 経路を残
+#   さない、AI Output Boundary §1 + DD-04)。
+# - registry に登録されていない binary や placeholder は launcher 側で deny。
+#
+# Sprint 6 batch 1 は registry skeleton + 1 agent (codex CLI、read-only sandbox
+# 前提) を入れる。batch 2 以降で agent 数を増やす場合は ADR-00003 §B
+# rollback を見直し、本 file の version を上げる。
+
+schema_version = "1.0.0"
+
+[[agents]]
+name = "codex"
+# 物理パスは絶対指定必須 (Codex SP6B1 R2 F-SP6B1-R2-004 採用、PATH 汚染による
+# 別 binary 起動を物理削除)。Mac (homebrew) のデフォルト path。Linux / VPS
+# deployment では別 path となるため、Sprint 6 batch 2 で env-overlay 機構を
+# 実装するまで本 file は **Mac 開発機 (`t-ohga-mac`) 専用** の値を保持する。
+# host-portable 化は ADR-00021 / Sprint 6 batch 2 以降で扱う。
+binary_path = "/opt/homebrew/bin/codex"
+# argv_template は placeholder のみ。launcher が placeholder を resolve する。
+# 許可済 placeholder:
+#   {prompt_file}: CLI 入力 prompt の絶対パス (read-only)
+#   {output_file}: 最終応答書出先 (subprocess は WRITE)
+#   {stream_file}: JSONL stream 書出先 (subprocess は WRITE)
+argv_template = [
+  "exec",
+  "--sandbox",
+  "read-only",
+  "--profile",
+  "deep-review",
+  "--json",
+  "--output-last-message",
+  "{output_file}",
+  "-",
+]
+stdin_source = "{prompt_file}"
+# 許可済 ENV var のみ pass-through。secret 値を抜く invariant
+# (`server-owned-boundary §1` / SecretBroker rules)。
+env_passthrough = [
+  "HOME",
+  "PATH",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM",
+]
+# subprocess の最大実行時間 (秒)。timeout 超過は cli_exit.timeout_reached=true。
+timeout_seconds = 1800
+# 最大 stdout/stderr バイト数 (各)。redaction pipeline はこれを上限とする。
+max_stdout_bytes = 1048576
+max_stderr_bytes = 524288
+# CLI agent の最大 payload data class。Provider Compliance Matrix と同等 invariant
+# で、**service layer (caller)** が artifact metadata から resolve した
+# payload_data_class を本値と比較する (Sprint 6 batch 2 で artifact_ref →
+# data class resolve を実装、batch 1 の launcher は boundary check の責任を持たない、
+# server-owned-boundary §1: caller-supplied payload_data_class の signature 経路を物理削除)。
+# 値 "internal" は: public ≤ internal ≤ internal で送れる、confidential / pii は deny。
+max_payload_data_class = "internal"
+# launcher 起動時の cwd allowlist。caller が指定する cwd は本 list 配下 (Path.resolve()
+# 後の prefix match) でなければ deny。同時に prompt_file / output_file / stream_file
+# も本 list 配下に限定 (AC-HARD-05 forbidden path enforcement の launcher 境界実装、
+# server-owned-boundary §1 で path containment を server 側で強制)。
+cwd_allowlist = ["/Users/tohga/repo/TaskManagedAI"]

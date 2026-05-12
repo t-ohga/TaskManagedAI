@@ -219,6 +219,69 @@ eval/
 
 本プロジェクトでは **Codex を主実装者、Claude を orchestration / 品質評価者** として運用する。本 section は Sprint 1 以降の全実装で適用される永続的 workflow である。
 
+### 6.5.0 Codex-first ポリシー (token / cost / 品質 最適化、2026-05-12 確立)
+
+**本プロジェクトは Codex (gpt-5.5 + xhigh) を第一選択の実装エンジンとし、Claude (本 agent) は orchestration + 微修正 + 採否判定 + 品質ゲートに専念する**。理由は以下。
+
+- **token / cost 最適化**: Codex は ChatGPT Plus 包括契約で reasoning effort xhigh + 大規模 explore + 長文出力を **追加課金なし**で実行できる。Claude API は token 従量課金のため、test 大量実装・bulk grep・大規模 refactor を Claude 単独で行うとコスト効率が悪い。
+- **品質向上**: Claude 単独 single-pass よりも、Codex で実装 → Claude が `adopt/reject/defer` 判定 → Codex に R1 review → 採否判定 → Codex R2 fix → … → `verdict=clean` のループの方が客観的かつ網羅的に finding を出せる (Sprint 1-5.5 実績で平均 R1→R3 で clean 達成、累計 200+ findings adopted)。
+- **Claude の比較優位**: orchestration、AskUserQuestion、Sprint Pack / ADR 整合性判断、不変条件 trace、最終 commit / push の責任所在の明確化、ユーザー対話品質。
+
+#### 必須 workflow
+
+| 作業種別 | 第一選択 | 理由 |
+|---|---|---|
+| **token / cost が膨らみそうな実装** (test 大量実装、bulk grep、大規模 refactor) | **Codex 委譲必須** | `codex-task` 経由で 5-60 分の長尺タスクを background で処理 |
+| **新規 feature 実装** | **Codex 委譲推奨**、Claude は prompt 作成 + 採否判定 | 不変条件 trace と pattern 反映を prompt で明示 |
+| **review ループ (R1 / R2 / R3 / …)** | **Codex 必須** (`codex-adversarial-review` skill) | `verdict=clean` まで multi-round で必ず実行、Claude single-pass review で commit しない |
+| **微修正 (5-10 行 / 1-2 ファイル)** | Claude 直接 fix | Codex 委譲 overhead を避ける、ただし lint / mypy / pytest 必須 |
+| **migration / DB schema / 不変条件 violation の可能性ある変更** | Codex 委譲 + Claude code review + Codex adversarial review の 3 段 | Hard Gates 7 / 5+ source enum integrity / atomic claim violation を多角的に検出 |
+| **frontend 実装** | Codex 委譲 (Sprint 9 以降) | UI test / accessibility / responsive を Codex で一括生成 |
+| **Sprint Exit 判定 / Sprint Pack ## Review 章** | Claude 主体 + Codex で残リスク adversarial review | 最終責任は Claude (orchestration) |
+
+#### Claude 単独で commit を作る禁止条件
+
+以下は **Codex review 経由必須** (commit 前に最低 R1 review 1 周):
+
+- **CRITICAL 不変条件触る変更** (AgentRun 16 状態 / ContextSnapshot 10 列 / Provider Compliance 13 reason_code / SecretBroker raw secret 非保存 / Tenant boundary / actor / principal / approval 4 整合 / runner_mutation_gateway / tool_mutating_gateway_stub / PostgreSQL CHECK constraint / 複合 FK)
+- **3 ファイル横断以上の変更**
+- **migration (Alembic) 追加・変更**
+- **新 ADR proposed → accepted 昇格**
+- **Sprint Exit / Sprint Pack ## Review 章書き出し**
+
+Claude 単独 commit が許される条件:
+
+- 1-2 ファイル / 30 行未満 の微修正
+- typo、コメント、wording、frontmatter ledger 更新、test fixture の expected 値追従
+- 既存 pattern に沿った定型作業 (例: import 追加、type ignore コメント追加、retry の expected count 修正)
+- 全条件で `uv run mypy backend` + `uv run ruff check backend tests` + 該当 `pytest` PASS が前提
+
+#### Review 採否判定ループの厳守
+
+1. Codex に実装委譲 → result.md / patch 生成
+2. Claude が **必ず file:line + evidence_quote ベース**で patch を読み、TaskManagedAI rules / Sprint Pack / ADR / 不変条件と照合
+3. `adopt` / `reject` / `defer` を明示 (Claude 判断、ユーザー確認なしで OK だが理由を書く)
+4. **adopt 後 commit 前に Codex adversarial review** (`codex-adversarial-review` skill) を最低 R1 (CRITICAL 不変条件触る変更は R2 まで)
+5. Codex review findings を Claude が再度 `adopt` / `reject` / `defer` で判定 → 修正 → 次 round
+6. `verdict=clean` 到達まで loop
+7. 3 連続 round で同種 finding 残存・rate limit・100 bytes 未満応答 → AskUserQuestion で継続可否 (auto reject せず必ずユーザー確認)
+
+#### token 効率の指針
+
+- Codex prompt は self-contained + 絶対パス + line range で **必読 file を絞る** (`codex-output-contract.md §3` 準拠、最大 20 file Read / grep 20 結果)
+- Codex review prompt は **finding-schema.json 形式必須** (parse 不可能な自由文応答は禁止)
+- Codex 出力 200 KB 超過時は **分割 output mode**、Claude 側 fallback 検知時は再 run
+- 大量 grep / bulk explore は Codex に委譲 (Claude 側で Grep / Glob を多数 spawn しない)
+- review session 中の `git diff` / `git status` は Claude 側で 1 回取って Codex prompt に embed (Codex 側で再取得させない)
+
+#### 例外条件 (Claude 単独で実装 OK)
+
+- Codex 3 連続失敗 (rate limit / 100 bytes 未満 / schema invalid) → AskUserQuestion で「Claude 単独続行」が選択された場合のみ
+- ユーザーが明示的に「Claude で実装して」と指示した場合
+- worktree setup / git operation / ファイル移動 / 環境変数読込 等の Claude tool 直叩きが効率的な作業
+
+
+
 ### 6.5.1 役割分担
 
 | 役割 | 担当 | 範囲 |

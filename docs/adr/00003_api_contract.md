@@ -1,8 +1,9 @@
 ---
 id: "ADR-00003"
 title: "CLI artifact orchestration boundary: artifact schema / subprocess launcher / AgentRunEvent 拡張 / 採否判定 API / AI 出力直結禁止 lint"
-status: "proposed"
+status: "accepted"
 date: "2026-05-12"
+accepted_at: "2026-05-12"
 authors:
   - "t-ohga"
 related_sprints:
@@ -15,7 +16,7 @@ superseded_by: null
 
 このテンプレの使い方: Sprint 6 の CLI artifact orchestration を ADR Gate Criteria #3 (API 契約 / event schema) に対応する形で固定する。`codex exec` / `claude -p` 等の CLI agent を domain に密結合せず、artifact schema + subprocess launcher + AgentRunEvent 拡張 + 採否判定 API + AI 出力直結禁止 lint の 5 boundary を確立する。Sprint 6 batch 1 着手前に proposed → accepted、Sprint 6 Exit までに review 欄を最終化する。
 
-最終更新: 2026-05-12 (Sprint 6 batch 0 で proposed 起票、Sprint 6 batch 1 着手前に accepted 化予定)
+最終更新: 2026-05-12 (Sprint 6 batch 0 で proposed 起票、Sprint 6 batch 1 着手直前に accepted 化)
 
 ## 背景
 
