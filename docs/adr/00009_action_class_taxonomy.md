@@ -160,7 +160,7 @@ Tier 2 (`policy_profile=low_risk_auto_allow` で effect=allow) は **approval_re
 
 ---
 
-## Sprint 5.5 Output Validator + Input Trust Layer update (2026-05-10、proposed 追記)
+## Sprint 5.5 Output Validator + Input Trust Layer update (2026-05-10 proposed 追記 / 2026-05-12 Sprint 5.5 着手で accepted)
 
 SP-005-5 (Output Validator) accepted 化に伴う本 ADR の update。**action_class 7 種は不変** (Sprint 5.5 で拡張なし)、本 update は (1) `repair_retry_max_attempts` policy を `config/policy_pack.toml` に新規導入、(2) `trusted_instruction` 昇格境界を既存 approval 経路に閉じる方針を Approval 4 整合 + decider human-only で明示、(3) Sprint 5.5 で追加する audit_events を 2 taxonomy で記述、の 3 点を追記する。
 

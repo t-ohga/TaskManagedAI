@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.db.models.base import Base, TenantIdMixin
 from backend.app.domain.artifact.data_class import PayloadDataClass
+from backend.app.domain.artifact.trust_level import TrustLevel
 
 JsonDict = dict[str, Any]
 
@@ -87,6 +88,10 @@ class Artifact(TenantIdMixin, Base):
             name="artifacts_ck_payload_data_class",
         ),
         sa.CheckConstraint(
+            "trust_level in ('untrusted_content','validated_artifact','trusted_instruction')",
+            name="artifacts_ck_trust_level",
+        ),
+        sa.CheckConstraint(
             "(kind <> 'provider_continuation_ref') or (exportable = false)",
             name="artifacts_ck_provider_continuation_ref_not_exportable",
         ),
@@ -150,6 +155,12 @@ class Artifact(TenantIdMixin, Base):
     content_hash: Mapped[str] = mapped_column(sa.Text, nullable=False)
     content_jsonb: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
     payload_data_class: Mapped[PayloadDataClass] = mapped_column(sa.Text, nullable=False)
+    trust_level: Mapped[TrustLevel] = mapped_column(
+        sa.Text,
+        nullable=False,
+        default="untrusted_content",
+        server_default=sa.text("'untrusted_content'"),
+    )
     exportable: Mapped[bool] = mapped_column(
         sa.Boolean,
         nullable=False,

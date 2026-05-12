@@ -1,0 +1,25 @@
+# TaskManagedAI Policy Pack (Sprint 5.5+)
+# 正本: docs/adr/00009_action_class_taxonomy.md §Sprint 5.5 update
+# 整合: ContextSnapshot.policy_pack_lock (DD-03 §10 カラム必須)
+#
+# policy_version は append-only / monotonic increment。Sprint 5.5 で導入 v1.0.0.
+# `repair_retry_max_attempts` は AgentRun runtime の Output Validator (BL-0064)
+# で参照、BudgetGuard.repair_budget_remaining との AND で repair_exhausted
+# (terminal、ADR-00004 §13) を強制する。
+
+[meta]
+policy_version = "v1.0.0-p0-sp5-5"
+last_updated_at = "2026-05-12"
+description = "TaskManagedAI Policy Pack v1 - Sprint 5.5 baseline"
+
+[output_validator]
+# Output Validator repair retry policy (BL-0064)
+# default 3, 上限到達で validation_failed -> repair_exhausted (terminal)
+# BudgetGuard.repair_budget_remaining も AND で必須
+repair_retry_max_attempts = 3
+
+[input_trust]
+# Input Trust Layer 昇格 policy (BL-0065)
+# validated_artifact -> trusted_instruction は human approval 経由のみ
+# (Approval 4 整合 + decider human-only、ADR-00009 §Sprint 5.5 update §198)
+trust_level_promotion_to_trusted_instruction_requires_human_approval = true

@@ -34,6 +34,9 @@ _DEFAULT_DATABASE_URL = (
 _DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/1"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENT_RUNS_MIGRATION = _REPO_ROOT / "migrations" / "versions" / "0008_agent_runs_lifecycle.py"
+_EVENT_TYPE_25_MIGRATION = (
+    _REPO_ROOT / "migrations" / "versions" / "0011_trust_level_event_25.py"
+)
 
 ACTOR_ID = UUID("00000000-0000-4000-8000-000000005001")
 WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000005002")
@@ -63,6 +66,9 @@ EXPECTED_AGENT_RUN_EVENT_TYPES = (
     "run_completed",
     "run_failed",
     "run_cancelled",
+    "repair_exhausted",
+    "trust_level_promoted",
+    "trust_level_promotion_denied",
 )
 
 
@@ -133,29 +139,96 @@ def _call_keyword_string(node: ast.Call, keyword_name: str) -> str | None:
     return None
 
 
-def _check_constraint_values_from_migration(constraint_name: str) -> set[str]:
-    module = ast.parse(_AGENT_RUNS_MIGRATION.read_text(encoding="utf-8"))
+def _module_string_constants(module: ast.Module) -> dict[str, str]:
+    """Collect top-level ``_NAME = "..."`` string-typed assignments.
+
+    Implicit string concatenation like ``("a" "b")`` collapses to a single
+    ``ast.Constant`` during parse, so this helper handles both inline
+    literals and module-level constants composed by adjacent strings.
+    """
+
+    result: dict[str, str] = {}
+    for stmt in module.body:
+        if not isinstance(stmt, ast.Assign):
+            continue
+        if len(stmt.targets) != 1:
+            continue
+        target = stmt.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        if isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+            result[target.id] = stmt.value.value
+    return result
+
+
+def _coerce_string_argument(
+    node: ast.expr,
+    constants: dict[str, str],
+) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name) and node.id in constants:
+        return constants[node.id]
+    return None
+
+
+def _check_constraint_values_from_migration(
+    constraint_name: str,
+    migration_path: Path | None = None,
+) -> set[str]:
+    """Parse a migration file for a CHECK constraint's quoted enum literals.
+
+    Supports two patterns in the same parser:
+    - ``sa.CheckConstraint("event_type in (...)", name="...")`` (Sprint 1-4
+      migration style, e.g. ``0008_agent_runs_lifecycle.py``).
+    - ``op.create_check_constraint("name", "table", "event_type in (...)")``
+      (Sprint 5.5 migration style, e.g. ``0011_trust_level_event_25.py``).
+      The ``condition`` argument MAY be either an inline string literal or
+      a reference to a module-level string constant.
+    """
+
+    target = migration_path if migration_path is not None else _AGENT_RUNS_MIGRATION
+    module = ast.parse(target.read_text(encoding="utf-8"))
+    constants = _module_string_constants(module)
 
     for node in ast.walk(module):
         if not isinstance(node, ast.Call):
             continue
-        if not isinstance(node.func, ast.Attribute) or node.func.attr != "CheckConstraint":
+        if not isinstance(node.func, ast.Attribute):
             continue
-        if _call_keyword_string(node, "name") != constraint_name:
-            continue
-        if not node.args:
-            raise AssertionError(f"{constraint_name} has no SQL expression.")
 
-        expression_node = node.args[0]
-        if not isinstance(expression_node, ast.Constant) or not isinstance(
-            expression_node.value,
-            str,
-        ):
-            raise AssertionError(f"{constraint_name} SQL expression must be a string literal.")
+        # Pattern A: sa.CheckConstraint(condition, name=name) [Sprint 1-4 style].
+        if node.func.attr == "CheckConstraint":
+            if _call_keyword_string(node, "name") != constraint_name:
+                continue
+            if not node.args:
+                raise AssertionError(f"{constraint_name} has no SQL expression.")
+            expression = _coerce_string_argument(node.args[0], constants)
+            if expression is None:
+                raise AssertionError(
+                    f"{constraint_name} SQL expression must be a string literal "
+                    "or module-level string constant."
+                )
+            return set(re.findall(r"'([^']+)'", expression))
 
-        return set(re.findall(r"'([^']+)'", expression_node.value))
+        # Pattern B: op.create_check_constraint(name, table, condition) [Sprint 5.5+].
+        if node.func.attr == "create_check_constraint":
+            if len(node.args) < 3:
+                continue
+            name_arg = node.args[0]
+            if not isinstance(name_arg, ast.Constant) or name_arg.value != constraint_name:
+                continue
+            condition = _coerce_string_argument(node.args[2], constants)
+            if condition is None:
+                raise AssertionError(
+                    f"{constraint_name} create_check_constraint condition "
+                    "must be a string literal or module-level string constant."
+                )
+            return set(re.findall(r"'([^']+)'", condition))
 
-    raise AssertionError(f"{constraint_name} was not found in 0008_agent_runs_lifecycle.py.")
+    raise AssertionError(
+        f"{constraint_name} was not found in {target.name}."
+    )
 
 
 def _sqlstate(error: BaseException) -> str | None:
@@ -358,8 +431,13 @@ def test_all_agent_run_event_types_match_literal_and_order() -> None:
 
 
 def test_db_event_type_check_constraint_matches_event_types() -> None:
+    # Sprint 5.5 (migration 0011) extends the CHECK from 22 -> 25 by drop +
+    # create, so the final source of truth lives in 0011.
     assert (
-        _check_constraint_values_from_migration("agent_run_events_ck_event_type")
+        _check_constraint_values_from_migration(
+            "agent_run_events_ck_event_type",
+            _EVENT_TYPE_25_MIGRATION,
+        )
         == set(ALL_AGENT_RUN_EVENT_TYPES)
     )
 

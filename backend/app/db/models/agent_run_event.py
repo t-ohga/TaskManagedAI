@@ -67,7 +67,8 @@ class AgentRunEvent(TenantIdMixin, Base):
             "'repair_retry_scheduled','policy_linted','policy_blocked','budget_blocked',"
             "'runtime_blocked','diff_ready','approval_requested','approval_decided',"
             "'runner_started','runner_completed','runner_blocked','repo_pr_opened',"
-            "'run_completed','run_failed','run_cancelled')",
+            "'run_completed','run_failed','run_cancelled',"
+            "'repair_exhausted','trust_level_promoted','trust_level_promotion_denied')",
             name="agent_run_events_ck_event_type",
         ),
         sa.CheckConstraint(

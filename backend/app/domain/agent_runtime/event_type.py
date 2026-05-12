@@ -25,6 +25,9 @@ AgentRunEventType = Literal[
     "run_completed",
     "run_failed",
     "run_cancelled",
+    "repair_exhausted",
+    "trust_level_promoted",
+    "trust_level_promotion_denied",
 ]
 
 ALL_AGENT_RUN_EVENT_TYPES: tuple[AgentRunEventType, ...] = (
@@ -50,6 +53,9 @@ ALL_AGENT_RUN_EVENT_TYPES: tuple[AgentRunEventType, ...] = (
     "run_completed",
     "run_failed",
     "run_cancelled",
+    "repair_exhausted",
+    "trust_level_promoted",
+    "trust_level_promotion_denied",
 )
 
 __all__ = ["ALL_AGENT_RUN_EVENT_TYPES", "AgentRunEventType"]

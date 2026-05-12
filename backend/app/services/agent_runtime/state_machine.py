@@ -66,7 +66,12 @@ EVENT_TYPE_FOR_TRANSITION: Mapping[
     ("waiting_approval", "blocked"): frozenset({"policy_blocked"}),
     ("waiting_approval", "cancelled"): frozenset({"run_cancelled"}),
     ("validation_failed", "running"): frozenset({"repair_retry_scheduled"}),
-    ("validation_failed", "repair_exhausted"): frozenset({"validation_failed", "run_failed"}),
+    # Sprint 5.5 update (SP55-B1-R2-F-001 fix): the terminal repair-exhaustion
+    # transition MUST be witnessed by the dedicated ``repair_exhausted`` event
+    # introduced in ADR-00004 §Sprint 5.5 update (event #23). Allowing
+    # ``validation_failed`` or ``run_failed`` here would hide repair-exhaustion
+    # as a generic failure in audit trails.
+    ("validation_failed", "repair_exhausted"): frozenset({"repair_exhausted"}),
     ("provider_incomplete", "running"): frozenset({"repair_retry_scheduled"}),
     ("provider_incomplete", "failed"): frozenset({"run_failed"}),
     ("provider_incomplete", "cancelled"): frozenset({"run_cancelled"}),

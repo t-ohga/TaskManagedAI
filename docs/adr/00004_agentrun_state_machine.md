@@ -494,7 +494,7 @@ SP-013 で agent_runs に `unique (tenant_id, project_id, id)` 追加 → 後続
 
 ---
 
-## Sprint 5.5 Output Validator + Input Trust Layer update (2026-05-10、proposed 追記)
+## Sprint 5.5 Output Validator + Input Trust Layer update (2026-05-10 proposed 追記 / 2026-05-12 Sprint 5.5 着手で accepted)
 
 SP-005-5 (Output Validator) accepted 化に伴う本 ADR の update。**P0 期間中** (Sprint 5.5) で event_type を 22 → 25 に拡張、`repair_exhausted` を terminal 強制、Input Trust Layer の `trust_level` enum (artifact 単体) を導入。**Phase D-E update §event_type 22 → 31 (P0.1+ 拡張) は本 Sprint 5.5 update が先行 accepted 化されるため、numbering を 26-34 にシフト**する (詳細は §event_type numbering 整合)。
 
