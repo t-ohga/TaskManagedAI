@@ -9,28 +9,28 @@ target_days: 6
 max_days: 9
 adr_refs:
   - "[ADR-00001](../adr/00001_auth_rbac.md) # accepted、dev login / actor binding"
-  - "[ADR-00003](../adr/00003_api_contract.md) # accepted (P0 で proposed → 着手時 accepted)、FastAPI + OpenAPI + Pydantic response model"
   - "[ADR-00004](../adr/00004_agentrun_state_machine.md) # accepted、AgentRun 16 状態 + blocked_reason 3 種、UI で status / reason を分離表示"
   - "[ADR-00009](../adr/00009_action_class_taxonomy.md) # accepted、action_class 7 種、Approval UI で表示"
   - "[ADR-00014](../adr/00014_multi_agent_orchestration.md) # proposed (P0.1 で accepted 化予定)、10 role + 4 面 UI 参照 (Symphony cross-reference 含む)"
-planned_adr_refs: []
+planned_adr_refs:
+  - "[ADR-00003](../adr/00003_api_contract.md) # ファイル未起票。AI Runs timeline / BL-0094 / BL-0092 Plan Mode Edit API 契約は実装前 proposed 起票が必要 (Criteria #3 API/event schema)"
 related_sprints:
-  - "SP-005-5_output_validator"
-  - "SP-006_cli_artifact"
-  - "SP-007_runner_sandbox"
-  - "SP-008_github_app_repoproxy"
+  - "SP-005-5_output_validator # 実在"
+  - "SP-006_cli_artifact # 実在"
+  - "SP-007_runner_sandbox # 実在"
+  - "SP-008_github_app_repoproxy # planned、未起票"
 upstream_sprints:
-  - "SP-001_project_foundation"
-  - "SP-002_core_data_model"
-  - "SP-003_policy_approval"
-  - "SP-004_agent_runtime"
-  - "SP-005_provider_adapter"
-  - "SP-005-5_output_validator"
-  - "SP-008_github_app_repoproxy"
+  - "SP-001_project_foundation # 実在"
+  - "SP-002_core_data_model # 実在"
+  - "SP-003_policy_approval # 実在"
+  - "SP-004_agent_runtime # 実在"
+  - "SP-005_provider_adapter # 実在"
+  - "SP-005-5_output_validator # 実在"
+  - "SP-008_github_app_repoproxy # planned、未起票"
 downstream_sprints:
-  - "SP-010_eval_harness"
-  - "SP-011_5_observability"
-  - "SP-012_p0_acceptance"
+  - "SP-010_eval_harness # planned、未起票 (PRD-01 では Sprint 10 は Research / Evidence、Sprint 11 が Eval Harness)"
+  - "SP-011_5_observability # planned、未起票"
+  - "SP-012_p0_acceptance # 実在"
 risks:
   - "UI scope creep (4 面 UI + Plan Mode + dashboard を 6/9 day 枠で収めにくい)"
   - "frontend telemetry を KPI 正本にする regression"
@@ -61,7 +61,7 @@ risks:
 - analytics drill-down (時系列 / cohort 分析)
 - 技術監視 dashboard (p95 latency / queue depth / provider error rate / 429 rate) は **Sprint 11.5 observability で実装**
 - WebSocket / Server-Sent Events での live update (P0 は polling + page refresh で完結)
-- AI Society Visualization (ADR-00017、P0.1 SP-017 で実装)
+- AI Society Visualization (ADR-00017、**P1 SP-017** で実装。P0.1 は SP-013〜016、P1 は SP-017〜020)
 
 ## 設計判断
 
@@ -98,7 +98,8 @@ risks:
 ### 2. Plan Mode (AI 計画 → 人間 approve / edit / reject)
 
 - AgentRun `generated_artifact → schema_validated → policy_linted → diff_ready → waiting_approval` の **`waiting_approval` 状態を Plan Mode UI で表現**
-- UI ボタン: **Approve** (`approval_decided` event 発行)、**Edit** (artifact を artifact_v(N+1) として作り直し)、**Reject** (`approval_decided` rejected 発行)
+- **P0 must_ship UI ボタン**: **Approve** (`approval_decided` event 発行)、**Reject** (`approval_decided` rejected 発行) の 2 つのみ
+- **Edit は P0 must_ship では defer**。Edit は新 artifact を untrusted_content → validated_artifact pipeline に戻し、旧 approval を invalidated にし、再 schema_validated / policy_linted / diff_ready / waiting_approval を経て再承認まで実行不可とする server-owned contract が必要。**実装は ADR-00003 (API contract) + ADR-00004 (AgentRun state machine、artifact_v(N+1) 経路) + ADR-00009 (action_class、Edit operation 該当判定) の 3 gate 配下で P0 Acceptance 後または P0.1 で着手**
 - agent は **decider にならない** (ADR-00014 human-only approval 不変)
 - Plan 内訳表示: `tool_manifest` + `policy_version` + `provider_request_fingerprint` + `evidence_set_hash`
 
@@ -111,7 +112,14 @@ risks:
 ### 4. 業務価値 dashboard
 
 - Quality KPIs 5 を可視化: `acceptance_pass_rate` / `time_to_merge` / `approval_wait_ms` / `citation_coverage` / `cost_per_completed_task`
-- source: **DB + audit_events + provider_usage table**、frontend event を KPI 正本にしない
+- source-of-truth: **ADR-00014 §10 `orchestrator_kpi_rollup` で KPI ごとに正本 source を列挙**:
+  - `acceptance_pass_rate`: `eval_runs` + `eval_scores` (SP-010 で実装) + 既存仕様
+  - `time_to_merge`: PR flow source のみ (RepoProxy 経由)、`agent_run_events` の `repo_pr_opened` event timestamp + merge timestamp
+  - `approval_wait_ms`: `approval_requests` の `requested_at` / `decided_at` (1 度のみ、parent / child 重複計測なし)
+  - `citation_coverage`: final adopted `artifacts` + `evidence_items` + `claims` (SP-010 Eval Harness で集計)
+  - `cost_per_completed_task`: `agent_run_events` の `provider_responded` event payload の `usage` field を sum + parent ticket 単位で wall-clock
+- **新規 `provider_usage` table は導入しない** (既存 `agent_run_events.event_payload.usage` を集計、新 table 追加なら別 ADR-00002 (DB schema) gate)
+- frontend event を KPI 正本にしない
 - read-only、drill-down は P1
 - 技術監視 (p95 latency / queue / error rate) は **Sprint 11.5 で Grafana 化、本 Sprint には含めない**
 
@@ -127,7 +135,7 @@ risks:
 |---|---|---:|---|
 | BL-0090 | Board page (Portfolio / Team / Sprint view + To Plan / In Execution / Review / Done columns) | M | SP-008 完了 |
 | BL-0091 | Ticket detail page (依頼/要件 + AI 計画/承認 + Execution Log timeline) | L | BL-0090 |
-| BL-0092 | Plan Mode UI (approve / edit / reject + plan 内訳表示) | M | BL-0091 + Approval API (SP-003) |
+| BL-0092 | Plan Mode UI (approve / reject + plan 内訳表示)。Edit は P0 must_ship では defer (ADR-00003/00004/00009 gate 配下で P0.1 着手) | M | BL-0091 + Approval API (SP-003) |
 | BL-0093 | Approval Inbox page (pending + risk_level + action_class、human-only decider) | M | SP-003 |
 | BL-0094 | AI Runs page (16 状態 + blocked_reason badge + AgentRunEvent timeline) | M | SP-004 + SP-005-5 |
 | BL-0095 | 業務価値 dashboard (Quality KPIs 5 read-only) | M | SP-010 Eval Harness |
@@ -140,7 +148,7 @@ risks:
 
 - BL-0090 Board page
 - BL-0091 Ticket detail
-- BL-0092 Plan Mode UI (approve / reject)
+- BL-0092 Plan Mode UI (approve / reject のみ、Edit は defer)
 - BL-0093 Approval Inbox
 - BL-0094 AI Runs (status + AgentRunEvent timeline、blocked_reason badge)
 
@@ -153,7 +161,7 @@ risks:
 ## 受け入れ条件
 
 - [ ] 4 面 UI (Board / Ticket Detail / Approval Inbox / AI Runs) すべてが Tailscale 閉域内で表示できる
-- [ ] Plan Mode で `waiting_approval` 状態の AgentRun に対し human approve / reject が可能、agent decider 経路がない
+- [ ] Plan Mode で `waiting_approval` 状態の AgentRun に対し human approve / reject (P0 must_ship: 2 ボタンのみ、Edit は defer) が可能、agent decider 経路がない
 - [ ] AgentRun status 16 個固定、UI が status enum を増やしていない
 - [ ] `blocked_reason` 3 種 (`policy_blocked` / `budget_blocked` / `runtime_blocked`) を status と分離 badge で表示
 - [ ] Execution Log で raw secret / provider response が表示されない (redaction 後 hash のみ)
@@ -205,7 +213,7 @@ E2E test 追加候補:
 - Sprint 11.5 (Observability): 技術監視 dashboard (p95 / queue / error rate) を Grafana で実装
 - Sprint 12 (P0 Acceptance): UI を含めた P0 全体 acceptance verify
 - P0.1 SP-016 (UI/CLI parity): UI と CLI で同 operation を提供
-- P0.1 SP-017 (AI Society Visualization): inter-agent timeline + role dashboard 追加
+- P1 SP-017 (AI Society Visualization): inter-agent timeline + role dashboard 追加 (P0.1 は SP-013〜016 multi-agent foundation のみ、P1 visualization は SP-017〜020)
 
 ## 関連 ADR / Sprint Pack / Doc
 

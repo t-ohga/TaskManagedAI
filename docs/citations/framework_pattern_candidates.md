@@ -8,7 +8,9 @@ TaskManagedAI の外部 AI/agent framework に対する **「参考にする pat
 
 候補 framework は AI-UIUX レポート (`docs/設計検討/AI統合タスク管理プラットフォームの最新UIUXと実装選定レポート.md`) で挙げられた 10 個。
 
-## 2. ADR-00020 8 verify (再掲、本 ledger の判定基準)
+## 2. ADR-00020 8 verify (非規範 summary、正本は `docs/adr/00020_framework_intake_checklist.md` §3)
+
+**本セクションは ADR-00020 の参照 summary であり、規範的な checklist は ADR-00020 と `SP-022_framework_intake_hardening.md` を正本とする**。本 ledger と ADR-00020 が drift した場合は **ADR-00020 が勝つ**。
 
 1. **License**: Polyform Shield 等の embed 禁止 license 検出
 2. **Attribution**: citation 義務化

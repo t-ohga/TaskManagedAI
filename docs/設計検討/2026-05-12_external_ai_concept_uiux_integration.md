@@ -68,7 +68,7 @@ defer / 拒否:
 
 | Action | 成果物 | 影響 invariant | 工数 | Gate |
 |---|---|---|---:|---|
-| Skill packaging boundary 設計 | `ADR-00023_skill_packaging_boundary.md` 候補、`SKILL.md + scripts/references/assets + metadata` 方針 | scripts 実行 gate なら Tool / MCP 権限、広範囲 refactor | M | doc-only は light、実行 hook / tool 権限追加なら ADR #5、5+ files なら #9 |
+| Skill packaging boundary 設計 | `ADR-00023_skill_packaging_boundary.md` 候補 (新規) **または** SP-006 の `planned_adr_refs` に「skill packaging は P0 では metadata/artifact 接続のみ、script execution gate は後続」を追加 (どちらか一方を Sprint 6 着手前に必ず実施) | scripts 実行 gate なら Tool / MCP 権限、広範囲 refactor | M | doc-only は light、実行 hook / tool 権限追加なら ADR #5、5+ files なら #9 |
 | SP-006 に skill I/O 接続 | CLI artifact `adopt / reject / defer` と skill result artifact を接続 | AI output direct execution 禁止、SecretBroker 非露出 | M | SP-006 の ADR-00003 #3 API/event schema gate |
 | **Framework candidate ledger 作成** | `docs/citations/framework_pattern_candidates.md` (LangGraph/CrewAI/Letta/Dapr/AutoGen/Semantic Kernel/Dify/Flowise/OpenHands/TaskingAI の参考 pattern と import 禁止) | ADR-00020 no code embed、persistence 一本化、telemetry off | S-M | dependency 追加なしなら light、import / provider / tool 権限追加なら #4/#5/#10 |
 
@@ -114,7 +114,7 @@ defer / 拒否:
 2. **Framework full embed 誘惑**: UIUX レポートの OSS catalog は強いが、TaskManagedAI では ADR-00020 の no code embed が正本。PoC と product code を分ける
 3. **Vendor spec drift**: Symphony、Managed Agents、Responses WebSocket は仕様・提供形態・価格・ZDR 条件が変わる。本 doc の source of truth は 2026-05-12 時点の Claude/Codex web search 結果
 4. **Local LLM 工数過小評価**: vLLM / llama.cpp はトークン課金を下げても、GPU、監視、モデル更新、RBAC、gateway、eval、incident 対応が増える。P0 には入れない
-5. **計画不足 Pack**: `SP-009_p0_ui_pack` が未整備、`SP-017〜SP-021` の Sprint Pack 実ファイルも未作成。ADR には方向があるが、実装前 gate として Pack 化が必要
+5. **計画不足 Pack**: `SP-009_p0_ui_pack.md` は本 Phase A で light skeleton 起票済 (実装前に heavy 化 + ADR-00003 起票 + 依存 Pack 実体確認が必要)。`SP-008_github_app_repoproxy` / `SP-010_eval_harness` / `SP-011_5_observability` / `SP-017〜SP-021` の Sprint Pack 実ファイルは未作成、ADR には方向があるが、実装前 gate として Pack 化が必要
 6. **invariant 破壊リスク 5 件は即 BLOCK**: §4 参照
 
 ## 8. 関連 ADR / Sprint Pack
