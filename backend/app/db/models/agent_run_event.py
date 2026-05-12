@@ -14,6 +14,10 @@ from backend.app.domain.agent_runtime.event_type import AgentRunEventType
 
 JsonDict = dict[str, Any]
 
+# Codex SP6B2 R1 F-007 (MEDIUM) adopt: repository scanner の
+# ``_PROHIBITED_PAYLOAD_KEYS`` と完全一致する 21 keys を DB CHECK で防御。
+# Sprint 6 batch 2 で 18 -> 21 へ拡張 (`secret_capability_token`,
+# `raw_token`, `session_token` を追加)。
 _PROHIBITED_EVENT_PAYLOAD_KEYS: tuple[str, ...] = (
     "api_key",
     "api_token",
@@ -33,6 +37,9 @@ _PROHIBITED_EVENT_PAYLOAD_KEYS: tuple[str, ...] = (
     "age_private_key",
     "canary_value",
     "raw_canary",
+    "secret_capability_token",
+    "raw_token",
+    "session_token",
 )
 
 
@@ -54,8 +61,9 @@ class AgentRunEvent(TenantIdMixin, Base):
     (詳細は backend/app/repositories/agent_run_event.py の _assert_no_raw_secret_value)。
 
     raw secret / provider key / capability token / canary 生値 (key, value どちらも) は
-    repository 層で 18 種 prohibited key + 6+ regex pattern により reject される
-    (defense-in-depth として migration 0008 の DB CHECK でも nested 含む全 path で同一 key set を reject)。
+    repository 層で 21 種 prohibited key + 8 regex pattern により reject される
+    (defense-in-depth として migration 0008 + 0014 の DB CHECK でも nested 含む全 path で同一 key set を reject)。
+    Sprint 6 batch 2 で 18 -> 21 へ拡張 (Codex SP6B2 R1 F-007)。
     """
 
     __tablename__ = "agent_run_events"
@@ -68,7 +76,8 @@ class AgentRunEvent(TenantIdMixin, Base):
             "'runtime_blocked','diff_ready','approval_requested','approval_decided',"
             "'runner_started','runner_completed','runner_blocked','repo_pr_opened',"
             "'run_completed','run_failed','run_cancelled',"
-            "'repair_exhausted','trust_level_promoted','trust_level_promotion_denied')",
+            "'repair_exhausted','trust_level_promoted','trust_level_promotion_denied',"
+            "'cli_invocation_started','cli_process_completed','cli_decision_recorded')",
             name="agent_run_events_ck_event_type",
         ),
         sa.CheckConstraint(

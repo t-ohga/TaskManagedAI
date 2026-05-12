@@ -37,6 +37,9 @@ _AGENT_RUNS_MIGRATION = _REPO_ROOT / "migrations" / "versions" / "0008_agent_run
 _EVENT_TYPE_25_MIGRATION = (
     _REPO_ROOT / "migrations" / "versions" / "0011_trust_level_event_25.py"
 )
+_EVENT_TYPE_28_MIGRATION = (
+    _REPO_ROOT / "migrations" / "versions" / "0013_cli_event_type_28.py"
+)
 
 ACTOR_ID = UUID("00000000-0000-4000-8000-000000005001")
 WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000005002")
@@ -69,6 +72,9 @@ EXPECTED_AGENT_RUN_EVENT_TYPES = (
     "repair_exhausted",
     "trust_level_promoted",
     "trust_level_promotion_denied",
+    "cli_invocation_started",
+    "cli_process_completed",
+    "cli_decision_recorded",
 )
 
 
@@ -431,15 +437,31 @@ def test_all_agent_run_event_types_match_literal_and_order() -> None:
 
 
 def test_db_event_type_check_constraint_matches_event_types() -> None:
-    # Sprint 5.5 (migration 0011) extends the CHECK from 22 -> 25 by drop +
-    # create, so the final source of truth lives in 0011.
+    # Sprint 6 batch 2 (migration 0013) extends the CHECK from 25 -> 28 by
+    # drop + create, so the latest source of truth lives in 0013.
     assert (
         _check_constraint_values_from_migration(
             "agent_run_events_ck_event_type",
-            _EVENT_TYPE_25_MIGRATION,
+            _EVENT_TYPE_28_MIGRATION,
         )
         == set(ALL_AGENT_RUN_EVENT_TYPES)
     )
+
+
+def test_migration_0013_supersedes_0011_for_cli_events() -> None:
+    """Sprint 6 batch 2 では 25 → 28 を additive 拡張するため、cli_* events は
+    0013 にのみ登場し、0011 には登場しないことを fail-fast で確認する。"""
+
+    cli_events = {
+        "cli_invocation_started",
+        "cli_process_completed",
+        "cli_decision_recorded",
+    }
+    migration_0011 = _EVENT_TYPE_25_MIGRATION.read_text(encoding="utf-8")
+    migration_0013 = _EVENT_TYPE_28_MIGRATION.read_text(encoding="utf-8")
+    for ev in cli_events:
+        assert f"'{ev}'" not in migration_0011
+        assert f"'{ev}'" in migration_0013
 
 
 def test_migration_and_repository_prohibited_keys_match() -> None:

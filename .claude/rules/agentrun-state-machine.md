@@ -139,33 +139,40 @@ queued
 | `run_completed` | success terminal |
 | `run_failed` | failure terminal |
 | `run_cancelled` | cancel terminal |
+| `trust_level_promoted` | Sprint 5.5 BL-0069: Input Trust Layer で `untrusted_content` -> `trusted_instruction` への昇格成功 (Approval 4 整合 hash binding 経由) |
+| `trust_level_promotion_denied` | Sprint 5.5 BL-0069: 昇格 deny (Approval 不在 / hash mismatch / policy block) |
+| `cli_invocation_started` | Sprint 6 BL-0067: CLI launcher が subprocess spawn 直後 (registry agent_name + redacted argv summary + per-run workdir id) |
+| `cli_process_completed` | Sprint 6 BL-0067: subprocess の exit / timeout / cancelled 後の集約 event (exit_code / signal / duration / timeout_reached / cancelled / stdout_bytes / stderr_bytes / redaction_hit_count) |
+| `cli_decision_recorded` | Sprint 6 BL-0068: cli_result_summary に対する `adopt` / `reject` / `defer` 採否判定 (actor + reason + decided_at + artifact_hash) |
 
-### 6.1 P0.1+ 拡張 event_type (22 → 31、ADR-00004 update / Phase H PH-F-006 fix)
+### 6.1 P0.1+ 拡張 event_type (28 → 37、ADR-00004 update / Phase H PH-F-006 fix / Sprint 6 batch 2 update)
 
-ADR-00014 Multi-Agent Orchestration / ADR-00018 Inter-Agent Communication で導入される追加 event_type 9 種 (event_type 23〜31). P0 期間中は使用しない (P0 sealed CI guard 対象)、P0.1 SP-013/014/015 で実装:
+ADR-00014 Multi-Agent Orchestration / ADR-00018 Inter-Agent Communication で導入される追加 event_type 9 種 (event_type 29〜37). P0 期間中は使用しない (P0 sealed CI guard 対象)、P0.1 SP-013/014/015 で実装。
+
+Sprint 6 batch 2 (2026-05-13) で event_type は 25 → 28 に拡張済 (`cli_invocation_started` / `cli_process_completed` / `cli_decision_recorded`)、本 §6.1 の P0.1+ extension はその上に重ねる:
 
 | # | event_type | state transition | 必須 payload (raw secret なし) | audit_events 責務分担 |
 |---|---|---|---|---|
-| 23 | `orchestrator_dispatched` | running | child_run_id, role_id, role_scope, dispatch_reason, recommended_provider | (AgentRunEvent のみ) |
-| 24 | `orchestrator_lease_renewed` | running | lease_token_hash, renewed_at, expires_at | (AgentRunEvent のみ) |
-| 25 | `orchestrator_lease_expired` | running -> blocked or running | old_lease_hash, expired_at, reason_code | (AgentRunEvent のみ) |
-| 26 | `orchestrator_failover_triggered` | running | old_lease_hash, new_orchestrator_run_id, new_lease_hash, reason_code | audit_events `orchestrator_failover` |
-| 27 | `orchestrator_kill_engaged` | running -> blocked (runtime_blocked) | engaged_by_actor_id (human only via UI/CLI), reason | audit_events `orchestrator_kill_engaged` |
-| 28 | `inter_agent_message_sent_ref` | (status 不変) | message_id, payload_hash, seq_no, sender_run_id, receiver_run_id, redaction_status | audit_events `inter_agent_message_sent` |
-| 29 | `inter_agent_message_consumed_ref` | (status 不変) | + previous_hash_match | audit_events `inter_agent_message_consumed` |
-| 30 | `tool_web_fetch_executed` | running | tool_name, domain, provider, payload_data_class, redaction_status | (AgentRunEvent のみ、SP-018 で audit_events 拡張) |
-| 31 | `tool_docs_search_executed` | running | 同上 | 同上 |
+| 29 | `orchestrator_dispatched` | running | child_run_id, role_id, role_scope, dispatch_reason, recommended_provider | (AgentRunEvent のみ) |
+| 30 | `orchestrator_lease_renewed` | running | lease_token_hash, renewed_at, expires_at | (AgentRunEvent のみ) |
+| 31 | `orchestrator_lease_expired` | running -> blocked or running | old_lease_hash, expired_at, reason_code | (AgentRunEvent のみ) |
+| 32 | `orchestrator_failover_triggered` | running | old_lease_hash, new_orchestrator_run_id, new_lease_hash, reason_code | audit_events `orchestrator_failover` |
+| 33 | `orchestrator_kill_engaged` | running -> blocked (runtime_blocked) | engaged_by_actor_id (human only via UI/CLI), reason | audit_events `orchestrator_kill_engaged` |
+| 34 | `inter_agent_message_sent_ref` | (status 不変) | message_id, payload_hash, seq_no, sender_run_id, receiver_run_id, redaction_status | audit_events `inter_agent_message_sent` |
+| 35 | `inter_agent_message_consumed_ref` | (status 不変) | + previous_hash_match | audit_events `inter_agent_message_consumed` |
+| 36 | `tool_web_fetch_executed` | running | tool_name, domain, provider, payload_data_class, redaction_status | (AgentRunEvent のみ、SP-018 で audit_events 拡張) |
+| 37 | `tool_docs_search_executed` | running | 同上 | 同上 |
 
 **5+ source 整合 (cross-source-enum-integrity §1) 更新先**:
 
-- DB CHECK: `migrations/versions/00NN_p0_1_event_type_31.py` で `agent_run_events.event_type` CHECK 拡張
+- DB CHECK: `migrations/versions/00NN_p0_1_event_type_37.py` で `agent_run_events.event_type` CHECK 拡張
 - ORM CheckConstraint: `backend/app/db/models/agent_run_event.py`
-- Python Literal: `backend/app/domain/agent_run/event_types.py` の `EVENT_TYPES: frozenset` (22 + 9 = 31)
+- Python Literal: `backend/app/domain/agent_run/event_types.py` の `EVENT_TYPES: frozenset` (28 + 9 = 37)
 - Pydantic: `agent_run_event/schemas.py`
-- pytest: `tests/agent_runtime/test_event_type_enum.py` の `EXPECTED_EVENT_TYPES` (31)
+- pytest: `tests/agent_runtime/test_event_type_enum.py` の `EXPECTED_EVENT_TYPES` (37)
 - frontend: `frontend/lib/domain/agent-run-event.ts` (Sprint 17 で TypeScript enum)
 
-**P0 期間中の sealed**: P0 sealed CI guard で `migrations/versions/*event_type_31*` 等の P0.1 path 追加を禁止 (本 rules + ADR-00021 §11.6 / ADR-00014 §13 で statement 統一).
+**P0 期間中の sealed**: P0 sealed CI guard で `migrations/versions/*event_type_37*` 等の P0.1 path 追加を禁止 (本 rules + ADR-00021 §11.6 / ADR-00014 §13 で statement 統一).
 
 ## 7. Provider Result Mapping
 

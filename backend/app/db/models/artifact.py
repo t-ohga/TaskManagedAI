@@ -43,6 +43,8 @@ ALL_ARTIFACT_KINDS: tuple[ArtifactKind, ...] = (
     "cli_result_summary",
 )
 
+# Codex SP6B2 R2 update: agent_run_events 側と同期して 21 keys 化
+# (migration 0014 / 0015 + repository scanner と整合)。
 _PROHIBITED_ARTIFACT_PAYLOAD_KEYS: tuple[str, ...] = (
     "api_key",
     "api_token",
@@ -62,6 +64,9 @@ _PROHIBITED_ARTIFACT_PAYLOAD_KEYS: tuple[str, ...] = (
     "age_private_key",
     "canary_value",
     "raw_canary",
+    "secret_capability_token",
+    "raw_token",
+    "session_token",
 )
 
 
