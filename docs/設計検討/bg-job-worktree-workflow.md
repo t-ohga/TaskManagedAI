@@ -54,18 +54,39 @@ scope 分割で **3-4 並列でも conflict ほぼゼロ**。
 
 `.claude/rules/codex-usage-policy.md` で明文化済み。異なる bg job で並列に Codex を呼ばない。
 
-## 4. branch / merge 戦略 (TaskManagedAI 固有)
+## 4. branch / merge 戦略 (TaskManagedAI 固有、2026-05-12 Phase C で 2-tier 確立)
 
 ### branch 命名
 
-- worktree branch: `worktree-<scope>-<feature>` (例: `worktree-phase-a-external-concept-integration`)
+- **メイン作業統合 branch**: `codex/<段>-...` (long-lived feature branch、関連 Sprint 群が完遂するまで継続。例: `codex/phase-d-g-multi-agent-vision-host-portable`)
+- **batch 単位 worktree branch**: `worktree-<sprint>-<batch>-<feature>` (例: `worktree-sprint55-batch1-output-validator`、本 batch 範囲だけの short-lived)
 - 既存 branch (`main`, `codex/...`) に直接 commit しない、必ず worktree branch 経由
+- **CLAUDE.md §6.7 「main / master への直接コミットは避け」 invariant を守るための 2-tier 構造**
 
-### merge 順序
+### 2-tier merge workflow
 
-1. worktree branch → main (fast-forward)
-2. main → 関連 branch (`codex/...` 等) (fast-forward が可能ならそれ、無理なら 3-way)
-3. worktree branch 削除 (`ExitWorktree action=remove discard_changes=true`)
+**Batch 完遂時** (Sprint 中の各 batch、複数回発生):
+
+1. worktree branch を push origin
+2. `codex/...` に ff merge (`git push origin worktree-<batch>:codex/<段>-...`、ff-only)
+3. worktree branch を `ExitWorktree action=remove discard_changes=true` で削除 (work loss なし、commit 済)
+4. **main は触らない** (Sprint Exit まで保留 = Sprint Pack §6.5.2 Step 7 遵守)
+
+**Sprint Exit 時** (Sprint Pack `## Review` 章追記 + Hard Gates / KPIs 集計後、Sprint 1 回ぶん):
+
+1. `codex/<段>-...` → main に ff merge (`git push origin codex/<段>-...:main`、ff-only)
+2. main の CI Smoke green を `gh run watch` で確認
+3. 必要なら `codex/<段>-...` を次 phase 用 branch に rename / archive
+
+### remote leftover branch の削除 (Sprint Exit 後 / 任意のタイミング)
+
+merge 完了済の worktree branch は origin から削除する (`git log codex/...` で commit が取り込まれていることを確認してから):
+
+```bash
+git push origin --delete worktree-<sprint>-<batch>-<feature>
+```
+
+stale な feature branch (放棄された / 別方針に置換された) も Sprint Exit 後に削除候補として整理する。
 
 ### 同じ branch を 2 worktree で checkout する場合の回避 (2026-05-12 Phase A 実演済)
 
@@ -118,6 +139,7 @@ git push origin codex/...
 
 - 2026-05-12 初版 (Phase B、FleetView 公式仕様 + TaskManagedAI 固有運用)
 - 2026-05-12 Phase B-2: user-global 判断ルールが追加されたため、project 側は固有事情のみに縮小 (159 行 → ~95 行)
+- 2026-05-12 Phase C (Sprint 5.5 batch 1 後): §4 を 2-tier merge workflow (Batch 完遂時 = codex に ff、Sprint Exit 時 = main に ff) に再構成。Sprint Pack §6.5.2 Step 7 規律と CLAUDE.md §6.7 invariant の anchor を明文化。remote leftover 削除手順を §4 に統合
 
 ## 10. references
 

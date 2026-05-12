@@ -32,6 +32,12 @@ build/
 # Claude Code hook state (session-local)
 .claude/.hook-state/
 
+# Claude harness runtime lock (background session lock, auto-generated)
+.claude/scheduled_tasks.lock
+
 
 # Python build artifacts
 *.egg-info/
+
+# Next.js auto-generated type reference (Next.js writes "should not be edited")
+frontend/next-env.d.ts
