@@ -352,6 +352,49 @@ Suite は Main Agent orchestration として動き、内部から Skill / Agent 
 - **failed-fast**: ADR と実装が drift した場合、ADR を update してから実装を再開する
 - **breakdown**: 1 ADR が 1 Sprint 内で proposed → accepted を跨ぐ場合は Sprint Pack `## Review` に accepted 化日を記録
 
+### 6.5.7 FleetView bg job × worktree 並列運用 (2026-05-12 追記)
+
+Anthropic **FleetView bg job** で TaskManagedAI を動かす場合の標準 workflow。詳細は `docs/設計検討/bg-job-worktree-workflow.md` を参照。
+
+#### 大前提 (FleetView 公式仕様、user 側で off にしない)
+
+- bg job 起動: **main checkout で start** (worktree 自動作成されない)
+- Write / Edit / NotebookEdit 呼び出し時: **harness が isolation 要求** → AI が `EnterWorktree` を自律判断で呼ぶ
+- `EnterWorktree` / `ExitWorktree` は **AI が自律判断で呼べる公式 tool**
+- isolation 要求 off の公式設定は未確認、built-in 安全装置として受け入れる
+
+#### AI 自律 workflow
+
+1. bg job start (main checkout)
+2. Read / Bash / Grep だけで完結 → main のまま、worktree 不要
+3. Write / Edit が必要 → `EnterWorktree name=<descriptive>` 自律呼び出し
+4. code (backend / frontend) を触る → `bash scripts/worktree_setup.sh` で setup (pnpm + uv + SOPS 復号)
+5. 作業 → commit → push origin worktree-<branch>
+6. main へ merge: `git checkout main && git merge --ff-only worktree-<branch> && git push`
+7. 別 branch (`codex/...` 等) 同期: 別 worktree から `git fetch origin && git merge --ff-only origin/main && git push`
+8. `ExitWorktree action=remove discard_changes=true` (commit + merge 済なら work loss なし)
+
+#### 並列 bg job 運用
+
+- **scope 分割で conflict 防止**: job A=backend / job B=frontend / job C=doc / job D=read-only 調査
+- **共通 file** (`CLAUDE.md` / `AGENTS.md` / `README.md`) を触る job は 1 つに制限
+- **Codex 並列起動禁止** (`.claude/rules/codex-usage-policy.md`)
+
+#### 同 branch を 2 worktree で checkout する場合の回避
+
+```
+fatal: '<branch>' is already used by worktree at '<path>'
+```
+
+→ worktree から push → main checkout 側で `git fetch origin && git merge --ff-only origin/<branch>` で取り込む (2026-05-12 Phase A で実演済)
+
+#### 関連 doc / memory
+
+- 公式 doc: `docs/設計検討/bg-job-worktree-workflow.md`
+- AI 用 memory 正本: `~/.claude/projects/-Users-tohga-repo-TaskManagedAI/memory/reference_fleetview_worktree_workflow.md`
+- setup script: `scripts/worktree_setup.sh`
+- gitignored copy 定義: `.worktreeinclude` (DD-06 SecretBroker 原則準拠、`.env.local` は意図的に copy 禁止)
+
 ## 7. Codex 連携
 
 Claude 側から Codex を使う場合は、Claude 側 Skill 経由で以下を起動します。

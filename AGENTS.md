@@ -68,6 +68,18 @@
 - `.claude/skills/` は suite と TaskManagedAI 固有 skill を提供する場所とする。`dev-suite` / `quality-suite` / `review-suite` / `security-suite` / `release-suite` と、Sprint Pack、ADR、Hard Gate fixture、atomic claim、Provider Compliance、AgentRun state machine、runner gateway、PostgreSQL boundary の固有 skill を想定する。
 - `.codex/config.toml` は Codex 実行設定、`.codex/hooks.json` は Codex で実行可能な shell hook のみを扱う。Claude 専用 env や `$CLAUDE_PROJECT_DIR` 前提の hook を持ち込まない。
 
+## FleetView bg job × worktree 並列運用 (2026-05-12 追記)
+
+Anthropic FleetView bg job で TaskManagedAI を動かす場合の workflow。詳細は `docs/設計検討/bg-job-worktree-workflow.md` を参照。
+
+- bg job 起動時は **main checkout で start**、自動 worktree 化はされない。
+- Write / Edit / NotebookEdit を呼ぶ時に harness が isolation 要求するため、AI は **`EnterWorktree` を自律判断で呼ぶ**。
+- worktree に切り替えた後、code (backend / frontend) を触る場合は `bash scripts/worktree_setup.sh` を実行して pnpm install + uv sync + SOPS 復号を完了させる。doc-only 作業なら setup skip 可。
+- 1 サイクル (commit + push + main へ merge) が完了したら **`ExitWorktree action=remove discard_changes=true`** で worktree 削除、main checkout に戻る。
+- **並列 bg job では scope 分割で conflict 防止**: backend / frontend / docs / read-only 調査の 4 軸で job を分ける。Codex 並列起動は `.claude/rules/codex-usage-policy.md` で禁止されているため、異なる bg job で並列に Codex を呼ばない。
+- 同 branch を 2 worktree で checkout する場合の回避: worktree 側で push → 別 worktree (main / codex/... checkout 中) で `git fetch origin && git merge --ff-only` で取り込む。
+- gitignored 個人設定 (`settings.local.json` / SOPS 設定 / age key pointer) は `.worktreeinclude` で自動 copy される。DD-06 SecretBroker 原則で `.env.local` は意図的に copy 禁止のため、各 worktree で SOPS 経由 (`scripts/worktree_setup.sh` 内) で生成する。
+
 ## Codex 専用補足
 
 - Codex からさらに Codex chain を並列起動しない。Claude 側の `codex-task` / `codex-second-opinion` / `codex-plan-review` / `codex-adversarial-review` / `codex-rescue` は Claude 側 Skill 経由の運用として扱い、Codex 自身の作業では同等観点を通常レビューに読み替える。
