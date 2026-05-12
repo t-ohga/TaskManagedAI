@@ -1,7 +1,7 @@
 ---
 id: "SP-005-5_output_validator"
 type: "heavy"
-status: "in_progress"
+status: "completed"
 sprint_no: 5.5
 created_at: "2026-05-10"
 updated_at: "2026-05-12"
@@ -287,11 +287,85 @@ Sprint 5.5 Batch 4 (実装最終 batch) で **dry-run rollback drill** を実施
 - **理由**: P0 の本体価値は Output Validator / CLI artifact / runner 境界、外部 framework runtime 取り込みは P0 価値と無関係 + ADR-00020 (Framework Intake Checklist) の 8 verify + No code embed 遵守
 - **再評価タイミング**: Sprint 6 前に Skill packaging boundary 設計、P0.1 Sprint 13 で Symphony cross-reference 追加、P1 / Wave 19+ で Managed Agents SaaS / local LLM / Dapr durable / Hermes memory を再評価
 
-## Review
+## Review (2026-05-12 Sprint Exit 追記)
 
-(Sprint 5.5 完了後に追記)
+### changed (実装した内容、4 commit / 全 origin/codex/phase-d-g-... ff push 済)
 
-- changed: <実際に変えたこと>
-- verified: <確認したこと>
-- deferred: <後回しにしたこと>
-- risks: <残ったリスク>
+| commit | scope |
+|---|---|
+| `060421e` batch 1 | BL-0064 (Output Validator core + policy_pack.toml + repair_policy refactor) + BL-0065 (Input Trust Layer + TrustLevel 3 種 5+ source 整合 + migration 0011) + BL-0066 (payload_classifier + caller-supplied 経路 schema 削除) + ADR-00004 / ADR-00009 §Sprint 5.5 update accepted 化 |
+| `4cd100f` batch 2 | BL-0067 (AgentRunOrchestrator: tenant guard / preflight / record_provider_usage + BudgetGuard / schema_mismatch override / repair retry + ContextSnapshot resume) + BL-0070 (repair_exhausted terminal contract test、75 pair + 24/25 forbidden event sweep) |
+| `6a899bf` batch 3 | BL-0068 (repair retry context redaction: RetryPromptInput multi-layered immutability + MappingProxyType + 21 prohibited keys × 2 surface sweep) + BL-0071 service-layer (5+ AC-HARD-07 prompt injection pattern × schema/service deny + AC-HARD-07 sentinel test) |
+| `3ca8947` batch 4 | BL-0067 続き (execute_validation_step: Draft7Validator + redacted error summary + tenant boundary guard) + BL-0069 (Approval 4 integrity hash binding: server-side SHA-256 + ApprovalRequest 4 field verify + policy-independent enforcement + required arg 必須化) |
+
+**累計**: 4 feature commit / +4,083 行 / -91 行、Codex multi-round review 通算 R1-R5 で 19 finding 全 adopt + clean。
+
+### verified (確認した invariant + test pass)
+
+#### invariant 不変 (Codex 各 round で count 直接確認、batch 1-4 累積で破壊なし)
+
+- AgentRun 16 状態 / blocked_reason 3 種 / terminal 5 種: 維持 (Sprint 5.5 で新 status / blocked_reason 追加なし、`repair_exhausted` は既存 terminal の 5 番目)
+- AgentRunEvent: 22 → 25 拡張 (`repair_exhausted` / `trust_level_promoted` / `trust_level_promotion_denied`、5+ source 整合)
+- ContextSnapshot 10 列: 維持 (`policy_pack_lock` SHA-256 hex 64 / `snapshot_kind='resume'` を batch 1/2 で wire-up)
+- Provider Compliance Matrix 13 reason_code: 維持
+- TrustLevel 3 種 (untrusted_content / validated_artifact / trusted_instruction): 新規導入、5+ source 整合 (Python Literal + frozenset + ORM CheckConstraint + migration CHECK + pytest EXPECTED)
+- SecretBroker raw secret 非保存: 維持 + 強化 (deepcopy + MappingProxyType + post_init re-scan の triple guard、retry prompt builder で assert_no_raw_secret 必須実行)
+
+#### server-owned-boundary §1 + §3 強制 (Sprint 5.5 で完成)
+
+- `payload_data_class` 算出: caller-supplied 経路 signature レベル物理削除 (PayloadClassificationInput `extra="forbid"`、Sprint 5.5 batch 1 で確立)
+- `trust_level` 昇格経路: PromoteRequest が trust_level / current_trust_level / approval_passed / decider_is_human / approval_4_integrity_ok / secret_ref / policy_version 等の attack field を schema reject (extra="forbid")、`current_trust_level` は internal-only keyword (signature 物理削除)
+- Approval 4 整合: 4 fields hash binding は server-side で常時 enforce (caller-supplied bool fallback 完全削除、policy toggle に関わらず drift で deny、Sprint 5.5 batch 4 R3 fix)
+
+#### cross-source enum integrity (5+ source 整合)
+
+- AgentRunEventType 25 種: Python Literal + ALL_AGENT_RUN_EVENT_TYPES + ORM CheckConstraint + migration 0011 CHECK + pytest EXPECTED_AGENT_RUN_EVENT_TYPES
+- TrustLevel 3 種: 同上 pattern
+- ProviderStepOutcome 7 種 / ValidationStepOutcome 2 種 / repair retry / Approval 4 整合 reason: orchestrator-internal Literal + parametrized test
+
+#### test pass (DB-less unit + contract + helper、累計 361 件)
+
+- ruff check backend tests: All checks passed
+- mypy backend + tests/input_trust + tests/runtime/test_orchestrator_*.py: Success (142 source files)
+- pytest tests/input_trust/ tests/runtime/test_orchestrator_*.py tests/runtime/test_repair_exhausted_terminal.py tests/output_validator/: 361 passed
+
+### deferred (Sprint 11 / 別 batch で対応)
+
+- **DB integration full chain test** (`tests/runtime/test_agent_run_full_chain_integration.py`):
+  Docker postgres + redis 起動済み、`uv run alembic upgrade head` 実行可能 (`.env.local` 整備済) だが、Docker Desktop host port 5432/6379 mapping が安定せず full chain end-to-end test の実装は Sprint 6 worker batch (arq) / Sprint 11 で対応。本 Sprint 5.5 では unit + pure helper + monkeypatch async test (361 件) で contract coverage を達成。
+- **audit_events 3 種** (`trust_level_promotion_audit` / `trust_level_promotion_denial_audit` / `output_validation_repair_retry_recorded`):
+  AuditEventRepository への追加 + emit 経路は Sprint 11。ADR-00004 §Sprint 5.5 update §「audit_events への追加」で予告済、ADR-00009 §「Sprint 5.5 audit_events 拡張」と整合。
+- **BL-0071 full eval-harness fixture loader** (`eval/security/prompt_injection_resist/`):
+  AC-HARD-02 secret_canary loader (~1300 行) pattern を踏襲して Sprint 11 で実装。本 Sprint 5.5 では service-layer の 5+ pattern を全 reject する unit test で AC-HARD-07 invariant の boundary を確立。
+- **recursive freeze for nested dict / list immutability** (RetryPromptInput / ApprovalIntegrityExpectation):
+  top-level MappingProxyType + deepcopy で実用的 fail-closed 達成、recursive freeze は Sprint 11 ADR 議論。
+
+### risks (残リスク + 緩和策)
+
+- **DB integration なし期間中の regression**: Sprint 6 worker batch 着手まで、provider call → Compliance Gate → preflight → execute → record_provider_usage → validate → repair retry → transition_with_event の full chain は monkeypatch unit test と SimpleNamespace mock のみで covered。Sprint 6 batch で docker compose host port mapping を確実にし、`test_agent_run_full_chain_integration.py` を実装することで mitigated。
+- **`record_provider_usage` 内部の BudgetGuard transition と orchestrator の二重 transition**: Sprint 5.5 batch 2 で `event=None` outcome として handle、orchestrator が再 transition せず caller に outcome label のみ surface。Sprint 6 worker で full chain integration 時に再確認。
+- **Approval 4 integrity の `policy_pack_lock` 不含み**: 本 Sprint 5.5 では 4 fields (artifact_hash + policy_version + provider_request_fingerprint + action_class) のみ binding、`policy_pack_lock` は ContextSnapshot で別途記録。policy 全体の drift 検出は Sprint 9 UI (Approval Inbox) で stale invalidation 表示時に確認。
+- **AC-HARD-07 full eval-harness fixture loader 未実装**: Sprint 11 まで service-layer test のみ。Sprint 11 着手前は AC-HARD-07 invariant が service-layer 経由でのみ enforce される (e.g. Sprint 6 worker が直接 ApprovalRequest を bypass する経路を作らない限り)。
+
+### Sprint 5.5 Hard Gates / Quality KPIs trace
+
+| Gate / KPI | trace |
+|---|---|
+| **AC-HARD-02 `secret_canary_no_leak`** | BL-0068 redaction で repair retry path に拡張 (21 prohibited keys × 2 surface = 42 sweep test、8 raw value patterns、deepcopy + MappingProxyType + post_init re-scan の triple guard) |
+| **AC-HARD-07 `prompt_injection_resist`** | BL-0071 service-layer で 5+ injection pattern (trust_level / current_trust_level / approval skip / secret_ref / policy override) を全 schema/service reject + AC-HARD-07 sentinel test |
+| AC-KPI-01 `acceptance_pass_rate` | Sprint 11 Eval Harness 接続後に計測 (本 Sprint 5.5 は AgentRun runtime + state machine 完成、Acceptance Criteria 連動は Sprint 6 / 11) |
+| AC-KPI-04 `citation_coverage` | 本 Sprint 5.5 範囲外 (citation / evidence は Deep Research、Sprint 9 UI で計測) |
+
+### Sprint 5.5 完了判定
+
+- 8 BL ticket 中 **7 件完遂 + BL-0071 service-layer 完遂** (full eval-harness fixture loader のみ Sprint 11 へ defer、Sprint Pack §「max_days 超過時の defer 順序」§1 と整合: BL-0071 fixture pattern 拡張は Sprint 11 で接続)
+- target_days 4 day / max_days 6 day に対し、actual 5 day (target を 1 day 超過、Codex multi-round review で 19 finding fix の inflate)
+- Codex review 全 R1 → 最終 R で **verdict=clean** 達成 (R 数: batch 1 = R1+R2 / batch 2 = R1+R2 / batch 3 = R1+R2+R3 / batch 4 = R1+R2+R3+R4+R5)
+- Sprint Pack `must_ship` 全達成: Output Validator core + Input Trust Layer + repair retry policy + trust_level + AC-HARD-07 (service-layer)
+- ADR Gate Criteria #8 非該当 (additive only、destructive 操作なし)、新規 ADR proposed なし (既存 ADR-00004 / 00006 / 00009 / 00010 §Sprint 5.5 update の延長で完遂)
+
+**Sprint 5.5 Exit 判定: PASS**。次 step:
+
+1. **2-tier workflow Sprint Exit**: `codex/phase-d-g-multi-agent-vision-host-portable` → `main` に ff merge
+2. main CI Smoke green 確認 (`gh run watch`)
+3. Sprint 6 (Worker / arq) 着手準備 (本 Sprint 5.5 で確立した AgentRunOrchestrator の step methods を arq worker から呼び出す)
