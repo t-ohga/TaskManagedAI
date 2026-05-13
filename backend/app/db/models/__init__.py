@@ -6,12 +6,14 @@ from backend.app.db.models.actor import Actor, ActorType
 from backend.app.db.models.approval_request import ApprovalRequest, ApprovalStatus, RiskLevel
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.base import Base
+from backend.app.db.models.evidence_source import EvidenceSource
 from backend.app.db.models.notification_event import NotificationEvent
 from backend.app.db.models.policy_decision import PolicyDecision
 from backend.app.db.models.policy_rule import PolicyRule
 from backend.app.db.models.principal import Principal, PrincipalType
 from backend.app.db.models.project import Project
 from backend.app.db.models.repository import Repository
+from backend.app.db.models.research_task import ResearchTask, ResearchTaskStatus
 from backend.app.db.models.secret_capability_token import (
     SecretCapabilityToken,
     SecretCapabilityTokenStatus,
@@ -31,6 +33,7 @@ __all__ = [
     "ApprovalStatus",
     "AuditEvent",
     "Base",
+    "EvidenceSource",
     "NotificationEvent",
     "PolicyDecision",
     "PolicyRule",
@@ -38,6 +41,8 @@ __all__ = [
     "PrincipalType",
     "Project",
     "Repository",
+    "ResearchTask",
+    "ResearchTaskStatus",
     "RiskLevel",
     "SecretCapabilityToken",
     "SecretCapabilityTokenStatus",
@@ -52,4 +57,3 @@ __all__ = [
     "TicketStatus",
     "Workspace",
 ]
-
