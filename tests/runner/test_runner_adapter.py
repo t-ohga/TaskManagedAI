@@ -151,6 +151,28 @@ async def test_run_command_rejects_empty_argv(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_command_rejects_nonexistent_cwd_inside_workspace(tmp_path: Path) -> None:
+    """Codex SP7 R3 F-SP7-R3-001 adopt: workspace 配下だが存在しない cwd は
+    redacted ValueError で reject (raw cwd 非露出)。"""
+    adapter, workspace = await _prepared_workspace(tmp_path)
+    nonexistent = Path(workspace.workdir) / "does-not-exist"
+
+    with pytest.raises(ValueError, match="cwd_not_directory") as excinfo:
+        await adapter.run_command(
+            workspace,
+            RunnerCommandRequest(
+                argv=("/bin/echo", "ok"),
+                cwd=str(nonexistent),
+            ),
+            RunnerExecutionContext.p0_default(),
+        )
+    msg = str(excinfo.value)
+    assert str(nonexistent) not in msg
+    assert workspace.workspace_id in msg
+    assert "cwd_hash=" in msg
+
+
+@pytest.mark.asyncio
 async def test_run_command_rejects_cwd_outside_workspace(tmp_path: Path) -> None:
     """workspace prefix 偽装を含む outside cwd を containment check で拒否する。
 

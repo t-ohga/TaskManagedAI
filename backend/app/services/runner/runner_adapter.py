@@ -303,8 +303,11 @@ class MockRunnerAdapter(RunnerAdapter):
         # canonical compare で symlink follow 後の escape を物理削除。
         # Codex SP7 R2 F-SP7-R2-001 adopt: cwd / resolved path / OSError message を
         # exception text から削除、workspace_id + cwd_hash のみ含める。
+        # Codex SP7 R3 F-SP7-R3-001 adopt: cwd directory 存在検証 + subprocess
+        # OSError redaction を追加 (raw path が subprocess 起動経路から漏れない)
         import hashlib as _hashlib  # noqa: PLC0415
 
+        cwd_hash = _hashlib.sha256(request.cwd.encode("utf-8")).hexdigest()[:16]
         workdir_resolved = await asyncio.to_thread(
             lambda: str(Path(workspace.workdir).resolve(strict=False))
         )
@@ -313,7 +316,6 @@ class MockRunnerAdapter(RunnerAdapter):
                 lambda: str(Path(request.cwd).resolve(strict=False))
             )
         except OSError as exc:
-            cwd_hash = _hashlib.sha256(request.cwd.encode("utf-8")).hexdigest()[:16]
             raise ValueError(
                 f"runner_blocked: cwd_resolve_failed "
                 f"workspace_id={workspace.workspace_id} cwd_hash={cwd_hash} "
@@ -323,9 +325,20 @@ class MockRunnerAdapter(RunnerAdapter):
             cwd_resolved == workdir_resolved
             or cwd_resolved.startswith(workdir_resolved + os.sep)
         ):
-            cwd_hash = _hashlib.sha256(request.cwd.encode("utf-8")).hexdigest()[:16]
             raise ValueError(
                 f"runner_blocked: cwd_outside_workspace "
+                f"workspace_id={workspace.workspace_id} cwd_hash={cwd_hash}"
+            )
+
+        # Codex SP7 R3 F-SP7-R3-001 adopt: cwd が directory として存在することを
+        # subprocess 起動前に確認、raw path を含む OSError を redacted ValueError
+        # に置換 (FileNotFoundError / NotADirectoryError 経路で raw cwd 漏れ防止)
+        cwd_is_dir = await asyncio.to_thread(
+            lambda: Path(request.cwd).is_dir()
+        )
+        if not cwd_is_dir:
+            raise ValueError(
+                f"runner_blocked: cwd_not_directory "
                 f"workspace_id={workspace.workspace_id} cwd_hash={cwd_hash}"
             )
 
@@ -340,14 +353,30 @@ class MockRunnerAdapter(RunnerAdapter):
 
         loop = asyncio.get_running_loop()
         start = loop.time()
-        proc = await asyncio.create_subprocess_exec(
-            *request.argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=request.cwd,
-            env=env,
-            start_new_session=True,
-        )
+        # Codex SP7 R3 F-SP7-R3-001 adopt: subprocess 起動失敗時に raw cwd / raw
+        # argv を含む OSError が漏れないよう wrap、redacted ValueError へ変換。
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *request.argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=request.cwd,
+                env=env,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            argv_basename = (
+                os.path.basename(request.argv[0]) if request.argv else ""
+            )
+            argv_hash = _hashlib.sha256(
+                "\x00".join(request.argv).encode("utf-8")
+            ).hexdigest()[:16]
+            raise ValueError(
+                f"runner_blocked: subprocess_exec_failed "
+                f"workspace_id={workspace.workspace_id} cwd_hash={cwd_hash} "
+                f"argv_basename={argv_basename} argv_hash={argv_hash} "
+                f"errno={getattr(exc, 'errno', 'unknown')}"
+            ) from exc
 
         timeout_reached = False
         cancelled = False
