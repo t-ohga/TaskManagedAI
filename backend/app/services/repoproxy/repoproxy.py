@@ -1,17 +1,28 @@
-"""Sprint 8 BL-0096: RepoProxy service module (skeleton).
+"""Sprint 8 BL-0096: RepoProxy service module (skeleton + 4 整合 PENDING).
 
 ADR-00011 §採用案: AgentRun 生成 patch を runner_mutation_gateway →
 RepoProxy 経由でのみ branch push + Draft PR 作成できる回路。
 
-Sprint 8 batch 2-3 で完成、本 module は **interface + Mock backend** を提供。
-実 GitHub API integration は ``GitHubAppAdapter`` (Sprint 8 batch 3) で実装。
+**PENDING SPRINT 11** (Codex audit F-002 adopt、2026-05-13):
+- 現在の ``MockRepoProxy.create_draft_pr`` は ``DraftPRRequest`` を直接受け取り、
+  branch pattern + overwrite 以外は検証しない。``server-owned-boundary §3``
+  4 整合 binding (artifact_hash / policy_version / provider_request_fingerprint
+  / repo_state_commit_sha) の **server-side 再計算 + ApprovalRequest 照合** は
+  Sprint 11 で `GitHubAppRepoProxy` 実装と一緒に追加する。
+- Sprint 11 で signature は ``create_draft_pr(approval_id, agent_run_id)`` に
+  refactor し、RepoProxy 内で DB / ContextSnapshot / Git ref から 4 hash を
+  再計算する設計。Mock もこの service-level validator を通すよう更新予定。
+- Sprint 11 で `OperationContext` の `repo.pr_open` target に
+  `commit_sha` / `repo_state_commit_sha` を追加 (現状 base/head_branch のみ)。
 
-server-owned-boundary §1:
-- installation_token は SecretBroker 内でのみ resolve
-- RepoProxy は broker-mediated operation 経由のみ httpx request 実行
+実 GitHub API integration は ``GitHubAppAdapter`` (Sprint 11 で実装) で行う。
+
+server-owned-boundary §1 (現状の caller-supplied リスク):
+- 現状 ``DraftPRRequest`` の 9 field を caller (orchestrator) が直接渡せる。
+  「server-resolved」とコメントしているが physical delete はまだ。
+- Sprint 11 で signature レベル削除 + service-internal computation で完成予定。
+- installation_token は SecretBroker 内でのみ resolve (Sprint 11)
 - raw token は caller / AI / runner / artifact / log / audit に渡さない
-- 4 整合 binding (artifact_hash / policy_version / provider_request_fingerprint /
-  repo_state_commit_sha) で stale approval invalidate
 """
 
 from __future__ import annotations

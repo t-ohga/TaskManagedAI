@@ -1,8 +1,15 @@
 /**
- * Sprint 9 BL-0106: AgentRun API client (Zod schema + AgentRunEvent timeline).
+ * Sprint 9 BL-0106: AgentRun API client (Zod schema + PENDING REDACTION).
+ *
+ * **PENDING SPRINT 11** (Codex audit F-004 + F-008 adopt、2026-05-13):
+ * - 対応 backend route `GET /api/v1/agent_runs` / `GET /api/v1/agent_runs/{id}`
+ *   は **未実装** (現状 backend は `POST /api/v1/agent_runs/{id}/cancel` のみ)。
+ *   Sprint 11 で list / detail route + integration test を追加。
+ * - AC-HARD-02 raw secret 非露出 enforcement は `audit.ts` 同様 Sprint 11 で
+ *   `RedactedAgentRunEventPayloadSchema` として実装予定。
  *
  * AgentRun 16 状態 + blocked_reason 3 種 + 22 event_type を Sprint 4 / Sprint 7
- * backend と整合 verify。
+ * backend と整合 verify (Sprint 11 で contract test 追加予定、Codex F-006 adopt)。
  */
 
 import { z } from "zod";
@@ -123,24 +130,26 @@ export const AgentRunDetailSchema = AgentRunListItemSchema.extend({
 export type AgentRunDetail = z.infer<typeof AgentRunDetailSchema>;
 
 /**
- * GET /api/v1/agent-runs
+ * **DRAFT** GET /api/v1/agent_runs (backend prefix は underscore、Codex audit
+ * F-004 adopt: 旧 hyphen path から訂正)。Sprint 9 では client draft、Sprint 11 で
+ * GET list route 実装 + integration test 結線。
  */
-export async function listAgentRuns(): Promise<AgentRunListItem[]> {
+export async function _listAgentRunsDraft(): Promise<AgentRunListItem[]> {
   return fetchBackendJson<AgentRunListItem[]>(
-    "/api/v1/agent-runs",
+    "/api/v1/agent_runs",
     z.array(AgentRunListItemSchema)
   );
 }
 
 /**
- * GET /api/v1/agent-runs/{id}
+ * **DRAFT** GET /api/v1/agent_runs/{id} (同上、backend prefix underscore)
  */
-export async function getAgentRun(id: string): Promise<AgentRunDetail> {
+export async function _getAgentRunDraft(id: string): Promise<AgentRunDetail> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) {
     throw new Error("invalid agent run id format");
   }
   return fetchBackendJson<AgentRunDetail>(
-    `/api/v1/agent-runs/${id}` as `/${string}`,
+    `/api/v1/agent_runs/${id}` as `/${string}`,
     AgentRunDetailSchema
   );
 }

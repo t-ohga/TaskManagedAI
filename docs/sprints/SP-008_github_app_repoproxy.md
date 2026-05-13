@@ -1,10 +1,11 @@
 ---
 id: "SP-008_github_app_repoproxy"
 type: "heavy"
-status: "in_progress"
+status: "partial_skeleton"
 sprint_no: 8
 created_at: "2026-05-13"
 updated_at: "2026-05-13"
+review_summary: "skeleton + mock + ADR proposed のみ。BL-0094/0095/0097/0100/0102 (5/9 BL) は Sprint 11 で本実装。Codex audit 2026-05-13 で F-001/F-005 指摘 adopt 済。"
 target_days: 5
 max_days: 7
 adr_refs:
@@ -235,16 +236,42 @@ risks:
 - BL-0102: AC-KPI-02 time_to_merge 計測 endpoint (Sprint 11 で KPI
   collector 整備時に追加)
 
-### Sprint 8 status
+### Sprint 8 status (Codex audit F-005 adopt で訂正、2026-05-13)
 
 - target_days: 5
 - max_days: 7
-- actual (本 session): 1 day (Pack + ADR + batches 1-4 完成、batches 5
-  deferred は Sprint 11 で本実装)
-- must_ship (Sprint 8 内 boundary): Permission Matrix + RepoProxy interface +
-  Webhook HMAC verifier + merge/deploy P0 deny = 全達成
-- defer (Sprint 11 へ): GitHub App registration + GitHubAppAdapter +
-  AgentRunEvent integration + AC-KPI-02 計測 = 4 件
+- actual (本 session): 1 day (Pack + ADR-00011 proposed + batches 1-4
+  partial_skeleton + Mock backend)
+- **must_ship 未達 (Codex audit F-005 adopt で正直化)**:
+  - GitHub App 登録 (BL-0094): admin 手動操作、未実施
+  - SecretBroker repo.push / repo.pr_open allowed_operations 追加 (BL-0095):
+    RequestedOperation Literal で予約済だが、`secret_refs.allowed_operations` 配列
+    + capability_token issue flow との結線は未実装
+  - GitHubAppAdapter httpx wrapper (BL-0097): **完全未実装**
+  - AgentRunEvent `repo_pr_opened` actual emission (BL-0100): MockRepoProxy
+    から AgentRuntime への結線なし、未実装
+  - AC-KPI-02 time_to_merge 計測 helper / endpoint (BL-0102): KPI collector
+    実装なし、未実装
+- **partial_skeleton 達成**:
+  - Permission Matrix toml hardcode + check_no_dangerous_permissions (BL-0098): ✅
+  - RepoProxy ABC + MockRepoProxy + DraftPRRequest server-owned-boundary
+    pending (Codex F-002 で 4 整合 binding 未実装を指摘、Sprint 11 で
+    refactor): ✅ interface のみ
+  - Webhook HMAC low-level pure helper (BL-0099): ✅ helper のみ、
+    SecretBroker mediated service layer は Sprint 11
+  - merge/deploy P0 deny test (BL-0101): ✅ Mock レベル
+- **defer (Sprint 11 へ、明示 5 件)**: BL-0094 / BL-0095 / BL-0097 / BL-0100 /
+  BL-0102
+
+### Codex audit (2026-05-13, sp7-8-9-final-audit, R1)
+
+- F-002 (HIGH): RepoProxy server-owned-boundary §1/§3 4 整合未実装 → adopt、
+  Sprint 11 で signature refactor + DB 再計算実装 (本 Sprint で docstring 文書化)
+- F-003 (HIGH): Webhook HMAC が SecretBroker-mediated / replay / rotation
+  policy 未実装 → adopt、本 Sprint で low-level helper 明示 + Sprint 11 で
+  service layer 実装
+- F-005 (MEDIUM): must_ship 表記と Review 達成判定不整合 → adopt、status を
+  `partial_skeleton` に訂正 + 5 BL 未達リスト明記 (本 commit)
 
 ### Codex review (Sprint 8)
 

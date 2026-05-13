@@ -1,7 +1,7 @@
 ---
 id: "SP-007_runner_sandbox"
 type: "heavy"
-status: "done"
+status: "done_with_phase5_defer"
 sprint_no: 7
 created_at: "2026-05-08"
 updated_at: "2026-05-13"
@@ -409,15 +409,35 @@ batch 3 module は audit / interface skeleton で security boundary 影響は ba
 - `94ba770`: feat(sprint7-batch4) AC-HARD-05/06 fixture loader + integration test
 - 本 commit: docs(sprint7-exit) SP-007 ## Review 最終 + status=done
 
-### must_ship 達成確認
+### must_ship 達成確認 (Codex audit F-001/F-007 adopt で訂正、2026-05-13)
+
+#### 達成
 
 - [x] Docker isolated runner interface (RunnerAdapter + MockRunnerAdapter)
 - [x] forbidden path canonicalization + 21 fragments + 7 prefixes
 - [x] dangerous command detection 20 reason + 30+ runtime wholesale deny
-- [x] `runner_mutation_gateway` 10 deny reason + 4 整合 binding + allowlist
+- [x] `runner_mutation_gateway` 10 deny reason + 4 整合 binding (caller-supplied
+  pass-through、Sprint 11 で server-side 再計算へ移行予定)
 - [x] resource cap (ResourcePolicy 18 reason + cross-field invariants)
 - [x] env scrub (70+ hardcode + 16 pattern)
-- [x] AC-HARD-05 / AC-HARD-06 fixture (public_regression) integration
+- [x] AC-HARD-05 / AC-HARD-06 fixture (**public_regression only**、Codex F-007
+  adopt: private_holdout + adversarial_new は expected_count=0 で Sprint 11
+  で expected_count>0 + symlink/traversal/encoding variants 追加予定)
+
+#### 未達 (Phase 5 defer、Codex audit F-001 adopt で明示)
+
+- [ ] BL-0082 Phase 4 hooks repo 外 trusted wrapper
+  (`~/.claude-trusted/taskmanagedai-hook-wrapper.sh`): 未実装、ADR-00012
+  proposed のまま
+- [ ] BL-0083 snapshot state repo 外移動
+  (`~/.claude-trusted-state/taskmanagedai/`): 未実装
+- [ ] BL-0084 sha256 manifest 生成/検証: 未実装
+- [ ] ADR-00012 accepted 化: proposed のまま (Phase 5 で wrapper 実装 + self-test
+  完了後)
+
+frontmatter `status: "done_with_phase5_defer"` で「done」表記を訂正済 (Codex
+audit F-001 adopt)。Phase 5 で BL-0082/0083/0084 完了 + ADR-00012 accepted 化
+で初めて status=`done` へ昇格する設計。
 
 ### defer_if_over_budget (後続 Sprint へ)
 

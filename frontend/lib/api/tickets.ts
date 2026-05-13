@@ -1,9 +1,17 @@
 /**
  * Sprint 9 BL-0104: Ticket API client (Zod schema + Server Component fetch helper).
  *
+ * **PENDING BACKEND INTEGRATION** (Codex audit F-004 adopt、2026-05-13):
+ * - 本 module は Sprint 9 で **schema draft** として整備したが、対応 backend
+ *   route (`GET /api/v1/tickets`, `GET /api/v1/tickets/{id}`) は **未実装**。
+ * - Sprint 9 page は `loadTicketDraft()` を呼ばず skeleton 文言のみ render。
+ * - 実 backend route 実装 + integration test 結線は Sprint 11 で扱う。
+ * - status / payload_data_class enum は backend ticket.py / DB CHECK と
+ *   drift する可能性 (Codex audit F-006 adopt、Sprint 11 contract test 追加予定)。
+ *
  * server-owned-boundary §1:
  * - tenant_id / project_id は Server Component で session から resolve、
- *   caller-supplied 経路なし
+ *   caller-supplied 経路なし (Sprint 11 で backend route 実装時に enforcement)
  * - response schema は Zod で strict validate、unknown field は drop
  */
 
@@ -11,12 +19,14 @@ import { z } from "zod";
 
 import { fetchBackendJson } from "@/lib/api/client";
 
+// Codex audit F-006 adopt: backend ticket.py Literal + DB CHECK と integrity 維持
+// backend/app/db/models/ticket.py:20 と完全一致 (Sprint 11 contract test で drift 検証)
 export const TicketStatusEnum = z.enum([
   "open",
   "in_progress",
-  "waiting_review",
-  "done",
-  "archived",
+  "blocked",
+  "review",
+  "closed",
   "cancelled"
 ]);
 
@@ -78,10 +88,13 @@ export const TicketsListResponseSchema = z.object({
 export type TicketsListResponse = z.infer<typeof TicketsListResponseSchema>;
 
 /**
- * GET /api/v1/tickets — Server Component fetch (tenant_id / project_id は
- * session cookie + middleware で server-side resolve)。
+ * **DRAFT** GET /api/v1/tickets — Sprint 9 では client draft、Sprint 11 で
+ * backend route を実装してから enable する。
+ *
+ * NOTE: `_listTicketsDraft` prefix で「未本実装」を signal、production code path
+ * から呼ばれないようにする (Codex audit F-004 adopt)。
  */
-export async function listTickets(): Promise<TicketsListResponse> {
+export async function _listTicketsDraft(): Promise<TicketsListResponse> {
   return fetchBackendJson<TicketsListResponse>(
     "/api/v1/tickets",
     TicketsListResponseSchema
@@ -89,9 +102,9 @@ export async function listTickets(): Promise<TicketsListResponse> {
 }
 
 /**
- * GET /api/v1/tickets/{id}
+ * **DRAFT** GET /api/v1/tickets/{id} (同上)
  */
-export async function getTicket(id: string): Promise<TicketDetail> {
+export async function _getTicketDraft(id: string): Promise<TicketDetail> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) {
     throw new Error("invalid ticket id format");
   }

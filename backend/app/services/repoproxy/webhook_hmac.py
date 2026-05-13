@@ -1,16 +1,27 @@
-"""Sprint 8 BL-0099: GitHub Webhook HMAC SHA-256 verifier.
+"""Sprint 8 BL-0099: GitHub Webhook HMAC SHA-256 **low-level pure helper**.
 
-ADR-00011 §Webhook HMAC:
+**PENDING SPRINT 11** (Codex audit F-003 adopt、2026-05-13):
+- 本 module は **HMAC 計算の low-level pure helper のみ**。SecretBroker
+  mediated resolve / Redis SETNX による delivery_id replay 拒否 / previous
+  secret の `deprecated|pending` status 検証 (7 日 grace window) / audit
+  event emission は **Sprint 11 で service layer として実装**。
+- Sprint 11 で公開境界を ``verify_github_webhook(request, secret_ref_current,
+  secret_ref_previous, delivery_id)`` に refactor、current/previous secret は
+  SecretBroker が内部 resolve し、delivery_id は tenant+installation 単位で
+  atomic nonce 登録 (replay detection)、previous secret の status を DB
+  metadata で検証する。
+- 現状の ``secret: bytes`` / ``previous_secret: bytes`` 直接受け取りは
+  test 用、production 経路では使わない (caller-supplied raw secret pass-through
+  リスクあり)。
+
+ADR-00011 §Webhook HMAC (将来 contract):
 - GitHub から `X-Hub-Signature-256: sha256=<hex>` で送信される signature を
-  `hmac.compare_digest` で constant-time 比較 (timing attack 防御)
+  `hmac.compare_digest` で constant-time 比較 (timing attack 防御) — 本 module で実装
 - Webhook secret は SecretBroker 経由 resolve (`secret://sops/p0/github_webhook_hmac#v1`)
-- Replay 防止: delivery_id を Redis に 1 hour 記録、重複なら deny
-- Secret rotation 中は新旧 2 secret 並行 verify (grace period 7 日)
-
-server-owned-boundary §1:
-- secret は caller-supplied ではなく SecretBroker 経由でのみ resolve
-- 検証失敗時は `webhook_hmac_failed` audit event を残し、payload 内容は
-  保存しない (raw secret 漏えい防止)
+  — Sprint 11
+- Replay 防止: delivery_id を Redis に 1 hour 記録、重複なら deny — Sprint 11
+- Secret rotation 中は新旧 2 secret 並行 verify (grace period 7 日) — 本 module で
+  低レベル helper、Sprint 11 で secret_refs.status 検証付き service layer
 """
 
 from __future__ import annotations

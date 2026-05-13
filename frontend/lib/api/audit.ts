@@ -1,9 +1,19 @@
 /**
- * Sprint 9 BL-0107: Audit Log API client.
+ * Sprint 9 BL-0107: Audit Log API client (PENDING BACKEND + REDACTION SCHEMA).
+ *
+ * **PENDING SPRINT 11** (Codex audit F-004 + F-008 adopt、2026-05-13):
+ * - 対応 backend route (`GET /api/v1/audit_events`) は **未実装**。本 module は
+ *   schema draft + cursor pagination interface のみ。Sprint 11 で backend
+ *   route 実装 + tenant boundary integration test と一緒に enable。
+ * - **AC-HARD-02 raw secret 非露出 enforcement (F-008)**: 現状
+ *   `payload: z.record(z.string(), z.unknown())` は arbitrary value を許可。
+ *   backend `_payload_secret_scan.py` の recursive secret scanner を frontend
+ *   側にも `RedactedAuditPayloadSchema` として port し、prohibited key set +
+ *   raw secret regex で parse 時 reject する設計を Sprint 11 で追加予定。
+ * - 現状は backend が key 名 + hash + reason_code のみ送る前提に依存、schema
+ *   側で enforce していない。
  *
  * append-only audit_event を Server Component で fetch。
- * raw secret / raw token / raw provider response は schema レベルで含めない
- * (AC-HARD-02 invariant、payload は key 名 + hash + reason_code のみ)。
  */
 
 import { z } from "zod";
@@ -57,9 +67,11 @@ export const AuditListResponseSchema = z.object({
 export type AuditListResponse = z.infer<typeof AuditListResponseSchema>;
 
 /**
- * GET /api/v1/audit-events?cursor=...&event_type=...
+ * **DRAFT** GET /api/v1/audit_events (Codex audit F-004 adopt: backend route
+ * 未実装、Sprint 9 では client draft のみ、Sprint 11 で backend route +
+ * tenant boundary integration test 結線)。
  */
-export async function listAuditEvents(
+export async function _listAuditEventsDraft(
   cursor?: string,
   eventType?: AuditEventType
 ): Promise<AuditListResponse> {
@@ -68,7 +80,7 @@ export async function listAuditEvents(
   if (eventType) params.set("event_type", eventType);
   const qs = params.toString();
   const path: `/${string}` = qs
-    ? (`/api/v1/audit-events?${qs}` as `/${string}`)
-    : "/api/v1/audit-events";
+    ? (`/api/v1/audit_events?${qs}` as `/${string}`)
+    : "/api/v1/audit_events";
   return fetchBackendJson<AuditListResponse>(path, AuditListResponseSchema);
 }
