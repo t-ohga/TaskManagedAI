@@ -1,16 +1,16 @@
 ---
 id: "SP-007_runner_sandbox"
 type: "heavy"
-status: "draft"
+status: "in_progress"
 sprint_no: 7
 created_at: "2026-05-08"
-updated_at: "2026-05-08"
+updated_at: "2026-05-13"
 target_days: 4.7
 max_days: 7
-adr_refs: []
+adr_refs:
+  - "[ADR-00008](../adr/00008_destructive_operation.md) # 2026-05-13 accepted (Sprint 7 batch 0)"
 planned_adr_refs:
-  - "[ADR-00008](../adr/00008_destructive_operation.md) # Sprint 7 で proposed 化、runner sandbox 破壊的操作の boundary"
-  - "[ADR-00012](../adr/00012_hook_trust_boundary.md) # Sprint 7 で proposed 化、Phase 4 hooks の repo 外 trusted wrapper 設計 (PH4-F-001 / PH4-F-002 解消)"
+  - "[ADR-00012](../adr/00012_hook_trust_boundary.md) # 2026-05-13 proposed (Sprint 7 batch 0)、Phase 4 hooks の repo 外 trusted wrapper 実装は Phase 5 で扱う"
 related_sprints:
   - "SP-006_cli_artifact"
 downstream_sprints:

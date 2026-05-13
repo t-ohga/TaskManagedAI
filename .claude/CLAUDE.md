@@ -221,6 +221,21 @@ eval/
 
 ### 6.5.0 Codex-first ポリシー (token / cost / 品質 最適化、2026-05-12 確立)
 
+#### 絶対教訓 (2026-05-13 ユーザー明示)
+
+> **「急がなくていい。それぞれ品質重視で codex をしっかり使い完璧にお願いします。時間よりも品質です。」**
+
+このプロジェクトの **絶対教訓**。Sprint 進行 / batch 完了 / review round 数において **速度を品質の上に置いてはならない**。具体的には:
+
+- **Codex multi-round review を最後まで回す**: `verdict=clean` (CRITICAL=0 / HIGH≤2 全 confidence=high) が出るまで R1 / R2 / R3 / ... と round を回し、途中で「コアの finding は塞いだから commit」「次 Sprint に進む時間がない」等の理由で短絡しない。Sprint 6 batch 2 redaction.py が 8 round / 18 finding を必要としたように、security 関連は深堀りが必要。
+- **Codex 委譲を惜しまない**: token / round を節約しない。Claude が直接実装した方が早い場面でも、test 大量実装・review・補完作業は **Codex を回す**。speed 優先で Codex skip した結果、後の round で finding が増えるか、未検出のまま commit するリスクが高い。
+- **batch scope を縮小せず full implementation**: Sprint Pack の must_ship を「時間がないから defer」と Claude 主導で決めない。defer する場合は **ユーザー明示確認** + Sprint Pack ## Review に明文化。
+- **fixture / Phase 4 hooks / Docker integration test も skip しない**: 「mock で代用、本実装は別 Sprint defer」は Sprint Pack の planned_adr_refs / 受け入れ条件と照合し、ユーザー確認なしの defer は禁止。
+- **多 Sprint 通し作業でも各 Sprint を独立に completed**: Sprint 7 → 8 → 9 を通す場合も、各 Sprint で Sprint Exit 章 + main ff merge + ## Review 章を完備してから次 Sprint に進む。複数 Sprint を 1 commit にまとめない。
+- **「ここで止める / 切り上げる」判断は user 確認後**: Claude が「scope 大きすぎる」「次 Sprint へ defer する」と判断した時は、必ず `AskUserQuestion` で確認。Claude 単独で defer 決定しない。
+
+#### Codex-first 設計思想
+
 **本プロジェクトは Codex (gpt-5.5 + xhigh) を第一選択の実装エンジンとし、Claude (本 agent) は orchestration + 微修正 + 採否判定 + 品質ゲートに専念する**。理由は以下。
 
 - **token / cost 最適化**: Codex は ChatGPT Plus 包括契約で reasoning effort xhigh + 大規模 explore + 長文出力を **追加課金なし**で実行できる。Claude API は token 従量課金のため、test 大量実装・bulk grep・大規模 refactor を Claude 単独で行うとコスト効率が悪い。
