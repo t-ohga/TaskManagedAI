@@ -6,7 +6,7 @@
  * heading / navigation が正しく出ることを verify。
  */
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 function readDevLoginToken(): string {
   return (
@@ -16,7 +16,7 @@ function readDevLoginToken(): string {
   );
 }
 
-async function loginAsDev(page: import("@playwright/test").Page) {
+async function loginAsDev(page: Page) {
   await page.goto("/login?next=/dashboard");
   await page.getByLabel("Dev login token").fill(readDevLoginToken());
   await page.getByRole("button", { name: "Sign in" }).click();
