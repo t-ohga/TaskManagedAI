@@ -176,8 +176,8 @@ async def test_run_command_rejects_nonexistent_cwd_inside_workspace(tmp_path: Pa
 async def test_run_command_exception_chain_redaction(tmp_path: Path) -> None:
     """Codex SP7 R4 F-SP7-R4-001 adopt: exception __cause__ も raw cwd を漏らさない。
 
-    `raise ... from None` で OSError chain を切断、`logger.exception` /
-    `traceback.format_exception` 経由でも raw filename が露出しない。
+    Codex SP7 R5 F-SP7-R5-001 adopt: `__context__` も None で raw OSError が
+    残らない (except ブロック外で raise pattern で完全切断)。
     """
     import traceback as _traceback
 
@@ -194,19 +194,53 @@ async def test_run_command_exception_chain_redaction(tmp_path: Path) -> None:
             RunnerExecutionContext.p0_default(),
         )
 
-    # exception chain が切断されている (__cause__ が None)
-    assert excinfo.value.__cause__ is None, (
-        f"exception chain not severed; __cause__ = {excinfo.value.__cause__!r}"
+    # exception chain 完全切断 (__cause__ + __context__ どちらも None)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None, (
+        f"__context__ not severed; remaining = {excinfo.value.__context__!r}"
     )
-    # traceback formatted output にも raw cwd は出ない
     formatted = "".join(
         _traceback.format_exception(
             type(excinfo.value), excinfo.value, excinfo.tb
         )
     )
-    assert str(nonexistent) not in formatted, (
-        f"raw cwd leaked via traceback: {formatted!r}"
+    assert str(nonexistent) not in formatted
+
+
+@pytest.mark.asyncio
+async def test_run_command_subprocess_exec_failed_redaction(tmp_path: Path) -> None:
+    """Codex SP7 R5 F-SP7-R5-001 adopt: subprocess_exec_failed の OSError catch
+    経路で __cause__ + __context__ が両方 None。
+
+    実在しない /usr/bin/this-binary-does-not-exist を実行して OSError 発生、
+    redacted ValueError + chain 完全切断 verify。
+    """
+    adapter, workspace = await _prepared_workspace(tmp_path)
+
+    # 実在しない command を workspace 内に絶対パスで指定
+    nonexistent_binary = Path(workspace.workdir) / "no-such-binary"
+
+    with pytest.raises(ValueError, match="subprocess_exec_failed") as excinfo:
+        await adapter.run_command(
+            workspace,
+            RunnerCommandRequest(
+                argv=(str(nonexistent_binary), "arg1"),
+                cwd=workspace.workdir,
+            ),
+            RunnerExecutionContext.p0_default(),
+        )
+
+    # __cause__ + __context__ 両方切断
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None, (
+        f"__context__ not severed; remaining = {excinfo.value.__context__!r}"
     )
+    msg = str(excinfo.value)
+    # raw absolute path 非露出 (basename のみ含む)
+    assert str(nonexistent_binary) not in msg
+    assert workspace.workspace_id in msg
+    assert "argv_basename=no-such-binary" in msg
+    assert "argv_hash=" in msg
 
 
 @pytest.mark.asyncio

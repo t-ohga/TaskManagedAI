@@ -311,20 +311,23 @@ class MockRunnerAdapter(RunnerAdapter):
         workdir_resolved = await asyncio.to_thread(
             lambda: str(Path(workspace.workdir).resolve(strict=False))
         )
+        # Codex SP7 R5 F-SP7-R5-001 adopt: except ブロック内で sanitized 情報を
+        # extract、ブロック外で ValueError raise → `__context__` も None になる
+        # (Python: except 内 raise は from None でも __context__ に OSError が残る)
+        cwd_resolve_errno: int | str | None = None
         try:
             cwd_resolved = await asyncio.to_thread(
                 lambda: str(Path(request.cwd).resolve(strict=False))
             )
         except OSError as exc:
-            # Codex SP7 R4 F-SP7-R4-001 adopt: `from None` で exception chain
-            # を切断、`__cause__` に raw cwd / filename が残る経路を物理削除
-            # (logger.exception / traceback / inspect 経由の secret leak 防御)
-            errno = getattr(exc, "errno", "unknown")
+            cwd_resolve_errno = getattr(exc, "errno", "unknown")
+            cwd_resolved = None
+        if cwd_resolved is None:
             raise ValueError(
                 f"runner_blocked: cwd_resolve_failed "
                 f"workspace_id={workspace.workspace_id} cwd_hash={cwd_hash} "
-                f"errno={errno}"
-            ) from None
+                f"errno={cwd_resolve_errno}"
+            )
         if not (
             cwd_resolved == workdir_resolved
             or cwd_resolved.startswith(workdir_resolved + os.sep)
@@ -357,8 +360,11 @@ class MockRunnerAdapter(RunnerAdapter):
 
         loop = asyncio.get_running_loop()
         start = loop.time()
-        # Codex SP7 R3 F-SP7-R3-001 adopt: subprocess 起動失敗時に raw cwd / raw
-        # argv を含む OSError が漏れないよう wrap、redacted ValueError へ変換。
+        # Codex SP7 R3 F-SP7-R3-001 + R5 F-SP7-R5-001 adopt: subprocess 起動失敗
+        # 時の OSError を except 内で extract、ブロック外で redacted ValueError
+        # を raise (__cause__ + __context__ 両方を物理切断)
+        proc_exec_errno: int | str | None = None
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *request.argv,
@@ -369,22 +375,20 @@ class MockRunnerAdapter(RunnerAdapter):
                 start_new_session=True,
             )
         except OSError as exc:
-            # Codex SP7 R4 F-SP7-R4-001 adopt: `from None` で exception chain
-            # を切断、OSError.filename / filename2 に残る raw cwd / argv[0] が
-            # __cause__ 経由で漏れる経路を物理削除。
+            proc_exec_errno = getattr(exc, "errno", "unknown")
+        if proc is None:
             argv_basename = (
                 os.path.basename(request.argv[0]) if request.argv else ""
             )
             argv_hash = _hashlib.sha256(
                 "\x00".join(request.argv).encode("utf-8")
             ).hexdigest()[:16]
-            errno = getattr(exc, "errno", "unknown")
             raise ValueError(
                 f"runner_blocked: subprocess_exec_failed "
                 f"workspace_id={workspace.workspace_id} cwd_hash={cwd_hash} "
                 f"argv_basename={argv_basename} argv_hash={argv_hash} "
-                f"errno={errno}"
-            ) from None
+                f"errno={proc_exec_errno}"
+            )
 
         timeout_reached = False
         cancelled = False
