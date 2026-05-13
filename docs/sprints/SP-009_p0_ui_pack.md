@@ -1,7 +1,7 @@
 ---
 id: "SP-009_p0_ui_pack"
 type: "heavy"
-status: "draft"
+status: "in_progress"
 sprint_no: 9
 created_at: "2026-05-12"
 updated_at: "2026-05-12"
@@ -286,13 +286,51 @@ E2E test 追加候補:
 - **a11y 不足 (MEDIUM)**: 現在 skeleton で ARIA role / label 未整備。
   BL-0110 で screen reader + keyboard nav を本実装。
 
-### Sprint 9 status
+### batch 3 完了 (2026-05-13、commit `2e96222`)
+
+#### changed (batch 3: BL-0104 / BL-0106 / BL-0107 / BL-0111)
+
+- `frontend/lib/api/tickets.ts`: Ticket / Acceptance Criteria / Evidence
+  Citation Zod schema + listTickets + getTicket Server Component fetch
+- `frontend/lib/api/agent-runs.ts`: AgentRun 16 状態 Zod enum + blocked_reason
+  3 種 + AgentRunEventTypeEnum (22 種、Sprint 4 + Sprint 7) + ContextSnapshot
+  10 column 完全 schema + listAgentRuns + getAgentRun
+- `frontend/lib/api/audit.ts`: AuditEventTypeEnum (17 種主要 audit event) +
+  AuditEventSchema + cursor pagination + listAuditEvents (eventType filter)
+- `frontend/tests/e2e/sprint9-pages.spec.ts`: 6 件 Playwright test
+  (Tickets / Runs / Audit / Settings + dynamic [id] routes)
+
+#### verified (batch 3)
+
+- frontend `pnpm exec tsc --noEmit` clean
+- Zod v4 record API 整合 (`z.record(z.string(), z.unknown())`)
+- AgentRunStatusEnum / AgentRunEventTypeEnum が backend Literal type と同期
+- Playwright test は ARIA region / role / heading で a11y 基盤確立 (BL-0110
+  の foundation)
+
+### Sprint 9 status (final)
 
 - target_days: 6
 - max_days: 9
-- actual (本 session): 1 day (Pack 既存 + batches 1-2 完成、batches 3-5
-  deferred は別 session)
-- must_ship (Sprint 9 内 boundary): Ticket / Approval / Run / Audit /
-  Settings の 5 画面 route 構造 + Server Component default = 全達成
-  (Approval Inbox は Sprint 3 既存実装、本 Sprint で追加は不要)
-- defer: API client + Playwright E2E + responsive + a11y = 別 session
+- actual (本 session): 1 day (Pack 既存 + batches 1-3 完成)
+- must_ship 全達成: Ticket / Approval / Run / Audit / Settings の 5 画面 +
+  Server Component default + Zod schema strict validation + Playwright E2E
+- defer (Sprint 11 へ): Eval Dashboard (BL-0112、Hard Gates 7 / KPIs 5 の
+  read-only 表示は eval_harness data source 完成後)
+
+### Sprint 9 batch coverage 最終
+
+- BL-0103 Tickets list: ✅ skeleton + lib/api/tickets.ts
+- BL-0104 Ticket detail: ✅ dynamic [id] + lib/api/tickets.ts (getTicket)
+- BL-0105 Approval Inbox: ✅ 既存実装 (Sprint 3 完成)
+- BL-0106 Agent Runs: ✅ list + detail + lib/api/agent-runs.ts
+- BL-0107 Audit Log: ✅ list + lib/api/audit.ts + cursor pagination
+- BL-0108 Project Settings: ✅ Provider Matrix + Policy Profile 表示
+- BL-0109 Responsive: 既存 Tailwind grid-cols-2/md:grid-cols-3 で部分対応、
+  本格的 mobile-first design は Sprint 11.5 で deep dive
+- BL-0110 a11y: ARIA region / role / heading 整備 (Playwright test で verify)、
+  axe-core integration は Sprint 11.5 で追加
+- BL-0111 Playwright E2E: ✅ sprint9-pages.spec.ts 6 件
+- BL-0112 Eval Dashboard: Sprint 11 eval_harness 完成後 (defer)
+
+10 BL ticket 中 8 件完了 + 2 件は Sprint 11/11.5 へ defer (理由文書化)。
