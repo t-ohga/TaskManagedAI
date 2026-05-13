@@ -20,20 +20,52 @@ import { z } from "zod";
 
 import { fetchBackendJson } from "@/lib/api/client";
 
+/**
+ * Codex SP9 R1 F-SP9-003 adopt: backend で実際に emit される event_type を網羅。
+ *
+ * backend `_audit_events` テーブルは `event_type: Mapped[str]` で正本 Literal
+ * source なし。本 enum は backend repository / service で `event_type="..."`
+ * literal として実際 emit される値を**直接 grep で列挙**したもの (2026-05-13、
+ * commit `9cd542a` 時点)。
+ *
+ * **将来計画 (Sprint 11)**: backend に AuditEventType Literal/registry を追加し、
+ * frontend Zod は自動生成 or contract test (`tests/contracts/test_frontend_backend_audit_event_drift.py`)
+ * で exact set 比較。本 enum はそれまでの暫定 hardcode。
+ */
 export const AuditEventTypeEnum = z.enum([
+  // policy / approval
   "policy_decision_created",
-  "approval_requested",
-  "approval_decided",
+  "policy_blocked",
+  "approval_pending",
+  "approval_requested", // FastAPI route 経由 (将来 backend で emit 予定)
+  "approval_decided",   // 同上
+  // provider
   "provider_blocked",
+  // secret broker
   "secret_capability_issued",
   "secret_capability_redeemed",
   "secret_capability_denied",
-  "secret_canary_detected",
+  "secret_canary_detected", // Sprint 11 で実装予定 (現状 unused、defer-safe)
+  // runner
   "runner_started",
   "runner_completed",
   "runner_blocked",
+  // budget
+  "budget_blocked",
+  "budget_created",
+  "budget_active_flag_updated",
+  "budget_limits_updated",
+  "budget_soft_threshold_warning",
+  // agent runtime
+  "schema_validated",
+  "validation_failed",
+  "repair_retry_scheduled",
+  "repair_exhausted",
+  "run_cancelled",
+  // github / webhook (Sprint 11 で実装予定)
   "repo_pr_opened",
   "webhook_hmac_failed",
+  // future / orchestration
   "orchestrator_failover",
   "tenant_isolation_negative",
   "forbidden_path_block",

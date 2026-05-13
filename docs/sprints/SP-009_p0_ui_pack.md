@@ -368,4 +368,19 @@ E2E test 追加候補:
 - BL-0111 Playwright E2E: ✅ sprint9-pages.spec.ts 6 件
 - BL-0112 Eval Dashboard: Sprint 11 eval_harness 完成後 (defer)
 
-10 BL ticket 中 8 件完了 + 2 件は Sprint 11/11.5 へ defer (理由文書化)。
+### BL coverage 集計 (Codex SP9 R1 F-SP9-004 adopt で表記訂正、2026-05-13)
+
+- **skeleton_complete (5 件)**: BL-0103 / BL-0104 / BL-0106 / BL-0107 / BL-0108
+  (Server Component skeleton + ARIA region + Zod schema draft)
+- **既存 Sprint 完成 (1 件)**: BL-0105 Approval Inbox (Sprint 3 実装、Sprint 9 で
+  本 audit 範囲外)
+- **partial (3 件)**: BL-0109 responsive (Tailwind grid のみ、本格 mobile-first
+  は Sprint 11.5 BL-0109a) / BL-0110 a11y (ARIA region/role/heading のみ、
+  axe-core integration は Sprint 11.5 BL-0110a) / BL-0111 Playwright E2E
+  (6 skeleton spec、golden flow は Sprint 11 backend route 結線後)
+- **defer (1 件)**: BL-0112 Eval Dashboard (Sprint 11 eval_harness データ
+  source 完成後)
+
+合計: **5 skeleton + 1 既存 + 3 partial + 1 defer = 10 件、Sprint 9 内では
+"functional complete" には到達しない (=`skeleton_pending_backend` status と
+整合)**。
