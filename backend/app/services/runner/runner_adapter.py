@@ -205,12 +205,25 @@ class RunnerAdapter(ABC):
 
 
 class MockRunnerAdapter(RunnerAdapter):
-    """In-process mock (Docker 不使用)。test / dev 用。
+    """In-process mock (Docker 不使用)。**test / dev 専用、production 禁止**。
 
-    実 runner と同じ method signature を持つが、command 実行は
-    ``asyncio.create_subprocess_exec`` で host 上で行う。
+    Codex SP7 audit F-SP7-002 adopt:
+
+    - 本 adapter は host subprocess を直接実行するため、CPU / memory / pids /
+      disk / network の **物理 isolation はない**。``ResourcePolicy`` は
+      `wall_clock_seconds` と `output_byte_cap` のみ enforce、CPU/memory/pids
+      の cgroups 制約は **適用されない**。
+    - production runtime には使わない。SP-007 §目的 の Docker isolation 要件は
+      Sprint 11 の ``DockerRunnerAdapter`` 実装で達成する (Docker network=none +
+      cgroups + iptables + read-only root + non-root + no Docker socket +
+      no host network + bounded mounts)。
+    - 上位 service (AgentRuntime) は production 経路では DockerRunnerAdapter
+      を選択する責任を持つ。MockRunnerAdapter を production 経路で使うと
+      cancel watcher 等の concurrent test が動作しても、実 attack surface
+      (fork bomb / zip bomb / memory leak) は kernel-level の保護を持たない。
+
     Sprint 7 batch 1 / batch 2 では integration test の代用、Sprint 11 で
-    DockerRunnerAdapter に置換 (Docker network=none + cgroups + iptables)。
+    DockerRunnerAdapter に置換。
     """
 
     def __init__(self, base_dir: str | None = None) -> None:
@@ -245,9 +258,22 @@ class MockRunnerAdapter(RunnerAdapter):
 
         violation = detect_dangerous_command(request.argv)
         if violation is not None:
+            # Codex SP7 audit F-SP7-009 adopt: raw argv は exception message に
+            # 含めない (AC-HARD-02 invariant 維持)。debug-only な詳細は別 channel
+            # (build_runner_blocked audit) で記録、上位 caller は reason_code +
+            # argv basename のみを user / log に出す。
+            import hashlib  # noqa: PLC0415
+
+            argv_hash = hashlib.sha256(
+                "\x00".join(request.argv).encode("utf-8")
+            ).hexdigest()[:16]
+            argv_basename = (
+                os.path.basename(request.argv[0]) if request.argv else ""
+            )
             raise ValueError(
                 f"runner_blocked: dangerous_command "
-                f"reason={violation.reason.value} argv={request.argv!r}"
+                f"reason={violation.reason.value} "
+                f"argv_basename={argv_basename} argv_hash={argv_hash}"
             )
 
         # Codex R1 F-001 adopt: network_policy enforcement。
@@ -388,35 +414,67 @@ class MockRunnerAdapter(RunnerAdapter):
             _drain_stream(proc.stderr, stderr_buf, rp.stderr_byte_cap)
         )
 
+        # Codex SP7 audit F-SP7-005 adopt: cancel watcher を concurrent に走らせ、
+        # proc.wait() 完了を待つ前に cancel signal が来た時点で process group を
+        # kill する。従来は proc.wait() 完了/timeout/output cap 後にしか cancel
+        # を見ず、長時間 process が timeout まで残る問題があった。
+        cancel_event = asyncio.Event()
+
+        async def _cancel_watcher() -> None:
+            """100 ms polling で cancel_token を監視、signal 到達で event set。"""
+            if cancel_token is None:
+                # cancel_token なしの場合は永久 sleep (gather で他 task 完了待ち)
+                await asyncio.sleep(timeout_s + 5.0)
+                return
+            poll_interval = 0.1
+            while not cancel_token.is_cancelled:
+                if proc.returncode is not None:
+                    return
+                await asyncio.sleep(poll_interval)
+            cancel_event.set()
+
+        watcher_task = asyncio.create_task(_cancel_watcher())
+
+        async def _gather_proc() -> None:
+            await asyncio.gather(drain_stdout, drain_stderr, proc.wait())
+
+        gather_task = asyncio.create_task(_gather_proc())
+
         try:
-            await asyncio.wait_for(
-                asyncio.gather(drain_stdout, drain_stderr, proc.wait()),
+            done, _pending = await asyncio.wait(
+                {gather_task, watcher_task},
                 timeout=timeout_s,
+                return_when=asyncio.FIRST_COMPLETED,
             )
+            if not done:
+                # all timed out
+                timeout_reached = True
         except TimeoutError:
             timeout_reached = True
+
+        # Cancel signal received during run → kill process group
+        if cancel_event.is_set() and proc.returncode is None:
+            cancelled = True
             await _terminate_process_group()
-            for task in (drain_stdout, drain_stderr):
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
-                        # 既に kill 経路を実行済。drain task 例外は飲み込んで OK。
-                        pass
+
+        # Timeout → kill process group
+        if timeout_reached and proc.returncode is None:
+            await _terminate_process_group()
+
+        # Cleanup remaining tasks (drain + watcher)
+        for task in (drain_stdout, drain_stderr, watcher_task, gather_task):
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                    pass
 
         # Codex R1 F-003 adopt: output cap detected during stream drain → kill
         if output_cap_exceeded and proc.returncode is None:
             await _terminate_process_group()
-            for task in (drain_stdout, drain_stderr):
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
-                        # 既に kill 経路を実行済。drain task 例外は飲み込んで OK。
-                        pass
 
+        # cancel_token を再チェック (cancel_event set 経路と watcher 完了経路の両方)
         if cancel_token is not None and cancel_token.is_cancelled:
             cancelled = True
             if proc.returncode is None:

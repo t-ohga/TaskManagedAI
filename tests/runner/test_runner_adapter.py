@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import os
 import stat
@@ -205,7 +206,13 @@ async def test_run_command_timeout(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_run_command_cancel_token(tmp_path: Path) -> None:
-    """cancel_token が cancelled の場合は result.cancelled に反映する。"""
+    """cancel_token が cancelled の場合は result.cancelled=True、process group は
+    kill される。
+
+    Codex SP7 audit F-SP7-005 adopt: pre-cancelled token を渡すと、cancel watcher
+    が即 detect して process group を SIGTERM、result.exit_code は -SIGTERM=-15
+    か kill されずに 0 のいずれか (timing-dependent)。**cancelled flag 必須**。
+    """
 
     adapter, workspace = await _prepared_workspace(tmp_path)
     cancel_token = RunnerCancelToken()
@@ -221,8 +228,43 @@ async def test_run_command_cancel_token(tmp_path: Path) -> None:
         cancel_token=cancel_token,
     )
 
-    assert result.exit_code == 0
+    # cancelled flag 必須
     assert result.cancelled is True
+    # exit_code は 0 (process が完了してから cancel) または -15 (SIGTERM) / None (immediate kill)
+    assert result.exit_code in {0, -15, None}
+
+
+@POSIX_ONLY
+@pytest.mark.asyncio
+async def test_run_command_mid_run_cancel_kills_long_process(tmp_path: Path) -> None:
+    """Codex SP7 audit F-SP7-005 adopt: mid-run cancel が長時間 process を kill。
+
+    cancel_token を実行中に cancel すると、watcher が detect して process group
+    SIGTERM 経路に入り、timeout を待たずに process が終了する。
+    """
+    adapter, workspace = await _prepared_workspace(tmp_path)
+    cancel_token = RunnerCancelToken()
+
+    async def cancel_after(delay: float) -> None:
+        await asyncio.sleep(delay)
+        cancel_token.cancel()
+
+    # 10s sleep を 0.3s で cancel
+    asyncio.create_task(cancel_after(0.3))
+
+    result = await adapter.run_command(
+        workspace,
+        RunnerCommandRequest(
+            argv=("/bin/sleep", "10"),
+            cwd=workspace.workdir,
+        ),
+        RunnerExecutionContext.p0_default(),
+        cancel_token=cancel_token,
+    )
+
+    # cancel watcher が動作した証拠: 10s 待たずに終了 (実測 < 5s) + cancelled=True
+    assert result.cancelled is True
+    assert result.duration_seconds < 5.0
 
 
 @POSIX_ONLY

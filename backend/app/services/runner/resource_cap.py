@@ -64,7 +64,8 @@ class ResourceCapDenyReason(StrEnum):
     OUTPUT_BYTE_CAP_BELOW_STREAM_SUM = "output_byte_cap_below_stream_sum"
 
 
-# 全 enum 値 (5+ source 整合検証用、`set(EXPECTED) == set(enum)` で test)
+# 全 enum 値 (Codex F-SP7-010 adopt: 2-source verified、enum + pytest EXPECTED の
+# 内部 deny reason として閉じている。Sprint 8 で audit/API 接続時に 5+ source 化)
 RESOURCE_CAP_DENY_REASONS: Final[frozenset[str]] = frozenset(
     r.value for r in ResourceCapDenyReason
 )

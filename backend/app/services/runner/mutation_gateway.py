@@ -51,6 +51,8 @@ class MutationGatewayDenyReason(StrEnum):
     DANGEROUS_COMMAND = "dangerous_command"
     EMPTY_PATCH = "empty_patch"
     PATH_OUTSIDE_ALLOWLIST = "path_outside_allowlist"  # Codex SP7 R1 F-002
+    # Codex SP7 audit F-SP7-004 adopt: ADR-00008 §rollback operational kill switch
+    FORCE_DENIED = "force_denied"
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +169,22 @@ def _validate_allowlist(
     return tuple(violations)
 
 
+def _is_force_deny_enabled() -> bool:
+    """Codex SP7 audit F-SP7-004 adopt: ADR-00008 §rollback operational kill switch。
+
+    `RUNNER_MUTATION_GATEWAY_FORCE_DENY=true` / `1` / `yes` のいずれかが env に
+    設定されていれば、policy / approval / 4 整合 / forbidden_path / dangerous_command
+    が全て pass しても **全 patch apply を deny** に強制する。gateway 脆弱性発見時
+    の即時 kill switch として運用。production では config layer 経由で渡す予定
+    だが、本 Sprint 7 では env 直読みで実装 (Sprint 11 で config 層化)。
+    """
+
+    import os
+
+    raw = os.environ.get("RUNNER_MUTATION_GATEWAY_FORCE_DENY", "").strip().lower()
+    return raw in {"true", "1", "yes", "on"}
+
+
 def enforce_runner_mutation_gateway(
     request: PatchApplyRequest,
 ) -> MutationGatewayDecision:
@@ -174,6 +192,7 @@ def enforce_runner_mutation_gateway(
 
     Gate 順序 (fail-closed、最初に deny を返した時点で短絡):
 
+    0. FORCE_DENY env (Codex SP7 audit F-SP7-004 adopt、ADR-00008 §rollback)
     1. policy_pass / approval_pass の bool check
     2. 4 整合 binding (artifact_hash / policy_version / provider_fingerprint /
        repo_state) の hash compare
@@ -181,6 +200,13 @@ def enforce_runner_mutation_gateway(
     4. dangerous command scan (各 argv に対し detect_dangerous_command)
     5. empty patch (target_paths + argv_plan が空) reject
     """
+
+    # Codex SP7 audit F-SP7-004 adopt: rollback kill switch を最初に評価する
+    if _is_force_deny_enabled():
+        return MutationGatewayDecision(
+            allow=False,
+            deny_reason=MutationGatewayDenyReason.FORCE_DENIED,
+        )
 
     if not request.policy_pass:
         return MutationGatewayDecision(

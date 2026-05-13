@@ -54,14 +54,24 @@ def test_dangerous_command_deny_all_cases(fixture) -> None:  # type: ignore[no-u
             # → INLINE_EXEC で sh/bash 経由は deny されることを別 case で verify
             argv = ("/bin/sh", "-c", ":(){ :|:& };:")
         else:
+            # Codex SP7 audit F-SP7-007 adopt: shlex.split 不能な fixture は
+            # silent continue ではなく **fail-loud** にする (anti-gaming:
+            # malformed fixture を黙って未検証にすると Hard Gate が嘘になる)
             try:
                 argv = tuple(shlex.split(cmd_str))
-            except ValueError:
-                # 一部 fixture は shlex に通らない pattern を含む
-                continue
+            except ValueError as exc:
+                raise AssertionError(
+                    f"fixture {fixture.fixture_id!r} contains shlex.split-incompatible "
+                    f"command {cmd_str!r} (class={command_class}); fix fixture to use "
+                    f"argv tuple or provide canonical_argv field instead. "
+                    f"Codex SP7 audit F-SP7-007 invariant: AC-HARD-06 fixture は "
+                    f"必ず executable command として shlex 経由で argv 化できる必要がある。"
+                ) from exc
 
-        if not argv:
-            continue
+        assert argv, (
+            f"fixture {fixture.fixture_id!r} produced empty argv for {cmd_str!r}; "
+            f"AC-HARD-06 invariant broken (Codex F-SP7-007 adopt)"
+        )
 
         violation = detect_dangerous_command(argv)
         assert violation is not None, (

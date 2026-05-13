@@ -49,7 +49,13 @@ from urllib.parse import urlsplit
 
 
 class NetworkEgressMode(StrEnum):
-    """Network egress mode (5+ source: enum / Literal / pytest / DB CHECK)."""
+    """Network egress mode.
+
+    Codex SP7 audit F-SP7-010 adopt: 現状は 2-source (enum + pytest EXPECTED)。
+    DB CHECK / ORM CheckConstraint / Pydantic / API payload integration は
+    Sprint 8 で audit / API 接続時に 5+ source 化する (本 module は internal
+    deny reason として閉じているため 2-source で許容)。
+    """
 
     DENY_ALL = "deny_all"
     ALLOWLIST = "allowlist"
@@ -74,7 +80,7 @@ class EgressDenyReason(StrEnum):
     MULTICAST_DENIED = "multicast_denied"
 
 
-# 全 enum 値 (5+ source 整合)
+# 全 enum 値 (2-source: enum + pytest、Codex F-SP7-010 adopt で 5+ から訂正)
 NETWORK_EGRESS_MODES: Final[frozenset[str]] = frozenset(
     m.value for m in NetworkEgressMode
 )

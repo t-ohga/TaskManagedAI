@@ -178,12 +178,53 @@ def test_detect_mkfs(argv: tuple[str, ...]) -> None:
     (
         ("docker", "run", "--privileged", "ubuntu"),
         ("docker", "run", "--rm", "--privileged", "ubuntu"),
+        # Codex SP7 audit F-SP7-006 adopt: flag=value form
+        ("docker", "run", "--privileged=true", "ubuntu"),
+        ("docker", "run", "--privileged=yes", "ubuntu"),
+        ("docker", "run", "--privileged=1", "ubuntu"),
+        ("docker", "run", "--privileged=on", "ubuntu"),
     ),
 )
 def test_detect_docker_privileged(argv: tuple[str, ...]) -> None:
     """privileged container 起動による sandbox escape を拒否する。"""
 
     _assert_dangerous(argv, DangerousCommandDenyReason.DOCKER_PRIVILEGED)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    (
+        # Codex SP7 audit F-SP7-006 adopt: --mount type=bind,src=...docker.sock variants
+        (
+            "docker",
+            "run",
+            "--mount",
+            "type=bind,src=/var/run/docker.sock,target=/var/run/docker.sock",
+            "ubuntu",
+        ),
+        (
+            "docker",
+            "run",
+            "--mount",
+            "type=bind,source=/var/run/docker.sock,target=/sock",
+            "ubuntu",
+        ),
+        (
+            "docker",
+            "run",
+            "--mount=type=bind,src=/var/run/docker.sock",
+            "ubuntu",
+        ),
+        # 既存 -v / --volume form
+        ("docker", "run", "-v", "/var/run/docker.sock:/var/run/docker.sock", "image"),
+        ("docker", "run", "--volume", "/var/run/docker.sock:/sock", "image"),
+        ("docker", "run", "--volume=/var/run/docker.sock:/sock", "image"),
+    ),
+)
+def test_detect_docker_socket_mount(argv: tuple[str, ...]) -> None:
+    """docker socket bind mount による host escape を拒否する。"""
+
+    _assert_dangerous(argv, DangerousCommandDenyReason.DOCKER_SOCKET_MOUNT)
 
 
 @pytest.mark.parametrize(

@@ -80,7 +80,11 @@ def _parse_fixture(data: dict[str, Any]) -> DangerousCommandFixture:
 
 
 def load_fixtures(split: FixtureKind) -> Iterator[DangerousCommandFixture]:
-    """指定 split から fixture を全件 yield する。"""
+    """指定 split から fixture を全件 yield する。
+
+    Codex SP7 audit F-SP7-007 adopt: manifest.expected_count と実 fixture 数を
+    照合し、mismatch なら ValueError で reject (anti-gaming)。
+    """
     if split not in _VALID_SPLIT_KINDS:
         raise ValueError(f"split must be one of {_VALID_SPLIT_KINDS}, got {split}")
 
@@ -88,9 +92,24 @@ def load_fixtures(split: FixtureKind) -> Iterator[DangerousCommandFixture]:
     dir_path = _BASE / split
     if not dir_path.is_dir():
         return
-    for f in sorted(dir_path.glob("*.json")):
-        if f.name == ".gitkeep":
-            continue
+
+    # Codex SP7 audit F-SP7-007 adopt: manifest count 整合 verify
+    manifest = load_manifest()
+    expected_count = (
+        manifest.get("splits", {}).get(split, {}).get("expected_count", 0)
+    )
+    fixture_files = [
+        f for f in sorted(dir_path.glob("*.json")) if f.name != ".gitkeep"
+    ]
+    if len(fixture_files) != expected_count:
+        raise ValueError(
+            f"fixture count mismatch in {dir_path}: expected={expected_count} "
+            f"(from manifest.splits.{split}.expected_count), actual={len(fixture_files)}. "
+            f"Anti-Gaming: update manifest or add/remove fixtures to align "
+            f"(Codex SP7 audit F-SP7-007 adopt)"
+        )
+
+    for f in fixture_files:
         with f.open(encoding="utf-8") as fp:
             data = json.load(fp)
         validator.validate(data)

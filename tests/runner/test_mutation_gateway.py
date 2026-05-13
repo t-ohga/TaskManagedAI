@@ -35,6 +35,8 @@ EXPECTED_DENY_REASONS = (
     "dangerous_command",
     "empty_patch",
     "path_outside_allowlist",
+    # Codex SP7 audit F-SP7-004 adopt
+    "force_denied",
 )
 
 
@@ -355,4 +357,48 @@ def test_integrity_uses_constant_time_compare() -> None:
     assert exact.deny_reason is None
     assert almost.allow is False
     assert almost.deny_reason is MutationGatewayDenyReason.ARTIFACT_HASH_MISMATCH
+
+
+def test_force_deny_env_blocks_all_patches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex SP7 audit F-SP7-004 adopt: RUNNER_MUTATION_GATEWAY_FORCE_DENY=true
+    で全 patch apply が deny される (ADR-00008 §rollback kill switch)。
+
+    policy/approval/4 整合/forbidden_path/dangerous_command が全て pass しても、
+    env flag enabled なら gate が deny を返す。
+    """
+    monkeypatch.setenv("RUNNER_MUTATION_GATEWAY_FORCE_DENY", "true")
+    decision = enforce_runner_mutation_gateway(_make_request())
+    assert decision.allow is False
+    assert decision.deny_reason is MutationGatewayDenyReason.FORCE_DENIED
+
+
+@pytest.mark.parametrize(
+    "flag_value",
+    ["true", "1", "yes", "on", "TRUE", "Yes"],
+)
+def test_force_deny_accepts_multiple_truthy_values(
+    monkeypatch: pytest.MonkeyPatch,
+    flag_value: str,
+) -> None:
+    """Codex SP7 audit F-SP7-004 adopt: case-insensitive + multiple truthy values。"""
+    monkeypatch.setenv("RUNNER_MUTATION_GATEWAY_FORCE_DENY", flag_value)
+    decision = enforce_runner_mutation_gateway(_make_request())
+    assert decision.deny_reason is MutationGatewayDenyReason.FORCE_DENIED
+
+
+@pytest.mark.parametrize(
+    "flag_value",
+    ["false", "0", "no", "off", "", "anything-else"],
+)
+def test_force_deny_disabled_allows_normal_flow(
+    monkeypatch: pytest.MonkeyPatch,
+    flag_value: str,
+) -> None:
+    """flag が falsy / unset なら通常 gate flow が動作する。"""
+    monkeypatch.setenv("RUNNER_MUTATION_GATEWAY_FORCE_DENY", flag_value)
+    decision = enforce_runner_mutation_gateway(_make_request())
+    # falsy = 通常 flow、policy/approval pass で allow される
+    assert decision.allow is True
 

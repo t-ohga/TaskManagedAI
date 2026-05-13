@@ -215,9 +215,20 @@ def _is_docker_invocation(canonical_argv: tuple[str, ...]) -> bool:
 
 
 def _matches_docker_privileged(canonical_argv: tuple[str, ...]) -> bool:
+    """Codex SP7 audit F-SP7-006 adopt: `--privileged` だけでなく `--privileged=true` /
+    `--privileged=yes` / `--privileged=1` を全て検出する。Docker CLI は flag=value form
+    も受け付けるため、joined string match で robust 化。"""
+
     if not _is_docker_invocation(canonical_argv):
         return False
-    return any(a == "--privileged" for a in canonical_argv[1:])
+    # 単独 flag
+    if any(a == "--privileged" for a in canonical_argv[1:]):
+        return True
+    # `--privileged=<value>` form (true / yes / 1 / on は実質有効)
+    return any(
+        a.startswith("--privileged=") and a.split("=", 1)[1].lower() in {"true", "yes", "1", "on"}
+        for a in canonical_argv[1:]
+    )
 
 
 def _matches_docker_exec(canonical_argv: tuple[str, ...]) -> bool:
@@ -231,15 +242,26 @@ def _matches_docker_exec(canonical_argv: tuple[str, ...]) -> bool:
 
 
 def _matches_docker_socket_mount(canonical_argv: tuple[str, ...]) -> bool:
-    """Codex SP7 R1 F-004: docker run/exec で host docker socket を bind mount。"""
+    """Codex SP7 R1 F-004 + SP7 audit F-SP7-006 adopt: docker run/exec で host
+    docker socket を bind mount。
+
+    Detect patterns (case-insensitive after canonicalize):
+    - ``-v /var/run/docker.sock:...`` (short volume)
+    - ``--volume /var/run/docker.sock:...`` / ``--volume=docker.sock:...``
+    - ``--mount type=bind,src=/var/run/docker.sock,...`` (Codex F-SP7-006)
+    - ``--mount type=bind,source=...docker.sock,...`` (alias `source=`)
+    - ``--mount=type=bind,src=...docker.sock`` (`=` separator)
+    """
 
     if not _is_docker_invocation(canonical_argv):
         return False
     joined = " ".join(canonical_argv)
-    # -v /var/run/docker.sock:... / --volume docker.sock / --mount source=...docker.sock
-    return bool(
-        re.search(r"(?:-v\s+|--volume[\s=]|--mount[\s=][^ ]*source=)[^ ]*docker\.sock", joined)
+    # -v / --volume / --mount with src= or source= referring to docker.sock
+    patterns = (
+        r"(?:-v\s+|--volume[\s=])[^ ]*docker\.sock",
+        r"--mount[\s=][^ ]*(?:src|source)=[^ ,]*docker\.sock",
     )
+    return any(re.search(p, joined) for p in patterns)
 
 
 def _matches_docker_host_network(canonical_argv: tuple[str, ...]) -> bool:
