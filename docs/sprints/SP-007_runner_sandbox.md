@@ -227,8 +227,66 @@ risks:
 
 ## Review
 
-- changed: Sprint 完了後に、RunnerAdapter、Docker lifecycle、path validator、command parser、resource cap、network allowlist、env scrubbing、`runner_mutation_gateway`、cancel cleanup、audit event、AC-HARD-05 / 06 fixture、trusted wrapper、state migration、manifest の実変更ファイルを追記する。
-- verified: Sprint 完了後に、Docker lifecycle、forbidden path、dangerous command、resource cap、network、env scrub、gateway negative、cancel、audit、fixture、hook wrapper self-test、PH4-F-001 / PH4-F-002 再現 test、raw secret 非露出確認を追記する。
-- deferred: runner orchestrator 高度化、multi-runner、job queue、remote runner、Kubernetes / Firecracker、GitHub Draft PR 実装、runner metrics dashboard を後続 Sprint へ送った理由を追記する。
-- risks: Sprint 完了後に、path bypass、command bypass、resource cap leak、network policy drift、gateway bypass、token injection、trusted wrapper dotfiles 管理失敗、ADR 昇格漏れの残リスクと検知方法を追記する。
+### batch 0 + batch 1 完了 (2026-05-13、commit `dc573cc`)
+
+#### changed (batch 0 + batch 1)
+
+- `docs/adr/00008_destructive_operation.md`: NEW、Sprint 7 batch 0 で `accepted` 化。forbidden path 13 種 + dangerous command 15 種 + allowlist 3 種 + canonical path normalization + command parser + rollback (`RUNNER_MUTATION_GATEWAY_FORCE_DENY=true`)。
+- `docs/adr/00012_hook_trust_boundary.md`: NEW、Sprint 7 batch 0 で `proposed`。Phase 4 hooks PH4-F-001 / PH4-F-002 解消方針 (repo 外 trusted wrapper + sha256 manifest)。実装は Phase 5 へ defer。
+- `backend/app/services/runner/__init__.py`: NEW。public API export。
+- `backend/app/services/runner/forbidden_path.py`: NEW (248 行)。`canonicalize_path` (ANSI strip + Unicode Cc/Cf carpet-bomb + URL 5 段 iterate decode + NFC + POSIX `//` collapse + symlink reject)。`_FORBIDDEN_FRAGMENTS` 21 entries + `_FORBIDDEN_PREFIXES` 7 entries + `detect_forbidden_path` + `resolve_and_detect`。
+- `backend/app/services/runner/dangerous_command.py`: NEW、`DangerousCommandDenyReason` 20 enum + carpet-bomb 戦略。`canonicalize_command` + env wrapper unwrap (max 5 段) + 30+ runtime wholesale deny + `_SAFE_KNOWN_COMMANDS` 約 50 entry fallback + Docker socket/host network/privileged 検出。
+- `backend/app/services/runner/mutation_gateway.py`: NEW、`MutationGatewayDenyReason` 10 enum + `PatchApplyRequest` frozen dataclass + `_validate_4_integrity` (hmac.compare_digest) + `_validate_allowlist` + `enforce_runner_mutation_gateway` (priority: policy → approval → 4-integrity → empty_patch → forbidden_path → allowlist → dangerous_command)。Sprint 8 server-owned ID 化 defer 明記。
+- `backend/app/services/runner/runner_adapter.py`: NEW、`RunnerAdapter` ABC + `MockRunnerAdapter`。`prepare_workspace` (0o700 + uid binding) + `run_command` (argv + detect_dangerous_command + cwd containment + 43 種 env scrub + process group SIGTERM→SIGKILL)。
+- `tests/runner/`: NEW、4 test file 合計 160+ test (forbidden_path 50+ / dangerous_command 60+ / mutation_gateway 20+ / runner_adapter 30+)。`EXPECTED_DENY_REASONS` で 5+ source 整合検証。
+- `.claude/CLAUDE.md`: §6.5.0 「絶対教訓 (品質最優先)」追加。「急がなくていい。それぞれ品質重視で codex をしっかり使い完璧に」+ 6 原則。
+
+#### verified (batch 0 + batch 1)
+
+- `uv run pytest tests/runner/ -q`: 236 tests pass
+- `uv run pytest -q`: 2002 tests pass (全 backend、Sprint 1-6 regression なし)
+- `uv run mypy backend`: clean
+- `uv run ruff check backend tests`: clean (S108 / ASYNC240 は file-level noqa)
+- ADR-00008 `status: accepted` + ADR-00012 `status: proposed` 確認
+- SP-007 frontmatter `status: in_progress` + `adr_refs: [ADR-00008]` 確認
+- Codex multi-round adversarial review 6 round 完遂、15 distinct finding 全件 adopt
+
+#### deferred (batch 1 → 後続)
+
+- **F-001 (Sprint 8)**: `PatchApplyRequest.policy_passed` / `approval_passed` を caller-supplied bool → server-owned ID 置換。Sprint 8 RepoProxy / GitHub App integration と一緒に provenance binding 実装 (docstring 明記)。
+- **F-011 (batch 4)**: AC-HARD-05 forbidden_path_block + AC-HARD-06 dangerous_command_block fixture (public_regression / private_holdout / adversarial_new) を batch 4 BL-0080 / BL-0081 で実装。
+- **strict allowlist 移行 (Sprint 8)**: Codex R6 で「Sprint 8 で deny-list → strict allowlist が本質解」と提言。本 Sprint では deny-list 最善努力で十分な fail-closed 状態を達成、Sprint 8 で command allowlist 設計を ADR 化。
+- **Phase 4 hooks repo 外 trusted wrapper (Phase 5)**: ADR-00012 で proposed のみ、本 Sprint では `~/.claude-trusted/` を forbidden path pre-protect。Phase 5 で wrapper + sha256 manifest + dotfiles 管理を完成、PH4-F-001 / PH4-F-002 最終解消。
+- **Docker runner integration (Sprint 11)**: `MockRunnerAdapter` で interface 確立、`DockerRunnerAdapter` は Sprint 11 (Eval Harness) で実装。
+
+#### risks (batch 1 時点識別)
+
+- **Command deny-list 限界 (HIGH, Sprint 8 で解消)**: Codex R3-R6 で連続的に新 attack 面発見、deny-list 戦略の本質的限界。本 batch では 30+ wholesale deny + carpet-bomb fallback で最善努力。Sprint 8 strict allowlist で根本解決。
+- **Symlink race (MEDIUM, Sprint 11)**: `Path.resolve(strict=False)` 後の symlink 差替 TOCTOU。allowlist prefix check + apply 前 re-resolve で緩和、Sprint 11 で container readonly mount + O_NOFOLLOW。
+- **PatchApplyRequest 4 整合の caller bool (MEDIUM, Sprint 8)**: 現状 `policy_passed` / `approval_passed` が caller-supplied bool。Sprint 8 で server-owned ID 化 (F-001)。
+- **Env scrub allowlist drift (LOW, Sprint 11.5)**: 43 種 forbidden env hardcode。新 secret env 出現で drift 可能。Sprint 11.5 で audit + auto-discovery。
+- **Phase 4 hooks dispatcher 改ざん (CRITICAL, Phase 5)**: 本 Sprint 7 では ADR-00012 proposed のみで wrapper 未実装。Bash tool 経由 `.claude/hooks/` 改ざん攻撃は依然可能。Phase 5 で wrapper + manifest 完成。
+- **AC-HARD-05 / AC-HARD-06 fixture 未完 (HIGH, batch 4)**: 本 batch 1 では unit test のみ。Hard Gate fixture (public / private / adversarial 3 分割) を batch 4 で実装、Sprint 11 で eval harness 統合。
+
+#### Codex R0-R6 review summary
+
+| Round | Severity | 件数 | adopt / reject / defer |
+|---|---|---|---|
+| R0 (test 生成中検出) | bug | 4 | adopt 4 (relative path / double-slash / env scrub / cwd prefix) |
+| R1 | HIGH 6 + MEDIUM 5 + LOW 1 | 12 | adopt 10 + partial-defer 2 (F-001 Sprint 8 / F-011 batch 4) |
+| R2 | HIGH 1 | 1 | adopt 1 (inline_exec coverage) |
+| R3 | HIGH 2 | 2 | adopt 2 (env wrapper bypass / interpreter coverage) |
+| R4 | HIGH 2 | 2 | adopt 2 (env -S/-- terminator / carpet-bomb 移行) |
+| R5 | HIGH 1 | 1 | adopt 1 (find -exec bypass) |
+| R6 | HIGH 1 | 1 | adopt 1 (ssh/scp/tmux/vim/less/emacs/nc/socat 等 30+ runtime wholesale deny) |
+| **累計** | - | **15 distinct** | **adopt 14 + partial-defer 2 (Sprint 8 / batch 4 明示記録)** |
+
+R6 で Codex 自身が「strict allowlist 移行が本質解、deny-list mole-whacking は限界」と提言。本 Sprint では deny-list 最善努力を達成、Sprint 8 で allowlist 移行へ進める。
+
+### batch 2-5 (進行中、別 commit で追記予定)
+
+- batch 2 (BL-0074 + BL-0075 + BL-0076): resource cap + network egress allowlist + env scrub integration with runner_adapter
+- batch 3 (BL-0078 + BL-0079): cancel propagation Redis pub/sub + runner audit event + event_type 28→30 拡張
+- batch 4 (BL-0080 + BL-0081): AC-HARD-05 + AC-HARD-06 fixture (public / private / adversarial 3 分割)
+- batch 5 (BL-0082 + BL-0083 + BL-0084): Phase 4 hooks repo 外 wrapper (Phase 5 defer 明文化 + SP-007 ## Review record)
 
