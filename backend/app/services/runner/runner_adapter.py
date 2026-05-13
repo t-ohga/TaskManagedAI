@@ -337,12 +337,24 @@ class MockRunnerAdapter(RunnerAdapter):
                 f"workspace_id={workspace.workspace_id} cwd_hash={cwd_hash}"
             )
 
-        # Codex SP7 R3 F-SP7-R3-001 adopt: cwd が directory として存在することを
-        # subprocess 起動前に確認、raw path を含む OSError を redacted ValueError
-        # に置換 (FileNotFoundError / NotADirectoryError 経路で raw cwd 漏れ防止)
-        cwd_is_dir = await asyncio.to_thread(
-            lambda: Path(request.cwd).is_dir()
-        )
+        # Codex SP7 R3 F-SP7-R3-001 + R6 F-SP7-R6-001 adopt: cwd が directory
+        # として存在することを subprocess 起動前に確認。`is_dir()` 自体が
+        # OSError (ENAMETOOLONG / EACCES 等) を raise する経路も R5 pattern で
+        # except 外 raise に redaction (raw cwd / filename 完全切断)。
+        cwd_is_dir: bool | None = None
+        cwd_stat_errno: int | str | None = None
+        try:
+            cwd_is_dir = await asyncio.to_thread(
+                lambda: Path(request.cwd).is_dir()
+            )
+        except OSError as exc:
+            cwd_stat_errno = getattr(exc, "errno", "unknown")
+        if cwd_is_dir is None:
+            raise ValueError(
+                f"runner_blocked: cwd_stat_failed "
+                f"workspace_id={workspace.workspace_id} cwd_hash={cwd_hash} "
+                f"errno={cwd_stat_errno}"
+            )
         if not cwd_is_dir:
             raise ValueError(
                 f"runner_blocked: cwd_not_directory "
