@@ -84,6 +84,55 @@ relative_file_path() {
   esac
 }
 
+# is_taskmanagedai_path: project boundary guard
+# TaskManagedAI worktree 外の file_path に対しては 1 を返す (hook を no-op で exit させる)
+# - 別 project (ieshima-edu 等) session から TaskManagedAI hook が誤発火するのを防ぐ
+# - **CRITICAL design (HBG-R1-001 + HBG-R1-002 fix)**: project_root prefix match は使わない
+#   (caller の current project_root は漏出先 project であり得るため、TaskManagedAI 配下と誤判定する)
+# - 判定は **TaskManagedAI / taskmanagedai path segment match のみ** で行う (`/foo/notes/TaskManagedAI-summary.md`
+#   のような filename substring は path segment 単位 match では false、TaskManagedAI directory 配下のみ true)
+# - **HBG-R1-004 fix**: symlink を realpath で canonicalize してから match
+# - 空 path は安全側 (0 = no-op return) で fall-through、caller 側で別判定
+#
+# 使用例: hook 冒頭で
+#   file_path="$(extract_file_path "$input")"
+#   if [ -n "$file_path" ] && ! is_taskmanagedai_path "$file_path"; then exit 0; fi
+is_taskmanagedai_path() {
+  local file_path="$1"
+  local abs resolved
+
+  # 空 path は no-op (caller 側で別判定)
+  if [ -z "$file_path" ]; then
+    return 0
+  fi
+
+  abs="$(normalize_file_path "$file_path")"
+
+  # symlink resolve (HBG-R1-004 + R2-001 fix): macOS の /bin/realpath は -m 非対応のため
+  # Python3 経由で `os.path.realpath` を使う (macOS / Linux 双方対応、missing path / symlink 共に canonical 化)
+  # python3 が無い環境では GNU realpath (-m 対応) を fallback、両方無ければ raw path で fall-through
+  if command -v python3 >/dev/null 2>&1; then
+    resolved="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$abs" 2>/dev/null || true)"
+  elif command -v realpath >/dev/null 2>&1; then
+    resolved="$(realpath -m "$abs" 2>/dev/null || realpath "$abs" 2>/dev/null || true)"
+  else
+    resolved=""
+  fi
+  if [ -n "$resolved" ]; then
+    abs="$resolved"
+  fi
+
+  # path segment 単位の TaskManagedAI / taskmanagedai match
+  # (filename substring の偶発 match を避けるため `/` 区切りを必須にする)
+  case "$abs" in
+    */TaskManagedAI|*/TaskManagedAI/*|*/taskmanagedai|*/taskmanagedai/*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 read_file_if_exists() {
   local file_path="$1"
   local abs

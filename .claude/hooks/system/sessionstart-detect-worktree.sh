@@ -12,12 +12,20 @@ source "$SCRIPT_DIR/../lib/common.sh"
 
 HOOK_EVENT_NAME="SessionStart"
 
+cwd="$(pwd)"
+timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+# project boundary guard (HBG-R1-005 fix: log dir/file write より前に判定)
+# cross-project session で TaskManagedAI log を作成しない。
+# - 別 project session で本 hook が呼ばれた場合 cwd は別 project root
+# - boundary guard 通過後に初めて LOG_DIR / LOG_FILE を初期化する
+if ! is_taskmanagedai_path "$cwd"; then
+  exit 0
+fi
+
 LOG_DIR="$HOME/.claude/local/taskmanagedai"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/sessionstart-worktree-$(date +%Y-%m-%d).log"
-
-cwd="$(pwd)"
-timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   printf '[%s] cwd=%s not_in_git_repo=yes\n' "$timestamp" "$cwd" >>"$LOG_FILE"

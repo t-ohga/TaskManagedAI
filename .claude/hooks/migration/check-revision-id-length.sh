@@ -11,6 +11,24 @@
 set -euo pipefail
 
 ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+
+# project boundary guard (lightweight inline、cross-project hook leak 防止)
+# TaskManagedAI worktree 外なら別 project の migrations を見ないよう exit
+# HBG-R1-003 + HBG-R1-004 + R2-001 fix: macOS /bin/realpath -m 非対応のため Python3 fallback
+_root_abs="$ROOT"
+if command -v python3 >/dev/null 2>&1; then
+  _root_resolved="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$ROOT" 2>/dev/null || true)"
+  [ -n "$_root_resolved" ] && _root_abs="$_root_resolved"
+elif command -v realpath >/dev/null 2>&1; then
+  _root_resolved="$(realpath -m "$ROOT" 2>/dev/null || realpath "$ROOT" 2>/dev/null || true)"
+  [ -n "$_root_resolved" ] && _root_abs="$_root_resolved"
+fi
+case "$_root_abs" in
+  */TaskManagedAI|*/TaskManagedAI/*|*/taskmanagedai|*/taskmanagedai/*) ;;
+  *) exit 0 ;;
+esac
+unset _root_abs _root_resolved
+
 # Alembic default `alembic_version.version_num` is `varchar(32)`. We BLOCK at 32 (technical limit).
 # Project convention recommends 30 chars (2-char safety margin) — surfaced as WARN at 31-32.
 MAX_LEN=32
