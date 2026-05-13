@@ -301,6 +301,10 @@ class MockRunnerAdapter(RunnerAdapter):
 
         # Codex SP7 R1 F-006 adopt: cwd containment は ``Path.resolve()`` 後の
         # canonical compare で symlink follow 後の escape を物理削除。
+        # Codex SP7 R2 F-SP7-R2-001 adopt: cwd / resolved path / OSError message を
+        # exception text から削除、workspace_id + cwd_hash のみ含める。
+        import hashlib as _hashlib  # noqa: PLC0415
+
         workdir_resolved = await asyncio.to_thread(
             lambda: str(Path(workspace.workdir).resolve(strict=False))
         )
@@ -309,14 +313,20 @@ class MockRunnerAdapter(RunnerAdapter):
                 lambda: str(Path(request.cwd).resolve(strict=False))
             )
         except OSError as exc:
-            raise ValueError(f"cwd resolve failed: {exc}") from exc
+            cwd_hash = _hashlib.sha256(request.cwd.encode("utf-8")).hexdigest()[:16]
+            raise ValueError(
+                f"runner_blocked: cwd_resolve_failed "
+                f"workspace_id={workspace.workspace_id} cwd_hash={cwd_hash} "
+                f"errno={getattr(exc, 'errno', 'unknown')}"
+            ) from exc
         if not (
             cwd_resolved == workdir_resolved
             or cwd_resolved.startswith(workdir_resolved + os.sep)
         ):
+            cwd_hash = _hashlib.sha256(request.cwd.encode("utf-8")).hexdigest()[:16]
             raise ValueError(
-                f"cwd {request.cwd!r} (resolved={cwd_resolved!r}) must be "
-                f"inside workspace {workdir_resolved!r}"
+                f"runner_blocked: cwd_outside_workspace "
+                f"workspace_id={workspace.workspace_id} cwd_hash={cwd_hash}"
             )
 
         # Sprint 7 batch 2 BL-0076: env scrub を ``env_scrub`` module に
@@ -342,6 +352,9 @@ class MockRunnerAdapter(RunnerAdapter):
         timeout_reached = False
         cancelled = False
         output_cap_exceeded = False
+        # Codex SP7 R2 F-SP7-R2-002 adopt: output_cap_event で cap 超過を
+        # gather/cancel watcher と並列に detect、即時 kill 経路を提供
+        output_cap_event = asyncio.Event()
 
         # Codex SP7 R1 F-010 adopt: process group SIGTERM -> SIGKILL escalation。
         async def _terminate_process_group() -> None:
@@ -385,7 +398,11 @@ class MockRunnerAdapter(RunnerAdapter):
             buffer: bytearray,
             per_stream_cap: int,
         ) -> None:
-            """Read stream chunk-by-chunk; trigger output cap if exceeded."""
+            """Read stream chunk-by-chunk; trigger output cap event if exceeded.
+
+            Codex SP7 R2 F-SP7-R2-002 adopt: cap 超過時に output_cap_event.set()
+            して gather/cancel watcher と並列に detect、即時 kill 経路を起動。
+            """
             nonlocal output_cap_exceeded
             if stream is None:
                 return
@@ -401,10 +418,12 @@ class MockRunnerAdapter(RunnerAdapter):
                 # Check per-stream cap
                 if len(buffer) > per_stream_cap:
                     output_cap_exceeded = True
+                    output_cap_event.set()
                     return
                 # Check total cap
                 if len(stdout_buf) + len(stderr_buf) > rp.output_byte_cap:
                     output_cap_exceeded = True
+                    output_cap_event.set()
                     return
 
         drain_stdout = asyncio.create_task(
@@ -440,9 +459,16 @@ class MockRunnerAdapter(RunnerAdapter):
 
         gather_task = asyncio.create_task(_gather_proc())
 
+        # Codex SP7 R2 F-SP7-R2-002 adopt: output_cap_event を FIRST_COMPLETED
+        # の対象に追加し、cap 超過時に gather や watcher を待たず即時 kill 経路へ
+        async def _output_cap_waiter() -> None:
+            await output_cap_event.wait()
+
+        output_cap_task = asyncio.create_task(_output_cap_waiter())
+
         try:
             done, _pending = await asyncio.wait(
-                {gather_task, watcher_task},
+                {gather_task, watcher_task, output_cap_task},
                 timeout=timeout_s,
                 return_when=asyncio.FIRST_COMPLETED,
             )
@@ -451,6 +477,10 @@ class MockRunnerAdapter(RunnerAdapter):
                 timeout_reached = True
         except TimeoutError:
             timeout_reached = True
+
+        # Codex SP7 R2 F-SP7-R2-002: output cap event set → 即時 kill
+        if output_cap_event.is_set() and proc.returncode is None:
+            await _terminate_process_group()
 
         # Cancel signal received during run → kill process group
         if cancel_event.is_set() and proc.returncode is None:
@@ -461,8 +491,8 @@ class MockRunnerAdapter(RunnerAdapter):
         if timeout_reached and proc.returncode is None:
             await _terminate_process_group()
 
-        # Cleanup remaining tasks (drain + watcher)
-        for task in (drain_stdout, drain_stderr, watcher_task, gather_task):
+        # Cleanup remaining tasks (drain + watcher + output_cap_waiter)
+        for task in (drain_stdout, drain_stderr, watcher_task, gather_task, output_cap_task):
             if not task.done():
                 task.cancel()
                 try:
@@ -470,7 +500,7 @@ class MockRunnerAdapter(RunnerAdapter):
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
                     pass
 
-        # Codex R1 F-003 adopt: output cap detected during stream drain → kill
+        # Codex R1 F-003 adopt: output cap detected during stream drain → kill (safety net)
         if output_cap_exceeded and proc.returncode is None:
             await _terminate_process_group()
 

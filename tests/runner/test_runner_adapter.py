@@ -152,13 +152,17 @@ async def test_run_command_rejects_empty_argv(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_run_command_rejects_cwd_outside_workspace(tmp_path: Path) -> None:
-    """workspace prefix 偽装を含む outside cwd を containment check で拒否する。"""
+    """workspace prefix 偽装を含む outside cwd を containment check で拒否する。
+
+    Codex SP7 R2 F-SP7-R2-001 adopt: exception message に raw cwd / resolved
+    path は含まれず、`workspace_id=<hex>` + `cwd_hash=<16-char-sha256>` のみ。
+    """
 
     adapter, workspace = await _prepared_workspace(tmp_path)
     outside = Path(workspace.workdir + "-escape")
     outside.mkdir()
 
-    with pytest.raises(ValueError, match="inside workspace"):
+    with pytest.raises(ValueError, match="cwd_outside_workspace") as excinfo:
         await adapter.run_command(
             workspace,
             RunnerCommandRequest(
@@ -167,6 +171,11 @@ async def test_run_command_rejects_cwd_outside_workspace(tmp_path: Path) -> None
             ),
             RunnerExecutionContext.p0_default(),
         )
+    # raw cwd 非露出 invariant verify
+    msg = str(excinfo.value)
+    assert str(outside) not in msg, f"raw cwd leaked in exception: {msg!r}"
+    assert workspace.workspace_id in msg
+    assert "cwd_hash=" in msg
 
 
 @pytest.mark.asyncio
@@ -671,6 +680,62 @@ def test_runner_execution_context_p0_default() -> None:
     ctx = RunnerExecutionContext.p0_default()
     assert ctx.network_policy.mode == NetworkEgressMode.DENY_ALL
     assert ctx.resource_policy == ResourcePolicy.from_p0_defaults()
+
+
+@POSIX_ONLY
+@pytest.mark.asyncio
+async def test_run_command_output_cap_triggers_immediate_kill(
+    tmp_path: Path,
+) -> None:
+    """Codex SP7 R2 F-SP7-R2-002 adopt: output_byte_cap 超過時に
+    wall_clock を待たず即時 kill。
+
+    `yes` 相当の bounded output script を実行し、output_cap (8 KB) 超過で
+    proc が wall_clock より遥かに短い時間で kill されることを verify。
+    """
+    import dataclasses
+
+    from backend.app.services.runner.resource_cap import ResourcePolicy
+
+    adapter, workspace = await _prepared_workspace(tmp_path)
+    # 大量出力する script を workspace 内に作成
+    script = Path(workspace.workdir) / "spam.sh"
+    script.write_text(
+        '#!/bin/sh\n'
+        'i=0\n'
+        'while [ $i -lt 100000 ]; do\n'
+        '  printf "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n"\n'
+        '  i=$((i+1))\n'
+        'done\n'
+    )
+    script.chmod(0o755)
+
+    # 8 KB cap で 100,000 行 × 33 bytes = 3.3 MB を生成しようとする → 即時 kill
+    tight_policy = dataclasses.replace(
+        ResourcePolicy.from_p0_defaults(),
+        wall_clock_seconds=30.0,  # 30 sec timeout、kill されなければ 30 sec 待つ
+        output_byte_cap=8 * 1024,
+        stdout_byte_cap=4 * 1024,
+        stderr_byte_cap=4 * 1024,
+    )
+    tight_context = dataclasses.replace(
+        RunnerExecutionContext.p0_default(),
+        resource_policy=tight_policy,
+    )
+
+    result = await adapter.run_command(
+        workspace,
+        RunnerCommandRequest(
+            argv=("/bin/sh", str(script)),
+            cwd=workspace.workdir,
+        ),
+        tight_context,
+    )
+
+    # output_cap_exceeded=True + wall_clock より遥かに短く終了
+    assert result.output_cap_exceeded is True
+    assert result.timeout_reached is False
+    assert result.duration_seconds < 10.0
 
 
 def test_runner_command_result_default_new_fields() -> None:
