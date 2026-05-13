@@ -232,9 +232,67 @@ E2E test 追加候補:
 - AI-UIUX レポート: `docs/設計検討/AI統合タスク管理プラットフォームの最新UIUXと実装選定レポート.md`
 - 統合結論: `docs/設計検討/2026-05-12_external_ai_concept_uiux_integration.md`
 
-## Review (Sprint 9 完了後追記)
+## Review
 
-- changed: <実際に変えたこと>
-- verified: <確認したこと>
-- deferred: <後回しにしたこと>
-- risks: <残ったリスク>
+### batch 1 + 2 完了 (2026-05-13、commit `0813e53` + `ceb28c8`)
+
+#### changed (batches 1-2: 6 page skeleton)
+
+- `frontend/app/(admin)/tickets/page.tsx`: Ticket 一覧 skeleton (BL-0103)
+- `frontend/app/(admin)/tickets/[id]/page.tsx`: Ticket 詳細 (BL-0104) +
+  Acceptance Criteria + Evidence + AgentRun mapping + ContextSnapshot 10
+  column 表示
+- `frontend/app/(admin)/runs/page.tsx`: AgentRun 16 状態 + blocked_reason
+  3 種 + terminal state 5 種 表示 (BL-0106 skeleton)
+- `frontend/app/(admin)/runs/[id]/page.tsx`: AgentRunEvent timeline 13 種
+  sample + Sprint 7 runner_* event 統合表示 (BL-0106 詳細)
+- `frontend/app/(admin)/audit/page.tsx`: audit_event 14 種 + 必須 payload
+  key 表示 (BL-0107 skeleton)
+- `frontend/app/(admin)/settings/page.tsx`: Provider Compliance Matrix
+  4 行 + Policy Profile + GitHub App repo binding 文書化 (BL-0108)
+
+#### verified (batches 1-2)
+
+- `pnpm exec tsc --noEmit` clean (新 page 全て TS pass)
+- Server Component default (export const dynamic = "force-dynamic")
+- secret_ref / installation_token を DOM に出さない invariant 維持
+- AgentRun 16 状態 enum を Sprint 4 backend と整合表示
+
+#### deferred (batches 3-5 → 別 session)
+
+- BL-0104 詳細: Ticket 詳細の実 data fetch (`frontend/lib/api/tickets.ts`)
+- BL-0106 詳細: AgentRun timeline 実 data fetch
+  (`frontend/lib/api/agent-runs.ts`)
+- BL-0107 詳細: Audit Log filter + pagination + raw secret enforcement
+- BL-0109: responsive layout (mobile / tablet / desktop)
+- BL-0110: a11y (ARIA + keyboard navigation + screen reader)
+- BL-0111: Playwright E2E (golden flow: Ticket → Approval → AgentRun →
+  Draft PR)
+- BL-0112: Eval Dashboard (Hard Gates 7 / Quality KPIs 5 read-only)
+
+これらは別 session で API client + Server Action + Playwright test と一緒に
+実装予定。本 Sprint では UI route 構造 + Server Component default + secret
+非表示 invariant + AgentRun / audit_event enum 表示の基盤完成。
+
+#### risks (Sprint 9 時点)
+
+- **secret leak via DOM (HIGH)**: 実 data fetch 時に installation_token /
+  raw secret が誤って Server Component の rendered HTML に混入するリスク。
+  Sprint 11 で `assert_no_raw_secret` を frontend test fixture に追加して
+  detect する。
+- **AgentRun status drift (HIGH)**: backend 16 状態 + blocked_reason 3 種 を
+  frontend で hardcode するため、backend 側に新 status 追加で drift 発生。
+  Sprint 11 で TypeScript enum 自動生成 (OpenAPI / Pydantic → ts) を導入。
+- **a11y 不足 (MEDIUM)**: 現在 skeleton で ARIA role / label 未整備。
+  BL-0110 で screen reader + keyboard nav を本実装。
+
+### Sprint 9 status
+
+- target_days: 6
+- max_days: 9
+- actual (本 session): 1 day (Pack 既存 + batches 1-2 完成、batches 3-5
+  deferred は別 session)
+- must_ship (Sprint 9 内 boundary): Ticket / Approval / Run / Audit /
+  Settings の 5 画面 route 構造 + Server Component default = 全達成
+  (Approval Inbox は Sprint 3 既存実装、本 Sprint で追加は不要)
+- defer: API client + Playwright E2E + responsive + a11y = 別 session

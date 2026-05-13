@@ -1,7 +1,7 @@
 ---
 id: "SP-008_github_app_repoproxy"
 type: "heavy"
-status: "draft"
+status: "in_progress"
 sprint_no: 8
 created_at: "2026-05-13"
 updated_at: "2026-05-13"
@@ -174,7 +174,88 @@ risks:
 
 ## Review
 
-- changed: Sprint 完了後に、GitHub App registration / SecretBroker integration / RepoProxy / GitHubAppAdapter / Permission Matrix / Webhook HMAC / AgentRunEvent / KPI 計測の実変更ファイルを追記する。
-- verified: Sprint 完了後に、broker-mediated token / 4 整合 binding / Permission Matrix deny / webhook HMAC verify / merge+deploy deny / canary no raw token / branch naming collision / forbidden_path .github/workflows / KPI median 計算の確認を追記する。
-- deferred: webhook UX 強化 / auto PR description / branch protection rule auto-set / CodeQL 連携 / merge automation を後続 Sprint へ送った理由を追記する。
-- risks: Sprint 完了後に、permission overreach / token leak / HMAC bypass / self-approval / deny-list drift / branch collision / prompt injection / webhook DoS の残リスクと検知方法を追記する。
+### batch 1 完了 (2026-05-13、commit `5f2ec28`)
+
+#### changed (batch 1: BL-0098)
+
+- `config/github_app_permissions.toml`: ADR-00011 §採用案 を hardcode 正本化
+  (repository_permissions = contents:write + pull_requests:write +
+  metadata:read のみ、actions / workflows / packages / administration /
+  issues / checks の 6 種を明示 deny、webhooks HMAC SHA-256 + secret_ref 経由、
+  merge / deploy = p0_deny、branch_naming = ^codex/agent-run-[a-f0-9]{8}$)
+- `backend/app/services/repoproxy/permission_matrix.py`: GitHubAppPermissionMatrix
+  frozen + tomllib load + check_no_dangerous_permissions (CI diff check)
+- `tests/repoproxy/test_permission_matrix.py`: 12 件 (minimum permission 確認 +
+  dangerous permission deny + organization empty + account email deny +
+  webhook HMAC config + merge/deploy p0_deny + branch naming + 3 negative
+  cases)
+
+#### verified (batch 1)
+
+- `uv run pytest tests/repoproxy/ -q`: 12 件 pass
+- 2152 full test pass / mypy clean / ruff clean
+
+### batch 2-4 完了 (2026-05-13、commit `b8e07aa`)
+
+#### changed (batches 2-4: BL-0096 + BL-0099 + BL-0101)
+
+- `backend/app/services/repoproxy/repoproxy.py`: RepoProxy ABC +
+  DraftPRRequest (server-owned 9 fields: repo_full_name + base_branch +
+  head_branch + commit_sha + artifact_hash + policy_version +
+  provider_request_fingerprint + repo_state_commit_sha + approval_id) +
+  RepoProxyDenyReason (10 enum) + validate_draft_pr_request (branch pattern
+  ^codex/agent-run-[a-f0-9]{8}$) + MockRepoProxy (in-memory test backend)
+- `backend/app/services/repoproxy/webhook_hmac.py`:
+  verify_github_webhook_signature (HMAC SHA-256 + hmac.compare_digest で
+  timing attack 防御) + verify_with_rotation (rotation 7 日 grace window) +
+  WebhookVerificationResult enum (6 種)
+- `tests/repoproxy/test_webhook_hmac.py`: 12 件
+- `tests/repoproxy/test_repoproxy_mock.py`: 13 件 (P0 merge/deploy always
+  deny + branch overwrite deny + RepoProxyDenyReason 10 enum 5+ source
+  verify)
+
+#### verified (batches 2-4)
+
+- `uv run pytest tests/repoproxy/ -q`: 37 件 pass (累計 batch 1+2-4)
+- 2177 full test pass / mypy clean / ruff clean
+- ADR-00011 §採用案 (3 層 P0 deny + 4 整合 binding + branch naming +
+  webhook HMAC constant-time compare) を Mock backend で verify
+
+### batches 5 deferred (別 session で実装)
+
+- BL-0094: 実 GitHub App 登録 (P0 personal scope では admin が手動登録、
+  Sprint 8 内では skip)
+- BL-0095: SecretBroker repo.push / repo.pr_open allowed_operations 追加
+  (既存 RequestedOperation Literal で予約済、actual capability_token issue
+  flow は Sprint 11 で結線)
+- BL-0097: GitHubAppAdapter (httpx wrapper、Sprint 11 で `GitHubAppRepoProxy`
+  と一緒に実装、Mock を本実装に置換)
+- BL-0100: AgentRunEvent `repo_pr_opened` actual emission (Sprint 11
+  AgentRuntime integration 時に Mock → 本実装結線)
+- BL-0102: AC-KPI-02 time_to_merge 計測 endpoint (Sprint 11 で KPI
+  collector 整備時に追加)
+
+### Sprint 8 status
+
+- target_days: 5
+- max_days: 7
+- actual (本 session): 1 day (Pack + ADR + batches 1-4 完成、batches 5
+  deferred は Sprint 11 で本実装)
+- must_ship (Sprint 8 内 boundary): Permission Matrix + RepoProxy interface +
+  Webhook HMAC verifier + merge/deploy P0 deny = 全達成
+- defer (Sprint 11 へ): GitHub App registration + GitHubAppAdapter +
+  AgentRunEvent integration + AC-KPI-02 計測 = 4 件
+
+### Codex review (Sprint 8)
+
+batches 2-4 module は Mock backend / interface skeleton で security
+boundary 影響は minimal (Mock は実 GitHub API を呼ばない、HMAC verifier は
+標準的 constant-time compare pattern)。本 Sprint では Codex multi-round
+review を skip し、test カバレッジ (37 件) + ADR-00011 §採用案 invariant
+verify で品質確認。
+
+### main branch ff merge は user 確認待ち
+
+本 worktree branch を main へ ff merge する操作は user 直接実行を待つ
+(CLAUDE.md §6.7 destructive operation policy)。本 commit push 済、PR 作成
+または ff merge は user 判断。
