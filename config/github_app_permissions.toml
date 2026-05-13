@@ -1,0 +1,56 @@
+# Sprint 8 BL-0098: GitHub App Permission Matrix (ADR-00011 正本)
+#
+# 本ファイルは GitHub App の permission の hardcode 正本。CI で
+# differential check し、不一致は ADR-00011 update を要求して merge block。
+#
+# ADR-00011 §採用案 / §Permission Matrix:
+# - 最小 permission のみ (contents:write + pull_requests:write + metadata:read)
+# - actions / workflows / packages / administration / issues / checks は明示 deny
+# - permission 拡張は ADR-00011 update + Criteria #11 (GitHub App permission) を経由
+
+dataset_version = "v2026.05.13-sprint8"
+hard_gate_id = "AC-HARD-05-related"  # .github/workflows/** への AI / runner 書込 forbidden_path で二重防御
+adr_ref = "docs/adr/00011_github_app_permission_matrix.md"
+
+[repository_permissions]
+contents = "write"         # branch create / commit / push (Draft PR 経路に必須)
+pull_requests = "write"    # Draft PR open / update (P0 deny は merge / deploy のみ)
+metadata = "read"          # repo info / branch list / installation_id 取得
+
+[repository_permissions.deny_explicit]
+# 以下は明示 deny。CI で diff check し、有効化された場合 fail。
+actions = "deny"           # GitHub Actions trigger / workflow run の自動化を禁止
+workflows = "deny"         # .github/workflows/** への push を二重防御 (forbidden_path + permission)
+packages = "deny"          # package registry write を禁止
+administration = "deny"    # repo settings / branch protection / collaborator 変更を禁止
+issues = "deny"            # P0 では使わない (P0.1 で再評価)
+checks = "deny"            # CI status fetch は metadata:read で代替
+
+[organization_permissions]
+# P0 personal 用途のため organization permission は不要
+
+[account_permissions]
+email_addresses = "deny"   # PII 取得経路を deny
+
+[webhooks]
+# Tailscale 内 endpoint (`100.64.0.0/10`) からのみ受信、HMAC SHA-256 verify。
+# Webhook shared secret は SecretBroker 経由 resolve。
+endpoint_path = "/webhooks/github"
+hmac_header = "X-Hub-Signature-256"
+hmac_algorithm = "sha256"
+secret_ref = "secret://sops/p0/github_webhook_hmac#v1"
+replay_window_seconds = 3600  # Redis nonce で 1 hour 重複防止
+
+[deny_actions]
+# action_class enforcement の P0 deny (3 層 defense-in-depth):
+# 1. SecretBroker.allowed_operations に登録しない (capability token issue 時点で deny)
+# 2. Policy Engine で action_class merge / deploy を always deny
+# 3. UI / API に merge / deploy endpoint を作らない
+merge = "p0_deny"
+deploy = "p0_deny"
+
+[branch_naming]
+# AgentRun が作る branch は `codex/agent-run-{run_id_short}` (8-char prefix)。
+# Existing branch overwrite は deny。
+pattern = "^codex/agent-run-[a-f0-9]{8}$"
+overwrite_allowed = false
