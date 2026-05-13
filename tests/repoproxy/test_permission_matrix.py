@@ -109,6 +109,55 @@ def test_check_detects_missing_deny_explicit() -> None:
     assert any("workflows" in v for v in violations)
 
 
+def test_diff_against_current_clean() -> None:
+    """Codex SP8 R1 F-SP8-005 adopt: current=matrix と一致なら drift なし。"""
+    from backend.app.services.repoproxy.permission_matrix import _diff_against_current
+
+    matrix = load_permission_matrix()
+    current = {
+        "permissions": {
+            "contents": "write",
+            "pull_requests": "write",
+            "metadata": "read",
+        }
+    }
+    assert _diff_against_current(matrix, current) == ()
+
+
+def test_diff_against_current_detects_drift() -> None:
+    """Matrix と current が drift していると violation 検出。"""
+    from backend.app.services.repoproxy.permission_matrix import _diff_against_current
+
+    matrix = load_permission_matrix()
+    # contents が read になっている (matrix=write と drift)
+    drifted = {
+        "permissions": {
+            "contents": "read",  # drift!
+            "pull_requests": "write",
+            "metadata": "read",
+        }
+    }
+    drifts = _diff_against_current(matrix, drifted)
+    assert any("contents" in d for d in drifts)
+
+
+def test_diff_against_current_detects_dangerous_enabled() -> None:
+    """Matrix で deny した actions が current で enabled なら detect。"""
+    from backend.app.services.repoproxy.permission_matrix import _diff_against_current
+
+    matrix = load_permission_matrix()
+    dangerous = {
+        "permissions": {
+            "contents": "write",
+            "pull_requests": "write",
+            "metadata": "read",
+            "actions": "write",  # Matrix では deny されているのに enabled
+        }
+    }
+    drifts = _diff_against_current(matrix, dangerous)
+    assert any("actions" in d for d in drifts)
+
+
 def test_check_detects_merge_not_denied() -> None:
     """merge が p0_deny でないと violation。"""
     matrix = GitHubAppPermissionMatrix(

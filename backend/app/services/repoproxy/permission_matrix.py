@@ -104,8 +104,116 @@ def check_no_dangerous_permissions(matrix: GitHubAppPermissionMatrix) -> tuple[s
     return tuple(violations)
 
 
+def _diff_against_current(
+    matrix: GitHubAppPermissionMatrix, current: dict[str, Any]
+) -> tuple[str, ...]:
+    """Codex SP8 R1 F-SP8-005 adopt: Matrix toml vs current installation
+    permissions の差分検出。`current` は `gh api repos/{owner}/{repo}/installation`
+    の `permissions` フィールド (dict[str, str]) を想定。
+
+    Returns tuple of drift descriptions; empty if no drift.
+    """
+    drifts: list[str] = []
+    current_perms = current.get("permissions", current)
+    if not isinstance(current_perms, dict):
+        return (f"unexpected current permissions shape: {type(current_perms).__name__}",)
+
+    # Matrix で許可された permission が current にあること
+    for perm, level in matrix.repository_permissions.items():
+        actual = current_perms.get(perm)
+        if actual != level:
+            drifts.append(
+                f"repository_permission.{perm}: matrix={level!r} current={actual!r}"
+            )
+
+    # Matrix で deny した permission が current で enabled でないこと
+    for perm in matrix.repository_deny_explicit:
+        actual = current_perms.get(perm)
+        if actual not in (None, "none", ""):
+            drifts.append(
+                f"repository_permission.{perm} is enabled in current "
+                f"({actual!r}) but Matrix denies it"
+            )
+
+    return tuple(drifts)
+
+
+def _cli() -> int:  # noqa: PLR0911, T201 のみ allow (CLI)
+    """Codex SP8 R1 F-SP8-005 adopt: ADR-00011 §採用案 CLI differential check。
+
+    使用法:
+      python -m backend.app.services.repoproxy.permission_matrix --check
+        [--current-permissions-json <path>]
+
+    --check のみ: static `check_no_dangerous_permissions` を実行
+    --current-permissions-json <path>: GitHub API response (JSON) と diff 検出
+
+    Exit code:
+      0: clean
+      1: violation (dangerous permission or drift)
+      2: CLI usage error
+    """
+    import argparse  # noqa: PLC0415
+    import json  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    parser = argparse.ArgumentParser(
+        description="GitHub App Permission Matrix differential check (ADR-00011)"
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Run static check_no_dangerous_permissions on Matrix toml",
+    )
+    parser.add_argument(
+        "--current-permissions-json",
+        type=str,
+        default=None,
+        help="Path to JSON file containing current installation.permissions",
+    )
+    args = parser.parse_args()
+
+    if not args.check:
+        parser.print_help()
+        return 2
+
+    matrix = load_permission_matrix()
+    violations = check_no_dangerous_permissions(matrix)
+    for v in violations:
+        print(f"VIOLATION (static): {v}", file=sys.stderr)  # noqa: T201
+
+    drift_violations: tuple[str, ...] = ()
+    if args.current_permissions_json:
+        try:
+            with open(args.current_permissions_json, encoding="utf-8") as f:
+                current = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"ERROR: cannot load current permissions: {exc}", file=sys.stderr)  # noqa: T201
+            return 2
+        drift_violations = _diff_against_current(matrix, current)
+        for d in drift_violations:
+            print(f"DRIFT: {d}", file=sys.stderr)  # noqa: T201
+
+    total = len(violations) + len(drift_violations)
+    if total > 0:
+        print(  # noqa: T201
+            f"FAIL: {total} violation(s) detected. ADR-00011 update required.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"OK: Permission Matrix clean (dataset_version={matrix.dataset_version})")  # noqa: T201
+    return 0
+
+
 __all__ = [
     "GitHubAppPermissionMatrix",
     "check_no_dangerous_permissions",
     "load_permission_matrix",
 ]
+
+
+if __name__ == "__main__":
+    import sys  # noqa: PLC0415
+
+    sys.exit(_cli())

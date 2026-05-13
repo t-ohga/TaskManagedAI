@@ -1,17 +1,39 @@
 ---
 id: "ADR-00011"
 title: "GitHub App Permission Matrix: 最小 permission + broker-mediated installation token + merge/deploy deny"
-status: "proposed"
+status: "proposed_pending_sprint_11"
 date: "2026-05-13"
 authors:
   - "claude (sprint8 owner)"
 related_sprints:
   - "SP-008_github_app_repoproxy"
+acceptance_blocking_items:
+  - "Sprint 11 BL-0094: real GitHub App registration + private key SOPS encrypt"
+  - "Sprint 11 BL-0095: SecretBroker allowed_operations + capability_token issue flow"
+  - "Sprint 11 BL-0097: GitHubAppAdapter httpx wrapper (broker-mediated only)"
+  - "Sprint 11 BL-0100: AgentRunEvent repo_pr_opened actual emission"
+  - "Sprint 11 BL-0102: AC-KPI-02 time_to_merge endpoint + median calc test"
+  - "Sprint 11 BL-0101a: Webhook HMAC SecretBroker-mediated service layer + Redis SETNX replay"
+  - "Sprint 11 BL-0096a: RepoProxy 4 整合 binding server-side 再計算 refactor"
+  - "Sprint 11.5 BL-Permission-CLI: GitHub API current permissions fetch + CI workflow integration"
 supersedes: null
 superseded_by: null
 ---
 
-このテンプレの使い方: ADR Gate Criteria #11 (GitHub App permission 変更) に該当。Sprint 8 batch 0 で proposed → batch 5 で accepted 化を計画。implementation 前に Permission Matrix の最終形を確定し、`config/github_app_permissions.toml` で hardcode + CI で diff check する基盤を確立する。
+このテンプレの使い方: ADR Gate Criteria #11 (GitHub App permission 変更) に該当。
+Sprint 8 batch 0 で proposed 化、Sprint 11 で 9 acceptance_blocking_items 全て
+完了後に **accepted** 昇格 (Codex SP8 R1 F-SP8-004 adopt、2026-05-13 status
+明文化)。Sprint 8 では Permission Matrix の最終形を確定し、`config/github_app_permissions.toml`
+で hardcode + CLI `--check` for diff check 基盤を整備。
+
+## Status 詳細 (Codex SP8 R1 F-SP8-004 adopt)
+
+- **proposed_pending_sprint_11**: Sprint 8 は `partial_skeleton` (Permission
+  Matrix + Mock RepoProxy + low-level Webhook HMAC) を完成、Sprint 11 で
+  acceptance_blocking_items 全 9 件を実装後に **accepted** へ昇格する。
+- 9 件のうち 1 件でも未完了の状態で accepted 化することは ADR Gate Criteria
+  #11 違反 (P0 期間中の GitHub App permission を実装で証明できないまま採用案
+  確定するのは設計品質上 NG)。
 
 最終更新: 2026-05-13
 
