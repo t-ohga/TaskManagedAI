@@ -8,8 +8,8 @@ updated_at: "2026-05-13"
 target_days: 5
 max_days: 7
 adr_refs:
-  - "[ADR-00006](../adr/00006_secretbroker_atomic_claim.md) # accepted、installation token を SecretBroker capability token 経由で扱う"
-  - "[ADR-00007](../adr/00007_tailscale_network_boundary.md) # accepted、GitHub webhook は Tailscale 内 endpoint のみ受信、public ingress なし"
+  - "[ADR-00006](../adr/00006_secrets_management.md) # accepted、installation token を SecretBroker capability token 経由で扱う"
+  - "[ADR-00007](../adr/00007_external_exposure.md) # accepted、GitHub webhook は Tailscale 内 endpoint のみ受信、Funnel/Cloudflare 不使用"
   - "[ADR-00009](../adr/00009_action_class_taxonomy.md) # accepted、repo_write / pr_open / merge / deploy action_class enforcement"
 planned_adr_refs:
   - "[ADR-00011](../adr/00011_github_app_permission_matrix.md) # Sprint 8 で proposed 化、Criteria #11 GitHub App permission 変更"
@@ -166,8 +166,8 @@ risks:
 
 ## 関連 ADR
 
-- [ADR-00006](../adr/00006_secretbroker_atomic_claim.md): accepted。installation token を SecretBroker capability token 経由で扱う前提。本 Sprint で `provider=github` / `operation=repo.push,repo.pr_open` を allowed_operations に追加。
-- [ADR-00007](../adr/00007_tailscale_network_boundary.md): accepted。webhook endpoint を Tailscale 内 (`100.64.0.0/10`) のみ受信、public ingress なし。
+- [ADR-00006](../adr/00006_secrets_management.md): accepted。installation token を SecretBroker capability token 経由で扱う前提。本 Sprint で `provider=github` / `operation=repo.push,repo.pr_open` を allowed_operations に追加。
+- [ADR-00007](../adr/00007_external_exposure.md): accepted。webhook endpoint を Tailscale 内 (`100.64.0.0/10`) のみ受信、Funnel/Cloudflare 不使用。
 - [ADR-00009](../adr/00009_action_class_taxonomy.md): accepted。action_class `repo_write` / `pr_open` / `merge` / `deploy` の enforcement 経路を本 Sprint で確立 (merge / deploy は P0 deny)。
 - [ADR-00011](../adr/00011_github_app_permission_matrix.md): Sprint 8 batch 0 で proposed → batch 5 で accepted。Criteria #11 GitHub App permission 変更の正本。
 - [ADR-00003](../adr/00003_api_contract.md): Sprint 8 batch 5 で proposed 化、Draft PR / webhook API endpoint contract (Criteria #3)。
