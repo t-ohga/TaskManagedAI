@@ -88,13 +88,13 @@ risks:
 
 ## タスク一覧
 
-- [ ] **batch 0**: ADR-00011 起票 (proposed)、Permission Matrix draft、Sprint 内で accepted 化
+- [ ] **batch 0**: ADR-00011 起票 (proposed)、Permission Matrix draft、Sprint 11 `acceptance_blocked_by` 完了後に accepted 化 (Codex SP8 R2 R2-F-002 + R3 R3-F-001 adopt: Sprint 8 内では accepted 化しない)
 - [ ] **batch 1**: BL-0094 (GitHub App 登録) + BL-0095 (SecretBroker integration) + Codex multi-round review
 - [ ] **batch 2**: BL-0096 (RepoProxy) + BL-0097 (GitHubAppAdapter) + Codex multi-round review
 - [ ] **batch 3**: BL-0098 (Permission Matrix) + BL-0101 (merge/deploy deny test) + Codex multi-round review
 - [ ] **batch 4**: BL-0099 (Webhook HMAC verifier) + Codex multi-round review
 - [ ] **batch 5**: BL-0100 (AgentRunEvent integration) + BL-0102 (AC-KPI-02 計測) + Codex multi-round review
-- [ ] **Sprint Exit**: SP-008 ## Review 章 + ADR-00011 accepted 化 + main ff merge
+- [ ] **Sprint Exit**: SP-008 ## Review 章 + main ff merge (ADR-00011 は Sprint 11 acceptance_blocked_by 完了後に accepted 化、Sprint 8 内では proposed 維持)
 - [ ] **Hard Gate 接続**: AC-HARD-03 tenant isolation の repo permission 越境 test 追加
 
 ## must_ship / defer_if_over_budget 対応表
@@ -134,7 +134,7 @@ risks:
 
 ## レビュー観点
 
-- [ ] ADR-00011 が Sprint 8 batch 0 で proposed 化 → batch 5 完了時に accepted 化される。
+- [ ] ADR-00011 が Sprint 8 batch 0 で proposed 化 → **Sprint 11 acceptance_blocked_by 完了後に accepted 化** (Sprint 8 partial_skeleton + Sprint 11 carry-over BL 全件完了が accepted 条件、Codex SP8 R2 R2-F-002 adopt)。
 - [ ] GitHub App permission は最小 (contents:write + pull_requests:write + metadata:read のみ)、actions / workflows / packages / administration は明示 deny。
 - [ ] installation token は SecretBroker 内でのみ resolve、RepoProxy は broker-mediated operation 経由でのみ httpx request を投げる。
 - [ ] 4 整合 binding が all-or-nothing (1 mismatch でも invalidate)、`expected_request_fingerprint` は OperationContext canonical JCS で server-side 計算 (`server-owned-boundary §1` 違反なし)。
@@ -170,7 +170,7 @@ risks:
 - [ADR-00006](../adr/00006_secrets_management.md): accepted。installation token を SecretBroker capability token 経由で扱う前提。本 Sprint で `provider=github` / `operation=repo.push,repo.pr_open` を allowed_operations に追加。
 - [ADR-00007](../adr/00007_external_exposure.md): accepted。webhook endpoint を Tailscale 内 (`100.64.0.0/10`) のみ受信、Funnel/Cloudflare 不使用。
 - [ADR-00009](../adr/00009_action_class_taxonomy.md): accepted。action_class `repo_write` / `pr_open` / `merge` / `deploy` の enforcement 経路を本 Sprint で確立 (merge / deploy は P0 deny)。
-- [ADR-00011](../adr/00011_github_app_permission_matrix.md): Sprint 8 batch 0 で proposed → batch 5 で accepted。Criteria #11 GitHub App permission 変更の正本。
+- [ADR-00011](../adr/00011_github_app_permission_matrix.md): Sprint 8 で proposed、Sprint 11 acceptance_blocked_by 8 件完了後に accepted (Codex SP8 R2/R3 adopt で旧「batch 5 で accepted」表現訂正)。Criteria #11 GitHub App permission 変更の正本。
 - [ADR-00003](../adr/00003_api_contract.md): Sprint 8 batch 5 で proposed 化、Draft PR / webhook API endpoint contract (Criteria #3)。
 
 ## Review
