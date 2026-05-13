@@ -17,6 +17,7 @@ from backend.app.services.runner.runner_adapter import (
     RunnerCancelToken,
     RunnerCommandRequest,
     RunnerCommandResult,
+    RunnerExecutionContext,
     RunnerWorkspace,
 )
 
@@ -123,8 +124,8 @@ async def test_run_command_executes_argv(tmp_path: Path) -> None:
         RunnerCommandRequest(
             argv=("/bin/echo", "hello"),
             cwd=workspace.workdir,
-            timeout_seconds=5,
         ),
+        RunnerExecutionContext.p0_default(),
     )
 
     assert result.exit_code == 0
@@ -144,6 +145,7 @@ async def test_run_command_rejects_empty_argv(tmp_path: Path) -> None:
         await adapter.run_command(
             workspace,
             RunnerCommandRequest(argv=(), cwd=workspace.workdir),
+            RunnerExecutionContext.p0_default(),
         )
 
 
@@ -162,21 +164,38 @@ async def test_run_command_rejects_cwd_outside_workspace(tmp_path: Path) -> None
                 argv=("/bin/echo", "should-not-run"),
                 cwd=str(outside),
             ),
+            RunnerExecutionContext.p0_default(),
         )
 
 
 @pytest.mark.asyncio
 async def test_run_command_timeout(tmp_path: Path) -> None:
-    """timeout_seconds を超えた process は terminate され timeout flag を返す。"""
+    """wall_clock_seconds (resource_policy) を超えた process は terminate され
+    timeout flag を返す。
+
+    Codex R1 F-003 adopt: timeout source は resource_policy.wall_clock_seconds
+    に一本化。RunnerCommandRequest.timeout_seconds は signature 削除済。
+    """
+    import dataclasses
+
+    from backend.app.services.runner.resource_cap import ResourcePolicy
 
     adapter, workspace = await _prepared_workspace(tmp_path)
+    short_policy = dataclasses.replace(
+        ResourcePolicy.from_p0_defaults(),
+        wall_clock_seconds=0.2,
+    )
+    short_context = dataclasses.replace(
+        RunnerExecutionContext.p0_default(),
+        resource_policy=short_policy,
+    )
     result = await adapter.run_command(
         workspace,
         RunnerCommandRequest(
             argv=("/bin/sleep", "10"),
             cwd=workspace.workdir,
-            timeout_seconds=0.2,
         ),
+        short_context,
     )
 
     assert result.timeout_reached is True
@@ -197,8 +216,8 @@ async def test_run_command_cancel_token(tmp_path: Path) -> None:
         RunnerCommandRequest(
             argv=("/bin/echo", "ok"),
             cwd=workspace.workdir,
-            timeout_seconds=5,
         ),
+        RunnerExecutionContext.p0_default(),
         cancel_token=cancel_token,
     )
 
@@ -229,8 +248,8 @@ async def test_run_command_env_scrub_removes_openai_api_key(
             argv=("/bin/sh", str(script)),
             cwd=workspace.workdir,
             env_allowlist=frozenset(),
-            timeout_seconds=5,
         ),
+        RunnerExecutionContext.p0_default(),
     )
 
     assert result.exit_code == 0
@@ -262,8 +281,8 @@ async def test_run_command_env_scrub_blocks_forbidden_var_even_in_allowlist(
             argv=("/bin/sh", str(script)),
             cwd=workspace.workdir,
             env_allowlist=frozenset({"OPENAI_API_KEY"}),
-            timeout_seconds=5,
         ),
+        RunnerExecutionContext.p0_default(),
     )
 
     assert result.exit_code == 0
@@ -296,8 +315,8 @@ async def test_run_command_env_scrub_blocks_known_secret_vars(
             argv=("/bin/sh", str(script)),
             cwd=workspace.workdir,
             env_allowlist=frozenset(secrets),
-            timeout_seconds=5,
         ),
+        RunnerExecutionContext.p0_default(),
     )
 
     content = output.read_text(encoding="utf-8")
@@ -331,8 +350,8 @@ async def test_run_command_env_allowlist_passes_path(
             argv=("/bin/sh", str(script)),
             cwd=workspace.workdir,
             env_allowlist=frozenset({"PATH"}),
-            timeout_seconds=5,
         ),
+        RunnerExecutionContext.p0_default(),
     )
 
     assert result.exit_code == 0
@@ -455,3 +474,172 @@ def test_cancel_token_default_not_cancelled() -> None:
     token = RunnerCancelToken()
 
     assert token.is_cancelled is False
+
+
+# Sprint 7 batch 2 BL-0074/0075/0076 integration tests
+
+
+@POSIX_ONLY
+@pytest.mark.asyncio
+async def test_run_command_rejects_invalid_resource_policy(tmp_path: Path) -> None:
+    """ResourcePolicy validate() に違反する policy は subprocess 前に reject。
+
+    Codex R1 F-007 adopt: invalid policy は RunnerExecutionContext 経由で
+    渡され、orchestrator-resolve 経路でも validate() が必ず通る。
+    """
+    from backend.app.services.runner.network_egress import NetworkPolicy
+    from backend.app.services.runner.resource_cap import ResourcePolicy
+
+    adapter, workspace = await _prepared_workspace(tmp_path)
+
+    invalid_policy = ResourcePolicy(
+        cpu_quota_us=-1,
+        cpu_period_us=1_000_000,
+        memory_bytes=1024,
+        pids_max=10,
+        disk_bytes=1024,
+        wall_clock_seconds=1.0,
+        output_byte_cap=1024,
+        stdout_byte_cap=512,
+        stderr_byte_cap=512,
+    )
+    invalid_context = RunnerExecutionContext(
+        resource_policy=invalid_policy,
+        network_policy=NetworkPolicy.p0_default(),
+    )
+
+    with pytest.raises(ValueError, match="resource_cap"):
+        await adapter.run_command(
+            workspace,
+            RunnerCommandRequest(
+                argv=("/bin/echo", "hello"),
+                cwd=workspace.workdir,
+            ),
+            invalid_context,
+        )
+
+
+@POSIX_ONLY
+@pytest.mark.asyncio
+async def test_run_command_p0_default_policy_passes(tmp_path: Path) -> None:
+    """P0 default RunnerExecutionContext では subprocess 実行が成立。"""
+    adapter, workspace = await _prepared_workspace(tmp_path)
+
+    result = await adapter.run_command(
+        workspace,
+        RunnerCommandRequest(
+            argv=("/bin/echo", "hello"),
+            cwd=workspace.workdir,
+        ),
+        RunnerExecutionContext.p0_default(),
+    )
+    assert result.exit_code == 0
+    assert result.output_cap_exceeded is False
+
+
+@POSIX_ONLY
+@pytest.mark.asyncio
+async def test_run_command_rejects_network_capable_command_in_deny_all(
+    tmp_path: Path,
+) -> None:
+    """Codex R1 F-001 adopt: NetworkPolicy.mode=deny_all で curl / wget 等を deny."""
+    adapter, workspace = await _prepared_workspace(tmp_path)
+
+    with pytest.raises(ValueError, match="network_egress"):
+        await adapter.run_command(
+            workspace,
+            RunnerCommandRequest(
+                argv=("/usr/bin/curl", "https://example.com"),
+                cwd=workspace.workdir,
+            ),
+            RunnerExecutionContext.p0_default(),
+        )
+
+
+@POSIX_ONLY
+@pytest.mark.asyncio
+async def test_run_command_scrubbed_env_keys_reported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """allowlist に入れた forbidden var は scrubbed_env_keys に記録される。"""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-LEAK")
+    monkeypatch.setenv("HOME", "/home/user")
+
+    adapter, workspace = await _prepared_workspace(tmp_path)
+
+    result = await adapter.run_command(
+        workspace,
+        RunnerCommandRequest(
+            argv=("/bin/echo", "ok"),
+            cwd=workspace.workdir,
+            env_allowlist=frozenset({"OPENAI_API_KEY", "HOME", "PATH"}),
+        ),
+        RunnerExecutionContext.p0_default(),
+    )
+
+    assert result.exit_code == 0
+    # OPENAI_API_KEY must be in scrubbed list (audit invariant)
+    assert "OPENAI_API_KEY" in result.scrubbed_env_keys
+    # scrubbed_env_keys contains *names only*, no value
+    for key in result.scrubbed_env_keys:
+        assert "LEAK" not in key
+        assert "sk-" not in key
+
+
+@POSIX_ONLY
+@pytest.mark.asyncio
+async def test_run_command_pattern_based_env_scrub(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """unknown VENDOR_X_TOKEN も pattern で scrub される。"""
+    monkeypatch.setenv("ACME_VENDOR_TOKEN", "vendor-secret")
+
+    adapter, workspace = await _prepared_workspace(tmp_path)
+
+    result = await adapter.run_command(
+        workspace,
+        RunnerCommandRequest(
+            argv=("/bin/echo", "ok"),
+            cwd=workspace.workdir,
+            env_allowlist=frozenset({"ACME_VENDOR_TOKEN", "PATH"}),
+        ),
+        RunnerExecutionContext.p0_default(),
+    )
+
+    assert result.exit_code == 0
+    assert "ACME_VENDOR_TOKEN" in result.scrubbed_env_keys
+
+
+def test_runner_command_request_has_no_policy_fields() -> None:
+    """Codex R1 F-007 adopt: server-owned-boundary §1。RunnerCommandRequest は
+    resource_policy / network_policy / timeout_seconds field を持たない。"""
+    req = RunnerCommandRequest(argv=("a",), cwd="/tmp")
+    assert not hasattr(req, "resource_policy")
+    assert not hasattr(req, "network_policy")
+    assert not hasattr(req, "timeout_seconds")
+
+
+def test_runner_execution_context_p0_default() -> None:
+    """RunnerExecutionContext.p0_default() = deny_all egress + P0 ResourcePolicy."""
+    from backend.app.services.runner.network_egress import NetworkEgressMode
+    from backend.app.services.runner.resource_cap import ResourcePolicy
+
+    ctx = RunnerExecutionContext.p0_default()
+    assert ctx.network_policy.mode == NetworkEgressMode.DENY_ALL
+    assert ctx.resource_policy == ResourcePolicy.from_p0_defaults()
+
+
+def test_runner_command_result_default_new_fields() -> None:
+    """RunnerCommandResult の新 field (Sprint 7 batch 2) は default が安全側。"""
+    result = RunnerCommandResult(
+        exit_code=0,
+        stdout_bytes=1,
+        stderr_bytes=0,
+        duration_seconds=0.1,
+        timeout_reached=False,
+        cancelled=False,
+    )
+    assert result.output_cap_exceeded is False
+    assert result.scrubbed_env_keys == ()

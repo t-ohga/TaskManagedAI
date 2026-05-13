@@ -1,11 +1,11 @@
-"""Sprint 7 BL-0071: RunnerAdapter (Docker isolated runner interface).
+"""Sprint 7 BL-0071 (batch 1) + BL-0074/0075/0076 (batch 2): RunnerAdapter.
 
 ADR-00003 + ADR-00008 boundary の RunnerAdapter abstract interface。Docker
 integration は Sprint 11 で本実装、本 module は **interface + mock backend** を
 提供し、上位 service (AgentRuntime) が runner_mutation_gateway 経由で patch
 apply を行う流れを Sprint 7 内で contract test できる状態にする。
 
-設計 (DD-01 §RunnerAdapter):
+設計 (DD-01 §RunnerAdapter + Codex R1 F-001/F-003/F-007 adopt):
 
 - ``RunnerAdapter`` は ABC で 4 method: ``prepare_workspace`` /
   ``run_command`` / ``collect_artifacts`` / ``cancel``。
@@ -13,22 +13,23 @@ apply を行う流れを Sprint 7 内で contract test できる状態にする�
   (test / dev 用)。
 - container lifecycle (image pull / volume / network) は ``DockerRunnerAdapter``
   (Sprint 11 で本実装) で扱う。
-- Sprint 7 batch 1 では mock のみ実装し、enforce_runner_mutation_gateway の
-  contract が成立することを test で証明。
 
-server-owned-boundary §1:
+server-owned-boundary §1 (Codex R1 F-007 adopt):
 
-- ``RunnerCommandRequest`` は argv + cwd + timeout のみで、shell string や
-  raw env を caller から受け取らない (env scrub は Sprint 6 batch 1 と同じ
-  pattern で adapter 内で行う)。
-- ``RunnerWorkspace`` の workdir は server-side で uuid 生成 (mock では
-  ``tempfile.TemporaryDirectory``)。
+- ``RunnerCommandRequest`` は argv + cwd + env_allowlist の command intent のみ
+  受け取り、resource_policy / network_policy は **caller-supplied 経路から
+  signature レベルで削除** された。
+- 代わりに ``RunnerExecutionContext`` を **server-owned** な struct として
+  orchestrator が解決し、``run_command`` の必須 parameter として渡す。
+- caller が任意 policy を挿入する経路がなく、orchestrator が P0 default を
+  必ず適用する。
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import signal
 import tempfile
@@ -36,6 +37,10 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from backend.app.services.runner.env_scrub import EnvScrubResult, scrub_env
+from backend.app.services.runner.network_egress import NetworkPolicy
+from backend.app.services.runner.resource_cap import ResourcePolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,12 +54,37 @@ class RunnerWorkspace:
 
 @dataclass(frozen=True, slots=True)
 class RunnerCommandRequest:
-    """Single command invocation request."""
+    """Single command invocation request (caller-supplied command intent only).
+
+    Codex R1 F-007 adopt: resource_policy / network_policy は signature
+    レベルで削除。代わりに RunnerExecutionContext を server-owned で渡す。
+    """
 
     argv: tuple[str, ...]
     cwd: str  # must be inside RunnerWorkspace.workdir
     env_allowlist: frozenset[str] = field(default_factory=frozenset)
-    timeout_seconds: float = 30.0
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerExecutionContext:
+    """Server-owned execution policy bundle (Codex R1 F-007 adopt).
+
+    Orchestrator が resolve し、caller は直接 instance 生成不可。
+    ``MockRunnerAdapter.run_command`` 経由でのみ受け取り、policy enforcement
+    が必ず適用される。
+    """
+
+    resource_policy: ResourcePolicy
+    network_policy: NetworkPolicy
+
+    @classmethod
+    def p0_default(cls) -> RunnerExecutionContext:
+        """P0 default context: ResourcePolicy.from_p0_defaults() +
+        NetworkPolicy.p0_default() (deny_all egress)。"""
+        return cls(
+            resource_policy=ResourcePolicy.from_p0_defaults(),
+            network_policy=NetworkPolicy.p0_default(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +95,9 @@ class RunnerCommandResult:
     duration_seconds: float
     timeout_reached: bool
     cancelled: bool
+    output_cap_exceeded: bool = False
+    scrubbed_env_keys: tuple[str, ...] = ()
+    network_deny_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -81,6 +114,66 @@ class RunnerCancelToken:
         return self._cancelled
 
 
+# Codex R1 F-001 adopt: NetworkPolicy.mode=deny_all 時に明らかに network-capable
+# な command を MockRunnerAdapter level で deny する。Docker network=none に
+# よる本格的 enforcement は Sprint 11 で DockerRunnerAdapter が担当。
+# 本 set は basename match で評価される (canonicalize_command で /usr/bin/curl
+# → curl に正規化済の前提)。
+_NETWORK_CAPABLE_COMMANDS: frozenset[str] = frozenset(
+    {
+        "curl",
+        "wget",
+        "ftp",
+        "tftp",
+        "scp",
+        "sftp",
+        "rsync",
+        "ssh",
+        "telnet",
+        "nc",
+        "ncat",
+        "socat",
+        "git",  # git clone / fetch / pull / push
+        "svn",
+        "hg",
+        "pip",
+        "pip3",
+        "npm",
+        "yarn",
+        "pnpm",
+        "cargo",
+        "gem",
+        "go",  # go get / go install
+        "composer",
+        "mvn",
+        "gradle",
+        "apt",
+        "apt-get",
+        "yum",
+        "dnf",
+        "pacman",
+        "brew",
+        "docker",
+        "kubectl",
+        "helm",
+    }
+)
+
+
+def _is_network_capable_command(argv: tuple[str, ...]) -> str | None:
+    """Codex R1 F-001 adopt: detect network-capable command basename.
+
+    Returns command basename if detected, None otherwise.
+    """
+    if not argv:
+        return None
+    raw_cmd = argv[0]
+    basename = os.path.basename(raw_cmd).lower()
+    if basename in _NETWORK_CAPABLE_COMMANDS:
+        return basename
+    return None
+
+
 class RunnerAdapter(ABC):
     """Abstract runner interface. Docker / Mock / Remote 実装を持つ。"""
 
@@ -93,9 +186,11 @@ class RunnerAdapter(ABC):
         self,
         workspace: RunnerWorkspace,
         request: RunnerCommandRequest,
+        execution_context: RunnerExecutionContext,
         cancel_token: RunnerCancelToken | None = None,
     ) -> RunnerCommandResult:
-        """workspace 内で argv を実行。timeout / cancel 対応。"""
+        """workspace 内で argv を実行。execution_context (server-owned) の
+        resource_policy / network_policy が必ず適用される。"""
 
     @abstractmethod
     async def collect_artifacts(
@@ -114,8 +209,8 @@ class MockRunnerAdapter(RunnerAdapter):
 
     実 runner と同じ method signature を持つが、command 実行は
     ``asyncio.create_subprocess_exec`` で host 上で行う。
-    Sprint 7 batch 1 では integration test の代用、Sprint 11 で
-    DockerRunnerAdapter に置換。
+    Sprint 7 batch 1 / batch 2 では integration test の代用、Sprint 11 で
+    DockerRunnerAdapter に置換 (Docker network=none + cgroups + iptables)。
     """
 
     def __init__(self, base_dir: str | None = None) -> None:
@@ -133,10 +228,11 @@ class MockRunnerAdapter(RunnerAdapter):
             workdir=str(workdir),
         )
 
-    async def run_command(
+    async def run_command(  # noqa: C901, PLR0912, PLR0915 - inherent complexity
         self,
         workspace: RunnerWorkspace,
         request: RunnerCommandRequest,
+        execution_context: RunnerExecutionContext,
         cancel_token: RunnerCancelToken | None = None,
     ) -> RunnerCommandResult:
         if not request.argv:
@@ -154,9 +250,31 @@ class MockRunnerAdapter(RunnerAdapter):
                 f"reason={violation.reason.value} argv={request.argv!r}"
             )
 
+        # Codex R1 F-001 adopt: network_policy enforcement。
+        # NetworkPolicy.mode=deny_all 時に明らかに network-capable な command を
+        # deny。完全 enforcement は Sprint 11 Docker network=none で実装。
+        from backend.app.services.runner.network_egress import (  # noqa: PLC0415
+            NetworkEgressMode,
+        )
+
+        network_deny_reason: str | None = None
+        if execution_context.network_policy.mode == NetworkEgressMode.DENY_ALL:
+            net_cmd = _is_network_capable_command(request.argv)
+            if net_cmd is not None:
+                raise ValueError(
+                    f"runner_blocked: network_egress "
+                    f"reason=mode_deny_all_network_capable_command "
+                    f"command={net_cmd}"
+                )
+
+        # Codex R1 F-007 adopt: server-owned resource_policy validate。
+        cap_violations = execution_context.resource_policy.validate()
+        if cap_violations:
+            reasons = ",".join(v.value for v in cap_violations)
+            raise ValueError(f"runner_blocked: resource_cap reasons={reasons}")
+
         # Codex SP7 R1 F-006 adopt: cwd containment は ``Path.resolve()`` 後の
         # canonical compare で symlink follow 後の escape を物理削除。
-        # asyncio.to_thread で sync Path ops を offload (ASYNC240 準拠)。
         workdir_resolved = await asyncio.to_thread(
             lambda: str(Path(workspace.workdir).resolve(strict=False))
         )
@@ -175,70 +293,14 @@ class MockRunnerAdapter(RunnerAdapter):
                 f"inside workspace {workdir_resolved!r}"
             )
 
-        # env scrub (Sprint 6 launcher registry._FORBIDDEN_ENV_NAMES と同等
-        # 14 種、drift 防止)
-        forbidden = {
-            "OPENAI_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "GEMINI_API_KEY",
-            "GOOGLE_API_KEY",
-            "GITHUB_TOKEN",
-            "GH_TOKEN",
-            "TAILSCALE_AUTHKEY",
-            "SOPS_AGE_KEY",
-            "SOPS_AGE_KEY_FILE",
-            "AGE_PRIVATE_KEY",
-            "AGE_SECRET_KEY",
-            "AWS_SECRET_ACCESS_KEY",
-            "AWS_SESSION_TOKEN",
-            "DATABASE_URL",
-            "POSTGRES_PASSWORD",
-            "REDIS_PASSWORD",
-            "TASKMANAGEDAI_DATABASE_URL",
-            "GITHUB_APP_PRIVATE_KEY",
-            "GITHUB_INSTALLATION_TOKEN",
-            "OPENAI_ORG_ID",
-            "HUGGINGFACE_TOKEN",
-            "HF_TOKEN",
-            "STRIPE_KEY",
-            "STRIPE_SECRET_KEY",
-            "SLACK_TOKEN",
-            "SLACK_WEBHOOK_URL",
-            "JWT_SECRET",
-            "GOOGLE_APPLICATION_CREDENTIALS",
-            "SUPABASE_SERVICE_ROLE_KEY",
-            "SUPABASE_ANON_KEY",
-            "REDIS_URL",
-            # Codex SP7 R1 F-009 adopt: code-loading / credential-adjacent /
-            # shell startup env を deny。caller が allowlist に入れても
-            # subprocess には渡らない fail-closed。
-            "PYTHONPATH",
-            "PYTHONSTARTUP",
-            "PYTHONHOME",
-            "BASH_ENV",
-            "ENV",
-            "ZDOTDIR",
-            "LD_PRELOAD",
-            "LD_LIBRARY_PATH",
-            "DYLD_LIBRARY_PATH",
-            "DYLD_INSERT_LIBRARIES",
-            "DYLD_FALLBACK_LIBRARY_PATH",
-            "SSH_AUTH_SOCK",
-            "SSH_AGENT_PID",
-            "GIT_CONFIG_GLOBAL",
-            "GIT_CONFIG_SYSTEM",
-            "GIT_DIR",
-            "GIT_WORK_TREE",
-            "GIT_EXEC_PATH",
-            "GIT_SSH",
-            "GIT_SSH_COMMAND",
-        }
-        env: dict[str, str] = {
-            k: os.environ[k]
-            for k in request.env_allowlist
-            if k in os.environ and k not in forbidden
-        }
-        env.setdefault("PATH", "/usr/bin:/bin")
+        # Sprint 7 batch 2 BL-0076: env scrub を ``env_scrub`` module に
+        # 切り出し。70+ var hardcode + pattern (Codex R1 F-004 adopt 拡張)。
+        scrub_result: EnvScrubResult = scrub_env(request.env_allowlist)
+        env = scrub_result.env
+
+        # Codex R1 F-003 adopt: wall_clock_seconds を resource_policy 単一 source に。
+        # RunnerCommandRequest.timeout_seconds は signature から削除済み。
+        timeout_s = execution_context.resource_policy.wall_clock_seconds
 
         loop = asyncio.get_running_loop()
         start = loop.time()
@@ -253,10 +315,9 @@ class MockRunnerAdapter(RunnerAdapter):
 
         timeout_reached = False
         cancelled = False
+        output_cap_exceeded = False
 
         # Codex SP7 R1 F-010 adopt: process group SIGTERM -> SIGKILL escalation。
-        # ``start_new_session=True`` を活かし、child fork (background &) も
-        # 含めて kill する。Sprint 6 batch 1 launcher と同じ pattern。
         async def _terminate_process_group() -> None:
             if proc.returncode is not None:
                 return
@@ -286,30 +347,91 @@ class MockRunnerAdapter(RunnerAdapter):
                 except TimeoutError:
                     pass
 
+        # Codex R1 F-003 adopt: chunk read + output_byte_cap での real-time kill。
+        # 各 stream を chunk 単位で読み、stdout_byte_cap / stderr_byte_cap /
+        # output_byte_cap (合計) のいずれか超過時点で process group を kill。
+        stdout_buf = bytearray()
+        stderr_buf = bytearray()
+        rp = execution_context.resource_policy
+
+        async def _drain_stream(
+            stream: asyncio.StreamReader | None,
+            buffer: bytearray,
+            per_stream_cap: int,
+        ) -> None:
+            """Read stream chunk-by-chunk; trigger output cap if exceeded."""
+            nonlocal output_cap_exceeded
+            if stream is None:
+                return
+            chunk_size = 64 * 1024  # 64 KiB chunks
+            while True:
+                try:
+                    chunk = await stream.read(chunk_size)
+                except (asyncio.CancelledError, ConnectionResetError):
+                    return
+                if not chunk:
+                    return
+                buffer.extend(chunk)
+                # Check per-stream cap
+                if len(buffer) > per_stream_cap:
+                    output_cap_exceeded = True
+                    return
+                # Check total cap
+                if len(stdout_buf) + len(stderr_buf) > rp.output_byte_cap:
+                    output_cap_exceeded = True
+                    return
+
+        drain_stdout = asyncio.create_task(
+            _drain_stream(proc.stdout, stdout_buf, rp.stdout_byte_cap)
+        )
+        drain_stderr = asyncio.create_task(
+            _drain_stream(proc.stderr, stderr_buf, rp.stderr_byte_cap)
+        )
+
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=request.timeout_seconds,
+            await asyncio.wait_for(
+                asyncio.gather(drain_stdout, drain_stderr, proc.wait()),
+                timeout=timeout_s,
             )
         except TimeoutError:
             timeout_reached = True
             await _terminate_process_group()
-            stdout, stderr = b"", b""
-            try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), 2.0)
-            except TimeoutError:
-                stdout, stderr = b"", b""
-        finally:
-            if cancel_token is not None and cancel_token.is_cancelled:
-                cancelled = True
+            for task in (drain_stdout, drain_stderr):
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                        # 既に kill 経路を実行済。drain task 例外は飲み込んで OK。
+                        pass
+
+        # Codex R1 F-003 adopt: output cap detected during stream drain → kill
+        if output_cap_exceeded and proc.returncode is None:
+            await _terminate_process_group()
+            for task in (drain_stdout, drain_stderr):
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                        # 既に kill 経路を実行済。drain task 例外は飲み込んで OK。
+                        pass
+
+        if cancel_token is not None and cancel_token.is_cancelled:
+            cancelled = True
+            if proc.returncode is None:
+                await _terminate_process_group()
 
         return RunnerCommandResult(
             exit_code=proc.returncode,
-            stdout_bytes=len(stdout),
-            stderr_bytes=len(stderr),
+            stdout_bytes=len(stdout_buf),
+            stderr_bytes=len(stderr_buf),
             duration_seconds=loop.time() - start,
             timeout_reached=timeout_reached,
             cancelled=cancelled,
+            output_cap_exceeded=output_cap_exceeded,
+            scrubbed_env_keys=scrub_result.scrubbed_keys,
+            network_deny_reason=network_deny_reason,
         )
 
     async def collect_artifacts(
@@ -325,15 +447,16 @@ class MockRunnerAdapter(RunnerAdapter):
 
 
 def _collect_files_sync(workdir: str) -> tuple[str, ...]:
-    """Sync helper for ``MockRunnerAdapter.collect_artifacts`` (run in thread).
-
-    sync Path ops を asyncio loop で安全に実行するため thread offload。
-    """
+    """Sync helper for ``MockRunnerAdapter.collect_artifacts`` (run in thread)."""
 
     base = Path(workdir)
     if not base.is_dir():
         return ()
     return tuple(str(p) for p in base.rglob("*") if p.is_file())
+
+
+# Suppress unused import warning for re (kept for future regex use)
+_ = re
 
 
 __all__ = [
@@ -342,5 +465,6 @@ __all__ = [
     "RunnerCancelToken",
     "RunnerCommandRequest",
     "RunnerCommandResult",
+    "RunnerExecutionContext",
     "RunnerWorkspace",
 ]
