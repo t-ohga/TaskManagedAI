@@ -10,9 +10,9 @@ import { notFound } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
-interface AgentRunDetailPageProps {
+type AgentRunDetailPageProps = {
   params: Promise<{ id: string }>;
-}
+};
 
 const SAMPLE_EVENT_TIMELINE = [
   { type: "run_queued", at: "2026-05-13T03:00:00Z" },

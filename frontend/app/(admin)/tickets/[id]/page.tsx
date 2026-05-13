@@ -10,9 +10,9 @@ import { notFound } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
-interface TicketDetailPageProps {
+type TicketDetailPageProps = {
   params: Promise<{ id: string }>;
-}
+};
 
 export default async function TicketDetailPage({ params }: TicketDetailPageProps) {
   const { id } = await params;
