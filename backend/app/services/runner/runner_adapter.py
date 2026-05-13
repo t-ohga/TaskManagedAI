@@ -316,11 +316,15 @@ class MockRunnerAdapter(RunnerAdapter):
                 lambda: str(Path(request.cwd).resolve(strict=False))
             )
         except OSError as exc:
+            # Codex SP7 R4 F-SP7-R4-001 adopt: `from None` で exception chain
+            # を切断、`__cause__` に raw cwd / filename が残る経路を物理削除
+            # (logger.exception / traceback / inspect 経由の secret leak 防御)
+            errno = getattr(exc, "errno", "unknown")
             raise ValueError(
                 f"runner_blocked: cwd_resolve_failed "
                 f"workspace_id={workspace.workspace_id} cwd_hash={cwd_hash} "
-                f"errno={getattr(exc, 'errno', 'unknown')}"
-            ) from exc
+                f"errno={errno}"
+            ) from None
         if not (
             cwd_resolved == workdir_resolved
             or cwd_resolved.startswith(workdir_resolved + os.sep)
@@ -365,18 +369,22 @@ class MockRunnerAdapter(RunnerAdapter):
                 start_new_session=True,
             )
         except OSError as exc:
+            # Codex SP7 R4 F-SP7-R4-001 adopt: `from None` で exception chain
+            # を切断、OSError.filename / filename2 に残る raw cwd / argv[0] が
+            # __cause__ 経由で漏れる経路を物理削除。
             argv_basename = (
                 os.path.basename(request.argv[0]) if request.argv else ""
             )
             argv_hash = _hashlib.sha256(
                 "\x00".join(request.argv).encode("utf-8")
             ).hexdigest()[:16]
+            errno = getattr(exc, "errno", "unknown")
             raise ValueError(
                 f"runner_blocked: subprocess_exec_failed "
                 f"workspace_id={workspace.workspace_id} cwd_hash={cwd_hash} "
                 f"argv_basename={argv_basename} argv_hash={argv_hash} "
-                f"errno={getattr(exc, 'errno', 'unknown')}"
-            ) from exc
+                f"errno={errno}"
+            ) from None
 
         timeout_reached = False
         cancelled = False

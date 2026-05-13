@@ -173,6 +173,43 @@ async def test_run_command_rejects_nonexistent_cwd_inside_workspace(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_run_command_exception_chain_redaction(tmp_path: Path) -> None:
+    """Codex SP7 R4 F-SP7-R4-001 adopt: exception __cause__ も raw cwd を漏らさない。
+
+    `raise ... from None` で OSError chain を切断、`logger.exception` /
+    `traceback.format_exception` 経由でも raw filename が露出しない。
+    """
+    import traceback as _traceback
+
+    adapter, workspace = await _prepared_workspace(tmp_path)
+    nonexistent = Path(workspace.workdir) / "missing-cwd"
+
+    with pytest.raises(ValueError) as excinfo:
+        await adapter.run_command(
+            workspace,
+            RunnerCommandRequest(
+                argv=("/bin/echo", "ok"),
+                cwd=str(nonexistent),
+            ),
+            RunnerExecutionContext.p0_default(),
+        )
+
+    # exception chain が切断されている (__cause__ が None)
+    assert excinfo.value.__cause__ is None, (
+        f"exception chain not severed; __cause__ = {excinfo.value.__cause__!r}"
+    )
+    # traceback formatted output にも raw cwd は出ない
+    formatted = "".join(
+        _traceback.format_exception(
+            type(excinfo.value), excinfo.value, excinfo.tb
+        )
+    )
+    assert str(nonexistent) not in formatted, (
+        f"raw cwd leaked via traceback: {formatted!r}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_command_rejects_cwd_outside_workspace(tmp_path: Path) -> None:
     """workspace prefix 偽装を含む outside cwd を containment check で拒否する。
 
