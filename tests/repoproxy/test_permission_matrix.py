@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from backend.app.services.repoproxy.permission_matrix import (
     GitHubAppPermissionMatrix,
     check_no_dangerous_permissions,
@@ -156,6 +158,51 @@ def test_diff_against_current_detects_dangerous_enabled() -> None:
     }
     drifts = _diff_against_current(matrix, dangerous)
     assert any("actions" in d for d in drifts)
+
+
+@pytest.mark.parametrize(
+    "unknown_perm",
+    ["deployments", "statuses", "security_events", "code_review", "discussions"],
+)
+def test_diff_against_current_fail_closed_for_unknown_keys(unknown_perm: str) -> None:
+    """Codex SP8 R2 R2-F-001 adopt: Matrix 未定義 permission が current で
+    enabled なら fail-closed で drift 検出。permission overreach 防御。"""
+    from backend.app.services.repoproxy.permission_matrix import _diff_against_current
+
+    matrix = load_permission_matrix()
+    # Matrix に declared でない permission が enabled
+    overreach = {
+        "permissions": {
+            "contents": "write",
+            "pull_requests": "write",
+            "metadata": "read",
+            unknown_perm: "write",  # Matrix で未 declare、deny にも書かれていない
+        }
+    }
+    drifts = _diff_against_current(matrix, overreach)
+    assert any(unknown_perm in d for d in drifts), (
+        f"unknown permission {unknown_perm!r} overreach was not detected; "
+        f"drifts = {drifts}"
+    )
+
+
+def test_diff_against_current_unknown_key_with_none_is_allowed() -> None:
+    """Matrix 未定義でも level=none ならば OK (GitHub default)."""
+    from backend.app.services.repoproxy.permission_matrix import _diff_against_current
+
+    matrix = load_permission_matrix()
+    benign = {
+        "permissions": {
+            "contents": "write",
+            "pull_requests": "write",
+            "metadata": "read",
+            "deployments": "none",  # Matrix 未 declare だが disabled
+            "statuses": "",
+        }
+    }
+    drifts = _diff_against_current(matrix, benign)
+    # contents/pull_requests/metadata の整合性は OK、unknown key は none/空文字 → drift なし
+    assert drifts == (), f"unexpected drift: {drifts}"
 
 
 def test_check_detects_merge_not_denied() -> None:

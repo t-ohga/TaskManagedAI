@@ -107,9 +107,18 @@ def check_no_dangerous_permissions(matrix: GitHubAppPermissionMatrix) -> tuple[s
 def _diff_against_current(
     matrix: GitHubAppPermissionMatrix, current: dict[str, Any]
 ) -> tuple[str, ...]:
-    """Codex SP8 R1 F-SP8-005 adopt: Matrix toml vs current installation
-    permissions の差分検出。`current` は `gh api repos/{owner}/{repo}/installation`
-    の `permissions` フィールド (dict[str, str]) を想定。
+    """Codex SP8 R1 F-SP8-005 + R2 R2-F-001 adopt: Matrix toml vs current
+    installation permissions の差分検出 (fail-closed for unknown keys)。
+
+    `current` は `gh api repos/{owner}/{repo}/installation` の `permissions`
+    フィールド (dict[str, str]) を想定。
+
+    Detection rules:
+    1. Matrix 許可 permission の level が current と不一致 → drift
+    2. Matrix deny_explicit permission が current で enabled → drift
+    3. **Codex R2 R2-F-001 adopt**: Matrix 未定義 permission key が current
+       で enabled (level != none/empty) → drift (`deployments`, `statuses`,
+       `security_events` 等の permission overreach を fail-closed で検出)
 
     Returns tuple of drift descriptions; empty if no drift.
     """
@@ -118,7 +127,7 @@ def _diff_against_current(
     if not isinstance(current_perms, dict):
         return (f"unexpected current permissions shape: {type(current_perms).__name__}",)
 
-    # Matrix で許可された permission が current にあること
+    # Rule 1: Matrix 許可 permission の level 整合
     for perm, level in matrix.repository_permissions.items():
         actual = current_perms.get(perm)
         if actual != level:
@@ -126,13 +135,28 @@ def _diff_against_current(
                 f"repository_permission.{perm}: matrix={level!r} current={actual!r}"
             )
 
-    # Matrix で deny した permission が current で enabled でないこと
+    # Rule 2: Matrix deny_explicit permission が current で enabled でないこと
     for perm in matrix.repository_deny_explicit:
         actual = current_perms.get(perm)
         if actual not in (None, "none", ""):
             drifts.append(
                 f"repository_permission.{perm} is enabled in current "
                 f"({actual!r}) but Matrix denies it"
+            )
+
+    # Rule 3 (Codex R2 R2-F-001 adopt): Matrix 未定義 key が enabled → fail-closed
+    known_keys = set(matrix.repository_permissions.keys()) | set(
+        matrix.repository_deny_explicit.keys()
+    )
+    for perm, actual in current_perms.items():
+        if perm in known_keys:
+            continue
+        if actual not in (None, "none", ""):
+            drifts.append(
+                f"repository_permission.{perm} is enabled in current "
+                f"({actual!r}) but NOT declared in Matrix (unknown permission "
+                f"overreach — Codex R2 R2-F-001 fail-closed). Add to "
+                f"deny_explicit or repository_permissions in TOML."
             )
 
     return tuple(drifts)

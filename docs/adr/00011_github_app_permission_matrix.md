@@ -1,13 +1,13 @@
 ---
 id: "ADR-00011"
 title: "GitHub App Permission Matrix: 最小 permission + broker-mediated installation token + merge/deploy deny"
-status: "proposed_pending_sprint_11"
+status: "proposed"
 date: "2026-05-13"
 authors:
   - "claude (sprint8 owner)"
 related_sprints:
   - "SP-008_github_app_repoproxy"
-acceptance_blocking_items:
+acceptance_blocked_by:
   - "Sprint 11 BL-0094: real GitHub App registration + private key SOPS encrypt"
   - "Sprint 11 BL-0095: SecretBroker allowed_operations + capability_token issue flow"
   - "Sprint 11 BL-0097: GitHubAppAdapter httpx wrapper (broker-mediated only)"
@@ -21,19 +21,23 @@ superseded_by: null
 ---
 
 このテンプレの使い方: ADR Gate Criteria #11 (GitHub App permission 変更) に該当。
-Sprint 8 batch 0 で proposed 化、Sprint 11 で 9 acceptance_blocking_items 全て
-完了後に **accepted** 昇格 (Codex SP8 R1 F-SP8-004 adopt、2026-05-13 status
-明文化)。Sprint 8 では Permission Matrix の最終形を確定し、`config/github_app_permissions.toml`
-で hardcode + CLI `--check` for diff check 基盤を整備。
+Sprint 8 batch 0 で `proposed`、Sprint 11 で `acceptance_blocked_by` 全 8 件
+完了後に **accepted** 昇格 (Codex SP8 R1 F-SP8-004 + R2 R2-F-002 adopt、
+2026-05-13 status は標準 `proposed` のまま維持し、custom field
+`acceptance_blocked_by` で blocking conditions を非標準扱いで記録)。
 
-## Status 詳細 (Codex SP8 R1 F-SP8-004 adopt)
+Sprint 8 では Permission Matrix の最終形を確定し、`config/github_app_permissions.toml`
+で hardcode + CLI `--check` で diff check 基盤を整備。
 
-- **proposed_pending_sprint_11**: Sprint 8 は `partial_skeleton` (Permission
-  Matrix + Mock RepoProxy + low-level Webhook HMAC) を完成、Sprint 11 で
-  acceptance_blocking_items 全 9 件を実装後に **accepted** へ昇格する。
-- 9 件のうち 1 件でも未完了の状態で accepted 化することは ADR Gate Criteria
-  #11 違反 (P0 期間中の GitHub App permission を実装で証明できないまま採用案
-  確定するのは設計品質上 NG)。
+## Status 詳細 (Codex SP8 R1 F-SP8-004 + R2 R2-F-002 adopt)
+
+- **status: proposed**: 標準 ADR lifecycle (`proposed` → `accepted`) を維持
+  (rules/sprint-pack-adr-gate.md と ADR template の整合性のため、Codex
+  R2 R2-F-002 adopt で custom `proposed_pending_sprint_11` から元に戻し)。
+- **acceptance_blocked_by 8 件** (frontmatter 参照): Sprint 11 で全件完了後に
+  `accepted` へ昇格する。1 件でも未完了の状態で accepted 化することは ADR
+  Gate Criteria #11 違反 (P0 期間中の GitHub App permission を実装で証明
+  できないまま採用案確定するのは設計品質上 NG)。
 
 最終更新: 2026-05-13
 
