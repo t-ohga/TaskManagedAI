@@ -6,7 +6,7 @@
  * heading / navigation が正しく出ることを verify。
  */
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const SESSION_COOKIE_NAME = "taskmanagedai_session";
 
@@ -16,6 +16,53 @@ function readDevLoginToken(): string {
     process.env.DEV_LOGIN_TOKEN ??
     "dev-login-token"
   );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function exactTextPattern(value: string): RegExp {
+  return new RegExp(`^${escapeRegExp(value)}$`, "u");
+}
+
+function exactCodeText(scope: Locator, value: string): Locator {
+  return scope.locator("code").filter({ hasText: exactTextPattern(value) });
+}
+
+async function expectUniqueCodeText(scope: Locator, value: string): Promise<void> {
+  const match = exactCodeText(scope, value);
+
+  await expect(match).toHaveCount(1);
+  await expect(match).toHaveText(value);
+  await expect(match).toBeVisible();
+}
+
+async function expectCodeTextCount(
+  scope: Locator,
+  value: string,
+  count: number
+): Promise<void> {
+  const matches = exactCodeText(scope, value);
+
+  await expect(matches).toHaveCount(count);
+
+  if (count > 0) {
+    await expect(matches.first()).toBeVisible();
+  }
+}
+
+async function expectUniqueDefinitionTerm(
+  scope: Locator,
+  value: string
+): Promise<void> {
+  const match = scope
+    .locator("dt code")
+    .filter({ hasText: exactTextPattern(value) });
+
+  await expect(match).toHaveCount(1);
+  await expect(match).toHaveText(value);
+  await expect(match).toBeVisible();
 }
 
 async function waitForDevSessionCookie(page: Page): Promise<void> {
@@ -50,12 +97,18 @@ test("Sprint 9: tickets list page renders with ARIA + heading", async ({
   await loginAsDev(page);
   await page.goto("/tickets");
 
+  const ticketsRegion = page.getByRole("region", {
+    name: "Tickets",
+    exact: true
+  });
+
+  await expect(ticketsRegion).toHaveCount(1);
+  await expect(ticketsRegion).toBeVisible();
   await expect(
-    page.getByRole("region", { name: "Tickets" })
+    ticketsRegion.getByRole("heading", { name: "Tickets", exact: true })
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Tickets" })).toBeVisible();
   // Sprint 9 batch 1 skeleton 文言の verify
-  await expect(page.getByText(/Sprint 9 batch 1 進捗/u)).toBeVisible();
+  await expect(ticketsRegion).toContainText(/Sprint 9 batch 1 進捗/u);
 });
 
 test("Sprint 9: agent runs list page renders 16 states + 3 blocked reasons", async ({
@@ -64,17 +117,39 @@ test("Sprint 9: agent runs list page renders 16 states + 3 blocked reasons", asy
   await loginAsDev(page);
   await page.goto("/runs");
 
+  const agentRunsRegion = page.getByRole("region", {
+    name: "Agent Runs",
+    exact: true
+  });
+
+  await expect(agentRunsRegion).toHaveCount(1);
+  await expect(agentRunsRegion).toBeVisible();
   await expect(
-    page.getByRole("region", { name: "Agent Runs" })
+    agentRunsRegion.getByRole("heading", { name: "Agent Runs", exact: true })
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Agent Runs" })).toBeVisible();
+
+  const stateGraph = agentRunsRegion.getByRole("list", {
+    name: "AgentRun 16 state execution graph",
+    exact: true
+  });
+
+  await expect(stateGraph).toHaveCount(1);
+  await expect(stateGraph).toBeVisible();
   // AgentRun 16 状態の主要な enum 値が表示されている
-  await expect(page.getByText("queued", { exact: false })).toBeVisible();
-  await expect(page.getByText("completed", { exact: false })).toBeVisible();
+  await expectUniqueCodeText(stateGraph, "queued");
+  await expectUniqueCodeText(stateGraph, "completed");
+
+  const blockedReasons = agentRunsRegion.getByRole("list", {
+    name: "blocked_reason fixed sub categories",
+    exact: true
+  });
+
+  await expect(blockedReasons).toHaveCount(1);
+  await expect(blockedReasons).toBeVisible();
   // blocked_reason の 3 種
-  await expect(page.getByText("policy_blocked")).toBeVisible();
-  await expect(page.getByText("budget_blocked")).toBeVisible();
-  await expect(page.getByText("runtime_blocked")).toBeVisible();
+  await expectUniqueCodeText(blockedReasons, "policy_blocked");
+  await expectUniqueCodeText(blockedReasons, "budget_blocked");
+  await expectUniqueCodeText(blockedReasons, "runtime_blocked");
 });
 
 test("Sprint 9: audit log page renders event types + no raw secret notice", async ({
@@ -83,16 +158,37 @@ test("Sprint 9: audit log page renders event types + no raw secret notice", asyn
   await loginAsDev(page);
   await page.goto("/audit");
 
+  const auditRegion = page.getByRole("region", {
+    name: "Audit Log",
+    exact: true
+  });
+
+  await expect(auditRegion).toHaveCount(1);
+  await expect(auditRegion).toBeVisible();
   await expect(
-    page.getByRole("region", { name: "Audit Log" })
+    auditRegion.getByRole("heading", { name: "Audit Log", exact: true })
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Audit Log" })).toBeVisible();
+
+  const auditTable = auditRegion.getByRole("table", {
+    name: /Audit events with event_type/u
+  });
+
+  await expect(auditTable).toHaveCount(1);
+  await expect(auditTable).toBeVisible();
   // 主要 audit_event 種別
-  await expect(page.getByText("policy_decision_created")).toBeVisible();
-  await expect(page.getByText("secret_canary_detected")).toBeVisible();
-  await expect(page.getByText("runner_blocked")).toBeVisible();
+  await expectUniqueCodeText(auditTable, "policy_decision_created");
+  await expectUniqueCodeText(auditTable, "secret_canary_detected");
+  await expectUniqueCodeText(auditTable, "runner_blocked");
+
+  const secretBoundary = auditRegion.getByRole("region", {
+    name: "AC-HARD-02 audit redaction",
+    exact: true
+  });
+
+  await expect(secretBoundary).toHaveCount(1);
+  await expect(secretBoundary).toBeVisible();
   // AC-HARD-02 invariant 文言
-  await expect(page.getByText(/raw secret/u)).toBeVisible();
+  await expect(secretBoundary).toContainText("raw secret");
 });
 
 test("Sprint 9: settings page renders provider matrix + policy profiles", async ({
@@ -101,35 +197,72 @@ test("Sprint 9: settings page renders provider matrix + policy profiles", async 
   await loginAsDev(page);
   await page.goto("/settings");
 
+  const settingsRegion = page.getByRole("region", {
+    name: "Project Settings",
+    exact: true
+  });
+
+  await expect(settingsRegion).toHaveCount(1);
+  await expect(settingsRegion).toBeVisible();
   await expect(
-    page.getByRole("region", { name: "Project Settings" })
+    settingsRegion.getByRole("heading", {
+      name: "Project Settings",
+      exact: true
+    })
   ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Project Settings" })
-  ).toBeVisible();
-  // Provider Compliance Matrix 4 entries
-  await expect(page.getByText("openai")).toBeVisible();
-  await expect(page.getByText("anthropic")).toBeVisible();
+
+  const providerMatrix = settingsRegion.getByRole("table", {
+    name: /Provider Compliance Matrix with provider/u
+  });
+
+  await expect(providerMatrix).toHaveCount(1);
+  await expect(providerMatrix).toBeVisible();
+  // Provider Compliance Matrix entries
+  await expectUniqueCodeText(providerMatrix, "openai");
+  await expectCodeTextCount(providerMatrix, "anthropic", 2);
+
+  const policyProfiles = settingsRegion.getByRole("region", {
+    name: "Policy Profiles",
+    exact: true
+  });
+
+  await expect(policyProfiles).toHaveCount(1);
+  await expect(policyProfiles).toBeVisible();
   // Policy profiles
-  await expect(page.getByText("minimal_safe")).toBeVisible();
-  await expect(page.getByText("approval_required")).toBeVisible();
-  await expect(page.getByText("merge_deny")).toBeVisible();
+  await expectUniqueCodeText(policyProfiles, "minimal_safe");
+  await expectUniqueCodeText(policyProfiles, "approval_required");
+  await expectUniqueCodeText(policyProfiles, "merge_deny");
 });
 
 test("Sprint 9: ticket detail dynamic route renders", async ({ page }) => {
   await loginAsDev(page);
   await page.goto("/tickets/00000000-0000-4000-8000-000000000001");
 
-  await expect(
-    page.getByRole("region", { name: "Ticket detail" })
-  ).toBeVisible();
+  const ticketDetailRegion = page.getByRole("region", {
+    name: "Ticket detail",
+    exact: true
+  });
+
+  await expect(ticketDetailRegion).toHaveCount(1);
+  await expect(ticketDetailRegion).toBeVisible();
+
+  const contextSnapshot = ticketDetailRegion.getByRole("region", {
+    name: "ContextSnapshot 10 columns",
+    exact: true
+  });
+
+  await expect(contextSnapshot).toHaveCount(1);
+  await expect(contextSnapshot).toBeVisible();
   // ContextSnapshot 10 column が全て表示
-  await expect(page.getByText("prompt_pack_version")).toBeVisible();
-  await expect(page.getByText("policy_pack_lock")).toBeVisible();
-  await expect(page.getByText("evidence_set_hash")).toBeVisible();
-  await expect(page.getByText("provider_continuation_ref")).toBeVisible();
-  await expect(page.getByText("provider_request_fingerprint")).toBeVisible();
-  await expect(page.getByText("snapshot_kind")).toBeVisible();
+  await expectUniqueDefinitionTerm(contextSnapshot, "prompt_pack_version");
+  await expectUniqueDefinitionTerm(contextSnapshot, "policy_pack_lock");
+  await expectUniqueDefinitionTerm(contextSnapshot, "evidence_set_hash");
+  await expectUniqueDefinitionTerm(contextSnapshot, "provider_continuation_ref");
+  await expectUniqueDefinitionTerm(
+    contextSnapshot,
+    "provider_request_fingerprint"
+  );
+  await expectUniqueDefinitionTerm(contextSnapshot, "snapshot_kind");
 });
 
 test("Sprint 9: agent run detail dynamic route renders timeline", async ({
@@ -138,14 +271,34 @@ test("Sprint 9: agent run detail dynamic route renders timeline", async ({
   await loginAsDev(page);
   await page.goto("/runs/00000000-0000-4000-8000-000000000002");
 
-  await expect(
-    page.getByRole("region", { name: "Agent Run detail" })
-  ).toBeVisible();
+  const agentRunDetailRegion = page.getByRole("region", {
+    name: "Agent Run detail",
+    exact: true
+  });
+
+  await expect(agentRunDetailRegion).toHaveCount(1);
+  await expect(agentRunDetailRegion).toBeVisible();
+
+  const eventTimeline = agentRunDetailRegion.getByRole("list", {
+    name: "Chronological AgentRunEvent timeline",
+    exact: true
+  });
+
+  await expect(eventTimeline).toHaveCount(1);
+  await expect(eventTimeline).toBeVisible();
   // Timeline events が render される
-  await expect(page.getByText("run_queued")).toBeVisible();
-  await expect(page.getByText("runner_started")).toBeVisible();
-  await expect(page.getByText("runner_completed")).toBeVisible();
-  await expect(page.getByText("repo_pr_opened")).toBeVisible();
+  await expectUniqueCodeText(eventTimeline, "run_queued");
+  await expectUniqueCodeText(eventTimeline, "runner_started");
+  await expectUniqueCodeText(eventTimeline, "runner_completed");
+  await expectUniqueCodeText(eventTimeline, "repo_pr_opened");
+
+  const secretBoundary = agentRunDetailRegion.getByRole("region", {
+    name: "AC-HARD-02 AgentRunEvent redaction",
+    exact: true
+  });
+
+  await expect(secretBoundary).toHaveCount(1);
+  await expect(secretBoundary).toBeVisible();
   // AC-HARD-02 invariant 文言
-  await expect(page.getByText(/AC-HARD-02/u)).toBeVisible();
+  await expect(secretBoundary).toContainText("AC-HARD-02");
 });
