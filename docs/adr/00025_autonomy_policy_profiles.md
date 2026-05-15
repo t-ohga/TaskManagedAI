@@ -55,7 +55,7 @@ superseded_by: null
   - `tests/policy/test_autonomy_level_enum.py` / `test_autonomy_level_resolve.py` / `test_low_risk_profile.py` / `test_autonomy_upgrade_gate.py` / **`test_autonomy_caller_supplied_policy_profile_reject.py` (Pydantic schema から policy_profile 削除後の reject 経路 verify)** (5 件最小)
 - 実装ガイダンス:
   - `autonomy_level` enum は **5+ source** で整合: DB CHECK / SQLAlchemy CheckConstraint / Python Literal / Pydantic Field validator / pytest EXPECTED constant (`.claude/rules/cross-source-enum-integrity.md`)
-  - `policy_profile` は **caller 指定不可**、Policy Engine 内部で `autonomy_level` から解決する server-owned 値 (`.claude/rules/server-owned-boundary.md` §1)
+  - `policy_profile` は **caller 指定不可**、Policy Engine 内部で `autonomy_level` から解決する server-owned 値 (`.claude/rules/server-owned-boundary.md` §1)。**現状 `backend/app/db/models/project.py:61` + `backend/app/schemas/project.py:22+35` に caller-supplied 経路が実装済**のため、本 ADR の `## 採用案 §実装対象ファイル` 第 3 項目で **migration (`projects.policy_profile` 列削除) + API removal (`ProjectCreate.policy_profile` / `ProjectUpdate.policy_profile` field 削除) + reject test (`test_autonomy_caller_supplied_policy_profile_reject.py`)** を明示済 (F-PR12-009 R1 adopt 反映、P0.1 SP-024 accepted 時に実施)
   - level matrix:
 
     | Level | 名称 | auto-allow される action_class (low-risk profile 通過時) | human approval が必須の action_class | 想定用途 |
