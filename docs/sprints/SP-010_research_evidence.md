@@ -123,7 +123,10 @@ risks:
 - **EvidenceSearchHit acceptance spec** (検索結果 ↔ Evidence 紐付け):
   - 必須 column: `tenant_id` / `project_id` / `search_run_id` / `claim_id` / `evidence_source_id` / `rank (int)` / `relevance_score (float [0,1])` / `ndcg_contribution (float)` / `is_grounding (bool)`
   - **rank constraint (Codex F-QLC-006 P2 adopt)**: `(tenant_id, project_id, search_run_id, rank)` unique + `CHECK (rank >= 1)`。同一 SearchRun 内の rank duplicate / 0 / 負値を全件 reject、top-k 集計 (recall@k / precision@k / nDCG) の安定再計算を保証。
-  - 複合 FK: `(tenant_id, project_id, search_run_id)` / `(tenant_id, project_id, claim_id)` / `(tenant_id, project_id, evidence_source_id)` で閉じる
+  - 複合 FK (Codex R3 F-QLC-R3-002 P2 adopt: `evidence_sources` は **tenant-scoped** (`project_id` 列なし、既存 schema + ADR-00002 §7)、project-level FK は DDL 不可。`evidence_source` への FK は tenant-level、project binding は `search_run` / `claim` 経由で間接保証):
+    - `(tenant_id, project_id, search_run_id) -> search_runs(tenant_id, project_id, id)` — project-scoped
+    - `(tenant_id, project_id, claim_id) -> claims(tenant_id, project_id, id)` — project-scoped
+    - `(tenant_id, evidence_source_id) -> evidence_sources(tenant_id, id)` — tenant-level only (evidence_sources は tenant-shared、project binding は claim 経由)
 - **GroundingSupport acceptance spec** (生成 artifact ↔ Evidence 関連付け、citation_coverage source):
   - 必須 column: `tenant_id` / `project_id` / `generated_artifact_id` / `agent_run_id` / `claim_id` / `evidence_source_id` / `support_type (cite|paraphrase|quote)` / `confidence_score`
   - **複合 FK (Codex F-QLC-002 P1 + R2 F-QLC-R2-001 P2 adopt)**: `generated_artifact_id` だけでは不足 — `artifacts` table は project を直接持たず `agent_runs` 経由で project が決まる。FK column 数 mismatch を避けるため **2 段 FK** に明確分離:
@@ -131,11 +134,18 @@ risks:
     - `(tenant_id, agent_run_id, generated_artifact_id) references artifacts(tenant_id, agent_run_id, id)` — artifact が同 run に属することを DB 強制 (3 col → 3 col、artifacts 側に project_id 列なしのため `agent_run_id` 経由で間接 project binding)
     
     注: 単一 4-col FK `(tenant_id, project_id, agent_run_id, generated_artifact_id) -> artifacts(tenant_id, agent_run_id, id)` は **PostgreSQL の FK column 数一致制約 (4→3)** に違反、本 spec では採用しない。`artifacts` table に project_id 列を追加する代替案は ADR-00002 update で議論可能、現状 spec は agent_runs 経由の間接 binding を採用 (既存 artifacts schema 変更なし)。
-  - 越境 negative test: 別 project の generated_artifact_id / claim_id / agent_run_id を関連付ける insert は全件 reject (artifact の run binding 経由で project 一致を verify)
+  - **claim ↔ source binding through evidence_items (Codex R3 F-QLC-R3-003 P2 adopt)**: `evidence_sources` が tenant-shared のため、unrelated source を valid claim に attach して citation_coverage を inflation する経路がある。**claim_id + evidence_source_id ペアが `evidence_items` table に存在する verify が必須**:
+    - `(tenant_id, project_id, claim_id, evidence_source_id) references evidence_items(tenant_id, project_id, claim_id, evidence_source_id)` 複合 FK で claim ↔ source の **正当な関連** を DB 強制
+    - これで「project A の claim に project A の別 claim 用 evidence_source を attach」経路を reject (citation_coverage 信頼性確保)
+  - 越境 negative test: 別 project の generated_artifact_id / claim_id / agent_run_id を関連付ける insert は全件 reject (artifact の run binding 経由 + claim ↔ source の evidence_items verify 経由で project 一致を二重 verify)
 - **RetrievalEvalRun baseline acceptance spec** (Sprint 11 BL-0126 で集計、本 Sprint 10 では skeleton schema のみ documenting):
   - 必須 column: `tenant_id` / `project_id` / `eval_run_id` / `dataset_version_id (UUID FK)` / `agent_run_id` / `recall_at_k (json: {5: float, 10: float})` / `precision_at_k (json)` / `ndcg_at_k (json: {10: float})` / `citation_coverage (float [0,1])` / `grounded_answer_rate (float [0,1])` / `tool_trajectory_match (float [0,1])` / `metric_metadata (jsonb)`
   - **dataset_version_id FK 必須 (Codex F-QLC-003 P1 adopt)**: 文字列 `dataset_version` のみだと別 dataset の `eval_run_id` と任意 version 文字列の組合せが保存可能 → Anti-Gaming fixture/policy 分離 + AC-KPI 集計 trace 破壊。既存 eval schema (Sprint 11 BL-0122/0123) の `dataset_versions` table への `dataset_version_id UUID FK` 必須、`(tenant_id, eval_run_id, dataset_version_id)` 複合制約で run ↔ case dataset 一致を DB で強制。
-  - **eval_run project binding (Codex R2 F-QLC-R2-002 P2 adopt)**: `eval_runs` table は `project_id` を直接持たない (既存 schema)、`agent_runs(tenant_id, project_id, id)` 経由で project が決まる。RetrievalEvalRun に **`agent_run_id` 列追加** + `(tenant_id, project_id, agent_run_id) references agent_runs(tenant_id, project_id, id)` 複合 FK で project binding を DB 境界で強制。これで「project B の RetrievalEvalRun が project A の eval_run_id を参照」経路を reject (AC-KPI rollup の project 誤帰属防止)。
+  - **eval_run project binding (Codex R2 F-QLC-R2-002 + R3 F-QLC-R3-004 P2 adopt)**: `eval_runs` table は `project_id` を直接持たない (既存 schema)、`agent_runs(tenant_id, project_id, id)` 経由で project が決まる。RetrievalEvalRun に **`agent_run_id` 列追加** + 2 段複合 FK で project binding を DB 境界で強制:
+    - `(tenant_id, project_id, agent_run_id) references agent_runs(tenant_id, project_id, id)` — project binding 強制
+    - `(tenant_id, eval_run_id, agent_run_id) references eval_runs(tenant_id, id, agent_run_id)` — **eval_run と agent_run の同一性を強制** (R3 adopt 追加): `eval_runs` table に `agent_run_id` 列追加が必須 (ADR-00002 update で `eval_runs.agent_run_id` 追加 — eval_run が **single AgentRun に紐付く** semantics)。これで「project B の valid agent_run_id + project A の eval_run_id」混合経路を reject。
+    
+    注: `eval_runs.agent_run_id` 列追加は Sprint 11 BL-0122 (eval_runs schema) の前提条件、SP-011 受け入れ条件で別途明示する。
   - **metric_metadata 列必須 (Codex R2 F-QLC-R2-005 P2 adopt)**: `tool_trajectory_metric_kind` (`edit_distance` / `lcs_ratio` / `prefix_ratio`) を `metric_metadata jsonb` 列に保存。consumers が `tool_trajectory_match` 値の metric kind を区別可能にする (SP-011 で記録要求している metadata を SP-010 source contract 側に明示)。
   - **Anti-Gaming invariant 強化 (Codex R2 F-QLC-R2-003 P2 adopt)**: `dataset_versions.created_at` だけでは fixture creation commit author / timestamp を立証できない。`dataset_versions` table に **追加列必須**:
     - `fixture_commit_sha (varchar 40)` (fixture creation commit の git SHA)

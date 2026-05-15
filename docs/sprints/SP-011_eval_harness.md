@@ -205,8 +205,9 @@ risks:
   - `EvidenceSearchHit.ndcg_contribution` 列は **記録用 metric のみ**、nDCG 集計の gain source としては使わない (Anti-Gaming reject)
 - **citation_coverage acceptance spec** (AC-KPI-04、grounding quality 計測):
   - **claim-level 集計 (Codex F-QLC-004 P1 adopt、SP-010 と整合)**: AC-KPI-04 既存 contract は `count(distinct claim_id with >= 1 GroundingSupport) / count(distinct claim_id within evaluated AgentRun)` — claim 単位で集計、generated_artifact-level は誤り (歪み発生)
-  - P0 で `claim-level citation_coverage >= 0.9` (Sprint 12 AC-KPI-04 final verify)
-  - **null evidence_set_hash AgentRun の扱い (SP-010 F-QLC-007 と整合)**: 分母に含め、分子は 0 として uncovered として数える (除外しない)
+  - **final-adopted artifact filter (Codex R3 F-QLC-R3-001 P2 adopt)**: multi-agent/orchestrator context での AC-KPI-04 rollup は `.claude/rules/multi-agent-orchestration.md` の規則 (#15 review pass = human approval ではない、final-adopted artifact のみが metric source) を遵守。candidate / child draft artifact (final adopt されていない) は分母 / 分子 から除外し、**final adopted artifact 由来の claim のみ** で集計。filter source: artifact の `is_final_adopted: bool` flag (Sprint 11 BL-0126 で追加列、または `agent_runs.final_artifact_id` の参照経由)。
+  - P0 で `claim-level citation_coverage >= 0.9` (Sprint 12 AC-KPI-04 final verify、final-adopted artifact のみ対象)
+  - **null evidence_set_hash AgentRun の扱い (SP-010 F-QLC-007 と整合)**: 分母に含め、分子は 0 として uncovered として数える (除外しない、ただし final-adopted artifact を持つ AgentRun のみ対象)
 - **grounded_answer_rate acceptance spec** (P0 Quality KPI 補強、optional Eval metric):
   - 計算: GroundingSupport 1 件以上関連付く **claim** の比率 (claim-level、generated_artifact-level ではない、citation_coverage と同等定義)
 - **tool_trajectory_match acceptance spec** (Eval fixture vs actual AgentRun trajectory):
@@ -224,6 +225,7 @@ risks:
 
 - 本 SP-011 は前 session commit `369672b` で作成済の **既存 Pack**。本 QL-C run では拡充 spec のみ追記、新規 Pack 作成なし。
 - SP-010 cross-ref: 上記 metrics の **source schema (SearchRun / EvidenceSearchHit / GroundingSupport / RetrievalEvalRun)** は SP-010 で acceptance spec 追記済 (本 PR 同一 file)。SP-011 は同 schema からの **集計のみ** が責務。
+- **eval_runs schema 拡張 (Codex R3 F-QLC-R3-004 P2 adopt cross-ref)**: SP-010 RetrievalEvalRun spec で `(tenant_id, eval_run_id, agent_run_id) references eval_runs(tenant_id, id, agent_run_id)` 複合 FK が必要 → 本 SP-011 BL-0122 で `eval_runs.agent_run_id` 列追加が前提条件。ADR-00002 update で `eval_runs` schema 拡張を明文化、Sprint 11 BL-0122 着手前に accepted 化。
 - 既存 BL trace 維持 (Sprint 11 本来 scope 12 BL + carry-over 15 BL = 27 BL は R29 §5 QL-C verification で破壊不可)。
 
 ## 検証手順
