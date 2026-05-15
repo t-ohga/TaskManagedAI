@@ -168,7 +168,7 @@ risks:
 - [ ] AgentRun status 16 個固定、UI が status enum を増やしていない
 - [ ] `blocked_reason` 3 種 (`policy_blocked` / `budget_blocked` / `runtime_blocked`) を status と分離 badge で表示
 - [ ] Execution Log で raw secret / provider response が表示されない (redaction 後 hash のみ)
-- [ ] Execution Log / AI Runs timeline で AgentRunEvent / AuditEvent / Approval / Budget / Eval が同一 timeline に表示される
+- [ ] Execution Log / AI Runs timeline で AgentRunEvent / AuditEvent / Approval / Budget が同一 timeline に表示される (Eval は SP-011 Eval Harness 完成後に追加表示、本 SP-009 では Eval timeline 表示を要求しない)
 - [ ] Realtime sample 由来の transcript + event-log pattern は AgentRunEvent/AuditEvent timeline の UI reference としてのみ使い、raw realtime payload、client secret response body、raw tool args は表示しない
 - [ ] validator state が `pending` / `pass` / `blocked` として見える
 - [ ] frontend は KPI 正本にしない (DB + audit_events を source of truth)

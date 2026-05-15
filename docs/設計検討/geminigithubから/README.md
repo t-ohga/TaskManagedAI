@@ -59,7 +59,7 @@ TaskManagedAI に取り込むべきなのは、Google Cloud / Gemini の managed
 
 ## 推奨 Next Step
 
-1. `03_adoption_decision.md` の `adopt` 項目を、実在 Sprint Pack がある SP-004 / SP-005 / SP-015 / SP-022 と、未作成 Sprint Pack だが P0 backlog 行がある `SP-010_research_evidence` / `SP-011_eval_harness` に分けて割り当てる。
+1. `03_adoption_decision.md` の `adopt` 項目を、実在 Sprint Pack (SP-004 / SP-005 / SP-010 / SP-011 / SP-015 / SP-022 / SP-0045) に **直接接続** する (Codex PR #5 R2 F-PR5-004 P2 adopt: `SP-0045_tool_registry.md` / `SP-010_research_evidence.md` / `SP-011_eval_harness.md` は本 commit 以前から `docs/sprints/` に正本として存在)。本 archive を「未作成」扱いで P0 backlog に迂回させない。
 2. Gemini / Google Cloud provider compliance は、feature 単位で公式 docs を再確認し、ADR-00010 と `config/provider_compliance.toml` を更新する。既存 `gemini/generate_content` entry は public-only で、managed search / Agent Platform / Memory Bank には適用しない。
 3. RAG / evidence は Vertex AI Search へ寄せず、まず PostgreSQL + full-text + optional vector + ranking policy で local-first に作る。
-4. 実装に入る前に、global P0 backlog ID と Sprint Pack-local ID の衝突、未作成 Sprint Pack (`SP-0045`, `SP-010`, `SP-011`) を正規化する。取り込み文書は候補と gate を示すだけで、この step を完了扱いにしない。
+4. 実装に入る前に、global P0 backlog ID と Sprint Pack-local ID の衝突を正規化する。SP-0045/SP-010/SP-011 は既存正本のため新規作成不要、本 archive 取り込み内容を **既存 Pack の must_ship / exit criteria に反映** する形で接続する。
