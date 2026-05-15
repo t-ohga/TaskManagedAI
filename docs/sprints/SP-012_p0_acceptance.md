@@ -329,6 +329,8 @@ defer_entry:
   resume_condition: text (defer 解除条件、accepted ADR / 次 Sprint Pack accepted / dependency resolved 等)
   blocked_by: [string] (defer 解除 blocker 一覧、ADR id / Sprint Pack id / external dependency)
   verification: text (defer 解除時の verification 手順)
+  target_artifact_hash: string (F-PR13-R3-002 P2 adopt: defer 対象 artifact の sha256、本 Pack §Server-owned AcceptanceArtifactBuilder の `decision_artifact_hash` + `source_set_hash` binding pattern と整合、defer resume 時に target artifact が変化していないことを再 verify、変化時は defer invalidated)
+  target_source_set_hash: string nullable (defer 対象が複数 source artifact を持つ場合の集合 hash、Decision approval policy F-P2R2-004 と整合)
   created_at: timestamp
   resumed_at: timestamp nullable
 ```
@@ -344,9 +346,9 @@ defer_entry:
 3. 全 `must_ship_items[]` の `## 受け入れ条件` PASS を確認 (本 Pack §受け入れ条件と一致)
 4. 全 `hard_gates_pass[]` の pytest / 各 hard gate runner PASS を確認
 5. 全 `quality_kpis_pass[]` の metric 計測結果が閾値内 (未達 1 個以下)
-6. 全 `quality_loop_harness_incident.resolved_at` が NOT NULL or `defer_entry` 移送済
+6. 全 `quality_loop_harness_incident.resolved_at` が NOT NULL or `defer_entry` 移送済 (**P0 期間中 (SP-023 未実装) は本 step を non-blocking** として扱う、自由文 incident 記録 OR `defer_entry` 移送済 OR structured `quality_loop_harness_incident.resolved_at` NOT NULL のいずれかで satisfy、F-PR13-R3-001 P2 adopt 反映)
 
-これら 6 step 全 PASS で `conformance.final_verdict='pass'`、P0 Exit 達成。
+これら 6 step 全 PASS で `conformance.final_verdict='pass'`、P0 Exit 達成。**P0 期間中 (SP-023 未実装) は step 1 (review chain) + step 6 (harness incident) を non-blocking gate として扱い、structured artifact が未実装でも P0 acceptance を block しない** (F-PR13-001 + F-PR13-R2-003 + F-PR13-R3-001 P2 adopt 反映、上記 「⚠️ P0 期間中の運用」 と整合)。
 
 #### QL-D 関連 ADR / Sprint Pack (本 update で trigger)
 
