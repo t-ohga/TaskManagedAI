@@ -597,7 +597,13 @@ def _collect_files_sync(workdir: str) -> tuple[str, ...]:
        check (paranoid 防御、forbidden-path check の backstop)。
     """
 
-    base = Path(workdir).resolve(strict=False)
+    # Codex PR #8 R1 F-PR8-001 P1 adopt: workspace root 自身が symlink に
+    # 置換されている場合 reject (例: `mv workdir workdir.bak; ln -s /etc workdir`
+    # で host dir に anchor された後、配下 file が in-bounds 判定される攻撃)。
+    base_path = Path(workdir)
+    if base_path.is_symlink():
+        return ()
+    base = base_path.resolve(strict=False)
     if not base.is_dir():
         return ()
     results: list[str] = []

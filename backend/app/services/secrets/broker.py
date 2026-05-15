@@ -686,12 +686,16 @@ def _operation_target_to_ref(
         # を approval resource_ref に含めることで、fresh commit_sha / state を
         # 持つ stale repo capability request が古い approval を再利用できない
         # ようにする (approval を repo state にも bind)。
+        # Codex PR #8 R1 F-PR8-002 P2 adopt: commit_sha / repo_state_commit_sha
+        # は git SHA hex format (`:` 等 separator を含まない) を validate
+        # することで、resource_ref への raw concatenation で別 tuple が
+        # 同 ref に collide する ambiguity を防止する。
         return (
             f"repo:{_target_string(target, 'repo_full_name')}:pr:"
             f"{_target_string(target, 'base_branch')}:"
             f"{_target_string(target, 'head_branch')}:draft:"
-            f"commit:{_target_string(target, 'commit_sha')}:"
-            f"state:{_target_string(target, 'repo_state_commit_sha')}"
+            f"commit:{_target_git_sha(target, 'commit_sha')}:"
+            f"state:{_target_git_sha(target, 'repo_state_commit_sha')}"
         )
     return (
         f"secret_ref:{_target_string(target, 'secret_ref_id')}:"
@@ -702,6 +706,21 @@ def _operation_target_to_ref(
 def _target_string(target: Mapping[str, Any], key: str) -> str:
     value = target.get(key)
     if not isinstance(value, str) or not value:
+        raise BrokerIssueDenied("approval_target_mismatch")
+    return value
+
+
+# Codex PR #8 R1 F-PR8-002 P2 adopt: git commit SHA hex pattern (SHA-1 40 char
+# or SHA-256 64 char、`[0-9a-f]` のみ)。`:` 等 separator 文字が含まれないことを
+# validate し、resource_ref への raw concatenation で別 tuple が同 ref に
+# collide する ambiguity を防止する。
+_GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
+
+
+def _target_git_sha(target: Mapping[str, Any], key: str) -> str:
+    """target[key] が有効な git SHA hex (40 or 64 char) であることを validate."""
+    value = _target_string(target, key)
+    if not _GIT_SHA_RE.match(value):
         raise BrokerIssueDenied("approval_target_mismatch")
     return value
 

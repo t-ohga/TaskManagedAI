@@ -144,3 +144,148 @@ class TestPrOpenApprovalRefBindsCommitSha:
         target.pop("commit_sha")
         with pytest.raises(BrokerIssueDenied):
             _operation_target_to_ref(target, "repo.pr_open")
+
+
+
+class TestWorkspaceRootSymlinkReject:
+    """F-PR8-001 P1 adopt (PR #8 R2): workspace root 自身が symlink に置換
+    されていても host file を artifact 化しない (Codex 検証: 現状 code
+    は `_collect_files_sync('/etc')` で `/etc/passwd` を collect する)."""
+
+    def test_workspace_root_as_symlink_to_host_dir_returns_empty(
+        self, tmp_path: Path
+    ) -> None:
+        """workspace root が `/etc` への symlink になっていれば return ()."""
+        # 別 dir を作ってその下に target を置く (`/etc` 直接使わず in-test 安全)
+        host_like = tmp_path.parent / "fake_host_etc"
+        host_like.mkdir(exist_ok=True)
+        (host_like / "passwd").write_text("root:x:0:0::/root:/bin/sh")
+
+        # workspace path が symlink で host-like dir を指す
+        ws_path = tmp_path / "ws_link"
+        ws_path.symlink_to(host_like)
+
+        results = _collect_files_sync(str(ws_path))
+        assert results == (), (
+            f"workspace root as symlink must return (), got: {results}"
+        )
+
+        try:
+            (host_like / "passwd").unlink()
+            host_like.rmdir()
+        except OSError:
+            pass
+
+    def test_regular_workspace_root_still_works(self, tmp_path: Path) -> None:
+        """workspace root が通常 dir なら通常動作 (regression check)."""
+        (tmp_path / "out.txt").write_text("hello")
+        results = _collect_files_sync(str(tmp_path))
+        names = {Path(p).name for p in results}
+        assert "out.txt" in names
+
+
+class TestPrOpenRefGitShaValidation:
+    """F-PR8-002 P2 adopt (PR #8 R2): commit_sha / repo_state_commit_sha を
+    git SHA hex format (40 or 64 char) として validate し、`:` 等 separator
+    含む value で resource_ref が ambiguity を生まないようにする."""
+
+    def test_commit_sha_with_colon_rejected(self) -> None:
+        from backend.app.services.secrets.broker import (
+            BrokerIssueDenied,
+            _operation_target_to_ref,
+        )
+
+        target = {
+            "repo_full_name": "owner/repo",
+            "base_branch": "main",
+            "head_branch": "feature-1",
+            "draft": True,
+            "commit_sha": "a:state:b",  # `:` 含む invalid value
+            "repo_state_commit_sha": "c" * 40,
+        }
+        with pytest.raises(BrokerIssueDenied):
+            _operation_target_to_ref(target, "repo.pr_open")
+
+    def test_short_commit_sha_rejected(self) -> None:
+        from backend.app.services.secrets.broker import (
+            BrokerIssueDenied,
+            _operation_target_to_ref,
+        )
+
+        target = {
+            "repo_full_name": "owner/repo",
+            "base_branch": "main",
+            "head_branch": "feature-1",
+            "draft": True,
+            "commit_sha": "abc123",  # 6 char、SHA hex として短い
+            "repo_state_commit_sha": "c" * 40,
+        }
+        with pytest.raises(BrokerIssueDenied):
+            _operation_target_to_ref(target, "repo.pr_open")
+
+    def test_sha256_64char_accepted(self) -> None:
+        """SHA-256 hex (64 char) も accept される."""
+        from backend.app.services.secrets.broker import _operation_target_to_ref
+
+        target = {
+            "repo_full_name": "owner/repo",
+            "base_branch": "main",
+            "head_branch": "feature-1",
+            "draft": True,
+            "commit_sha": "a" * 64,
+            "repo_state_commit_sha": "b" * 64,
+        }
+        ref = _operation_target_to_ref(target, "repo.pr_open")
+        assert "a" * 64 in ref
+        assert "b" * 64 in ref
+
+
+class TestShellScriptOperandStopsScanning:
+    """F-PR8-003 P2 adopt (PR #8 R2): shell の script operand に到達したら
+    以降の引数を inline exec として scan しない (誤検出回避)."""
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            # script file + 引数 (誤検出されてはならない)
+            ("bash", "scripts/build.sh", "-config", "local"),
+            ("sh", "deploy.sh", "-clean"),
+            ("zsh", "lib/setup.zsh", "-c-style-arg"),
+            # `--` で option parsing 終了
+            ("bash", "--", "-c", "danger"),
+            ("sh", "--", "command-with-c"),
+        ],
+    )
+    def test_shell_script_operand_not_inline_exec(
+        self, argv: tuple[str, ...]
+    ) -> None:
+        from backend.app.services.runner.dangerous_command import (
+            DangerousCommandDenyReason,
+            detect_dangerous_command,
+        )
+
+        violation = detect_dangerous_command(argv)
+        # INLINE_EXEC として誤検出されないこと (他 deny reason はあっても OK)
+        if violation is not None:
+            assert violation.reason != DangerousCommandDenyReason.INLINE_EXEC, (
+                f"shell script operand must not trigger INLINE_EXEC, got: {violation}"
+            )
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            # 既存 detect は維持 (regression check)
+            ("bash", "-c", "rm -rf /"),
+            ("bash", "-lc", "rm -rf /"),
+            ("bash", "--norc", "-c", "rm -rf /"),
+        ],
+    )
+    def test_shell_inline_exec_still_detected(self, argv: tuple[str, ...]) -> None:
+        from backend.app.services.runner.dangerous_command import (
+            DangerousCommandDenyReason,
+            detect_dangerous_command,
+        )
+
+        violation = detect_dangerous_command(argv)
+        assert violation is not None
+        assert violation.reason == DangerousCommandDenyReason.INLINE_EXEC
