@@ -117,7 +117,8 @@ risks:
 本 section は **QL-C run (2026-05-15、quality-loop/QL-C-research-eval-pack)** で追記した修正まとめ拡充 spec。**本 SP-010 では schema 追加なし** (acceptance spec のみ)、実 DDL / model / API は別 batch で landing する。
 
 - **SearchRun acceptance spec** (Sprint 10 BL-0119 source / Sprint 11 BL-0126 consumer 共通 contract):
-  - 必須 column: `tenant_id` / `project_id` / `research_task_id` / `search_run_id (UUID)` / `query_canonical_hash (sha256)` / `retrieval_policy_version` / `hit_count` / `latency_ms` / `started_at` / `completed_at`
+  - 必須 column: `tenant_id` / `project_id` / `research_task_id` / `id (UUID primary key)` / `query_canonical_hash (sha256)` / `retrieval_policy_version` / `hit_count` / `latency_ms` / `started_at` / `completed_at`
+  - **column 名統一 (Codex R4 F-QLC-R4-001 P2 adopt)**: SearchRun の primary key は `id` (project convention: research_tasks / claims / evidence_sources と同じ)。外部参照側 (EvidenceSearchHit / RetrievalEvalRun 等) では `search_run_id` 列名で `search_runs.id` を参照。本 acceptance spec 全体で **table primary key = `id`、参照側 column = `<table>_id`** で統一。
   - **複合 FK (Codex F-QLC-001 P1 adopt)**: `(tenant_id, project_id)` だけでは不足。`(tenant_id, project_id, research_task_id) references research_tasks(tenant_id, project_id, id)` で **research_task が同一 project に属することを DB 境界で強制** (cross-project research_task 紐付け reject、BL-0029c 整合)。cross-project SELECT も全件 reject。
   - server-owned-boundary: `query_canonical_hash` は caller-supplied 不可、server 側で query 文字列を NFC + lower 化後 sha256 して生成
 - **EvidenceSearchHit acceptance spec** (検索結果 ↔ Evidence 紐付け):
@@ -131,21 +132,25 @@ risks:
   - 必須 column: `tenant_id` / `project_id` / `generated_artifact_id` / `agent_run_id` / `claim_id` / `evidence_source_id` / `support_type (cite|paraphrase|quote)` / `confidence_score`
   - **複合 FK (Codex F-QLC-002 P1 + R2 F-QLC-R2-001 P2 adopt)**: `generated_artifact_id` だけでは不足 — `artifacts` table は project を直接持たず `agent_runs` 経由で project が決まる。FK column 数 mismatch を避けるため **2 段 FK** に明確分離:
     - `(tenant_id, project_id, agent_run_id) references agent_runs(tenant_id, project_id, id)` — run が同 project に属することを DB 強制 (3 col → 3 col)
-    - `(tenant_id, agent_run_id, generated_artifact_id) references artifacts(tenant_id, agent_run_id, id)` — artifact が同 run に属することを DB 強制 (3 col → 3 col、artifacts 側に project_id 列なしのため `agent_run_id` 経由で間接 project binding)
+    - `(tenant_id, run_id, generated_artifact_id) references artifacts(tenant_id, run_id, id)` — artifact が同 run に属することを DB 強制 (3 col → 3 col、Codex R4 F-QLC-R4-002 P2 adopt: 既存 `artifacts` schema の column 名は **`run_id`** (not `agent_run_id`)、既存 unique key `artifacts_uq_tenant_run_id` を直接参照。GroundingSupport の `agent_run_id` 列 (project binding 用、agent_runs 経由) と GroundingSupport の `run_id` 列 (artifact 同 run 強制用) が **同値** であることは追加 CHECK constraint で verify、または GroundingSupport で `agent_run_id` 単一列にし agent_runs 側で `id` = `run_id` を保証する設計を ADR-00002 update で議論)
     
     注: 単一 4-col FK `(tenant_id, project_id, agent_run_id, generated_artifact_id) -> artifacts(tenant_id, agent_run_id, id)` は **PostgreSQL の FK column 数一致制約 (4→3)** に違反、本 spec では採用しない。`artifacts` table に project_id 列を追加する代替案は ADR-00002 update で議論可能、現状 spec は agent_runs 経由の間接 binding を採用 (既存 artifacts schema 変更なし)。
-  - **claim ↔ source binding through evidence_items (Codex R3 F-QLC-R3-003 P2 adopt)**: `evidence_sources` が tenant-shared のため、unrelated source を valid claim に attach して citation_coverage を inflation する経路がある。**claim_id + evidence_source_id ペアが `evidence_items` table に存在する verify が必須**:
-    - `(tenant_id, project_id, claim_id, evidence_source_id) references evidence_items(tenant_id, project_id, claim_id, evidence_source_id)` 複合 FK で claim ↔ source の **正当な関連** を DB 強制
-    - これで「project A の claim に project A の別 claim 用 evidence_source を attach」経路を reject (citation_coverage 信頼性確保)
+  - **claim ↔ source binding through evidence_items (Codex R3 F-QLC-R3-003 + R4 F-QLC-R4-003 P2 adopt)**: `evidence_sources` が tenant-shared のため、unrelated source を valid claim に attach して citation_coverage を inflation する経路がある。**claim_id + evidence_source_id ペアが `evidence_items` table に存在する verify が必須**。ただし `evidence_items` の既存 unique key は `(claim_id, source_id, locator)` で 4-col `(tenant_id, project_id, claim_id, evidence_source_id)` 複合 FK は DDL 不可:
+    - **代替設計**: GroundingSupport に `evidence_item_id (UUID)` 列追加 + `(tenant_id, project_id, evidence_item_id) references evidence_items(tenant_id, project_id, id)` 単一 FK
+    - 加えて **CHECK constraint or trigger**: `evidence_items.claim_id == GroundingSupport.claim_id AND evidence_items.source_id == GroundingSupport.evidence_source_id` を verify (同 evidence_item が GroundingSupport の claim / source と一致することを DB 強制)
+    - これで「project A の claim に project A の別 claim 用 evidence_source を attach」経路を reject (citation_coverage 信頼性確保)、かつ `evidence_items` の既存 multi-locator semantics (同 claim/source に複数 locator 保持可能) を破壊しない
   - 越境 negative test: 別 project の generated_artifact_id / claim_id / agent_run_id を関連付ける insert は全件 reject (artifact の run binding 経由 + claim ↔ source の evidence_items verify 経由で project 一致を二重 verify)
 - **RetrievalEvalRun baseline acceptance spec** (Sprint 11 BL-0126 で集計、本 Sprint 10 では skeleton schema のみ documenting):
   - 必須 column: `tenant_id` / `project_id` / `eval_run_id` / `dataset_version_id (UUID FK)` / `agent_run_id` / `recall_at_k (json: {5: float, 10: float})` / `precision_at_k (json)` / `ndcg_at_k (json: {10: float})` / `citation_coverage (float [0,1])` / `grounded_answer_rate (float [0,1])` / `tool_trajectory_match (float [0,1])` / `metric_metadata (jsonb)`
   - **dataset_version_id FK 必須 (Codex F-QLC-003 P1 adopt)**: 文字列 `dataset_version` のみだと別 dataset の `eval_run_id` と任意 version 文字列の組合せが保存可能 → Anti-Gaming fixture/policy 分離 + AC-KPI 集計 trace 破壊。既存 eval schema (Sprint 11 BL-0122/0123) の `dataset_versions` table への `dataset_version_id UUID FK` 必須、`(tenant_id, eval_run_id, dataset_version_id)` 複合制約で run ↔ case dataset 一致を DB で強制。
   - **eval_run project binding (Codex R2 F-QLC-R2-002 + R3 F-QLC-R3-004 P2 adopt)**: `eval_runs` table は `project_id` を直接持たない (既存 schema)、`agent_runs(tenant_id, project_id, id)` 経由で project が決まる。RetrievalEvalRun に **`agent_run_id` 列追加** + 2 段複合 FK で project binding を DB 境界で強制:
     - `(tenant_id, project_id, agent_run_id) references agent_runs(tenant_id, project_id, id)` — project binding 強制
-    - `(tenant_id, eval_run_id, agent_run_id) references eval_runs(tenant_id, id, agent_run_id)` — **eval_run と agent_run の同一性を強制** (R3 adopt 追加): `eval_runs` table に `agent_run_id` 列追加が必須 (ADR-00002 update で `eval_runs.agent_run_id` 追加 — eval_run が **single AgentRun に紐付く** semantics)。これで「project B の valid agent_run_id + project A の eval_run_id」混合経路を reject。
+    - `(tenant_id, eval_run_id, agent_run_id) references eval_runs(tenant_id, id, agent_run_id)` — **eval_run と agent_run の同一性を強制** (R3 adopt + R4 F-QLC-R4-004 P2 adopt 追加):
+      - `eval_runs` table に `agent_run_id` 列追加が必須 (ADR-00002 update で `eval_runs.agent_run_id` 追加 — eval_run が **single AgentRun に紐付く** semantics)
+      - **加えて `eval_runs` に `unique (tenant_id, id, agent_run_id)` 制約追加が必須** (Codex R4 F-QLC-R4-004 P2 adopt): PostgreSQL FK 参照先は primary/unique key を要求、既存 `unique (tenant_id, id)` と `unique (tenant_id, id, dataset_version_id)` だけでは 3-col FK 不可。本 unique 制約追加で RetrievalEvalRun migration が `no unique constraint matching given keys` エラー回避
+      - これで「project B の valid agent_run_id + project A の eval_run_id」混合経路を reject
     
-    注: `eval_runs.agent_run_id` 列追加は Sprint 11 BL-0122 (eval_runs schema) の前提条件、SP-011 受け入れ条件で別途明示する。
+    注: 上記 `eval_runs.agent_run_id` 列追加 + `unique (tenant_id, id, agent_run_id)` 制約追加は Sprint 11 BL-0122 (eval_runs schema) の前提条件、SP-011 受け入れ条件で別途明示する。
   - **metric_metadata 列必須 (Codex R2 F-QLC-R2-005 P2 adopt)**: `tool_trajectory_metric_kind` (`edit_distance` / `lcs_ratio` / `prefix_ratio`) を `metric_metadata jsonb` 列に保存。consumers が `tool_trajectory_match` 値の metric kind を区別可能にする (SP-011 で記録要求している metadata を SP-010 source contract 側に明示)。
   - **Anti-Gaming invariant 強化 (Codex R2 F-QLC-R2-003 P2 adopt)**: `dataset_versions.created_at` だけでは fixture creation commit author / timestamp を立証できない。`dataset_versions` table に **追加列必須**:
     - `fixture_commit_sha (varchar 40)` (fixture creation commit の git SHA)
