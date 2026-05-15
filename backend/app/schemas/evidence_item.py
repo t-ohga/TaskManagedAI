@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -13,17 +13,21 @@ def _rls_ready_metadata() -> dict[str, Any]:
 
 class EvidenceItemBase(BaseModel):
     locator: str = Field(min_length=1, max_length=500)
+    # F-PR19-R9-001 P1 adopt: SP-010 BL-0115 spec で必須の `relation` enum 列追加
+    # (supports / contradicts / context)、citation_coverage + conflict handling の前提
+    relation: Literal["supports", "contradicts", "context"]
     relevance_score: float | None = Field(default=None, ge=0.0, le=1.0)
     metadata: dict[str, Any] = Field(default_factory=_rls_ready_metadata)
 
     @field_validator("metadata", mode="before")
     @classmethod
     def _validate_metadata_is_dict(cls, value: object) -> dict[str, Any]:
-        # F-PR19-R8-003 P2 adopt: caller-supplied metadata に rls_ready: true を merge (RLS-ready invariant)
+        # F-PR19-R8-003 + F-PR19-R9-003 P2 adopt: server-side で rls_ready: true を強制 enforce
+        # (caller-supplied false / 空 dict / 不在 全経路で rls_ready true 保証)
         if not isinstance(value, dict):
             raise ValueError("metadata must be a JSON object.")
         result = dict(value)
-        result.setdefault("rls_ready", True)
+        result["rls_ready"] = True
         return result
 
 

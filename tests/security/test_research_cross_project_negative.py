@@ -253,10 +253,10 @@ async def _insert_fixtures(session: AsyncSession) -> None:
         text(
             """
             insert into evidence_items (
-              id, tenant_id, project_id, claim_id, source_id, locator, metadata
+              id, tenant_id, project_id, claim_id, source_id, locator, relation, metadata
             )
             values (
-              :item_id, 1, :project_a_id, :claim_a_id, :source_id, 'p.1',
+              :item_id, 1, :project_a_id, :claim_a_id, :source_id, 'p.1', 'supports',
               '{"rls_ready": true}'::jsonb
             )
             """
@@ -315,7 +315,7 @@ async def test_evidence_items_cross_project_select_and_insert_rejected(
                 1,
                 PROJECT_B_ID,
                 CLAIM_A_ID,
-                EvidenceItemCreate(source_id=SOURCE_ID, locator="p.cross"),
+                EvidenceItemCreate(source_id=SOURCE_ID, locator="p.cross", relation="supports"),
             )
             await session.commit()
 
@@ -367,7 +367,7 @@ async def test_same_tenant_other_project_claim_attach_rejected(
                 1,
                 PROJECT_A_ID,
                 CLAIM_B_ID,
-                EvidenceItemCreate(source_id=SOURCE_ID, locator="p.cross"),
+                EvidenceItemCreate(source_id=SOURCE_ID, locator="p.cross", relation="supports"),
             )
             await session.commit()
 

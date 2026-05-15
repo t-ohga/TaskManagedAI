@@ -109,6 +109,7 @@ def upgrade() -> None:
         sa.Column("claim_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("source_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("locator", sa.Text(), nullable=False),
+        sa.Column("relation", sa.Text(), nullable=False),
         sa.Column("relevance_score", sa.Double(), nullable=True),
         sa.Column(
             "metadata",
@@ -121,6 +122,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "length(locator) between 1 and 500",
             name="evidence_items_ck_locator_length",
+        ),
+        sa.CheckConstraint(
+            "relation in ('supports', 'contradicts', 'context')",
+            name="evidence_items_ck_relation_enum",
         ),
         sa.CheckConstraint(
             "relevance_score is null or (relevance_score >= 0.0 and relevance_score <= 1.0)",

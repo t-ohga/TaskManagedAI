@@ -28,12 +28,12 @@ class ClaimBase(BaseModel):
     @field_validator("metadata", mode="before")
     @classmethod
     def _validate_metadata_is_dict(cls, value: object) -> dict[str, Any]:
-        # F-PR19-R8-003 P2 adopt: caller が metadata={} を passing する場合も rls_ready: true を server-side で merge
-        # (rls_ready は RLS-ready metadata invariant、caller-supplied metadata で消失しないよう preserve)
+        # F-PR19-R8-003 + F-PR19-R9-003 P2 adopt: caller-supplied metadata で rls_ready が消失または
+        # `rls_ready: false` を強制される経路を遮断。setdefault ではなく **強制 True** で server-side enforce。
         if not isinstance(value, dict):
             raise ValueError("metadata must be a JSON object.")
         result = dict(value)
-        result.setdefault("rls_ready", True)
+        result["rls_ready"] = True  # server-side enforce (caller-supplied false を上書き)
         return result
 
 
@@ -71,11 +71,15 @@ class ClaimUpdate(BaseModel):
     @field_validator("metadata", mode="before")
     @classmethod
     def _validate_optional_metadata_is_dict(cls, value: object) -> dict[str, Any] | None:
+        # F-PR19-R9-002 P2 adopt: ClaimUpdate でも metadata 更新時に rls_ready: true を server-side enforce
+        # (caller が metadata={rls_ready: false} or 空 dict で update する経路で RLS-ready invariant を破壊させない)
         if value is None:
             return None
         if not isinstance(value, dict):
             raise ValueError("metadata must be a JSON object.")
-        return value
+        result = dict(value)
+        result["rls_ready"] = True
+        return result
 
 
 __all__ = [

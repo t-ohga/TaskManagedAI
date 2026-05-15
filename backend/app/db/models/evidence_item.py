@@ -25,6 +25,10 @@ class EvidenceItem(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             name="evidence_items_ck_locator_length",
         ),
         sa.CheckConstraint(
+            "relation in ('supports', 'contradicts', 'context')",
+            name="evidence_items_ck_relation_enum",
+        ),
+        sa.CheckConstraint(
             "relevance_score is null or (relevance_score >= 0.0 and relevance_score <= 1.0)",
             name="evidence_items_ck_relevance_score_range",
         ),
@@ -66,6 +70,7 @@ class EvidenceItem(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
     claim_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     source_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     locator: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    relation: Mapped[str] = mapped_column(sa.Text, nullable=False)
     relevance_score: Mapped[float | None] = mapped_column(sa.Double, nullable=True)
     metadata_: Mapped[JsonDict] = mapped_column(
         "metadata",

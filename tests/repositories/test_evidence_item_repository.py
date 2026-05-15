@@ -254,7 +254,7 @@ async def test_evidence_item_repository_crud(
             1,
             PROJECT_A_ID,
             CLAIM_A_ID,
-            EvidenceItemCreate(source_id=SOURCE_ID, locator="p.1", relevance_score=0.8),
+            EvidenceItemCreate(source_id=SOURCE_ID, locator="p.1", relevance_score=0.8, relation="supports"),
         )
         fetched = await repo.get_evidence_item_by_id(1, PROJECT_A_ID, created.id)
         listed = await repo.list_evidence_items_by_claim(1, PROJECT_A_ID, CLAIM_A_ID)
@@ -280,7 +280,7 @@ async def test_evidence_item_repository_cross_project_create_rejected(
                 1,
                 PROJECT_B_ID,
                 CLAIM_A_ID,
-                EvidenceItemCreate(source_id=SOURCE_ID, locator="p.1"),
+                EvidenceItemCreate(source_id=SOURCE_ID, locator="p.1", relation="supports"),
             )
             await session.commit()
 
@@ -305,7 +305,7 @@ async def test_evidence_item_repository_duplicate_locator_rejected(
             1,
             PROJECT_A_ID,
             CLAIM_A_ID,
-            EvidenceItemCreate(source_id=SOURCE_ID, locator="p.1"),
+            EvidenceItemCreate(source_id=SOURCE_ID, locator="p.1", relation="supports"),
         )
 
         with pytest.raises(IntegrityError) as exc_info:
@@ -313,7 +313,7 @@ async def test_evidence_item_repository_duplicate_locator_rejected(
                 1,
                 PROJECT_A_ID,
                 CLAIM_A_ID,
-                EvidenceItemCreate(source_id=SOURCE_ID, locator="p.1"),
+                EvidenceItemCreate(source_id=SOURCE_ID, locator="p.1", relation="supports"),
             )
             await session.commit()
 
@@ -338,13 +338,13 @@ async def test_evidence_item_repository_same_claim_source_allows_different_locat
             1,
             PROJECT_A_ID,
             CLAIM_A_ID,
-            EvidenceItemCreate(source_id=SOURCE_ID, locator="p.1"),
+            EvidenceItemCreate(source_id=SOURCE_ID, locator="p.1", relation="supports"),
         )
         second = await repo.create_evidence_item(
             1,
             PROJECT_A_ID,
             CLAIM_A_ID,
-            EvidenceItemCreate(source_id=SOURCE_ID, locator="p.2"),
+            EvidenceItemCreate(source_id=SOURCE_ID, locator="p.2", relation="supports"),
         )
 
     assert first.id != second.id
@@ -364,7 +364,7 @@ async def test_evidence_item_repository_missing_source_rejected(
                 1,
                 PROJECT_A_ID,
                 CLAIM_A_ID,
-                EvidenceItemCreate(source_id=MISSING_SOURCE_ID, locator="p.1"),
+                EvidenceItemCreate(source_id=MISSING_SOURCE_ID, locator="p.1", relation="supports"),
             )
             await session.commit()
 
