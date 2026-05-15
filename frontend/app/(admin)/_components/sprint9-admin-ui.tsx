@@ -133,13 +133,18 @@ const BLOCKED_REASON_DESCRIPTIONS: Record<BlockedReason, string> = {
   runtime_blocked: "Runner gateway denied command, path, resource, or egress."
 };
 
-const KEYBOARD_NAV_ITEMS: readonly KeyboardNavItem[] = [
+// F-P3R1-003 fix: keep KEYBOARD_NAV_ITEMS as readonly + literal type so that
+// `current` consumers cannot pass arbitrary strings (typo would silently lose
+// aria-current).
+const KEYBOARD_NAV_ITEMS = [
   { label: "Tickets", href: "/tickets", keys: ["g", "t"] },
   { label: "Approval Inbox", href: "/approvals", keys: ["g", "i"] },
   { label: "Agent Runs", href: "/runs", keys: ["g", "r"] },
   { label: "Audit Log", href: "/audit", keys: ["g", "a"] },
   { label: "Project Settings", href: "/settings", keys: ["g", "s"] }
-];
+] as const satisfies readonly KeyboardNavItem[];
+
+export type KeyboardNavLabel = (typeof KEYBOARD_NAV_ITEMS)[number]["label"];
 
 const CONTEXT_SNAPSHOT_COLUMNS = [
   {
@@ -255,6 +260,18 @@ const POLICY_PROFILES = [
 // event types, expanding to 37 in P0.1 per ADR-00014/ADR-00018). The sample
 // shown here is intentionally narrowed to the success path for the P0 UI
 // skeleton.
+// F-P3R1-005 fix: keep status typed as AgentRunState so typos cannot reach
+// rendering. F-P3R1-004 fix: React key uses seqNo because event_type may
+// repeat across retry / continuation in real timelines.
+type AgentRunTimelineEvent = Readonly<{
+  seqNo: number;
+  event_type: string;
+  status: AgentRunState;
+  at: string;
+  actor_id: string;
+  summary: string;
+}>;
+
 const AGENT_RUN_EVENT_TIMELINE = [
   {
     seqNo: 1,
@@ -360,7 +377,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     actor_id: "system/orchestrator",
     summary: "AgentRun reached completed terminal state."
   }
-] as const;
+] as const satisfies readonly AgentRunTimelineEvent[];
 
 export function AdminPageShell({
   regionLabel,
@@ -403,7 +420,11 @@ export function Panel({ titleId, title, description, aside, children }: PanelPro
   );
 }
 
-export function KeyboardReadinessStrip({ current }: { current: string }) {
+export function KeyboardReadinessStrip({
+  current
+}: {
+  readonly current: KeyboardNavLabel;
+}) {
   return (
     <nav
       aria-label="Keyboard-ready admin navigation"
@@ -411,7 +432,7 @@ export function KeyboardReadinessStrip({ current }: { current: string }) {
     >
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <p className="text-sm font-medium text-ink">
-          Keyboard-first skeleton: semantic links, natural tab order, visible focus.
+          Admin navigation
         </p>
         <ul className="flex flex-wrap gap-2">
           {KEYBOARD_NAV_ITEMS.map((item) => (
@@ -449,7 +470,7 @@ export function AgentRunStateGraph() {
     <div className="grid gap-4">
       <div className="rounded-md border border-line bg-slate-50 p-3">
         <h3 className="text-sm font-semibold text-ink">
-          LangSmith inspired execution graph: 16 fixed states
+          Execution graph: 16 fixed states
         </h3>
         <ol
           aria-label="AgentRun 16 state execution graph"
@@ -541,7 +562,7 @@ export function AgentRunEventTimeline() {
     <ol aria-label="Chronological AgentRunEvent timeline" className="grid gap-2">
       {AGENT_RUN_EVENT_TIMELINE.map((event) => (
         <li
-          key={event.event_type}
+          key={`${event.seqNo}-${event.event_type}`}
           className="grid gap-3 rounded-md border border-line bg-white p-3 md:grid-cols-[4rem_minmax(10rem,0.8fr)_minmax(0,1fr)] md:items-start"
         >
           <span className="font-mono text-xs font-semibold text-muted">

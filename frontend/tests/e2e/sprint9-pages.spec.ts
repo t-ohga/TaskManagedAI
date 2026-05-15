@@ -227,6 +227,16 @@ test("Sprint 9: audit log page renders event types + no raw secret notice", asyn
   await expectUniqueCodeText(auditTable, "policy_decision_created");
   await expectUniqueCodeText(auditTable, "secret_canary_detected");
   await expectUniqueCodeText(auditTable, "runner_blocked");
+  // F-P3R1-002 fix: reason_code と blocked_reason の列分離を CI 固定する
+  await expect(
+    auditTable.getByRole("columnheader", { name: "reason_code" })
+  ).toBeVisible();
+  await expect(
+    auditTable.getByRole("columnheader", { name: "blocked_reason" })
+  ).toBeVisible();
+  // runner_blocked 行は reason_code=dangerous_command と blocked_reason=runtime_blocked の分離
+  await expectUniqueCodeText(auditTable, "dangerous_command");
+  await expectUniqueCodeText(auditTable, "runtime_blocked");
 
   const secretBoundary = auditRegion.getByRole("region", {
     name: "AC-HARD-02 audit redaction",
@@ -347,4 +357,22 @@ test("Sprint 9: agent run detail dynamic route renders timeline", async ({
   await expect(secretBoundary).toBeVisible();
   // AC-HARD-02 invariant 文言
   await expect(secretBoundary).toContainText("AC-HARD-02");
+});
+
+// F-P3R1-001 fix: 不正 route id (UUID 形式違反) で notFound() が走り 404 を返す
+// ことを CI で固定する。F-P2R1-007 で導入した UUID guard の fail-closed 経路。
+test("Sprint 9: ticket detail rejects non-UUID id with 404", async ({
+  page
+}) => {
+  await loginAsDev(page);
+  const response = await page.goto("/tickets/not-a-uuid");
+  expect(response?.status()).toBe(404);
+});
+
+test("Sprint 9: agent run detail rejects non-UUID id with 404", async ({
+  page
+}) => {
+  await loginAsDev(page);
+  const response = await page.goto("/runs/not-a-uuid");
+  expect(response?.status()).toBe(404);
 });

@@ -8,6 +8,7 @@
 
 import { notFound } from "next/navigation";
 
+import { UUID_V1_TO_V5_PATTERN } from "../../_lib/route-id";
 import {
   AdminPageShell,
   ContextSnapshotDefinitionList,
@@ -18,12 +19,6 @@ import {
 
 export const dynamic = "force-dynamic";
 
-// F-P2R1-007 fix: validate dynamic route id as UUID v1-v5 before rendering, so
-// arbitrary caller-supplied strings cannot reach downstream API/data layers
-// through the same entry point (server-owned-boundary invariant).
-const TICKET_ID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-
 type TicketDetailPageProps = {
   params: Promise<{ id: string }>;
 };
@@ -31,7 +26,9 @@ type TicketDetailPageProps = {
 export default async function TicketDetailPage({ params }: TicketDetailPageProps) {
   const { id } = await params;
 
-  if (!id || !TICKET_ID_PATTERN.test(id)) {
+  // F-P2R1-007 + F-P3R1-006: shared UUID v1-v5 guard prevents caller-supplied
+  // path values from reaching downstream layers (server-owned-boundary).
+  if (!id || !UUID_V1_TO_V5_PATTERN.test(id)) {
     notFound();
   }
 
