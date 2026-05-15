@@ -4,6 +4,26 @@
 
 Codex auto-review (chatgpt-codex-connector[bot]) の **inline (file/line specific) finding を見逃さず**、merge 前に全件 adopt / reject / defer 判定するための checklist。CLAUDE.md §6.5.9 の helper 正本。
 
+## 🔴 MANDATORY: 必ず `.claude/scripts/codex_pr_full_review.sh` を使う
+
+**2026-05-15 self-violation 事故** ([[feedback_codex_review_must_use_full_helper]]) の再発防止として、本 checklist の **shell helper 部分は手書きで実行しない**。必ず以下を実行:
+
+```bash
+.claude/scripts/codex_pr_full_review.sh <PR>
+```
+
+helper 内部は本 checklist の Step 1〜4 を **paginated + Codex bot filter + 全 commit 横断** で実行する。
+
+### なぜ helper 必須か (失敗パターン 5 件)
+
+| 失敗 | 教訓 |
+|---|---|
+| `inline_for_head` filter のみ追跡 (commit_id match) | line tracking で過去 commit に残る finding 取りこぼし。**commit_id filter は禁止** |
+| `pulls/N/comments` (inline) のみ確認 | conversation comments を見落とし。**両 endpoint mandatory** |
+| polling timeout 4-5 分で「真の 0 件」判定 | Codex は 6-10 分後にも new finding 出す。**polling は最低 10 分** (Codex F-PR7-014 P3 adopt) |
+| pagination 未対応 (gh api default 30 件) | 30 件超で truncate。**`gh api --paginate` 必須** (Codex F-PR7-011 P2 adopt) |
+| Codex bot filter なし | 人間 / 私自身の `@codex review` comment と Codex review を混同して誤判定。**`user.login == "chatgpt-codex-connector[bot]"` で filter 必須** (Codex F-PR7-012 P2 adopt) |
+
 ## 前提
 
 - repo: `t-ohga/TaskManagedAI`
@@ -47,7 +67,9 @@ gh pr view <N> --json reviewDecision,mergeStateStatus,mergeable
 
 → `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE` 確認。
 
-## one-liner helper (push 後すぐ叩く)
+## one-liner helper (簡易版、push 後すぐ叩く)
+
+**注意**: 本 helper は **`.claude/scripts/codex_pr_full_review.sh`** に統合済み (mandatory verify path)。以下は実装参考のみ。
 
 ```bash
 # Codex PR #7 R1 F-PR7-001 P2 adopt: fail-closed 化。silent suppression は
@@ -88,44 +110,54 @@ codex_pr_review() {
 
 `~/.zshrc` 等にコピーすれば全 PR で再利用可能。**silent suppression (`2>/dev/null || echo "no comments"`) を絶対に使わない** (Codex F-PR7-001 P2)。**`set -e` は subshell `( ... )` 内に閉じ込め、caller shell の errexit を leak しない** (Codex F-PR7-009 P3)。
 
-## Polling (review 未完了時)
+## Polling (review 未完了時) — 最低 **10 分** (Codex F-PR7-014 P3 adopt)
 
-push 後すぐは review が来ていない可能性が高いため、bg polling で待つ。**Codex PR #7 R1 F-PR7-002 + R3 F-PR7-007/008/010 P2 adopt: latest push 後 (= latest commit) の review/comment を待ち、未完了なら timeout で fail-closed**。
+push 後すぐは review が来ていない可能性が高いため、bg polling で待つ。**最低 10 分**、大 PR (50+ file) は **20 分**。Codex は 6-10 分後にも new finding を出すため、4-5 分の polling は早すぎる (2026-05-15 self-violation の根本原因 1)。
+
+**Codex PR #7 R1 F-PR7-002 + R3 F-PR7-007/008/010 + R4 F-PR7-011/012/013/014 P2/P3 adopt: latest push 後 (= latest commit) の review/comment を待ち、未完了なら timeout で fail-closed**。**Codex bot のみ filter**、**pagination 必須**、**top-level review は commit match 必須**。
 
 baseline は **`headRefOid` (latest commit SHA)** を使う。`authoredDate` は commit author timestamp で push 時刻ではない (GraphQL に `pushedDate` フィールドはないため、push 時刻は直接取得不能)。**新 commit に紐付く review/comment があるか** で判定する方が信頼性高い。
 
 ```bash
 PR=<N>
-# baseline: 最新 commit sha (Codex review の commit_id が新 sha 一致するまで待つ)
+BOT='chatgpt-codex-connector[bot]'
+REPO=t-ohga/TaskManagedAI
 LATEST_SHA=$(gh pr view "$PR" --json headRefOid -q '.headRefOid')
-# baseline: トリガー時点の conversation comments count (issues endpoint、Codex F-PR7-008 P2 adopt)
-PRE_CONV_COUNT=$(gh api "repos/t-ohga/TaskManagedAI/issues/${PR}/comments" --jq 'length')
+# トリガー前の Codex finding 数 baseline (inline + conv、Codex bot のみ filter)
+PRE_INLINE=$(gh api --paginate "repos/$REPO/pulls/$PR/comments" \
+  | jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length')
+PRE_CONV=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+  | jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length')
+PRE_REVIEW=$(gh pr view "$PR" --json reviews \
+  -q '[.reviews[] | select(.author.login == "chatgpt-codex-connector")] | length')
 
-for i in $(seq 12); do
+# Codex F-PR7-014 P3 adopt: 最低 10 分 (大 PR は 20 分推奨)。
+# 6 min は短すぎる、Codex は 6-10 min 後にも new finding 出す。
+for i in $(seq 20); do
   sleep 30
-  # latest commit に紐付く新 inline diff comment
-  NEW_INLINE=$(gh api "repos/t-ohga/TaskManagedAI/pulls/${PR}/comments" \
-    --jq "[.[] | select(.commit_id == \"${LATEST_SHA}\")] | length")
-  # latest commit 以降の review (submitted_at > 最新 commit の authoredDate も併用)
-  HEAD_AUTHOR_DATE=$(gh pr view "$PR" --json commits -q '.commits[-1].authoredDate')
-  NEW_REVIEW=$(gh pr view "$PR" --json reviews \
-    -q "[.reviews[] | select(.submittedAt > \"${HEAD_AUTHOR_DATE}\")] | length")
-  # 新 conversation comments (count 増加で判定)
-  CUR_CONV_COUNT=$(gh api "repos/t-ohga/TaskManagedAI/issues/${PR}/comments" --jq 'length')
-  NEW_CONV=$((CUR_CONV_COUNT - PRE_CONV_COUNT))
-  echo "[$((i*30))s] new_inline_for_${LATEST_SHA:0:7}=${NEW_INLINE}, new_reviews=${NEW_REVIEW}, new_conv=${NEW_CONV}"
-  if [[ "${NEW_INLINE}" -gt 0 || "${NEW_REVIEW}" -gt 0 || "${NEW_CONV}" -gt 0 ]]; then
-    codex_pr_review "$PR"
-    exit 0  # break + success
+  # 全 inline (paginated, Codex bot only)
+  CUR_INLINE=$(gh api --paginate "repos/$REPO/pulls/$PR/comments" \
+    | jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length')
+  CUR_CONV=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+    | jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length')
+  # Codex F-PR7-013 P2 adopt: top-level review は head commit match で判定
+  CUR_REVIEW_FOR_HEAD=$(gh pr view "$PR" --json reviews \
+    -q "[.reviews[] | select(.author.login == \"chatgpt-codex-connector\" and .commit_id == \"$LATEST_SHA\")] | length")
+  DELTA_INLINE=$((CUR_INLINE - PRE_INLINE))
+  DELTA_CONV=$((CUR_CONV - PRE_CONV))
+  DELTA_REVIEW=$((CUR_REVIEW_FOR_HEAD - PRE_REVIEW))
+  echo "[$((i*30))s] codex inline=+$DELTA_INLINE conv=+$DELTA_CONV review_for_head=+$DELTA_REVIEW"
+  if [[ "$DELTA_INLINE" -gt 0 || "$DELTA_CONV" -gt 0 || "$DELTA_REVIEW" -gt 0 ]]; then
+    .claude/scripts/codex_pr_full_review.sh "$PR"
+    exit 0
   fi
 done
-# Codex F-PR7-010 P2 adopt: timeout で fail-closed。silent success exit せず、
-# 「未 review」を明示的に報告する (caller が clean と誤判定する事故を防ぐ)。
-echo "ERROR: PR #${PR} has no new Codex review after 6 min polling for ${LATEST_SHA:0:7}. DO NOT mark clean — investigate manually or @codex review." >&2
+# Codex F-PR7-010 P2 adopt: fail-closed
+echo "ERROR: PR #${PR} no new Codex review after 10 min for ${LATEST_SHA:0:7}. DO NOT mark clean." >&2
 exit 1
 ```
 
-`authoredDate` は commit 作成時刻なので review timing baseline として完璧ではない (rebase / amend で同じ commit が再 push される場合は不一致)。最も信頼性が高いのは **commit SHA filter (`.commit_id == LATEST_SHA`)**。
+**baseline は `headRefOid` (commit SHA) + Codex bot filter で判定**。`authoredDate` は rebase / amend で同じ commit が再 push される場合に不一致になるため secondary。`commit_id == LATEST_SHA` filter が最も信頼性高い (Codex F-PR7-007 P2)。
 
 ## 採否判定 (CLAUDE.md §6.5.9 と同じフロー)
 
