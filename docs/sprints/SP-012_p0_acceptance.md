@@ -357,7 +357,7 @@ defer_entry:
 - **structured artifact 表現 (`conformance` / `quality_loop_harness_incident` table) の発行は P0 期間中 non-blocking** (SP-023 未実装、自由文 evidence で表現可能)
 - **ただし、review chain の close (step 1) と harness incident の resolve (step 6) は P0 期間中も blocking gate**:
   - **step 1 (review chain)**: 自由文 evidence でも close 必須 — 各 Sprint Pack の `## Review` で「全 finding が adopt/reject/defer 判定済」を自由文 narrative で記録、open finding を ignore して P0 Exit する経路は **fail-closed で禁止**
-  - **step 6 (harness incident)**: 自由文 evidence でも resolve 必須 — Sprint Pack `## Review §Pending entries` 等で「全 harness incident が rollback / abort / `defer_entry` 移送のいずれかで resolve 済」を自由文 narrative で記録、open incident を ignore して P0 Exit する経路は **fail-closed で禁止**
+  - **step 6 (harness incident)**: 自由文 evidence でも resolve 必須 — Sprint Pack `## Review §Pending entries` 等で「全 harness incident が **rollback / abort / `defer_entry` 移送 のいずれか具体的 resolve action で 解決済**」を自由文 narrative で記録 (F-PR13-R8-002 P2 adopt 反映: incident を recording のみで satisfy する経路を遮断、resolution action を明示要求)、open incident を ignore して P0 Exit する経路は **fail-closed で禁止**
 - non-blocking 化されるのは **structured artifact format のみ** (`quality_loop_*` table の row 表現は P0.1 SP-023 candidate accepted 後)、close/resolve の本質的 invariant (open finding/incident を残したまま Sprint Exit 不可) は P0 期間中も blocking gate として維持
 
 #### QL-D 関連 ADR / Sprint Pack (本 update で trigger)
