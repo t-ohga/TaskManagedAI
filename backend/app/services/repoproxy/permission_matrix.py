@@ -74,7 +74,11 @@ def check_no_dangerous_permissions(matrix: GitHubAppPermissionMatrix) -> tuple[s
     violations: list[str] = []
 
     # 必須 deny permission list
-    must_deny = ("actions", "workflows", "packages", "administration")
+    # Codex PR #1 R1 F-PR1-004 P2 adopt: `config/github_app_permissions.toml` で
+    # `issues` / `checks` も deny として定義されているが、本 static gate では未含。
+    # 将来 matrix が誤って `issues` / `checks` を `repository_permissions` に
+    # read/write で追加した場合に検出するため、must_deny に追加する。
+    must_deny = ("actions", "workflows", "packages", "administration", "issues", "checks")
 
     # repository_permissions に actions / workflows / packages / administration が
     # write/read として存在してはいけない
