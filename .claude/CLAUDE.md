@@ -488,6 +488,69 @@ PR-based workflow における **Claude / user の責務分離**。`.claude/rule
   - **PR #3** (本 doc 修正): 本責務分離方針を CLAUDE.md に追記 → user merge 待ち
   - **未着手 (次セッション)**: 5 untracked docs/dirs (`修正まとめ/` 等、~25 file) は別 PR で Claude 代理起票予定
 
+### 6.5.9 Codex auto-review 確認義務 (2026-05-15 確立、本プロジェクト恒久方針)
+
+#### 背景
+
+2026-05-15 session で、過去 merged PR (PR #1 / PR #3) に **9 件の Codex inline review finding が未対応** だったことが事後判明。Claude は `gh pr view --json reviews` の top-level body のみを確認しており、**inline (file/line specific) コメントを取得していなかった** ことが root cause。特に PR #1 では P1 × 3 (security 直結) が見逃され、merged 後に follow-up PR で fix する事態。
+
+#### 必須確認手順 (PR 起票後 / push 後 / merge 前、全 3 タイミング)
+
+```bash
+# 1. top-level body (テンプレート、全体コメント)
+gh pr view <N> --json reviews -q '.reviews[] | {author: .author.login, state, body: (.body[0:300])}'
+
+# 2. inline comments (file/line specific、ここに具体的 finding が乗る) — 必須
+gh api repos/t-ohga/TaskManagedAI/pulls/<N>/comments --jq '.[] | {path, line, body}'
+
+# 3. merge readiness
+gh pr view <N> --json reviewDecision,mergeStateStatus,mergeable
+```
+
+`gh pr view --json reviews` の body だけでは **inline コメントが取れない**。**必ず `gh api .../pulls/<N>/comments` も併用** すること。helper の正本は `.claude/rules/codex-pr-review-checklist.md` を参照。
+
+#### Codex auto-review trigger と timing
+
+`chatgpt-codex-connector[bot]` は以下で trigger:
+- PR open
+- draft → ready 化
+- `@codex review` コメント
+
+**review 完了は push から 1-5 分後** (10 file 未満)、**50 file 規模で 5-10 分**。CI が green でも Codex は別 timeline で来るので、**merge 前に必ず最新 inline を確認** する。merge 後の発覚は follow-up PR が必要。
+
+#### 採否判定 (CLAUDE.md §6.5.0 / `.claude/rules/codex-usage-policy.md` と同じフロー)
+
+- **adopt**: 根拠明確、プロジェクト規約と整合 → 同 PR に追加 commit で fix (merge 前) または follow-up PR (merge 後)
+- **reject**: Codex の誤認、文脈不整合 → reject reason を PR コメント or commit message に記載
+- **defer**: 別 Sprint / 別 PR へ → defer 理由を PR コメントに記載 + memory に記録
+
+Severity と risk_to_apply の独立評価:
+- P1/CRITICAL × LOW risk → 即 fix
+- P1/HIGH × HIGH risk → ユーザー承認 + diff / 影響範囲 / rollback 説明
+- P2 × LOW → 自動 fix
+- P3 (LOW) → backlog
+
+#### Post-merge 発覚時 (本 session のような事故)
+
+merged 後に inline finding 発覚 → 新 PR で **follow-up fix** 起票:
+
+| Step | Action |
+|---|---|
+| 1 | branch 命名: `fix/pr<元 PR 番号>-codex-<scope>` (例: `fix/pr1-codex-p1-security`) |
+| 2 | PR body に **元 PR # への back-reference** + Codex finding 全文引用 |
+| 3 | adopt commit で fix + Codex 委譲 review (security 関連は codex-impl-loop or codex-adversarial-loop) |
+| 4 | CI green + Codex auto-review clean まで polish |
+| 5 | user merge 後、memory の `feedback_codex_*` or 本 CLAUDE.md §6.5.x 経由で再発防止記録 |
+
+元 PR が security 関連で P1 finding を含む場合、**即時 follow-up が必須** (defer 不可)。
+
+#### 関連参照
+
+- `.claude/rules/codex-pr-review-checklist.md` (正本 helper script + 検証 checklist)
+- `.claude/rules/codex-usage-policy.md` (Codex 全般)
+- `.claude/rules/user-preferences.md` (本 session で集約した user 要望)
+- §6.5.0 Codex-first ポリシー
+
 ## 7. Codex 連携
 
 Claude 側から Codex を使う場合は、Claude 側 Skill 経由で以下を起動します。
