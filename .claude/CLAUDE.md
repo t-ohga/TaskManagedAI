@@ -442,6 +442,52 @@ Suite は Main Agent orchestration として動き、内部から Skill / Agent 
 - **同 branch を 2 worktree で checkout する場合**: worktree 側で push → 別 worktree (main / codex/... checkout 中) で `git fetch origin && git merge --ff-only origin/<branch>` で取り込む (2026-05-12 Phase A で実演済)。
 - **詳細運用 doc**: `docs/設計検討/bg-job-worktree-workflow.md` + AI 用 memory `~/.claude/projects/-Users-tohga-repo-TaskManagedAI/memory/reference_fleetview_worktree_workflow.md`。
 
+### 6.5.8 PR 起票・merge 責務分離 (2026-05-15 確立、本プロジェクト恒久方針)
+
+PR-based workflow における **Claude / user の責務分離**。`.claude/rules/branch-and-pr-workflow.md` (2026-05-15 制定) §1 + §7 を本 CLAUDE.md でも宣言する。
+
+#### 責務マトリクス
+
+| Role | 担当 | 理由 |
+|---|---|---|
+| **PR 起票** (worktree 作成 → branch 切る → commit → push → `gh pr create`) | **Claude** | Codex 委譲・実装・doc 修正は Claude が自律で完遂 |
+| **PR 修正** (Codex auto-review + adopt/reject 判定 + fix commit + push 再 trigger) | **Claude** | multi-round review loop は Claude が責任を持って clean まで polish |
+| **PR レビュー応答** (Codex bot のコメント / 別 reviewer の comment に対して採否判定 + fix or 説明返信) | **Claude** | 採否判定は project rules / 不変条件と照合する Claude の責務 |
+| **PR merge** (`gh pr merge` または GitHub UI、main へ統合) | **user** | Claude classifier が `Merging PR to main` を destructive と判定し reject する。user 直接 authorization 必須 |
+| **Branch cleanup** (merge 後 `--delete-branch`) | **user** または GitHub auto-delete | branch 削除も destructive、user 判断 |
+
+#### 理由 (なぜ Claude が merge できないか)
+
+- **Classifier reject**: Claude Code の auto mode classifier が `gh pr merge` を **high-impact action** と判定し block する。これは:
+  - main は production の deploy gate を持つ branch、誤 merge は重大影響
+  - 「全部おまかせ」のような generic delegation では merge authorization と認定されない
+  - **明示 authorization があっても classifier は reject** することがある (long autonomous chain 後の safeguard)
+- **設計意図**: Claude (自律 worker) が PR を起票 → user (human reviewer) が最終 1 click で merge という flow は、人間が最終 control を保持する best practice。
+- **代替**: user は `gh pr merge <N> --squash --delete-branch` か GitHub UI の "Merge pull request" ボタンで完結。
+
+#### user 手元作業の代理処理 path
+
+過去セッションで user 手元に残った commit / modified file / untracked file は、user が「Claude に整理委任」と意思表示すれば Claude が **代理 PR として起票**:
+
+1. **内容確認**: `git show <hash>` / `git diff` / `ls <untracked-dir>` で review
+2. **新 worktree 作成**: `git worktree add .claude/worktrees/<topic> -b <branch-name> origin/main` で main base
+3. **cherry-pick or copy**: `git cherry-pick <hash>` で user 手元 commit を取り込み、untracked file は copy で move
+4. **push + PR 起票**: `git push -u origin <branch>` → `gh pr create --base main --head <branch>`
+5. **user merge 待ち**: user は GitHub UI または `gh pr merge` で完結
+
+注意:
+- user の **active 作業中** branch / file は **触らない** (stash / checkout は user 直接実行)
+- 大規模な scope creep が懸念される場合は user 確認後実行
+- 25 file 超の add は **別 session で慎重に** (本 session で着手しない)
+
+#### 過去事例
+
+- **2026-05-15 本セッション**:
+  - **PR #1** (QL-A + Sprint 9 UI fix、6 commit、+1700 行): Claude 起票 → CI green → Codex auto-review + Claude adopt/reject loop → user merge ✅
+  - **PR #2** (chore: `.gitignore` 4 行追加): user 手元 commit `925fe8f` を Claude が代理起票 → user merge 待ち
+  - **PR #3** (本 doc 修正): 本責務分離方針を CLAUDE.md に追記 → user merge 待ち
+  - **未着手 (次セッション)**: 5 untracked docs/dirs (`修正まとめ/` 等、~25 file) は別 PR で Claude 代理起票予定
+
 ## 7. Codex 連携
 
 Claude 側から Codex を使う場合は、Claude 側 Skill 経由で以下を起動します。
