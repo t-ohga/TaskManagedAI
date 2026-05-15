@@ -359,3 +359,67 @@ class TestShellOptionWithArgumentNotMistakenAsScript:
             assert violation.reason != DangerousCommandDenyReason.INLINE_EXEC, (
                 f"must NOT be INLINE_EXEC: {argv}, got {violation.reason}"
             )
+
+
+
+class TestShellPlusOAndEmulateAndCaseSensitive:
+    """F-PR8-005 / F-PR8-006 / F-PR8-007 P1+P2 adopt (PR #8 R3):
+    - `+o` / `+O` (bash shell option disable) も option-with-argument
+    - 大文字 `-C` (bash restricted file mode) は inline-exec ではない
+    - zsh `--emulate <mode>` も option-with-argument
+    """
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            # bash +o option -c cmd (F-PR8-005 P1)
+            ("bash", "+o", "errexit", "-c", "rm -rf /"),
+            ("bash", "+O", "nullglob", "-c", "rm -rf /"),
+            # bash -o + +o 混在
+            ("bash", "-o", "pipefail", "+o", "errexit", "-c", "rm -rf /"),
+            # zsh --emulate <mode> -c cmd (F-PR8-007 P1)
+            ("zsh", "--emulate", "sh", "-c", "rm -rf /"),
+            ("zsh", "--emulate", "ksh", "-c", "rm -rf /"),
+            # bash --rcfile + --emulate (combine)
+            ("zsh", "--emulate", "sh", "--rcfile", "/dev/null", "-c", "rm -rf /"),
+        ],
+    )
+    def test_plus_o_and_emulate_still_detect_inline(
+        self, argv: tuple[str, ...]
+    ) -> None:
+        from backend.app.services.runner.dangerous_command import (
+            DangerousCommandDenyReason,
+            detect_dangerous_command,
+        )
+
+        violation = detect_dangerous_command(argv)
+        assert violation is not None, f"must detect inline_exec: {argv}"
+        assert violation.reason == DangerousCommandDenyReason.INLINE_EXEC, (
+            f"must be INLINE_EXEC: {argv}, got {violation.reason}"
+        )
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            # bash -C (uppercase, restricted file mode) は inline_exec ではない (F-PR8-006 P2)
+            ("bash", "-C", "script.sh"),
+            ("bash", "-eC", "script.sh"),
+            ("bash", "-EC", "script.sh", "arg"),
+            # mixed grouped opts: -e/-E は OK (`c` 含まない)、`-C` 大文字も OK
+            ("bash", "-EC", "deploy.sh"),
+        ],
+    )
+    def test_uppercase_C_not_detected_as_inline(self, argv: tuple[str, ...]) -> None:
+        """`bash -eC script.sh` 等の大文字 C 含む grouped option を inline_exec
+        と誤検出しない (canonicalize で lower 化されるため、raw rest を使い
+        case-sensitive に判定)."""
+        from backend.app.services.runner.dangerous_command import (
+            DangerousCommandDenyReason,
+            detect_dangerous_command,
+        )
+
+        violation = detect_dangerous_command(argv)
+        if violation is not None:
+            assert violation.reason != DangerousCommandDenyReason.INLINE_EXEC, (
+                f"must NOT be INLINE_EXEC for uppercase C: {argv}, got {violation.reason}"
+            )
