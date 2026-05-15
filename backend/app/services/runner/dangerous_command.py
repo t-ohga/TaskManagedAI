@@ -302,8 +302,16 @@ def _matches_inline_exec(canonical_argv: tuple[str, ...]) -> bool:
     name = canonical_argv[0]
     rest = canonical_argv[1:]
     # shell inline (-c)
+    # Codex PR #1 R1 F-PR1-001 P1 adopt: `bash -lc 'cmd'` / `sh -ec 'cmd'` 等の
+    # combined short option group (`-lc` / `-ec` / `-ic` etc.) で `c` を含むもの
+    # も inline exec 扱いにする。POSIX shell の short option は `-` + chars で
+    # combine 可能 (`-lc` = `-l` + `-c`)。`--long` 形式は別 path、`-` 単独や
+    # `-c` literal は既存通り検出。
     if name in {"sh", "bash", "zsh", "dash", "ash", "ksh", "fish"}:
-        return any(a == "-c" for a in rest)
+        return any(
+            (a.startswith("-") and not a.startswith("--") and "c" in a[1:])
+            for a in rest
+        )
     # python inline (-c)
     if name in {"python", "python2", "python3"}:
         return any(a == "-c" for a in rest)

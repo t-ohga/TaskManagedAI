@@ -682,10 +682,16 @@ def _operation_target_to_ref(
         draft = target.get("draft")
         if draft is not True:
             raise BrokerIssueDenied("approval_target_mismatch")
+        # Codex PR #1 R1 F-PR1-002 P1 adopt: `commit_sha` / `repo_state_commit_sha`
+        # を approval resource_ref に含めることで、fresh commit_sha / state を
+        # 持つ stale repo capability request が古い approval を再利用できない
+        # ようにする (approval を repo state にも bind)。
         return (
             f"repo:{_target_string(target, 'repo_full_name')}:pr:"
             f"{_target_string(target, 'base_branch')}:"
-            f"{_target_string(target, 'head_branch')}:draft"
+            f"{_target_string(target, 'head_branch')}:draft:"
+            f"commit:{_target_string(target, 'commit_sha')}:"
+            f"state:{_target_string(target, 'repo_state_commit_sha')}"
         )
     return (
         f"secret_ref:{_target_string(target, 'secret_ref_id')}:"

@@ -588,12 +588,34 @@ class MockRunnerAdapter(RunnerAdapter):
 
 
 def _collect_files_sync(workdir: str) -> tuple[str, ...]:
-    """Sync helper for ``MockRunnerAdapter.collect_artifacts`` (run in thread)."""
+    """Sync helper for ``MockRunnerAdapter.collect_artifacts`` (run in thread).
 
-    base = Path(workdir)
+    Codex PR #1 R1 F-PR1-005 P1 adopt: symlink artifact 経由の host file
+    (例: `/etc/passwd` への symlink) exfiltration を防止する。
+    1. `is_symlink()` で symlink 自体を reject (是 host file への bridge)
+    2. `resolve(strict=True)` 後 `relative_to(base)` で workspace 配下 containment
+       check (paranoid 防御、forbidden-path check の backstop)。
+    """
+
+    base = Path(workdir).resolve(strict=False)
     if not base.is_dir():
         return ()
-    return tuple(str(p) for p in base.rglob("*") if p.is_file())
+    results: list[str] = []
+    for p in base.rglob("*"):
+        # 1. symlink 自体を reject (workspace 外 file への bridge を防止)
+        if p.is_symlink():
+            continue
+        # 2. regular file 以外 (dir / fifo / etc.) は skip
+        if not p.is_file():
+            continue
+        # 3. resolved path が workspace 配下にあること (containment backstop)
+        try:
+            resolved = p.resolve(strict=True)
+            resolved.relative_to(base)
+        except (OSError, ValueError):
+            continue
+        results.append(str(p))
+    return tuple(results)
 
 
 # Suppress unused import warning for re (kept for future regex use)
