@@ -162,13 +162,15 @@ def validate_provenance_json(provenance_json: dict[str, Any]) -> ProvBundle:
     try:
         bundle = ProvBundle.model_validate(provenance_json)
     except ValidationError as exc:
-        # F-PR19-R4-003 P1 adopt: raw caller-supplied input value を echo しない (audit / response にも)
-        # Pydantic ValidationError.str() は raw input value を含む経路があるため、loc + type のみ抽出して sanitize。
-        # 完全な error context は audit log の structured form に閉じる (本 endpoint レベルでは expose しない)。
+        # F-PR19-R4-003 P1 + F-PR19-R7-001 P1 adopt: raw caller input value / location を echo しない。
+        # Pydantic ValidationError の loc は extra (forbidden) field 等で caller-controlled key を含む
+        # 経路があるため、location 自体も redact (count + types のみ表示)。完全な error context は
+        # audit log の structured form に閉じる。
         errors = exc.errors(include_input=False, include_context=False, include_url=False)
-        locations = sorted({".".join(str(p) for p in err.get("loc", ())) for err in errors})
+        error_types = sorted({err.get("type", "unknown") for err in errors})
         raise ProvValidationError(
-            f"PROV schema validation failed: {len(errors)} error(s) at locations: {', '.join(locations) or '(root)'}"
+            f"PROV schema validation failed: {len(errors)} error(s), types: {', '.join(error_types) or '(unknown)'} "
+            "(caller locations redacted, see audit logs)"
         ) from exc
     except ValueError as exc:
         # ValueError は _normalize_prov_namespace_keys 由来、caller key (raw) を含む可能性、message を sanitize

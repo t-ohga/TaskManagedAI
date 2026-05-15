@@ -45,10 +45,29 @@ class EvidenceItemRepository(BaseRepository[EvidenceItem]):
     async def delete(self, tenant_id: int, id: UUID) -> int:
         raise NotImplementedError("Use delete_evidence_item(...).")
 
+    async def create(self, tenant_id: int, payload: dict[str, Any]) -> EvidenceItem:
+        # F-PR19-R7-005 P1 adopt: BaseRepository.create を override で block、
+        # generic create path で project_id / claim_id binding と secret scan を bypass する経路を遮断。
+        raise NotImplementedError("Use create_evidence_item(...).")
+
     def statement_for_get(self, tenant_id: int, id: UUID) -> NoReturn:
         raise NotImplementedError("Use project-scoped methods.")
 
     def statement_for_list(self, tenant_id: int) -> NoReturn:
+        raise NotImplementedError("Use project-scoped methods.")
+
+    def statement_for_update(
+        self,
+        tenant_id: int,
+        id: UUID,
+        payload: dict[str, Any],
+    ) -> NoReturn:
+        # F-PR19-R7-003 P1 adopt: SQL statement builder mutator block
+        # (evidence_items は P0 で immutable、generic update path も遮断)
+        raise NotImplementedError("evidence_items are immutable in P0.")
+
+    def statement_for_delete(self, tenant_id: int, id: UUID) -> NoReturn:
+        # F-PR19-R7-003 P1 adopt: SQL statement builder mutator block
         raise NotImplementedError("Use project-scoped methods.")
 
     async def create_evidence_item(

@@ -41,10 +41,29 @@ class ClaimRepository(BaseRepository[Claim]):
     async def delete(self, tenant_id: int, id: UUID) -> int:
         raise NotImplementedError("Use delete_claim(...).")
 
+    async def create(self, tenant_id: int, payload: dict[str, Any]) -> Claim:
+        # F-PR19-R7-004 P1 adopt: BaseRepository.create を override で block、
+        # generic create path で project_id / research_task_id binding を bypass する経路を遮断。
+        raise NotImplementedError("Use create_claim(...).")
+
     def statement_for_get(self, tenant_id: int, id: UUID) -> NoReturn:
         raise NotImplementedError("Use project-scoped methods.")
 
     def statement_for_list(self, tenant_id: int) -> NoReturn:
+        raise NotImplementedError("Use project-scoped methods.")
+
+    def statement_for_update(
+        self,
+        tenant_id: int,
+        id: UUID,
+        payload: dict[str, Any],
+    ) -> NoReturn:
+        # F-PR19-R7-002 P1 adopt: SQL statement builder mutator も block、project boundary 検証を bypass する
+        # 経路 (direct SQL execute) を遮断。caller は project-scoped helper のみ使用すべき。
+        raise NotImplementedError("Use project-scoped methods.")
+
+    def statement_for_delete(self, tenant_id: int, id: UUID) -> NoReturn:
+        # F-PR19-R7-002 P1 adopt: SQL statement builder mutator block
         raise NotImplementedError("Use project-scoped methods.")
 
     async def create_claim(
