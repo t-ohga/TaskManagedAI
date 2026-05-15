@@ -423,3 +423,49 @@ class TestShellPlusOAndEmulateAndCaseSensitive:
             assert violation.reason != DangerousCommandDenyReason.INLINE_EXEC, (
                 f"must NOT be INLINE_EXEC for uppercase C: {argv}, got {violation.reason}"
             )
+
+
+
+class TestFishInitCommandInline:
+    """F-PR8-008 P1 adopt (PR #8 R4): fish の `-C` / `--init-command=<cmd>` も
+    inline command 評価 (fish docs)、bypass を防ぐ。"""
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ("fish", "-C", "rm -rf /"),
+            ("fish", "-c", "rm -rf /"),
+            ("fish", "--init-command=rm -rf /"),
+            ("fish", "--init-command", "rm -rf /"),
+            ("fish", "-i", "-C", "rm -rf /"),
+        ],
+    )
+    def test_fish_inline_detected(self, argv: tuple[str, ...]) -> None:
+        from backend.app.services.runner.dangerous_command import (
+            DangerousCommandDenyReason,
+            detect_dangerous_command,
+        )
+
+        violation = detect_dangerous_command(argv)
+        assert violation is not None, f"fish inline must be detected: {argv}"
+        assert violation.reason == DangerousCommandDenyReason.INLINE_EXEC
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ("fish", "script.fish"),
+            ("fish", "-i"),
+            ("fish", "--no-config"),
+        ],
+    )
+    def test_fish_non_inline_not_detected(self, argv: tuple[str, ...]) -> None:
+        from backend.app.services.runner.dangerous_command import (
+            DangerousCommandDenyReason,
+            detect_dangerous_command,
+        )
+
+        violation = detect_dangerous_command(argv)
+        if violation is not None:
+            assert violation.reason != DangerousCommandDenyReason.INLINE_EXEC, (
+                f"fish non-inline must NOT be INLINE_EXEC: {argv}"
+            )

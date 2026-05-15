@@ -333,7 +333,28 @@ def _matches_inline_exec(
     #   option disable 形式) も option-with-argument。`+` 始まりも option prefix。
     # Codex PR #8 R3 F-PR8-007 P1 adopt: zsh の `--emulate <mode>` (emulation
     #   mode を取る) も option-with-argument。LONG_OPT_WITH_ARG に追加。
-    if name in {"sh", "bash", "zsh", "dash", "ash", "ksh", "fish"}:
+    # Codex PR #8 R4 F-PR8-008 P1 adopt: fish 専用判定 — fish は `-c` (小文字、inline
+    # command) に加えて `-C` (大文字、init-command) / `--init-command=<cmd>` でも
+    # inline evaluation が起きる (fish docs)。case-sensitive 判定で `-c` のみ catch
+    # する path だと fish の `-C` / `--init-command` が bypass されるため、fish branch
+    # を分離して両 case + long option を明示 deny。
+    if name == "fish":
+        for a in shell_rest:
+            if a == "--":
+                return False
+            if not (a.startswith("-") or a.startswith("+")):
+                return False
+            if not a.startswith("--"):
+                # fish は -c / -C どちらも inline command (case-insensitive)
+                if "c" in a[1:].lower():
+                    return True
+            else:
+                # --init-command / --init-command=<cmd>
+                base = a.split("=", 1)[0]
+                if base == "--init-command":
+                    return True
+        return False
+    if name in {"sh", "bash", "zsh", "dash", "ash", "ksh"}:
         # 引数を消費する short option (POSIX shell + bash 共通、`+o` も含む)
         SHORT_OPT_WITH_ARG = {"-o", "-O", "+o", "+O"}
         # 引数を消費する long option (bash + zsh の主要 invocation options)
