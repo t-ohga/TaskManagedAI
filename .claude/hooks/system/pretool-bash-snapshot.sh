@@ -30,6 +30,23 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 0
 fi
 
+# project boundary guard (lightweight inline、lib/common.sh source 不要)
+# cross-project hook leak 防止: TaskManagedAI worktree 外なら snapshot 不要
+# HBG-R1-003 + HBG-R1-004 + R2-001 fix: macOS /bin/realpath -m 非対応のため Python3 fallback
+_pr_abs="$project_root"
+if command -v python3 >/dev/null 2>&1; then
+  _pr_resolved="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$project_root" 2>/dev/null || true)"
+  [ -n "$_pr_resolved" ] && _pr_abs="$_pr_resolved"
+elif command -v realpath >/dev/null 2>&1; then
+  _pr_resolved="$(realpath -m "$project_root" 2>/dev/null || realpath "$project_root" 2>/dev/null || true)"
+  [ -n "$_pr_resolved" ] && _pr_abs="$_pr_resolved"
+fi
+case "$_pr_abs" in
+  */TaskManagedAI|*/TaskManagedAI/*|*/taskmanagedai|*/taskmanagedai/*) ;;
+  *) exit 0 ;;
+esac
+unset _pr_abs _pr_resolved
+
 state_dir="$project_root/.claude/.hook-state/bash"
 if ! mkdir -p "$state_dir" 2>/dev/null; then
   # state dir 作成不能 = Post 側が fail-closed の SNAPSHOT_FALLBACK 経路へ落ちる

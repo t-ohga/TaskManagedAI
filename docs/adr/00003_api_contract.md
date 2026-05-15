@@ -16,7 +16,7 @@ superseded_by: null
 
 このテンプレの使い方: Sprint 6 の CLI artifact orchestration を ADR Gate Criteria #3 (API 契約 / event schema) に対応する形で固定する。`codex exec` / `claude -p` 等の CLI agent を domain に密結合せず、artifact schema + subprocess launcher + AgentRunEvent 拡張 + 採否判定 API + AI 出力直結禁止 lint の 5 boundary を確立する。Sprint 6 batch 1 着手前に proposed → accepted、Sprint 6 Exit までに review 欄を最終化する。
 
-最終更新: 2026-05-12 (Sprint 6 batch 0 で proposed 起票、Sprint 6 batch 1 着手直前に accepted 化)
+最終更新: 2026-05-13 (Sprint 10 prep で Research-to-Ticket adapter API contract 延長 section を追加。Sprint 6 batch 0 で proposed 起票、Sprint 6 batch 1 着手直前に accepted 化。**Sprint 10 では Research-to-Ticket adapter API contract を本 ADR の延長として扱う、§Sprint 10 Research-to-Ticket adapter 参照**)
 
 ## 背景
 
@@ -176,3 +176,73 @@ superseded_by: null
    - `uv run pytest tests/cli_artifact/ -q` が全 skip (file 削除済) または fail-closed (skeleton)
    - Sprint 5.5 までの test 361 件が依然 pass
    - AgentRun 16 状態 / blocked_reason 3 種 / ContextSnapshot 10 列 / artifact_kind 6 種 / AgentRunEvent 25 種が rollback 後も整合
+
+## Sprint 10 Research-to-Ticket adapter API contract 延長 (2026-05-13 update proposed)
+
+本 section は **本 ADR の延長として扱う追加 API contract** であり、Sprint 10 で proposed → accepted 化する。base ADR (採用案 A: subprocess + artifact pattern) と同じ invariant (AI Output Boundary §1 / server-owned-boundary §1 / Approval 4 整合) を Research-to-Ticket adapter に適用する。
+
+### Sprint 10 BL-0118: Research-to-Ticket adapter
+
+**adapter の役割**: Research session (ResearchTask + Claims + Evidence) の結果を Ticket / Acceptance Criteria に **artifact 経由で promotion** する。AI が Research 結果を直接 Ticket DB に書き込むことは絶対禁止 (AI Output Boundary §1)。
+
+#### server-owned 経路 (caller-supplied 経路 signature レベル物理削除)
+
+- `artifact_hash`: server-side で `sha256(NFC-UTF8(JCS-canonical-JSON(research_promotion_payload)))` を再計算 (caller が指定する経路を signature から削除)
+- `evidence_set_hash`: ADR-00002 §7.2 と同じ algorithm で server-side 再計算
+- `payload_data_class`: Research session の payload metadata から事前算出 (caller-supplied 禁止、Provider Compliance Matrix §payload_data_class invariant)
+- `provenance_json`: W3C PROV-DM minimal subset で validate (BL-0116)、Pydantic schema 不一致なら reject
+
+#### API contract (Pydantic schema)
+
+```python
+class ResearchToTicketPromotionRequest(BaseModel):
+    model_config = {"extra": "forbid"}  # caller-supplied 経路を fail-closed reject
+
+    tenant_id: int
+    project_id: UUID
+    research_task_id: UUID  # server-side で research_tasks(tenant_id, project_id, id) 検証
+    target_ticket_action: Literal["create_new", "update_existing"]
+    existing_ticket_id: UUID | None  # target_ticket_action="update_existing" の時のみ
+    proposed_acceptance_criteria: list[ProposedAC]  # caller-supplied content (untrusted_content)
+
+class ResearchToTicketPromotionResponse(BaseModel):
+    artifact_hash: str  # server-owned 再計算済
+    evidence_set_hash: str  # server-owned 再計算済 (ContextSnapshot 結線)
+    payload_data_class: Literal["public", "internal", "confidential", "pii"]  # server-side 算出
+    approval_request_id: UUID  # Approval 4 整合 binding (Sprint 3 BL-0037 へ陪席)
+    agent_run_event: Literal["research_to_ticket_promotion_requested"]
+```
+
+#### Approval 4 整合 (server-owned-boundary §3)
+
+Research-to-Ticket promotion は **必ず Approval workflow を経由** する。caller (Research session worker) が直接 Ticket を更新する経路は signature から物理削除:
+
+- artifact_hash binding: server-side で promotion payload を hash
+- policy_version: Approval 時の policy pack version snapshot
+- provider_request_fingerprint: Research session を実行した provider の OperationContext canonical fingerprint
+- action_class: `task_write` (Sprint 3 ADR-00009 action_class taxonomy)
+
+#### AgentRunEvent 拡張 (additive、cross-source-enum-integrity §1 維持)
+
+- `research_to_ticket_promotion_requested`: Adapter が Approval workflow に submit
+- `research_to_ticket_promotion_approved`: Approval decided=approved → Ticket / AC INSERT or UPDATE
+- `research_to_ticket_promotion_rejected`: Approval decided=rejected → no DB mutation
+
+AgentRunEvent enum total: Sprint 6 で 29 → 32 (Sprint 10 で +3、5+ source 整合 (Python Literal / ORM CheckConstraint / migration CHECK / pytest EXPECTED / frontend Zod) で同期)。
+
+#### audit_events payload
+
+- `tenant_id` / `actor_id` / `run_id` / `research_task_id` / `evidence_set_hash` / `approval_request_id` / `trace_id` / `correlation_id` / `timestamp`
+- raw provenance_json / raw evidence content は payload に含めず、`provenance_json_hash` / `evidence_content_hash` のみ記録 (AC-HARD-02 invariant、ADR-00002 §7.2 と整合)
+
+#### ADR Gate Criteria 該当
+
+- **#3 API contract** (Pydantic schema 新規追加)、**#4 AI エージェント権限** (Research → Ticket promotion 経路、Approval 必須)
+- base ADR (Sprint 6 CLI artifact) と同じ invariant 適用のため、新規 ADR 起票ではなく **本 ADR 延長で proposed → accepted**
+- Sprint 10 完了で `status` 維持 (既に accepted)、`最終更新` date を更新
+
+#### rollback (Sprint 10 adapter)
+
+1. Adapter コード削除 (`backend/app/services/research_evidence/promotion_adapter.py`)、DB 変更なし
+2. AgentRunEvent enum を 32 → 29 に戻す (migration revision 1 件 down)
+3. promotion endpoint を 410 Gone で返却、既存 Research session worker は manual review 経路に fallback

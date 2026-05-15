@@ -1,7 +1,8 @@
 ---
 id: "SP-009_p0_ui_pack"
 type: "heavy"
-status: "draft"
+status: "skeleton_pending_backend"
+review_summary: "5 page skeleton + 3 API client draft + Playwright spec のみ。実 backend route は未実装、API client は `_listXxxDraft` prefix で signal。Sprint 11 で backend route 実装 + integration test 結線。Codex audit 2026-05-13 で F-004/F-006/F-008 指摘 adopt 済。"
 sprint_no: 9
 created_at: "2026-05-12"
 updated_at: "2026-05-12"
@@ -232,9 +233,154 @@ E2E test 追加候補:
 - AI-UIUX レポート: `docs/設計検討/AI統合タスク管理プラットフォームの最新UIUXと実装選定レポート.md`
 - 統合結論: `docs/設計検討/2026-05-12_external_ai_concept_uiux_integration.md`
 
-## Review (Sprint 9 完了後追記)
+## Review
 
-- changed: <実際に変えたこと>
-- verified: <確認したこと>
-- deferred: <後回しにしたこと>
-- risks: <残ったリスク>
+### batch 1 + 2 完了 (2026-05-13、commit `0813e53` + `ceb28c8`)
+
+#### changed (batches 1-2: 6 page skeleton)
+
+- `frontend/app/(admin)/tickets/page.tsx`: Ticket 一覧 skeleton (BL-0103)
+- `frontend/app/(admin)/tickets/[id]/page.tsx`: Ticket 詳細 (BL-0104) +
+  Acceptance Criteria + Evidence + AgentRun mapping + ContextSnapshot 10
+  column 表示
+- `frontend/app/(admin)/runs/page.tsx`: AgentRun 16 状態 + blocked_reason
+  3 種 + terminal state 5 種 表示 (BL-0106 skeleton)
+- `frontend/app/(admin)/runs/[id]/page.tsx`: AgentRunEvent timeline 13 種
+  sample + Sprint 7 runner_* event 統合表示 (BL-0106 詳細)
+- `frontend/app/(admin)/audit/page.tsx`: audit_event 14 種 + 必須 payload
+  key 表示 (BL-0107 skeleton)
+- `frontend/app/(admin)/settings/page.tsx`: Provider Compliance Matrix
+  4 行 + Policy Profile + GitHub App repo binding 文書化 (BL-0108)
+
+#### verified (batches 1-2)
+
+- `pnpm exec tsc --noEmit` clean (新 page 全て TS pass)
+- Server Component default (export const dynamic = "force-dynamic")
+- secret_ref / installation_token を DOM に出さない invariant 維持
+- AgentRun 16 状態 enum を Sprint 4 backend と整合表示
+
+#### deferred (batches 3-5 → 別 session)
+
+- BL-0104 詳細: Ticket 詳細の実 data fetch (`frontend/lib/api/tickets.ts`)
+- BL-0106 詳細: AgentRun timeline 実 data fetch
+  (`frontend/lib/api/agent-runs.ts`)
+- BL-0107 詳細: Audit Log filter + pagination + raw secret enforcement
+- BL-0109: responsive layout (mobile / tablet / desktop)
+- BL-0110: a11y (ARIA + keyboard navigation + screen reader)
+- BL-0111: Playwright E2E (golden flow: Ticket → Approval → AgentRun →
+  Draft PR)
+- BL-0112: Eval Dashboard (Hard Gates 7 / Quality KPIs 5 read-only)
+
+これらは別 session で API client + Server Action + Playwright test と一緒に
+実装予定。本 Sprint では UI route 構造 + Server Component default + secret
+非表示 invariant + AgentRun / audit_event enum 表示の基盤完成。
+
+#### risks (Sprint 9 時点)
+
+- **secret leak via DOM (HIGH)**: 実 data fetch 時に installation_token /
+  raw secret が誤って Server Component の rendered HTML に混入するリスク。
+  Sprint 11 で `assert_no_raw_secret` を frontend test fixture に追加して
+  detect する。
+- **AgentRun status drift (HIGH)**: backend 16 状態 + blocked_reason 3 種 を
+  frontend で hardcode するため、backend 側に新 status 追加で drift 発生。
+  Sprint 11 で TypeScript enum 自動生成 (OpenAPI / Pydantic → ts) を導入。
+- **a11y 不足 (MEDIUM)**: 現在 skeleton で ARIA role / label 未整備。
+  BL-0110 で screen reader + keyboard nav を本実装。
+
+### batch 3 完了 (2026-05-13、commit `2e96222`)
+
+#### changed (batch 3: BL-0104 / BL-0106 / BL-0107 / BL-0111)
+
+- `frontend/lib/api/tickets.ts`: Ticket / Acceptance Criteria / Evidence
+  Citation Zod schema + listTickets + getTicket Server Component fetch
+- `frontend/lib/api/agent-runs.ts`: AgentRun 16 状態 Zod enum + blocked_reason
+  3 種 + AgentRunEventTypeEnum (22 種、Sprint 4 + Sprint 7) + ContextSnapshot
+  10 column 完全 schema + listAgentRuns + getAgentRun
+- `frontend/lib/api/audit.ts`: AuditEventTypeEnum (17 種主要 audit event) +
+  AuditEventSchema + cursor pagination + listAuditEvents (eventType filter)
+- `frontend/tests/e2e/sprint9-pages.spec.ts`: 6 件 Playwright test
+  (Tickets / Runs / Audit / Settings + dynamic [id] routes)
+
+#### verified (batch 3)
+
+- frontend `pnpm exec tsc --noEmit` clean
+- Zod v4 record API 整合 (`z.record(z.string(), z.unknown())`)
+- AgentRunStatusEnum / AgentRunEventTypeEnum が backend Literal type と同期
+- Playwright test は ARIA region / role / heading で a11y 基盤確立 (BL-0110
+  の foundation)
+
+### Sprint 9 status (Codex audit F-004/F-006/F-008 adopt で訂正、2026-05-13)
+
+- target_days: 6
+- max_days: 9
+- actual (本 session): 1 day (Pack 既存 + batches 1-3、skeleton + draft client
+  + Playwright spec のみ)
+- **must_ship 未達 (Codex audit F-004 adopt で正直化)**:
+  - **実 backend route 未実装**: `GET /api/v1/tickets` / `GET /api/v1/agent_runs`
+    (list/detail) / `GET /api/v1/audit_events` は backend に **存在しない**。
+    frontend API client は `_listXxxDraft` / `_getXxxDraft` prefix で signal、
+    Sprint page は skeleton 文言のみ。Sprint 11 で backend route 実装 +
+    integration test 結線。
+  - **enum drift**: 旧 TicketStatusEnum (`waiting_review/done/archived`) が
+    backend `ticket.py` Literal (`blocked/review/closed`) と drift していた
+    → Codex F-006 adopt で backend Literal と完全同期 (`open|in_progress|
+    blocked|review|closed|cancelled`)。Sprint 11 で contract test 追加。
+  - **AC-HARD-02 frontend redaction enforcement**: `payload: z.record(...)` は
+    backend 信頼で arbitrary value 許可、frontend 側の `RedactedAuditPayloadSchema`
+    は **未実装**。Sprint 11 で backend `_payload_secret_scan.py` を frontend
+    に port + DOM secret scan test 追加 (Codex F-008 adopt 文書化済)。
+- **partial_skeleton 達成**:
+  - 5 page route + Server Component default + ARIA region/role (BL-0103〜0108): ✅
+  - Zod schema strict validation (5 enum) (BL-0104/0106/0107): ✅ schema のみ、
+    実 fetch は未動作
+  - Playwright E2E 6 spec (BL-0111): ✅ skeleton 文言 verify、API client
+    integration なし
+- **partial / defer**:
+  - BL-0105 Approval Inbox: ✅ Sprint 3 既存実装
+  - BL-0109 responsive: ✅ 部分 (Tailwind grid)、本格 mobile-first は Sprint 11.5
+  - BL-0110 a11y: ✅ 部分 (ARIA region/role)、axe-core integration は Sprint 11.5
+  - BL-0112 Eval Dashboard: defer Sprint 11 (eval_harness 完成後)
+
+### Codex audit (2026-05-13, sp7-8-9-final-audit, R1)
+
+- F-004 (HIGH): API client が実 backend route と結線していない (path mismatch
+  `agent-runs` ↔ `agent_runs`、`/tickets` `/audit-events` route 未実装) →
+  adopt、`_listXxxDraft` prefix で signal + backend path 訂正 + status を
+  `skeleton_pending_backend` に変更
+- F-006 (MEDIUM): TicketStatus / AuditEventType cross-source drift → adopt、
+  TicketStatusEnum を backend Literal に同期、Sprint 11 で contract test 追加
+- F-008 (MEDIUM): frontend payload schema が AC-HARD-02 raw secret 非露出を
+  enforce しない → adopt、docstring 明文化 + Sprint 11 で
+  RedactedXxxPayloadSchema 実装
+
+### Sprint 9 batch coverage 最終
+
+- BL-0103 Tickets list: ✅ skeleton + lib/api/tickets.ts
+- BL-0104 Ticket detail: ✅ dynamic [id] + lib/api/tickets.ts (getTicket)
+- BL-0105 Approval Inbox: ✅ 既存実装 (Sprint 3 完成)
+- BL-0106 Agent Runs: ✅ list + detail + lib/api/agent-runs.ts
+- BL-0107 Audit Log: ✅ list + lib/api/audit.ts + cursor pagination
+- BL-0108 Project Settings: ✅ Provider Matrix + Policy Profile 表示
+- BL-0109 Responsive: 既存 Tailwind grid-cols-2/md:grid-cols-3 で部分対応、
+  本格的 mobile-first design は Sprint 11.5 で deep dive
+- BL-0110 a11y: ARIA region / role / heading 整備 (Playwright test で verify)、
+  axe-core integration は Sprint 11.5 で追加
+- BL-0111 Playwright E2E: ✅ sprint9-pages.spec.ts 6 件
+- BL-0112 Eval Dashboard: Sprint 11 eval_harness 完成後 (defer)
+
+### BL coverage 集計 (Codex SP9 R1 F-SP9-004 adopt で表記訂正、2026-05-13)
+
+- **skeleton_complete (5 件)**: BL-0103 / BL-0104 / BL-0106 / BL-0107 / BL-0108
+  (Server Component skeleton + ARIA region + Zod schema draft)
+- **既存 Sprint 完成 (1 件)**: BL-0105 Approval Inbox (Sprint 3 実装、Sprint 9 で
+  本 audit 範囲外)
+- **partial (3 件)**: BL-0109 responsive (Tailwind grid のみ、本格 mobile-first
+  は Sprint 11.5 BL-0109a) / BL-0110 a11y (ARIA region/role/heading のみ、
+  axe-core integration は Sprint 11.5 BL-0110a) / BL-0111 Playwright E2E
+  (6 skeleton spec、golden flow は Sprint 11 backend route 結線後)
+- **defer (1 件)**: BL-0112 Eval Dashboard (Sprint 11 eval_harness データ
+  source 完成後)
+
+合計: **5 skeleton + 1 既存 + 3 partial + 1 defer = 10 件、Sprint 9 内では
+"functional complete" には到達しない (=`skeleton_pending_backend` status と
+整合)**。

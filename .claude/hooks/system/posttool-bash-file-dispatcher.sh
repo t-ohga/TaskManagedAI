@@ -38,6 +38,12 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 0
 fi
 
+# project boundary guard (cross-project dispatcher leak 防止、lib/common.sh § is_taskmanagedai_path)
+# dispatcher は file_path 抽出前に project_root で判定し、TaskManagedAI 外なら一切 dispatch しない
+if ! is_taskmanagedai_path "$project_root"; then
+  exit 0
+fi
+
 state_dir="$project_root/.claude/.hook-state/bash"
 pre_file="$state_dir/last-pre.tsv"
 pre_meta_file="$state_dir/last-pre-meta.tsv"

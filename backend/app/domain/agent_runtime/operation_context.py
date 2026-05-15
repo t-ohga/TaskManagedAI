@@ -23,7 +23,20 @@ _SHA256_HEX_RE = re.compile(r"^[a-f0-9]{64}$")
 _REQUIRED_TARGET_KEYS: dict[RequestedOperation, frozenset[str]] = {
     "provider.call": frozenset({"provider", "api_or_feature", "model_resolved"}),
     "repo.push": frozenset({"repo_full_name", "branch", "commit_sha"}),
-    "repo.pr_open": frozenset({"repo_full_name", "base_branch", "head_branch", "draft"}),
+    # Codex SP8 R1 F-SP8-007 adopt: 4 整合 binding (artifact_hash / policy_version /
+    # provider_request_fingerprint / repo_state_commit_sha) を fingerprint で
+    # 表現するため、target に commit_sha (head 確定値) と repo_state_commit_sha
+    # (push 直前 HEAD) を追加。ADR-00011 §採用案 + SP-008 §設計判断 で要求。
+    "repo.pr_open": frozenset(
+        {
+            "repo_full_name",
+            "base_branch",
+            "head_branch",
+            "draft",
+            "commit_sha",
+            "repo_state_commit_sha",
+        }
+    ),
     "secret.verify": frozenset({"secret_ref_id", "version"}),
     "rotation.read_old": frozenset({"secret_ref_id", "version"}),
     "rotation.read_new": frozenset({"secret_ref_id", "version"}),
@@ -124,6 +137,9 @@ def validate_operation_context(ctx: OperationContext) -> None:
         _require_nonempty_string(ctx.target, "repo_full_name")
         _require_nonempty_string(ctx.target, "base_branch")
         _require_nonempty_string(ctx.target, "head_branch")
+        # Codex SP8 R1 F-SP8-007 adopt: server-owned 4 整合 binding に必要
+        _require_nonempty_string(ctx.target, "commit_sha")
+        _require_nonempty_string(ctx.target, "repo_state_commit_sha")
         if ctx.target["draft"] is not True:
             raise ValueError("repo.pr_open target draft must be true.")
         return

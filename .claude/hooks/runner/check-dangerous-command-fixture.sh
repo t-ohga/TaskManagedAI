@@ -23,6 +23,11 @@ if [ -z "$file_path" ]; then
   exit 0
 fi
 
+# project boundary guard (cross-project hook leak 防止、lib/common.sh § is_taskmanagedai_path)
+if ! is_taskmanagedai_path "$file_path"; then
+  exit 0
+fi
+
 rel_path="$(relative_file_path "$file_path")"
 content="$(tool_content_or_file "$input" "$file_path")"
 

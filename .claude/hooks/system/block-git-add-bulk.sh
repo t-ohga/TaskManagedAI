@@ -21,6 +21,12 @@ if [ -z "$command" ]; then
   exit 0
 fi
 
+# project boundary guard (cross-project hook leak 防止、lib/common.sh § is_taskmanagedai_path)
+# bash command 系 hook では file_path が直接無いため、project_root 自体を判定対象にする
+if ! is_taskmanagedai_path "$(project_root)"; then
+  exit 0
+fi
+
 if printf '%s\n' "$command" | grep -Eq '(^|[;&|[:space:]])git[[:space:]]+add[[:space:]]+(-A|--all|\.)([[:space:]]|$)'; then
   block_with_message "PreToolUse" "BLOCK git-add-bulk: TaskManagedAI では git add -A / git add . / git add --all を禁止します。理由: .claude/CLAUDE.md §6 と Git 運用ルールにより、別 Sprint / 別判断の差分混入を防ぐためです。必要なファイルを個別指定してください。"
 fi
