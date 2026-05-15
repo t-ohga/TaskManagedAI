@@ -469,16 +469,46 @@ PR-based workflow における **Claude / user の責務分離**。`.claude/rule
 
 過去セッションで user 手元に残った commit / modified file / untracked file は、user が「Claude に整理委任」と意思表示すれば Claude が **代理 PR として起票**:
 
-1. **内容確認**: `git show <hash>` / `git diff` / `ls <untracked-dir>` で review
-2. **新 worktree 作成**: `git worktree add .claude/worktrees/<topic> -b <branch-name> origin/main` で main base
-3. **cherry-pick or copy**: `git cherry-pick <hash>` で user 手元 commit を取り込み、untracked file は copy で move
-4. **push + PR 起票**: `git push -u origin <branch>` → `gh pr create --base main --head <branch>`
+1. **内容確認 (Codex PR #3 R1 F-PR3-002 P2 adopt: 深掘り必須)**:
+   - committed: `git show <hash>` で diff 全文 review
+   - **modified file (tracked、uncommitted edit)**: `git diff <file>` + `git diff --stat` で範囲確認
+   - **untracked file/dir**: `ls` だけでは file 中身を見ていない不十分。以下全件実施:
+     ```bash
+     # 深 enumerate (binary 含む)
+     find <dir> -type f | head -100
+     # 各 file 中身を head/file で確認 (binary / 巨大 file 検出)
+     find <dir> -type f -exec file {} +
+     # 機密 sweep (secret / token / password / API key 等)
+     rg -i -- 'password|secret|api[_-]?key|token|BEGIN.*PRIVATE.*KEY' <dir> || true
+     # gitignore に該当しないか (.env 等が untrack ≠ ignored を確認)
+     git check-ignore -v <dir>/* || echo "(none ignored)"
+     ```
+   - 巨大 binary / 機密疑い content / `.env*` / `*.key` / `*.pem` / `id_rsa*` を検出したら **user 確認なしに add しない**
+
+2. **新 branch 作成**: `git worktree add .claude/worktrees/<topic> -b <branch-name> origin/main` で main base
+   (`.claude/worktrees/` は `.gitignore` で除外済、PR #2 で恒久対応)
+
+3. **transfer (Codex PR #3 R1 F-PR3-003 P2 adopt: 3 state 全部 cover)**:
+   - **committed** (user 手元の commit): `git cherry-pick <hash>` で取り込み
+   - **untracked file/dir**: `cp -r <src> <worktree>/<dest>` で copy
+   - **modified file (tracked、uncommitted edit)**: 専用 transfer 必須
+     ```bash
+     # 方法 A: patch 経由 (clean)
+     git -C <src-checkout> diff -- <file> | git -C <worktree> apply
+     # 方法 B: 直接 copy (file 単位の場合)
+     cp <src-checkout>/<file> <worktree>/<file>
+     ```
+     **cherry-pick / untracked copy だけだと modified file が抜ける** ことに注意。
+
+4. **stage + commit + push + PR 起票**: `git add` (3 経路すべての変更) → `git commit` → `git push -u origin <branch>` → `gh pr create --base main --head <branch>`
+
 5. **user merge 待ち**: user は GitHub UI または `gh pr merge` で完結
 
 注意:
 - user の **active 作業中** branch / file は **触らない** (stash / checkout は user 直接実行)
 - 大規模な scope creep が懸念される場合は user 確認後実行
 - 25 file 超の add は **別 session で慎重に** (本 session で着手しない)
+- 機密疑い content が enumerate 段階で見つかったら **絶対に add せず user に報告**
 
 #### 過去事例
 
