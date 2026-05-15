@@ -21,7 +21,7 @@ gh pr view <N> --json reviews -q '.reviews[] | {author: .author.login, state, bo
 
 → 「**指摘なし**」テンプレ + 👍 reaction なら top-level は clean。
 
-### Step 2: **inline review (diff) comments (必須、ここを見落としがち)**
+### Step 2: **inline review (diff) comments (必須)**
 
 ```bash
 # diff line に紐付く inline finding (Codex の主要 output 経路)
@@ -30,18 +30,16 @@ gh api repos/t-ohga/TaskManagedAI/pulls/<N>/comments --jq '.[] | {user: .user.lo
 
 → inline finding がここに乗る。`gh pr view --json reviews` の body だけでは **絶対に取れない**。
 
-### Step 2b: **PR conversation comments (Codex PR #7 R1 F-PR7-004 P2 adopt、別 endpoint で見落としがち)**
+### Step 3: **PR conversation comments (必須、Codex PR #7 R3 F-PR7-004〜006 P2 adopt)**
 
 ```bash
-# PR conversation thread (review に紐付かない一般 comment、Codex 失敗 / 再 review request 等)
+# PR conversation thread (review に紐付かない PR 全体 comment、Codex 失敗報告 / 再 review request / 一般 finding)
 gh api repos/t-ohga/TaskManagedAI/issues/<N>/comments --jq '.[] | {user: .user.login, body: (.body[0:400])}'
-# 簡易には gh pr view --comments も可 (出力 format は別)
-gh pr view <N> --comments
 ```
 
-GitHub は PR diff comments (`pulls/N/comments`) と PR conversation comments (`issues/N/comments`) を **別 endpoint** で持つ。Codex bot は両方に post し得る。
+GitHub は PR diff comments (`pulls/N/comments`) と PR conversation comments (`issues/N/comments`) を **別 endpoint** で持ち、Codex bot は両方に post する可能性がある。**両方 mandatory** で確認。`gh pr view <N> --comments` でも閲覧できるが、必ず両 endpoint を fetch するのが正本。
 
-### Step 3: merge readiness
+### Step 4: merge readiness
 
 ```bash
 gh pr view <N> --json reviewDecision,mergeStateStatus,mergeable
@@ -53,66 +51,81 @@ gh pr view <N> --json reviewDecision,mergeStateStatus,mergeable
 
 ```bash
 # Codex PR #7 R1 F-PR7-001 P2 adopt: fail-closed 化。silent suppression は
-# 同じ事故 (clean と誤判定) を再生産するため、gh api 失敗時は exit 1 で abort。
+# 同じ事故 (clean と誤判定) を再生産するため、gh api 失敗時は return 1 で abort。
+# Codex PR #7 R3 F-PR7-009 P3 adopt: subshell `( set -e ... )` で実行し、
+# caller の shell option (errexit / nounset 等) を leak しない。
 codex_pr_review() {
-  local pr=$1
-  set -e  # fail-closed
-  echo "=== PR #${pr} top-level review ==="
-  gh pr view "$pr" --json reviews \
-    -q '.reviews[] | "[\(.author.login)] state=\(.state)\n  body: \(.body[0:200])"' || {
-      echo "ERROR: top-level fetch failed (auth / repo slug / gh missing?)" >&2
-      return 1
-    }
-  echo ""
-  echo "=== PR #${pr} inline (diff) comments ==="
-  gh api "repos/t-ohga/TaskManagedAI/pulls/${pr}/comments" \
-    --jq '.[] | "[\(.user.login)] \(.path):\(.line)\n  \(.body[0:300])\n"' || {
-      echo "ERROR: inline fetch failed (DO NOT mark clean!)" >&2
-      return 1
-    }
-  echo ""
-  echo "=== PR #${pr} conversation comments ==="
-  gh api "repos/t-ohga/TaskManagedAI/issues/${pr}/comments" \
-    --jq '.[] | "[\(.user.login)]\n  \(.body[0:300])\n"' || {
-      echo "ERROR: conversation fetch failed (DO NOT mark clean!)" >&2
-      return 1
-    }
-  echo ""
-  echo "=== PR #${pr} merge state ==="
-  gh pr view "$pr" --json reviewDecision,mergeStateStatus,mergeable
+  ( set -e -o pipefail
+    local pr=$1
+    [ -n "$pr" ] || { echo "usage: codex_pr_review <PR-number>" >&2; exit 2; }
+
+    echo "=== PR #${pr} top-level review ==="
+    gh pr view "$pr" --json reviews \
+      -q '.reviews[] | "[\(.author.login)] state=\(.state)\n  body: \(.body[0:200])"' || {
+        echo "ERROR: top-level fetch failed (auth / repo slug / gh missing?)" >&2
+        exit 1
+      }
+    echo ""
+    echo "=== PR #${pr} inline (diff) comments ==="
+    gh api "repos/t-ohga/TaskManagedAI/pulls/${pr}/comments" \
+      --jq '.[] | "[\(.user.login)] \(.path):\(.line)\n  \(.body[0:300])\n"' || {
+        echo "ERROR: inline fetch failed (DO NOT mark clean!)" >&2
+        exit 1
+      }
+    echo ""
+    echo "=== PR #${pr} conversation comments ==="
+    gh api "repos/t-ohga/TaskManagedAI/issues/${pr}/comments" \
+      --jq '.[] | "[\(.user.login)]\n  \(.body[0:300])\n"' || {
+        echo "ERROR: conversation fetch failed (DO NOT mark clean!)" >&2
+        exit 1
+      }
+    echo ""
+    echo "=== PR #${pr} merge state ==="
+    gh pr view "$pr" --json reviewDecision,mergeStateStatus,mergeable
+  )
 }
 ```
 
-`~/.zshrc` 等にコピーすれば全 PR で再利用可能。**silent suppression (`2>/dev/null || echo "no comments"`) を絶対に使わない** (Codex F-PR7-001 P2)。
+`~/.zshrc` 等にコピーすれば全 PR で再利用可能。**silent suppression (`2>/dev/null || echo "no comments"`) を絶対に使わない** (Codex F-PR7-001 P2)。**`set -e` は subshell `( ... )` 内に閉じ込め、caller shell の errexit を leak しない** (Codex F-PR7-009 P3)。
 
 ## Polling (review 未完了時)
 
-push 後すぐは review が来ていない可能性が高いため、bg polling で待つ。**Codex PR #7 R1 F-PR7-002 P2 adopt: latest push 後の comment を待つ必要があるため、push 時刻 (commit pushedDate / head sha) を baseline にする**:
+push 後すぐは review が来ていない可能性が高いため、bg polling で待つ。**Codex PR #7 R1 F-PR7-002 + R3 F-PR7-007/008/010 P2 adopt: latest push 後 (= latest commit) の review/comment を待ち、未完了なら timeout で fail-closed**。
+
+baseline は **`headRefOid` (latest commit SHA)** を使う。`authoredDate` は commit author timestamp で push 時刻ではない (GraphQL に `pushedDate` フィールドはないため、push 時刻は直接取得不能)。**新 commit に紐付く review/comment があるか** で判定する方が信頼性高い。
 
 ```bash
-# 30s × 12 = 6 分 polling、最新 push 後の Codex review が来たら break。
 PR=<N>
-# baseline: 最新 push (= 最新 commit) の created_at
-LATEST_PUSH_AT=$(gh pr view "$PR" --json commits -q '.commits[-1].authoredDate')
-# baseline: 最新 commit sha (commit_id 比較に使う、Codex review の commit_id が新 sha 一致するまで待つ)
+# baseline: 最新 commit sha (Codex review の commit_id が新 sha 一致するまで待つ)
 LATEST_SHA=$(gh pr view "$PR" --json headRefOid -q '.headRefOid')
+# baseline: トリガー時点の conversation comments count (issues endpoint、Codex F-PR7-008 P2 adopt)
+PRE_CONV_COUNT=$(gh api "repos/t-ohga/TaskManagedAI/issues/${PR}/comments" --jq 'length')
 
 for i in $(seq 12); do
   sleep 30
-  # 新しい review/comment が来たか
+  # latest commit に紐付く新 inline diff comment
   NEW_INLINE=$(gh api "repos/t-ohga/TaskManagedAI/pulls/${PR}/comments" \
     --jq "[.[] | select(.commit_id == \"${LATEST_SHA}\")] | length")
+  # latest commit 以降の review (submitted_at > 最新 commit の authoredDate も併用)
+  HEAD_AUTHOR_DATE=$(gh pr view "$PR" --json commits -q '.commits[-1].authoredDate')
   NEW_REVIEW=$(gh pr view "$PR" --json reviews \
-    -q "[.reviews[] | select(.submittedAt > \"${LATEST_PUSH_AT}\")] | length")
-  echo "[$((i*30))s] new_inline_for_${LATEST_SHA:0:7}=${NEW_INLINE}, new_reviews_after_push=${NEW_REVIEW}"
-  if [[ "${NEW_INLINE}" -gt 0 || "${NEW_REVIEW}" -gt 0 ]]; then
+    -q "[.reviews[] | select(.submittedAt > \"${HEAD_AUTHOR_DATE}\")] | length")
+  # 新 conversation comments (count 増加で判定)
+  CUR_CONV_COUNT=$(gh api "repos/t-ohga/TaskManagedAI/issues/${PR}/comments" --jq 'length')
+  NEW_CONV=$((CUR_CONV_COUNT - PRE_CONV_COUNT))
+  echo "[$((i*30))s] new_inline_for_${LATEST_SHA:0:7}=${NEW_INLINE}, new_reviews=${NEW_REVIEW}, new_conv=${NEW_CONV}"
+  if [[ "${NEW_INLINE}" -gt 0 || "${NEW_REVIEW}" -gt 0 || "${NEW_CONV}" -gt 0 ]]; then
     codex_pr_review "$PR"
-    break
+    exit 0  # break + success
   fi
 done
+# Codex F-PR7-010 P2 adopt: timeout で fail-closed。silent success exit せず、
+# 「未 review」を明示的に報告する (caller が clean と誤判定する事故を防ぐ)。
+echo "ERROR: PR #${PR} has no new Codex review after 6 min polling for ${LATEST_SHA:0:7}. DO NOT mark clean — investigate manually or @codex review." >&2
+exit 1
 ```
 
-古い review/comment で break しないよう、**新 push の commit_id / pushedDate 以降に絞って検索** すること。
+`authoredDate` は commit 作成時刻なので review timing baseline として完璧ではない (rebase / amend で同じ commit が再 push される場合は不一致)。最も信頼性が高いのは **commit SHA filter (`.commit_id == LATEST_SHA`)**。
 
 ## 採否判定 (CLAUDE.md §6.5.9 と同じフロー)
 

@@ -500,14 +500,17 @@ PR-based workflow における **Claude / user の責務分離**。`.claude/rule
 # 1. top-level body (テンプレート、全体コメント)
 gh pr view <N> --json reviews -q '.reviews[] | {author: .author.login, state, body: (.body[0:300])}'
 
-# 2. inline comments (file/line specific、ここに具体的 finding が乗る) — 必須
+# 2. inline diff comments (file/line specific、ここに Codex の主要 finding が乗る) — 必須
 gh api repos/t-ohga/TaskManagedAI/pulls/<N>/comments --jq '.[] | {path, line, body}'
 
-# 3. merge readiness
+# 3. PR conversation comments (review に紐付かない PR 全体 thread、Codex F-PR7-004/005/006 P2 adopt で必須昇格) — 必須
+gh api repos/t-ohga/TaskManagedAI/issues/<N>/comments --jq '.[] | {user: .user.login, body}'
+
+# 4. merge readiness
 gh pr view <N> --json reviewDecision,mergeStateStatus,mergeable
 ```
 
-`gh pr view --json reviews` の body だけでは **inline コメントが取れない**。**必ず `gh api .../pulls/<N>/comments` も併用** すること。helper の正本は `.claude/rules/codex-pr-review-checklist.md` を参照。
+GitHub は PR diff comments (`pulls/N/comments`) と PR conversation comments (`issues/N/comments`) を **別 endpoint** で持つ。Codex bot は両方に post し得るため、**必ず両方確認** すること。helper の正本は `.claude/rules/codex-pr-review-checklist.md` を参照。
 
 #### Codex auto-review trigger と timing
 
