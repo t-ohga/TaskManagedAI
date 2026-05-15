@@ -350,7 +350,15 @@ defer_entry:
 5. 全 `quality_kpis_pass[]` の metric 計測結果が閾値内 (未達 1 個以下)
 6. 全 `quality_loop_harness_incident.resolved_at` が NOT NULL or `defer_entry` 移送済 (**P0 期間中 (SP-023 未実装) は本 step を non-blocking** として扱う、自由文 incident 記録 OR `defer_entry` 移送済 OR structured `quality_loop_harness_incident.resolved_at` NOT NULL のいずれかで satisfy、F-PR13-R3-001 P2 adopt 反映)
 
-これら 6 step 全 PASS で `conformance.final_verdict='pass'`、P0 Exit 達成。**P0 期間中 (SP-023 未実装) は step 1 (review chain) + step 6 (harness incident) を non-blocking gate として扱い、structured artifact が未実装でも P0 acceptance を block しない** (F-PR13-001 + F-PR13-R2-003 + F-PR13-R3-001 P2 adopt 反映、上記 「⚠️ P0 期間中の運用」 と整合)。
+これら 6 step 全 PASS で `conformance.final_verdict='pass'`、P0 Exit 達成。
+
+**P0 期間中 (SP-023 未実装) の運用** (F-PR13-001 + F-PR13-R2-003 + F-PR13-R3-001 + F-PR13-R6-002 + F-PR13-R6-004 adopt 反映、security 上 review/incident close は P0 期間中も blocking):
+
+- **structured artifact 表現 (`conformance` / `quality_loop_harness_incident` table) の発行は P0 期間中 non-blocking** (SP-023 未実装、自由文 evidence で表現可能)
+- **ただし、review chain の close (step 1) と harness incident の resolve (step 6) は P0 期間中も blocking gate**:
+  - **step 1 (review chain)**: 自由文 evidence でも close 必須 — 各 Sprint Pack の `## Review` で「全 finding が adopt/reject/defer 判定済」を自由文 narrative で記録、open finding を ignore して P0 Exit する経路は **fail-closed で禁止**
+  - **step 6 (harness incident)**: 自由文 evidence でも resolve 必須 — Sprint Pack `## Review §Pending entries` 等で「全 harness incident が rollback / abort / `defer_entry` 移送のいずれかで resolve 済」を自由文 narrative で記録、open incident を ignore して P0 Exit する経路は **fail-closed で禁止**
+- non-blocking 化されるのは **structured artifact format のみ** (`quality_loop_*` table の row 表現は P0.1 SP-023 candidate accepted 後)、close/resolve の本質的 invariant (open finding/incident を残したまま Sprint Exit 不可) は P0 期間中も blocking gate として維持
 
 #### QL-D 関連 ADR / Sprint Pack (本 update で trigger)
 
@@ -358,7 +366,7 @@ defer_entry:
 - **ADR-00026 候補 (P0.1、proposed 新規起票必須)**: Quality Loop schema design (ADR Gate Criteria #2/#3 trigger)
 - DD-03 §14 + DD-07 §14 (本 QL-D run で同時追加)
 - `docs/設計検討/quality_loop_product_artifact.md` (本 QL-D run で新規起票、core spec)
-- ADR-00014 (Multi-Agent Orchestration、accepted): Phase C `review_artifacts` table と Quality Loop `review` artifact の物理分離 (本 §14.4 of DD-03)
+- ADR-00014 (Multi-Agent Orchestration、**proposed**、F-PR13-R6-001 P2 adopt: 実 file `docs/adr/00014_multi_agent_orchestration.md:status=proposed` confirm): Phase C `review_artifacts` table と Quality Loop `review` artifact の物理分離 (本 §14.4 of DD-03)、P0.1 accepted 化時に cross-reference 有効化
 
 #### QL-D 関連 rules (本 update で trigger)
 
