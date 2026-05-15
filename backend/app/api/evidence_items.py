@@ -32,7 +32,12 @@ def _constraint_name(error: IntegrityError) -> str | None:
     return None
 
 
-_TRACE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+# F-PR19-R5-001 P1 adopt: trace_id format を narrow に (claims.py と同 invariant)
+_TRACE_ID_RE = re.compile(
+    r"^[0-9a-fA-F]{16,32}$"
+    r"|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    r"|^[A-Za-z0-9-]{16,64}$"
+)
 
 
 def _correlation_id(request: Request) -> str:

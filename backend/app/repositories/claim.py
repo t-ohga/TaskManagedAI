@@ -62,6 +62,13 @@ class ClaimRepository(BaseRepository[Claim]):
         if "research_task_id" in data and data["research_task_id"] != research_task_id:
             raise ValueError("payload research_task_id must match repository research_task_id.")
 
+        # F-PR19-R5-003 P2 adopt: dict caller が server-owned field (id / tenant_id / created_at /
+        # updated_at) を payload に passing する経路を遮断 (`Claim(**data)` で server uuid_generate_v4()
+        # default が caller value で上書きされる risk)。
+        _SERVER_OWNED_FIELDS = {"id", "created_at", "updated_at"}
+        for forbidden in _SERVER_OWNED_FIELDS:
+            data.pop(forbidden, None)
+
         # F-PR19-R2-001 P1 + F-PR19-R1-002 P1 adopt: server-owned UUID 追加前の caller payload に対して
         # secret scan + PROV validation を実行。scan 範囲を minimize し、UUID 型 field (server-owned ID) は
         # JSON-serializable でないため scan 対象から除外 (assert_no_raw_secret は dict[str, JsonValue] を期待)。

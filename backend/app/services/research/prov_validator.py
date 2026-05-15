@@ -131,11 +131,14 @@ class ProvBundle(BaseModel):
 
 def _assert_unique_ids(kind: str, ids: list[str]) -> None:
     # F-PR19-R4-002 P2 adopt: O(N^2) を O(N) に修正 (Counter で各 ID の count を 1 pass)
+    # F-PR19-R5-002 P1 adopt: caller-supplied ID 値を error message に echo しない (count + kind のみ)
     from collections import Counter
     counts = Counter(ids)
-    duplicates = sorted(item for item, count in counts.items() if count > 1)
-    if duplicates:
-        raise ProvValidationError(f"duplicate {kind} ids: {', '.join(duplicates)}")
+    duplicate_count = sum(1 for count in counts.values() if count > 1)
+    if duplicate_count:
+        raise ProvValidationError(
+            f"PROV bundle has {duplicate_count} duplicate {kind} id(s) (caller IDs redacted, see audit logs)"
+        )
 
 
 def _assert_refs_exist(
@@ -144,10 +147,12 @@ def _assert_refs_exist(
     refs: list[str],
     allowed_ids: set[str],
 ) -> None:
-    missing = sorted({ref for ref in refs if ref not in allowed_ids})
-    if missing:
+    # F-PR19-R5-002 P1 adopt: caller-supplied ID 値を error message に echo しない
+    missing_count = sum(1 for ref in refs if ref not in allowed_ids)
+    if missing_count:
         raise ProvValidationError(
-            f"{relation_name}.{field_name} references unknown ids: {', '.join(missing)}"
+            f"{relation_name}.{field_name} references {missing_count} unknown id(s) "
+            "(caller IDs redacted, see audit logs)"
         )
 
 
@@ -185,6 +190,17 @@ def validate_provenance_json(provenance_json: dict[str, Any]) -> ProvBundle:
     activities = set(activity_ids)
     entities = set(entity_ids)
     agents = set(agent_ids)
+
+    # F-PR19-R5-004 P2 adopt: PROV id disjointness 検証
+    # (同 ID が entity / activity / agent 複数 kind で declared される経路を遮断、PROV-DM semantics 違反)
+    overlap_activity_entity = len(activities & entities)
+    overlap_activity_agent = len(activities & agents)
+    overlap_entity_agent = len(entities & agents)
+    if overlap_activity_entity or overlap_activity_agent or overlap_entity_agent:
+        total = overlap_activity_entity + overlap_activity_agent + overlap_entity_agent
+        raise ProvValidationError(
+            f"PROV bundle has {total} id(s) declared as multiple node kinds (caller IDs redacted, see audit logs)"
+        )
 
     _assert_refs_exist(
         "wasGeneratedBy",

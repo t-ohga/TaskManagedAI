@@ -40,7 +40,15 @@ def _provenance_json_hash(provenance_json: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
-_TRACE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+# F-PR19-R5-001 P1 adopt: trace_id format を narrow に、secret-shaped string (Bearer / API key / canary)
+# が match しない char set + length 制限。OpenTelemetry / W3C Trace Context (16 or 32 hex) +
+# UUID (with hyphen) + simple short structured ID (alphanumeric + - のみ、length 16-64) を許可。
+# `_` (Bearer 系で頻出) / `.` (canary 系) / `:` (ARN 系) / `/` (path 系) を除外。
+_TRACE_ID_RE = re.compile(
+    r"^[0-9a-fA-F]{16,32}$"  # W3C / OpenTelemetry hex
+    r"|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"  # UUID
+    r"|^[A-Za-z0-9-]{16,64}$"  # short structured ID
+)
 
 
 def _correlation_id(request: Request) -> str:
