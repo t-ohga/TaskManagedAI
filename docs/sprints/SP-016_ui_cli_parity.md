@@ -144,3 +144,51 @@ uv tool install ./cli && tm --version && tm --profile default ticket list --json
 ## Review
 
 (SP-016 完了時に追記)
+
+## QL-F update (R29 §5 QL-F、2026-05-15 doc-only、CLI ContextResolver + canonical 選択肢 spec)
+
+本 section は QL-F Quality Loop run で R29 plan PARTIAL_ADOPT P-05 + P-06 を **future implementation gate spec として記録**する追記。**code/test/CLI 実装変更を一切行わない**。
+
+### QL-F.1 詳細 spec は docs/cli/README.md に集約
+
+QL-F run で新規起票した `docs/cli/README.md` (proposed design doc) を本 Pack の CLI 設計 source-of-truth として cross-reference。本 Pack §設計判断 / §実装チケット で記載されている CLI 関連 spec は `docs/cli/README.md` の §2-§7 を参照。
+
+### QL-F.2 13 capability matrix cross-reference
+
+`docs/cli/README.md §4` の 13 capability matrix が本 Pack の must_ship 実装対象 (CLI 経由で expose する操作の網羅性):
+
+| capability category | 該当 capability | 本 Pack must_ship 関連 |
+|---|---|---|
+| read-only | task_list / task_show / approval_list / repo_status / run_show | 全件 must_ship |
+| task mutating | task_create / task_write | autonomy_level 経由で must_ship |
+| approval | approval_decide (decider human-only) | autonomy_level 不問で human approval 必須、must_ship |
+| repo mutating | repo_push / pr_open | L2/L3 で auto-allow path も、SecretBroker capability 内包 path は除外 (ADR-00025 §10.2) |
+| secret / provider | secret_resolve / provider_call | 全 level で human approval 必須 (ADR-00025 §不変条件 #1) |
+| run control | run_cancel | requester==operator なら approval 不要、それ以外 approval 必須 |
+
+### QL-F.3 ContextResolver state machine cross-reference
+
+`docs/cli/README.md §3` の 5 状態 (explicit_arg / env / cwd_git_remote / profile / interactive_or_fail) は本 Pack の CLI 起動時 project context 解決の正本 spec、本 Pack must_ship でも本 state machine を実装。
+
+### QL-F.4 ADR-00024 placeholder (project auto-discovery memory boundary)
+
+<!-- ADR-00024 placeholder: project auto-discovery + memory boundary は ADR-00024 (proposed、QL-G で起票予定) で扱う、本 SP-016 は ADR-00024 accepted 後に memory backend 関連の must_ship を追加 -->
+
+本 placeholder は QL-G run で実 ADR 起票後、本 §設計判断 で memory backend 関連の must_ship を追加する future implementation gate。本 QL-F run では marker のみ。
+
+### QL-F.5 taskhub host/admin vs tm/tmai project user 境界
+
+`docs/cli/README.md §7` の 2 CLI 境界 (taskhub vs tm/tmai) は本 Pack の admin scope と project user scope の物理分離。本 Pack must_ship では:
+
+- `tm`/`tmai` 経由の 13 capability (上記 §QL-F.2) のみ実装
+- `taskhub` 経由の admin scope (`tenant_create` / `sprint_pack_admin_close` / `sops_rotate` 等) は本 Pack scope 外、別 SP-XXX で扱う
+
+`taskhub` 経由で project mutating command を invoke する path は **restricted** (本 SP-016 must_ship 範囲外)。
+
+### QL-F.6 同一 PR 一括更新 future requirement (U-04 確定後)
+
+U-04 (B 反転採用) 確定時、本 SP-016 + ADR-00015 + SP-012 + docs/cli/README.md + CLI test file を **同一 PR で doc-only 一括更新**。CLI test file 更新は反転実装 Sprint Pack accepted 後の別 run。
+
+### QL-F.7 QL-D 教訓適用
+
+`.claude/CLAUDE.md §6.5.0` (PR #14) の「doc-only future spec と code 品質追求は別軸」教訓を適用。本質目的 (docs/cli/README.md cross-reference + ADR-00024 placeholder + 同一 PR 一括更新 future requirement) は本 run の Phase 0 で達成済、R1-R3 軽い polish で merge ready 判断。
