@@ -1,12 +1,20 @@
 /**
- * Sprint 9 BL-0104: Ticket 詳細 (P0 UI skeleton)。
+ * Sprint 9 BL-0104: Ticket detail (P0 UI skeleton).
  *
- * Acceptance Criteria + Evidence + AgentRun mapping + ContextSnapshot 10
- * column を表示。AI 生成案は採用前 (waiting_approval) でも表示するが、
- * trusted_instruction への昇格は approval flow で別経路。
+ * Acceptance Criteria, evidence, AgentRun mapping, and ContextSnapshot metadata
+ * are rendered as server-owned display surfaces. AI output remains candidate
+ * artifact material until approval flow accepts it.
  */
 
 import { notFound } from "next/navigation";
+
+import {
+  AdminPageShell,
+  ContextSnapshotDefinitionList,
+  KeyboardReadinessStrip,
+  Panel,
+  SecretBoundaryNotice
+} from "../../_components/sprint9-admin-ui";
 
 export const dynamic = "force-dynamic";
 
@@ -22,60 +30,129 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   }
 
   return (
-    <section aria-label="Ticket detail" className="grid gap-4">
-      <header>
-        <p className="text-sm font-medium text-accent">Admin / Ticket</p>
-        <h1 className="text-3xl font-semibold tracking-normal">Ticket {id}</h1>
-        <p className="mt-2 text-sm text-muted">
-          Sprint 9 BL-0104 skeleton — Ticket 詳細 (Acceptance Criteria +
-          Evidence + AgentRun mapping + ContextSnapshot 10 column 表示)。
-        </p>
-      </header>
+    <AdminPageShell
+      description={
+        <>
+          Sprint 9 BL-0104 skeleton for ticket <code>{id}</code>. The page keeps
+          Acceptance Criteria, evidence, AgentRun mapping, and ContextSnapshot 10
+          columns visible without exposing raw snapshot values.
+        </>
+      }
+      eyebrow="Admin / Ticket"
+      regionLabel="Ticket detail"
+      title="Ticket detail"
+    >
+      <KeyboardReadinessStrip current="Tickets" />
 
-      <article className="rounded-md border border-base p-4">
-        <h2 className="text-lg font-medium">Acceptance Criteria</h2>
-        <p className="mt-2 text-sm text-muted">
-          AC list (numbered) + EvalResult mapping (Sprint 11 eval_harness 連動)
-        </p>
-      </article>
+      <Panel
+        description="Acceptance Criteria are operator-facing requirements. EvalResult and approval binding remain server-side."
+        title="Acceptance Criteria"
+        titleId="ticket-detail-acceptance-criteria"
+      >
+        <ol className="grid gap-2 text-sm text-muted">
+          <li className="rounded-md border border-line bg-white p-3">
+            AC-001: Ticket scope, action class, and reviewer-visible risk summary are
+            resolved inside the project boundary.
+          </li>
+          <li className="rounded-md border border-line bg-white p-3">
+            AC-002: AI generated artifact stays candidate output until approval binding
+            succeeds.
+          </li>
+          <li className="rounded-md border border-line bg-white p-3">
+            AC-HARD-02: secret values and provider raw payloads are excluded from
+            evidence display.
+          </li>
+        </ol>
+      </Panel>
 
-      <article className="rounded-md border border-base p-4">
-        <h2 className="text-lg font-medium">Evidence / Claim / Citation</h2>
-        <p className="mt-2 text-sm text-muted">
-          claim_id / source_id / URL / PROV bundle hash (evidence_set_hash で
-          ContextSnapshot に固定、AC-KPI-04 citation_coverage 計測元)
-        </p>
-      </article>
+      <Panel
+        description="Evidence is represented through stable hashes and citation IDs. The UI does not fetch external raw source bodies in this skeleton."
+        title="Evidence / Claim / Citation"
+        titleId="ticket-detail-evidence"
+      >
+        <dl className="grid gap-2 md:grid-cols-3">
+          <div className="rounded-md border border-line bg-white p-3">
+            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+              claim_id
+            </dt>
+            <dd className="mt-2 font-mono text-xs text-ink">claim.ticket.scope.p0</dd>
+          </div>
+          <div className="rounded-md border border-line bg-white p-3">
+            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+              source binding
+            </dt>
+            <dd className="mt-2 font-mono text-xs text-ink">source_id + citation hash</dd>
+          </div>
+          <div className="rounded-md border border-line bg-white p-3">
+            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+              evidence_set_hash
+            </dt>
+            <dd className="mt-2 text-sm text-muted">
+              fixed in ContextSnapshot, raw source body omitted.
+            </dd>
+          </div>
+        </dl>
+      </Panel>
 
-      <article className="rounded-md border border-base p-4">
-        <h2 className="text-lg font-medium">AgentRun Mapping (server-owned)</h2>
-        <p className="mt-2 text-sm text-muted">
-          Ticket と AgentRun は project 境界内で 1:N。AgentRun status 16 状態 +
-          blocked_reason 3 種 を分離表示。
-        </p>
-      </article>
+      <Panel
+        description="Ticket to AgentRun remains a 1:N server-owned mapping. status and blocked_reason are not collapsed into a single enum."
+        title="AgentRun Mapping"
+        titleId="ticket-detail-agentrun-mapping"
+      >
+        <div className="overflow-x-auto rounded-md border border-line">
+          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
+            <caption className="sr-only">
+              Ticket to AgentRun mapping with status and blocked_reason separated.
+            </caption>
+            <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted">
+              <tr>
+                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
+                  run_ref
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
+                  status
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
+                  blocked_reason
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
+                  approval invariant
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="align-top">
+                <th scope="row" className="border-b border-line px-3 py-2">
+                  <code className="font-mono text-xs text-ink">agent_run.latest</code>
+                </th>
+                <td className="border-b border-line px-3 py-2">
+                  <code className="font-mono text-xs text-ink">waiting_approval</code>
+                </td>
+                <td className="border-b border-line px-3 py-2 text-muted">null unless blocked</td>
+                <td className="border-b border-line px-3 py-2 text-muted">
+                  requester actor cannot approve own artifact.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Panel>
 
-      <article className="rounded-md border border-base p-4">
-        <h2 className="text-lg font-medium">ContextSnapshot 10 column</h2>
-        <ul className="mt-2 grid grid-cols-2 gap-1 text-xs text-muted md:grid-cols-3">
-          {[
-            "prompt_pack_version",
-            "prompt_pack_lock",
-            "policy_version",
-            "policy_pack_lock",
-            "repo_state",
-            "tool_manifest",
-            "evidence_set_hash",
-            "provider_continuation_ref",
-            "provider_request_fingerprint",
-            "snapshot_kind"
-          ].map((col) => (
-            <li key={col} className="rounded bg-muted/10 px-2 py-1">
-              <code className="text-xs">{col}</code>
-            </li>
-          ))}
-        </ul>
-      </article>
-    </section>
+      <Panel
+        description="Vault / Doppler inspired metadata layout: 10 fixed ContextSnapshot columns, structured as a definition list, with raw values omitted."
+        title="ContextSnapshot 10 columns"
+        titleId="ticket-detail-context-snapshot"
+      >
+        <ContextSnapshotDefinitionList />
+      </Panel>
+
+      <Panel
+        description="Provider continuation and request fingerprint are references for binding and replay safety, not raw provider payload display."
+        title="Secret and provider payload boundary"
+        titleId="ticket-detail-secret-boundary"
+      >
+        <SecretBoundaryNotice title="Ticket detail SecretBroker boundary" />
+      </Panel>
+    </AdminPageShell>
   );
 }
