@@ -283,17 +283,29 @@ R29 修正まとめ統合計画 §5 QL-D で **open finding zero gate + harness 
 
 QL-D scope の core spec は別 design doc `docs/設計検討/quality_loop_product_artifact.md` (本 QL-D run で新規起票) + DD-03 §14 + DD-07 §14 を正本とする。本 SP-012 update は P0 Exit Master Plan の acceptance contract として上記 spec を必須化する記述のみ。
 
-#### open finding zero gate (A-12 反映、SP-012 Sprint Exit invariant)
+#### open finding zero gate (A-12 反映、SP-012 Sprint Exit invariant、F-PR13-001 + F-PR13-002 P1 adopt 反映)
 
-Sprint Pack 単位の **`conformance` artifact 発行** (= Sprint Exit) を SP-012 P0 Exit acceptance の前提条件として明示:
+Sprint Pack 単位の **`conformance` artifact 発行** (= Sprint Exit) は **non-blocking future gate** として P0.1 SP-023 候補 accepted 後の Sprint Exit から mandatory 化する記述として明示:
 
-1. 全 `review` / `rereview` artifact の `verdict='clean'` (各 round で findings: [] または LOW のみで explicit accept、QL-D `docs/設計検討/quality_loop_product_artifact.md §5/§6` の delegate)
-2. `defer_entry` の `verification` 列が記入済 (LOW finding を `defer` する場合、§14.2 defer structured state schema 準拠)
+1. **最新 review chain (= `revision` linked to current artifact の `review` / `rereview`) の `verdict='clean'`** (findings: [] または `P3` / `info` のみで explicit accept、QL-D `docs/設計検討/quality_loop_product_artifact.md §5/§6` の delegate) **OR** 全 finding に `adoption_decision` (adopt / reject / defer) が記録済 (R1 = `verdict='needs_revision'` でも、R2 / R3 で全 finding が adopt/reject/defer 判定済なら gate 通過 OK、historical R1/R2 は append-only history として保持、gate 対象外、F-PR13-002 P1 adopt)
+2. `defer_entry` の `verification` 列が記入済 (`P3` / `info` finding を `defer` する場合、§14.2 defer structured state schema 準拠)
 3. `must_ship_items[]` 全件達成 (`must_ship_pass_count == must_ship_total`)
 4. `hard_gates_pass[]` 全件 PASS (AC-HARD-01〜07 全件、本 Pack §受け入れ条件と整合)
 5. `quality_kpis_pass[]` 未達 1 個以下 (AC-KPI-01〜05、§Hard Gates 7 / Quality KPIs 5 準拠)
 
-これらいずれか 1 つでも未達なら `conformance.final_verdict='partial'` または `'blocked'`、P0 Exit を block。**現状自由文 (例: `## Review §Pending entries`) の defer entry を structured state へ migration するのは P0.1 SP-023 候補 accepted 後** (本 run では doc-only spec のみ)。
+これらいずれか 1 つでも未達なら `conformance.final_verdict='partial'` または `'blocked'`、Sprint Exit を block。**現状自由文 (例: `## Review §Pending entries`) の defer entry を structured state へ migration するのは P0.1 SP-023 候補 accepted 後** (本 run では doc-only spec のみ)。
+
+**⚠️ P0 期間中 (SP-023 未実装、本 PR commit 時点) の SP-012 P0 Exit acceptance の運用** (F-PR13-001 P1 adopt 反映):
+
+- 上記 5 step は **structured `conformance` artifact** を前提とするが、`quality_loop_*` table / API / event schema は SP-023 候補 (P0.1) で実装される。SP-012 で P0 Exit を declare する Sprint 12 着手時点で structured artifact は未実装
+- そのため、**P0 期間中の SP-012 P0 Exit acceptance は本 §QL-D update の structured gate を mandatory prerequisite にしない**。代わりに以下で acceptance を判定:
+  - **Hard Gates 7** (AC-HARD-01〜07) の自動 pytest / runner PASS — 本 Pack `## 受け入れ条件` の core
+  - **Quality KPIs 5** (AC-KPI-01〜05) の metric 計測 PASS (未達 1 個以下)
+  - **既存 Sprint Pack `## Review` 自由文 evidence** (各 Sprint Exit で `changed` / `verified` / `deferred` / `risks` を記載済の Sprint Pack 群)
+  - **`## 残リスク` の defer entry** (自由文表記、structured 化は P0.1 SP-023 candidate accepted 後)
+- structured `conformance` artifact 発行を **P0.1 SP-023 candidate accepted 後の Sprint Exit から mandatory 化**。本 QL-D update は future implementation gate として記録するのみ、P0 acceptance gate を **block しない**
+
+これにより、SP-023 が未実装のまま P0 acceptance が impossibility paradox に陥る経路を doc レベルで防ぐ。
 
 #### harness incident zero gate (A-12 反映)
 
@@ -326,7 +338,7 @@ defer_entry:
 
 `conformance` artifact 発行時の verification 手順 (`docs/設計検討/quality_loop_product_artifact.md §6.3` 準拠):
 
-1. 全 `review` / `rereview` artifact の `verdict='clean'` を確認
+1. **最新 review chain (= `revision` linked to current artifact の `review` / `rereview`) の `verdict='clean'`** を確認 **OR** 全 finding に `adoption_decision` (adopt / reject / defer) が記録済を確認 (F-PR13-002 P1 adopt 反映)
 2. 全 `defer_entry.resume_condition` + `verification` が記入済を確認
 3. 全 `must_ship_items[]` の `## 受け入れ条件` PASS を確認 (本 Pack §受け入れ条件と一致)
 4. 全 `hard_gates_pass[]` の pytest / 各 hard gate runner PASS を確認
