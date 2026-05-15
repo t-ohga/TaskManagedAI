@@ -276,3 +276,76 @@ P0 Exit artifact / hash chain の生成・検証責務:
   3. または **detached signature** (source host signing key で artifact 署名、SP-012 Phase G PGA-F-002 と同 pattern)
   4. BL-0149 sign-off は AcceptanceArtifactBuilder の出力を **再 verify** (target_hash / evidence_artifact_hash と persisted artifact の actual hash 一致)
 - **実装 Sprint**: Sprint 12 着手時 (本 Pack は spec のみ)
+
+### QL-D Quality Loop product artifact acceptance spec (R29 §5 QL-D 反映、2026-05-15 doc-only、F-P2R2 系列とは独立追記)
+
+R29 修正まとめ統合計画 §5 QL-D で **open finding zero gate + harness incident zero gate + defer structured state** を SP-012 acceptance spec として記録する future implementation gate を以下に追記する。**code / test / schema / migration 変更を一切行わない**、本 Pack の acceptance spec として cross-reference するのみ。
+
+QL-D scope の core spec は別 design doc `docs/設計検討/quality_loop_product_artifact.md` (本 QL-D run で新規起票) + DD-03 §14 + DD-07 §14 を正本とする。本 SP-012 update は P0 Exit Master Plan の acceptance contract として上記 spec を必須化する記述のみ。
+
+#### open finding zero gate (A-12 反映、SP-012 Sprint Exit invariant)
+
+Sprint Pack 単位の **`conformance` artifact 発行** (= Sprint Exit) を SP-012 P0 Exit acceptance の前提条件として明示:
+
+1. 全 `review` / `rereview` artifact の `verdict='clean'` (各 round で findings: [] または LOW のみで explicit accept、QL-D `docs/設計検討/quality_loop_product_artifact.md §5/§6` の delegate)
+2. `defer_entry` の `verification` 列が記入済 (LOW finding を `defer` する場合、§14.2 defer structured state schema 準拠)
+3. `must_ship_items[]` 全件達成 (`must_ship_pass_count == must_ship_total`)
+4. `hard_gates_pass[]` 全件 PASS (AC-HARD-01〜07 全件、本 Pack §受け入れ条件と整合)
+5. `quality_kpis_pass[]` 未達 1 個以下 (AC-KPI-01〜05、§Hard Gates 7 / Quality KPIs 5 準拠)
+
+これらいずれか 1 つでも未達なら `conformance.final_verdict='partial'` または `'blocked'`、P0 Exit を block。**現状自由文 (例: `## Review §Pending entries`) の defer entry を structured state へ migration するのは P0.1 SP-023 候補 accepted 後** (本 run では doc-only spec のみ)。
+
+#### harness incident zero gate (A-12 反映)
+
+Sprint Pack の Sprint Exit 時点で `quality_loop_harness_incident` artifact のうち **`resolved_at` が null** の row が残っているなら、P0 Exit を block:
+
+- harness incident の `recovery_action` が `manual_resolution` でまだ解決していない → `conformance.final_verdict='blocked'`
+- harness incident が `abort` で解決済 → SP-012 `## 残リスク` に `defer_entry` で migration して `resolved_at` 記入
+
+これにより、open harness incident (Codex 失敗 / Claude tool error / CI flake 等) を放置したまま P0 Exit 宣言する経路を fail-closed で防ぐ。
+
+#### `defer` structured state schema (A-15 反映、本 Pack `## 残リスク` の structured 化 future gate)
+
+本 Pack の `## 残リスク` / `## 次スプリント候補` / `## Review §Pending entries` で使われる「`defer`」「Pending」表記を **structured state** として表現する future implementation gate (詳細 schema は `docs/設計検討/quality_loop_product_artifact.md §4`):
+
+```yaml
+defer_entry:
+  defer_id: string (e.g., "DEFER-SP-012-001")
+  owner: actor_id (defer 判定責任 actor、`actors.id` UUID、human or agent)
+  impact: text (P0 Exit / acceptance / AC-HARD/KPI への影響)
+  resume_condition: text (defer 解除条件、accepted ADR / 次 Sprint Pack accepted / dependency resolved 等)
+  blocked_by: [string] (defer 解除 blocker 一覧、ADR id / Sprint Pack id / external dependency)
+  verification: text (defer 解除時の verification 手順)
+  created_at: timestamp
+  resumed_at: timestamp nullable
+```
+
+**現状の自由文 entry migration**: 本 Pack `## Review §Pending entries` で記載されている各 Pending row を `defer_id` 付き structured state へ migration するのは P0.1 SP-023 候補 accepted 後の別 run。本 QL-D run では doc-only spec のみ記録。
+
+#### clean evidence verification 6 step (A-12 反映、SP-012 §検証手順 拡張)
+
+`conformance` artifact 発行時の verification 手順 (`docs/設計検討/quality_loop_product_artifact.md §6.3` 準拠):
+
+1. 全 `review` / `rereview` artifact の `verdict='clean'` を確認
+2. 全 `defer_entry.resume_condition` + `verification` が記入済を確認
+3. 全 `must_ship_items[]` の `## 受け入れ条件` PASS を確認 (本 Pack §受け入れ条件と一致)
+4. 全 `hard_gates_pass[]` の pytest / 各 hard gate runner PASS を確認
+5. 全 `quality_kpis_pass[]` の metric 計測結果が閾値内 (未達 1 個以下)
+6. 全 `quality_loop_harness_incident.resolved_at` が NOT NULL or `defer_entry` 移送済
+
+これら 6 step 全 PASS で `conformance.final_verdict='pass'`、P0 Exit 達成。
+
+#### QL-D 関連 ADR / Sprint Pack (本 update で trigger)
+
+- **SP-023 候補 (P0.1、新規 Pack 起票必須)**: Quality Loop product artifact schema (`quality_loop_artifacts` / `quality_loop_reviews` / `quality_loop_defer_entries` table、event_type 拡張、API endpoint) 実装
+- **ADR-00026 候補 (P0.1、proposed 新規起票必須)**: Quality Loop schema design (ADR Gate Criteria #2/#3 trigger)
+- DD-03 §14 + DD-07 §14 (本 QL-D run で同時追加)
+- `docs/設計検討/quality_loop_product_artifact.md` (本 QL-D run で新規起票、core spec)
+- ADR-00014 (Multi-Agent Orchestration、accepted): Phase C `review_artifacts` table と Quality Loop `review` artifact の物理分離 (本 §14.4 of DD-03)
+
+#### QL-D 関連 rules (本 update で trigger)
+
+- `.claude/rules/agentrun-state-machine.md §1` (AgentRun.status 16 状態固定、本 Pack §QL-D update の物理分離 invariant の根拠)
+- `.claude/rules/sprint-pack-adr-gate.md §131-142` (Sprint Pack Review DoD、本 §open finding zero gate の根拠)
+- `.claude/rules/plan-review.md §122-128` (verification checklist、本 §clean evidence verification と整合)
+- `.claude/rules/cross-source-enum-integrity.md §1` (5+ source 整合、Quality Loop artifact_kind 6 種は P0.1 SP-023 候補で別途実装)
