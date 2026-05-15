@@ -88,13 +88,17 @@ class ClaimRepository(BaseRepository[Claim]):
         for forbidden in _SERVER_OWNED_FIELDS:
             data.pop(forbidden, None)
 
-        # F-PR19-R10-001 P2 adopt: dict payload 経路でも rls_ready: true を server-side で enforce
-        # (Pydantic schema 経由なら field_validator で済むが、dict caller は schema bypass する経路)
-        metadata = data.get("metadata")
-        if isinstance(metadata, dict):
-            metadata["rls_ready"] = True
-        elif metadata is None or not metadata:
-            data["metadata"] = {"rls_ready": True}
+        # F-PR19-R10-001 + F-PR19-R12-001 P2 adopt: dict payload 経路でも rls_ready: true を server-side で enforce。
+        # `_payload_with_tenant_id` が `metadata` を `metadata_` に rename (Pydantic alias 経由 ORM 表現)
+        # しているため、両 key を check (rename 前後)。
+        for key in ("metadata", "metadata_"):
+            metadata = data.get(key)
+            if isinstance(metadata, dict):
+                metadata["rls_ready"] = True
+                break
+        else:
+            # 両 key とも不在 or non-dict、新規 dict assign (rename 後の正しい key で)
+            data["metadata_"] = {"rls_ready": True}
 
         # F-PR19-R2-001 P1 + F-PR19-R1-002 P1 adopt: server-owned UUID 追加前の caller payload に対して
         # secret scan + PROV validation を実行。scan 範囲を minimize し、UUID 型 field (server-owned ID) は
@@ -173,15 +177,16 @@ class ClaimRepository(BaseRepository[Claim]):
         for forbidden in _SERVER_OWNED_FIELDS:
             data.pop(forbidden, None)
 
-        # F-PR19-R11-003 P2 adopt: update 経路でも metadata に rls_ready: true を server-side enforce
-        # (raw dict caller の `metadata={"rls_ready": false}` or 空 dict update 経路で
-        # RLS-ready invariant を破壊させない)
-        if "metadata" in data:
-            metadata = data["metadata"]
-            if isinstance(metadata, dict):
-                metadata["rls_ready"] = True
-            else:
-                data["metadata"] = {"rls_ready": True}
+        # F-PR19-R11-003 + F-PR19-R12-002 P2 adopt: update 経路でも metadata に rls_ready: true を server-side enforce。
+        # `_payload_for_update` も `metadata` → `metadata_` に rename しているため、両 key を check。
+        for key in ("metadata", "metadata_"):
+            if key in data:
+                metadata = data[key]
+                if isinstance(metadata, dict):
+                    metadata["rls_ready"] = True
+                else:
+                    data[key] = {"rls_ready": True}
+                break
 
         if not data:
             return await self.get_claim_by_id(tenant_id, project_id, claim_id)

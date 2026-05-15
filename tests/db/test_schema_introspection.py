@@ -1354,6 +1354,7 @@ async def test_evidence_items_schema_constraints_and_composite_foreign_keys(
         "claim_id",
         "source_id",
         "locator",
+        "relation",
         "relevance_score",
         "metadata",
         "created_at",
