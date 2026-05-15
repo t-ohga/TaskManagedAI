@@ -124,12 +124,20 @@ BOT='chatgpt-codex-connector[bot]'
 REPO=t-ohga/TaskManagedAI
 LATEST_SHA=$(gh pr view "$PR" --json headRefOid -q '.headRefOid')
 # トリガー前の Codex finding 数 baseline (inline + conv、Codex bot のみ filter)
+# Codex PR #7 R5 F-PR7-017 P2 adopt: --paginate は GH CLI version で multi-document
+# emit するため `jq -s 'flatten'` で全 page を flat array に統合 (slurp)。
 PRE_INLINE=$(gh api --paginate "repos/$REPO/pulls/$PR/comments" \
+  | jq -s 'flatten' \
   | jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length')
 PRE_CONV=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+  | jq -s 'flatten' \
   | jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length')
-PRE_REVIEW=$(gh pr view "$PR" --json reviews \
-  -q '[.reviews[] | select(.author.login == "chatgpt-codex-connector")] | length')
+# Codex PR #7 R5 F-PR7-016 P2 adopt: baseline と loop の比較対象を **同じ scope** に
+# 揃える。両方とも HEAD commit 限定 (`commit_id == LATEST_SHA`) で count する
+# (history 全 review count を baseline にすると、new head review が 1 件来ても
+# delta が負になり false negative)。
+PRE_REVIEW_FOR_HEAD=$(gh pr view "$PR" --json reviews \
+  -q "[.reviews[] | select(.author.login == \"chatgpt-codex-connector\" and .commit_id == \"$LATEST_SHA\")] | length")
 
 # Codex F-PR7-014 P3 adopt: 最低 10 分 (大 PR は 20 分推奨)。
 # 6 min は短すぎる、Codex は 6-10 min 後にも new finding 出す。
@@ -137,15 +145,17 @@ for i in $(seq 20); do
   sleep 30
   # 全 inline (paginated, Codex bot only)
   CUR_INLINE=$(gh api --paginate "repos/$REPO/pulls/$PR/comments" \
+    | jq -s 'flatten' \
     | jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length')
   CUR_CONV=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+    | jq -s 'flatten' \
     | jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length')
-  # Codex F-PR7-013 P2 adopt: top-level review は head commit match で判定
+  # Codex F-PR7-013/016 P2 adopt: top-level review は head commit match、baseline も同じ scope
   CUR_REVIEW_FOR_HEAD=$(gh pr view "$PR" --json reviews \
     -q "[.reviews[] | select(.author.login == \"chatgpt-codex-connector\" and .commit_id == \"$LATEST_SHA\")] | length")
   DELTA_INLINE=$((CUR_INLINE - PRE_INLINE))
   DELTA_CONV=$((CUR_CONV - PRE_CONV))
-  DELTA_REVIEW=$((CUR_REVIEW_FOR_HEAD - PRE_REVIEW))
+  DELTA_REVIEW=$((CUR_REVIEW_FOR_HEAD - PRE_REVIEW_FOR_HEAD))
   echo "[$((i*30))s] codex inline=+$DELTA_INLINE conv=+$DELTA_CONV review_for_head=+$DELTA_REVIEW"
   if [[ "$DELTA_INLINE" -gt 0 || "$DELTA_CONV" -gt 0 || "$DELTA_REVIEW" -gt 0 ]]; then
     .claude/scripts/codex_pr_full_review.sh "$PR"

@@ -24,8 +24,12 @@ echo "PR #${PR} — Codex full review check (ALL endpoints, paginated)"
 echo "==================================================================="
 
 echo ""
-echo "=== 1) Inline diff comments (paginated, Codex bot only) ==="
-INLINE_JSON=$(gh api --paginate "repos/${REPO}/pulls/${PR}/comments")
+echo "=== 1) Inline diff comments (paginated + slurped, Codex bot only) ==="
+# Codex PR #7 R5 F-PR7-017 P2 adopt: `gh api --paginate` は GH CLI version に
+# よっては各 page を別 JSON document として emit する。`jq -s 'flatten'` で
+# 確実に全 page を flat array に統合し、複数 page (30 件超 comment) でも
+# 正しく count する。
+INLINE_JSON=$(gh api --paginate "repos/${REPO}/pulls/${PR}/comments" | jq -s 'flatten')
 INLINE_COUNT=$(jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length' <<<"$INLINE_JSON")
 jq -r --arg bot "$BOT" '
   .[] | select(.user.login == $bot)
@@ -34,8 +38,8 @@ jq -r --arg bot "$BOT" '
 echo "(total inline Codex findings: ${INLINE_COUNT})"
 
 echo ""
-echo "=== 2) Conversation comments (paginated, Codex bot only) ==="
-CONV_JSON=$(gh api --paginate "repos/${REPO}/issues/${PR}/comments")
+echo "=== 2) Conversation comments (paginated + slurped, Codex bot only) ==="
+CONV_JSON=$(gh api --paginate "repos/${REPO}/issues/${PR}/comments" | jq -s 'flatten')
 CONV_COUNT=$(jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length' <<<"$CONV_JSON")
 jq -r --arg bot "$BOT" '
   .[] | select(.user.login == $bot)
