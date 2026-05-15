@@ -53,12 +53,13 @@ class EvidenceItemRepository(BaseRepository[EvidenceItem]):
         if "claim_id" in data and data["claim_id"] != claim_id:
             raise ValueError("payload claim_id must match repository claim_id.")
 
+        # F-PR19-R2-002 P1 + F-PR19-R1-003 P1 adopt: server-owned UUID 追加前の caller payload に対して
+        # secret scan を実行。scan 範囲を minimize し、server-owned UUID (project_id / claim_id) は対象外。
+        # caller-supplied UUID (source_id) は scan 対象内、ただし UUID 形式は secret pattern と一致しない設計。
+        assert_no_raw_secret(data, path="$evidence_item_create")
+
         data["project_id"] = project_id
         data["claim_id"] = claim_id
-
-        # F-PR19-R1-003 P1 adopt: persist 前に raw secret / canary scan を実行
-        # (evidence_item metadata / locator に caller 由来 secret が混入する経路を遮断)
-        assert_no_raw_secret(data, path="$evidence_item_create")
 
         item = EvidenceItem(**data)
         self.session.add(item)

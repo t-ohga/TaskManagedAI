@@ -62,12 +62,17 @@ class ClaimRepository(BaseRepository[Claim]):
         if "research_task_id" in data and data["research_task_id"] != research_task_id:
             raise ValueError("payload research_task_id must match repository research_task_id.")
 
+        # F-PR19-R2-001 P1 + F-PR19-R1-002 P1 adopt: server-owned UUID 追加前の caller payload に対して
+        # secret scan + PROV validation を実行。scan 範囲を minimize し、server-owned UUID は対象外。
+        assert_no_raw_secret(data, path="$claim_create")
+
+        # F-PR19-R2-003 P2 adopt: repository create でも PROV validation を実行
+        # (API endpoint bypass で repository direct call の経路を遮断、create と update で同 invariant 維持)
+        if "provenance_json" in data:
+            validate_provenance_json(data["provenance_json"])
+
         data["project_id"] = project_id
         data["research_task_id"] = research_task_id
-
-        # F-PR19-R1-002 P1 adopt: persist 前に raw secret / canary scan を実行
-        # (claim metadata + provenance_json string field に caller 由来 secret が混入する経路を遮断)
-        assert_no_raw_secret(data, path="$claim_create")
 
         claim = Claim(**data)
         self.session.add(claim)
