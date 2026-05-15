@@ -452,6 +452,52 @@ Phase 0-8 で確立した「Codex multi-round review で clean 達成」の work
 - **3 連続失敗 / rate limit / 100 bytes 未満応答**: 自動停止し AskUserQuestion で継続可否確認
 - **CRITICAL / HIGH defer**: `harness-residual-risks.md` の PH<N>-F-NNN 形式で記録、対応 Sprint を明記
 
+#### codex-all-loops 3 phase pattern 推奨 (2026-05-16 確立、本プロジェクト恒久方針)
+
+TaskManagedAI は **完璧を目指す品質基準** (`§6.5.0 絶対教訓` "急がなくていい。それぞれ品質重視で codex をしっかり使い完璧にお願いします。時間よりも品質です。") を採用するため、**単一 review pass では発見しない抜け漏れ** を防ぐ multi-source review 体制を **CRITICAL invariant 直結 code 変更で推奨**:
+
+##### 推奨パターン
+
+| 変更種別 | 推奨 codex-* skill chain | 理由 |
+|---|---|---|
+| **CRITICAL invariant 直結 code** (CLAUDE.md §6.5.0 区別軸の 1 列目: AgentRun 16 状態 / SecretBroker / Provider Compliance / migration / approval decider human-only / 5+ source 整合 / DB schema) | **`codex-all-loops --mode=code`** (codex-impl-loop + codex-adversarial-loop + codex-review-loop の 3 phase chain) | impl-loop で実装、adversarial-loop で敵対視点 / security boundary、review-loop で総合磨き。**3 layer の review で抜け漏れを catch** (例: QL-A で 37 findings closure、Sprint 7-9 audit で 32 findings closure) |
+| **新規 ADR / Sprint Pack / design doc 起票** (heavy plan、CRITICAL gate review) | **`codex-all-loops --mode=plan`** (codex-review-loop + codex-adversarial-loop の 2 phase chain) | review-loop で構造磨き、adversarial-loop で抜け漏れ catch (例: Wave 12 audit 28 round / 108 findings 全件 adopt) |
+| **doc-only future implementation gate spec** (R29 plan §5 QL-X 系等、概念 + future gate 記録のみ) | **PR Codex auto-review 単発 + R1-R3 軽い polish** (§6.5.0 「doc-only spec と code 品質追求は別軸」教訓適用) | doc-only spec の wording 細部は実装時 Sprint Pack で再議論される、infinite polish の cost-benefit 低い |
+| **微修正 (5-10 行 / 1-2 ファイル)** | **Claude 直接 fix + lint / mypy / pytest 必須 (§6.5.0 Claude 単独 commit 許可条件)** | Codex overhead 回避、ただし lint clean 必須 |
+
+##### 「抜け漏れのないチェック体制」の core 原則
+
+1. **multi-source review**: 同 1 reviewer (Codex のみ or Claude のみ) の review pass は完璧でない、複数 phase / 複数視点で重ね review
+2. **review chain の完備**: Phase 0 (Claude direct edit) → Phase 1 (codex-impl-loop or codex-review-loop、構造) → Phase 2 (codex-adversarial-loop、敵対視点) → PR Codex auto-review (3rd review) → user merge (final human gate)
+3. **`verdict: clean` までループ**: 各 phase で `findings: []` or `CRITICAL=0 / HIGH≤2 / new finding 0` まで multi-round
+4. **finding adoption decision** は file:line + evidence_quote ベース、Codex 採否判定 (adopt / reject / defer) で記録、defer は実装時 Sprint Pack 再 review
+5. **failure protection**: 3 連続失敗で hook 自動停止、user AskUserQuestion で継続可否確認
+
+##### 実例 (本プロジェクトでの全 multi-round review 履歴)
+
+| Phase / Sprint | 変更種別 | codex chain | round / findings | 結果 |
+|---|---|---|---|---|
+| Phase 0-8 (Sprint 1-5) | code 変更 | codex-impl-loop or 多 round adversarial | 平均 5-7 round / 100+ findings | clean 達成 |
+| Sprint 6 batch 2 (redaction.py) | security boundary | 多 round | 8 round / 18 findings | clean |
+| Sprint 7-9 audit | code + test | codex-adversarial-review | 13 round / 32 findings | clean |
+| QL-A | doc + ADR + SP-0045 新規起票 | codex-all-loops mode=plan | 6 round / 37 findings | clean |
+| QL-D (PR #13) | doc-only future spec | PR Codex auto-review 11 round | 11 round / 51 findings | clean (本質目的達成済認識 + R11 残 5 defer) |
+| Wave 12 audit (別 session) | plan + ADR polish | codex-all-loops mode=plan | 28 round / 108 findings | clean |
+
+##### 反例 (本推奨を適用しなくて良いケース)
+
+- **doc-only future implementation gate spec** (R29 plan §5 QL-X 系): 本プロジェクトでは §6.5.0 「doc-only spec と code 品質追求は別軸」教訓を適用、軽い PR Codex auto-review R1-R3 polish で merge ready 判断
+- **微修正 (1-2 ファイル / 30 行未満 / 既存 pattern follow / 不変条件触らない)**: Claude 直接 fix で OK、ただし lint / mypy / pytest 全 clean 必須
+- **緊急 hotfix** (ADR Gate Criteria 11 種に該当しない bug fix、user 明示承認あり): user 確認で Claude 直接 fix も可、ただし lint clean + 該当 test PASS + retro Sprint Pack 24h 以内必須
+
+##### 関連 rules
+
+- `.claude/rules/codex-multi-round-workflow.md`: round 推定 / prompt 必須要素 / stale test 対策
+- `.claude/rules/codex-usage-policy.md`: 並列禁止 / failure 検知 / 採否判定 3 分類
+- `.claude/rules/codex-output-contract.md`: 200 KB 出力上限 / 分割 output mode / truncation 検知
+- `.claude/rules/codex-pr-review-checklist.md`: PR Codex auto-review 採否判定 checklist
+- `.claude/rules/branch-and-pr-workflow.md` §3 Phase 1: 「3 phase pattern 推奨」(本 subsection の implementation 詳細)
+
 ### 6.5.5 Skill 起動 priority (Sprint 内の判断)
 
 各 step で Skill を直接起動する場合の優先順位:
