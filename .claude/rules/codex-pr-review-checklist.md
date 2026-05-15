@@ -136,8 +136,9 @@ PRE_CONV=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
 # 揃える。両方とも HEAD commit 限定 (`commit_id == LATEST_SHA`) で count する
 # (history 全 review count を baseline にすると、new head review が 1 件来ても
 # delta が負になり false negative)。
+# Codex F-PR7-019 P2 adopt: commit_id / commit.oid 両 field name に対応
 PRE_REVIEW_FOR_HEAD=$(gh pr view "$PR" --json reviews \
-  -q "[.reviews[] | select(.author.login == \"chatgpt-codex-connector\" and .commit_id == \"$LATEST_SHA\")] | length")
+  -q "[.reviews[] | select((.author.login | startswith(\"chatgpt-codex-connector\")) and ((.commit_id // .commit.oid) == \"$LATEST_SHA\"))] | length")
 
 # Codex F-PR7-014 P3 adopt: 最低 10 分 (大 PR は 20 分推奨)。
 # 6 min は短すぎる、Codex は 6-10 min 後にも new finding 出す。
@@ -151,8 +152,10 @@ for i in $(seq 20); do
     | jq -s 'flatten' \
     | jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length')
   # Codex F-PR7-013/016 P2 adopt: top-level review は head commit match、baseline も同じ scope
+  # Codex PR #7 R5 F-PR7-019 P2 adopt: `gh pr view --json reviews` の commit 識別子は
+  # version によって `.commit_id` または `.commit.oid` のどちらか。両方 fallback で確認。
   CUR_REVIEW_FOR_HEAD=$(gh pr view "$PR" --json reviews \
-    -q "[.reviews[] | select(.author.login == \"chatgpt-codex-connector\" and .commit_id == \"$LATEST_SHA\")] | length")
+    -q "[.reviews[] | select((.author.login | startswith(\"chatgpt-codex-connector\")) and ((.commit_id // .commit.oid) == \"$LATEST_SHA\"))] | length")
   DELTA_INLINE=$((CUR_INLINE - PRE_INLINE))
   DELTA_CONV=$((CUR_CONV - PRE_CONV))
   DELTA_REVIEW=$((CUR_REVIEW_FOR_HEAD - PRE_REVIEW_FOR_HEAD))
@@ -162,8 +165,14 @@ for i in $(seq 20); do
     exit 0
   fi
 done
-# Codex F-PR7-010 P2 adopt: fail-closed
-echo "ERROR: PR #${PR} no new Codex review after 10 min for ${LATEST_SHA:0:7}. DO NOT mark clean." >&2
+# Codex F-PR7-010 + R5 F-PR7-020 P2 adopt: fail-closed + reaction-only clean 注意
+# Codex は新 comment / review を出さず **👍 reaction** だけで「no major issues」を示す
+# こともある (Codex GitHub integration の clean case)。本 polling は reaction を
+# poll しないため、10 min 経過で finding が出なかった場合は **明示的に user 確認**
+# を要する (silent clean 判定禁止)。
+echo "WARNING: PR #${PR} no new Codex inline/conv/review for ${LATEST_SHA:0:7} after 10 min." >&2
+echo "         → Codex が reaction-only clean (👍) で完了した可能性 (`gh api repos/.../reactions`)、" >&2
+echo "           または review 未送信。**clean と自動判定せず**、user 確認後に proceed。" >&2
 exit 1
 ```
 

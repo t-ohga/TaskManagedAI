@@ -33,7 +33,7 @@ INLINE_JSON=$(gh api --paginate "repos/${REPO}/pulls/${PR}/comments" | jq -s 'fl
 INLINE_COUNT=$(jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length' <<<"$INLINE_JSON")
 jq -r --arg bot "$BOT" '
   .[] | select(.user.login == $bot)
-  | "[\(.commit_id[0:7]) \(.created_at)] \(.path):\(.line)\n  \(.body[0:280] | gsub("[\r\n]+"; " "))\n"
+  | "[\(.commit_id[0:7]) \(.created_at)] \(.path):\(.line)\n  \(.body | gsub("[\r\n]+"; " "))\n"
 ' <<<"$INLINE_JSON"
 echo "(total inline Codex findings: ${INLINE_COUNT})"
 
@@ -43,7 +43,7 @@ CONV_JSON=$(gh api --paginate "repos/${REPO}/issues/${PR}/comments" | jq -s 'fla
 CONV_COUNT=$(jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length' <<<"$CONV_JSON")
 jq -r --arg bot "$BOT" '
   .[] | select(.user.login == $bot)
-  | "[\(.created_at)]\n  \(.body[0:280] | gsub("[\r\n]+"; " "))\n"
+  | "[\(.created_at)]\n  \(.body | gsub("[\r\n]+"; " "))\n"
 ' <<<"$CONV_JSON"
 echo "(total conversation Codex comments: ${CONV_COUNT})"
 
@@ -51,18 +51,22 @@ echo ""
 echo "=== 3) Top-level reviews (Codex reviewer only) ==="
 gh pr view "${PR}" --repo "${REPO}" --json reviews -q '.reviews' \
   | jq -r --arg author "$REVIEWER" '
-    .[] | select(.author.login == $author)
-    | "[\(.submittedAt)] state=\(.state)\n  \(.body[0:280] | gsub("[\r\n]+"; " "))\n"
+    .[] | select(.author.login == $author or .author.login == ($author + "[bot]"))
+    | "[\(.submittedAt)] state=\(.state)\n  \(.body | gsub("[\r\n]+"; " "))\n"
   '
 
 echo ""
 echo "=== 4) Merge readiness ==="
 gh pr view "${PR}" --repo "${REPO}" --json reviewDecision,mergeStateStatus,mergeable
 
+# Codex PR #7 R5 F-PR7-021 P2 adopt: top-level Codex review も TOTAL に含める
+# (Codex が inline / conv なしで top-level review body にのみ書く scenario の検出)
+REVIEW_COUNT=$(gh pr view "${PR}" --repo "${REPO}" --json reviews -q '[.reviews[] | select(.author.login == "chatgpt-codex-connector" or .author.login == "chatgpt-codex-connector[bot]")] | length')
+
 echo ""
 echo "=== Summary ==="
-TOTAL=$((INLINE_COUNT + CONV_COUNT))
-echo "Codex total findings (inline + conversation): ${TOTAL}"
+TOTAL=$((INLINE_COUNT + CONV_COUNT + REVIEW_COUNT))
+echo "Codex total findings (inline + conversation + top-level review): ${TOTAL} (i=${INLINE_COUNT} c=${CONV_COUNT} r=${REVIEW_COUNT})"
 if [ "${TOTAL}" -eq 0 ]; then
   echo "✅ NO Codex findings detected (review 未送信の可能性は polling 側で確認)"
 else
