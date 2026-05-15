@@ -140,6 +140,12 @@ class ClaimRepository(BaseRepository[Claim]):
             data.pop("project_id")
         data.pop("research_task_id", None)
 
+        # F-PR19-R6-005 P2 adopt: update でも server-owned field (id / created_at / updated_at) を
+        # caller payload から pop (caller が id を update 試行する経路を遮断)
+        _SERVER_OWNED_FIELDS = {"id", "created_at", "updated_at", "tenant_id"}
+        for forbidden in _SERVER_OWNED_FIELDS:
+            data.pop(forbidden, None)
+
         if not data:
             return await self.get_claim_by_id(tenant_id, project_id, claim_id)
 

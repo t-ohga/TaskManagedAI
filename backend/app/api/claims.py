@@ -55,7 +55,12 @@ def _correlation_id(request: Request) -> str:
     value = request.headers.get("x-correlation-id")
     if value and _TRACE_ID_RE.fullmatch(value):
         return value
-    return str(getattr(request.state, "request_id", ""))
+    # F-PR19-R6-003 P1 adopt: fallback request_id も sanitize、framework が caller-controlled
+    # request_id を state に set する経路でも secret-shaped string を audit に保存させない。
+    fallback = str(getattr(request.state, "request_id", ""))
+    if fallback and _TRACE_ID_RE.fullmatch(fallback):
+        return fallback
+    return ""
 
 
 def _trace_id(request: Request) -> str | None:

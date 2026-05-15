@@ -76,7 +76,7 @@ def test_validate_provenance_json_rejects_unknown_relation_reference() -> None:
     payload = _valid_full_bundle()
     payload["used"] = [{"activity": "activity:missing", "entity": "entity:source"}]
 
-    with pytest.raises(ProvValidationError, match="unknown ids"):
+    with pytest.raises(ProvValidationError, match=r"unknown id\(s\)"):
         validate_provenance_json(payload)
 
 

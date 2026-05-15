@@ -29,6 +29,19 @@ class EvidenceItemRepository(BaseRepository[EvidenceItem]):
     async def list(self, tenant_id: int) -> builtins.list[EvidenceItem]:
         raise NotImplementedError("Use list_evidence_items_by_claim(...).")
 
+    async def update(
+        self,
+        tenant_id: int,
+        id: UUID,
+        payload: dict[str, Any],
+    ) -> EvidenceItem | None:
+        # F-PR19-R6-002 P1 adopt: BaseRepository.update を override で block、
+        # tenant-only 経路で project boundary を bypass する経路を遮断
+        # (evidence_item は project-scoped、cross-project mutate を防ぐ)
+        raise NotImplementedError(
+            "evidence_items are immutable in P0; use delete_evidence_item + create_evidence_item."
+        )
+
     async def delete(self, tenant_id: int, id: UUID) -> int:
         raise NotImplementedError("Use delete_evidence_item(...).")
 
@@ -52,6 +65,12 @@ class EvidenceItemRepository(BaseRepository[EvidenceItem]):
             raise ValueError("payload project_id must match repository project_id.")
         if "claim_id" in data and data["claim_id"] != claim_id:
             raise ValueError("payload claim_id must match repository claim_id.")
+
+        # F-PR19-R6-001 P2 adopt: dict caller が server-owned field (id / created_at / updated_at) を
+        # payload に passing する経路を遮断 (claim.py と同 pattern、uuid_generate_v4() default 保護)
+        _SERVER_OWNED_FIELDS = {"id", "created_at", "updated_at"}
+        for forbidden in _SERVER_OWNED_FIELDS:
+            data.pop(forbidden, None)
 
         # F-PR19-R2-002 P1 + F-PR19-R1-003 P1 adopt: server-owned UUID 追加前の caller payload に対して
         # secret scan を実行。UUID 型 field (source_id 等) は JSON-serializable でないため scan 対象から
