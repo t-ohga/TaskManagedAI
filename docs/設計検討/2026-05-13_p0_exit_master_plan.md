@@ -34,7 +34,7 @@ remaining BL 概算 (正本 BL ID = PLAN-01 docs/実装計画/P0_バックログ
 - **Sprint 10**: 10 BL (`BL-0029c + BL-0113〜0121`)
 - **Sprint 11**: 12 本来 (`BL-0122〜0130 + BL-0158/0159/0163`) + 15 carry-over = **27 BL**
 - **Sprint 11.5**: 11 本来 (`BL-0131〜0139 + BL-0156/0159b`) + 3 carry-over = **14 BL**
-- **Sprint 12**: 12 本来 (`BL-0140〜0149 + BL-0164/0166`) + Phase G strengthening 既存 SP-012 反映済 = **12 BL + 11 PGA file 群**
+- **Sprint 12**: 12 本来 (`BL-0140b + BL-0141〜0149 + BL-0164/0166` = 1 + 9 + 2 = **12 BL count 維持**) + R29 §6 U-01 で **gated add `BL-0140a` (Research-to-PR representative flow、Sprint 12 表 2 で acceptance、target_days 再見積もり対象)** ※ 旧 BL-0140 は R29 §3.5.* D-002 で三分割: BL-0140a=Research-to-PR (gated add、SP-012 表 2) / BL-0140b=Ticket-to-PR smoke (旧 BL-0140 後継、SP-012 表 1 維持)、BL-0140c=alerting rules は SP-0115 へ移送 + Phase G strengthening 既存 SP-012 反映済 = **12 BL + 1 gated add + 11 PGA file 群**
 - **Phase 5**: 3 BL (`BL-0082/0083/0084`) + ADR-00012 accepted = **4 task**
 - **累計**: 本来 BL = 10 + 27 + 14 + 12 = **63 BL** + Phase G strengthening 11 + Phase 5 4 task = **78 work item** (Codex R2 F-R2-003 adopt: 82 表記削除)
 
@@ -309,7 +309,7 @@ uv run python -m backend.app.services.repoproxy.permission_matrix --check \
 - BL-0137: Prometheus metrics endpoint + scrape target
 - BL-0138: Loki promtail config + log shipping
 - BL-0139: Grafana dashboard (Hard Gates + KPIs)
-- BL-0140: alerting rules (approval pending > 4h / budget exceeded / run_failed spike)
+- BL-0140c: alerting rules (approval pending > 4h / budget exceeded / run_failed spike、**alert は signal-only invariant: R2 P2R1 F-P2R1-016 反映で `approval_requests` の `decision` / `status` を alert 発火で変更せず、approval state 変更 / run resume / re-approval は human approval row 必須**、auto-approve / auto-retry 経路で human-only approval decider invariant を bypass しない) ※ R29 §3.5.* D-002 で BL-0140 三重 collision (Research-to-PR / Ticket-to-PR / alerting rules) 解消 → 別 ID 割当、`docs/実装計画/P0_バックログ.md` も同期更新済 (BL-0140a/0140b は SP-012、BL-0140c は本 Sprint 11.5 = SP-0115)
 - BL-0141: private staging Tailscale GitHub Action
 - BL-0142: WAL archiving + PITR drill (AC-HARD-04 source)
 - BL-0143: secret rotation drill + canary preflight

@@ -41,3 +41,6 @@ build/
 
 # Next.js auto-generated type reference (Next.js writes "should not be edited")
 frontend/next-env.d.ts
+
+# TypeScript incremental build info (doc-only PR scope 保護、R2 P2R1 F-P2R1-015 反映)
+*.tsbuildinfo
