@@ -1,12 +1,14 @@
 /**
  * Sprint 9 BL-0111: Playwright E2E for Sprint 9 admin pages.
  *
- * Sprint 9 batches 1-2 で実装した 5 page (Tickets / Runs / Audit / Settings +
+ * Sprint 9 batches 1-2 で実装した 6 page (Tickets / Runs / Audit / Settings +
  * dynamic [id] routes) が Server Component で render され、ARIA label /
  * heading / navigation が正しく出ることを verify。
  */
 
 import { expect, test, type Page } from "@playwright/test";
+
+const SESSION_COOKIE_NAME = "taskmanagedai_session";
 
 function readDevLoginToken(): string {
   return (
@@ -16,11 +18,30 @@ function readDevLoginToken(): string {
   );
 }
 
+async function waitForDevSessionCookie(page: Page): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const cookies = await page.context().cookies();
+        return cookies.some(
+          (cookie) => cookie.name === SESSION_COOKIE_NAME && cookie.value.length > 0
+        );
+      },
+      {
+        message: "Dev session cookie should be persisted before protected route navigation.",
+        timeout: 10_000
+      }
+    )
+    .toBe(true);
+}
+
 async function loginAsDev(page: Page) {
   await page.goto("/login?next=/dashboard");
   await page.getByLabel("Dev login token").fill(readDevLoginToken());
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/dashboard$/u);
+  await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible();
+  await waitForDevSessionCookie(page);
 }
 
 test("Sprint 9: tickets list page renders with ARIA + heading", async ({
