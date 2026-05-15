@@ -88,6 +88,14 @@ class ClaimRepository(BaseRepository[Claim]):
         for forbidden in _SERVER_OWNED_FIELDS:
             data.pop(forbidden, None)
 
+        # F-PR19-R10-001 P2 adopt: dict payload 経路でも rls_ready: true を server-side で enforce
+        # (Pydantic schema 経由なら field_validator で済むが、dict caller は schema bypass する経路)
+        metadata = data.get("metadata")
+        if isinstance(metadata, dict):
+            metadata["rls_ready"] = True
+        elif metadata is None or not metadata:
+            data["metadata"] = {"rls_ready": True}
+
         # F-PR19-R2-001 P1 + F-PR19-R1-002 P1 adopt: server-owned UUID 追加前の caller payload に対して
         # secret scan + PROV validation を実行。scan 範囲を minimize し、UUID 型 field (server-owned ID) は
         # JSON-serializable でないため scan 対象から除外 (assert_no_raw_secret は dict[str, JsonValue] を期待)。

@@ -91,6 +91,13 @@ class EvidenceItemRepository(BaseRepository[EvidenceItem]):
         for forbidden in _SERVER_OWNED_FIELDS:
             data.pop(forbidden, None)
 
+        # F-PR19-R10-002 P2 adopt: dict payload 経路でも rls_ready: true を server-side で enforce
+        metadata = data.get("metadata")
+        if isinstance(metadata, dict):
+            metadata["rls_ready"] = True
+        elif metadata is None or not metadata:
+            data["metadata"] = {"rls_ready": True}
+
         # F-PR19-R2-002 P1 + F-PR19-R1-003 P1 adopt: server-owned UUID 追加前の caller payload に対して
         # secret scan を実行。UUID 型 field (source_id 等) は JSON-serializable でないため scan 対象から
         # 除外 (assert_no_raw_secret は dict[str, JsonValue] を期待、UUID 値は SQL Layer で型保証される)。
