@@ -396,3 +396,117 @@ E2E test 追加候補:
 合計: **5 skeleton + 1 既存 + 3 partial + 1 defer = 10 件、Sprint 9 内では
 "functional complete" には到達しない (=`skeleton_pending_backend` status と
 整合)**。
+
+## QL-E update (R29 §5 QL-E、2026-05-15 doc-only、SP-009 must_ship delta spec)
+
+本 section は QL-E Quality Loop run で `docs/設計検討/修正まとめ統合計画.md` の PARTIAL_ADOPT P-03 / P-04 / P-13 / P-14 + DEFER mitigation D-006 を **future implementation gate spec として記録**する追記。**code/test/schema/migration/UI 実装変更を一切行わない**、各 must_ship 拡張案の acceptance spec として cross-reference するのみ。U-02 (must_ship lane/summary 範囲) / U-03 (`request_revision` を P0 か P0.1 か) は **spec 記録のみ、決定は別 run** (Sprint 9 batch 4+ または P0.1 SP-009-5 候補 で user 確認後)。
+
+### Q-E.1 P-03: must_ship 拡張案 spec (U-02 で確定後)
+
+R29 plan P-03 で提案された SP-009 must_ship 拡張 4 軸を spec として記録:
+
+| # | 拡張軸 | spec | U-02 確定後の landing |
+|---:|---|---|---|
+| 1 | **Today / Inbox lane rename** (Board → Today/Inbox control plane、P-13 と統合) | Daily Today (今日 due / open) + Inbox (未割当 / 新規) の 2 lane control plane、Board は rename or hide | SP-009 must_ship に 1 route 追加、または defer_if_over_budget |
+| 2 | **Decision packet 拡張** | Approval 詳細表示で artifact_hash / diff_hash / policy_version / provider_request_fingerprint / stale_after_event_seq 全 5 hash を表示、stale invalidation 状態を visible 化 | SP-009 must_ship に 1 component 追加、ADR-00009 §採用案 stale invalidation 5 種 と整合 |
+| 3 | **Agent Runs workspace** | 進行中 AgentRun の状態 (16 state + blocked_reason 3 種) + ContextSnapshot 10 列 view + AgentRunEvent timeline | SP-009 must_ship に 1 page 追加、または既存 Agent Runs page 拡張 |
+| 4 | **Execution Log summary lane** | Sprint Pack lifecycle event (QL-D Quality Loop product artifact 6 種) の structured 表示 + `raw_event_anchor` で raw provider response 等の redacted-by-default reference | SP-009 must_ship に 1 lane 追加、QL-D Quality Loop artifact concept (DD-03 §14) と cross-reference |
+
+U-02 確定: must_ship lane/summary 範囲は user 確認待ち、本 run では spec 記録のみ。確定後の選択肢:
+
+- **A safe (Recommended)**: must_ship 追加は lane/summary/Agent Runs workspace のみ (3 軸)、Decision packet 拡張は `defer_if_over_budget` 列に分離。Notification triage / Newcomer Path / minimal KPI strip / request_revision は P-04 と統合して U-03 で別途確認
+- **B aggressive**: 全 4 軸 + P-14 Notification triage を must_ship に追加 (target_days / max_days 超過 risk)
+
+### Q-E.2 P-04: Approval `request_revision` action spec (U-03 で確定後)
+
+R29 plan P-04 で提案された Approval `request_revision` action の acceptance spec を記録 (採用時は ADR-00003 + ADR-00009 update 経由):
+
+```yaml
+approval_request_revision:
+  # 採用時、Approval flow に 4 状態目を追加: pending / approved / rejected / revision_requested
+  # ただし revision_requested は terminal ではない、AgentRun が修正 artifact を提出後に同 approval row が pending に戻る or new approval row が作成される
+  
+  acceptance_spec:
+    # 1. 旧 approval invalidation
+    old_approval_invalidated: true  # status = 'revision_requested' の前 approval row は invalidated に遷移
+    invalidation_reason: text  # decider が記入する自由文 (例: "diff includes forbidden path .env, please remove")
+    
+    # 2. New artifact hash binding
+    new_artifact_hash: string  # AgentRun が修正 artifact を提出時の sha256、旧 artifact_hash と異なることを DB CHECK で enforce
+    
+    # 3. Policy / diff revalidation
+    policy_relinted_at: timestamp  # 修正 artifact に対して policy lint を再実行した時刻、policy_version と invalidated approval の policy_version 比較
+    diff_revalidated_at: timestamp  # 修正 diff の path / size / forbidden path / dangerous command 再 check
+    
+    # 4. OperationContext fingerprint
+    operation_context_fingerprint: string  # 修正後の OperationContext canonical schema から再計算 (SecretBroker fingerprint pattern と整合)、旧 fingerprint と異なることを DB CHECK で enforce
+  
+  invariants:
+    # decider human-only (`.claude/rules/multi-agent-orchestration.md §52-58` 維持)
+    decider_human_only: true
+    
+    # 自己 approval 禁止 (`.claude/rules/server-owned-boundary.md §4` 維持)
+    requester_decider_different: true
+    
+    # 4 hash 全件 mismatch 時は revision_requested 状態の approval row を resume せず new approval row を要求
+    stale_revision_request_invalidation: true
+```
+
+U-03 確定: `request_revision` を P0 か P0.1 か は user 確認待ち、本 run では spec 記録のみ。確定後の選択肢:
+
+- **A safe**: P0.1 defer (現状 Approval flow 3 状態維持、`request_revision` 追加は P0.1 SP-009-5 候補)
+- **B P0 採用**: 上記 4 hash binding + invariants 全件を SP-009 batch 4+ で実装、ADR-00003 + ADR-00009 update
+
+### Q-E.3 P-13: Today / Inbox control plane 再定義 (P-03 #1 統合)
+
+P-03 #1 と統合、本 §QL-E update 内で同 spec。
+
+### Q-E.4 P-14: Notification triage queue spec (P0 か P0.1 か U-03 で確認)
+
+R29 plan P-14 で提案された Notification triage queue の minimal schema を記録 (P0 採用時は SP-009 must_ship 追加 + DD-07 §audit_events 拡張):
+
+```yaml
+notification_triage_entry:
+  notification_id: uuid
+  tenant_id: bigint
+  required_action: enum {approval_pending, policy_blocked, budget_exceeded, run_failed, harness_incident_unresolved}
+  severity: enum {info, warning, critical}
+  due_at: timestamp nullable  # SLO / deadline 設定の場合
+  snooze_until: timestamp nullable  # ユーザーが snooze した場合の resume 時刻
+  dedupe_key: string  # 同 type + 同 source の notification を group 化、N+1 notification storm 防止
+  resolved_at: timestamp nullable
+  resolved_by_actor_id: actor_id nullable  # human or system auto-resolve
+```
+
+U-03 確定: P0 minimal queue か P0.1 full lifecycle か は user 確認待ち、本 run では spec 記録のみ。
+
+- **A safe**: P0 では minimal model (4 fields + ADR-00003 event schema 拡張のみ)、full lifecycle は P0.1 SP-009-5
+- **B P0 採用**: 上記 minimal schema 全件を SP-009 batch 4+ で実装、ADR-00003 event schema 拡張 + ADR Gate Criteria #3 trigger
+
+### Q-E.5 D-006 mitigation (SP-009 関連 defer 集合)
+
+R29 plan §3.3 D-006 で提案された SP-009 関連 defer 集合の mitigation spec を記録 (本 run では mitigation を doc 化のみ、実装は P0.1 SP-009-5 候補 or 個別 BL-XXXX として):
+
+- D-006.1: Newcomer Path (initial tenant onboarding UI) → P0.1 SP-009-5 (must_ship 拡張から defer)
+- D-006.2: Minimal KPI strip (top header KPI display) → P0.1 SP-009-5 (must_ship 拡張から defer)
+- D-006.3: Advanced Approval Inbox (bulk action / 高度 filter / policy editor) → ADR-00009 §採用案で Sprint 9 defer 済、QL-E でも Sprint 9 内 must_ship 追加しない
+
+### Q-E.6 Realtime UI exclusion (本 SP-009 で transcript event-log reference のみ)
+
+`docs/adr/00023_interaction_gateway_realtime_intake.md` (proposed、QL-H run で同時起票、PR #15 で起票済) と整合:
+
+- 本 SP-009 must_ship に **Realtime 機能関連の route / component を追加しない**
+- 既存 Sprint 9 batch 1-3 (commit `0813e53` / `ceb28c8` / `2e96222`) で実装した 6 page skeleton で Realtime UI 関連の placeholder がある場合は **transcript event-log reference のみ** (raw audio / voice consent UI 等は permanent reject)
+- ADR-00023 §13 runtime wiring 禁止 8 項目 を本 Sprint 9 acceptance spec に cross-reference として記録
+
+### Q-E.7 関連 ADR / Sprint Pack (QL-E update)
+
+- **ADR-00023 (proposed、本 QL-H run で同時起票)**: Realtime intake BLOCK、本 Q-E.6 で SP-009 と cross-reference
+- **ADR-00003 (API contract、accepted) update 候補**: P-04 採用時の `request_revision` event schema + P-14 採用時の Notification queue event schema
+- **ADR-00009 (Action class taxonomy、accepted) update 候補**: P-04 採用時の `task_write` 等 action_class の revision_requested 状態と整合
+- **SP-009-5 候補 (P0.1)**: U-02 / U-03 で P0 採用却下時の defer 先、本 Pack で reserve
+- 既存 Sprint 9 batch 1-3 commit (`0813e53` / `ceb28c8` / `2e96222`): 本 Q-E update は既存 commit を破壊せず、追加 must_ship を future spec として記録するのみ
+
+### Q-E.8 QL-D 教訓適用
+
+本 update は `.claude/CLAUDE.md §6.5.0` (PR #14 で追加) の **「doc-only future spec と code 変更の品質追求は別軸」教訓** を適用。本質目的 (P-03/P-04/P-13/P-14/D-006 の spec 記録 + U-02/U-03 user approval block 明示) は Phase 0 で達成済、R1-R3 軽い polish で merge ready 判断。残 wording polish は U-02 / U-03 確定後の SP-009 batch 4+ で再議論する。
