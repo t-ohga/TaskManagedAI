@@ -295,17 +295,18 @@ Sprint Pack 単位の **`conformance` artifact 発行** (= Sprint Exit) は **no
 
 これらいずれか 1 つでも未達なら `conformance.final_verdict='partial'` または `'blocked'`、Sprint Exit を block。**現状自由文 (例: `## Review §Pending entries`) の defer entry を structured state へ migration するのは P0.1 SP-023 候補 accepted 後** (本 run では doc-only spec のみ)。
 
-**⚠️ P0 期間中 (SP-023 未実装、本 PR commit 時点) の SP-012 P0 Exit acceptance の運用** (F-PR13-001 P1 adopt 反映):
+**⚠️ P0 期間中 (SP-023 未実装、本 PR commit 時点) の SP-012 P0 Exit acceptance の運用** (F-PR13-001 P1 + F-PR13-R2-003 P2 adopt 反映):
 
-- 上記 5 step は **structured `conformance` artifact** を前提とするが、`quality_loop_*` table / API / event schema は SP-023 候補 (P0.1) で実装される。SP-012 で P0 Exit を declare する Sprint 12 着手時点で structured artifact は未実装
-- そのため、**P0 期間中の SP-012 P0 Exit acceptance は本 §QL-D update の structured gate を mandatory prerequisite にしない**。代わりに以下で acceptance を判定:
+- 上記 5 step は **structured `conformance` artifact** + **`quality_loop_harness_incident` table** を前提とするが、両者の table / API / event schema は SP-023 候補 (P0.1) で実装される。SP-012 で P0 Exit を declare する Sprint 12 着手時点で structured artifact は未実装
+- そのため、**P0 期間中の SP-012 P0 Exit acceptance は本 §QL-D update の structured gate (`conformance` artifact + `quality_loop_harness_incident` 両方) を mandatory prerequisite にしない**。代わりに以下で acceptance を判定:
   - **Hard Gates 7** (AC-HARD-01〜07) の自動 pytest / runner PASS — 本 Pack `## 受け入れ条件` の core
   - **Quality KPIs 5** (AC-KPI-01〜05) の metric 計測 PASS (未達 1 個以下)
   - **既存 Sprint Pack `## Review` 自由文 evidence** (各 Sprint Exit で `changed` / `verified` / `deferred` / `risks` を記載済の Sprint Pack 群)
   - **`## 残リスク` の defer entry** (自由文表記、structured 化は P0.1 SP-023 candidate accepted 後)
-- structured `conformance` artifact 発行を **P0.1 SP-023 candidate accepted 後の Sprint Exit から mandatory 化**。本 QL-D update は future implementation gate として記録するのみ、P0 acceptance gate を **block しない**
+  - **harness incident の自由文記録** (Sprint Pack `## Review §Pending entries` 等で 自由文 incident 記録、structured `quality_loop_harness_incident` 表は P0.1 SP-023 候補で実装)
+- structured `conformance` artifact + structured `quality_loop_harness_incident` 発行を **P0.1 SP-023 candidate accepted 後の Sprint Exit から mandatory 化**。本 QL-D update は future implementation gate として記録するのみ、P0 acceptance gate を **block しない** (F-PR13-R2-003 P2 adopt: harness_incident gate も同様に non-blocking future gate として扱う)
 
-これにより、SP-023 が未実装のまま P0 acceptance が impossibility paradox に陥る経路を doc レベルで防ぐ。
+これにより、SP-023 が未実装のまま P0 acceptance が impossibility paradox に陥る経路 (`conformance` artifact + `quality_loop_harness_incident` 両者) を doc レベルで防ぐ。
 
 #### harness incident zero gate (A-12 反映)
 
