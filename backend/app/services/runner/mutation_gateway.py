@@ -154,10 +154,20 @@ def _validate_allowlist(
         for root in (request.workspace_root, request.artifact_outbox, request.temp_root)
         if root
     )
+    # Codex PR #1 R1 F-PR1-003 P2 adopt: relative path は `request.workspace_root` を
+    # 基準に resolve する。service process の cwd を使うと、`backend/foo.py` の
+    # ような repo-relative path が `/Users/.../backend/foo.py` に resolve され、
+    # `/tmp/runner-workspace/...` 配下の allowed_roots と一致しなくなる。
+    workspace_base = (
+        _Path(request.workspace_root) if request.workspace_root else None
+    )
     violations: list[str] = []
     for path in request.target_paths:
         try:
-            resolved = str(_Path(path).resolve(strict=False))
+            path_obj = _Path(path)
+            if not path_obj.is_absolute() and workspace_base is not None:
+                path_obj = workspace_base / path_obj
+            resolved = str(path_obj.resolve(strict=False))
         except OSError:
             violations.append(path)
             continue

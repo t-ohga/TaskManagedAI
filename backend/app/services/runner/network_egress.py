@@ -105,6 +105,19 @@ _METADATA_HOSTS: Final[frozenset[str]] = frozenset(
     }
 )
 
+# Codex PR #1 R1 F-PR1-006 P2 adopt: Loopback hostnames (RFC 6761 + common aliases).
+# `_classify_ip` は IP literal にしか効かないため、hostname `localhost` 等を allowlist
+# check の前に unconditionally deny し、`NetworkPolicy.allowlist({"localhost"})` でも
+# loopback 経由の cloud SSRF / 内部 service exfiltration を防止する。
+_LOOPBACK_HOSTNAMES: Final[frozenset[str]] = frozenset(
+    {
+        "localhost",
+        "localhost.localdomain",
+        "ip6-localhost",
+        "ip6-loopback",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class EgressViolation:
@@ -319,6 +332,19 @@ def check_egress_allowed(
     if host in _METADATA_HOSTS:
         return EgressViolation(
             reason=EgressDenyReason.METADATA_SERVICE_DENIED,
+            canonical_host=host,
+            canonical_port=port,
+            raw_target=raw_target,
+        )
+
+    # Codex PR #1 R1 F-PR1-006 P2 adopt: hostname `localhost` 等を loopback として
+    # allowlist check の前に deny する。`NetworkPolicy.allowlist({"localhost"})` でも
+    # `_classify_ip` は IP literal にしか効かず hostname `localhost` を通過させ得る。
+    # loopback host name を unconditionally deny し、allowlist 側で誤許可されない
+    # ようにする (cloud SSRF 防御の一環)。
+    if host.lower() in _LOOPBACK_HOSTNAMES:
+        return EgressViolation(
+            reason=EgressDenyReason.LOOPBACK_DENIED,
             canonical_host=host,
             canonical_port=port,
             raw_target=raw_target,
