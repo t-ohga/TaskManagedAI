@@ -88,6 +88,14 @@ def upgrade() -> None:
         """
     )
 
+    # F-PR19-R8-002 P2 adopt: list_claims_by_research_task (tenant_id, project_id, research_task_id)
+    # filter + order by created_at, id の listing 用 index 追加 (performance optimization)。
+    op.create_index(
+        "claims_ix_tenant_project_research_task_created",
+        "claims",
+        ["tenant_id", "project_id", "research_task_id", "created_at", "id"],
+    )
+
     op.create_table(
         "evidence_items",
         sa.Column(
@@ -158,6 +166,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS evidence_items_set_updated_at ON evidence_items")
     op.execute("DROP TRIGGER IF EXISTS claims_set_updated_at ON claims")
+    op.drop_index("claims_ix_tenant_project_research_task_created", table_name="claims")
 
     op.drop_table("evidence_items")
     op.drop_table("claims")

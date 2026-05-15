@@ -19,9 +19,12 @@ class EvidenceItemBase(BaseModel):
     @field_validator("metadata", mode="before")
     @classmethod
     def _validate_metadata_is_dict(cls, value: object) -> dict[str, Any]:
+        # F-PR19-R8-003 P2 adopt: caller-supplied metadata に rls_ready: true を merge (RLS-ready invariant)
         if not isinstance(value, dict):
             raise ValueError("metadata must be a JSON object.")
-        return value
+        result = dict(value)
+        result.setdefault("rls_ready", True)
+        return result
 
 
 class EvidenceItemCreate(EvidenceItemBase):

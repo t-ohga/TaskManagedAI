@@ -20,6 +20,7 @@ class ClaimBase(BaseModel):
     @field_validator("provenance_json", mode="before")
     @classmethod
     def _validate_provenance_json_is_dict(cls, value: object) -> dict[str, Any]:
+        # F-PR19-R8-001 P2 adopt: raw value を error message に含めない (sanitized message のみ)
         if not isinstance(value, dict):
             raise ValueError("provenance_json must be a JSON object.")
         return value
@@ -27,9 +28,13 @@ class ClaimBase(BaseModel):
     @field_validator("metadata", mode="before")
     @classmethod
     def _validate_metadata_is_dict(cls, value: object) -> dict[str, Any]:
+        # F-PR19-R8-003 P2 adopt: caller が metadata={} を passing する場合も rls_ready: true を server-side で merge
+        # (rls_ready は RLS-ready metadata invariant、caller-supplied metadata で消失しないよう preserve)
         if not isinstance(value, dict):
             raise ValueError("metadata must be a JSON object.")
-        return value
+        result = dict(value)
+        result.setdefault("rls_ready", True)
+        return result
 
 
 class ClaimCreate(ClaimBase):
