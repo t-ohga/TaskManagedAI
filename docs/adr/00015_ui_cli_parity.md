@@ -140,3 +140,23 @@ mutating API call (Tier 2/3) では:
 ## 関連
 
 - ADR-00014 / ADR-00007 update / Phase C §C-4 / §11.3 PE-F-006
+
+## QL-F update (R29 §5 QL-F、2026-05-15 doc-only、CLI ContextResolver + canonical 選択肢 spec)
+
+本 section は QL-F Quality Loop run で R29 plan PARTIAL_ADOPT P-05 (CLI canonical `tm`→`tmai` 反転) + P-06 (ContextResolver state machine) を **future implementation gate spec として記録**する追記。U-04 (CLI canonical 反転採否) は **spec 記録のみ、決定は別 run**。
+
+### QL-F.1 詳細 spec は docs/cli/README.md に集約
+
+QL-F run で新規起票した `docs/cli/README.md` (proposed design doc) に CLI canonical 選択肢 + ContextResolver state machine + 13 capability matrix + mode matrix + fail-closed acceptance + taskhub 境界を集約。
+
+### QL-F.2 同一 PR 一括更新の future requirement (U-04 確定後)
+
+U-04 (B 反転採用) 確定時、本 ADR-00015 + SP-016 + SP-012 + docs/cli/README.md + CLI test file を **同一 PR で doc-only 一括更新**。CLI test file 更新は反転実装 Sprint Pack accepted 後の別 run。
+
+### QL-F.3 ADR-00024 placeholder 関係
+
+ADR-00024 (project auto-discovery + memory boundary、proposed、QL-G で起票予定) との cross-reference: SP-016 に `<!-- ADR-00024 placeholder -->` marker のみ、実 ADR 起票は QL-G run。
+
+### QL-F.4 QL-D 教訓適用
+
+`.claude/CLAUDE.md §6.5.0` (PR #14) の「doc-only future spec と code 品質追求は別軸」教訓を適用。本質目的 (CLI canonical 選択肢 spec + ContextResolver state machine spec + capability matrix spec + 同一 PR 一括更新 future requirement + ADR-00024 placeholder) は本 run の Phase 0 で達成済、R1-R3 軽い polish で merge ready 判断。
