@@ -126,12 +126,24 @@ risks:
   - 複合 FK: `(tenant_id, project_id, search_run_id)` / `(tenant_id, project_id, claim_id)` / `(tenant_id, project_id, evidence_source_id)` で閉じる
 - **GroundingSupport acceptance spec** (生成 artifact ↔ Evidence 関連付け、citation_coverage source):
   - 必須 column: `tenant_id` / `project_id` / `generated_artifact_id` / `agent_run_id` / `claim_id` / `evidence_source_id` / `support_type (cite|paraphrase|quote)` / `confidence_score`
-  - **複合 FK (Codex F-QLC-002 P1 adopt)**: `generated_artifact_id` だけでは不足 — `artifacts` table は project を直接持たず `agent_runs` 経由で project が決まるため、`(tenant_id, project_id, agent_run_id) references agent_runs(tenant_id, project_id, id)` + `(tenant_id, project_id, agent_run_id, generated_artifact_id) references artifacts(tenant_id, agent_run_id, id)` の 2 段 FK で **artifact の project binding を DB 境界で強制**。
+  - **複合 FK (Codex F-QLC-002 P1 + R2 F-QLC-R2-001 P2 adopt)**: `generated_artifact_id` だけでは不足 — `artifacts` table は project を直接持たず `agent_runs` 経由で project が決まる。FK column 数 mismatch を避けるため **2 段 FK** に明確分離:
+    - `(tenant_id, project_id, agent_run_id) references agent_runs(tenant_id, project_id, id)` — run が同 project に属することを DB 強制 (3 col → 3 col)
+    - `(tenant_id, agent_run_id, generated_artifact_id) references artifacts(tenant_id, agent_run_id, id)` — artifact が同 run に属することを DB 強制 (3 col → 3 col、artifacts 側に project_id 列なしのため `agent_run_id` 経由で間接 project binding)
+    
+    注: 単一 4-col FK `(tenant_id, project_id, agent_run_id, generated_artifact_id) -> artifacts(tenant_id, agent_run_id, id)` は **PostgreSQL の FK column 数一致制約 (4→3)** に違反、本 spec では採用しない。`artifacts` table に project_id 列を追加する代替案は ADR-00002 update で議論可能、現状 spec は agent_runs 経由の間接 binding を採用 (既存 artifacts schema 変更なし)。
   - 越境 negative test: 別 project の generated_artifact_id / claim_id / agent_run_id を関連付ける insert は全件 reject (artifact の run binding 経由で project 一致を verify)
 - **RetrievalEvalRun baseline acceptance spec** (Sprint 11 BL-0126 で集計、本 Sprint 10 では skeleton schema のみ documenting):
-  - 必須 column: `tenant_id` / `project_id` / `eval_run_id` / `dataset_version_id (UUID FK)` / `recall_at_k (json: {5: float, 10: float})` / `precision_at_k (json)` / `ndcg_at_k (json: {10: float})` / `citation_coverage (float [0,1])` / `grounded_answer_rate (float [0,1])` / `tool_trajectory_match (float [0,1])`
+  - 必須 column: `tenant_id` / `project_id` / `eval_run_id` / `dataset_version_id (UUID FK)` / `agent_run_id` / `recall_at_k (json: {5: float, 10: float})` / `precision_at_k (json)` / `ndcg_at_k (json: {10: float})` / `citation_coverage (float [0,1])` / `grounded_answer_rate (float [0,1])` / `tool_trajectory_match (float [0,1])` / `metric_metadata (jsonb)`
   - **dataset_version_id FK 必須 (Codex F-QLC-003 P1 adopt)**: 文字列 `dataset_version` のみだと別 dataset の `eval_run_id` と任意 version 文字列の組合せが保存可能 → Anti-Gaming fixture/policy 分離 + AC-KPI 集計 trace 破壊。既存 eval schema (Sprint 11 BL-0122/0123) の `dataset_versions` table への `dataset_version_id UUID FK` 必須、`(tenant_id, eval_run_id, dataset_version_id)` 複合制約で run ↔ case dataset 一致を DB で強制。
-  - Anti-Gaming invariant: `dataset_versions.created_at` の fixture creation commit と policy 修正 commit が **別 author / 別 timestamp** であること (Sprint 11 BL-0129 CI gate)
+  - **eval_run project binding (Codex R2 F-QLC-R2-002 P2 adopt)**: `eval_runs` table は `project_id` を直接持たない (既存 schema)、`agent_runs(tenant_id, project_id, id)` 経由で project が決まる。RetrievalEvalRun に **`agent_run_id` 列追加** + `(tenant_id, project_id, agent_run_id) references agent_runs(tenant_id, project_id, id)` 複合 FK で project binding を DB 境界で強制。これで「project B の RetrievalEvalRun が project A の eval_run_id を参照」経路を reject (AC-KPI rollup の project 誤帰属防止)。
+  - **metric_metadata 列必須 (Codex R2 F-QLC-R2-005 P2 adopt)**: `tool_trajectory_metric_kind` (`edit_distance` / `lcs_ratio` / `prefix_ratio`) を `metric_metadata jsonb` 列に保存。consumers が `tool_trajectory_match` 値の metric kind を区別可能にする (SP-011 で記録要求している metadata を SP-010 source contract 側に明示)。
+  - **Anti-Gaming invariant 強化 (Codex R2 F-QLC-R2-003 P2 adopt)**: `dataset_versions.created_at` だけでは fixture creation commit author / timestamp を立証できない。`dataset_versions` table に **追加列必須**:
+    - `fixture_commit_sha (varchar 40)` (fixture creation commit の git SHA)
+    - `fixture_commit_author (text)` / `fixture_commit_authored_at (timestamptz)`
+    - `policy_commit_sha (varchar 40)` (policy / runner 修正 commit の git SHA)
+    - `policy_commit_author (text)` / `policy_commit_authored_at (timestamptz)`
+    
+    Sprint 11 BL-0129 CI gate は **fixture_commit_author != policy_commit_author** AND **fixture_commit_authored_at < policy_commit_authored_at** を DB-level invariant として verify (永続化された author/timestamp evidence から audit 可能)。
 - **citation_coverage の source ticket spec** (AC-KPI-04 計測 contract):
   - **計算式 (Codex F-QLC-004 P1 adopt)**: AC-KPI-04 既存 contract は **claim-level** (`count(distinct claim_id with >= 1 GroundingSupport) / count(distinct claim_id within evaluated AgentRun)`)。**generated_artifact-level は誤り** — 複数 claim を含む artifact に 1 件だけ GroundingSupport があっても artifact 全体が covered と数える歪み発生。Sprint 12 AC-KPI-04 final verify では claim 単位で集計する。
   - 閾値: P0 で `claim-level citation_coverage >= 0.9` (Sprint 12 AC-KPI-04 で final verify)

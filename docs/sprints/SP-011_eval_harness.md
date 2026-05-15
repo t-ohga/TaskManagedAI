@@ -212,6 +212,11 @@ risks:
 - **tool_trajectory_match acceptance spec** (Eval fixture vs actual AgentRun trajectory):
   - **計算 (Codex F-QLC-008 P2 adopt)**: fixture 想定 tool sequence vs actual AgentRunEvent emitted tool sequence の **order-preserving metric** — **Jaccard index は使わない** (順序消失、`search→read→cite` と `cite→read→search` を同 score にする)。
   - 推奨 metric: **Normalized Edit Distance** (`1 - levenshtein(expected, actual) / max(len(expected), len(actual))`、float [0, 1]) を P0 default に。alternative として `Longest Common Subsequence ratio` / `prefix match ratio` を fixture 設計時に選択可能。
+  - **Empty sequence edge case (Codex R2 F-QLC-R2-004 P2 adopt)**: `max(0, 0) = 0` で division-by-zero / NaN 発生を防ぐため、両 sequence empty / 片方のみ empty の挙動を明示固定:
+    - `expected = [] AND actual = []` → score `1.0` (no tool 期待 + no tool emit = match)
+    - `expected = [] AND actual = [_, ...]` → score `0.0` (tool emit すべきでない fixture で emit された)
+    - `expected = [_, ...] AND actual = []` → score `0.0` (tool emit 期待 fixture で emit されなかった)
+    - 上記 edge case を含む Eval fixture の集計時、本 metric は always [0, 1] 範囲で安定 (NaN / exception 発生なし)
   - 集計単位: `RetrievalEvalRun.tool_trajectory_match` float [0, 1] + `tool_trajectory_metric_kind` enum (`edit_distance` / `lcs_ratio` / `prefix_ratio`) を `RetrievalEvalRun` の metric_metadata に記録
   - Anti-Gaming invariant: fixture commit と AgentRun emit logic 修正 commit を **別 author / 別 timestamp** で分離 (BL-0129 CI gate)
 
