@@ -499,15 +499,28 @@ PR-based workflow における **Claude / user の責務分離**。`.claude/rule
      # === 4b) size 検査 — Codex PR #10 R3 F-PR10-017 P2 adopt ===
      # 「巨大 binary (>1MB) は add しない」rule を機械的に enforce。
      find <dir> -type f -size +1M -exec du -h {} +
-     # === 5) 機密 content sweep (F-PR10-001 adopt: hidden 含む全 file scan) ===
-     rg -i --hidden --no-ignore \
+     # === 5) 機密 content sweep (F-PR10-001 + R4 F-PR10-020 P1 adopt) ===
+     # **secret value 自体を terminal/log に echo しない** ため `rg -l`
+     # (filename only、matched line は出力しない) を使う。検出 file は user 確認
+     # 経路に回す (cat / head 等の content review は禁止)。
+     rg -l -i --hidden --no-ignore \
        -- 'password|secret|api[_-]?key|token|BEGIN.*PRIVATE.*KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]+|xox[bp]-[A-Za-z0-9-]+|bearer\s+[A-Za-z0-9._-]+' \
-       <dir> || true
+       <dir> > /tmp/codex-secret-hit-files.txt 2>/dev/null || true
+     # secret-hit file list を確認 (filename のみ表示)。1 件でもあれば user 報告 + add 中止。
+     test -s /tmp/codex-secret-hit-files.txt && {
+       echo "ERROR: secret-suspect content detected in following files (NOT shown for security):"
+       cat /tmp/codex-secret-hit-files.txt
+       echo "→ user 確認なしに proceed しない。content 確認は user 直接 review (Claude session 越し禁止)。"
+     }
      # === 6) text content human review (F-PR10-005 + R2 F-PR10-006/012 adopt) ===
      # 全 text file の **全 body** を review (前 R2 で head -50 cap だったが撤去、F-PR10-012 adopt)。
      # 20 件 cap も撤去 (F-PR10-006 adopt: 21+ 件目を review せず copy する経路を防ぐ)。
      # F-PR10-019 P2 adopt: NUL 区切りで空白・改行・glob を含む path も安全処理
      # F-PR10-016 P2 adopt: 拡張子リストを repo 内 code 全種に拡張 + MIME ベース fallback
+     # Codex PR #10 R4 F-PR10-021 P1 adopt: sensitive filename (`.env*` / `*.key` /
+     # `*.pem` / `id_rsa*` 等) は cat review **対象外**。content 出力 = secret leak。
+     # 検出済 sensitive file は step 4 (filename sweep) の出力で user に報告済、
+     # ここで content review しない。
      find <dir> -type f \( \
        -name '*.md' -o -name '*.txt' -o -name '*.json' -o -name '*.yaml' -o -name '*.yml' \
        -o -name '*.toml' -o -name '*.ini' -o -name '*.cfg' \
@@ -516,13 +529,19 @@ PR-based workflow における **Claude / user の責務分離**。`.claude/rule
        -o -name 'Dockerfile*' -o -name 'Makefile*' -o -name '*.mk' \
        -o -name '*.go' -o -name '*.rs' -o -name '*.rb' -o -name '*.lua' \
        -o -name '*.html' -o -name '*.css' -o -name '*.xml' -o -name '*.sql' \
-       -o -name '*.lock' -o -name '*.env*' \
-     \) -print0 | while IFS= read -r -d '' f; do
+       -o -name '*.lock' \
+     \) \
+     ! -name '.env*' ! -name '*.key' ! -name '*.pem' ! -name 'id_rsa*' \
+     ! -name 'id_ed25519*' ! -name 'id_dsa*' ! -name '*.pfx' ! -name '*.p12' \
+     ! -name '*credentials*' ! -name '*secrets*' ! -name 'authorized_keys' \
+     ! -name 'known_hosts' \
+     -print0 | while IFS= read -r -d '' f; do
        echo "=== $f ==="
        wc -l "$f"
        cat "$f"
      done
      # 拡張子リスト外 (拡張子なし script 等) も MIME 判定で text 抽出して review
+     # MIME fallback も sensitive filename を exclude (F-PR10-021 adopt)
      find <dir> -type f ! \( \
        -name '*.md' -o -name '*.txt' -o -name '*.json' -o -name '*.yaml' -o -name '*.yml' \
        -o -name '*.toml' -o -name '*.ini' -o -name '*.cfg' \
@@ -531,7 +550,11 @@ PR-based workflow における **Claude / user の責務分離**。`.claude/rule
        -o -name 'Dockerfile*' -o -name 'Makefile*' -o -name '*.mk' \
        -o -name '*.go' -o -name '*.rs' -o -name '*.rb' -o -name '*.lua' \
        -o -name '*.html' -o -name '*.css' -o -name '*.xml' -o -name '*.sql' \
-       -o -name '*.lock' -o -name '*.env*' \
+       -o -name '*.lock' \
+       -o -name '.env*' -o -name '*.key' -o -name '*.pem' -o -name 'id_rsa*' \
+       -o -name 'id_ed25519*' -o -name 'id_dsa*' -o -name '*.pfx' -o -name '*.p12' \
+       -o -name '*credentials*' -o -name '*secrets*' -o -name 'authorized_keys' \
+       -o -name 'known_hosts' \
      \) -print0 | while IFS= read -r -d '' f; do
        MIME=$(file --brief --mime-type "$f")
        case "$MIME" in
