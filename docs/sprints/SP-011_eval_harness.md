@@ -187,6 +187,37 @@ risks:
 - Anti-Gaming Rules CI gate が fixture creation commit + policy 修正 commit 分離 verify
 - private_holdout 期待値が source code grep で漏えいしない (SOPS + age 経由復号)
 
+### QL-C 拡充 acceptance spec (R29 §5 QL-C、P-09 + P-18 反映、doc-only)
+
+本 section は **QL-C run (2026-05-15、quality-loop/QL-C-research-eval-pack)** で追記した修正まとめ拡充 spec。**本 SP-011 では schema 追加なし** (acceptance spec のみ)、実 BL 詳細は本 Sprint 11 carry-over + 本来 scope 内で landing する。SP-010 が source contract (SearchRun / EvidenceSearchHit / GroundingSupport / RetrievalEvalRun) を提供、SP-011 は **集計 / metric 計測** が責務。
+
+- **recall@k acceptance spec** (k = 5, 10、retrieval quality 計測):
+  - 計算: gold answer の relevant evidence_source_id 集合のうち、SearchRun の top-k EvidenceSearchHit に含まれる数 / 全 relevant 数
+  - 集計単位: `RetrievalEvalRun.recall_at_k` json column (`{"5": float, "10": float}`)
+  - P0 で `recall@5 >= 0.6`、`recall@10 >= 0.75` (Sprint 12 で final verify)
+- **precision@k acceptance spec** (k = 5, 10、retrieval signal-to-noise 計測):
+  - 計算: SearchRun の top-k EvidenceSearchHit のうち relevant な数 / k
+  - 集計単位: `RetrievalEvalRun.precision_at_k` json column
+- **ndcg@k acceptance spec** (k = 10、retrieval ranking quality 計測):
+  - 計算: 標準 ndcg@10 (relevance_score を gain として、log2(rank+1) で discount)
+  - 集計単位: `RetrievalEvalRun.ndcg_at_k` json column (`{"10": float}`)
+  - SP-010 EvidenceSearchHit.ndcg_contribution の sum で server-side aggregate
+- **citation_coverage acceptance spec** (AC-KPI-04、grounding quality 計測):
+  - SP-010 GroundingSupport から計算: `count(distinct generated_artifact_id with >= 1 support) / count(distinct generated_artifact_id)`
+  - P0 で `>= 0.9` (Sprint 12 AC-KPI-04 final verify)
+- **grounded_answer_rate acceptance spec** (P0 Quality KPI 補強、optional Eval metric):
+  - 計算: GroundingSupport 1 件以上関連付く generated_artifact の比率 (citation_coverage と同等定義、別 metric として記録)
+- **tool_trajectory_match acceptance spec** (Eval fixture vs actual AgentRun trajectory):
+  - 計算: fixture 想定 tool sequence vs actual AgentRunEvent emitted tool sequence の Jaccard index
+  - 集計単位: `RetrievalEvalRun.tool_trajectory_match` float [0, 1]
+  - Anti-Gaming invariant: fixture commit と AgentRun emit logic 修正 commit を **別 author / 別 timestamp** で分離 (BL-0129 CI gate)
+
+### Pack reuse + cross-ref 注記 (R29 P-09 + P-18 反映)
+
+- 本 SP-011 は前 session commit `369672b` で作成済の **既存 Pack**。本 QL-C run では拡充 spec のみ追記、新規 Pack 作成なし。
+- SP-010 cross-ref: 上記 metrics の **source schema (SearchRun / EvidenceSearchHit / GroundingSupport / RetrievalEvalRun)** は SP-010 で acceptance spec 追記済 (本 PR 同一 file)。SP-011 は同 schema からの **集計のみ** が責務。
+- 既存 BL trace 維持 (Sprint 11 本来 scope 12 BL + carry-over 15 BL = 27 BL は R29 §5 QL-C verification で破壊不可)。
+
 ## 検証手順
 
 ```bash
@@ -277,3 +308,13 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 ## Review
 
 (SP-011 完了時に追記)
+
+### QL-C 拡充 spec landing 記録 (R29 §5 QL-C run、2026-05-15)
+
+- **QL-C run branch**: `quality-loop/QL-C-research-eval-pack` (PR #11、quality-loop/QL-C-research-eval-pack)
+- **拡充内容**: P-09 (Pack reuse + alias 整理) + P-18 (Evidence/RAG/Eval metrics acceptance spec) を本 Pack `## 受け入れ条件` に追記
+- **doc-only scope** (R29 §5 QL-C verification): no test file / no code change / no DB schema / no migration、acceptance spec のみ
+- **既存 27 BL trace 維持**: 本 QL-C 拡充は BL-0079a〜BL-0130 の既存 trace を破壊しない
+- **cross-ref**: SP-010 で source schema (SearchRun / EvidenceSearchHit / GroundingSupport / RetrievalEvalRun) を同 PR で追記、SP-011 は集計責務のみ
+
+frontmatter `status: draft` 維持。

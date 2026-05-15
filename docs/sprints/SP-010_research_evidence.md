@@ -112,6 +112,34 @@ risks:
 - 越境 SELECT / INSERT / UPDATE / DELETE が全件 reject (BL-0029c)
 - 同一 tenant・別 project の cross reference (research_task → ticket / claim → evidence_source) も reject
 
+### QL-C 拡充 acceptance spec (R29 §5 QL-C、P-09 + P-18 反映、doc-only)
+
+本 section は **QL-C run (2026-05-15、quality-loop/QL-C-research-eval-pack)** で追記した修正まとめ拡充 spec。**本 SP-010 では schema 追加なし** (acceptance spec のみ)、実 DDL / model / API は別 batch で landing する。
+
+- **SearchRun acceptance spec** (Sprint 10 BL-0119 source / Sprint 11 BL-0126 consumer 共通 contract):
+  - 必須 column: `tenant_id` / `project_id` / `research_task_id` / `search_run_id (UUID)` / `query_canonical_hash (sha256)` / `retrieval_policy_version` / `hit_count` / `latency_ms` / `started_at` / `completed_at`
+  - `(tenant_id, project_id)` 複合 FK で閉じる、cross-project SELECT は全件 reject
+  - server-owned-boundary: `query_canonical_hash` は caller-supplied 不可、server 側で query 文字列を NFC + lower 化後 sha256 して生成
+- **EvidenceSearchHit acceptance spec** (検索結果 ↔ Evidence 紐付け):
+  - 必須 column: `tenant_id` / `project_id` / `search_run_id` / `claim_id` / `evidence_source_id` / `rank (int)` / `relevance_score (float [0,1])` / `ndcg_contribution (float)` / `is_grounding (bool)`
+  - 複合 FK: `(tenant_id, project_id, search_run_id)` / `(tenant_id, project_id, claim_id)` / `(tenant_id, project_id, evidence_source_id)` で閉じる
+- **GroundingSupport acceptance spec** (生成 artifact ↔ Evidence 関連付け、citation_coverage source):
+  - 必須 column: `tenant_id` / `project_id` / `generated_artifact_id` / `claim_id` / `evidence_source_id` / `support_type (cite|paraphrase|quote)` / `confidence_score`
+  - 越境 negative test: 別 project の generated_artifact_id / claim_id を関連付ける insert は全件 reject
+- **RetrievalEvalRun baseline acceptance spec** (Sprint 11 BL-0126 で集計、本 Sprint 10 では skeleton schema のみ documenting):
+  - 必須 column: `tenant_id` / `project_id` / `eval_run_id` / `dataset_version` / `recall_at_k (json: {5: float, 10: float})` / `precision_at_k (json)` / `ndcg_at_k (json: {10: float})` / `citation_coverage (float [0,1])` / `grounded_answer_rate (float [0,1])` / `tool_trajectory_match (float [0,1])`
+  - Anti-Gaming invariant: `dataset_version` は fixture creation commit と policy 修正 commit が **別 author / 別 timestamp** であること (Sprint 11 BL-0129 で CI gate)
+- **citation_coverage の source ticket spec** (AC-KPI-04 計測 contract):
+  - 計算式: `count(distinct generated_artifact_id with at least 1 GroundingSupport) / count(distinct generated_artifact_id)`
+  - 閾値: P0 で `>= 0.9` (Sprint 12 AC-KPI-04 で final verify)
+  - null evidence_set_hash の AgentRun は分母から除外 (Sprint 4 backfill 期間の互換性)
+
+### Pack reuse + alias map 注記 (R29 P-09 反映)
+
+- 本 SP-010 は前 session commit `369672b` で作成済の **既存 Pack**。本 QL-C run では拡充 spec のみ追記、新規 Pack 作成なし。
+- alias map: `BL-0113`〜`BL-0130` (P0 backlog) は本 Pack `## 実装チケット` section に直接 landing 済。registry 経由の indirection なし。
+- 既存 BL trace を破壊しない (R29 §5 QL-C verification 必須項目)。
+
 ## Audit Event
 
 新規 event_type (Sprint 10 で追加):
@@ -184,3 +212,12 @@ uv run ruff check backend tests
 ## Review
 
 (SP-010 完了時に追記)
+
+### Sprint 10 batch 0 実装進捗 (R29 §5 QL-C R22 T-P2R1-013 反映)
+
+- **batch_0_completed_commit**: `314b5bb` (BL-0113 research_tasks DDL/model/migration + BL-0114 evidence_sources DDL/model/migration、Codex R1-R2 clean)
+- **既実装 BL**: `BL-0113` (research_tasks)、`BL-0114` (evidence_sources)
+- **未着手 BL**: BL-0115〜BL-0130 (claims / evidence_items / evidence_set_hash / Research-to-Ticket adapter / cross-project FK / UI 等、Sprint 10 batch 1+ で順次着手)
+- **ADR 状態**: ADR-00002 + ADR-00003 は commit `3f11d00` で proposed 起票済 (frontmatter `status: proposed`)、accepted 化は Sprint 10 全 batch 完了時に別 run で実施
+
+frontmatter `status: draft` 維持 (Pack 全体の Sprint 完了は batch 0〜5 全 BL clean 到達時)。
