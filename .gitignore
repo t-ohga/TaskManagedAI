@@ -31,6 +31,10 @@ build/
 
 # Claude Code hook state (session-local)
 .claude/.hook-state/
+.claude/worktrees/
+
+# Codex Quality Loop runtime state (local run ledgers and archives)
+.codex/plans/
 
 # Claude harness runtime lock (background session lock, auto-generated)
 .claude/scheduled_tasks.lock
