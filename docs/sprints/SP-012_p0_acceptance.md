@@ -288,7 +288,7 @@ QL-D scope の core spec は別 design doc `docs/設計検討/quality_loop_produ
 Sprint Pack 単位の **`conformance` artifact 発行** (= Sprint Exit) は **non-blocking future gate** として P0.1 SP-023 候補 accepted 後の Sprint Exit から mandatory 化する記述として明示:
 
 1. **最新 review chain (= `revision` linked to current artifact の `review` / `rereview`) の `verdict='clean'`** (findings: [] または `P3` / `info` のみで explicit accept、QL-D `docs/設計検討/quality_loop_product_artifact.md §5/§6` の delegate) **OR** 全 finding に `adoption_decision` (adopt / reject / defer) が記録済 (R1 = `verdict='needs_revision'` でも、R2 / R3 で全 finding が adopt/reject/defer 判定済なら gate 通過 OK、historical R1/R2 は append-only history として保持、gate 対象外、F-PR13-002 P1 adopt)
-2. `defer_entry` の `verification` 列が記入済 (`P3` / `info` finding を `defer` する場合、§14.2 defer structured state schema 準拠)
+2. **全 `defer_entry` の `verification` 列が記入済** (F-PR13-R4-001 P2 adopt: severity を問わず — `P0` / `P1` / `P2` / `P3` / `info` のいずれの finding を `defer` する場合でも、`verification` 必須。本条件は前述 #### `defer` structured state schema (本 Pack §QL-D update) と整合、P0/P1/P2 blocking finding を `defer` する場合は **resume_condition + verification の両方が記入済** が必要、gate を緩めない)
 3. `must_ship_items[]` 全件達成 (`must_ship_pass_count == must_ship_total`)
 4. `hard_gates_pass[]` 全件 PASS (AC-HARD-01〜07 全件、本 Pack §受け入れ条件と整合)
 5. `quality_kpis_pass[]` 未達 1 個以下 (AC-KPI-01〜05、§Hard Gates 7 / Quality KPIs 5 準拠)
@@ -308,14 +308,16 @@ Sprint Pack 単位の **`conformance` artifact 発行** (= Sprint Exit) は **no
 
 これにより、SP-023 が未実装のまま P0 acceptance が impossibility paradox に陥る経路 (`conformance` artifact + `quality_loop_harness_incident` 両者) を doc レベルで防ぐ。
 
-#### harness incident zero gate (A-12 反映)
+#### harness incident zero gate (A-12 反映、F-PR13-R4-002 P2 adopt 反映で P0 期間中は non-blocking)
 
-Sprint Pack の Sprint Exit 時点で `quality_loop_harness_incident` artifact のうち **`resolved_at` が null** の row が残っているなら、P0 Exit を block:
+Sprint Pack の Sprint Exit 時点で `quality_loop_harness_incident` artifact のうち **`resolved_at` が null** の row が残っているなら、Sprint Exit を block (P0.1 SP-023 accepted 後の Sprint Exit から mandatory 化):
 
 - harness incident の `recovery_action` が `manual_resolution` でまだ解決していない → `conformance.final_verdict='blocked'`
 - harness incident が `abort` で解決済 → SP-012 `## 残リスク` に `defer_entry` で migration して `resolved_at` 記入
 
-これにより、open harness incident (Codex 失敗 / Claude tool error / CI flake 等) を放置したまま P0 Exit 宣言する経路を fail-closed で防ぐ。
+これにより、open harness incident (Codex 失敗 / Claude tool error / CI flake 等) を放置したまま Sprint Exit 宣言する経路を fail-closed で防ぐ。
+
+**⚠️ P0 期間中の運用** (F-PR13-R2-003 + F-PR13-R3-001 + F-PR13-R4-002 P2 adopt 反映): SP-023 未実装の P0 期間中、本 gate は **non-blocking** として扱う (上記「⚠️ P0 期間中 (SP-023 未実装) の SP-012 P0 Exit acceptance の運用」と整合)。P0 期間中は **harness incident の自由文記録** (Sprint Pack `## Review §Pending entries` 等での 自由文 incident 記録) で satisfy 可能、structured `quality_loop_harness_incident.resolved_at` の NOT NULL を P0 acceptance の mandatory prerequisite にしない。structured gate enforcement は P0.1 SP-023 candidate accepted 後の Sprint Exit から開始。
 
 #### `defer` structured state schema (A-15 反映、本 Pack `## 残リスク` の structured 化 future gate)
 
