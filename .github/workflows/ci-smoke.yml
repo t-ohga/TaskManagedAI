@@ -7,7 +7,10 @@ name: CI Smoke
     branches: [main]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # PR: PR 単位で latest commit のみ実行 (cancel-in-progress=true で古い run を cancel)
+  # push to main: commit SHA 単位で独立 group、queue 飽和でも前 pending を cancel しない
+  #               (Codex PR #4 R1 F-PR4-001 P2 後追い反映、main 履歴全 commit を検証する目的)
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('push-{0}', github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
