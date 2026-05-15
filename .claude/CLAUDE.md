@@ -508,8 +508,12 @@ PR-based workflow における **Claude / user の責務分離**。`.claude/rule
        wc -l "$f"
        cat "$f"
      done
-     # === 7) gitignore 状態 (F-PR10-001 adopt: shell glob では dotfiles skip、find 使用) ===
-     find <dir> -type f -exec git check-ignore -v {} + 2>&1 || echo "(none ignored)"
+     # === 7) gitignore 状態 ===
+     # Codex F-PR10-001 + R3 F-PR10-015 P2 adopt:
+     # - shell glob では dotfiles skip → find 使用
+     # - `<dir>` が別 checkout の場合、現在の repo を基準にすると "outside repository"
+     #   エラーで ignore 状態取得失敗 → `-C <src-checkout>` 経由で source repo を明示。
+     find <dir> -type f -print0 | xargs -0 git -C <src-checkout> check-ignore -v -- 2>&1 || echo "(none ignored)"
      ```
    - 以下 **いずれか** を検出したら **user 確認なしに add しない**:
      - 巨大 binary (>1MB) / `.env*` / `*.key` / `*.pem` / `id_rsa*` 等 sensitive filename
