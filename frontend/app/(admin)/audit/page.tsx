@@ -15,11 +15,17 @@ import {
 
 export const dynamic = "force-dynamic";
 
+// F-P2R1-006 fix: reason_code (Provider Compliance / event-level) and
+// blocked_reason (AgentRun status sub-category) are distinct invariants.
+// blocked_reason is null unless the resulting status is `blocked`, while
+// reason_code mirrors event-specific deny / allow codes (Provider Compliance
+// Matrix has 13 reason_code values, runner_blocked has its own deny_category).
 const AUDIT_EVENT_ROWS = [
   {
     event_type: "policy_decision_created",
     actor_id: "actor:user:reviewer-001",
     reason_code: "allow",
+    blocked_reason: null,
     payload_data_class: "internal",
     allowed_data_class: "confidential",
     redaction: "hash references only"
@@ -28,6 +34,7 @@ const AUDIT_EVENT_ROWS = [
     event_type: "secret_canary_detected",
     actor_id: "system/provider-preflight",
     reason_code: "provider_request_preflight_violation",
+    blocked_reason: null,
     payload_data_class: "confidential",
     allowed_data_class: "confidential",
     redaction: "pattern_hit only"
@@ -35,7 +42,8 @@ const AUDIT_EVENT_ROWS = [
   {
     event_type: "runner_blocked",
     actor_id: "system/runner-gateway",
-    reason_code: "runtime_blocked",
+    reason_code: "dangerous_command",
+    blocked_reason: "runtime_blocked",
     payload_data_class: "internal",
     allowed_data_class: "internal",
     redaction: "argv_hash and deny_category only"
@@ -44,6 +52,7 @@ const AUDIT_EVENT_ROWS = [
     event_type: "repo_pr_opened",
     actor_id: "system/repo-proxy",
     reason_code: "allow",
+    blocked_reason: null,
     payload_data_class: "internal",
     allowed_data_class: "confidential",
     redaction: "branch and pr number metadata only"
@@ -68,8 +77,8 @@ export default function AuditLogPage() {
         <div className="overflow-x-auto rounded-md border border-line">
           <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
             <caption className="sr-only">
-              Audit events with event_type, actor_id, reason_code, payload_data_class,
-              allowed_data_class, and redaction status.
+              Audit events with event_type, actor_id, reason_code, blocked_reason,
+              payload_data_class, allowed_data_class, and redaction status.
             </caption>
             <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted">
               <tr>
@@ -81,6 +90,9 @@ export default function AuditLogPage() {
                 </th>
                 <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
                   reason_code
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
+                  blocked_reason
                 </th>
                 <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
                   payload_data_class
@@ -106,6 +118,17 @@ export default function AuditLogPage() {
                   </td>
                   <td className="border-b border-line px-3 py-2">
                     <code className="font-mono text-xs text-ink">{event.reason_code}</code>
+                  </td>
+                  <td className="border-b border-line px-3 py-2 text-muted">
+                    {event.blocked_reason === null ? (
+                      <span aria-label="not applicable" className="text-muted">
+                        —
+                      </span>
+                    ) : (
+                      <code className="font-mono text-xs text-attention">
+                        {event.blocked_reason}
+                      </code>
+                    )}
                   </td>
                   <td className="border-b border-line px-3 py-2 text-muted">
                     {event.payload_data_class}

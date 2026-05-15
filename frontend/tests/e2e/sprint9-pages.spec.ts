@@ -8,7 +8,52 @@
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-const SESSION_COOKIE_NAME = "taskmanagedai_session";
+import { DEV_SESSION_COOKIE_NAME } from "@/lib/auth/dev-login";
+
+// F-P2R1-010 fix: import the canonical cookie name from the auth module
+// rather than duplicating the literal string, so future renames cannot drift.
+const SESSION_COOKIE_NAME = DEV_SESSION_COOKIE_NAME;
+
+// F-P2R1-001 + F-P2R1-008 fix: exact-set verification of AgentRun 16 states,
+// blocked_reason 3 reasons, and ContextSnapshot 10 columns. These are P0
+// invariants (#6 / #8) and must not silently change in either direction.
+const AGENT_RUN_STATES_16 = [
+  "queued",
+  "gathering_context",
+  "running",
+  "generated_artifact",
+  "schema_validated",
+  "policy_linted",
+  "diff_ready",
+  "waiting_approval",
+  "blocked",
+  "provider_refused",
+  "provider_incomplete",
+  "validation_failed",
+  "repair_exhausted",
+  "completed",
+  "failed",
+  "cancelled"
+] as const;
+
+const BLOCKED_REASONS_3 = [
+  "policy_blocked",
+  "budget_blocked",
+  "runtime_blocked"
+] as const;
+
+const CONTEXT_SNAPSHOT_COLUMNS = [
+  "prompt_pack_version",
+  "prompt_pack_lock",
+  "policy_version",
+  "policy_pack_lock",
+  "repo_state",
+  "tool_manifest",
+  "evidence_set_hash",
+  "provider_continuation_ref",
+  "provider_request_fingerprint",
+  "snapshot_kind"
+] as const;
 
 function readDevLoginToken(): string {
   return (
@@ -135,9 +180,11 @@ test("Sprint 9: agent runs list page renders 16 states + 3 blocked reasons", asy
 
   await expect(stateGraph).toHaveCount(1);
   await expect(stateGraph).toBeVisible();
-  // AgentRun 16 状態の主要な enum 値が表示されている
-  await expectUniqueCodeText(stateGraph, "queued");
-  await expectUniqueCodeText(stateGraph, "completed");
+  // F-P2R1-001 fix: exact 16 items + every enum value visible
+  await expect(stateGraph.locator("li")).toHaveCount(AGENT_RUN_STATES_16.length);
+  for (const state of AGENT_RUN_STATES_16) {
+    await expectUniqueCodeText(stateGraph, state);
+  }
 
   const blockedReasons = agentRunsRegion.getByRole("list", {
     name: "blocked_reason fixed sub categories",
@@ -146,10 +193,11 @@ test("Sprint 9: agent runs list page renders 16 states + 3 blocked reasons", asy
 
   await expect(blockedReasons).toHaveCount(1);
   await expect(blockedReasons).toBeVisible();
-  // blocked_reason の 3 種
-  await expectUniqueCodeText(blockedReasons, "policy_blocked");
-  await expectUniqueCodeText(blockedReasons, "budget_blocked");
-  await expectUniqueCodeText(blockedReasons, "runtime_blocked");
+  // F-P2R1-001 fix: exact 3 items + every blocked_reason visible
+  await expect(blockedReasons.locator("li")).toHaveCount(BLOCKED_REASONS_3.length);
+  for (const reason of BLOCKED_REASONS_3) {
+    await expectUniqueCodeText(blockedReasons, reason);
+  }
 });
 
 test("Sprint 9: audit log page renders event types + no raw secret notice", async ({
@@ -253,16 +301,14 @@ test("Sprint 9: ticket detail dynamic route renders", async ({ page }) => {
 
   await expect(contextSnapshot).toHaveCount(1);
   await expect(contextSnapshot).toBeVisible();
-  // ContextSnapshot 10 column が全て表示
-  await expectUniqueDefinitionTerm(contextSnapshot, "prompt_pack_version");
-  await expectUniqueDefinitionTerm(contextSnapshot, "policy_pack_lock");
-  await expectUniqueDefinitionTerm(contextSnapshot, "evidence_set_hash");
-  await expectUniqueDefinitionTerm(contextSnapshot, "provider_continuation_ref");
-  await expectUniqueDefinitionTerm(
-    contextSnapshot,
-    "provider_request_fingerprint"
+  // F-P2R1-008 fix: ContextSnapshot must expose exactly 10 columns (#8 invariant).
+  // Test now verifies all 10 column names + total dt count.
+  await expect(contextSnapshot.locator("dt")).toHaveCount(
+    CONTEXT_SNAPSHOT_COLUMNS.length
   );
-  await expectUniqueDefinitionTerm(contextSnapshot, "snapshot_kind");
+  for (const columnKey of CONTEXT_SNAPSHOT_COLUMNS) {
+    await expectUniqueDefinitionTerm(contextSnapshot, columnKey);
+  }
 });
 
 test("Sprint 9: agent run detail dynamic route renders timeline", async ({

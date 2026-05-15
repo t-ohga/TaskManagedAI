@@ -1,6 +1,12 @@
+import "server-only";
+
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+// AdminPageShell / Panel render description content inside <p>. Restricting
+// the type to ReactNode|string at the call sites and rendering inside <div>
+// here would also work, but for now we use <div> wrappers to keep HTML valid
+// when callers pass mixed inline + block content (F-P2R1-012 fix).
 type AdminPageShellProps = {
   regionLabel: string;
   eyebrow: string;
@@ -72,15 +78,30 @@ const STANDARD_TRANSITION_PATH: readonly AgentRunState[] = [
   "completed"
 ];
 
+// AgentRun state machine exception transitions, mirrored from
+// .claude/rules/agentrun-state-machine.md §4 (cancel / resume / failure paths).
+// Keep this list aligned with the rules document so that operators can rely on
+// the UI as a complete representation of exception flows (F-P2R1-002 fix).
 const EXCEPTION_TRANSITIONS = [
   { from: "running", to: "provider_refused", reason: "provider refusal" },
   { from: "running", to: "provider_incomplete", reason: "retryable incomplete" },
   { from: "running", to: "blocked", reason: "policy / budget / runtime deny" },
+  { from: "running", to: "failed", reason: "unrecoverable failure" },
+  { from: "running", to: "cancelled", reason: "human cancellation during running" },
+  { from: "waiting_approval", to: "cancelled", reason: "human cancellation" },
+  { from: "blocked", to: "cancelled", reason: "human cancellation while blocked" },
+  { from: "provider_incomplete", to: "cancelled", reason: "human cancellation while incomplete" },
   { from: "generated_artifact", to: "validation_failed", reason: "schema mismatch" },
+  { from: "validation_failed", to: "running", reason: "repair retry attempt" },
   { from: "validation_failed", to: "repair_exhausted", reason: "retry limit reached" },
+  { from: "policy_linted", to: "blocked", reason: "policy / data class deny" },
+  { from: "diff_ready", to: "blocked", reason: "runtime / runner deny" },
+  { from: "waiting_approval", to: "blocked", reason: "stale approval invalidated" },
+  { from: "blocked", to: "waiting_approval", reason: "resume requires re-approval" },
   { from: "blocked", to: "running", reason: "resume after cause resolved" },
-  { from: "provider_incomplete", to: "failed", reason: "continuation unavailable" },
-  { from: "waiting_approval", to: "cancelled", reason: "human cancellation" }
+  { from: "blocked", to: "failed", reason: "unresolvable blocker" },
+  { from: "provider_incomplete", to: "running", reason: "continuation succeeded" },
+  { from: "provider_incomplete", to: "failed", reason: "continuation unavailable" }
 ] as const satisfies readonly {
   from: AgentRunState;
   to: AgentRunState;
@@ -163,6 +184,11 @@ const CONTEXT_SNAPSHOT_COLUMNS = [
   }
 ] as const;
 
+// TODO (P0.1+ F-P2R1-003): Replace this hardcoded snapshot with a TypeScript
+// module generated from `config/provider_compliance.toml` so that the UI never
+// drifts from the canonical Matrix (matrix_version, condition_status,
+// region_or_data_transfer, plan_required, last_verified_at) need to be exposed.
+// In P0 this skeleton intentionally limits the columns shown.
 const PROVIDER_COMPLIANCE_ROWS = [
   {
     provider: "openai",
@@ -209,18 +235,26 @@ const PROVIDER_COMPLIANCE_ROWS = [
 const POLICY_PROFILES = [
   {
     name: "minimal_safe",
-    summary: "Read-only by default; task_write, repo_write, pr_open, and secret_access require approval."
+    summary:
+      "task_write / repo_write / pr_open require approval; secret_access and provider_call fail closed through SecretBroker and Provider Compliance Matrix; merge / deploy remain P0 deny (F-P2R1-004)."
   },
   {
     name: "approval_required",
-    summary: "Human approval is required before privileged mutations can proceed."
+    summary:
+      "Human approval gates every privileged mutation; SecretBroker capability token, Provider Compliance preflight, and runner gateway still verify independently."
   },
   {
     name: "merge_deny",
-    summary: "Merge and deploy remain denied in P0 even when other approvals pass."
+    summary:
+      "Merge and deploy stay denied in P0 even after approvals; RepoProxy Draft PR remains the only allowed write surface."
   }
 ] as const;
 
+// TODO (P0.1+ F-P2R1-005): Replace this sample timeline with a canonical
+// event catalog sourced from the backend AgentRunEvent enum (currently 28
+// event types, expanding to 37 in P0.1 per ADR-00014/ADR-00018). The sample
+// shown here is intentionally narrowed to the success path for the P0 UI
+// skeleton.
 const AGENT_RUN_EVENT_TIMELINE = [
   {
     seqNo: 1,
@@ -340,7 +374,7 @@ export function AdminPageShell({
       <header className="max-w-5xl">
         <p className="text-sm font-medium text-accent">{eyebrow}</p>
         <h1 className="text-3xl font-semibold tracking-normal text-ink">{title}</h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">{description}</p>
+        <div className="mt-2 max-w-3xl text-sm leading-6 text-muted">{description}</div>
       </header>
       {children}
     </section>
@@ -359,7 +393,7 @@ export function Panel({ titleId, title, description, aside, children }: PanelPro
             {title}
           </h2>
           {description === undefined ? null : (
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">{description}</p>
+            <div className="mt-1 max-w-3xl text-sm leading-6 text-muted">{description}</div>
           )}
         </div>
         {aside === undefined ? null : <div className="shrink-0">{aside}</div>}
@@ -384,11 +418,12 @@ export function KeyboardReadinessStrip({ current }: { current: string }) {
             <li key={item.href}>
               <Link
                 aria-current={item.label === current ? "page" : undefined}
-                aria-label={`Go to ${item.label} with ${item.keys.join(" then ")}`}
+                aria-label={`Go to ${item.label}`}
                 className="inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-xs font-semibold text-ink outline-offset-2 hover:border-accent hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 href={item.href}
               >
-                <kbd className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-muted">
+                {/* P0.1+ shortcut hint (planned; no key handler attached yet, F-P2R1-013) */}
+                <kbd aria-hidden="true" className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-muted">
                   {item.keys.join(" ")}
                 </kbd>
                 <span>{item.label}</span>
