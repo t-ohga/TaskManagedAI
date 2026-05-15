@@ -469,16 +469,163 @@ PR-based workflow における **Claude / user の責務分離**。`.claude/rule
 
 過去セッションで user 手元に残った commit / modified file / untracked file は、user が「Claude に整理委任」と意思表示すれば Claude が **代理 PR として起票**:
 
-1. **内容確認**: `git show <hash>` / `git diff` / `ls <untracked-dir>` で review
-2. **新 worktree 作成**: `git worktree add .claude/worktrees/<topic> -b <branch-name> origin/main` で main base
-3. **cherry-pick or copy**: `git cherry-pick <hash>` で user 手元 commit を取り込み、untracked file は copy で move
-4. **push + PR 起票**: `git push -u origin <branch>` → `gh pr create --base main --head <branch>`
+1. **内容確認 (Codex PR #3 R1 + PR #10 R1+R2 全件 P2 adopt: 深掘り必須)**:
+   - committed: `git show <hash>` で diff 全文 review
+   - **tracked file の変更 (worktree edit + staged + deletion + rename) — Codex PR #10 R2 F-PR10-007/008/011 P2 adopt**:
+     ```bash
+     # 1. stat (staged + worktree 両方を `HEAD` 基準で取得、F-PR10-008 adopt)
+     git -C <src-checkout> diff --stat HEAD -- <file>
+     # 2. status 種別 (A=added M=modified D=deleted R=rename C=copy) を取得、deletion/rename を判定 (F-PR10-007/011 adopt)
+     git -C <src-checkout> diff --name-status -M HEAD -- .
+     # 3. diff 全文 (staged + worktree)
+     git -C <src-checkout> diff HEAD -- <file>
+     ```
+   - **untracked file/dir**: `ls` だけでは file 中身を見ていない不十分。以下全件実施:
+     ```bash
+     # === 1) enumerate (全 file 数 + 全 path、F-PR10-002 + R2 F-PR10-006/012 adopt) ===
+     find <dir> -type f | wc -l            # 全 file 数 (cap なし)
+     find <dir> -type f                    # 全 file path (head 制限なし、全件 review)
+     # === 2) symlink 検出 — Codex F-PR10-009 P2 adopt: workspace 外への symlink を reject ===
+     find <dir> -type l                    # symlink 一覧 (1 件でも検出されたら user 確認なしに add しない)
+     # === 3) file type 判定 (binary / 巨大 file 検出) ===
+     find <dir> -type f -exec file {} +
+     # === 4) sensitive **filename** sweep — Codex F-PR10-010 P2 adopt ===
+     # rule では `.env*` `*.key` `*.pem` `id_rsa*` を add 禁止と書いているが、内容 sweep の rg だけでは
+     # filename そのものを catch しない。filename glob で別途明示検出する。
+     find <dir> -type f \( -name '.env*' -o -name '*.key' -o -name '*.pem' \
+       -o -name 'id_rsa*' -o -name 'id_ed25519*' -o -name 'id_dsa*' \
+       -o -name '*.pfx' -o -name '*.p12' -o -name '*credentials*' \
+       -o -name '*secrets*' -o -name 'authorized_keys' -o -name 'known_hosts' \)
+     # === 4b) size 検査 — Codex PR #10 R3 F-PR10-017 P2 adopt ===
+     # 「巨大 binary (>1MB) は add しない」rule を機械的に enforce。
+     find <dir> -type f -size +1M -exec du -h {} +
+     # === 5) 機密 content sweep (F-PR10-001 + R4 F-PR10-020 P1 adopt) ===
+     # **secret value 自体を terminal/log に echo しない** ため `rg -l`
+     # (filename only、matched line は出力しない) を使う。検出 file は user 確認
+     # 経路に回す (cat / head 等の content review は禁止)。
+     rg -l -i --hidden --no-ignore \
+       -- 'password|secret|api[_-]?key|token|BEGIN.*PRIVATE.*KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]+|xox[bp]-[A-Za-z0-9-]+|bearer\s+[A-Za-z0-9._-]+' \
+       <dir> > /tmp/codex-secret-hit-files.txt 2>/dev/null || true
+     # secret-hit file list を確認 (filename のみ表示)。1 件でもあれば user 報告 + add 中止。
+     test -s /tmp/codex-secret-hit-files.txt && {
+       echo "ERROR: secret-suspect content detected in following files (NOT shown for security):"
+       cat /tmp/codex-secret-hit-files.txt
+       echo "→ user 確認なしに proceed しない。content 確認は user 直接 review (Claude session 越し禁止)。"
+     }
+     # === 6) text content human review (F-PR10-005 + R2 F-PR10-006/012 adopt) ===
+     # 全 text file の **全 body** を review (前 R2 で head -50 cap だったが撤去、F-PR10-012 adopt)。
+     # 20 件 cap も撤去 (F-PR10-006 adopt: 21+ 件目を review せず copy する経路を防ぐ)。
+     # F-PR10-019 P2 adopt: NUL 区切りで空白・改行・glob を含む path も安全処理
+     # F-PR10-016 P2 adopt: 拡張子リストを repo 内 code 全種に拡張 + MIME ベース fallback
+     # Codex PR #10 R4 F-PR10-021 P1 adopt: sensitive filename (`.env*` / `*.key` /
+     # `*.pem` / `id_rsa*` 等) は cat review **対象外**。content 出力 = secret leak。
+     # 検出済 sensitive file は step 4 (filename sweep) の出力で user に報告済、
+     # ここで content review しない。
+     find <dir> -type f \( \
+       -name '*.md' -o -name '*.txt' -o -name '*.json' -o -name '*.yaml' -o -name '*.yml' \
+       -o -name '*.toml' -o -name '*.ini' -o -name '*.cfg' \
+       -o -name '*.py' -o -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \
+       -o -name '*.sh' -o -name '*.bash' -o -name '*.zsh' \
+       -o -name 'Dockerfile*' -o -name 'Makefile*' -o -name '*.mk' \
+       -o -name '*.go' -o -name '*.rs' -o -name '*.rb' -o -name '*.lua' \
+       -o -name '*.html' -o -name '*.css' -o -name '*.xml' -o -name '*.sql' \
+       -o -name '*.lock' \
+     \) \
+     ! -name '.env*' ! -name '*.key' ! -name '*.pem' ! -name 'id_rsa*' \
+     ! -name 'id_ed25519*' ! -name 'id_dsa*' ! -name '*.pfx' ! -name '*.p12' \
+     ! -name '*credentials*' ! -name '*secrets*' ! -name 'authorized_keys' \
+     ! -name 'known_hosts' \
+     -print0 | while IFS= read -r -d '' f; do
+       echo "=== $f ==="
+       wc -l "$f"
+       cat "$f"
+     done
+     # 拡張子リスト外 (拡張子なし script 等) も MIME 判定で text 抽出して review
+     # MIME fallback も sensitive filename を exclude (F-PR10-021 adopt)
+     find <dir> -type f ! \( \
+       -name '*.md' -o -name '*.txt' -o -name '*.json' -o -name '*.yaml' -o -name '*.yml' \
+       -o -name '*.toml' -o -name '*.ini' -o -name '*.cfg' \
+       -o -name '*.py' -o -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \
+       -o -name '*.sh' -o -name '*.bash' -o -name '*.zsh' \
+       -o -name 'Dockerfile*' -o -name 'Makefile*' -o -name '*.mk' \
+       -o -name '*.go' -o -name '*.rs' -o -name '*.rb' -o -name '*.lua' \
+       -o -name '*.html' -o -name '*.css' -o -name '*.xml' -o -name '*.sql' \
+       -o -name '*.lock' \
+       -o -name '.env*' -o -name '*.key' -o -name '*.pem' -o -name 'id_rsa*' \
+       -o -name 'id_ed25519*' -o -name 'id_dsa*' -o -name '*.pfx' -o -name '*.p12' \
+       -o -name '*credentials*' -o -name '*secrets*' -o -name 'authorized_keys' \
+       -o -name 'known_hosts' \
+     \) -print0 | while IFS= read -r -d '' f; do
+       MIME=$(file --brief --mime-type "$f")
+       case "$MIME" in
+         text/*|application/json|application/xml|application/x-shellscript|application/javascript)
+           echo "=== $f (MIME: $MIME) ==="; wc -l "$f"; cat "$f" ;;
+       esac
+     done
+     # === 7) gitignore 状態 ===
+     # Codex F-PR10-001 + R3 F-PR10-015 P2 adopt:
+     # - shell glob では dotfiles skip → find 使用
+     # - `<dir>` が別 checkout の場合、現在の repo を基準にすると "outside repository"
+     #   エラーで ignore 状態取得失敗 → `-C <src-checkout>` 経由で source repo を明示。
+     find <dir> -type f -print0 | xargs -0 git -C <src-checkout> check-ignore -v -- 2>&1 || echo "(none ignored)"
+     ```
+   - 以下 **いずれか** を検出したら **user 確認なしに add しない**:
+     - 巨大 binary (>1MB) / `.env*` / `*.key` / `*.pem` / `id_rsa*` 等 sensitive filename
+     - 機密疑い content (rg sweep ヒット)
+     - **symlink** (`find -type l` で 1 件以上、F-PR10-009 adopt)
+     - 100 file 超の untracked dir → 複数 PR 分割 or user 承認
+
+2. **新 branch 作成**: `git worktree add .claude/worktrees/<topic> -b <branch-name> origin/main` で main base
+   (`.claude/worktrees/` は `.gitignore` で除外済、PR #2 で恒久対応)
+
+3. **transfer (Codex PR #3 R1 + PR #10 R1+R2 全件 P2 adopt: 6 state 全部 cover)**:
+   - **committed** (user 手元の commit): `git cherry-pick <hash>` で取り込み
+   - **untracked file/dir**: `cp -r <src> <worktree>/<dest>` で copy
+   - **tracked file の text 変更 (worktree edit + staged)**:
+     ```bash
+     # F-PR10-004 adopt: staged-only edit は `git diff <file>` で 0 byte。HEAD 基準で取得。
+     git -C <src-checkout> diff HEAD -- <file> | git -C <worktree> apply
+     ```
+   - **tracked file の binary 変更** (F-PR10-003 + R3 F-PR10-014 P2 adopt):
+     ```bash
+     # binary は `git diff` が marker のみで `git apply` で no-op。直接 copy。
+     # F-PR10-014: 新規 dir 配下 (e.g. `assets/new/foo.png`) は worktree 側に親 dir が
+     # ないと `cp` が失敗するため `mkdir -p` で先に作成。
+     mkdir -p "$(dirname <worktree>/<binary-file>)"
+     cp <src-checkout>/<binary-file> <worktree>/<binary-file>
+     ```
+   - **tracked file の deletion** (Codex PR #10 R2 F-PR10-007 P2 adopt 新追加):
+     ```bash
+     # text/binary 問わず削除は `git diff` / `cp` どちらでも transfer されない。
+     # `git diff --name-status -M HEAD -- .` の `D <path>` (F-PR10-013 adopt: `-M` 必須) を `git rm` で再現。
+     git -C <worktree> rm <path>
+     ```
+   - **tracked file の rename (binary 含む)** (Codex PR #10 R2 F-PR10-011 P2 adopt 新追加):
+     ```bash
+     # binary rename は新 path を copy しても旧 path が残る。`git mv` または明示削除必要。
+     # `git diff --name-status -M HEAD -- .` の `R<score> <old> <new>` (F-PR10-013 adopt) を `git mv` で再現。
+     git -C <worktree> mv <old-path> <new-path>
+     # 既に <new-path> を copy してしまった場合は <old-path> を `git rm`:
+     git -C <worktree> rm <old-path>
+     # F-PR10-018 P2 adopt: rename 後の **内容変更** も transfer 必須
+     # (rename だけだと user の編集が落ちる、`R<score>` には内容変更 case がある)
+     # text: 新 path に対し HEAD baseline で diff を取って apply
+     git -C <src-checkout> diff HEAD -- <new-path> | git -C <worktree> apply
+     # binary: 新 path に直接 copy で上書き
+     cp <src-checkout>/<new-path> <worktree>/<new-path>
+     ```
+   - **cherry-pick / untracked copy / git apply 経路だけでは binary edit / deletion / rename が抜ける** こと、
+     **`git diff <file>` 単独では staged-only edit が抜ける** ことに注意。
+
+4. **stage + commit + push + PR 起票**: `git add` (6 経路すべての変更、`git rm` / `git mv` 含む) → `git commit` → `git push -u origin <branch>` → `gh pr create --base main --head <branch>`
+
 5. **user merge 待ち**: user は GitHub UI または `gh pr merge` で完結
 
 注意:
 - user の **active 作業中** branch / file は **触らない** (stash / checkout は user 直接実行)
 - 大規模な scope creep が懸念される場合は user 確認後実行
 - 25 file 超の add は **別 session で慎重に** (本 session で着手しない)
+- 機密疑い content が enumerate 段階で見つかったら **絶対に add せず user に報告**
 
 #### 過去事例
 
