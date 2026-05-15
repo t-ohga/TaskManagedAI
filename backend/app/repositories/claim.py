@@ -63,13 +63,15 @@ class ClaimRepository(BaseRepository[Claim]):
             raise ValueError("payload research_task_id must match repository research_task_id.")
 
         # F-PR19-R2-001 P1 + F-PR19-R1-002 P1 adopt: server-owned UUID 追加前の caller payload に対して
-        # secret scan + PROV validation を実行。scan 範囲を minimize し、server-owned UUID は対象外。
-        assert_no_raw_secret(data, path="$claim_create")
+        # secret scan + PROV validation を実行。scan 範囲を minimize し、UUID 型 field (server-owned ID) は
+        # JSON-serializable でないため scan 対象から除外 (assert_no_raw_secret は dict[str, JsonValue] を期待)。
+        scan_data = {k: v for k, v in data.items() if not isinstance(v, UUID)}
+        assert_no_raw_secret(scan_data, path="$claim_create")
 
         # F-PR19-R2-003 P2 adopt: repository create でも PROV validation を実行
         # (API endpoint bypass で repository direct call の経路を遮断、create と update で同 invariant 維持)
-        if "provenance_json" in data:
-            validate_provenance_json(data["provenance_json"])
+        if "provenance_json" in scan_data:
+            validate_provenance_json(scan_data["provenance_json"])
 
         data["project_id"] = project_id
         data["research_task_id"] = research_task_id
@@ -140,7 +142,9 @@ class ClaimRepository(BaseRepository[Claim]):
             validate_provenance_json(data["provenance_json"])
 
         # F-PR19-R1-002 P1 adopt: persist 前に raw secret / canary scan を実行
-        assert_no_raw_secret(data, path="$claim_update")
+        # UUID 型 field は scan 対象外 (JSON-serializable のみ scan)
+        scan_data = {k: v for k, v in data.items() if not isinstance(v, UUID)}
+        assert_no_raw_secret(scan_data, path="$claim_update")
 
         result = await self.session.execute(
             update(Claim)

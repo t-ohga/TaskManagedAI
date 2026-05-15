@@ -73,12 +73,24 @@ async def create_claim_endpoint(
 
     repo = ClaimRepository(session)
     try:
-        claim = await repo.create_claim(
-            tenant_id=tenant_id,
-            project_id=project_id,
-            research_task_id=research_task_id,
-            claim_create=body,
-        )
+        try:
+            claim = await repo.create_claim(
+                tenant_id=tenant_id,
+                project_id=project_id,
+                research_task_id=research_task_id,
+                claim_create=body,
+            )
+        except ValueError as exc:
+            # F-PR19-R3-001 P2 adopt: assert_no_raw_secret / validate_provenance_json 失敗を 400 で返す
+            # (uncontrolled 500 ではなく structured 4xx error code、caller が原因を区別可能)
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error_code": "claim_payload_validation_failed",
+                    "error_summary": str(exc),
+                },
+            ) from exc
         correlation_id = _correlation_id(request)
         await AuditEventRepository(session).append(
             tenant_id=tenant_id,

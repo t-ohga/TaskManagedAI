@@ -54,12 +54,24 @@ async def create_evidence_item_endpoint(
 ) -> EvidenceItemRead:
     repo = EvidenceItemRepository(session)
     try:
-        item = await repo.create_evidence_item(
-            tenant_id=tenant_id,
-            project_id=project_id,
-            claim_id=claim_id,
-            evidence_item_create=body,
-        )
+        try:
+            item = await repo.create_evidence_item(
+                tenant_id=tenant_id,
+                project_id=project_id,
+                claim_id=claim_id,
+                evidence_item_create=body,
+            )
+        except ValueError as exc:
+            # F-PR19-R3-002 P2 adopt: assert_no_raw_secret 失敗を 400 で返す
+            # (uncontrolled 500 ではなく structured 4xx error code、caller が原因を区別可能)
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error_code": "evidence_item_payload_validation_failed",
+                    "error_summary": str(exc),
+                },
+            ) from exc
         correlation_id = _correlation_id(request)
         await AuditEventRepository(session).append(
             tenant_id=tenant_id,

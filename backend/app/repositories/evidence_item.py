@@ -54,9 +54,10 @@ class EvidenceItemRepository(BaseRepository[EvidenceItem]):
             raise ValueError("payload claim_id must match repository claim_id.")
 
         # F-PR19-R2-002 P1 + F-PR19-R1-003 P1 adopt: server-owned UUID 追加前の caller payload に対して
-        # secret scan を実行。scan 範囲を minimize し、server-owned UUID (project_id / claim_id) は対象外。
-        # caller-supplied UUID (source_id) は scan 対象内、ただし UUID 形式は secret pattern と一致しない設計。
-        assert_no_raw_secret(data, path="$evidence_item_create")
+        # secret scan を実行。UUID 型 field (source_id 等) は JSON-serializable でないため scan 対象から
+        # 除外 (assert_no_raw_secret は dict[str, JsonValue] を期待、UUID 値は SQL Layer で型保証される)。
+        scan_data = {k: v for k, v in data.items() if not isinstance(v, UUID)}
+        assert_no_raw_secret(scan_data, path="$evidence_item_create")
 
         data["project_id"] = project_id
         data["claim_id"] = claim_id
