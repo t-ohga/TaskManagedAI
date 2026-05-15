@@ -6,6 +6,8 @@ from backend.app.db.models.actor import Actor, ActorType
 from backend.app.db.models.approval_request import ApprovalRequest, ApprovalStatus, RiskLevel
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.base import Base
+from backend.app.db.models.claim import Claim
+from backend.app.db.models.evidence_item import EvidenceItem
 from backend.app.db.models.evidence_source import EvidenceSource
 from backend.app.db.models.notification_event import NotificationEvent
 from backend.app.db.models.policy_decision import PolicyDecision
@@ -33,6 +35,8 @@ __all__ = [
     "ApprovalStatus",
     "AuditEvent",
     "Base",
+    "Claim",
+    "EvidenceItem",
     "EvidenceSource",
     "NotificationEvent",
     "PolicyDecision",

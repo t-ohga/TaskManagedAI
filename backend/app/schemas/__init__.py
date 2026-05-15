@@ -5,6 +5,13 @@ from backend.app.schemas.acceptance_criteria import (
 )
 from backend.app.schemas.actor import ActorCreate, ActorRead, ActorType
 from backend.app.schemas.audit_event import AuditEventCreate, AuditEventRead
+from backend.app.schemas.claim import ClaimBase, ClaimCreate, ClaimRead, ClaimUpdate
+from backend.app.schemas.evidence_item import (
+    EvidenceItemAttach,
+    EvidenceItemBase,
+    EvidenceItemCreate,
+    EvidenceItemRead,
+)
 from backend.app.schemas.notification_event import NotificationEventCreate, NotificationEventRead
 from backend.app.schemas.principal import PrincipalCreate, PrincipalRead, PrincipalType
 from backend.app.schemas.project import ProjectCreate, ProjectRead, ProjectStatus
@@ -33,6 +40,14 @@ __all__ = [
     "ActorType",
     "AuditEventCreate",
     "AuditEventRead",
+    "ClaimBase",
+    "ClaimCreate",
+    "ClaimRead",
+    "ClaimUpdate",
+    "EvidenceItemAttach",
+    "EvidenceItemBase",
+    "EvidenceItemCreate",
+    "EvidenceItemRead",
     "NotificationEventCreate",
     "NotificationEventRead",
     "PrincipalCreate",
@@ -57,4 +72,3 @@ __all__ = [
     "WorkspaceCreate",
     "WorkspaceRead",
 ]
-
