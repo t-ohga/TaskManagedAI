@@ -302,29 +302,48 @@ def _matches_inline_exec(canonical_argv: tuple[str, ...]) -> bool:
     name = canonical_argv[0]
     rest = canonical_argv[1:]
     # shell inline (-c)
-    # Codex PR #1 R1 F-PR1-001 P1 adopt: `bash -lc 'cmd'` / `sh -ec 'cmd'` 等の
-    # combined short option group (`-lc` / `-ec` / `-ic` etc.) で `c` を含むもの
-    # も inline exec 扱いにする。POSIX shell の short option は `-` + chars で
-    # combine 可能 (`-lc` = `-l` + `-c`)。
+    # Codex PR #1 R1 F-PR1-001 P1 adopt: combined short option group (`-lc` 等) で
+    #   `c` 含むものも inline exec 検出。
     # Codex PR #8 R1 F-PR8-003 P2 adopt: option parsing は script operand (`--`
-    # or non-option) に到達したら **break** する。`bash scripts/build.sh -config local`
-    # の `-config` を inline exec と誤検出してきた挙動を修正する (script の引数
-    # は shell option ではないので scan しない)。
+    #   or non-option) で break、script の引数は scan しない。
+    # Codex PR #8 R2 F-PR8-004 P1 adopt: option-with-argument 型 option
+    #   (`-o option` / `-O shopt_option` / `--rcfile file` / `--init-file file`)
+    #   の **argument** を script operand と誤認して早期 break しない。GNU Bash
+    #   docs (Invoking-Bash) 準拠で 2-token consume。`bash -o pipefail -c '...'`
+    #   や `bash --rcfile /dev/null -c '...'` 等を正しく inline exec として検出。
     if name in {"sh", "bash", "zsh", "dash", "ash", "ksh", "fish"}:
-        for a in rest:
+        # 引数を消費する short option (POSIX shell + bash 共通)
+        SHORT_OPT_WITH_ARG = {"-o", "-O"}
+        # 引数を消費する long option (bash の主要 invocation options、GNU docs)
+        LONG_OPT_WITH_ARG = {"--rcfile", "--init-file"}
+        i = 0
+        n = len(rest)
+        while i < n:
+            a = rest[i]
             # `--` で option parsing 終了 (POSIX)
             if a == "--":
                 return False
-            # script operand (non-option) に到達 → 以降は script の引数で
-            # shell option ではない、scan 終了
+            # script operand (non-option) に到達 → 以降は script の引数、scan 終了
             if not a.startswith("-"):
                 return False
-            # long option (`--norc`/`--posix`) は skip
-            if a.startswith("--"):
+            if not a.startswith("--"):
+                # short option (or group): chars に `c` を含む = inline exec
+                if "c" in a[1:]:
+                    return True
+                # option-with-argument (`-o` / `-O`) は argument を 2-token consume
+                if a in SHORT_OPT_WITH_ARG and i + 1 < n:
+                    i += 2
+                    continue
+                i += 1
                 continue
-            # short option group: chars に `c` を含む = inline exec
-            if "c" in a[1:]:
-                return True
+            # long option `--xxx` または `--xxx=val`
+            base = a.split("=", 1)[0]
+            if base in LONG_OPT_WITH_ARG and "=" not in a and i + 1 < n:
+                # `--rcfile <path>` 形式: 2-token consume
+                i += 2
+                continue
+            # `--rcfile=<path>` (= 結合) や boolean long opt (`--norc`) は 1 token
+            i += 1
         return False
     # python inline (-c)
     if name in {"python", "python2", "python3"}:

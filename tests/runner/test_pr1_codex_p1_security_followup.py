@@ -289,3 +289,73 @@ class TestShellScriptOperandStopsScanning:
         violation = detect_dangerous_command(argv)
         assert violation is not None
         assert violation.reason == DangerousCommandDenyReason.INLINE_EXEC
+
+
+
+class TestShellOptionWithArgumentNotMistakenAsScript:
+    """F-PR8-004 P1 adopt (PR #8 R2): option-with-argument 型 option
+    (`-o option` / `-O shopt` / `--rcfile file` / `--init-file file`) の
+    argument を script operand と誤認して inline -c 検出を bypass しない。
+    GNU Bash docs (Invoking-Bash) 準拠で 2-token consume。"""
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            # bash -o option -c cmd
+            ("bash", "-o", "pipefail", "-c", "rm -rf /"),
+            ("bash", "-o", "errexit", "-c", "rm -rf /"),
+            # bash -O shopt -c cmd
+            ("bash", "-O", "extglob", "-c", "rm -rf /"),
+            ("bash", "-O", "nullglob", "-c", "rm -rf /"),
+            # bash --rcfile file -c cmd
+            ("bash", "--rcfile", "/dev/null", "-c", "rm -rf /"),
+            ("bash", "--init-file", "./fake-init", "-c", "rm -rf /"),  # noqa: S108
+            # combined: multiple option-with-argument before -c
+            ("bash", "-o", "pipefail", "-O", "extglob", "-c", "rm -rf /"),
+            # `--rcfile=val` (= 結合) でも detect される (= 単一 token)
+            ("bash", "--rcfile=/dev/null", "-c", "rm -rf /"),
+            # sh / zsh も同じ
+            ("sh", "-o", "errexit", "-c", "rm -rf /"),
+            ("zsh", "-o", "errexit", "-c", "rm -rf /"),
+        ],
+    )
+    def test_inline_exec_after_option_with_argument(
+        self, argv: tuple[str, ...]
+    ) -> None:
+        from backend.app.services.runner.dangerous_command import (
+            DangerousCommandDenyReason,
+            detect_dangerous_command,
+        )
+
+        violation = detect_dangerous_command(argv)
+        assert violation is not None, f"must detect inline exec: {argv}"
+        assert violation.reason == DangerousCommandDenyReason.INLINE_EXEC, (
+            f"must be INLINE_EXEC: {argv}, got {violation.reason}"
+        )
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            # script.sh + -config (option-with-argument の argument ではない)
+            ("bash", "scripts/build.sh", "-config", "local"),
+            # `--` 以降は引数、`-c` も無視 (POSIX 準拠)
+            ("bash", "-o", "errexit", "--", "-c", "harmless"),
+            # -o option script.sh -- 以降は scan しない
+            ("bash", "-o", "pipefail", "script.sh", "-config", "local"),
+        ],
+    )
+    def test_no_false_positive_after_consumption(
+        self, argv: tuple[str, ...]
+    ) -> None:
+        """option-with-argument を正しく consume した後の script operand は
+        誤検出されない (regression check)."""
+        from backend.app.services.runner.dangerous_command import (
+            DangerousCommandDenyReason,
+            detect_dangerous_command,
+        )
+
+        violation = detect_dangerous_command(argv)
+        if violation is not None:
+            assert violation.reason != DangerousCommandDenyReason.INLINE_EXEC, (
+                f"must NOT be INLINE_EXEC: {argv}, got {violation.reason}"
+            )
