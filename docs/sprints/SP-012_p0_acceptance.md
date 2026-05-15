@@ -287,7 +287,7 @@ QL-D scope の core spec は別 design doc `docs/設計検討/quality_loop_produ
 
 Sprint Pack 単位の **`conformance` artifact 発行** (= Sprint Exit) は **non-blocking future gate** として P0.1 SP-023 候補 accepted 後の Sprint Exit から mandatory 化する記述として明示:
 
-1. **最新 review chain (= `revision` linked to current artifact の `review` / `rereview`) の `verdict='clean'`** (findings: [] または `P3` / `info` のみで explicit accept、QL-D `docs/設計検討/quality_loop_product_artifact.md §5/§6` の delegate) **OR** 全 finding に `adoption_decision` (adopt / reject / defer) が記録済 (R1 = `verdict='needs_revision'` でも、R2 / R3 で全 finding が adopt/reject/defer 判定済なら gate 通過 OK、historical R1/R2 は append-only history として保持、gate 対象外、F-PR13-002 P1 adopt)
+1. **最新 review chain (= `revision` linked to current artifact の `review` / `rereview`) の `verdict='clean'`** (findings: [] または `P3` / `info` のみで explicit accept、QL-D `docs/設計検討/quality_loop_product_artifact.md §5/§6` の delegate) **OR** 全 finding が **fully resolved** = `adoption_decision='adopt'` + 実 fix commit referenced / `adoption_decision='reject'` + acknowledgement rationale / `adoption_decision='defer'` + full `defer_entry` schema (resume_condition + verification + target_artifact_hash 全記入済) のいずれか (F-PR13-R7-006 P2 adopt: 「adoption_decision 記録のみ」では不十分、resolved status を要求)。historical R1/R2 は append-only history として保持、gate 対象外、F-PR13-002 P1 + R7-006 P2 adopt 反映。
 2. **全 `defer_entry` の `verification` 列が記入済** (F-PR13-R4-001 P2 adopt: severity を問わず — `P0` / `P1` / `P2` / `P3` / `info` のいずれの finding を `defer` する場合でも、`verification` 必須。本条件は前述 #### `defer` structured state schema (本 Pack §QL-D update) と整合、P0/P1/P2 blocking finding を `defer` する場合は **resume_condition + verification の両方が記入済** が必要、gate を緩めない)
 3. `must_ship_items[]` 全件達成 (`must_ship_pass_count == must_ship_total`)
 4. `hard_gates_pass[]` 全件 PASS (AC-HARD-01〜07 全件、本 Pack §受け入れ条件と整合)
@@ -363,7 +363,7 @@ defer_entry:
 #### QL-D 関連 ADR / Sprint Pack (本 update で trigger)
 
 - **SP-023 候補 (P0.1、新規 Pack 起票必須)**: Quality Loop product artifact schema (`quality_loop_artifacts` / `quality_loop_reviews` / `quality_loop_defer_entries` table、event_type 拡張、API endpoint) 実装
-- **ADR-00026 候補 (P0.1、proposed 新規起票必須)**: Quality Loop schema design (ADR Gate Criteria #2/#3 trigger)
+- **ADR-00028 候補 (P0.1、proposed 新規起票必須)**: Quality Loop schema design (ADR Gate Criteria #2/#3 trigger)
 - DD-03 §14 + DD-07 §14 (本 QL-D run で同時追加)
 - `docs/設計検討/quality_loop_product_artifact.md` (本 QL-D run で新規起票、core spec)
 - ADR-00014 (Multi-Agent Orchestration、**proposed**、F-PR13-R6-001 P2 adopt: 実 file `docs/adr/00014_multi_agent_orchestration.md:status=proposed` confirm): Phase C `review_artifacts` table と Quality Loop `review` artifact の物理分離 (本 §14.4 of DD-03)、P0.1 accepted 化時に cross-reference 有効化
