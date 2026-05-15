@@ -295,7 +295,56 @@ Claude 単独 commit が許される条件:
 - ユーザーが明示的に「Claude で実装して」と指示した場合
 - worktree setup / git operation / ファイル移動 / 環境変数読込 等の Claude tool 直叩きが効率的な作業
 
+#### doc-only future spec と code 変更の品質追求は別軸 (2026-05-15 確立、QL-D PR #13 教訓)
 
+**「品質重視、時間より品質」絶対教訓 (§6.5.0 冒頭) は文脈依存で適用範囲が異なる**。CRITICAL invariant 直結 code 変更と doc-only future implementation gate spec では、適切な multi-round depth が異なる。両者を同 quality bar で扱うと time cost が爆発し、本質目的達成済 PR の merge が遅延する。
+
+##### 区別軸
+
+| 変更種別 | 例 | Codex multi-round 適用 |
+|---|---|---|
+| **CRITICAL invariant 直結 code** | AgentRun 16 状態 / SecretBroker atomic claim / Provider Compliance / approval decider human-only / 5+ source enum integrity / migration / schema 変更 | **「品質重視」絶対教訓 sticks**、clean (CRITICAL=0 / HIGH≤2 / new finding 0) まで infinite polish |
+| **doc-only future implementation gate spec** | R29 plan §5 QL-X 系の Pack/ADR proposed 起票、design doc 起票、acceptance spec として記録、cross-reference 追加 | **本質目的達成 + 軽い R1-R3 polish で merge へ進む判断 OK**、Codex 堂々巡り検知時 (5+ round で同 topic / 累計 30+ findings の wording 細部) は adopt 中断 |
+
+##### 本質目的判定 (doc-only run の merge ready 判断)
+
+R29 plan §5 QL-X 等の **本質目的** (concept 記録 / core invariant 宣言 / future gate doc) が **Phase 0 で達成済**なら、R1-R3 軽い polish で merge ready 宣言可能。例:
+
+- QL-A: registry + gold-flow + namespace + SP-0045 新規起票 → Phase 0 + 6 round で 37 findings
+- QL-B: ADR-00025 proposed + DD-03/04/06 §13 update → Phase 0 + 3 round で 12 findings
+- QL-C: SP-010/011 既存 Pack 拡充 → Phase 0 + 4 round で 21 findings
+- **QL-D: Quality Loop product artifact 6 種 concept + AgentRun.status 物理分離宣言 → Phase 0 で達成済、11 round で 51 findings 累積後、本質目的達成済を認識し merge ready 宣言 (R11 残 5 件 P2 は実装時 fix へ defer)**
+
+##### Codex 堂々巡り検知
+
+doc-only spec の wording polish で以下兆候があれば cost-benefit 評価で adopt 中断判断:
+
+- 5+ round で **同 topic を多 round 修正** (P0 期間中 blocking vs non-blocking、SP 番号 renumber、defer schema field 等)
+- 累計 30+ findings が **wording 細部** の polish に集中 (新 CRITICAL/HIGH 不変条件問題が出ない)
+- 同 wording を round ごとに微調整して Codex が再指摘 (line tracking で同じ line に new finding が anchor される)
+
+これらは Codex の品質問題ではなく、doc-only spec が「実装直前 spec」として review される性質。実装 Sprint Pack 着手時に再度議論される wording 細部に infinite polish するメリット低い。
+
+##### merge ready 判断時の defer note
+
+adopt 中断時は **PR description / Sprint Pack `## Review` に defer note を必ず記録**:
+
+- 残 findings の severity (P0/P1/P2/P3/info) と count
+- 実装時 fix へ defer する理由 (doc-only spec / 実装 Sprint Pack 着手時に再議論)
+- 該当 Sprint Pack (SP-029 candidate 等) accepted 後の Sprint Exit で final fix
+
+これで「品質重視」教訓と「本質目的達成済 merge」の両立を doc レベルで確立する。
+
+##### 反例 (本 教訓を適用しない場合)
+
+以下は CRITICAL invariant 直結 code 変更のため、本教訓の対象外 (引き続き「品質重視」絶対教訓 sticks):
+
+- Sprint 1-9 batch 実装 (code/test/migration、Codex multi-round 平均 5-7 round で clean、Sprint 6 batch 2 で 8 round が必要だった redaction.py 等)
+- SecretBroker / Provider Compliance / runner_mutation_gateway 変更
+- DB schema / migration 追加
+- security boundary 変更 (PR #8 PR #9 等の security follow-up)
+
+これらは merge 後の修正コスト高、infinite polish 必要。
 
 ### 6.5.1 役割分担
 
