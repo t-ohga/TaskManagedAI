@@ -245,3 +245,79 @@ policy_decisions 列拡張は **行わない** (Sprint 5.5 で additive only 維
 - ADR-00006 (SecretBroker): repair retry context redaction で `assert_no_raw_secret` を retry prompt builder で必須実行 (Sprint 5.5 で延長)
 - ADR-00010 (Provider Compliance Matrix v2): payload_data_class 算出を Input Trust Layer 側に集約 (Sprint 5.5 で延長、Sprint 5 で確立した caller-supplied 禁止 invariant 継続)
 - ADR-00002 (DB schema): artifacts.trust_level 列追加は ADR-00002 の延長として扱う (de facto accepted via Sprint 2 完了)
+
+## QL-B autonomy L0-L3 cross-reference (R29 修正まとめ統合計画反映、2026-05-15 proposed)
+
+本 update は **proposed のみ** (本 ADR-00009 の status は accepted 維持、本セクションは proposed cross-reference)。code / API / schema 変更なし、future implementation gate として `docs/設計検討/修正まとめ統合計画.md` §10 と新 ADR-00025 (proposed) との関係を doc 化する。
+
+### action_class 7 種は不変 (Sprint 5.5 で拡張なしを継続)
+
+QL-B run でも action_class を拡張しない。`task_write` / `repo_write` / `pr_open` / `secret_access` / `merge` / `deploy` / `provider_call` の **7 種 frozenset** を維持する。autonomy L0-L3 は action_class の追加ではなく、各 action_class に対する Policy Engine `effect=allow` の auto-allow 適用範囲を level ごとに切替する仕組みであり、enum レベルでの drift は発生しない (`.claude/rules/cross-source-enum-integrity.md` §1 5+ source 整合)。
+
+### autonomy_level (caller-visible) と policy_profile (server-owned) の概念分離
+
+ADR-00025 (proposed) で導入する autonomy_level は **caller-visible project setting**、policy_profile は **server-owned Policy Engine 内部値**。両者は別概念:
+
+| 概念 | scope | caller 指定 | 既存 ADR-00009 との関係 |
+|---|---|---|---|
+| `autonomy_level` (L0/L1/L2/L3) | project setting (P0.1 で `projects` table に列追加候補) | **可** (project owner) | 本 ADR-00009 に存在しない、ADR-00025 で新規導入 |
+| `policy_profile` (`default` / `low_risk_auto_allow` 等) | Policy Engine 内部 effect profile | **不可** (server resolve 専用、`.claude/rules/server-owned-boundary.md` §1) | 本 ADR-00009 §Tier 2 の既存 semantics、ADR-00025 で `autonomy_level` から resolve するロジック追加 |
+
+**P0 期間中の運用**: `autonomy_level` 列は **追加しない**、Policy Engine は既存 ADR-00009 §Tier 2 の `policy_profile='default'` のみで動作。`applied_level=L0` は audit event metadata として記録 (新規 column 不要)、全 mutation が approval path を通る。
+
+**P0.1 accepted 化後**: ADR-00025 + 新 Sprint Pack SP-017 候補で `autonomy_level` 列追加 (ADR Gate Criteria #2 trigger) + low-risk profile 機械判定実装 + L1-L3 auto-allow path 実装。
+
+### auto-allow path は decider 委譲ではない (本 ADR §self-approval invariant の延長)
+
+ADR-00025 の L1-L3 で auto-allow される action でも、Policy Engine `effect=allow` は **「approval を skip」であって「agent / orchestrator / service / provider が decider に昇格」ではない** (本 ADR §採用案の self-approval 禁止 invariant の延長)。approval を要する action では decider は依然 **human only** (DB CHECK + service guard + Pydantic + pytest の 4 重防御、`.claude/rules/multi-agent-orchestration.md` §52-58 と整合)。
+
+具体的には:
+
+- auto-allow path で実行する action は `approval_requests` row を作らない (decider 欄なし)
+- AgentRunEvent + audit event に `policy_profile` + `policy_version` + `auto_allow_reason` + `effective_action_class` + `applied_level` を必ず残す (raw secret 除外、本 ADR §採用案の audit invariant の延長)
+- low-risk profile 機械判定で **1 軸でも不合格** なら approval path に fall back (fail-closed 設計、本 ADR の deny-by-default invariant の延長)
+
+### level に関わらず human approval 必須の action_class (本 ADR の `merge` / `deploy` deny invariant の延長)
+
+ADR-00025 で `secret_access` / `merge` / `deploy` / `provider_call` は **全 level (L0-L3) で human approval 必須**。これは本 ADR §採用案で:
+
+- `merge` / `deploy` は P0 deny (常時 `effect=deny`、`reason_code=p0_merge_deploy_disabled`)
+- `secret_access` は SecretBroker mediated operation の policy gate (ADR-00006 と整合)
+- `provider_call` は Provider Compliance Matrix `payload_data_class <= allowed_data_class` 必須 (ADR-00010 と整合)
+
+の延長として、`provider_call` も含めて L1-L3 でも auto-allow されない不変条件を ADR-00025 に明文化する。
+
+### Phase 5 prerequisite (Critical、ADR-00012 Hook Trust Boundary)
+
+ADR-00025 の **accepted 化は Phase 5 Hook Trust Boundary 完成 + ADR-00012 accepted が prerequisite**。本 ADR-00009 の Sprint 3 accepted 化時点では Phase 5 未完のため、L1-L3 auto-allow path 実装は本 ADR の Sprint 5 update (Sprint 5.5 で `trusted_instruction` 昇格境界を Approval 4 整合 + decider human-only で延長) と同等の要件を満たさない。trusted hook / counter / audit 基盤なしでは autonomous workflow が gate bypass を生成する可能性 (`.claude/hooks/` 改ざん攻撃) があり、ADR-00025 accepted 化は Phase 5 完了後にのみ進める。
+
+### 5+ source 整合 manifest (D-011 trace)
+
+`action_class` 7 種 enum の 5+ source 整合 (R29 修正まとめ統合計画 §4 D-011 mitigation):
+
+| # | source | path | enforcement |
+|---:|---|---|---|
+| 1 | DB CHECK constraint | `migrations/versions/0005_policy_rules.py` (policy_rules、Sprint 3) + `migrations/versions/0006_approval_policy_decisions.py` (approval_requests + policy_decisions、Sprint 3) + future `migrations/versions/00NN_p0_1_event_type_37.py` (P0.1 SP-013 prerequisite Phase F-0) | `policy_rules.action_class` / `approval_requests.action_class` / `policy_decisions.action_class` の CHECK constraint で 7 種に限定 |
+| 2 | SQLAlchemy CheckConstraint | `backend/app/db/models/policy_rule.py` / `approval_request.py` / `policy_decision.py` | ORM レベルで再 enforce |
+| 3 | Python Literal | `backend/app/domain/policy/action_class.py` | `ACTION_CLASSES: Final[frozenset[str]]` で型レベル enforce |
+| 4 | Pydantic Field validator | **P0 完成時に追加予定** (`backend/app/schemas/policy_rule.py` / `approval_request.py` / `policy_decision.py` を新規起票、現状 `backend/app/schemas/` 配下に該当 schema 未実装、F-PR12-003 反映) | API request body validation で reject、P0 完成時に SP-003 acceptance spec として追加 |
+| 5 | pytest EXPECTED constant | `tests/policy/test_action_class_enum.py` の `EXPECTED_ACTION_CLASSES` | drift detection (`set(actual) == set(expected)`) |
+| 6 (optional) | frontend TypeScript enum | `frontend/lib/domain/policy/action-class.ts` (Sprint 9+) | UI と backend の enum 同期 |
+
+ADR-00025 の `autonomy_level` enum も同等の 5+ source 整合を P0.1 SP-017 候補で実装する。
+
+### 関連 ADR (QL-B update)
+
+- **ADR-00025 (proposed、新規)**: autonomy L0-L3 policy_profiles、本 ADR の §Tier 2 `low_risk_auto_allow` semantics を 4 段階に拡張する cross-reference 関係。
+- ADR-00012 (Hook Trust Boundary): ADR-00025 accepted 化の Phase 5 prerequisite。
+- ADR-00014 (Multi-Agent Orchestration): role ⊥ capability authorization invariant、本 ADR の action_class 7 種固定と整合。
+- ADR-00023 (proposed、InteractionGateway): Realtime/Gemini direct 不可 invariant、本 ADR の `provider_call` 全 level approval 必須 invariant と整合。
+
+### 関連資料 (QL-B update)
+
+- `docs/設計検討/修正まとめ統合計画.md` §10 (R29 clean、ADR-00025 の source spec)
+- `docs/adr/00025_autonomy_policy_profiles.md` (proposed)
+- `.claude/rules/server-owned-boundary.md` §1 (caller-not-allowed 経路)
+- `.claude/rules/cross-source-enum-integrity.md` §1 (5+ source 整合)
+- `.claude/rules/multi-agent-orchestration.md` (decider human-only、role ⊥ capability)
+- `.claude/rules/sprint-pack-adr-gate.md` §11 (ADR Gate Criteria 11 種 break-glass 対象外、L upgrade は ADR retro 不可)
