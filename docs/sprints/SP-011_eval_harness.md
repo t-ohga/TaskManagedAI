@@ -199,17 +199,20 @@ risks:
   - 計算: SearchRun の top-k EvidenceSearchHit のうち relevant な数 / k
   - 集計単位: `RetrievalEvalRun.precision_at_k` json column
 - **ndcg@k acceptance spec** (k = 10、retrieval ranking quality 計測):
-  - 計算: 標準 ndcg@10 (relevance_score を gain として、log2(rank+1) で discount)
+  - **gain source (Codex F-QLC-005 P1 adopt)**: 標準 nDCG@10、**gain は gold relevance labels (fixture の graded relevance)** から取る — EvidenceSearchHit.relevance_score (ranker 自己採点) を gain に使うと **ranker が自分で高く採点した非 relevant hit でも nDCG を上げられる** self-reported score 依存になり Anti-Gaming 致命的。gold relevance は recall/precision と同じ fixture 由来 (dataset_versions に紐付く gold annotation)。
+  - 計算: gold relevance を gain、`log2(rank+1)` で discount、`(tenant_id, project_id, search_run_id, rank)` unique を SP-010 で enforce 済 (top-k 安定再計算)
   - 集計単位: `RetrievalEvalRun.ndcg_at_k` json column (`{"10": float}`)
-  - SP-010 EvidenceSearchHit.ndcg_contribution の sum で server-side aggregate
+  - `EvidenceSearchHit.ndcg_contribution` 列は **記録用 metric のみ**、nDCG 集計の gain source としては使わない (Anti-Gaming reject)
 - **citation_coverage acceptance spec** (AC-KPI-04、grounding quality 計測):
-  - SP-010 GroundingSupport から計算: `count(distinct generated_artifact_id with >= 1 support) / count(distinct generated_artifact_id)`
-  - P0 で `>= 0.9` (Sprint 12 AC-KPI-04 final verify)
+  - **claim-level 集計 (Codex F-QLC-004 P1 adopt、SP-010 と整合)**: AC-KPI-04 既存 contract は `count(distinct claim_id with >= 1 GroundingSupport) / count(distinct claim_id within evaluated AgentRun)` — claim 単位で集計、generated_artifact-level は誤り (歪み発生)
+  - P0 で `claim-level citation_coverage >= 0.9` (Sprint 12 AC-KPI-04 final verify)
+  - **null evidence_set_hash AgentRun の扱い (SP-010 F-QLC-007 と整合)**: 分母に含め、分子は 0 として uncovered として数える (除外しない)
 - **grounded_answer_rate acceptance spec** (P0 Quality KPI 補強、optional Eval metric):
-  - 計算: GroundingSupport 1 件以上関連付く generated_artifact の比率 (citation_coverage と同等定義、別 metric として記録)
+  - 計算: GroundingSupport 1 件以上関連付く **claim** の比率 (claim-level、generated_artifact-level ではない、citation_coverage と同等定義)
 - **tool_trajectory_match acceptance spec** (Eval fixture vs actual AgentRun trajectory):
-  - 計算: fixture 想定 tool sequence vs actual AgentRunEvent emitted tool sequence の Jaccard index
-  - 集計単位: `RetrievalEvalRun.tool_trajectory_match` float [0, 1]
+  - **計算 (Codex F-QLC-008 P2 adopt)**: fixture 想定 tool sequence vs actual AgentRunEvent emitted tool sequence の **order-preserving metric** — **Jaccard index は使わない** (順序消失、`search→read→cite` と `cite→read→search` を同 score にする)。
+  - 推奨 metric: **Normalized Edit Distance** (`1 - levenshtein(expected, actual) / max(len(expected), len(actual))`、float [0, 1]) を P0 default に。alternative として `Longest Common Subsequence ratio` / `prefix match ratio` を fixture 設計時に選択可能。
+  - 集計単位: `RetrievalEvalRun.tool_trajectory_match` float [0, 1] + `tool_trajectory_metric_kind` enum (`edit_distance` / `lcs_ratio` / `prefix_ratio`) を `RetrievalEvalRun` の metric_metadata に記録
   - Anti-Gaming invariant: fixture commit と AgentRun emit logic 修正 commit を **別 author / 別 timestamp** で分離 (BL-0129 CI gate)
 
 ### Pack reuse + cross-ref 注記 (R29 P-09 + P-18 反映)

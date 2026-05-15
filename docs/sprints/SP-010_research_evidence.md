@@ -118,21 +118,24 @@ risks:
 
 - **SearchRun acceptance spec** (Sprint 10 BL-0119 source / Sprint 11 BL-0126 consumer 共通 contract):
   - 必須 column: `tenant_id` / `project_id` / `research_task_id` / `search_run_id (UUID)` / `query_canonical_hash (sha256)` / `retrieval_policy_version` / `hit_count` / `latency_ms` / `started_at` / `completed_at`
-  - `(tenant_id, project_id)` 複合 FK で閉じる、cross-project SELECT は全件 reject
+  - **複合 FK (Codex F-QLC-001 P1 adopt)**: `(tenant_id, project_id)` だけでは不足。`(tenant_id, project_id, research_task_id) references research_tasks(tenant_id, project_id, id)` で **research_task が同一 project に属することを DB 境界で強制** (cross-project research_task 紐付け reject、BL-0029c 整合)。cross-project SELECT も全件 reject。
   - server-owned-boundary: `query_canonical_hash` は caller-supplied 不可、server 側で query 文字列を NFC + lower 化後 sha256 して生成
 - **EvidenceSearchHit acceptance spec** (検索結果 ↔ Evidence 紐付け):
   - 必須 column: `tenant_id` / `project_id` / `search_run_id` / `claim_id` / `evidence_source_id` / `rank (int)` / `relevance_score (float [0,1])` / `ndcg_contribution (float)` / `is_grounding (bool)`
+  - **rank constraint (Codex F-QLC-006 P2 adopt)**: `(tenant_id, project_id, search_run_id, rank)` unique + `CHECK (rank >= 1)`。同一 SearchRun 内の rank duplicate / 0 / 負値を全件 reject、top-k 集計 (recall@k / precision@k / nDCG) の安定再計算を保証。
   - 複合 FK: `(tenant_id, project_id, search_run_id)` / `(tenant_id, project_id, claim_id)` / `(tenant_id, project_id, evidence_source_id)` で閉じる
 - **GroundingSupport acceptance spec** (生成 artifact ↔ Evidence 関連付け、citation_coverage source):
-  - 必須 column: `tenant_id` / `project_id` / `generated_artifact_id` / `claim_id` / `evidence_source_id` / `support_type (cite|paraphrase|quote)` / `confidence_score`
-  - 越境 negative test: 別 project の generated_artifact_id / claim_id を関連付ける insert は全件 reject
+  - 必須 column: `tenant_id` / `project_id` / `generated_artifact_id` / `agent_run_id` / `claim_id` / `evidence_source_id` / `support_type (cite|paraphrase|quote)` / `confidence_score`
+  - **複合 FK (Codex F-QLC-002 P1 adopt)**: `generated_artifact_id` だけでは不足 — `artifacts` table は project を直接持たず `agent_runs` 経由で project が決まるため、`(tenant_id, project_id, agent_run_id) references agent_runs(tenant_id, project_id, id)` + `(tenant_id, project_id, agent_run_id, generated_artifact_id) references artifacts(tenant_id, agent_run_id, id)` の 2 段 FK で **artifact の project binding を DB 境界で強制**。
+  - 越境 negative test: 別 project の generated_artifact_id / claim_id / agent_run_id を関連付ける insert は全件 reject (artifact の run binding 経由で project 一致を verify)
 - **RetrievalEvalRun baseline acceptance spec** (Sprint 11 BL-0126 で集計、本 Sprint 10 では skeleton schema のみ documenting):
-  - 必須 column: `tenant_id` / `project_id` / `eval_run_id` / `dataset_version` / `recall_at_k (json: {5: float, 10: float})` / `precision_at_k (json)` / `ndcg_at_k (json: {10: float})` / `citation_coverage (float [0,1])` / `grounded_answer_rate (float [0,1])` / `tool_trajectory_match (float [0,1])`
-  - Anti-Gaming invariant: `dataset_version` は fixture creation commit と policy 修正 commit が **別 author / 別 timestamp** であること (Sprint 11 BL-0129 で CI gate)
+  - 必須 column: `tenant_id` / `project_id` / `eval_run_id` / `dataset_version_id (UUID FK)` / `recall_at_k (json: {5: float, 10: float})` / `precision_at_k (json)` / `ndcg_at_k (json: {10: float})` / `citation_coverage (float [0,1])` / `grounded_answer_rate (float [0,1])` / `tool_trajectory_match (float [0,1])`
+  - **dataset_version_id FK 必須 (Codex F-QLC-003 P1 adopt)**: 文字列 `dataset_version` のみだと別 dataset の `eval_run_id` と任意 version 文字列の組合せが保存可能 → Anti-Gaming fixture/policy 分離 + AC-KPI 集計 trace 破壊。既存 eval schema (Sprint 11 BL-0122/0123) の `dataset_versions` table への `dataset_version_id UUID FK` 必須、`(tenant_id, eval_run_id, dataset_version_id)` 複合制約で run ↔ case dataset 一致を DB で強制。
+  - Anti-Gaming invariant: `dataset_versions.created_at` の fixture creation commit と policy 修正 commit が **別 author / 別 timestamp** であること (Sprint 11 BL-0129 CI gate)
 - **citation_coverage の source ticket spec** (AC-KPI-04 計測 contract):
-  - 計算式: `count(distinct generated_artifact_id with at least 1 GroundingSupport) / count(distinct generated_artifact_id)`
-  - 閾値: P0 で `>= 0.9` (Sprint 12 AC-KPI-04 で final verify)
-  - null evidence_set_hash の AgentRun は分母から除外 (Sprint 4 backfill 期間の互換性)
+  - **計算式 (Codex F-QLC-004 P1 adopt)**: AC-KPI-04 既存 contract は **claim-level** (`count(distinct claim_id with >= 1 GroundingSupport) / count(distinct claim_id within evaluated AgentRun)`)。**generated_artifact-level は誤り** — 複数 claim を含む artifact に 1 件だけ GroundingSupport があっても artifact 全体が covered と数える歪み発生。Sprint 12 AC-KPI-04 final verify では claim 単位で集計する。
+  - 閾値: P0 で `claim-level citation_coverage >= 0.9` (Sprint 12 AC-KPI-04 で final verify)
+  - **null evidence_set_hash 扱い (Codex F-QLC-007 P2 adopt)**: null evidence_set_hash の AgentRun は **分母に含め、分子は 0 として uncovered として数える**。除外すると Research/Evidence 結線欠落 run が評価対象から消えて citation_coverage を過大評価する。SP-010 既存リスク欄の「Sprint 11 で null を 0 として扱う仕様統一」と整合。P0 acceptance での `denominator_nonzero` gate を維持。
 
 ### Pack reuse + alias map 注記 (R29 P-09 反映)
 
