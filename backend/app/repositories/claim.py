@@ -173,6 +173,16 @@ class ClaimRepository(BaseRepository[Claim]):
         for forbidden in _SERVER_OWNED_FIELDS:
             data.pop(forbidden, None)
 
+        # F-PR19-R11-003 P2 adopt: update 経路でも metadata に rls_ready: true を server-side enforce
+        # (raw dict caller の `metadata={"rls_ready": false}` or 空 dict update 経路で
+        # RLS-ready invariant を破壊させない)
+        if "metadata" in data:
+            metadata = data["metadata"]
+            if isinstance(metadata, dict):
+                metadata["rls_ready"] = True
+            else:
+                data["metadata"] = {"rls_ready": True}
+
         if not data:
             return await self.get_claim_by_id(tenant_id, project_id, claim_id)
 

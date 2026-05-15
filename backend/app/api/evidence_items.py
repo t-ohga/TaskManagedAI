@@ -32,11 +32,11 @@ def _constraint_name(error: IntegrityError) -> str | None:
     return None
 
 
-# F-PR19-R5-001 P1 adopt: trace_id format を narrow に (claims.py と同 invariant)
+# F-PR19-R5-001 + F-PR19-R11-004 P1 adopt: trace_id format を narrow に (claims.py と同 invariant)
+# structured ID branch は OpenAI-style key (`sk-` prefix) を許可してしまうため削除、hex/UUID のみ。
 _TRACE_ID_RE = re.compile(
     r"^[0-9a-fA-F]{16,32}$"
     r"|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-    r"|^[A-Za-z0-9-]{16,64}$"
 )
 
 
