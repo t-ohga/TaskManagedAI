@@ -469,38 +469,54 @@ PR-based workflow における **Claude / user の責務分離**。`.claude/rule
 
 過去セッションで user 手元に残った commit / modified file / untracked file は、user が「Claude に整理委任」と意思表示すれば Claude が **代理 PR として起票**:
 
-1. **内容確認 (Codex PR #3 R1 F-PR3-002 P2 adopt: 深掘り必須)**:
+1. **内容確認 (Codex PR #3 R1 F-PR3-002 + PR #10 R1 F-PR10-001/002/005 P2 adopt: 深掘り必須)**:
    - committed: `git show <hash>` で diff 全文 review
-   - **modified file (tracked、uncommitted edit)**: `git diff <file>` + `git diff --stat` で範囲確認
+   - **modified file (tracked、uncommitted edit + staged)**: `git diff HEAD -- <file>` + `git diff --stat` で範囲確認 (staged + worktree 両方 cover)
    - **untracked file/dir**: `ls` だけでは file 中身を見ていない不十分。以下全件実施:
      ```bash
-     # 深 enumerate (binary 含む)
-     find <dir> -type f | head -100
-     # 各 file 中身を head/file で確認 (binary / 巨大 file 検出)
+     # 全 file enumerate (count 取得、preview のみ head 100、F-PR10-002 adopt)
+     find <dir> -type f | wc -l                    # 全 file 数を把握
+     find <dir> -type f                            # 全 file path 列挙
+     # 各 file 中身を type 判定 (binary / 巨大 file 検出)
      find <dir> -type f -exec file {} +
-     # 機密 sweep (secret / token / password / API key 等)
-     rg -i -- 'password|secret|api[_-]?key|token|BEGIN.*PRIVATE.*KEY' <dir> || true
-     # gitignore に該当しないか (.env 等が untrack ≠ ignored を確認)
-     git check-ignore -v <dir>/* || echo "(none ignored)"
+     # 機密 sweep — Codex PR #10 R1 F-PR10-001 P2 adopt:
+     # rg は default で hidden files / dotfiles を skip するので --hidden + --no-ignore 必須。
+     # secret pattern も拡張 (.env / id_rsa / PGP / SSH / OAuth bearer 等)。
+     rg -i --hidden --no-ignore \
+       -- 'password|secret|api[_-]?key|token|BEGIN.*PRIVATE.*KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]+|xox[bp]-[A-Za-z0-9-]+|bearer\s+[A-Za-z0-9._-]+' \
+       <dir> || true
+     # text content human review — Codex F-PR10-005 P2 adopt: file metadata だけでなく
+     # 実 text contents を目視確認する (rg は narrow secret pattern しか catch しない)
+     find <dir> -type f -name '*.md' -o -name '*.txt' -o -name '*.json' -o -name '*.yaml' \
+       | head -20 | xargs -I {} sh -c 'echo "=== {} ==="; head -50 {}'
+     # gitignore 状態 — F-PR10-001 adopt: shell glob `<dir>/*` は dotfiles を skip、find 使用
+     find <dir> -type f -exec git check-ignore -v {} + 2>&1 || echo "(none ignored)"
      ```
    - 巨大 binary / 機密疑い content / `.env*` / `*.key` / `*.pem` / `id_rsa*` を検出したら **user 確認なしに add しない**
+   - 100 file 超の untracked dir は **複数 PR に分割** または add 前 user 承認
 
 2. **新 branch 作成**: `git worktree add .claude/worktrees/<topic> -b <branch-name> origin/main` で main base
    (`.claude/worktrees/` は `.gitignore` で除外済、PR #2 で恒久対応)
 
-3. **transfer (Codex PR #3 R1 F-PR3-003 P2 adopt: 3 state 全部 cover)**:
+3. **transfer (Codex PR #3 R1 F-PR3-003 + PR #10 R1 F-PR10-003/004 P2 adopt: 4 state 全部 cover)**:
    - **committed** (user 手元の commit): `git cherry-pick <hash>` で取り込み
    - **untracked file/dir**: `cp -r <src> <worktree>/<dest>` で copy
-   - **modified file (tracked、uncommitted edit)**: 専用 transfer 必須
+   - **tracked file の text 変更 (worktree edit + staged)**: 専用 transfer 必須
      ```bash
-     # 方法 A: patch 経由 (clean)
-     git -C <src-checkout> diff -- <file> | git -C <worktree> apply
-     # 方法 B: 直接 copy (file 単位の場合)
-     cp <src-checkout>/<file> <worktree>/<file>
+     # Codex F-PR10-004 P2 adopt: staged-only edit は `git diff <file>` で 0 byte。
+     # `git diff HEAD -- <file>` で staged + worktree 両方 cover する。
+     git -C <src-checkout> diff HEAD -- <file> | git -C <worktree> apply
      ```
-     **cherry-pick / untracked copy だけだと modified file が抜ける** ことに注意。
+   - **tracked file の binary 変更** (Codex F-PR10-003 P2 adopt 新追加経路):
+     ```bash
+     # binary file は `git diff` が `Binary files ... differ` marker のみで `git apply`
+     # で no-op になる。**直接 copy 必須**。
+     cp <src-checkout>/<binary-file> <worktree>/<binary-file>
+     ```
+   - **cherry-pick / untracked copy / git apply 経路だけでは binary tracked edit が抜ける** こと、
+     **`git diff <file>` 単独では staged-only edit が抜ける** ことに注意。
 
-4. **stage + commit + push + PR 起票**: `git add` (3 経路すべての変更) → `git commit` → `git push -u origin <branch>` → `gh pr create --base main --head <branch>`
+4. **stage + commit + push + PR 起票**: `git add` (4 経路すべての変更) → `git commit` → `git push -u origin <branch>` → `gh pr create --base main --head <branch>`
 
 5. **user merge 待ち**: user は GitHub UI または `gh pr merge` で完結
 
