@@ -476,7 +476,7 @@ PR-based workflow における **Claude / user の責務分離**。`.claude/rule
      # 1. stat (staged + worktree 両方を `HEAD` 基準で取得、F-PR10-008 adopt)
      git -C <src-checkout> diff --stat HEAD -- <file>
      # 2. status 種別 (A=added M=modified D=deleted R=rename C=copy) を取得、deletion/rename を判定 (F-PR10-007/011 adopt)
-     git -C <src-checkout> diff --name-status HEAD -- .
+     git -C <src-checkout> diff --name-status -M HEAD -- .
      # 3. diff 全文 (staged + worktree)
      git -C <src-checkout> diff HEAD -- <file>
      ```
@@ -496,6 +496,9 @@ PR-based workflow における **Claude / user の責務分離**。`.claude/rule
        -o -name 'id_rsa*' -o -name 'id_ed25519*' -o -name 'id_dsa*' \
        -o -name '*.pfx' -o -name '*.p12' -o -name '*credentials*' \
        -o -name '*secrets*' -o -name 'authorized_keys' -o -name 'known_hosts' \)
+     # === 4b) size 検査 — Codex PR #10 R3 F-PR10-017 P2 adopt ===
+     # 「巨大 binary (>1MB) は add しない」rule を機械的に enforce。
+     find <dir> -type f -size +1M -exec du -h {} +
      # === 5) 機密 content sweep (F-PR10-001 adopt: hidden 含む全 file scan) ===
      rg -i --hidden --no-ignore \
        -- 'password|secret|api[_-]?key|token|BEGIN.*PRIVATE.*KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]+|xox[bp]-[A-Za-z0-9-]+|bearer\s+[A-Za-z0-9._-]+' \
@@ -503,10 +506,38 @@ PR-based workflow における **Claude / user の責務分離**。`.claude/rule
      # === 6) text content human review (F-PR10-005 + R2 F-PR10-006/012 adopt) ===
      # 全 text file の **全 body** を review (前 R2 で head -50 cap だったが撤去、F-PR10-012 adopt)。
      # 20 件 cap も撤去 (F-PR10-006 adopt: 21+ 件目を review せず copy する経路を防ぐ)。
-     for f in $(find <dir> -type f \( -name '*.md' -o -name '*.txt' -o -name '*.json' -o -name '*.yaml' -o -name '*.yml' -o -name '*.toml' -o -name '*.ini' -o -name '*.cfg' \)); do
+     # F-PR10-019 P2 adopt: NUL 区切りで空白・改行・glob を含む path も安全処理
+     # F-PR10-016 P2 adopt: 拡張子リストを repo 内 code 全種に拡張 + MIME ベース fallback
+     find <dir> -type f \( \
+       -name '*.md' -o -name '*.txt' -o -name '*.json' -o -name '*.yaml' -o -name '*.yml' \
+       -o -name '*.toml' -o -name '*.ini' -o -name '*.cfg' \
+       -o -name '*.py' -o -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \
+       -o -name '*.sh' -o -name '*.bash' -o -name '*.zsh' \
+       -o -name 'Dockerfile*' -o -name 'Makefile*' -o -name '*.mk' \
+       -o -name '*.go' -o -name '*.rs' -o -name '*.rb' -o -name '*.lua' \
+       -o -name '*.html' -o -name '*.css' -o -name '*.xml' -o -name '*.sql' \
+       -o -name '*.lock' -o -name '*.env*' \
+     \) -print0 | while IFS= read -r -d '' f; do
        echo "=== $f ==="
        wc -l "$f"
        cat "$f"
+     done
+     # 拡張子リスト外 (拡張子なし script 等) も MIME 判定で text 抽出して review
+     find <dir> -type f ! \( \
+       -name '*.md' -o -name '*.txt' -o -name '*.json' -o -name '*.yaml' -o -name '*.yml' \
+       -o -name '*.toml' -o -name '*.ini' -o -name '*.cfg' \
+       -o -name '*.py' -o -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \
+       -o -name '*.sh' -o -name '*.bash' -o -name '*.zsh' \
+       -o -name 'Dockerfile*' -o -name 'Makefile*' -o -name '*.mk' \
+       -o -name '*.go' -o -name '*.rs' -o -name '*.rb' -o -name '*.lua' \
+       -o -name '*.html' -o -name '*.css' -o -name '*.xml' -o -name '*.sql' \
+       -o -name '*.lock' -o -name '*.env*' \
+     \) -print0 | while IFS= read -r -d '' f; do
+       MIME=$(file --brief --mime-type "$f")
+       case "$MIME" in
+         text/*|application/json|application/xml|application/x-shellscript|application/javascript)
+           echo "=== $f (MIME: $MIME) ==="; wc -l "$f"; cat "$f" ;;
+       esac
      done
      # === 7) gitignore 状態 ===
      # Codex F-PR10-001 + R3 F-PR10-015 P2 adopt:
@@ -532,24 +563,33 @@ PR-based workflow における **Claude / user の責務分離**。`.claude/rule
      # F-PR10-004 adopt: staged-only edit は `git diff <file>` で 0 byte。HEAD 基準で取得。
      git -C <src-checkout> diff HEAD -- <file> | git -C <worktree> apply
      ```
-   - **tracked file の binary 変更** (F-PR10-003 adopt):
+   - **tracked file の binary 変更** (F-PR10-003 + R3 F-PR10-014 P2 adopt):
      ```bash
      # binary は `git diff` が marker のみで `git apply` で no-op。直接 copy。
+     # F-PR10-014: 新規 dir 配下 (e.g. `assets/new/foo.png`) は worktree 側に親 dir が
+     # ないと `cp` が失敗するため `mkdir -p` で先に作成。
+     mkdir -p "$(dirname <worktree>/<binary-file>)"
      cp <src-checkout>/<binary-file> <worktree>/<binary-file>
      ```
    - **tracked file の deletion** (Codex PR #10 R2 F-PR10-007 P2 adopt 新追加):
      ```bash
      # text/binary 問わず削除は `git diff` / `cp` どちらでも transfer されない。
-     # `git diff --name-status HEAD -- .` の `D <path>` を `git rm` で再現。
+     # `git diff --name-status -M HEAD -- .` の `D <path>` (F-PR10-013 adopt: `-M` 必須) を `git rm` で再現。
      git -C <worktree> rm <path>
      ```
    - **tracked file の rename (binary 含む)** (Codex PR #10 R2 F-PR10-011 P2 adopt 新追加):
      ```bash
      # binary rename は新 path を copy しても旧 path が残る。`git mv` または明示削除必要。
-     # `git diff --name-status HEAD -- .` の `R<score> <old> <new>` を `git mv` で再現。
+     # `git diff --name-status -M HEAD -- .` の `R<score> <old> <new>` (F-PR10-013 adopt) を `git mv` で再現。
      git -C <worktree> mv <old-path> <new-path>
-     # 既に <new-path> を copy してしまった場合は <old-path> を `git rm` する:
+     # 既に <new-path> を copy してしまった場合は <old-path> を `git rm`:
      git -C <worktree> rm <old-path>
+     # F-PR10-018 P2 adopt: rename 後の **内容変更** も transfer 必須
+     # (rename だけだと user の編集が落ちる、`R<score>` には内容変更 case がある)
+     # text: 新 path に対し HEAD baseline で diff を取って apply
+     git -C <src-checkout> diff HEAD -- <new-path> | git -C <worktree> apply
+     # binary: 新 path に直接 copy で上書き
+     cp <src-checkout>/<new-path> <worktree>/<new-path>
      ```
    - **cherry-pick / untracked copy / git apply 経路だけでは binary edit / deletion / rename が抜ける** こと、
      **`git diff <file>` 単独では staged-only edit が抜ける** ことに注意。
