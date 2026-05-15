@@ -104,7 +104,8 @@ TaskManagedAI では、client secret response body を event / log / UI / audit 
 - Server-side controls / sideband: https://developers.openai.com/api/docs/guides/realtime-server-controls
 - Realtime MCP/tools: https://developers.openai.com/api/docs/guides/realtime-mcp
 - Data controls: https://developers.openai.com/api/docs/guides/your-data
-- `gpt-realtime-2`: https://developers.openai.com/api/docs/models/gpt-realtime-2
+- `gpt-realtime`: https://developers.openai.com/api/docs/models/gpt-realtime
+- `gpt-realtime-mini`: https://developers.openai.com/api/docs/models/gpt-realtime-mini
 
 現在の公式 docs では、browser voice agent の代表経路は `RealtimeAgent` / `RealtimeSession` と WebRTC です。WebRTC 初期化には、developer-controlled backend が `/v1/realtime/calls` を作成する unified interface と、backend が `/v1/realtime/client_secrets` で ephemeral key / client secret を mint して browser が `/v1/realtime/calls` に接続する経路があります。TaskManagedAI では policy / audit / session config を backend で固定しやすい unified interface を第一候補にし、client secret flow は代替候補として扱います。standard API key は server-side のみに置き、`OpenAI-Safety-Identifier` は trusted backend で付与します。
 
@@ -112,7 +113,7 @@ TaskManagedAI では、client secret response body を event / log / UI / audit 
 
 Realtime MCP/tools docs は、MCP tool が Realtime API 自身によって実行されることを説明しています。これは便利な一方、TaskManagedAI の Tool/MCP gateway、approval、audit、retention、prompt-injection check を迂回し得るため、直接採用しません。
 
-重要な制約として、`gpt-realtime-2` model page は realtime voice、reasoning effort、tool use を説明していますが、TaskManagedAI の `ProviderAdapter` が必須にする strict structured output schema contract を満たす根拠はこの調査時点では確認できませんでした。したがって、Realtime model を canonical artifact 生成の本体や `ProviderAdapter` 置換にするのは不適切です。将来採用する場合も、current docs と contract test で structured artifact 生成の保証を確認してから別 ADR で扱います。
+重要な制約として、公式 Realtime model (`gpt-realtime` / `gpt-realtime-mini`) page は realtime voice、reasoning effort、tool use を説明していますが、TaskManagedAI の `ProviderAdapter` が必須にする strict structured output schema contract を満たす根拠はこの調査時点では確認できませんでした。したがって、Realtime model を canonical artifact 生成の本体や `ProviderAdapter` 置換にするのは不適切です。将来採用する場合も、current docs と contract test で structured artifact 生成の保証を確認してから別 ADR で扱います。
 
 ## 6. TaskManagedAI 側の前提
 

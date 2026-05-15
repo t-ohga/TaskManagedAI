@@ -27,8 +27,8 @@
 
 1. SP-004: add `pending_signals` concept as artifact/event metadata, not as new top-level state explosion.
 2. SP-005: keep provider adapter contract provider-neutral; add Gemini mapping only after Matrix entry is verified.
-3. SP-010 相当: `docs/sprints/SP-010_research_evidence.md` は未作成なので、当面は P0 backlog `BL-0113`〜`BL-0121` へ接続して local-first Evidence / Search DTOs を設計する。
-4. SP-011 相当: `docs/sprints/SP-011_eval_harness.md` は未作成なので、当面は P0 backlog `BL-0122`〜`BL-0130` へ接続し、小さい gold set を TaskManagedAI docs/issues から作る。
+3. SP-010: `docs/sprints/SP-010_research_evidence.md` は既存 Pack として存在するため、本 intake の Research / Evidence 候補 (local-first Evidence / Search DTOs、P0 backlog `BL-0113`〜`BL-0121`) を直接接続し、Gemini 取り込み内容を SP-010 must_ship / exit criteria へ反映する。
+4. SP-011: `docs/sprints/SP-011_eval_harness.md` は既存 Pack として存在するため、本 intake の Eval 候補 (gold set, attack fixture, P0 backlog `BL-0122`〜`BL-0130`) を直接接続し、Gemini 取り込み内容を SP-011 must_ship / exit criteria へ反映する。
 5. Tool/MCP: P0 Tool Registry / Read-only Gateway、SP-014 network_access enum、SP-015 inter-agent communication、SP-022 framework intake hardening に分解し、P0 中は remote/network MCP を deny-only にする。
 6. Reliability / Safety: SP-005 と SP-005.5 に retry / timeout / safety metadata / injection fixtures を先に入れる。provider feature 拡大より先に、失敗時と攻撃時の観測可能性を作る。
 7. Managed Gemini features: code execution、computer use、URL context、batch、live、model optimizer は Sprint 候補に残すが、P0 実装候補ではなく high-risk gate 待ちにする。
@@ -36,7 +36,7 @@
 ## Traceability Guardrails
 
 - P0 backlog の global `BL-*` と Sprint Pack-local `BL-*` が重複しているため、実装前に ID namespace を決める。この intake では global backlog ID を `P0-BL-*` 相当として読む。
-- `SP-0045_tool_registry`, `SP-010_research_evidence`, `SP-011_eval_harness` は参照先として重要だが、現時点では未作成または placeholder 扱いの可能性がある。これらがない状態で「実装準備完了」とは判断しない。
+- `SP-0045_tool_registry`, `SP-010_research_evidence`, `SP-011_eval_harness` は **正本 Sprint Pack として既存** (Gemini レビュー後に作成済)。本 intake は backlog 迂回ではなく **既存 Pack へ直接接続** すること。Pack 内容と矛盾する取り込みは Pack 側の update PR を起票する。
 - 取り込み文書は Sprint Pack の代替ではない。実装フェーズでは、各候補を Sprint Pack / ADR / Provider Compliance Matrix / test fixture へ再分解する。
 
 ## Explicit Non-Goals
