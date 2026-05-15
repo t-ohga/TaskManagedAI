@@ -243,6 +243,19 @@ uv run ruff check backend tests
 
 (SP-010 完了時に追記)
 
+### QL-C 拡充 spec landing 記録 (2026-05-15、PR #11)
+
+- **QL-C run branch**: `quality-loop/QL-C-research-eval-pack` (PR #11)
+- **拡充内容**: P-09 (Pack reuse) + P-18 (Evidence/RAG/Eval metrics acceptance spec)
+- **Codex multi-round adoption (累計 21 件、PR #11)**:
+  - R1: 8 件 adopt (P1×5 + P2×3) — Anti-Gaming + AC-KPI 整合性
+  - R2: 5 件 adopt (P2×5) — DDL reality + edge case
+  - R3: 4 件 adopt (P2×4) — DDL reality + multi-agent rule + Anti-Gaming
+  - R4: 4 件 adopt (P2×4) — DDL unique key + 既存 column 名整合
+- **P0 / P1 全件 fix** (Anti-Gaming citation_coverage inflation 防御 + AC-KPI 既存 contract 整合 + cross-project DDL boundary)
+- **doc-only scope 維持**: acceptance spec only、no test / code / DB schema / migration changes
+- **defer note (R5+ で続く可能性のある DDL minor edge case)**: 残る minor edge case (Codex は毎 R で `evidence_items` unique key の細部 / artifacts の column 名 alias 等 minor DDL adjustment を発見する性質) は **Sprint 10 batch 1+ で実 DDL/migration 化時に Codex review 経由で adopt**。本 acceptance spec は P0 / P1 全件 + 主要 P2 fix で品質基準達成、minor DDL adjustment は実装時に確実に発覚する layer (DDL migration が `no unique constraint matching given keys` 等のエラーで止まるため fail-safe)。
+
 ### Sprint 10 batch 0 実装進捗 (R29 §5 QL-C R22 T-P2R1-013 反映)
 
 - **batch_0_completed_commit**: `314b5bb` (BL-0113 research_tasks DDL/model/migration + BL-0114 evidence_sources DDL/model/migration、Codex R1-R2 clean)
