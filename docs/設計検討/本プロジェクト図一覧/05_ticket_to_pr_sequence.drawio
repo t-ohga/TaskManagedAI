@@ -1,0 +1,338 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" modified="2026-05-14T19:40:00.000Z" agent="TaskManagedAI diagram generator" version="24.0.0" type="device">
+  <diagram id="05_ticket_to_pr_sequence" name="05 Ticket To PR Sequence">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2140" pageHeight="1640" math="0" shadow="0" adaptiveColors="auto">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="05 シーケンス: Ticket から Draft PR / Eval / Audit まで" style="text;html=1;fontSize=22;fontStyle=1;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="980" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="human" value="Human" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="130" width="145" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="life_human" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#666666;strokeColor=none;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="131" y="215" width="2" height="1120" as="geometry" />
+        </mxCell>
+        <mxCell id="ui" value="Next.js UI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="230" y="130" width="145" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="life_ui" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#666666;strokeColor=none;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="301" y="215" width="2" height="1120" as="geometry" />
+        </mxCell>
+        <mxCell id="api" value="FastAPI API" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="130" width="145" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="life_api" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#666666;strokeColor=none;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="471" y="215" width="2" height="1120" as="geometry" />
+        </mxCell>
+        <mxCell id="store" value="DB / Audit" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="570" y="130" width="145" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="life_store" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#666666;strokeColor=none;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="641" y="215" width="2" height="1120" as="geometry" />
+        </mxCell>
+        <mxCell id="policy" value="Policy / Approval" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="740" y="130" width="145" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="life_policy" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#666666;strokeColor=none;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="811" y="215" width="2" height="1120" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime" value="Agent Runtime" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="920" y="130" width="145" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="life_runtime" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#666666;strokeColor=none;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="991" y="215" width="2" height="1120" as="geometry" />
+        </mxCell>
+        <mxCell id="worker" value="Worker" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="130" width="145" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="life_worker" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#666666;strokeColor=none;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="1171" y="215" width="2" height="1120" as="geometry" />
+        </mxCell>
+        <mxCell id="provider" value="ProviderAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="130" width="145" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="life_provider" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#666666;strokeColor=none;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="1351" y="215" width="2" height="1120" as="geometry" />
+        </mxCell>
+        <mxCell id="runner" value="Runner Sandbox" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1460" y="130" width="145" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="life_runner" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#666666;strokeColor=none;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="1531" y="215" width="2" height="1120" as="geometry" />
+        </mxCell>
+        <mxCell id="repo" value="RepoProxy / GitHub" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1640" y="130" width="145" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="life_repo" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#666666;strokeColor=none;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="1711" y="215" width="2" height="1120" as="geometry" />
+        </mxCell>
+        <mxCell id="eval" value="Eval Harness" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9ead3;strokeColor=#38761d;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1820" y="130" width="145" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="life_eval" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#666666;strokeColor=none;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="1891" y="215" width="2" height="1120" as="geometry" />
+        </mxCell>
+        <mxCell id="act_api_create" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="466" y="270" width="12" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="act_runtime_plan" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="986" y="410" width="12" height="850" as="geometry" />
+        </mxCell>
+        <mxCell id="act_worker_plan" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="1166" y="455" width="12" height="165" as="geometry" />
+        </mxCell>
+        <mxCell id="act_provider" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1346" y="500" width="12" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="act_policy" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="806" y="650" width="12" height="430" as="geometry" />
+        </mxCell>
+        <mxCell id="act_api_repo" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="466" y="1145" width="12" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="act_runner" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1526" y="1070" width="12" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="act_repo" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1706" y="1190" width="12" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="act_eval" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9ead3;strokeColor=#38761d;" vertex="1" parent="1">
+          <mxGeometry x="1886" y="1280" width="12" height="145" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_1_human" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="131" y="249" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_1_ui" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="301" y="249" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_1" value="01 Ticket / Research 作成" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_1_human" target="pt_1_ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_2_ui" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="301" y="294" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_2_api" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="471" y="294" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_2" value="02 POST /tickets" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_2_ui" target="pt_2_api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_3_api" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="471" y="339" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_3_store" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="641" y="339" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_3" value="03 ticket / event 保存" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_3_api" target="pt_3_store">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_4_api" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="471" y="384" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_4_runtime" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="991" y="384" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_4" value="04 AgentRun作成 + enqueue" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_4_api" target="pt_4_runtime">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_5_runtime" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="991" y="429" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_5_worker" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="1171" y="429" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_5" value="05 planning job 開始" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_5_runtime" target="pt_5_worker">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_6_worker" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="1171" y="474" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_6_provider" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="1351" y="474" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_6" value="06 preflight + structured output" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_6_worker" target="pt_6_provider">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_7_provider" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="1351" y="519" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_7_worker" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="1171" y="519" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_7" value="07 plan artifact" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;dashed=1;" edge="1" parent="1" source="pt_7_provider" target="pt_7_worker">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_8_worker" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="1171" y="564" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_8_runtime" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="991" y="564" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_8" value="08 schema_validated artifact" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;dashed=1;" edge="1" parent="1" source="pt_8_worker" target="pt_8_runtime">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_9_runtime" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="991" y="609" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_9_policy" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="811" y="609" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_9" value="09 policy_linted: action_class / data_class / forbidden path" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_9_runtime" target="pt_9_policy">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_10_policy" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="811" y="654" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_10_runtime" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="991" y="654" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_10" value="10 policy_linted result" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;dashed=1;" edge="1" parent="1" source="pt_10_policy" target="pt_10_runtime">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_11_runtime" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="991" y="699" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_11_store" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="641" y="699" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_11" value="11 diff_ready + artifact/event/cost 保存" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_11_runtime" target="pt_11_store">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_12_runtime" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="991" y="744" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_12_policy" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="811" y="744" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_12" value="12 approval target binding: artifact_hash / policy_version / provider_request_fingerprint / action_class" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_12_runtime" target="pt_12_policy">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_13_policy" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="811" y="789" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_13_ui" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="301" y="789" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_13" value="13 Approval Inbox更新" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_13_policy" target="pt_13_ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_14_ui" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="301" y="834" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_14_human" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="131" y="834" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_14" value="14 承認依頼を表示" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_14_ui" target="pt_14_human">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_15_human" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="131" y="879" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_15_ui" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="301" y="879" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_15" value="15 Approve / Reject" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_15_human" target="pt_15_ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_16_ui" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="301" y="924" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_16_api" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="471" y="924" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_16" value="16 POST /approvals/{id}/decision" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_16_ui" target="pt_16_api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_17_api" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="471" y="969" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_17_policy" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="811" y="969" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_17" value="17 human decision記録" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_17_api" target="pt_17_policy">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_18_policy" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="811" y="1014" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_18_runtime" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="991" y="1014" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_18" value="18 approved resume precheck: binding再検証 / stale invalidation" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;dashed=1;" edge="1" parent="1" source="pt_18_policy" target="pt_18_runtime">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_19_runtime" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="991" y="1059" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_19_runner" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="1531" y="1059" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_19" value="19 approved patch job only / no installation token" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_19_runtime" target="pt_19_runner">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_20_runner" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="1531" y="1104" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_20_runtime" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="991" y="1104" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_20" value="20 patch artifact / stdout / exit code" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;dashed=1;" edge="1" parent="1" source="pt_20_runner" target="pt_20_runtime">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_21_runtime" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="991" y="1149" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_21_api" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="471" y="1149" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_21" value="21 validated patch artifact" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_21_runtime" target="pt_21_api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_22_api" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="471" y="1194" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_22_repo" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="1711" y="1194" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_22" value="22 RepoProxy: branch + push + Draft PR only" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_22_api" target="pt_22_repo">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_23_repo" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="1711" y="1239" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_23_runtime" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="991" y="1239" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_23" value="23 PR URL / CI status" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;dashed=1;" edge="1" parent="1" source="pt_23_repo" target="pt_23_runtime">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_24_runtime" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="991" y="1284" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_24_eval" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="1891" y="1284" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_24" value="24 Hard Gates / KPI eval" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_24_runtime" target="pt_24_eval">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_25_eval" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="1891" y="1329" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="pt_25_store" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="641" y="1329" width="2" height="2" as="geometry" />
+        </mxCell>
+        <mxCell id="msg_25" value="25 eval結果 + audit保存" style="html=1;endArrow=classic;endSize=6;startSize=6;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="pt_25_eval" target="pt_25_store">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="deny" value="P0 deny&#10;merge / deploy / .github/workflows/** write" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4cccc;strokeColor=#cc0000;" vertex="1" parent="1">
+          <mxGeometry x="1390" y="1435" width="360" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="explain" value="この図でわかること: Ticket作成からAI計画、承認、patch実行、Draft PR、Eval、Audit保存までを時間順で追う図。上から下に読む。&#10;誤解しないこと: schema_validated だけでは承認へ進まない。policy_linted、diff_ready、approval target binding、approved resume precheck を通す。Runner は repo token を持たず、RepoProxy がDraft PR操作を行う。&#10;正本: PRD-01 P0完了フロー、F-006/F-008/F-015/F-016/F-019、ADR-00004。" style="shape=note;whiteSpace=wrap;html=1;fontSize=12;spacing=8;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1435" width="1250" height="125" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

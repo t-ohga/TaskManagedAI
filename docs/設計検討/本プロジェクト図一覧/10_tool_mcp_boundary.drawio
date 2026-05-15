@@ -1,0 +1,119 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" modified="2026-05-14T19:40:00.000Z" agent="TaskManagedAI diagram generator" version="24.0.0" type="device">
+  <diagram id="10_tool_mcp_boundary" name="10 Tool MCP Boundary">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="1160" math="0" shadow="0" adaptiveColors="auto">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="10 Tool / MCP 接続境界: outbound provider gate と inbound tool gate を分ける" style="text;html=1;fontSize=22;fontStyle=1;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="980" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_box" value="凡例" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="30" width="460" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_0" value="凡例&#10;P0実装: 必須 / P0構造準備: 境界だけ準備" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1278" y="56" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_1" value="P0 deny&#10;P0で明示拒否" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1278" y="84" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_2" value="P0.1+&#10;P0完了後のロードマップ" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1278" y="112" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_3" value="P1以降&#10;将来拡張" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1278" y="140" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="request" value="Outbound&#10;AgentRun provider request&#10;trusted_instruction + payload_data_class" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="70" y="150" width="300" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="provider_gate" value="ProviderAdapter Compliance Gate&#10;Matrix / effective_allowed_data_class / preflight&#10;provider call前の境界" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="450" y="135" width="340" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="provider_call" value="Provider call&#10;Mock / OpenAI / Claude / Gemini" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="870" y="150" width="300" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="provider_output" value="Inbound&#10;Provider output / tool-call candidate&#10;まだ実行しない" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="70" y="360" width="300" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="artifact" value="Artifact Store&#10;provider outputを保存" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="450" y="365" width="300" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="validator" value="Output Validator&#10;schema / policy / diff / unsafe command scan" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="830" y="360" width="330" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="registry" value="Tool Registry&#10;schema hash / risk / allowed_actions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="70" y="590" width="300" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="policy" value="Policy Engine&#10;Action class / approval requirement" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="450" y="590" width="300" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="readonly" value="Read-only Gateway&#10;local/stdio search・fetch&#10;network_access=false" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="830" y="570" width="300" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="mutating" value="tool_mutating_gateway_stub&#10;P0 deny&#10;書込系MCP/外部tool拒否" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4cccc;strokeColor=#cc0000;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="570" width="300" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="runner" value="runner_mutation_gateway&#10;P0 approved patch path&#10;forbidden path / cap / approval" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="830" y="760" width="330" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="remote" value="remote_agent_gateway&#10;P0 no path / P0.1 deny-only / P1 ADR" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="760" width="330" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="output" value="Tool output artifact&#10;untrusted_contentとして再分類" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="70" y="790" width="310" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="audit" value="Audit&#10;metadata / hash / redacted excerpt" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9ead3;strokeColor=#38761d;" vertex="1" parent="1">
+          <mxGeometry x="450" y="790" width="300" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="送信前gate" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="request" target="provider_gate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="provider送信" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="provider_gate" target="provider_call">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="応答" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="provider_call" target="provider_output">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="保存" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="provider_output" target="artifact">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="検証" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="artifact" target="validator">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="tool候補だけ抽出" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="validator" target="registry">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="risk判定" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="registry" target="policy">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="read/search allow" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="policy" target="readonly">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="P0 deny" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#cc0000;dashed=1;" edge="1" parent="1" source="policy" target="mutating">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" value="承認済patch" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="policy" target="runner">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" value="将来のみ" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#cc0000;dashed=1;" edge="1" parent="1" source="policy" target="remote">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" value="結果" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="readonly" target="output">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" value="記録" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="output" target="audit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" value="記録" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="runner" target="audit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" value="deny記録" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#cc0000;dashed=1;" edge="1" parent="1" source="mutating" target="audit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="explain" value="この図でわかること: providerへ送る前の outbound gate と、provider応答後の inbound tool gate を分けて見る図。MCPや外部toolの接続可否を判断する。&#10;誤解しないこと: Provider Compliance は provider call 前の境界。provider output の tool-call candidate はまず artifact と Output Validator を通り、Tool Registry / Policy / Gateway で初めて実行可否を判定する。&#10;正本: PRD-01 F-011/F-012/F-015、DD-01、ADR-00010、ADR-00013。" style="shape=note;whiteSpace=wrap;html=1;fontSize=12;spacing=8;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="1">
+          <mxGeometry x="60" y="950" width="1360" height="120" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

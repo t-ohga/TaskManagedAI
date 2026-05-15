@@ -5,7 +5,7 @@ status: "skeleton_pending_backend"
 review_summary: "5 page skeleton + 3 API client draft + Playwright spec のみ。実 backend route は未実装、API client は `_listXxxDraft` prefix で signal。Sprint 11 で backend route 実装 + integration test 結線。Codex audit 2026-05-13 で F-004/F-006/F-008 指摘 adopt 済。"
 sprint_no: 9
 created_at: "2026-05-12"
-updated_at: "2026-05-12"
+updated_at: "2026-05-14"
 target_days: 6
 max_days: 9
 adr_refs:
@@ -38,9 +38,10 @@ risks:
   - "UI 都合で AgentRun status enum を増やす invariant 破壊"
   - "Approval UI で agent が decider になる経路の混入"
   - "Execution Log で raw secret / provider response の暴露"
+  - "Realtime sample 由来の raw payload / client secret response を UI へ持ち込む regression"
 ---
 
-最終更新: 2026-05-12 (light skeleton 起票、Phase A integration、実装着手前に heavy 化必要)
+最終更新: 2026-05-14 (light skeleton 起票、Phase A integration、Realtime UI reference 接続を追記。実装着手前に heavy 化必要)
 
 ## 目的
 
@@ -109,6 +110,7 @@ risks:
 - 同一 timeline で `tools` / `citations` / `diffs` / `eval scores` / `policy decision` / `audit refs` を表示
 - source of truth: **AuditEvent / AgentRunEvent (append-only)**、frontend cache は invalidation 可能
 - raw secret / provider response は表示しない (redaction 後 hash のみ)
+- OpenAI Realtime Agents sample の transcript + event-log pattern は UI reference として参照する。ただし raw realtime payload、client secret response body、PII、raw tool args は表示せず、AgentRunEvent / AuditEvent / Approval / Budget / Eval timeline に正規化する。
 
 ### 4. 業務価値 dashboard
 
@@ -166,8 +168,12 @@ risks:
 - [ ] AgentRun status 16 個固定、UI が status enum を増やしていない
 - [ ] `blocked_reason` 3 種 (`policy_blocked` / `budget_blocked` / `runtime_blocked`) を status と分離 badge で表示
 - [ ] Execution Log で raw secret / provider response が表示されない (redaction 後 hash のみ)
+- [ ] Execution Log / AI Runs timeline で AgentRunEvent / AuditEvent / Approval / Budget / Eval が同一 timeline に表示される
+- [ ] Realtime sample 由来の transcript + event-log pattern は AgentRunEvent/AuditEvent timeline の UI reference としてのみ使い、raw realtime payload、client secret response body、raw tool args は表示しない
+- [ ] validator state が `pending` / `pass` / `blocked` として見える
 - [ ] frontend は KPI 正本にしない (DB + audit_events を source of truth)
 - [ ] Playwright E2E で 4 面の主要 flow (login → Board → Ticket Detail → Approve → Done) が通る
+- [ ] E2E または component test で timeline、redaction、validator state 表示を確認する
 - [ ] AI-UIUX レポート §UI/UX + 統合結論 §3 (Plan Mode + 4 面 UI 採用判定) との整合確認
 - [ ] ADR-00014 Symphony cross-reference (§外部参照モデル) に整合した UI 設計
 
@@ -232,6 +238,12 @@ E2E test 追加候補:
 - SP-011.5 (Observability) - 技術監視 dashboard
 - AI-UIUX レポート: `docs/設計検討/AI統合タスク管理プラットフォームの最新UIUXと実装選定レポート.md`
 - 統合結論: `docs/設計検討/2026-05-12_external_ai_concept_uiux_integration.md`
+- OpenAI Realtime Agents 適用検討: `docs/設計検討/openairealtimegithubから/README.md`
+- Realtime UI reference / invariant gate: `docs/設計検討/openairealtimegithubから/03_adoption_plan.md`
+- Realtime invariant traceability / browser event allowlist / InteractionGateway crosswalk: `docs/設計検討/openairealtimegithubから/02_invariant_traceability.md`
+- Realtime risk / retention / cost / rollback gate: `docs/設計検討/openairealtimegithubから/04_risks_and_deferred_items.md`
+- Realtime deepcheck recommendations: `docs/設計検討/openairealtimegithubから/05_deepcheck_recommendations.md`
+- Realtime intake eval fixture plan: `docs/設計検討/openairealtimegithubから/06_eval_fixture_plan.md`
 
 ## Review
 

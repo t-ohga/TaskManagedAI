@@ -1,0 +1,92 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" modified="2026-05-14T19:40:00.000Z" agent="TaskManagedAI diagram generator" version="24.0.0" type="device">
+  <diagram id="02_user_golden_flow" name="02 User Golden Flow">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="980" math="0" shadow="0" adaptiveColors="auto">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="02 ユーザーゴールドフロー: 調査・計画・承認・Draft PR・評価" style="text;html=1;fontSize=22;fontStyle=1;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="760" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_box" value="凡例" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1160" y="30" width="460" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_0" value="凡例&#10;P0実装: 必須 / P0構造準備: 境界だけ準備" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1178" y="56" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_1" value="P0 deny&#10;P0で明示拒否" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1178" y="84" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_2" value="P0.1+&#10;P0完了後のロードマップ" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1178" y="112" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_3" value="P1以降&#10;将来拡張" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1178" y="140" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" value="Ticket / Research作成&#10;目的・背景・AC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="60" y="170" width="180" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" value="AI計画生成&#10;構造化artifact" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="290" y="170" width="180" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="schema validation&#10;Output Validator" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="520" y="170" width="180" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" value="Policy lint&#10;Action class判定" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="750" y="170" width="180" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s5" value="Approval Inbox&#10;人間が承認/拒否" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="980" y="170" width="180" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s6" value="Runner sandbox&#10;許可patchのみ" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="170" width="180" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s7" value="RepoProxy&#10;Draft PR only" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1440" y="170" width="180" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s8" value="Eval / Audit&#10;KPI・証跡確認" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9ead3;strokeColor=#38761d;" vertex="1" parent="1">
+          <mxGeometry x="750" y="420" width="180" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="s1" target="s2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="s2" target="s3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="s3" target="s4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="s4" target="s5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="s5" target="s6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="s6" target="s7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="PR/CI" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="s7" target="s8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="次の改善へ" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;dashed=1;" edge="1" parent="1" source="s8" target="s1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="deny1" value="P0 deny&#10;merge / deploy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4cccc;strokeColor=#cc0000;" vertex="1" parent="1">
+          <mxGeometry x="980" y="430" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="deny2" value="P0 deny&#10;.github/workflows/** 書込" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4cccc;strokeColor=#cc0000;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="430" width="210" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="deny_e1" value="進まない" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#cc0000;dashed=1;" edge="1" parent="1" source="s7" target="deny1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="deny_e2" value="拒否" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#cc0000;dashed=1;" edge="1" parent="1" source="s6" target="deny2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="explain" value="この図でわかること: ユーザーは Ticket / Research を作り、AIの提案を確認してから承認する。承認後だけ runner と RepoProxy が動き、結果は Eval / Audit で確認する。&#10;誤解しないこと: Draft PR は作るが、merge / deploy / workflow file write は P0 deny。承認前の副作用はない。&#10;正本: PRD-01 F-006/F-008/F-013/F-015/F-016、ロードマップ P0 Acceptance Flow。" style="shape=note;whiteSpace=wrap;html=1;fontSize=12;spacing=8;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="1">
+          <mxGeometry x="60" y="690" width="1350" height="115" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

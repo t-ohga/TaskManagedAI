@@ -1,0 +1,89 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" modified="2026-05-14T19:40:00.000Z" agent="TaskManagedAI diagram generator" version="24.0.0" type="device">
+  <diagram id="11_deployment_network" name="11 Deployment Network">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1760" pageHeight="1060" math="0" shadow="0" adaptiveColors="auto">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="11 デプロイ / ネットワーク: host-portable P0 と Tailscale閉域" style="text;html=1;fontSize=22;fontStyle=1;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="760" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_box" value="凡例" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="30" width="460" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_0" value="凡例&#10;P0実装: 必須 / P0構造準備: 境界だけ準備" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1228" y="56" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_1" value="P0 deny&#10;P0で明示拒否" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1228" y="84" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_2" value="P0.1+&#10;P0完了後のロードマップ" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1228" y="112" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_3" value="P1以降&#10;将来拡張" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1228" y="140" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="user" value="ユーザー端末&#10;approved Tailscale device" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="70" y="160" width="260" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="tail" value="Tailscale tailnet&#10;grants minimum / Funnel不使用" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="430" y="160" width="300" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="active" value="Active Host&#10;Mac / Linux / VPS のいずれか1つ" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="1">
+          <mxGeometry x="800" y="150" width="320" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="serve" value="Tailscale Serve&#10;HTTPS on tailnet" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="800" y="310" width="280" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="proxy" value="reverse proxy&#10;127.0.0.1 bind" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="800" y="460" width="280" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="compose" value="Docker Compose&#10;web / api / worker / postgres / redis" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="430" y="460" width="300" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="ci" value="GitHub Actions private staging CI/E2E&#10;tag:taskhub-ci / ephemeral auth key&#10;TCP:443 only / log mask" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9ead3;strokeColor=#38761d;" vertex="1" parent="1">
+          <mxGeometry x="70" y="380" width="300" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="egress" value="Provider / GitHub egress&#10;Compliance / RepoProxy経由" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="460" width="310" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="backup" value="backup / restore / migrate drill&#10;freeze.signed / active.signed / signed journal&#10;trusted signer / active registry&#10;age private key excluded" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9ead3;strokeColor=#38761d;" vertex="1" parent="1">
+          <mxGeometry x="430" y="680" width="390" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="deny" value="P0 deny&#10;public bind / Funnel / public SSH / production deploy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4cccc;strokeColor=#cc0000;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="680" width="360" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="閉域接続" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="user" target="tail">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="到達" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="tail" target="active">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="公開面" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="active" target="serve">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="localhost" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="serve" target="proxy">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="internal" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="proxy" target="compose">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="一時参加 / private staging" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="ci" target="tail">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="外部API" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="compose" target="egress">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="host切替" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="active" target="backup">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="拒否" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#cc0000;dashed=1;" edge="1" parent="1" source="active" target="deny">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="explain" value="この図でわかること: どこで動かし、どこから入れて、どこへ出ていくかを示すネットワーク図。入口はTailscale、外部通信はProvider/GitHubに限定して考える。private staging CI/E2E は GitHub Actions が ephemeral key と tag:taskhub-ci で tailnet に一時参加し、TCP:443 のみ到達する。&#10;誤解しないこと: host移行は単なる暗号化backupではない。freeze/thaw、detached signature、active registry、signed journalでsplit-brainを防ぐ。&#10;正本: PRD-01 P0-SCOPE-002/P0-SCOPE-010、DD-05、ADR-00007、ADR-00021。" style="shape=note;whiteSpace=wrap;html=1;fontSize=12;spacing=8;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="1">
+          <mxGeometry x="60" y="830" width="1320" height="115" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,92 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" modified="2026-05-14T19:40:00.000Z" agent="TaskManagedAI diagram generator" version="24.0.0" type="device">
+  <diagram id="07_er_overview" name="07 ER Overview">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1120" math="0" shadow="0" adaptiveColors="auto">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="07 ER概要: 主要エンティティと関係" style="text;html=1;fontSize=22;fontStyle=1;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="760" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_box" value="凡例" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1240" y="30" width="460" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_0" value="凡例&#10;P0実装: 必須 / P0構造準備: 境界だけ準備" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1258" y="56" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_1" value="P0 deny&#10;P0で明示拒否" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1258" y="84" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_2" value="P0.1+&#10;P0完了後のロードマップ" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1258" y="112" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_3" value="P1以降&#10;将来拡張" style="text;html=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1258" y="140" width="424" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="tenant" value="Tenant / Actor Core&#10;tenants / users / actors / principals" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="60" y="130" width="250" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="project" value="Workspace / Project / Repository" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="360" y="130" width="250" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ticket" value="Ticket Core&#10;tickets / relations / acceptance_criteria" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="660" y="130" width="250" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="research" value="Research / Evidence&#10;research_tasks / claims / sources / items" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="960" y="130" width="250" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="run" value="Agent Runtime&#10;agent_runs / events / artifacts / snapshots / budgets" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="360" y="390" width="250" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="policy" value="Policy / Approval&#10;rules / requests / decisions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="660" y="390" width="250" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="tool" value="Tool Registry&#10;tools / versions / permissions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="960" y="390" width="250" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="eval" value="Eval&#10;eval_runs / cases / scores / dataset_versions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9ead3;strokeColor=#38761d;" vertex="1" parent="1">
+          <mxGeometry x="660" y="650" width="250" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="audit" value="Audit / Notification&#10;audit_events / notification_events" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9ead3;strokeColor=#38761d;" vertex="1" parent="1">
+          <mxGeometry x="960" y="650" width="250" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="secret" value="Secret refs&#10;secret_refのみ / capability token" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="390" width="250" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="tenant_id複合FK" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="tenant" target="project">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="project_id" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="project" target="ticket">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="生成/紐付け" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="ticket" target="research">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="AI実行" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="ticket" target="run">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="承認/判断" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="run" target="policy">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="tool_manifest" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="run" target="tool">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="KPI" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="run" target="eval">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="append-only" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="policy" target="audit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="events" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="run" target="audit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" value="secret_refのみ" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#666666;" edge="1" parent="1" source="secret" target="run">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="explain" value="この図でわかること: DBを細かいDDLではなく、どの情報がどのまとまりに属するかで見る図。Ticket、Research、AgentRun、Approval、Eval、Audit がどう結びつくかを把握する。&#10;誤解しないこと: これは理解用ER概要で最終DDLではない。実装では tenant_id / project_id 境界、append-only event、artifact経由、secret_refのみ保持が重要。&#10;正本: DD-02、PRD-01 F-003/F-008/F-009/F-018/F-019、ADR-00002、ADR-00004。" style="shape=note;whiteSpace=wrap;html=1;fontSize=12;spacing=8;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="1">
+          <mxGeometry x="60" y="850" width="1300" height="120" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
