@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -31,15 +32,22 @@ def _constraint_name(error: IntegrityError) -> str | None:
     return None
 
 
+_TRACE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
 def _correlation_id(request: Request) -> str:
     value = request.headers.get("x-correlation-id")
-    if value:
+    if value and _TRACE_ID_RE.fullmatch(value):
         return value
     return str(getattr(request.state, "request_id", ""))
 
 
 def _trace_id(request: Request) -> str | None:
-    return request.headers.get("x-trace-id")
+    # F-PR19-R4-001 P1 adopt: caller-controlled x-trace-id header に raw secret / canary が混入する経路を遮断
+    value = request.headers.get("x-trace-id")
+    if value is None or not _TRACE_ID_RE.fullmatch(value):
+        return None
+    return value
 
 
 @router.post("", response_model=EvidenceItemRead, status_code=status.HTTP_201_CREATED)

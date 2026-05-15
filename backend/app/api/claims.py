@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -39,15 +40,23 @@ def _provenance_json_hash(provenance_json: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
+_TRACE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
 def _correlation_id(request: Request) -> str:
     value = request.headers.get("x-correlation-id")
-    if value:
+    if value and _TRACE_ID_RE.fullmatch(value):
         return value
     return str(getattr(request.state, "request_id", ""))
 
 
 def _trace_id(request: Request) -> str | None:
-    return request.headers.get("x-trace-id")
+    # F-PR19-R4-001 P1 adopt: caller-controlled x-trace-id header に raw secret / canary が混入する経路を遮断
+    # (audit 保存前に format 制約で sanitize、UUID / hex / structured trace ID のみ許可、不正 format は None)
+    value = request.headers.get("x-trace-id")
+    if value is None or not _TRACE_ID_RE.fullmatch(value):
+        return None
+    return value
 
 
 @router.post("", response_model=ClaimRead, status_code=status.HTTP_201_CREATED)

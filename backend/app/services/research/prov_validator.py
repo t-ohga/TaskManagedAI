@@ -130,7 +130,10 @@ class ProvBundle(BaseModel):
 
 
 def _assert_unique_ids(kind: str, ids: list[str]) -> None:
-    duplicates = sorted({item for item in ids if ids.count(item) > 1})
+    # F-PR19-R4-002 P2 adopt: O(N^2) を O(N) に修正 (Counter で各 ID の count を 1 pass)
+    from collections import Counter
+    counts = Counter(ids)
+    duplicates = sorted(item for item, count in counts.items() if count > 1)
     if duplicates:
         raise ProvValidationError(f"duplicate {kind} ids: {', '.join(duplicates)}")
 
@@ -154,9 +157,19 @@ def validate_provenance_json(provenance_json: dict[str, Any]) -> ProvBundle:
     try:
         bundle = ProvBundle.model_validate(provenance_json)
     except ValidationError as exc:
-        raise ProvValidationError(str(exc)) from exc
+        # F-PR19-R4-003 P1 adopt: raw caller-supplied input value を echo しない (audit / response にも)
+        # Pydantic ValidationError.str() は raw input value を含む経路があるため、loc + type のみ抽出して sanitize。
+        # 完全な error context は audit log の structured form に閉じる (本 endpoint レベルでは expose しない)。
+        errors = exc.errors(include_input=False, include_context=False, include_url=False)
+        locations = sorted({".".join(str(p) for p in err.get("loc", ())) for err in errors})
+        raise ProvValidationError(
+            f"PROV schema validation failed: {len(errors)} error(s) at locations: {', '.join(locations) or '(root)'}"
+        ) from exc
     except ValueError as exc:
-        raise ProvValidationError(str(exc)) from exc
+        # ValueError は _normalize_prov_namespace_keys 由来、caller key (raw) を含む可能性、message を sanitize
+        raise ProvValidationError(
+            "PROV namespace normalization failed (caller-controlled key conflict, see audit logs)"
+        ) from exc
 
     if not bundle.wasGeneratedBy:
         raise ProvValidationError("wasGeneratedBy must contain at least one relation.")
