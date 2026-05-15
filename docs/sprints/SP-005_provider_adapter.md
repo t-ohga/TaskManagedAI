@@ -275,3 +275,12 @@ Codex multi-round adversarial review pattern (Sprint 1-4 から継続):
 
 **重要**: Sprint 1-4 知見の `.claude/` ハーネス恒久化 task #54 は別セッションで進行中。Sprint 5 終了時点で memory 更新 (`project_taskmanagedai_sprint5_progress.md`) とハーネス化進捗確認は次セッションでも継続。
 
+## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
+
+本 Pack の acceptance spec として、QL-B Quality Loop run で記録された future implementation gate を以下の通り cross-reference する:
+
+- `docs/基本設計/04_セキュリティ_権限_監査設計.md §13.2` Provider gateway audited enforcement (全 provider call は `ProviderAdapter.execute()` 経由のみ、SDK 直叩き path 禁止)
+- `docs/基本設計/03_AIオーケストレーション設計.md §13.1` PolicyDecision must-precede (`provider_call` action 実行前に `policy_decisions` row を outbox 経由で先行記録)
+- `docs/基本設計/03_AIオーケストレーション設計.md §13.2` BudgetGuard pre-spend gate (max token / max cost / provider call 前 estimated cost check)
+- `docs/adr/00025_autonomy_policy_profiles.md` (proposed) §不変条件 #1 `provider_call` は全 level (L0-L3) で human approval 必須
+

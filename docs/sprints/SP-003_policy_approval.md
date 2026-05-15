@@ -321,3 +321,13 @@ Codex multi-round adversarial review pattern (Sprint 1/2 から継続):
 
 → **Sprint 3 完了**。次 Sprint は Sprint 4 (Agent Runtime: AgentRun 16 状態 + ContextSnapshot 10 カラム + state machine + provider adapter integration)。
 
+## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
+
+本 Pack の acceptance spec として、QL-B Quality Loop run で記録された future implementation gate を以下の通り cross-reference する:
+
+- `docs/基本設計/03_AIオーケストレーション設計.md §13.1` PolicyDecision must-precede invariant (outbox / audit-before-dispatch pattern、external action と DB transaction を同一 scope にしない)
+- `docs/基本設計/04_セキュリティ_権限_監査設計.md §13.1` action_class 7 種 exact set (read/search は Tool Registry `allowed_actions` 経由に移送)
+- `docs/基本設計/04_セキュリティ_権限_監査設計.md §13.3` Auto-allow ≠ approval row (effect=allow path は approval_requests row 作らない、audit metadata で applied_level 記録)
+- `docs/adr/00025_autonomy_policy_profiles.md` (proposed) autonomy L0-L3 が approval row に与える影響 (L1-L3 で auto-allow path 利用時、approval_requests 不作成 + audit-only path)
+- 本 Pack で実装済の `approval_requests.decided_by_actor_id` human-only DB CHECK は ADR-00025 §不変条件 #2 と整合
+

@@ -328,3 +328,11 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 - **cross-ref**: SP-010 で source schema (SearchRun / EvidenceSearchHit / GroundingSupport / RetrievalEvalRun) を同 PR で追記、SP-011 は集計責務のみ
 
 frontmatter `status: draft` 維持。
+
+## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
+
+本 Pack の acceptance spec として、QL-B Quality Loop run で記録された future implementation gate を以下の通り cross-reference する:
+
+- `docs/基本設計/03_AIオーケストレーション設計.md §13.2` BudgetGuard pre-spend gate (max cost / max session cost / `cost_per_completed_task` AC-KPI-05 計測元、provider call 前 estimated cost check)
+- `docs/基本設計/03_AIオーケストレーション設計.md §13.3` Quality Loop status 物理分離宣言 (AgentRun.status 16 状態に Quality Loop vocabulary を追加しない、Quality Loop schema 化は P0.1 **SP-023 候補**で別 ADR + Sprint Pack)
+- `docs/adr/00025_autonomy_policy_profiles.md` (proposed) §10.3 不変条件 #3 auto-allow path でも AgentRunEvent + audit event に `policy_profile` / `policy_version` / `applied_level` を必ず残す (eval metrics 集計の trace source)

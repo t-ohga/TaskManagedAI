@@ -297,10 +297,10 @@ ADR-00025 の **accepted 化は Phase 5 Hook Trust Boundary 完成 + ADR-00012 a
 
 | # | source | path | enforcement |
 |---:|---|---|---|
-| 1 | DB CHECK constraint | `migrations/versions/0005_policy_approval.py` (Sprint 3) + future `migrations/versions/00NN_p0_1_event_type_37.py` (P0.1 SP-013 prerequisite Phase F-0) | `policy_rules.action_class` / `approval_requests.action_class` / `policy_decisions.action_class` の CHECK constraint で 7 種に限定 |
+| 1 | DB CHECK constraint | `migrations/versions/0005_policy_rules.py` (policy_rules、Sprint 3) + `migrations/versions/0006_approval_policy_decisions.py` (approval_requests + policy_decisions、Sprint 3) + future `migrations/versions/00NN_p0_1_event_type_37.py` (P0.1 SP-013 prerequisite Phase F-0) | `policy_rules.action_class` / `approval_requests.action_class` / `policy_decisions.action_class` の CHECK constraint で 7 種に限定 |
 | 2 | SQLAlchemy CheckConstraint | `backend/app/db/models/policy_rule.py` / `approval_request.py` / `policy_decision.py` | ORM レベルで再 enforce |
 | 3 | Python Literal | `backend/app/domain/policy/action_class.py` | `ACTION_CLASSES: Final[frozenset[str]]` で型レベル enforce |
-| 4 | Pydantic Field validator | `backend/app/api/schemas/policy_rule_schema.py` / `approval_request_schema.py` 等 | API request body validation で reject |
+| 4 | Pydantic Field validator | **P0 完成時に追加予定** (`backend/app/schemas/policy_rule.py` / `approval_request.py` / `policy_decision.py` を新規起票、現状 `backend/app/schemas/` 配下に該当 schema 未実装、F-PR12-003 反映) | API request body validation で reject、P0 完成時に SP-003 acceptance spec として追加 |
 | 5 | pytest EXPECTED constant | `tests/policy/test_action_class_enum.py` の `EXPECTED_ACTION_CLASSES` | drift detection (`set(actual) == set(expected)`) |
 | 6 (optional) | frontend TypeScript enum | `frontend/lib/domain/policy/action-class.ts` (Sprint 9+) | UI と backend の enum 同期 |
 

@@ -7,7 +7,7 @@ accepted_at: null
 authors:
   - "t-ohga"
 related_sprints:
-  - "SP-017"
+  - "SP-024"
 supersedes: null
 superseded_by: null
 ---
@@ -17,7 +17,7 @@ superseded_by: null
 ## 背景
 
 - 決定対象: `approval 不要で AI が自動実行できる範囲` を 4 段階 (L0/L1/L2/L3) で切替可能にする autonomy policy profiles を定義する。**human-only approval decider invariant (ADR-00009 §self-approval / `.claude/rules/multi-agent-orchestration.md`) は維持**したまま、Policy Engine `effect=allow` で `approval_requests` row を作らない auto-allow path を level ごとに調整する。
-- 関連 Sprint: 本 ADR は **proposed のみ**、accepted 化は P0.1 (新 Sprint Pack SP-017 候補)。P0 期間中は L0 default のみ実 enforce、L1-L3 auto-allow path は disable。
+- 関連 Sprint: 本 ADR は **proposed のみ**、accepted 化は P0.1 (新 Sprint Pack **SP-024 候補**、未使用番号)。**SP-017 は SP-016 `## P0.1 候補` で AI Society Visualization (board / role icon / dashboard) に予約済のため使用不可** (`docs/sprints/SP-016_ui_cli_parity.md:39+135` で予約)、R29 plan §10.4 「新 SP-017 候補」言及は本 PR commit 時点で SP-024 に override (R29 plan 側修正は QL-A 完遂後の別 run で forward fix)。P0 期間中は L0 default のみ実 enforce、L1-L3 auto-allow path は disable。
 - 前提 / 制約:
   - **不変条件 #2 維持**: approval を要する action では decider は依然 human only。auto-allow path は「approval を skip」であって「agent / orchestrator / service / provider が decider に昇格」ではない (ADR-00009 §Tier 2 準拠)。
   - **caller-not-allowed**: `autonomy_level` (L0-L3 project setting) は caller-visible だが、`policy_profile` (Policy Engine server-resolved effect profile) は **server-owned**、caller 指定不可 (`.claude/rules/server-owned-boundary.md:5-12`)。両者は概念分離。
@@ -43,15 +43,16 @@ superseded_by: null
   - low-risk profile (機械判定) 通過時のみ auto-allow を適用する設計で fail-closed 維持。1 軸でも不合格なら approval path に fall back。
   - `autonomy_level` (caller-visible) と `policy_profile` (server-owned) の概念分離で server-owned-boundary 不変 (`.claude/rules/server-owned-boundary.md`) を維持。
   - level upgrade (L0→L3) は **accepted ADR + accepted Sprint Pack + human approval event before effect** 必須で gate。
-- 実装 Sprint: 本 ADR は **proposed のみ**。accepted 化は P0.1 (新 Sprint Pack SP-017 候補)。P0 期間中は L0 default のみ実 enforce。
+- 実装 Sprint: 本 ADR は **proposed のみ**。accepted 化は P0.1 (新 Sprint Pack **SP-024 候補**、SP-017 は AI Society Visualization 用に予約済のため使用不可)。P0 期間中は L0 default のみ実 enforce。
 - 実装対象ファイル (P0.1 accepted 後):
   - `backend/app/domain/policy/autonomy_level.py` (新規、Literal L0/L1/L2/L3 + Pydantic enum + frozenset)
   - `backend/app/db/models/project.py` (既存) または `workspace.py` の `autonomy_level` 列追加 (`migrations/versions/00NN_p0_1_autonomy_level.py`)
-  - `backend/app/services/policy/engine.py` (autonomy_level → policy_profile resolve helper)
+  - **`backend/app/db/models/project.py` の既存 `policy_profile` 列削除 + `backend/app/schemas/project.py` の `ProjectCreate.policy_profile` / `ProjectUpdate.policy_profile` field 削除 + migration で `projects.policy_profile` 列削除** (server-owned-boundary 不変条件のため、現状 caller-supplied 経路として実装済 `backend/app/db/models/project.py:61` + `backend/app/schemas/project.py:22+35` を `autonomy_level` 経路に置換) — F-PR12-009 adopt
+  - `backend/app/services/policy/engine.py` (autonomy_level → policy_profile resolve helper、Policy Engine 内部で server-owned 解決、caller 入力経路を signature レベル削除)
   - `backend/app/services/policy/low_risk_profile.py` (新規、機械判定: payload_data_class / diff size / file count / forbidden path / dangerous command / provider_request_preflight / runner_mutation_gateway / ContextSnapshot 10 列 PASS)
-  - `frontend/app/(admin)/project-settings/autonomy/` (UI)
-  - `taskmanagedai-cli/src/settings/autonomy.ts` (`tmai settings autonomy --level L1`)
-  - `tests/policy/test_autonomy_level_enum.py` / `test_autonomy_level_resolve.py` / `test_low_risk_profile.py` / `test_autonomy_upgrade_gate.py` (4 件最小)
+  - `frontend/app/(admin)/project-settings/autonomy/` (UI、`policy_profile` 入力 field は削除、`autonomy_level` のみ表示)
+  - `taskmanagedai-cli/src/settings/autonomy.ts` (`tmai settings autonomy --level L1`、`policy_profile` 指定経路は CLI からも削除)
+  - `tests/policy/test_autonomy_level_enum.py` / `test_autonomy_level_resolve.py` / `test_low_risk_profile.py` / `test_autonomy_upgrade_gate.py` / **`test_autonomy_caller_supplied_policy_profile_reject.py` (Pydantic schema から policy_profile 削除後の reject 経路 verify)** (5 件最小)
 - 実装ガイダンス:
   - `autonomy_level` enum は **5+ source** で整合: DB CHECK / SQLAlchemy CheckConstraint / Python Literal / Pydantic Field validator / pytest EXPECTED constant (`.claude/rules/cross-source-enum-integrity.md`)
   - `policy_profile` は **caller 指定不可**、Policy Engine 内部で `autonomy_level` から解決する server-owned 値 (`.claude/rules/server-owned-boundary.md` §1)
@@ -111,10 +112,12 @@ superseded_by: null
 
 ### 運用 rollback (autonomy 設定の問題発見)
 
+**F-PR12-002 P2 adopt 反映**: auto-allow path は `approval_requests` row を作らない invariant のため、`auto_allow_reason` 列を仮定した invalidation step は実装不可能。代わりに AgentRunEvent / audit event / policy_decisions の append-only ledger を trace する設計。
+
 1. 全 `projects.autonomy_level` を L0 (default) に強制 downgrade する settings flag を Policy Engine に追加 (`AUTONOMY_GLOBAL_DOWNGRADE=L0`)。downgrade は accepted ADR + Sprint Pack 不要 (L upgrade と非対称)。
-2. 既存 `approval_requests.status='pending'` / `'approved'` のうち、auto-allow path で生成された (`auto_allow_reason` 列 NOT NULL) row を `invalidated` に遷移し、再 approval を要求する。
+2. **AgentRunEvent + `policy_decisions` の append-only ledger を trace** して過去 auto-allow path で実行された action を identify する: `policy_decisions.reason_code='auto_allow_applied'` (新規 reason_code、ADR-00009 §QL-B update §reason_code 列の延長) + AgentRunEvent metadata `applied_level` 列で `L1` 以上の row を抽出。該当 action に対する rollback / compensation は **新規 ticket 起票 + human approval** 経由 (auto-allow action 自体の DB row は append-only 維持、消去せず)。`approval_requests` row は **作られていないため invalidate 対象なし**。
 3. AgentRunEvent / audit event の `applied_level` 列で過去 auto-allow 履歴を trace、不正パターン検出 → `policy_decisions` の `reason_code='autonomy_downgrade'` で記録。
-4. UI / In-App Notification で auto-allow path 一時停止と stale invalidation を通知する。
+4. UI / In-App Notification で auto-allow path 一時停止 + 過去 auto-allow action の human review 要求を通知する。
 
 ### Migration rollback (DB schema 変更時、`autonomy_level` 列追加時)
 
@@ -138,7 +141,7 @@ superseded_by: null
 - ADR-00002 (Data Model、`autonomy_level` 列追加時の ADR Gate Criteria #2 trigger)
 - ADR-00006 (SecretBroker raw secret 非保存、本 ADR の `secret_access` 全 level human approval 必須 invariant の延長)
 - ADR-00010 (Provider Compliance Matrix、本 ADR の `provider_call` 全 level human approval 必須 invariant の延長)
-- ADR-00023 (proposed、InteractionGateway Realtime intake、本 ADR の Realtime/Gemini direct 不可 invariant と整合)
+- ADR-00023 (**QL-H Quality Loop run で proposed 起票予定**、現時点では未起票、本 cross-ref は QL-H 完了後に有効化される。InteractionGateway Realtime intake、本 ADR の Realtime/Gemini direct 不可 invariant と整合)
 
 ## 関連資料
 

@@ -267,3 +267,11 @@ Sprint 6 を 3 batch 構成で完了。3 commit (`1843054` / `147c433` / 本 com
 - **batch 3 R1** (1 round): 8 finding (1 CRITICAL + 4 HIGH + 2 MEDIUM + 1 LOW) 全件採否判定 → adopt / partial / defer 文書化。signature 変更追従 test を Codex 委譲。
 - **合計**: 13 round / 35 finding (重複排除後 33 finding)、Claude 単独 review では発見困難な Unicode redaction bypass + caller-supplied path 経路 + self-approval 経路 + graph integrity を Codex multi-round で補完。Codex-first ポリシー §6.5.0 を初期 round から適用。
 
+## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
+
+本 Pack の acceptance spec として、QL-B Quality Loop run で記録された future implementation gate を以下の通り cross-reference する:
+
+- `docs/基本設計/06_秘密管理設計.md §13` SecretBroker OperationContext canonical schema (CLI artifact が `secret.verify` operation を内包する場合、broker 側 OperationContext fingerprint binding が必須)
+- `docs/基本設計/03_AIオーケストレーション設計.md §13.1` PolicyDecision must-precede (CLI 経由の `task_write` action 実行前に policy_decisions row 記録)
+- `docs/adr/00025_autonomy_policy_profiles.md` (proposed) `secret_access` は全 level (L0-L3) で human approval 必須、CLI 経由でも auto-allow されない
+

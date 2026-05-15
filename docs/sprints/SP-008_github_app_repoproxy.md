@@ -286,3 +286,12 @@ verify で品質確認。
 本 worktree branch を main へ ff merge する操作は user 直接実行を待つ
 (CLAUDE.md §6.7 destructive operation policy)。本 commit push 済、PR 作成
 または ff merge は user 判断。
+
+## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
+
+本 Pack の acceptance spec として、QL-B Quality Loop run で記録された future implementation gate を以下の通り cross-reference する:
+
+- `docs/基本設計/06_秘密管理設計.md §13.1` OperationContext canonical schema `repo.pr_open` target = `{repo_full_name, base_branch, head_branch, draft=true, commit_sha, repo_state_commit_sha}` (本 Pack で実装済の broker validator `backend/app/services/secrets/broker.py:681-698` の正本、F-PR12-010 反映)
+- `docs/基本設計/03_AIオーケストレーション設計.md §13.1` PolicyDecision must-precede (`pr_open` / `repo_write` action 実行前に outbox pattern で policy_decisions row 記録、external GitHub API 呼出と DB transaction を同一 scope にしない)
+- `docs/基本設計/04_セキュリティ_権限_監査設計.md §13.1` action_class 7 種 (`pr_open` Draft PR 作成のみ、merge は P0 deny)
+- `docs/adr/00025_autonomy_policy_profiles.md` (proposed) §10.2 L3 `pr_open` auto-allow 例外 (SecretBroker capability issue/redeem を内包する path は別 gate で human approval 必須)
