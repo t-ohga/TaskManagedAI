@@ -17,7 +17,7 @@ from backend.app.repositories.evidence_item import EvidenceItemRepository
 from backend.app.schemas.evidence_item import EvidenceItemCreate, EvidenceItemRead
 
 router = APIRouter(
-    prefix="/api/projects/{project_id}/claims/{claim_id}/evidence-items",
+    prefix="/api/v1/projects/{project_id}/claims/{claim_id}/evidence-items",
     tags=["evidence_items"],
 )
 

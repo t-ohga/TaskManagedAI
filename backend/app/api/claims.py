@@ -24,7 +24,7 @@ from backend.app.services.research.prov_validator import (
 )
 
 router = APIRouter(
-    prefix="/api/projects/{project_id}/research-tasks/{research_task_id}/claims",
+    prefix="/api/v1/projects/{project_id}/research-tasks/{research_task_id}/claims",
     tags=["claims"],
 )
 

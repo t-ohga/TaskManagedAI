@@ -1303,7 +1303,8 @@ async def test_claims_schema_constraints_and_composite_foreign_keys(
             table_name="claims",
             constraint_name="claims_ck_freshness_score_range",
         )
-        foreign_keys = await _foreign_key_signatures(session, frozenset({"claims"}))
+        all_foreign_keys = await _foreign_key_signatures(session)
+        foreign_keys = {fk for fk in all_foreign_keys if fk[0] == "claims"}
 
     assert set(columns) == set(column_names)
     assert columns["tenant_id"]["data_type"] == "bigint"
@@ -1380,7 +1381,8 @@ async def test_evidence_items_schema_constraints_and_composite_foreign_keys(
             table_name="evidence_items",
             constraint_name="evidence_items_ck_relevance_score_range",
         )
-        foreign_keys = await _foreign_key_signatures(session, frozenset({"evidence_items"}))
+        all_foreign_keys = await _foreign_key_signatures(session)
+        foreign_keys = {fk for fk in all_foreign_keys if fk[0] == "evidence_items"}
 
     assert set(columns) == set(column_names)
     assert columns["tenant_id"]["data_type"] == "bigint"
@@ -1427,7 +1429,8 @@ async def test_research_evidence_has_no_id_only_foreign_keys(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_factory() as session:
-        foreign_keys = await _foreign_key_signatures(session, RESEARCH_EVIDENCE_TABLES)
+        all_foreign_keys = await _foreign_key_signatures(session)
+        foreign_keys = {fk for fk in all_foreign_keys if fk[0] in RESEARCH_EVIDENCE_TABLES}
 
     bad_constraints: list[ForeignKeySignature] = []
     for table_name, constrained_columns, referenced_table, referred_columns in foreign_keys:

@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.models.evidence_item import EvidenceItem
+from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 from backend.app.repositories.base import BaseRepository
 
 
@@ -54,6 +55,11 @@ class EvidenceItemRepository(BaseRepository[EvidenceItem]):
 
         data["project_id"] = project_id
         data["claim_id"] = claim_id
+
+        # F-PR19-R1-003 P1 adopt: persist 前に raw secret / canary scan を実行
+        # (evidence_item metadata / locator に caller 由来 secret が混入する経路を遮断)
+        assert_no_raw_secret(data, path="$evidence_item_create")
+
         item = EvidenceItem(**data)
         self.session.add(item)
         await self.session.flush()

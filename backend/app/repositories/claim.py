@@ -9,7 +9,9 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.models.claim import Claim
+from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 from backend.app.repositories.base import BaseRepository
+from backend.app.services.research.prov_validator import validate_provenance_json
 
 
 def _model_payload(value: BaseModel | dict[str, Any], *, exclude_unset: bool = False) -> dict[str, Any]:
@@ -62,6 +64,11 @@ class ClaimRepository(BaseRepository[Claim]):
 
         data["project_id"] = project_id
         data["research_task_id"] = research_task_id
+
+        # F-PR19-R1-002 P1 adopt: persist 前に raw secret / canary scan を実行
+        # (claim metadata + provenance_json string field に caller 由来 secret が混入する経路を遮断)
+        assert_no_raw_secret(data, path="$claim_create")
+
         claim = Claim(**data)
         self.session.add(claim)
         await self.session.flush()
@@ -121,6 +128,14 @@ class ClaimRepository(BaseRepository[Claim]):
 
         if not data:
             return await self.get_claim_by_id(tenant_id, project_id, claim_id)
+
+        # F-PR19-R1-004 P2 adopt: update 時に provenance_json が含まれる場合、PROV validation を実行
+        # (create と同じ invariant、bypass 経路を遮断)
+        if "provenance_json" in data:
+            validate_provenance_json(data["provenance_json"])
+
+        # F-PR19-R1-002 P1 adopt: persist 前に raw secret / canary scan を実行
+        assert_no_raw_secret(data, path="$claim_update")
 
         result = await self.session.execute(
             update(Claim)
