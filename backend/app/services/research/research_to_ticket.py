@@ -14,6 +14,7 @@ from backend.app.db.app_role import (
     get_tenant_context,
     set_tenant_context,
 )
+from backend.app.db.models.actor import Actor
 from backend.app.db.models.approval_request import ApprovalRequest
 from backend.app.db.models.claim import Claim
 from backend.app.db.models.evidence_item import EvidenceItem
@@ -30,6 +31,7 @@ from backend.app.schemas.research.research_to_ticket import (
 from backend.app.schemas.ticket import TicketCreate
 from backend.app.services.policy_pack.loader import get_policy_pack
 from backend.app.services.research.evidence_set_hash import compute_evidence_set_hash
+from backend.app.services.research.prov_validator import validate_provenance_json
 
 _ARTIFACT_SCHEMA_VERSION = "1.0.0"
 _ARTIFACT_KIND = "research_summary"
@@ -187,6 +189,7 @@ class ResearchToTicketAdapter:
             approval_request_id=request.approval_request_id,
             requested_by_actor_id=request.requested_by_actor_id,
             artifact_hash=artifact_hash,
+            policy_version=policy_version,
         )
 
         metadata = {
@@ -262,16 +265,24 @@ class ResearchToTicketAdapter:
         approval_request_id: UUID,
         requested_by_actor_id: UUID,
         artifact_hash: str,
+        policy_version: str,
     ) -> None:
         """Validate ApprovalRequest before any Ticket mutation (F-PR24-R1-004 P1).
 
         Per ADR-00003 §"Approval 4 整合", Research-to-Ticket promotion must
         only mutate Tickets after a matching ApprovalRequest has reached
-        ``status=approved`` with the artifact_hash binding equal to the
-        server-computed canonical promotion artifact. The caller (orchestrator
-        / research session worker) is responsible for submitting the
-        ApprovalRequest through the existing Approval workflow; the adapter
-        verifies the binding and is fail-closed otherwise.
+        ``status=approved`` with **field-by-field agreement** to the
+        server-computed canonical promotion context (F-PR24-R2-001 P1 adopt:
+        the policy_version snapshot must match too -- a pre-approval that
+        was granted under a different policy version cannot be replayed).
+        The decider must be a **human actor** (F-PR24-R2-003 P1 adopt:
+        non-human deciders such as service/agent actors are rejected for
+        Ticket mutations per project rules).
+
+        The caller (orchestrator / research session worker) is responsible
+        for submitting the ApprovalRequest through the existing Approval
+        workflow; the adapter verifies the binding and is fail-closed
+        otherwise.
         """
 
         approval = await self.session.scalar(
@@ -302,6 +313,13 @@ class ResearchToTicketAdapter:
                 "approval_request.artifact_hash does not match the canonical "
                 "promotion artifact"
             )
+        if approval.policy_version != policy_version:
+            # F-PR24-R2-001 P1 adopt: stale policy_version reject -- prevents
+            # replay of approval granted under a different policy pack.
+            raise ValueError(
+                "approval_request.policy_version does not match the current "
+                "policy snapshot used for promotion"
+            )
         expected_resource_ref = f"research_task:{research_task_id}"
         if approval.resource_ref != expected_resource_ref:
             raise ValueError(
@@ -312,6 +330,25 @@ class ResearchToTicketAdapter:
             raise ValueError(
                 "approval_request.requested_by_actor_id does not match the "
                 "promoting actor"
+            )
+        # F-PR24-R2-003 P1 adopt: human-decider invariant. The Approval
+        # workflow allows service/agent deciders for some flows, but
+        # Ticket mutations (task_write action_class) require a human
+        # decider per project rules.
+        if approval.decided_by_actor_id is None:
+            raise ValueError(
+                "approval_request must have a recorded decider before promotion"
+            )
+        decider_actor_type = await self.session.scalar(
+            select(Actor.actor_type).where(
+                Actor.tenant_id == tenant_id,
+                Actor.id == approval.decided_by_actor_id,
+            )
+        )
+        if decider_actor_type != "human":
+            raise ValueError(
+                "approval_request decider must be a human actor for "
+                "Research-to-Ticket promotion"
             )
 
     async def _fetch_research_bundle(
@@ -341,6 +378,15 @@ class ResearchToTicketAdapter:
             .order_by(Claim.id)
         )
         claims = tuple(claims_result.scalars().all())
+
+        # F-PR24-R2-004 P2 adopt: re-validate PROV at the promotion
+        # boundary. ClaimRepository validates provenance_json at write
+        # time, but claims imported / backfilled through other paths
+        # may bypass that validation; re-running validate_provenance_json
+        # here ensures malformed PROV fails closed before becoming part
+        # of an approved Ticket artifact.
+        for claim in claims:
+            validate_provenance_json(claim.provenance_json)
 
         if not claims:
             return _ResearchBundle(

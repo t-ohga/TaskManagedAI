@@ -46,6 +46,7 @@ EMPTY_RESEARCH_TASK_ID = UUID("00000000-0000-4000-8000-000000036007")
 CLAIM_A_ID = UUID("00000000-0000-4000-8000-000000036008")
 SOURCE_ID = UUID("00000000-0000-4000-8000-000000036009")
 EVIDENCE_ITEM_A_ID = UUID("00000000-0000-4000-8000-000000036010")
+DECIDER_ACTOR_ID = UUID("00000000-0000-4000-8000-000000036020")
 VALID_HASH = "d" * 64
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _PREFIX16_RE = re.compile(r"^[0-9a-f]{16}$")
@@ -150,6 +151,20 @@ async def _insert_fixtures(
             """
         ),
         {"actor_id": ACTOR_ID},
+    )
+    # F-PR24-R2-002 / R2-003 P1 adopt: insert a separate **human** decider actor.
+    # ApprovalRequest CHECK ``approval_requests_ck_requester_not_decider`` plus
+    # the human-decider invariant require a distinct human actor for the
+    # decided_by_actor_id column.
+    await session.execute(
+        text(
+            """
+            insert into actors (id, tenant_id, actor_type, actor_id, display_name, metadata)
+            values (:decider_id, 1, 'human', 'human:research-ticket-decider',
+              'Research Ticket Decider', '{"rls_ready": true}'::jsonb)
+            """
+        ),
+        {"decider_id": DECIDER_ACTOR_ID},
     )
     await session.execute(
         text(
@@ -302,29 +317,41 @@ async def _insert_approval(
 
     from uuid import uuid4 as _uuid4
     approval_id = approval_id or _uuid4()
-    await session.execute(
-        text(
-            """
-            insert into approval_requests (
-              id, tenant_id, action_class, resource_ref, risk_level,
-              artifact_hash, policy_version, status,
-              requested_by_actor_id, requested_at, metadata
-            ) values (
-              :id, 1, :action_class, :resource_ref, 'low',
-              :artifact_hash, 'pp-test-1', :status,
-              :actor_id, now(), '{"rls_ready": true}'::jsonb
-            )
-            """
-        ),
-        {
-            "id": approval_id,
-            "action_class": action_class,
-            "resource_ref": f"research_task:{research_task_id}",
-            "artifact_hash": artifact_hash,
-            "status": status,
-            "actor_id": actor_id,
-        },
+    # F-PR24-R2-002 P1 adopt: when status='approved', the DB CHECK
+    # ``approval_requests_ck_decision_completeness`` requires
+    # decided_by_actor_id and decided_at to be set. Provide them when
+    # inserting an already-approved fixture row.
+    decided_clause = (
+        ":decider_id, now()"
+        if status == "approved"
+        else "NULL, NULL"
     )
+    # decided_clause is a literal we control (":decider_id, now()" or "NULL, NULL")
+    sql_template = (
+        "insert into approval_requests ("
+        "id, tenant_id, action_class, resource_ref, risk_level,"
+        "artifact_hash, policy_version, status,"
+        "requested_by_actor_id, requested_at,"
+        "decided_by_actor_id, decided_at,"
+        "metadata) values ("
+        ":id, 1, :action_class, :resource_ref, 'low',"
+        ":artifact_hash, 'pp-test-1', :status,"
+        ":actor_id, now(),"
+        "DECIDED_CLAUSE_PLACEHOLDER,"
+        "'{\"rls_ready\": true}'::jsonb)"
+    )
+    sql = sql_template.replace("DECIDED_CLAUSE_PLACEHOLDER", decided_clause)
+    params: dict[str, object] = {
+        "id": approval_id,
+        "action_class": action_class,
+        "resource_ref": f"research_task:{research_task_id}",
+        "artifact_hash": artifact_hash,
+        "status": status,
+        "actor_id": actor_id,
+    }
+    if status == "approved":
+        params["decider_id"] = DECIDER_ACTOR_ID
+    await session.execute(text(sql), params)
     return approval_id
 
 
