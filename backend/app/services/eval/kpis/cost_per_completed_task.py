@@ -216,13 +216,27 @@ class CostPerCompletedTaskMetricResult:
 
 
 def _is_finite_number(value: object) -> bool:
-    """Return True for finite ``int`` / ``float`` (excluding ``bool``)."""
+    """Return True for finite ``int`` / ``float`` (excluding ``bool``).
 
-    return (
-        isinstance(value, int | float)
-        and not isinstance(value, bool)
-        and math.isfinite(float(value))
-    )
+    F-PR32-R6-002 P2 adopt: persisted corpora that bypass JSON Schema can
+    ship a Python integer with hundreds of digits (e.g., a JSON number
+    like ``10**500``). ``float(huge_int)`` raises ``OverflowError`` and
+    would otherwise crash the eval run. Catch the overflow and return
+    ``False`` so the caller emits ``spec_violation:*`` instead of an
+    uncaught exception. ``math.isfinite`` itself accepts float infinities
+    by definition and we still reject those via the explicit
+    ``math.isfinite`` check.
+    """
+
+    if not isinstance(value, int | float):
+        return False
+    if isinstance(value, bool):
+        return False
+    try:
+        as_float = float(value)
+    except (OverflowError, ValueError):
+        return False
+    return math.isfinite(as_float)
 
 
 def _is_non_bool_int(value: object) -> bool:
@@ -282,11 +296,12 @@ def _collect_sample_runs(
     fixture: Fixture,
     *,
     corpus_seen_run_ids: set[str] | None = None,
-) -> tuple[list[SampleRun], str | None]:
+) -> tuple[list[SampleRun], str | None, frozenset[str]]:
     """Walk ``input.sample_runs`` and validate each run's shape.
 
-    Returns ``(runs, spec_violation_reason)``. On any structural violation the
-    parser returns an empty list so the aggregator does not undercount via a
+    Returns ``(runs, spec_violation_reason, pending_corpus_ids)``. On any
+    structural violation the parser returns an empty list and an empty
+    ``pending_corpus_ids`` so the aggregator does not undercount via a
     partial parse.
 
     F-PR32-R3-001 P2 adopt: ``corpus_seen_run_ids`` is shared across all
@@ -295,15 +310,25 @@ def _collect_sample_runs(
     multi-fixture corpus that reuses the same low-cost completed run would
     otherwise lower the corpus weighted average, even though ``run_id``
     identifies one AgentRun globally.
+
+    F-PR32-R6-001 P2 adopt: this function **only stages** the corpus-wide
+    UUID delta in ``pending_corpus_ids`` and never mutates the caller-owned
+    ``corpus_seen_run_ids`` set. The orchestrator (``evaluate_cost_per_completed_task``)
+    is responsible for merging the staged set only after **all** fixture
+    validation gates pass (envelope / threshold / sample_runs /
+    expected_aggregate). This prevents an invalid fixture from leaking its
+    UUIDs and causing a later valid fixture to be falsely flagged as
+    ``duplicate_run_id_across_fixtures``.
     """
 
+    _EMPTY_PENDING: frozenset[str] = frozenset()
     case_input = fixture.case_json.get("input")
     if not isinstance(case_input, dict):
-        return [], "spec_violation:input"
+        return [], "spec_violation:input", _EMPTY_PENDING
 
     sample_runs = case_input.get("sample_runs")
     if not isinstance(sample_runs, list):
-        return [], "spec_violation:sample_runs"
+        return [], "spec_violation:sample_runs", _EMPTY_PENDING
     # F-PR32-R2-003 P2 adopt: AC-KPI-05 fixture schema declares
     # ``sample_runs`` with ``minItems=1``. Persisted corpora that bypass JSON
     # Schema and ship an empty list would otherwise yield ``passed=True`` as
@@ -311,35 +336,37 @@ def _collect_sample_runs(
     # corpus-level threshold path still falls through to ``no_completed_runs``,
     # but the per-fixture row should already mark the fixture spec-invalid.
     if not sample_runs:
-        return [], "spec_violation:sample_runs"
+        return [], "spec_violation:sample_runs", _EMPTY_PENDING
 
     runs: list[SampleRun] = []
     seen_run_ids: set[str] = set()
-    # F-PR32-R5-003 P2 adopt: stage the corpus-level seen-set delta locally
-    # and only commit it after the fixture has fully validated. Otherwise a
-    # malformed fixture that fails partway through its rows (e.g., a valid
-    # ``run_id`` followed by an invalid ``tokens_input``) would leak its
-    # UUIDs into ``corpus_seen_run_ids``, causing the next otherwise-valid
-    # fixture to falsely fail as ``duplicate_run_id_across_fixtures``.
+    # F-PR32-R5-003 + R6-001 P2 adopt: stage the corpus-level seen-set delta
+    # locally. The orchestrator merges into ``corpus_seen_run_ids`` only
+    # after the fixture has fully validated against **every** gate (envelope,
+    # threshold, sample_runs, expected_aggregate).
     pending_corpus_ids: set[str] = set()
     for raw_run in sample_runs:
         if not isinstance(raw_run, dict):
-            return [], "spec_violation:sample_runs"
+            return [], "spec_violation:sample_runs", _EMPTY_PENDING
 
         run_id = raw_run.get("run_id")
         if not _validate_uuid_text(run_id) or not isinstance(run_id, str):
-            return [], "spec_violation:run_id"
+            return [], "spec_violation:run_id", _EMPTY_PENDING
         if run_id in seen_run_ids:
-            return [], "spec_violation:duplicate_run_id"
+            return [], "spec_violation:duplicate_run_id", _EMPTY_PENDING
         if corpus_seen_run_ids is not None and run_id in corpus_seen_run_ids:
-            return [], "spec_violation:duplicate_run_id_across_fixtures"
+            return (
+                [],
+                "spec_violation:duplicate_run_id_across_fixtures",
+                _EMPTY_PENDING,
+            )
         seen_run_ids.add(run_id)
         if corpus_seen_run_ids is not None:
             pending_corpus_ids.add(run_id)
 
         tenant_id = raw_run.get("tenant_id")
         if not _is_non_bool_int(tenant_id) or tenant_id < 1:  # type: ignore[operator]
-            return [], "spec_violation:tenant_id"
+            return [], "spec_violation:tenant_id", _EMPTY_PENDING
 
         # F-PR32-R1-004 P2 adopt: AC-KPI-05 fixture schema requires
         # ``project_id`` to be an integer with minimum 1. Persisted corpora
@@ -347,17 +374,17 @@ def _collect_sample_runs(
         # completed-run totals; tighten to ``>= 1``.
         project_id = raw_run.get("project_id")
         if not _is_non_bool_int(project_id) or project_id < 1:  # type: ignore[operator]
-            return [], "spec_violation:project_id"
+            return [], "spec_violation:project_id", _EMPTY_PENDING
 
         status = raw_run.get("status")
         if not isinstance(status, str) or status not in _KNOWN_AGENT_RUN_STATUSES:
-            return [], "spec_violation:status"
+            return [], "spec_violation:status", _EMPTY_PENDING
 
         cost_usd = raw_run.get("cost_usd")
         if not _is_finite_number(cost_usd):
-            return [], "spec_violation:cost_usd"
+            return [], "spec_violation:cost_usd", _EMPTY_PENDING
         if float(cost_usd) < 0.0:  # type: ignore[arg-type]
-            return [], "spec_violation:cost_usd"
+            return [], "spec_violation:cost_usd", _EMPTY_PENDING
 
         # F-PR32-R2-001 P2 adopt: AC-KPI-05 fixture schema requires both
         # ``tokens_input`` and ``tokens_output`` as non-negative integers.
@@ -368,10 +395,10 @@ def _collect_sample_runs(
         # token oracles exist to catch.
         tokens_input = raw_run.get("tokens_input")
         if not _is_non_bool_int(tokens_input) or tokens_input < 0:  # type: ignore[operator]
-            return [], "spec_violation:tokens_input"
+            return [], "spec_violation:tokens_input", _EMPTY_PENDING
         tokens_output = raw_run.get("tokens_output")
         if not _is_non_bool_int(tokens_output) or tokens_output < 0:  # type: ignore[operator]
-            return [], "spec_violation:tokens_output"
+            return [], "spec_violation:tokens_output", _EMPTY_PENDING
 
         runs.append(
             SampleRun(
@@ -383,13 +410,9 @@ def _collect_sample_runs(
             )
         )
 
-    # F-PR32-R5-003 P2 adopt: commit the pending corpus-wide UUIDs only after
-    # *all* rows in this fixture validated. If any row above had raised a
-    # spec violation we returned early and ``pending_corpus_ids`` is
-    # discarded along with the function frame.
-    if corpus_seen_run_ids is not None and pending_corpus_ids:
-        corpus_seen_run_ids.update(pending_corpus_ids)
-    return runs, None
+    # Return the staged set as an immutable snapshot; the orchestrator
+    # commits it only when the fixture passes all gates.
+    return runs, None, frozenset(pending_corpus_ids)
 
 
 def _fixture_threshold(fixture: Fixture) -> object:
@@ -644,7 +667,7 @@ def evaluate_cost_per_completed_task(
         threshold_reason_violation = (
             _fixture_threshold_violation_reason(fixture) if envelope_reason is None else None
         )
-        runs, run_violation = _collect_sample_runs(
+        runs, run_violation, pending_corpus_ids = _collect_sample_runs(
             fixture,
             corpus_seen_run_ids=corpus_seen_run_ids,
         )
@@ -656,9 +679,6 @@ def evaluate_cost_per_completed_task(
             if recomputed_completed_count
             else None
         )
-
-        total_completed_runs_across_corpus += recomputed_completed_count
-        total_cost_usd_across_corpus += recomputed_total_cost
 
         spec_reason: str | None = envelope_reason
         if spec_reason is None and threshold_reason_violation is not None:
@@ -672,6 +692,19 @@ def evaluate_cost_per_completed_task(
                 recomputed_total_cost_usd=recomputed_total_cost,
                 recomputed_ratio=recomputed_ratio,
             )
+
+        # F-PR32-R6-001 P2 adopt: gate both corpus-wide totals **and** the
+        # cross-fixture seen-set commit on the final spec_reason. An
+        # otherwise-structurally-valid set of sample_runs in a fixture that
+        # fails its envelope / threshold / expected_aggregate gates must not
+        # leak its UUIDs (which would falsely flag a later valid fixture as
+        # ``duplicate_run_id_across_fixtures``) nor inflate the corpus-level
+        # numerator / denominator.
+        if spec_reason is None:
+            total_completed_runs_across_corpus += recomputed_completed_count
+            total_cost_usd_across_corpus += recomputed_total_cost
+            if pending_corpus_ids:
+                corpus_seen_run_ids.update(pending_corpus_ids)
 
         spec_violation_reason = spec_reason
         sut_failure_reason: str | None = None

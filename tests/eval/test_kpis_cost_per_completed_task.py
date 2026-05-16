@@ -1507,3 +1507,177 @@ def test_invalid_fixture_does_not_poison_corpus_seen_run_ids() -> None:
     assert result.per_fixture[1].spec_violation_reason is None
     assert result.total_completed_runs_across_corpus == 1
     assert result.total_cost_usd_across_corpus == pytest.approx(0.2)
+
+
+# ---------------------------------------------------------------------------
+# F-PR32-R6: envelope/threshold-invalid fixtures must not poison corpus state
+# ---------------------------------------------------------------------------
+
+
+def test_envelope_invalid_fixture_does_not_commit_run_ids_or_costs() -> None:
+    """F-PR32-R6-001 P2 adopt: an envelope violation (e.g., wrong kpi_id)
+    must not leak its structurally-valid ``sample_runs`` UUIDs into the
+    corpus-wide seen-set, nor inflate the corpus-level numerator /
+    denominator.
+
+    Construct fixture A with the wrong ``kpi_id`` (envelope violation) but
+    structurally valid runs. Then fixture B reuses A's ``run_id``.
+    Without the gate, B would be falsely flagged as
+    ``duplicate_run_id_across_fixtures`` and A's costs would have
+    incremented the corpus totals.
+    """
+
+    shared_run_id = _uuid_for("envelope-invalid-shared")
+
+    fixture_a = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_env_a",
+        kpi_id="AC-KPI-99",  # envelope violation
+        sample_runs=[
+            {
+                "tenant_id": 1,
+                "project_id": 10,
+                "run_id": shared_run_id,
+                "status": "completed",
+                "cost_usd": 0.3,
+                "tokens_input": 1000,
+                "tokens_output": 200,
+            }
+        ],
+        expected_aggregate={
+            "total_completed_runs": 1,
+            "total_cost_usd": 0.3,
+            "cost_per_completed_task_usd": 0.3,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            "threshold_passed": True,
+        },
+    )
+    fixture_b = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_env_b",
+        sample_runs=[
+            {
+                "tenant_id": 1,
+                "project_id": 10,
+                "run_id": shared_run_id,  # would collide if A leaked
+                "status": "completed",
+                "cost_usd": 0.2,
+                "tokens_input": 1000,
+                "tokens_output": 200,
+            }
+        ],
+        expected_aggregate={
+            "total_completed_runs": 1,
+            "total_cost_usd": 0.2,
+            "cost_per_completed_task_usd": 0.2,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            "threshold_passed": True,
+        },
+    )
+    result = evaluate_cost_per_completed_task(
+        _synthetic_corpus([fixture_a, fixture_b])
+    )
+
+    # Fixture A is rejected on envelope (wrong kpi_id).
+    assert result.per_fixture[0].spec_violation_reason == "spec_violation:kpi_id"
+    # Fixture B is not falsely flagged as cross-fixture duplicate.
+    assert result.per_fixture[1].spec_violation_reason is None
+    # Corpus totals reflect **only** the valid fixture B.
+    assert result.total_completed_runs_across_corpus == 1
+    assert result.total_cost_usd_across_corpus == pytest.approx(0.2)
+
+
+def test_expected_aggregate_invalid_fixture_does_not_commit_run_ids() -> None:
+    """F-PR32-R6-001 P2 adopt: same guard at the ``expected_aggregate``
+    layer. Fixture A's ``sample_runs`` validate structurally and even pass
+    ``run_violation``, but the declared aggregate drifts → spec_reason
+    fires from ``_expected_aggregate_violation_reason``. Its UUIDs must
+    not leak.
+    """
+
+    shared_run_id = _uuid_for("agg-invalid-shared")
+
+    fixture_a = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_agg_a",
+        sample_runs=[
+            {
+                "tenant_id": 1,
+                "project_id": 10,
+                "run_id": shared_run_id,
+                "status": "completed",
+                "cost_usd": 0.3,
+                "tokens_input": 1000,
+                "tokens_output": 200,
+            }
+        ],
+        # Declared total drift: 999.0 != recomputed 0.3 → expected_aggregate
+        # violation.
+        expected_aggregate={
+            "total_completed_runs": 1,
+            "total_cost_usd": 999.0,
+            "cost_per_completed_task_usd": 999.0,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            "threshold_passed": False,
+        },
+    )
+    fixture_b = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_agg_b",
+        sample_runs=[
+            {
+                "tenant_id": 1,
+                "project_id": 10,
+                "run_id": shared_run_id,
+                "status": "completed",
+                "cost_usd": 0.2,
+                "tokens_input": 1000,
+                "tokens_output": 200,
+            }
+        ],
+        expected_aggregate={
+            "total_completed_runs": 1,
+            "total_cost_usd": 0.2,
+            "cost_per_completed_task_usd": 0.2,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            "threshold_passed": True,
+        },
+    )
+    result = evaluate_cost_per_completed_task(
+        _synthetic_corpus([fixture_a, fixture_b])
+    )
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_aggregate_total_cost_drift"
+    )
+    assert result.per_fixture[1].spec_violation_reason is None
+    assert result.total_completed_runs_across_corpus == 1
+    assert result.total_cost_usd_across_corpus == pytest.approx(0.2)
+
+
+def test_overflowing_numeric_input_does_not_crash() -> None:
+    """F-PR32-R6-002 P2 adopt: a JSON integer with hundreds of digits
+    (e.g., ``10**500``) used as ``cost_usd`` must produce a per-fixture
+    ``spec_violation:cost_usd`` instead of raising ``OverflowError`` from
+    ``float(huge_int)``.
+    """
+
+    fixture = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_overflow",
+        sample_runs=[
+            {
+                "tenant_id": 1,
+                "project_id": 10,
+                "run_id": _uuid_for("overflow-cost"),
+                "status": "completed",
+                "cost_usd": 10**500,  # Python int that overflows float
+                "tokens_input": 1000,
+                "tokens_output": 200,
+            }
+        ],
+        expected_aggregate={
+            "total_completed_runs": 1,
+            "total_cost_usd": 0.0,
+            "cost_per_completed_task_usd": 0.0,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            "threshold_passed": True,
+        },
+    )
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == "spec_violation:cost_usd"
