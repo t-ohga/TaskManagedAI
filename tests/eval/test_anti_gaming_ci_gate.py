@@ -30,7 +30,15 @@ import pytest
 from backend.app.services.eval.anti_gaming import verify_fixture_commit_separation
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_FIXTURE_ROOT = _REPO_ROOT / "eval/security/tenant_isolation/public_regression"
+# F-PR28-R5-005 P2 adopt: include all three splits (public_regression /
+# private_holdout / adversarial_new). Limiting the gate to public_regression
+# would skip exactly the splits where expectation leakage is most sensitive
+# once non-public fixtures are added (Sprint 11 BL-0158).
+_FIXTURE_SPLIT_ROOTS = (
+    _REPO_ROOT / "eval/security/tenant_isolation/public_regression",
+    _REPO_ROOT / "eval/security/tenant_isolation/private_holdout",
+    _REPO_ROOT / "eval/security/tenant_isolation/adversarial_new",
+)
 _POLICY_PATHS = (
     _REPO_ROOT / "backend/app/services/policy",
     _REPO_ROOT / "backend/app/services/runner",
@@ -53,9 +61,12 @@ def test_real_git_fixture_policy_commit_separation_is_clean() -> None:
     if not (_REPO_ROOT / ".git").exists():
         pytest.skip(f"{_REPO_ROOT} is not a git repository; cannot run real-git anti-gaming gate.")
 
-    fixture_paths = sorted(_FIXTURE_ROOT.glob("*.json"))
+    fixture_paths: list[Path] = []
+    for split_root in _FIXTURE_SPLIT_ROOTS:
+        if split_root.exists():
+            fixture_paths.extend(sorted(split_root.glob("*.json")))
     if not fixture_paths:
-        pytest.skip(f"No fixture files under {_FIXTURE_ROOT}.")
+        pytest.skip(f"No fixture files under {[str(p) for p in _FIXTURE_SPLIT_ROOTS]}.")
     policy_paths = [path for path in _POLICY_PATHS if path.exists()]
     if not policy_paths:
         pytest.skip("No policy paths found; nothing to compare against.")

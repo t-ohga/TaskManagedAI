@@ -26,6 +26,7 @@ LOADER_FIXTURE_KIND_VALUES: Final[tuple[FixtureKind, ...]] = (
     "adversarial_new",
 )
 LOADER_FIXTURE_KINDS: Final[frozenset[FixtureKind]] = frozenset(LOADER_FIXTURE_KIND_VALUES)
+_VALID_SPLIT_KINDS: Final[frozenset[str]] = frozenset(LOADER_FIXTURE_KIND_VALUES)
 
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 _EXPECTED_SCHEMA_FILENAME = "expected_schema.json"
@@ -373,12 +374,60 @@ def _validate_public_fixture_schema(raw_fixture: JsonDict, schema: JsonDict, sou
         raise FixtureLoadError(f"public fixture {source_path.name} fails expected_schema validation: {details}")
 
 
+def _validate_redacted_input_schema(raw_fixture: JsonDict, schema: JsonDict, source_path: Path) -> None:
+    """Validate the ``input`` field of a redacted fixture against ``schema.properties.input``.
+
+    F-PR28-R5-003 P2 adopt: redacted (``private_holdout`` / ``adversarial_new``)
+    fixtures otherwise skip schema validation entirely, so arbitrary string /
+    object shapes for ``input`` would be persisted to ``case_json`` unchecked.
+    Validating just the ``input`` subschema keeps holdout expectations out of
+    the schema check while still pinning the input shape.
+    """
+
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    if not isinstance(properties, dict):
+        return
+    input_schema = properties.get("input")
+    if not isinstance(input_schema, dict):
+        return
+    if "input" not in raw_fixture:
+        raise FixtureLoadError(f"{source_path}: redacted fixture missing required key 'input'")
+
+    validator = Draft7Validator(input_schema, format_checker=FormatChecker())
+    errors: list[JsonSchemaValidationError] = sorted(
+        validator.iter_errors(raw_fixture["input"]),
+        key=lambda error: tuple(str(part) for part in error.absolute_path),
+    )
+    if errors:
+        details = "; ".join(
+            f"path={list(error.absolute_path)} validator={error.validator}"
+            for error in errors[:5]
+        )
+        raise FixtureLoadError(
+            f"redacted fixture {source_path.name} fails input schema validation: {details}"
+        )
+
+
 def _fixture_paths_for_split(split_dir: Path) -> list[Path]:
+    # F-PR28-R5-002 P2 adopt: reject symlinks under split directories.
+    # A symlink committed inside a corpus split could point to a JSON file
+    # outside the repository tree; ``_read_json_object()`` would happily follow
+    # it while ``source_path`` still looked in-tree, opening a fixture-source
+    # provenance bypass.
     if not split_dir.exists():
         return []
+    if split_dir.is_symlink():
+        raise FixtureLoadError(f"fixture split path must not be a symlink: {split_dir}")
     if not split_dir.is_dir():
         raise FixtureLoadError(f"fixture split path must be a directory: {split_dir}")
-    return sorted(split_dir.glob("*.json"))
+    paths: list[Path] = []
+    for candidate in sorted(split_dir.glob("*.json")):
+        if candidate.is_symlink():
+            raise FixtureLoadError(f"fixture file must not be a symlink: {candidate}")
+        if not candidate.is_file():
+            raise FixtureLoadError(f"fixture file must be a regular file: {candidate}")
+        paths.append(candidate)
+    return paths
 
 
 def _assert_split_count(manifest: JsonDict, fixture_kind: FixtureKind, actual_count: int) -> None:
@@ -457,13 +506,29 @@ def _assert_index_split_consistency(
         source_path=Path("manifest.json"),
         key="fixture_immutable_index",
     )
-    registered = {
-        fixture_id
-        for fixture_id, entry in index.items()
-        if isinstance(fixture_id, str)
-        and isinstance(entry, dict)
-        and entry.get("split") == fixture_kind
-    }
+    # F-PR28-R5-001 P2 adopt: previously a malformed entry (non-object or with
+    # missing/invalid ``split``) was silently omitted from ``registered``, so a
+    # tampered/removed fixture could escape detection by lowering
+    # ``expected_count`` and replacing the index entry with garbage. Reject
+    # malformed entries up front so the append-only immutable index keeps
+    # detecting deletion/tampering.
+    registered: set[str] = set()
+    for fixture_id, entry in index.items():
+        if not isinstance(fixture_id, str) or not fixture_id:
+            raise FixtureLoadError(
+                f"fixture_immutable_index contains malformed fixture_id key: {fixture_id!r}"
+            )
+        if not isinstance(entry, dict):
+            raise FixtureLoadError(
+                f"fixture_immutable_index entry for {fixture_id} must be a JSON object"
+            )
+        split = entry.get("split")
+        if not isinstance(split, str) or split not in _VALID_SPLIT_KINDS:
+            raise FixtureLoadError(
+                f"fixture_immutable_index entry for {fixture_id} has invalid split={split!r}"
+            )
+        if split == fixture_kind:
+            registered.add(fixture_id)
     missing_files = sorted(registered - actual_fixture_ids)
     if missing_files:
         raise FixtureLoadError(
@@ -531,6 +596,12 @@ def _fixture_from_raw(
             raise FixtureLoadError(
                 f"{source_path}: redacted fixture contains prohibited expectation keys {leaked_expectation_keys}"
             )
+        # F-PR28-R5-003 P2 adopt: even for redacted splits, validate the
+        # ``input`` field against ``schema.properties.input`` (if defined) so
+        # arbitrary string/object shapes cannot be loaded into case_json. The
+        # rest of the schema (expectations) is intentionally not applied to
+        # redacted splits — expectations live in an external vault.
+        _validate_redacted_input_schema(raw_fixture, schema, source_path)
 
     metadata = dict(_require_object(raw_fixture.get("metadata"), source_path=source_path, key="metadata"))
     metadata.setdefault("rls_ready", True)
