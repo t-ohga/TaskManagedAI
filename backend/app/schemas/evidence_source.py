@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -23,6 +24,18 @@ def _safe_metadata(value: object) -> dict[str, Any]:
 # log / non-UI clients / browser DevTools.
 _SAFE_URL_PROTOCOLS = frozenset({"http", "https"})
 
+# F-PR26-R2-002 P1 adopt: parity with the frontend SECRETISH_PATTERN
+# regex (`frontend/lib/api/research.ts`). Embedded tokens inside the
+# host or path (e.g., ``/sk-AbCdEf...``, ``/api_key/...``,
+# ``capability_token``) must be redacted at the API boundary so the
+# raw value never reaches non-UI clients or HTTP logs. Keep both
+# server and client redaction in sync.
+_SECRETISH_PATTERN = re.compile(
+    r"(secret://|secret_ref|capability[_-]?token|api[_-]?key|"
+    r"authorization|bearer|sk-[A-Za-z0-9_-]{8,})",
+    re.IGNORECASE,
+)
+
 
 def _redact_canonical_url(value: str) -> str:
     try:
@@ -33,9 +46,21 @@ def _redact_canonical_url(value: str) -> str:
         return "[redacted]"
     if not parsed.hostname:
         return "[redacted]"
+    # F-PR26-R2-001 P2 adopt: parsed.port raises ValueError on
+    # malformed / out-of-range ports (e.g., ``:99999``). The DB only
+    # enforces length/hash, not URL port validity, so listing or
+    # fetching such a source would 500 on API serialization. Fail-
+    # closed to "[redacted]" instead.
+    try:
+        port = parsed.port
+    except ValueError:
+        return "[redacted]"
     host_part = parsed.hostname
-    if parsed.port is not None:
-        host_part = f"{host_part}:{parsed.port}"
+    if port is not None:
+        host_part = f"{host_part}:{port}"
+    # F-PR26-R2-002 P1 adopt: also reject secret-shaped host/path.
+    if _SECRETISH_PATTERN.search(f"{host_part}{parsed.path}"):
+        return "[redacted]"
     return urlunsplit((parsed.scheme, host_part, parsed.path, "", ""))
 
 

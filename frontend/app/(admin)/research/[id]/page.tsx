@@ -40,6 +40,26 @@ type ResearchDetailData = {
   sourcesById: Map<string, EvidenceSource>;
 };
 
+// F-PR26-R2-003 + F-PR26-R2-004 P2 adopt: bound the per-claim
+// listEvidenceItems and per-source getEvidenceSource fan-out so a
+// research task with hundreds of claims / sources does not exhaust
+// server connection capacity. Process in chunks of CONCURRENCY_LIMIT.
+const CONCURRENCY_LIMIT = 8;
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += limit) {
+    const chunk = items.slice(i, i + limit);
+    const chunkResults = await Promise.all(chunk.map(fn));
+    results.push(...chunkResults);
+  }
+  return results;
+}
+
 async function loadResearchDetail(researchTaskId: string): Promise<ResearchDetailData> {
   // F-PR26-R1-002 P2 adopt: resolve evidence_sources by the specific
   // ``source_id``s referenced from this research task's evidence_items,
@@ -52,23 +72,29 @@ async function loadResearchDetail(researchTaskId: string): Promise<ResearchDetai
     listClaims(researchTaskId)
   ]);
 
-  const evidenceItemGroups = await Promise.all(
-    claims.map(async (claim) => [claim.id, await listEvidenceItems(claim.id)] as const)
+  // F-PR26-R2-004 P2 adopt: bounded per-claim fan-out.
+  const evidenceItemGroups = await mapWithConcurrency(
+    claims,
+    CONCURRENCY_LIMIT,
+    async (claim) => [claim.id, await listEvidenceItems(claim.id)] as const
   );
   const evidenceItemsByClaimId = new Map<string, EvidenceItem[]>(evidenceItemGroups);
   const allEvidenceItems = evidenceItemGroups.flatMap(([, items]) => items);
   const referencedSourceIds = Array.from(
     new Set(allEvidenceItems.map((item) => item.source_id))
   );
-  const resolvedSources = await Promise.all(
-    referencedSourceIds.map(async (sourceId) => {
+  // F-PR26-R2-003 P2 adopt: bounded per-source fan-out.
+  const resolvedSources = await mapWithConcurrency(
+    referencedSourceIds,
+    CONCURRENCY_LIMIT,
+    async (sourceId) => {
       try {
         const source = await getEvidenceSource(sourceId);
         return [sourceId, source] as const;
       } catch {
         return null;
       }
-    })
+    }
   );
   const sourcesById = new Map<string, EvidenceSource>(
     resolvedSources.filter((entry): entry is readonly [string, EvidenceSource] => entry !== null)
