@@ -1,0 +1,620 @@
+"""AC-KPI-05 ``cost_per_completed_task`` aggregator.
+
+Computes the AC-KPI-05 KPI (USD cost per completed AgentRun) from a fixture
+corpus loaded by :func:`backend.app.services.eval.loader.load_fixture_corpus`.
+
+Anti-Gaming invariants (manifest ``anti_gaming_rules.kpi_specific``):
+
+1. ``cost_per_completed_task is calculated from normalized provider usage
+   after BudgetGuard accounting`` — the aggregator never trusts the fixture's
+   declared ``cost_per_completed_task_usd``; it always **recomputes** the
+   metric from ``input.sample_runs``.
+2. ``only AgentRun status=completed contributes to numerator and denominator``
+   — failed / cancelled / refused / repair-exhausted runs must be filtered out
+   of both the cost numerator and the completed-task denominator.
+
+The function is pure (no DB / file system / network access). Optional
+``sut_results`` is consumed read-only for forward-compatibility with the
+BL-0127b / SP-012 programmatic SUT execution path.
+
+The KPI is "lower is better": ``threshold_met`` requires the recomputed
+``cost_per_completed_task_usd`` to be **at or below** ``AC_KPI_05_THRESHOLD_USD``.
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Final, Literal
+from uuid import UUID
+
+from backend.app.db.models.dataset_version import FixtureKind
+from backend.app.services.eval.loader import Fixture, LoadedCorpus
+
+_LOGGER = logging.getLogger(__name__)
+
+AC_KPI_05_KPI_ID: Final[Literal["AC-KPI-05"]] = "AC-KPI-05"
+AC_KPI_05_METRIC_KEY: Final[Literal["cost_per_completed_task"]] = "cost_per_completed_task"
+AC_KPI_05_THRESHOLD_USD: Final[float] = 0.5
+AC_KPI_05_CURRENCY: Final[Literal["USD"]] = "USD"
+
+# AC-KPI-05 contract: only AgentRun ``status=completed`` runs contribute to the
+# numerator and denominator. The wider 16-state AgentRun status enum (see
+# ``backend/app/db/models/agent_run.py``) is accepted on input — non-completed
+# runs are simply filtered out — but unknown / missing status values are a
+# spec violation because the fixture cannot be Anti-Gaming-safely classified.
+_KPI_05_COMPLETED_STATUS: Final[Literal["completed"]] = "completed"
+
+# AgentRun 16 状態 (recognised values; runs outside this set are rejected as
+# spec violations so a future status name change can't bypass the
+# completed-status filter silently).
+_KNOWN_AGENT_RUN_STATUSES: Final[frozenset[str]] = frozenset(
+    {
+        "queued",
+        "gathering_context",
+        "running",
+        "generated_artifact",
+        "schema_validated",
+        "policy_linted",
+        "diff_ready",
+        "waiting_approval",
+        "blocked",
+        "provider_refused",
+        "provider_incomplete",
+        "validation_failed",
+        "repair_exhausted",
+        "completed",
+        "failed",
+        "cancelled",
+    }
+)
+
+_SUPPORTED_FIXTURE_KINDS: Final[Sequence[FixtureKind]] = ("public_regression",)
+
+# Drift tolerances mirror batch 5d (citation_coverage) so float64 round-trip
+# noise across heterogeneous fixture writers cannot trigger false-positive
+# drift, but documented attack-pattern drifts (e.g., declaring $0.2 while the
+# real run set sums to $0.6) exceed these orders of magnitude trivially.
+_COST_REL_TOL: Final[float] = 1e-6
+_COST_ABS_TOL: Final[float] = 1e-9
+_THRESHOLD_USD_ABS_TOL: Final[float] = 1e-9
+
+# Sentinel that distinguishes "key absent" from "key present but malformed"
+# (mirrors the citation_coverage aggregator).
+_AGGREGATE_NOT_PROVIDED: Final[object] = object()
+
+# F-PR31-R5-002 lesson: persisted corpora that bypass JSON Schema can ship
+# arbitrary string shapes. ``evidence_set_hash`` is not part of the
+# AC-KPI-05 contract (the live fixture explicitly leaves it ``null``), so
+# we do NOT validate it here. Status enum and UUID structural validation
+# carry the Anti-Gaming load instead.
+_UUID_TEXT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class SampleRun:
+    """A single AgentRun observation extracted from ``input.sample_runs``."""
+
+    run_id: str
+    tenant_id: int
+    project_id: int
+    status: str
+    cost_usd: float
+
+
+@dataclass(frozen=True)
+class CostPerCompletedTaskFixtureResult:
+    """Per-fixture cost-KPI result.
+
+    The dual ``spec_violation_reason`` / ``sut_failure_reason`` contract is
+    identical to the batch 5d citation_coverage aggregator: at most one of
+    these fields is non-None per row. ``passed=True`` with ``sut_attempted=False``
+    means **spec compliance only** (SUT was not executed and its outcome is
+    not represented); ``passed=True`` with ``sut_attempted=True`` means both
+    spec and SUT pass.
+    """
+
+    fixture_id: str
+    case_key: str
+    total_runs: int
+    completed_runs: int
+    recomputed_completed_runs: int
+    recomputed_total_cost_usd: float
+    recomputed_cost_per_completed_task_usd: float | None
+    expected_cost_per_completed_task_usd: float | None
+    passed: bool
+    spec_violation_reason: str | None
+    sut_failure_reason: str | None
+    sut_result: bool | None
+    sut_attempted: bool
+
+
+@dataclass(frozen=True)
+class CostPerCompletedTaskMetricResult:
+    """Corpus-level cost-KPI result.
+
+    ``metric_value`` is the corpus-wide recomputed
+    ``sum(cost_usd of completed runs) / count(completed runs)``. When the
+    corpus has zero completed runs, ``metric_value`` is ``None`` (the KPI is
+    undefined) and ``threshold_met`` is ``False`` with
+    ``threshold_reason="no_completed_runs"``.
+    """
+
+    metric_value: float | None
+    fixture_count: int
+    total_completed_runs_across_corpus: int
+    total_cost_usd_across_corpus: float
+    pass_count: int
+    fail_count: int
+    per_fixture: tuple[CostPerCompletedTaskFixtureResult, ...]
+    threshold_usd: float
+    currency: str
+    threshold_met: bool
+    threshold_reason: str
+    manifest_violation_reason: str | None
+
+
+def _is_finite_number(value: object) -> bool:
+    """Return True for finite ``int`` / ``float`` (excluding ``bool``)."""
+
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+    )
+
+
+def _is_non_bool_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _costs_match(recomputed: float, expected: float) -> bool:
+    return math.isclose(recomputed, expected, rel_tol=_COST_REL_TOL, abs_tol=_COST_ABS_TOL)
+
+
+def _manifest_violation_reason(corpus: LoadedCorpus) -> str | None:
+    """Validate manifest top-level constants for AC-KPI-05."""
+
+    manifest = corpus.manifest
+    if manifest.get("kpi_id") != AC_KPI_05_KPI_ID:
+        return "manifest_violation:kpi_id"
+    if manifest.get("metric") != AC_KPI_05_METRIC_KEY:
+        return "manifest_violation:metric"
+
+    threshold = manifest.get("threshold")
+    if not isinstance(threshold, dict):
+        return "manifest_violation:threshold"
+    threshold_map: Mapping[str, object] = threshold
+    threshold_value = threshold_map.get("cost_per_completed_task_usd_max")
+    if not _is_finite_number(threshold_value):
+        return "manifest_violation:threshold_value"
+    if abs(float(threshold_value) - AC_KPI_05_THRESHOLD_USD) > _THRESHOLD_USD_ABS_TOL:  # type: ignore[arg-type]
+        return "manifest_violation:threshold_value"
+    if threshold_map.get("currency") != AC_KPI_05_CURRENCY:
+        return "manifest_violation:currency"
+    return None
+
+
+def _envelope_violation_reason(fixture: Fixture) -> str | None:
+    if fixture.kpi_id != AC_KPI_05_KPI_ID:
+        return "spec_violation:kpi_id"
+    if fixture.metric_key != AC_KPI_05_METRIC_KEY:
+        return "spec_violation:metric_key"
+    if fixture.fixture_kind not in _SUPPORTED_FIXTURE_KINDS:
+        return "spec_violation:fixture_kind"
+    return None
+
+
+def _validate_uuid_text(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    if not _UUID_TEXT_PATTERN.fullmatch(value):
+        return False
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _collect_sample_runs(
+    fixture: Fixture,
+) -> tuple[list[SampleRun], str | None]:
+    """Walk ``input.sample_runs`` and validate each run's shape.
+
+    Returns ``(runs, spec_violation_reason)``. On any structural violation the
+    parser returns an empty list so the aggregator does not undercount via a
+    partial parse.
+    """
+
+    case_input = fixture.case_json.get("input")
+    if not isinstance(case_input, dict):
+        return [], "spec_violation:input"
+
+    sample_runs = case_input.get("sample_runs")
+    if not isinstance(sample_runs, list):
+        return [], "spec_violation:sample_runs"
+
+    runs: list[SampleRun] = []
+    seen_run_ids: set[str] = set()
+    for raw_run in sample_runs:
+        if not isinstance(raw_run, dict):
+            return [], "spec_violation:sample_runs"
+
+        run_id = raw_run.get("run_id")
+        if not _validate_uuid_text(run_id) or not isinstance(run_id, str):
+            return [], "spec_violation:run_id"
+        if run_id in seen_run_ids:
+            return [], "spec_violation:duplicate_run_id"
+        seen_run_ids.add(run_id)
+
+        tenant_id = raw_run.get("tenant_id")
+        if not _is_non_bool_int(tenant_id) or tenant_id < 1:  # type: ignore[operator]
+            return [], "spec_violation:tenant_id"
+
+        project_id = raw_run.get("project_id")
+        if not _is_non_bool_int(project_id) or project_id < 0:  # type: ignore[operator]
+            return [], "spec_violation:project_id"
+
+        status = raw_run.get("status")
+        if not isinstance(status, str) or status not in _KNOWN_AGENT_RUN_STATUSES:
+            return [], "spec_violation:status"
+
+        cost_usd = raw_run.get("cost_usd")
+        if not _is_finite_number(cost_usd):
+            return [], "spec_violation:cost_usd"
+        if float(cost_usd) < 0.0:  # type: ignore[arg-type]
+            return [], "spec_violation:cost_usd"
+
+        runs.append(
+            SampleRun(
+                run_id=run_id,
+                tenant_id=int(tenant_id),  # type: ignore[arg-type]
+                project_id=int(project_id),  # type: ignore[arg-type]
+                status=status,
+                cost_usd=float(cost_usd),  # type: ignore[arg-type]
+            )
+        )
+
+    return runs, None
+
+
+def _fixture_threshold(fixture: Fixture) -> object:
+    if "threshold" in fixture.expected_json:
+        return fixture.expected_json["threshold"]
+    if "threshold" in fixture.raw_json:
+        return fixture.raw_json["threshold"]
+    return _AGGREGATE_NOT_PROVIDED
+
+
+def _fixture_threshold_violation_reason(fixture: Fixture) -> str | None:
+    """Validate the fixture-declared ``threshold`` against AC-KPI-05 constants.
+
+    The cost fixture's ``threshold`` field is optional in the live corpus
+    (the minimal skeleton fixture leaves it ``null``); however, when present
+    and non-null it must match the AC-KPI-05 contract exactly so a persisted
+    corpus cannot declare a relaxed cost ceiling.
+    """
+
+    threshold = _fixture_threshold(fixture)
+    if threshold is _AGGREGATE_NOT_PROVIDED or threshold is None:
+        # Fixture-level threshold is optional for cost; the manifest is the
+        # canonical source. Permit None / absent and rely on manifest check.
+        return None
+    if not isinstance(threshold, dict):
+        return "spec_violation:threshold"
+    declared_max = threshold.get("cost_per_completed_task_usd_max")
+    if not _is_finite_number(declared_max):
+        return "spec_violation:threshold_value"
+    if abs(float(declared_max) - AC_KPI_05_THRESHOLD_USD) > _THRESHOLD_USD_ABS_TOL:  # type: ignore[arg-type]
+        return "spec_violation:threshold_value"
+    if threshold.get("currency") != AC_KPI_05_CURRENCY:
+        return "spec_violation:currency"
+    return None
+
+
+def _expected_aggregate_value(fixture: Fixture) -> object:
+    if "expected_aggregate" in fixture.expected_json:
+        return fixture.expected_json["expected_aggregate"]
+    if "expected_aggregate" in fixture.raw_json:
+        return fixture.raw_json["expected_aggregate"]
+    return _AGGREGATE_NOT_PROVIDED
+
+
+def _expected_aggregate_violation_reason(
+    fixture: Fixture,
+    *,
+    recomputed_completed_runs: int,
+    recomputed_total_cost_usd: float,
+    recomputed_ratio: float | None,
+) -> str | None:
+    raw = _expected_aggregate_value(fixture)
+    if raw is _AGGREGATE_NOT_PROVIDED:
+        return "spec_violation:expected_aggregate_missing"
+    if not isinstance(raw, dict):
+        return "spec_violation:expected_aggregate"
+
+    declared_completed = raw.get("total_completed_runs")
+    if not _is_non_bool_int(declared_completed):
+        return "spec_violation:expected_aggregate"
+    if declared_completed != recomputed_completed_runs:
+        return "spec_violation:expected_aggregate_completed_drift"
+
+    declared_total_cost = raw.get("total_cost_usd")
+    if not _is_finite_number(declared_total_cost):
+        return "spec_violation:expected_aggregate"
+    if not _costs_match(float(declared_total_cost), recomputed_total_cost_usd):  # type: ignore[arg-type]
+        return "spec_violation:expected_aggregate_total_cost_drift"
+
+    if recomputed_ratio is not None:
+        declared_ratio = raw.get("cost_per_completed_task_usd")
+        if not _is_finite_number(declared_ratio):
+            return "spec_violation:expected_aggregate"
+        if not _costs_match(float(declared_ratio), recomputed_ratio):  # type: ignore[arg-type]
+            return "spec_violation:expected_aggregate_ratio_drift"
+
+    # ``threshold_usd`` and ``threshold_passed`` are documented in the
+    # expected_aggregate as denormalized echoes of the manifest threshold +
+    # the per-fixture pass/fail. Validate them too so a persisted fixture
+    # cannot quietly weaken the ceiling.
+    declared_threshold_usd = raw.get("threshold_usd")
+    if declared_threshold_usd is not None:
+        if not _is_finite_number(declared_threshold_usd):
+            return "spec_violation:expected_aggregate"
+        if abs(float(declared_threshold_usd) - AC_KPI_05_THRESHOLD_USD) > _THRESHOLD_USD_ABS_TOL:
+            return "spec_violation:expected_aggregate_threshold_drift"
+
+    declared_threshold_passed = raw.get("threshold_passed")
+    if declared_threshold_passed is not None:
+        if not isinstance(declared_threshold_passed, bool):
+            return "spec_violation:expected_aggregate"
+        actual_passed = (
+            recomputed_ratio is not None
+            and recomputed_ratio <= AC_KPI_05_THRESHOLD_USD + _THRESHOLD_USD_ABS_TOL
+        )
+        if declared_threshold_passed != actual_passed:
+            return "spec_violation:expected_aggregate_passed_drift"
+
+    return None
+
+
+def _warn_unknown_sut_results(corpus: LoadedCorpus, sut_results: Mapping[str, bool]) -> None:
+    fixture_ids = {fixture.fixture_id for fixture in corpus.fixtures}
+    for fixture_id in sorted(set(sut_results) - fixture_ids):
+        _LOGGER.warning(
+            "Ignoring SUT result for unknown AC-KPI-05 fixture_id=%s",
+            fixture_id,
+        )
+
+
+def _threshold_reason(
+    *,
+    fixture_count: int,
+    total_completed_runs: int,
+    metric_value: float | None,
+    spec_violation_present: bool,
+    manifest_violation_present: bool,
+    sut_failure_present: bool,
+) -> str:
+    if fixture_count == 0:
+        return "no_fixtures"
+    if manifest_violation_present:
+        return "manifest_violation"
+    if spec_violation_present:
+        return "spec_violation"
+    if sut_failure_present:
+        return "sut_failure"
+    if total_completed_runs == 0 or metric_value is None:
+        return "no_completed_runs"
+    if metric_value <= AC_KPI_05_THRESHOLD_USD + _THRESHOLD_USD_ABS_TOL:
+        return "threshold_met"
+    return "above_threshold"
+
+
+def evaluate_cost_per_completed_task(
+    corpus: LoadedCorpus,
+    *,
+    sut_results: Mapping[str, bool] | None = None,
+) -> CostPerCompletedTaskMetricResult:
+    """Compute AC-KPI-05 ``cost_per_completed_task`` from a loaded corpus.
+
+    The caller must load and validate the corpus via
+    :func:`backend.app.services.eval.loader.load_fixture_corpus` first. The
+    function is pure: no DB / file system / network access. Optional
+    ``sut_results`` is consumed read-only and keyed by ``fixture_id``.
+
+    Anti-Gaming invariants (manifest ``anti_gaming_rules.kpi_specific``):
+
+    * ``cost_per_completed_task`` is **always recomputed** from
+      ``input.sample_runs``; the fixture's declared
+      ``expected_aggregate.cost_per_completed_task_usd`` is consumed as a
+      drift-detection oracle only.
+    * **Only ``status="completed"`` runs** contribute to both numerator and
+      denominator. Failed / cancelled / refused / repair-exhausted /
+      non-terminal runs are filtered out of both totals.
+    * Unknown status values are rejected as ``spec_violation:status`` so a
+      future AgentRun status name change can't quietly bypass the filter.
+
+    Per-fixture procedure:
+        1. Skip non-public-regression fixtures (redacted splits are SP-022+).
+        2. Validate the fixture envelope and the optional fixture-level
+           ``threshold`` against AC-KPI-05 constants.
+        3. Walk ``input.sample_runs`` validating UUID / tenant_id /
+           project_id / status / cost_usd shapes.
+        4. Filter to completed runs and recompute
+           ``cost_per_completed_task_usd``.
+        5. Drift-check against ``expected_aggregate`` (completed count,
+           total cost, recomputed ratio, declared threshold, declared pass).
+        6. Optionally cross-check ``sut_results[fixture_id]``; non-boolean
+           values reject as ``sut_result_invalid_type``.
+
+    Per-fixture reason priority:
+        envelope_violation > fixture_threshold_violation >
+        run_parsing_violation > expected_aggregate_* violations. SUT
+        processing is **skipped** entirely when a spec violation is detected,
+        keeping the dataclass invariant (at most one of
+        ``spec_violation_reason`` / ``sut_failure_reason`` non-None).
+
+    Corpus-level metric:
+        ``metric_value = sum(cost_usd over completed runs) /
+                          count(completed runs)``
+        ``threshold_met`` ⇔ ``metric_value <= AC_KPI_05_THRESHOLD_USD`` AND
+        ``fixture_count > 0`` AND ``total_completed_runs > 0`` AND no
+        spec/manifest/SUT failure.
+        ``threshold_reason`` ∈ {``no_fixtures``, ``manifest_violation``,
+        ``spec_violation``, ``sut_failure``, ``no_completed_runs``,
+        ``threshold_met``, ``above_threshold``} with that priority order.
+    """
+
+    if sut_results is not None:
+        _warn_unknown_sut_results(corpus, sut_results)
+
+    per_fixture: list[CostPerCompletedTaskFixtureResult] = []
+    spec_violation_present = False
+    sut_failure_present = False
+    total_completed_runs_across_corpus = 0
+    total_cost_usd_across_corpus = 0.0
+
+    for fixture in corpus.fixtures:
+        if fixture.fixture_kind not in _SUPPORTED_FIXTURE_KINDS:
+            # Redacted splits deferred to SP-022+ (encrypted-holdout path).
+            continue
+
+        envelope_reason = _envelope_violation_reason(fixture)
+        threshold_reason_violation = (
+            _fixture_threshold_violation_reason(fixture) if envelope_reason is None else None
+        )
+        runs, run_violation = _collect_sample_runs(fixture)
+        completed_runs = [run for run in runs if run.status == _KPI_05_COMPLETED_STATUS]
+        recomputed_completed_count = len(completed_runs)
+        recomputed_total_cost = sum(run.cost_usd for run in completed_runs)
+        recomputed_ratio: float | None = (
+            recomputed_total_cost / recomputed_completed_count
+            if recomputed_completed_count
+            else None
+        )
+
+        total_completed_runs_across_corpus += recomputed_completed_count
+        total_cost_usd_across_corpus += recomputed_total_cost
+
+        spec_reason: str | None = envelope_reason
+        if spec_reason is None and threshold_reason_violation is not None:
+            spec_reason = threshold_reason_violation
+        if spec_reason is None and run_violation is not None:
+            spec_reason = run_violation
+        if spec_reason is None:
+            spec_reason = _expected_aggregate_violation_reason(
+                fixture,
+                recomputed_completed_runs=recomputed_completed_count,
+                recomputed_total_cost_usd=recomputed_total_cost,
+                recomputed_ratio=recomputed_ratio,
+            )
+
+        spec_violation_reason = spec_reason
+        sut_failure_reason: str | None = None
+        sut_result: bool | None = None
+        sut_attempted = False
+        passed = spec_reason is None
+
+        # Mirror batch 5d (citation_coverage): skip SUT processing entirely
+        # when the fixture spec is invalid so the dataclass contract holds.
+        if sut_results is not None and spec_violation_reason is None:
+            sut_attempted = True
+            if fixture.fixture_id not in sut_results:
+                passed = False
+                sut_failure_reason = "sut_result_missing"
+                sut_failure_present = True
+            else:
+                raw_sut_value = sut_results[fixture.fixture_id]
+                if not isinstance(raw_sut_value, bool):
+                    passed = False
+                    sut_failure_reason = "sut_result_invalid_type"
+                    sut_failure_present = True
+                else:
+                    sut_result = raw_sut_value
+                    if not sut_result:
+                        passed = False
+                        sut_failure_reason = "sut_result_false"
+                        sut_failure_present = True
+
+        if spec_violation_reason is not None:
+            spec_violation_present = True
+
+        per_fixture.append(
+            CostPerCompletedTaskFixtureResult(
+                fixture_id=fixture.fixture_id,
+                case_key=fixture.case_key,
+                total_runs=len(runs),
+                completed_runs=recomputed_completed_count,
+                recomputed_completed_runs=recomputed_completed_count,
+                recomputed_total_cost_usd=recomputed_total_cost,
+                recomputed_cost_per_completed_task_usd=recomputed_ratio,
+                expected_cost_per_completed_task_usd=_expected_ratio_from_aggregate(fixture),
+                passed=passed,
+                spec_violation_reason=spec_violation_reason,
+                sut_failure_reason=sut_failure_reason,
+                sut_result=sut_result,
+                sut_attempted=sut_attempted,
+            )
+        )
+
+    fixture_count = len(per_fixture)
+    pass_count = sum(1 for result in per_fixture if result.passed)
+    fail_count = fixture_count - pass_count
+    metric_value = (
+        total_cost_usd_across_corpus / total_completed_runs_across_corpus
+        if total_completed_runs_across_corpus
+        else None
+    )
+    manifest_reason = _manifest_violation_reason(corpus)
+    threshold_reason = _threshold_reason(
+        fixture_count=fixture_count,
+        total_completed_runs=total_completed_runs_across_corpus,
+        metric_value=metric_value,
+        spec_violation_present=spec_violation_present,
+        manifest_violation_present=manifest_reason is not None,
+        sut_failure_present=sut_failure_present,
+    )
+
+    return CostPerCompletedTaskMetricResult(
+        metric_value=metric_value,
+        fixture_count=fixture_count,
+        total_completed_runs_across_corpus=total_completed_runs_across_corpus,
+        total_cost_usd_across_corpus=total_cost_usd_across_corpus,
+        pass_count=pass_count,
+        fail_count=fail_count,
+        per_fixture=tuple(per_fixture),
+        threshold_usd=AC_KPI_05_THRESHOLD_USD,
+        currency=AC_KPI_05_CURRENCY,
+        threshold_met=threshold_reason == "threshold_met",
+        threshold_reason=threshold_reason,
+        manifest_violation_reason=manifest_reason,
+    )
+
+
+def _expected_ratio_from_aggregate(fixture: Fixture) -> float | None:
+    raw = _expected_aggregate_value(fixture)
+    if not isinstance(raw, dict):
+        return None
+    declared_ratio = raw.get("cost_per_completed_task_usd")
+    if not _is_finite_number(declared_ratio):
+        return None
+    return float(declared_ratio)  # type: ignore[arg-type]
+
+
+__all__ = [
+    "AC_KPI_05_CURRENCY",
+    "AC_KPI_05_KPI_ID",
+    "AC_KPI_05_METRIC_KEY",
+    "AC_KPI_05_THRESHOLD_USD",
+    "CostPerCompletedTaskFixtureResult",
+    "CostPerCompletedTaskMetricResult",
+    "SampleRun",
+    "evaluate_cost_per_completed_task",
+]
