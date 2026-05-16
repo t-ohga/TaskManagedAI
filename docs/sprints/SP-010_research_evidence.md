@@ -269,7 +269,12 @@ uv run ruff check backend tests
 - **実装 BL**:
   - `BL-0115` (claims + evidence_items DDL/model/schemas/repositories/API)
   - `BL-0116` (PROV validation: W3C PROV-DM minimal subset、Counter O(N) unique id check + refs existence + id disjointness)
-  - `BL-0029c` (cross-project negative test fixture: claims + evidence_items boundary)
+  - `BL-0029c (partial)` — cross-project negative test fixture の **claims + evidence_items 部分のみ** coverage 完了:
+    - `test_claims_cross_project_select_and_insert_rejected`
+    - `test_evidence_items_cross_project_select_and_insert_rejected`
+    - `test_same_tenant_other_project_research_task_attach_rejected` (claims→research_tasks の cross-project attach negative)
+    - `test_same_tenant_other_project_claim_attach_rejected` (evidence_items→claims の cross-project attach negative)
+  - **BL-0029c の残作業 (Sprint 10 batch 2+ defer)**: `research_tasks` 自身への cross-project SELECT/INSERT/UPDATE/DELETE coverage は batch 2 で BL-0029c-b として実装する (ADR-00002 + P0 backlog AC-HARD-03 で要求される coverage の完全性は batch 2 完遂で達成)
 - **新規 file (主要)**:
   - `migrations/versions/0017_claims_evidence_items.py` (composite FK + CHECK enum `relation` supports/contradicts/context + updated_at trigger + supporting index)
   - `backend/app/db/models/{claim,evidence_item}.py`
