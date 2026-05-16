@@ -285,11 +285,19 @@ class ResearchToTicketAdapter:
         otherwise.
         """
 
+        # F-PR24-R3-005 P1 adopt: lock the approval row so a concurrent
+        # invalidate / expire transition cannot occur between this read and
+        # the Ticket INSERT. Without FOR UPDATE the default read-committed
+        # isolation allows another transaction to set status='invalidated'
+        # immediately after we observe 'approved', leading to a mutation
+        # under a no-longer-valid approval.
         approval = await self.session.scalar(
-            select(ApprovalRequest).where(
+            select(ApprovalRequest)
+            .where(
                 ApprovalRequest.tenant_id == tenant_id,
                 ApprovalRequest.id == approval_request_id,
             )
+            .with_for_update()
         )
         if approval is None:
             raise ValueError(
@@ -319,6 +327,21 @@ class ResearchToTicketAdapter:
             raise ValueError(
                 "approval_request.policy_version does not match the current "
                 "policy snapshot used for promotion"
+            )
+        # F-PR24-R3-002 P1 adopt: provider_request_fingerprint binding.
+        # Research-to-Ticket promotion is NOT a provider call, so the
+        # adapter does not produce a provider_request_fingerprint. The
+        # ApprovalRequest must therefore have ``provider_request_fingerprint``
+        # NULL (or matching None) -- a non-null fingerprint on the approval
+        # row indicates the approval was issued for a different scope
+        # (e.g., a provider_call action) and must not be replayable for
+        # Ticket mutation.
+        if approval.provider_request_fingerprint is not None:
+            raise ValueError(
+                "approval_request.provider_request_fingerprint must be NULL "
+                "for Research-to-Ticket promotion (this is not a provider "
+                "call); a non-null fingerprint indicates approval scope "
+                "mismatch"
             )
         expected_resource_ref = f"research_task:{research_task_id}"
         if approval.resource_ref != expected_resource_ref:

@@ -221,7 +221,15 @@ async def _insert_fixtures(
     if not include_claim:
         return
 
-    raw_secret = "sk-" + ("A" * 40) if raw_secret_in_prov else None
+    # F-PR24-R3-004 P2 adopt: raw_secret canary cannot live inside PROV
+    # entity / activity (extra='forbid' on ProvEntity / ProvActivity).
+    # Inject the canary into claim_text instead -- promotion hashes
+    # claim text via PROV bundle hash (provenance only, not claim_text),
+    # but the test asserts the audit payload still does not surface the
+    # raw value regardless of where it lives in the claim row.
+    claim_text = "Claim A"
+    if raw_secret_in_prov:
+        claim_text = f"Claim A leaked: sk-{'A' * 40}"
     await session.execute(
         text(
             """
@@ -229,7 +237,7 @@ async def _insert_fixtures(
               id, tenant_id, project_id, research_task_id, claim_text, provenance_json, metadata
             )
             values (
-              :claim_id, 1, :project_id, :task_id, 'Claim A',
+              :claim_id, 1, :project_id, :task_id, :claim_text,
               cast(:prov as jsonb), '{"rls_ready": true}'::jsonb
             )
             """
@@ -238,7 +246,8 @@ async def _insert_fixtures(
             "claim_id": CLAIM_A_ID,
             "project_id": PROJECT_A_ID,
             "task_id": RESEARCH_TASK_A_ID,
-            "prov": json.dumps(_valid_prov(raw_secret=raw_secret)),
+            "claim_text": claim_text,
+            "prov": json.dumps(_valid_prov()),
         },
     )
     if not include_evidence:
