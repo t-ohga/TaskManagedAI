@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Final, Literal
+from unittest import mock
 
 import pytest
 
@@ -546,13 +546,15 @@ def test_spec_violation_reason_does_not_embed_raw_fixture_content() -> None:
 
 
 def test_unknown_sut_result_logging_does_not_embed_raw_fixture_content() -> None:
-    """Direct handler attachment avoids pytest caplog CI/local propagation drift.
+    """Mock-based verification of the unknown-fixture warning path.
 
-    Previously this test relied on ``caplog.set_level`` to capture warnings via
-    the root logger, but in some CI configurations the propagation chain or
-    a prior test's logger mutation produced an empty ``caplog.text``. Attaching
-    a memory handler directly to the module logger and removing it in
-    ``finally`` is independent of any global pytest logging plugin state.
+    Earlier revisions relied on ``caplog`` / a memory handler attached to the
+    module logger, but both produced empty captures in CI even though they
+    worked locally (likely a pytest plugin / propagation interaction with
+    earlier tests). Patching ``tenant_isolation._LOGGER`` directly is
+    deterministic across local and CI: we inspect the mock call args to verify
+    the warning path runs with the expected message and never embeds the raw
+    fixture marker.
     """
 
     raw_marker = "raw-content-that-must-stay-out-of-logs"
@@ -564,32 +566,31 @@ def test_unknown_sut_result_logging_does_not_embed_raw_fixture_content() -> None
     )
     corpus = _synthetic_corpus(fixtures)
 
-    module_logger = logging.getLogger(tenant_isolation.__name__)
-    previous_level = module_logger.level
-    captured_records: list[logging.LogRecord] = []
+    sut_results = {fixture.fixture_id: True for fixture in fixtures}
+    sut_results["AC-HARD-03_v2026.05.01-synthetic_unknown_fixture"] = True
 
-    class _ListHandler(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            captured_records.append(record)
-
-    handler = _ListHandler(level=logging.WARNING)
-    module_logger.addHandler(handler)
-    module_logger.setLevel(logging.WARNING)
-    try:
-        sut_results = {fixture.fixture_id: True for fixture in fixtures}
-        sut_results["AC-HARD-03_v2026.05.01-synthetic_unknown_fixture"] = True
+    with mock.patch.object(tenant_isolation, "_LOGGER") as mock_logger:
         result = evaluate_tenant_isolation_negative_pass(corpus, sut_results=sut_results)
-    finally:
-        module_logger.removeHandler(handler)
-        module_logger.setLevel(previous_level)
 
     assert result.metric_value == 1.0
     assert result.threshold_met is True
 
-    captured_messages = [record.getMessage() for record in captured_records]
-    combined = "\n".join(captured_messages)
-    assert any(
-        "AC-HARD-03_v2026.05.01-synthetic_unknown_fixture" in message
-        for message in captured_messages
-    )
+    warning_calls = mock_logger.warning.call_args_list
+    assert warning_calls, "expected at least one warning for the unknown fixture_id"
+
+    formatted_calls: list[str] = []
+    for call in warning_calls:
+        args = call.args
+        if args:
+            template = args[0]
+            if isinstance(template, str):
+                try:
+                    formatted_calls.append(template % args[1:] if len(args) > 1 else template)
+                except TypeError:  # mismatched placeholders — keep raw template
+                    formatted_calls.append(template)
+            else:
+                formatted_calls.append(str(template))
+
+    combined = "\n".join(formatted_calls)
+    assert "AC-HARD-03_v2026.05.01-synthetic_unknown_fixture" in combined
     assert raw_marker not in combined
