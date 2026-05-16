@@ -132,7 +132,10 @@ def _synthetic_raw_json(
         "case_key": case_key,
         "input": {
             "dataset_version": "v2026.05.09-synthetic",
-            "evidence_set_hash": "synthetic-hash",
+            # 64-char lowercase hex SHA-256 placeholder; satisfies the
+            # F-PR31-R5-002 ``evidence_set_hash`` validation while remaining
+            # obviously-synthetic for human reviewers.
+            "evidence_set_hash": "a" * 64,
             "sample_claims": sample_claims if sample_claims is not None else [],
         },
         "threshold": {"operator": AC_KPI_04_THRESHOLD_OPERATOR, "value": threshold_value},
@@ -589,6 +592,75 @@ def test_fixture_threshold_drift_is_detected(
     fixture = _override_fixture_threshold(_synthetic_fixture(), threshold_override)
     _, per_fixture = _result_for(fixture)
     assert per_fixture.spec_violation_reason == expected_reason
+
+
+@pytest.mark.parametrize(
+    "claim_text_mutation",
+    (None, "", "   "),
+)
+def test_missing_claim_text_is_detected(claim_text_mutation: object) -> None:
+    """F-PR31-R5-001 P2 adopt: ``claim_text`` must be a non-empty string."""
+
+    claims = _sample_claims(total=2, with_citation=1, prefix="txt")
+    if claim_text_mutation is None:
+        del claims[0]["claim_text"]
+    else:
+        claims[0]["claim_text"] = claim_text_mutation  # type: ignore[assignment]
+    fixture = _synthetic_fixture(sample_claims=claims)
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == "spec_violation:claim_text"
+
+
+def _override_input_field(fixture: Fixture, key: str, value: object) -> Fixture:
+    """Replace a key inside the fixture's ``input`` object (both case + raw views)."""
+
+    case_input = dict(fixture.case_json["input"])  # type: ignore[arg-type]
+    raw_input = dict(fixture.raw_json["input"])  # type: ignore[arg-type]
+    if value is _MISSING:
+        case_input.pop(key, None)
+        raw_input.pop(key, None)
+    else:
+        case_input[key] = value
+        raw_input[key] = value
+    case_json = dict(fixture.case_json)
+    case_json["input"] = case_input
+    raw_json = dict(fixture.raw_json)
+    raw_json["input"] = raw_input
+    return Fixture(
+        fixture_id=fixture.fixture_id,
+        dataset_version_id=fixture.dataset_version_id,
+        fixture_kind=fixture.fixture_kind,
+        gate_id=fixture.gate_id,
+        metric_key=fixture.metric_key,
+        case_key=fixture.case_key,
+        case_json=case_json,
+        expected_json=fixture.expected_json,
+        metadata=fixture.metadata,
+        anti_gaming=fixture.anti_gaming,
+        source_path=fixture.source_path,
+        raw_json=raw_json,
+        kpi_id=fixture.kpi_id,
+    )
+
+
+@pytest.mark.parametrize(
+    "hash_override",
+    (
+        _MISSING,  # field absent
+        "",  # empty string
+        "short-hash",  # too short
+        "A" * 64,  # uppercase (must be lowercase per AC-KPI-04 contract)
+        "g" * 64,  # non-hex character
+        "a" * 63,  # one char short
+        123,  # non-string
+    ),
+)
+def test_invalid_evidence_set_hash_is_detected(hash_override: object) -> None:
+    """F-PR31-R5-002 P2 adopt: ``input.evidence_set_hash`` must be 64-char lowercase hex."""
+
+    fixture = _override_input_field(_synthetic_fixture(), "evidence_set_hash", hash_override)
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == "spec_violation:evidence_set_hash"
 
 
 def test_spec_violation_skips_sut_processing() -> None:

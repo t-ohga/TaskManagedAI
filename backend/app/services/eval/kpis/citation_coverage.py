@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
@@ -34,6 +35,12 @@ from backend.app.db.models.dataset_version import FixtureKind
 from backend.app.services.eval.loader import Fixture, LoadedCorpus
 
 _LOGGER = logging.getLogger(__name__)
+
+# F-PR31-R5-002 P2 adopt: AC-KPI-04 manifest contract requires a 64-character
+# lowercase hex SHA-256 evidence_set_hash to be carried into ContextSnapshot.
+# Persisted corpora that bypass JSON Schema can ship empty / wrong-shape
+# values; this regex backstops the schema check inside the evaluator itself.
+_SHA256_HEX_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-f0-9]{64}$")
 
 AC_KPI_04_KPI_ID: Final[Literal["AC-KPI-04"]] = "AC-KPI-04"
 AC_KPI_04_METRIC_KEY: Final[Literal["citation_coverage"]] = "citation_coverage"
@@ -258,11 +265,19 @@ def _collect_claim_entries(fixture: Fixture) -> tuple[list[ClaimCoverageEntry], 
     accumulated entries up to (but not including) the offending claim are
     discarded so that the aggregator never undercounts a partial parse — both
     counts in the result come from the same (empty) list.
+
+    F-PR31-R5-002 P2 adopt: ``input.evidence_set_hash`` is validated here as
+    well so that persisted corpora cannot drop the ContextSnapshot trace key
+    while still passing claim parsing.
     """
 
     case_input = fixture.case_json.get("input")
     if not isinstance(case_input, dict):
         return [], "spec_violation:input"
+
+    evidence_set_hash = case_input.get("evidence_set_hash")
+    if not isinstance(evidence_set_hash, str) or not _SHA256_HEX_PATTERN.fullmatch(evidence_set_hash):
+        return [], "spec_violation:evidence_set_hash"
 
     sample_claims = case_input.get("sample_claims")
     if not isinstance(sample_claims, list):
@@ -279,6 +294,14 @@ def _collect_claim_entries(fixture: Fixture) -> tuple[list[ClaimCoverageEntry], 
         if claim_id in seen_claim_ids:
             return [], "spec_violation:duplicate_claim_id"
         seen_claim_ids.add(claim_id)
+
+        # F-PR31-R5-001 P2 adopt: AC-KPI-04 schema requires non-empty
+        # ``claim_text`` for every sample claim. Persisted corpora that bypass
+        # JSON Schema could omit ``claim_text`` while keeping IDs valid, which
+        # would inflate ``claims_with_citation`` with bogus rows.
+        claim_text = raw_claim.get("claim_text")
+        if not isinstance(claim_text, str) or not claim_text.strip():
+            return [], "spec_violation:claim_text"
 
         # F-PR31-R4-001 P2 adopt: ``evidence_ids`` carries the same Anti-Gaming
         # weight as ``citation_ids`` in the AC-KPI-04 corpus schema. Persisted
