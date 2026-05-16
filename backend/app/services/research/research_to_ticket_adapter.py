@@ -33,6 +33,7 @@ from backend.app.db.app_role import (
     set_tenant_context,
 )
 from backend.app.db.models.agent_run import AgentRun
+from backend.app.db.models.approval_request import ApprovalRequest
 from backend.app.db.models.artifact import Artifact
 from backend.app.db.models.claim import Claim
 from backend.app.db.models.research_task import ResearchTask
@@ -45,9 +46,19 @@ from backend.app.services.research.evidence_set_hash import (
 )
 
 _RESEARCH_PROMOTION_KIND: str = "research_promotion"
-_PROMOTION_PAYLOAD_DATA_CLASS: str = "internal"
 _PROMOTION_TRUST_LEVEL: str = "validated_artifact"
 _PROMOTION_ALGORITHM_ID: str = "taskmanagedai.research_to_ticket.v1"
+
+# F-PR25-R8-003 fix (Codex R8 P1): payload_data_class is no longer
+# hard-coded — accept caller-supplied classification (validated
+# against the Provider Compliance Matrix ordinal). Stage 2 (server-
+# side automatic classification from research/session metadata) is
+# deferred to SP-011 / DD-04 classifier integration; in the meantime
+# the caller is responsible for upgrading the class above ``internal``
+# when the promotion content warrants ``confidential`` / ``pii``.
+_ALLOWED_PAYLOAD_DATA_CLASSES: frozenset[str] = frozenset(
+    {"public", "internal", "confidential", "pii"}
+)
 
 
 class ResearchToTicketError(ValueError):
@@ -121,6 +132,7 @@ async def promote_research_to_ticket(
     summary: str,
     parent_artifact_id: UUID | None = None,
     approval_request_id: UUID | None = None,
+    payload_data_class: str = "internal",
 ) -> ResearchToTicketArtifactView:
     """Create a Research-to-Ticket promotion artifact.
 
@@ -162,21 +174,93 @@ async def promote_research_to_ticket(
             "summary must be a non-empty string.",
         )
 
-    # F-PR25-R3-002 fix Stage 1 (Codex R3 P1): Research-to-Ticket
-    # promotion is ``task_write`` action class per ADR-00003 and must
-    # bind an Approval. Full 4-binding verification against an
-    # approved ApprovalRequest row (artifact_hash + policy_version +
-    # provider_request_fingerprint + action_class) is deferred to
-    # SP-010 batch 4 / SP-008 Approval integration; for now we enforce
-    # the *presence* of an approval_request_id so unapproved promotions
-    # cannot seed Ticket work. The full check lands when the Approval
-    # repository surface stabilises.
+    # F-PR25-R3-002 + F-PR25-R8-001 fix Stage 2 (Codex R3 P1 + R8 P1):
+    # Research-to-Ticket promotion is ``task_write`` action class per
+    # ADR-00003 and must bind an **approved** ApprovalRequest before
+    # the artifact is created. Stage 1 (presence-only) was insufficient
+    # — any non-null UUID (random, pending, rejected, cross-run) used
+    # to pass. Stage 2 loads the row and verifies:
+    #
+    # - tenant_id matches (cross-tenant Approval reuse blocked)
+    # - run_id matches (cross-run Approval reuse blocked)
+    # - action_class == 'task_write' (Approval for a different
+    #   action class cannot authorise a promotion)
+    # - status == 'approved' (pending / rejected / expired /
+    #   invalidated all reject)
+    #
+    # Full 4-binding verification (artifact_hash + policy_version +
+    # provider_request_fingerprint additional checks) is deferred to
+    # SP-008 once the Approval contract stabilises across all
+    # ``task_write`` callers. The four checks here cover the security
+    # boundary the R8 finding flagged: unapproved promotion seeding
+    # Ticket work.
     if approval_request_id is None:
         raise ResearchToTicketError(
             "approval_request_required",
             "approval_request_id is required for Research-to-Ticket promotion "
-            "(ADR-00003 task_write action class). Full Approval 4-binding "
-            "verification lands in SP-010 batch 4.",
+            "(ADR-00003 task_write action class).",
+        )
+    approval_row = (
+        await session.execute(
+            select(
+                ApprovalRequest.tenant_id,
+                ApprovalRequest.run_id,
+                ApprovalRequest.action_class,
+                ApprovalRequest.status,
+            ).where(
+                ApprovalRequest.tenant_id == tenant_id,
+                ApprovalRequest.id == approval_request_id,
+            )
+        )
+    ).one_or_none()
+    if approval_row is None:
+        raise ResearchToTicketError(
+            "approval_request_not_found",
+            f"approval_request_id {approval_request_id} not found for "
+            f"tenant {tenant_id}.",
+        )
+    approval_tenant, approval_run_id, approval_action_class, approval_status = (
+        approval_row
+    )
+    if approval_tenant != tenant_id:  # belt-and-braces (the WHERE clause already filtered)
+        raise ResearchToTicketError(
+            "approval_request_tenant_mismatch",
+            f"approval_request_id {approval_request_id} belongs to a "
+            f"different tenant.",
+        )
+    if approval_run_id is not None and approval_run_id != run_id:
+        raise ResearchToTicketError(
+            "approval_request_run_mismatch",
+            f"approval_request_id {approval_request_id} is bound to run "
+            f"{approval_run_id}, not {run_id}.",
+        )
+    if approval_action_class != "task_write":
+        raise ResearchToTicketError(
+            "approval_request_action_class_mismatch",
+            f"approval_request_id {approval_request_id} has action_class "
+            f"{approval_action_class!r}; Research-to-Ticket requires "
+            f"'task_write'.",
+        )
+    if approval_status != "approved":
+        raise ResearchToTicketError(
+            "approval_request_not_approved",
+            f"approval_request_id {approval_request_id} has status "
+            f"{approval_status!r}; promotion requires 'approved'.",
+        )
+
+    # F-PR25-R8-003 fix Stage 1 (Codex R8 P1): caller-supplied
+    # payload_data_class validated against the Provider Compliance
+    # Matrix enum. Hard-coded ``"internal"`` would under-classify a
+    # promotion whose summary or claim content is ``confidential``
+    # or ``pii`` and downstream export/provider gates would let the
+    # data pass under the wrong policy. Stage 2 (server-side
+    # automatic classification from research/session metadata) is
+    # deferred to SP-011 / DD-04 classifier integration.
+    if payload_data_class not in _ALLOWED_PAYLOAD_DATA_CLASSES:
+        raise ResearchToTicketError(
+            "payload_data_class_invalid",
+            f"payload_data_class {payload_data_class!r} must be one of "
+            f"{sorted(_ALLOWED_PAYLOAD_DATA_CLASSES)}.",
         )
 
     # F-PR25-R1-004 fix (Codex R1 P1): the adapter bypasses
@@ -429,7 +513,7 @@ async def promote_research_to_ticket(
         kind=_RESEARCH_PROMOTION_KIND,
         content_hash=content_hash,
         content_jsonb=payload,
-        payload_data_class=_PROMOTION_PAYLOAD_DATA_CLASS,
+        payload_data_class=payload_data_class,
         trust_level=_PROMOTION_TRUST_LEVEL,
         exportable=True,
         parent_artifact_id=parent_artifact_id,

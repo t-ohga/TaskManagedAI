@@ -14,6 +14,7 @@ Endpoints:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,9 +22,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.approval_inbox import (
+    get_current_actor_id,
     get_db_session,
     get_tenant_id,
 )
+from backend.app.repositories.audit_event import AuditEventRepository
 from backend.app.repositories.grounding_support import (
     GroundingSupportRepository,
 )
@@ -59,6 +62,7 @@ async def register_grounding_support(
     payload: GroundingSupportCreate,
     session: AsyncSession = Depends(get_db_session),
     tenant_id: int = Depends(get_tenant_id),
+    actor_id: UUID = Depends(get_current_actor_id),
 ) -> GroundingSupportRead:
     if payload.agent_run_id != agent_run_id:
         raise HTTPException(
@@ -84,6 +88,29 @@ async def register_grounding_support(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
+    # F-PR25-R8-002 fix (Codex R8 P2): record an audit event linking
+    # the registering actor to the GroundingSupport row. Pre-R8 the
+    # endpoint had no actor binding, so any tenant-scoped request
+    # could inflate AC-KPI-04 numerators without attribution.
+    audit = AuditEventRepository(session)
+    await audit.append(
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        event_type="grounding_support_registered",
+        payload={
+            "tenant_id": tenant_id,
+            "actor_id": str(actor_id),
+            "project_id": str(project_id),
+            "agent_run_id": str(agent_run_id),
+            "grounding_support_id": str(support.id),
+            "claim_id": str(support.claim_id),
+            "evidence_source_id": str(support.evidence_source_id),
+            "evidence_item_id": str(support.evidence_item_id),
+            "support_type": support.support_type,
+            "timestamp": datetime.now(UTC).isoformat(),
+        },
+    )
+
     # F-PR25-R2-002 fix (Codex R2 P1): the repository only flushes; the
     # ``get_db_session`` dependency does not auto-commit on teardown,
     # so the inserted row would be rolled back on response. Commit
@@ -152,6 +179,7 @@ async def delete_grounding_support(
     grounding_support_id: UUID,
     session: AsyncSession = Depends(get_db_session),
     tenant_id: int = Depends(get_tenant_id),
+    actor_id: UUID = Depends(get_current_actor_id),
 ) -> None:
     repo = GroundingSupportRepository(session)
     deleted = await repo.delete_grounding_support(
@@ -164,6 +192,22 @@ async def delete_grounding_support(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"grounding_support {grounding_support_id} not found.",
         )
+    # F-PR25-R8-002 fix: record an audit event for the deletion too —
+    # erasing a GroundingSupport row can deflate AC-KPI-04 just as
+    # readily as adding one can inflate it.
+    audit = AuditEventRepository(session)
+    await audit.append(
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        event_type="grounding_support_deleted",
+        payload={
+            "tenant_id": tenant_id,
+            "actor_id": str(actor_id),
+            "project_id": str(project_id),
+            "grounding_support_id": str(grounding_support_id),
+            "timestamp": datetime.now(UTC).isoformat(),
+        },
+    )
     # F-PR25-R2-002 fix (Codex R2 P1): commit so the DELETE is durable;
     # otherwise the row reappears after request teardown.
     await session.commit()

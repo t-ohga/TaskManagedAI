@@ -88,6 +88,14 @@ class ResearchToTicketPromoteRequest(BaseModel):
     claim_ids: tuple[UUID, ...] = Field(default_factory=tuple)
     evidence_item_ids: tuple[UUID, ...] = Field(default_factory=tuple)
     parent_artifact_id: UUID | None = None
+    # F-PR25-R8-003 fix Stage 1: caller-supplied data classification
+    # (validated against Provider Compliance Matrix enum). Stage 2
+    # (server-side automatic classification) lands in SP-011 / DD-04
+    # classifier integration.
+    payload_data_class: str = Field(
+        default="internal",
+        pattern=r"^(public|internal|confidential|pii)$",
+    )
     # F-PR25-R3-002 fix (Codex R3 P1): the Research-to-Ticket flow is
     # ``task_write`` action class per ADR-00003 and requires Approval
     # binding before promoting evidence to a Ticket-creation seed.
@@ -143,6 +151,7 @@ async def promote(
             summary=payload.summary,
             parent_artifact_id=payload.parent_artifact_id,
             approval_request_id=payload.approval_request_id,
+            payload_data_class=payload.payload_data_class,
         )
     except ResearchToTicketError as exc:
         if exc.reason_code in (
@@ -153,10 +162,18 @@ async def promote(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=str(exc),
             ) from exc
-        if exc.reason_code == "approval_request_required":
-            # F-PR25-R3-002 fix Stage 1: Approval not bound. 403 (vs
-            # 422 generic) so the client distinguishes "missing
-            # authorisation" from "request body invalid".
+        if exc.reason_code in (
+            "approval_request_required",
+            "approval_request_not_found",
+            "approval_request_tenant_mismatch",
+            "approval_request_run_mismatch",
+            "approval_request_action_class_mismatch",
+            "approval_request_not_approved",
+        ):
+            # F-PR25-R3-002 + F-PR25-R8-001 fix: Approval boundary
+            # violation. 403 (vs 422 generic) so the client
+            # distinguishes "missing/invalid authorisation" from
+            # "request body invalid".
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=str(exc),
