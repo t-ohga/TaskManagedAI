@@ -235,8 +235,8 @@ risks:
 uv run pytest tests/secrets/test_repo_operations.py tests/repoproxy/test_github_app_adapter.py \
               tests/agent_runtime/test_repo_pr_opened_event.py tests/contracts/test_kpi_time_to_merge.py \
               tests/repoproxy/test_4integrity_negative.py tests/repoproxy/test_webhook_service_layer.py \
-              tests/api/test_tickets_route.py tests/api/test_agent_runs_list.py \
-              tests/api/test_audit_events_route.py tests/contracts/test_ac_hard_02_frontend_redaction.py \
+              tests/api/test_tickets_route.py tests/api/test_agent_runs_list.py tests/api/test_audit_events_route.py \
+              tests/contracts/test_ac_hard_02_frontend_redaction.py \
               tests/contracts/test_frontend_backend_enum_drift.py \
               tests/agent_runtime/test_runner_audit_event_emission.py \
               tests/security/test_ac_hard_05_private_holdout.py tests/security/test_ac_hard_06_private_holdout.py -q
@@ -312,7 +312,7 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 - ADR-00003 (API contract) — backend route 追加 + Eval endpoint で update accepted
 - ADR-00004 (AgentRun state machine) — runner_cancelled / runner_cleanup_completed event_type 追加で update
 - ADR-00006 (Secrets management) — SecretBroker allowed_operations 拡張で update
-- ADR-00009 (Action class taxonomy) — repo.push / repo.pr_open enforcement で update
+- ADR-00009 (Action class taxonomy) — repo.push / repo.pr_open enforcement
 - **ADR-00011 (GitHub App Permission Matrix) — proposed → accepted 化**
 
 ## Review
@@ -387,6 +387,25 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 - **forward-compat for BL-0127 SUT integration**: `sut_results: Mapping[str, bool] | None = None` optional parameter で programmatic SUT 実行結果を注入可能、batch 5b では spec compliance のみで metric 計算
 - **server-owned boundary §1+§3 invariants 維持**: loader-validated corpus only、caller-supplied path 経路なし、pure function (side effect なし)、raw secret 非展開 (reason_code + fixture_id のみ)
 - **既存 batch 1-10 + batch 5a invariant 維持**: AgentRun 16 状態 / ContextSnapshot 10 列 / SecretBroker / Approval 4 整合 / RFC 8785 / Research/Evidence schema / fixture loader / Anti-Gaming CI gate
+
+### Sprint 11 batch 5c 実装進捗 (PR #?? merge 後に commit hash 追記)
+
+- **batch_5c_implementation_pr**: 本 PR (BL-0127a generic loader expansion)
+- **実装 BL**: BL-0127a (PR #28 R1-R6 defer 4 finding 中 core 3 解消、全 10 eval corpora load 可能化)
+- **修正 file**:
+  - `backend/app/services/eval/loader.py` (gate_id ↔ kpi_id either-or required + manifest-level expectation_keys override + optional fixture_immutable_index with WARN)
+- **新規 file**:
+  - `tests/eval/test_eval_loader_generic.py` (~400 LOC、10 corpora load + kpi_id acceptance + expectation_keys override + immutable_index optional)
+- **PR #28 R1-R6 defer 解消**:
+  - F-PR28-R4-003 P1 (kpi_id either-or): ADOPT
+  - F-PR28-R4-001 P1 (non-prefix expectation): ADOPT (manifest expectation_keys override)
+  - F-PR28-R3-004 P2 (immutable_index backfill): ADOPT (warn instead of fail)
+  - F-PR28-R1-002/R3-002 escalation P1 (`_REQUIRED_PUBLIC_FIXTURE_KEYS` TI-specific): ADOPT (gate_id removal + kpi_id support 経由 generic 化)
+- **BL-0127b に残 defer** (本 batch 対象外):
+  - F-PR28-R4-005/R6-003/R6-005 (prompt paths registry / CI wire-in / opt-in env var の workflow 統合)
+  - F-PR28-R6-001 (CI gate が他 corpora を scan する registry)
+- **5+ source 整合維持**: `_KNOWN_NON_PREFIXED_EXPECTATION_KEYS` + `_VALID_EXPECTATION_KEY_PATTERN`
+- **既存 batch 1-10 + batch 5a/5b invariant 維持**: ContextSnapshot 10 列 / AgentRun 16 状態 / SecretBroker / Approval 4 整合 / RFC 8785 / batch 5a loader (gate_id removal は backwards-compat) / batch 5b aggregator
 
 frontmatter `status: draft` 維持。
 
