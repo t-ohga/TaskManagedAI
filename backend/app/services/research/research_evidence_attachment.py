@@ -14,15 +14,15 @@ from backend.app.db.app_role import (
 from backend.app.db.models.claim import Claim
 from backend.app.db.models.evidence_item import EvidenceItem
 from backend.app.db.models.research_task import ResearchTask
-from backend.app.schemas.research.citation_coverage import CitationCoverageMetric
+from backend.app.schemas.research.research_evidence_attachment import ResearchEvidenceAttachmentMetric
 
 
-async def compute_citation_coverage(
+async def compute_research_evidence_attachment_rate(
     session: AsyncSession,
     tenant_id: int,
     project_id: UUID,
     research_task_id: UUID,
-) -> CitationCoverageMetric:
+) -> ResearchEvidenceAttachmentMetric:
     """Compute claim-level citation coverage for one ResearchTask.
 
     Sprint 10 batch 3 intentionally stops at the per-research_task source
@@ -46,7 +46,7 @@ async def compute_citation_coverage(
     )
     denominator = len(claim_ids)
     if denominator == 0:
-        return CitationCoverageMetric(
+        return ResearchEvidenceAttachmentMetric(
             research_task_id=research_task_id,
             numerator=0,
             denominator=0,
@@ -61,7 +61,7 @@ async def compute_citation_coverage(
     )
     numerator = sum(1 for claim_id in claim_ids if claim_id in covered_claim_ids)
 
-    return CitationCoverageMetric(
+    return ResearchEvidenceAttachmentMetric(
         research_task_id=research_task_id,
         numerator=numerator,
         denominator=denominator,
@@ -138,4 +138,4 @@ async def _fetch_covered_claim_ids(
     return frozenset(result.scalars().all())
 
 
-__all__ = ["compute_citation_coverage"]
+__all__ = ["compute_research_evidence_attachment_rate"]

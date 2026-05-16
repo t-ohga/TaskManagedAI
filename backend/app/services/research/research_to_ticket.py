@@ -14,6 +14,7 @@ from backend.app.db.app_role import (
     get_tenant_context,
     set_tenant_context,
 )
+from backend.app.db.models.approval_request import ApprovalRequest
 from backend.app.db.models.claim import Claim
 from backend.app.db.models.evidence_item import EvidenceItem
 from backend.app.db.models.evidence_source import EvidenceSource
@@ -44,6 +45,27 @@ class _ResearchBundle:
     evidence_sources: tuple[EvidenceSource, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class PromotionArtifactPreview:
+    """Server-computed canonical promotion artifact preview (no DB mutation).
+
+    Returned by ``ResearchToTicketAdapter.prepare_promotion_artifact``. The
+    caller uses ``artifact_hash`` to bind an ApprovalRequest before
+    invoking ``promote`` (which validates the same hash against the
+    approved ApprovalRequest).
+    """
+
+    artifact_hash: str
+    evidence_set_hash: str
+    policy_version: str
+    provenance_json_hash_prefix: str
+    title: str
+    slug: str
+    description: str
+    claim_count: int
+    evidence_item_count: int
+
+
 class ResearchToTicketAdapter:
     """Promote a project-scoped ResearchTask into a Ticket.
 
@@ -55,60 +77,136 @@ class ResearchToTicketAdapter:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def promote(self, request: ResearchToTicketRequest) -> ResearchToTicketOutcome:
-        await _ensure_tenant_context(self.session, request.tenant_id)
+    async def prepare_promotion_artifact(
+        self,
+        *,
+        tenant_id: int,
+        project_id: UUID,
+        research_task_id: UUID,
+        requested_by_actor_id: UUID,
+        ticket_title_override: str | None = None,
+    ) -> PromotionArtifactPreview:
+        """Compute the canonical promotion artifact WITHOUT mutating state.
 
+        F-PR24-R1-004 P1 adopt: callers use the returned ``artifact_hash``
+        to create an ApprovalRequest binding before calling ``promote``,
+        which then validates that the approved ApprovalRequest carries the
+        same hash. The preview is deterministic for a given
+        ``(tenant_id, project_id, research_task_id, ticket_title_override)``
+        DB snapshot.
+        """
+
+        await _ensure_tenant_context(self.session, tenant_id)
         bundle = await self._fetch_research_bundle(
-            tenant_id=request.tenant_id,
-            project_id=request.project_id,
-            research_task_id=request.research_task_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            research_task_id=research_task_id,
         )
-
         reference = ResearchSetReference(
-            project_id=request.project_id,
-            research_task_id=request.research_task_id,
+            project_id=project_id,
+            research_task_id=research_task_id,
         )
         evidence_set_hash = await compute_evidence_set_hash(
             self.session,
-            request.tenant_id,
+            tenant_id,
             reference,
         )
         policy_version = get_policy_pack().policy_version
         provenance_json_hash_prefix = _provenance_hash_prefix(bundle.claims)
-
         research_summary = _build_research_summary_artifact(
             bundle=bundle,
             evidence_set_hash=evidence_set_hash,
             policy_version=policy_version,
             provenance_json_hash_prefix=provenance_json_hash_prefix,
         )
-        artifact_hash = _hash_canonical_json(research_summary)
-
-        title_source = request.ticket_title_override or bundle.task.title
+        title_source = ticket_title_override or bundle.task.title
         title = _normalize_title(title_source)
+        slug = _ticket_slug(research_task_id)
+        description = _render_ticket_description_pre_hash(
+            research_task_id=research_task_id,
+            claim_count=len(bundle.claims),
+            evidence_item_count=len(bundle.evidence_items),
+            evidence_set_hash=evidence_set_hash,
+        )
+        # F-PR24-R1-003 P1 adopt: hash includes the finalized ticket fields
+        # (title / slug / description signature / status / priority /
+        # created_by_actor_id) so two Tickets with different titles cannot
+        # share the same artifact_hash.
+        canonical_ticket_artifact = {
+            **research_summary,
+            "ticket": {
+                "title": title,
+                "slug": slug,
+                "description_hash": _hash_text(description),
+                "status": "open",
+                "priority": "medium",
+                "created_by_actor_id": str(requested_by_actor_id),
+            },
+        }
+        artifact_hash = _hash_canonical_json(canonical_ticket_artifact)
+        return PromotionArtifactPreview(
+            artifact_hash=artifact_hash,
+            evidence_set_hash=evidence_set_hash,
+            policy_version=policy_version,
+            provenance_json_hash_prefix=provenance_json_hash_prefix,
+            title=title,
+            slug=slug,
+            description=description,
+            claim_count=len(bundle.claims),
+            evidence_item_count=len(bundle.evidence_items),
+        )
+
+    async def promote(self, request: ResearchToTicketRequest) -> ResearchToTicketOutcome:
+        preview = await self.prepare_promotion_artifact(
+            tenant_id=request.tenant_id,
+            project_id=request.project_id,
+            research_task_id=request.research_task_id,
+            requested_by_actor_id=request.requested_by_actor_id,
+            ticket_title_override=request.ticket_title_override,
+        )
+        artifact_hash = preview.artifact_hash
+        evidence_set_hash = preview.evidence_set_hash
+        policy_version = preview.policy_version
+        provenance_json_hash_prefix = preview.provenance_json_hash_prefix
+        title = preview.title
+        slug = preview.slug
+        description = preview.description
+
+        # F-PR24-R1-004 P1 adopt: enforce Approval 4 整合 binding before any
+        # Ticket mutation (ADR-00003 §"Approval 4 整合 (server-owned-boundary §3)").
+        # The caller supplies ``approval_request_id`` referencing a
+        # **pre-existing approved** ApprovalRequest whose artifact_hash MUST
+        # equal the server-computed canonical_ticket_artifact hash. The
+        # adapter never creates ApprovalRequest itself (caller manages submit
+        # via the existing Approval repository) and never mutates Tickets
+        # without a matching approval.
+        await self._assert_approval_binding(
+            tenant_id=request.tenant_id,
+            project_id=request.project_id,
+            research_task_id=request.research_task_id,
+            approval_request_id=request.approval_request_id,
+            requested_by_actor_id=request.requested_by_actor_id,
+            artifact_hash=artifact_hash,
+        )
+
         metadata = {
             "rls_ready": True,
             "research_task_id": str(request.research_task_id),
             "artifact_hash": artifact_hash,
             "evidence_set_hash": evidence_set_hash,
             "policy_version": policy_version,
-            "claim_count": len(bundle.claims),
-            "evidence_item_count": len(bundle.evidence_items),
+            "claim_count": preview.claim_count,
+            "evidence_item_count": preview.evidence_item_count,
             "provenance_json_hash": provenance_json_hash_prefix,
+            "approval_request_id": str(request.approval_request_id),
             "research_to_ticket_schema_version": _ARTIFACT_SCHEMA_VERSION,
         }
 
         ticket_payload = TicketCreate(
             repository_id=None,
-            slug=_ticket_slug(request.research_task_id),
+            slug=slug,
             title=title,
-            description=_render_ticket_description(
-                research_task_id=request.research_task_id,
-                claim_count=len(bundle.claims),
-                evidence_item_count=len(bundle.evidence_items),
-                evidence_set_hash=evidence_set_hash,
-                artifact_hash=artifact_hash,
-            ),
+            description=description,
             status="open",
             priority="medium",
             created_by_actor_id=request.requested_by_actor_id,
@@ -131,6 +229,7 @@ class ResearchToTicketAdapter:
             "evidence_set_hash": evidence_set_hash,
             "provenance_json_hash": provenance_json_hash_prefix,
             "artifact_hash": artifact_hash,
+            "approval_request_id": str(request.approval_request_id),
             "policy_version": policy_version,
             "trace_id": None,
             "correlation_id": None,
@@ -147,11 +246,73 @@ class ResearchToTicketAdapter:
 
         return ResearchToTicketOutcome(
             ticket_id=ticket.id,
+            approval_request_id=request.approval_request_id,
             artifact_hash=artifact_hash,
             evidence_set_hash=evidence_set_hash,
-            claim_count=len(bundle.claims),
-            evidence_item_count=len(bundle.evidence_items),
+            claim_count=preview.claim_count,
+            evidence_item_count=preview.evidence_item_count,
         )
+
+    async def _assert_approval_binding(
+        self,
+        *,
+        tenant_id: int,
+        project_id: UUID,
+        research_task_id: UUID,
+        approval_request_id: UUID,
+        requested_by_actor_id: UUID,
+        artifact_hash: str,
+    ) -> None:
+        """Validate ApprovalRequest before any Ticket mutation (F-PR24-R1-004 P1).
+
+        Per ADR-00003 §"Approval 4 整合", Research-to-Ticket promotion must
+        only mutate Tickets after a matching ApprovalRequest has reached
+        ``status=approved`` with the artifact_hash binding equal to the
+        server-computed canonical promotion artifact. The caller (orchestrator
+        / research session worker) is responsible for submitting the
+        ApprovalRequest through the existing Approval workflow; the adapter
+        verifies the binding and is fail-closed otherwise.
+        """
+
+        approval = await self.session.scalar(
+            select(ApprovalRequest).where(
+                ApprovalRequest.tenant_id == tenant_id,
+                ApprovalRequest.id == approval_request_id,
+            )
+        )
+        if approval is None:
+            raise ValueError(
+                "approval_request_id is not reachable in tenant"
+            )
+        if approval.status != "approved":
+            raise ValueError(
+                f"approval_request must be approved before promotion; "
+                f"current status={approval.status!r}"
+            )
+        if approval.action_class != "task_write":
+            raise ValueError(
+                "approval_request must bind action_class='task_write' for "
+                "Research-to-Ticket promotion"
+            )
+        if approval.artifact_hash != artifact_hash:
+            # Caller-supplied approval reaches a different artifact than the
+            # server-computed canonical promotion hash; reject without
+            # surfacing either hash in the error (audit only).
+            raise ValueError(
+                "approval_request.artifact_hash does not match the canonical "
+                "promotion artifact"
+            )
+        expected_resource_ref = f"research_task:{research_task_id}"
+        if approval.resource_ref != expected_resource_ref:
+            raise ValueError(
+                "approval_request.resource_ref does not match the "
+                "research_task_id binding"
+            )
+        if approval.requested_by_actor_id != requested_by_actor_id:
+            raise ValueError(
+                "approval_request.requested_by_actor_id does not match the "
+                "promoting actor"
+            )
 
     async def _fetch_research_bundle(
         self,
@@ -268,7 +429,13 @@ def _hash_text(value: str) -> str:
 
 
 def _ticket_slug(research_task_id: UUID) -> str:
-    return f"research-{research_task_id.hex[-8:].lower()}"
+    # F-PR24-R1-002 P2 adopt: 32-bit (8-hex) suffix gives ~65k birthday-collision
+    # tickets per project; tickets unique on (tenant_id, project_id, slug) would
+    # then reject promotion of a research task whose suffix collides with another
+    # already promoted task in the same project. Use the full UUID (128 bits)
+    # for collision-resistance; CHECK ``^[a-z0-9]+(-[a-z0-9]+)*$`` accepts the
+    # UUID hex+hyphen form.
+    return f"research-{str(research_task_id).lower()}"
 
 
 def _normalize_title(value: str) -> str:
@@ -323,6 +490,32 @@ def _build_research_summary_artifact(
     }
 
 
+def _render_ticket_description_pre_hash(
+    *,
+    research_task_id: UUID,
+    claim_count: int,
+    evidence_item_count: int,
+    evidence_set_hash: str,
+) -> str:
+    """Build the ticket description text WITHOUT artifact_hash dependency.
+
+    F-PR24-R1-003 P1 adopt: artifact_hash is computed over the canonical
+    promotion artifact (which includes ``description_hash``), so the
+    description text itself must not depend on artifact_hash (otherwise
+    chicken-and-egg). Render the description from inputs that are stable
+    before hashing.
+    """
+
+    return "\n".join(
+        [
+            f"Promoted from research task {research_task_id}.",
+            f"Claims: {claim_count}",
+            f"Evidence items: {evidence_item_count}",
+            f"Evidence set hash: {evidence_set_hash[:16]}",
+        ]
+    )
+
+
 def _render_ticket_description(
     *,
     research_task_id: UUID,
@@ -343,6 +536,7 @@ def _render_ticket_description(
 
 
 __all__ = [
+    "PromotionArtifactPreview",
     "ResearchToTicketAdapter",
     "promote_research_to_ticket",
 ]

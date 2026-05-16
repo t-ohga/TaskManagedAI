@@ -12,9 +12,13 @@ _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 class ResearchToTicketRequest(BaseModel):
     """Server-owned ResearchTask promotion request.
 
-    Callers provide only tenant/project/research task identifiers and the
-    promoting actor. ``artifact_hash``, ``evidence_set_hash``, and ``ticket_id``
-    are intentionally absent from this schema.
+    Callers provide only tenant/project/research task identifiers, the
+    promoting actor, and a pre-existing approved ApprovalRequest ID
+    (F-PR24-R1-004 P1 adopt: ADR-00003 mandates Approval 4 整合 before
+    Ticket mutation; ``approval_request_id`` is the server-trusted
+    binding to the Approval workflow decision). ``artifact_hash``,
+    ``evidence_set_hash``, and ``ticket_id`` are intentionally absent
+    from this schema.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -23,6 +27,7 @@ class ResearchToTicketRequest(BaseModel):
     project_id: UUID
     research_task_id: UUID
     requested_by_actor_id: UUID
+    approval_request_id: UUID
     ticket_title_override: str | None = Field(default=None, max_length=2000)
 
     @field_validator("tenant_id")
@@ -47,6 +52,7 @@ class ResearchToTicketOutcome(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     ticket_id: UUID
+    approval_request_id: UUID
     artifact_hash: str = Field(pattern=_SHA256_HEX_RE.pattern)
     evidence_set_hash: str = Field(pattern=_SHA256_HEX_RE.pattern)
     claim_count: int = Field(ge=0)

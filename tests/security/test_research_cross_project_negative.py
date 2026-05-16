@@ -4,7 +4,7 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -21,7 +21,7 @@ from backend.app.repositories.evidence_item import EvidenceItemRepository
 from backend.app.schemas.claim import ClaimCreate
 from backend.app.schemas.evidence_item import EvidenceItemCreate
 from backend.app.schemas.research.research_to_ticket import ResearchToTicketRequest
-from backend.app.services.research.citation_coverage import compute_citation_coverage
+from backend.app.services.research.research_evidence_attachment import compute_research_evidence_attachment_rate
 from backend.app.services.research.research_to_ticket import ResearchToTicketAdapter
 
 _DEFAULT_DATABASE_URL = (
@@ -402,6 +402,7 @@ async def test_research_to_ticket_cross_project_research_task_id_rejected(
                     project_id=PROJECT_B_ID,
                     research_task_id=RESEARCH_TASK_A_ID,
                     requested_by_actor_id=ACTOR_ID,
+                    approval_request_id=uuid4(),
                 )
             )
 
@@ -421,6 +422,7 @@ async def test_research_to_ticket_cross_project_ticket_creation_does_not_escape_
                     project_id=PROJECT_B_ID,
                     research_task_id=RESEARCH_TASK_A_ID,
                     requested_by_actor_id=ACTOR_ID,
+                    approval_request_id=uuid4(),
                 )
             )
 
@@ -457,7 +459,7 @@ async def test_citation_coverage_cross_project_research_task_id_rejected(
         await _insert_fixtures(session)
 
         with pytest.raises(ValueError, match="research_task_id not reachable in tenant/project"):
-            await compute_citation_coverage(session, 1, PROJECT_B_ID, RESEARCH_TASK_A_ID)
+            await compute_research_evidence_attachment_rate(session, 1, PROJECT_B_ID, RESEARCH_TASK_A_ID)
 
 
 @pytest.mark.asyncio

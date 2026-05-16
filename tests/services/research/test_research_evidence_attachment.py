@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.app.config import Settings, get_settings
 from backend.app.db.session import create_engine
-from backend.app.services.research.citation_coverage import compute_citation_coverage
+from backend.app.services.research.research_evidence_attachment import compute_research_evidence_attachment_rate
 
 _DEFAULT_DATABASE_URL = (
     "postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test"
@@ -270,11 +270,11 @@ async def test_one_claim_with_one_evidence_item_has_full_coverage(
         await _insert_base_fixture(session)
         await _insert_claims(session, evidence_flags=(True,))
 
-        metric = await compute_citation_coverage(session, 1, PROJECT_A_ID, RESEARCH_TASK_A_ID)
+        metric = await compute_research_evidence_attachment_rate(session, 1, PROJECT_A_ID, RESEARCH_TASK_A_ID)
 
     assert metric.numerator == 1
     assert metric.denominator == 1
-    assert metric.coverage == 1.0
+    assert metric.attachment_rate == 1.0
 
 
 @pytest.mark.asyncio
@@ -285,11 +285,11 @@ async def test_one_claim_without_evidence_item_has_zero_coverage(
         await _insert_base_fixture(session)
         await _insert_claims(session, evidence_flags=(False,))
 
-        metric = await compute_citation_coverage(session, 1, PROJECT_A_ID, RESEARCH_TASK_A_ID)
+        metric = await compute_research_evidence_attachment_rate(session, 1, PROJECT_A_ID, RESEARCH_TASK_A_ID)
 
     assert metric.numerator == 0
     assert metric.denominator == 1
-    assert metric.coverage == 0.0
+    assert metric.attachment_rate == 0.0
 
 
 @pytest.mark.asyncio
@@ -300,11 +300,11 @@ async def test_two_claims_one_with_evidence_item_has_half_coverage(
         await _insert_base_fixture(session)
         await _insert_claims(session, evidence_flags=(True, False))
 
-        metric = await compute_citation_coverage(session, 1, PROJECT_A_ID, RESEARCH_TASK_A_ID)
+        metric = await compute_research_evidence_attachment_rate(session, 1, PROJECT_A_ID, RESEARCH_TASK_A_ID)
 
     assert metric.numerator == 1
     assert metric.denominator == 2
-    assert metric.coverage == 0.5
+    assert metric.attachment_rate == 0.5
 
 
 @pytest.mark.asyncio
@@ -314,11 +314,11 @@ async def test_zero_claims_returns_none_coverage(
     async with session_factory() as session:
         await _insert_base_fixture(session)
 
-        metric = await compute_citation_coverage(session, 1, PROJECT_A_ID, RESEARCH_TASK_A_ID)
+        metric = await compute_research_evidence_attachment_rate(session, 1, PROJECT_A_ID, RESEARCH_TASK_A_ID)
 
     assert metric.numerator == 0
     assert metric.denominator == 0
-    assert metric.coverage is None
+    assert metric.attachment_rate is None
 
 
 @pytest.mark.asyncio
@@ -329,7 +329,7 @@ async def test_cross_project_research_task_reference_is_rejected(
         await _insert_base_fixture(session)
 
         with pytest.raises(ValueError, match="research_task_id not reachable in tenant/project"):
-            await compute_citation_coverage(session, 1, PROJECT_B_ID, RESEARCH_TASK_A_ID)
+            await compute_research_evidence_attachment_rate(session, 1, PROJECT_B_ID, RESEARCH_TASK_A_ID)
 
 
 @pytest.mark.asyncio
@@ -346,8 +346,8 @@ async def test_evidence_on_other_claim_does_not_cover_target_claim(
             offset=10,
         )
 
-        metric = await compute_citation_coverage(session, 1, PROJECT_A_ID, RESEARCH_TASK_A_ID)
+        metric = await compute_research_evidence_attachment_rate(session, 1, PROJECT_A_ID, RESEARCH_TASK_A_ID)
 
     assert metric.numerator == 0
     assert metric.denominator == 1
-    assert metric.coverage == 0.0
+    assert metric.attachment_rate == 0.0

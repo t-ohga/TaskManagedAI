@@ -25,7 +25,10 @@ from backend.app.db.session import create_engine
 from backend.app.schemas.research.evidence_set import ResearchSetReference
 from backend.app.schemas.research.research_to_ticket import ResearchToTicketRequest
 from backend.app.services.research.evidence_set_hash import compute_evidence_set_hash
-from backend.app.services.research.research_to_ticket import ResearchToTicketAdapter
+from backend.app.services.research.research_to_ticket import (
+    PromotionArtifactPreview,
+    ResearchToTicketAdapter,
+)
 
 _DEFAULT_DATABASE_URL = (
     "postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test"
@@ -265,6 +268,7 @@ def _request(
     *,
     project_id: UUID = PROJECT_A_ID,
     research_task_id: UUID = RESEARCH_TASK_A_ID,
+    approval_request_id: UUID,
     ticket_title_override: str | None = None,
 ) -> ResearchToTicketRequest:
     return ResearchToTicketRequest(
@@ -272,14 +276,95 @@ def _request(
         project_id=project_id,
         research_task_id=research_task_id,
         requested_by_actor_id=ACTOR_ID,
+        approval_request_id=approval_request_id,
         ticket_title_override=ticket_title_override,
     )
+
+
+async def _insert_approval(
+    session: AsyncSession,
+    *,
+    artifact_hash: str,
+    research_task_id: UUID = RESEARCH_TASK_A_ID,
+    actor_id: UUID = ACTOR_ID,
+    status: str = "approved",
+    action_class: str = "task_write",
+    approval_id: UUID | None = None,
+) -> UUID:
+    """Insert an ApprovalRequest matching the canonical promotion artifact.
+
+    F-PR24-R1-004 P1 adopt: Research-to-Ticket promotion requires a
+    pre-existing approved ApprovalRequest whose artifact_hash equals the
+    server-computed canonical promotion artifact hash. Tests use
+    ``ResearchToTicketAdapter.prepare_promotion_artifact`` to learn the
+    hash, then call this helper to insert the bound approval.
+    """
+
+    from uuid import uuid4 as _uuid4
+    approval_id = approval_id or _uuid4()
+    await session.execute(
+        text(
+            """
+            insert into approval_requests (
+              id, tenant_id, action_class, resource_ref, risk_level,
+              artifact_hash, policy_version, status,
+              requested_by_actor_id, requested_at, metadata
+            ) values (
+              :id, 1, :action_class, :resource_ref, 'low',
+              :artifact_hash, 'pp-test-1', :status,
+              :actor_id, now(), '{"rls_ready": true}'::jsonb
+            )
+            """
+        ),
+        {
+            "id": approval_id,
+            "action_class": action_class,
+            "resource_ref": f"research_task:{research_task_id}",
+            "artifact_hash": artifact_hash,
+            "status": status,
+            "actor_id": actor_id,
+        },
+    )
+    return approval_id
+
+
+async def _setup_approval(
+    session: AsyncSession,
+    *,
+    project_id: UUID = PROJECT_A_ID,
+    research_task_id: UUID = RESEARCH_TASK_A_ID,
+    ticket_title_override: str | None = None,
+    actor_id: UUID = ACTOR_ID,
+) -> tuple[UUID, PromotionArtifactPreview]:  # noqa: F821 (forward ref)
+    """Prepare canonical artifact + insert matching approved ApprovalRequest.
+
+    Does NOT call ``promote()`` — returns (approval_id, preview) so the
+    test can invoke ``promote()`` once with the correct approval_request_id.
+    """
+    adapter = ResearchToTicketAdapter(session)
+    preview = await adapter.prepare_promotion_artifact(
+        tenant_id=1,
+        project_id=project_id,
+        research_task_id=research_task_id,
+        requested_by_actor_id=actor_id,
+        ticket_title_override=ticket_title_override,
+    )
+    approval_id = await _insert_approval(
+        session,
+        artifact_hash=preview.artifact_hash,
+        research_task_id=research_task_id,
+        actor_id=actor_id,
+    )
+    return approval_id, preview
 
 
 async def _promote_once(session_factory: async_sessionmaker[AsyncSession]) -> str:
     async with session_factory() as session:
         await _insert_fixtures(session)
-        outcome = await ResearchToTicketAdapter(session).promote(_request())
+        approval_id, _ = await _setup_approval(session)
+        outcome = await ResearchToTicketAdapter(session).promote(
+            _request(approval_request_id=approval_id)
+        )
     return outcome.artifact_hash
 
 
@@ -287,6 +372,10 @@ def test_research_to_ticket_request_has_no_caller_supplied_binding_fields() -> N
     assert "artifact_hash" not in ResearchToTicketRequest.model_fields
     assert "evidence_set_hash" not in ResearchToTicketRequest.model_fields
     assert "ticket_id" not in ResearchToTicketRequest.model_fields
+    # F-PR24-R1-004 P1 adopt: approval_request_id is the server-trusted
+    # binding to the existing Approval workflow decision (a UUID, not a
+    # caller-supplied hash). It IS expected on the request schema.
+    assert "approval_request_id" in ResearchToTicketRequest.model_fields
 
     signature = inspect.signature(ResearchToTicketAdapter.promote)
     assert "artifact_hash" not in signature.parameters
@@ -299,17 +388,37 @@ def test_research_to_ticket_request_has_no_caller_supplied_binding_fields() -> N
 async def test_artifact_hash_is_deterministic_and_server_side_computed(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    """Determinism: same DB snapshot -> same canonical artifact hash."""
     first_hash = await _promote_once(session_factory)
-    second_hash = await _promote_once(session_factory)
-
-    assert first_hash == second_hash
-    assert _SHA256_RE.fullmatch(first_hash)
 
     async with session_factory() as session:
         await _insert_fixtures(session)
         adapter = ResearchToTicketAdapter(session)
-        with pytest.raises(TypeError, match="artifact_hash"):
-            await adapter.promote(_request(), artifact_hash="f" * 64)  # type: ignore[call-arg]
+        preview2 = await adapter.prepare_promotion_artifact(
+            tenant_id=1,
+            project_id=PROJECT_A_ID,
+            research_task_id=RESEARCH_TASK_A_ID,
+            requested_by_actor_id=ACTOR_ID,
+        )
+
+    assert preview2.artifact_hash == first_hash
+    assert _SHA256_RE.fullmatch(first_hash)
+
+    # Caller cannot supply artifact_hash via the schema (extra='forbid').
+    async with session_factory() as session:
+        approval_id = await _insert_approval(
+            session, artifact_hash=first_hash
+        )
+        await session.commit()
+        with pytest.raises((TypeError, ValueError)):
+            ResearchToTicketRequest(  # type: ignore[call-arg]
+                tenant_id=1,
+                project_id=PROJECT_A_ID,
+                research_task_id=RESEARCH_TASK_A_ID,
+                requested_by_actor_id=ACTOR_ID,
+                approval_request_id=approval_id,
+                artifact_hash="f" * 64,
+            )
 
 
 @pytest.mark.asyncio
@@ -319,7 +428,10 @@ async def test_ticket_metadata_and_audit_payload_are_server_owned_and_raw_secret
     raw_secret = "sk-" + ("A" * 40)
     async with session_factory() as session:
         await _insert_fixtures(session, raw_secret_in_prov=True)
-        outcome = await ResearchToTicketAdapter(session).promote(_request())
+        approval_id, preview = await _setup_approval(session)
+        outcome = await ResearchToTicketAdapter(session).promote(
+            _request(approval_request_id=approval_id)
+        )
 
         ticket = await session.scalar(select(Ticket).where(Ticket.id == outcome.ticket_id))
         event = await session.scalar(
@@ -371,6 +483,14 @@ async def test_ticket_metadata_and_audit_payload_are_server_owned_and_raw_secret
 async def test_cross_project_research_task_reference_is_rejected(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    """Cross-project research_task is rejected during fetch (before approval).
+
+    F-PR24-R1-004 P1 adopt: a dummy approval_request_id is fine because the
+    research_task bundle fetch fails first; the adapter must not even
+    reach the approval validation step when the ref is cross-project.
+    """
+    from uuid import uuid4 as _uuid4
+
     async with session_factory() as session:
         await _insert_fixtures(session)
         adapter = ResearchToTicketAdapter(session)
@@ -380,6 +500,7 @@ async def test_cross_project_research_task_reference_is_rejected(
                 _request(
                     project_id=PROJECT_B_ID,
                     research_task_id=RESEARCH_TASK_A_ID,
+                    approval_request_id=_uuid4(),
                 )
             )
 
@@ -399,8 +520,14 @@ async def test_empty_claim_set_creates_valid_ticket_with_server_evidence_hash(
             ),
         )
 
+        approval_id, _ = await _setup_approval(
+            session, research_task_id=EMPTY_RESEARCH_TASK_ID
+        )
         outcome = await ResearchToTicketAdapter(session).promote(
-            _request(research_task_id=EMPTY_RESEARCH_TASK_ID)
+            _request(
+                research_task_id=EMPTY_RESEARCH_TASK_ID,
+                approval_request_id=approval_id,
+            )
         )
         ticket = await session.scalar(select(Ticket).where(Ticket.id == outcome.ticket_id))
 
@@ -422,8 +549,14 @@ async def test_ticket_title_override_is_nfc_normalized_and_truncated(
 
     async with session_factory() as session:
         await _insert_fixtures(session)
+        approval_id, _ = await _setup_approval(
+            session, ticket_title_override=override
+        )
         outcome = await ResearchToTicketAdapter(session).promote(
-            _request(ticket_title_override=override)
+            _request(
+                approval_request_id=approval_id,
+                ticket_title_override=override,
+            )
         )
         ticket = await session.scalar(select(Ticket).where(Ticket.id == outcome.ticket_id))
 
