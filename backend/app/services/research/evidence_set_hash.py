@@ -47,8 +47,37 @@ def _hash_text(value: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def _jcs_number_normalize(value: object) -> object:
+    """Normalize numeric values for JCS / RFC 8785 compatible canonicalization.
+
+    Python ``json.dumps`` emits whole-number floats with a trailing ``.0``
+    (``1.0`` -> ``"1.0"``) while JCS / ECMA-262 canonical form drops the
+    fractional part when the value is an integer (``"1"``). For
+    cross-implementation reproducibility of ``evidence_set_hash``
+    (F-PR22-003 P2 adopt), this helper collapses integer-valued floats to
+    ``int`` before passing to ``canonical_json_dumps``. Lists and mappings
+    are walked recursively; other types pass through unchanged. ``bool`` is
+    treated as itself (JSON booleans), not coerced.
+    """
+
+    if isinstance(value, bool):  # bool is subclass of int; guard first
+        return value
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+        return value
+    if isinstance(value, Mapping):
+        return {key: _jcs_number_normalize(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_jcs_number_normalize(item) for item in value]
+    if isinstance(value, tuple):
+        return [_jcs_number_normalize(item) for item in value]
+    return value
+
+
 def _hash_canonical_payload(payload: object) -> str:
-    canonical_json = canonical_json_dumps(payload)
+    normalized_payload = _jcs_number_normalize(payload)
+    canonical_json = canonical_json_dumps(normalized_payload)
     normalized = unicodedata.normalize("NFC", canonical_json)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
@@ -256,7 +285,11 @@ def _build_evidence_payload(
                     _evidence_item_payload(item, evidence_sources[item.source_id])
                     for item in sorted(
                         items_by_claim_id.get(claim.id, []),
-                        key=lambda item: (str(item.source_id), str(item.id)),
+                        key=lambda item: (
+                            str(item.source_id),
+                            item.relation,
+                            str(item.id),
+                        ),
                     )
                 ],
             }
