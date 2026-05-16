@@ -375,6 +375,19 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
   - **F-PR28-R6-004 P2 adopt**: R5-002 (fixture file symlink reject) follow-up、`_read_json_object()` で **manifest.json + expected_schema.json も symlink reject**。`Path.is_file()` は symlink を follow するため、manifest が symlink で repo 外 file を指していたら provenance bypass された。全 JSON file 共通の symlink check に統一。
   - **F-PR28-R6-005 P2 defer → Sprint 11 BL-0127**: `tests/eval/test_anti_gaming_ci_gate.py` の `TASKMANAGEDAI_RUN_ANTI_GAMING_GATE=1` opt-in 化は **P0 期間中 single-author (`t-ohga` のみ)** の制約による意図的な設計 (author_inversion 常時 fire 回避)。CI workflow への wire-in は multi-actor scenario (Sprint 11.5+ multi-agent orchestration) で BL-0127 経由実施。
 
+### Sprint 11 batch 5b 実装進捗 (PR #?? merge 後に commit hash 追記)
+
+- **batch_5b_implementation_pr**: 本 PR (BL-0158 AC-HARD-03 aggregator + tenant_isolation fixture loader integration)
+- **実装 BL**: BL-0158 (tenant_isolation_negative_pass fixture loader を Eval Harness Hard Gate aggregator に接続)
+- **新規 file**:
+  - `backend/app/services/eval/hard_gates/__init__.py`
+  - `backend/app/services/eval/hard_gates/tenant_isolation.py` (~250 LOC、AC_HARD_03_* constants + TenantIsolationFixtureResult + TenantIsolationMetricResult + evaluate_tenant_isolation_negative_pass())
+  - `tests/eval/test_hard_gates_tenant_isolation.py` (~300 LOC、5+ source enum integrity + 13+ test cases including 17-fixture happy path / sut_results integration / spec violation detection / edge cases / raw secret non-leakage)
+- **5+ source 整合 (AC_HARD_03_* enum)**: Python Literal + Final constants + module-level `__all__` export + pytest EXPECTED constants + 実 fixture (17 件 raw_json) 内の値 cross-check
+- **forward-compat for BL-0127 SUT integration**: `sut_results: Mapping[str, bool] | None = None` optional parameter で programmatic SUT 実行結果を注入可能、batch 5b では spec compliance のみで metric 計算
+- **server-owned boundary §1+§3 invariants 維持**: loader-validated corpus only、caller-supplied path 経路なし、pure function (side effect なし)、raw secret 非展開 (reason_code + fixture_id のみ)
+- **既存 batch 1-10 + batch 5a invariant 維持**: AgentRun 16 状態 / ContextSnapshot 10 列 / SecretBroker / Approval 4 整合 / RFC 8785 / Research/Evidence schema / fixture loader / Anti-Gaming CI gate
+
 frontmatter `status: draft` 維持。
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
