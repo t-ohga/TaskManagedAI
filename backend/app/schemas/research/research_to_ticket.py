@@ -4,7 +4,7 @@ import re
 import unicodedata
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -23,7 +23,12 @@ class ResearchToTicketRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tenant_id: int = Field(gt=0)
+    # F-PR24-R5-003 P2 adopt: ``StrictInt`` rejects Pydantic's default lax
+    # coercion (e.g., bool ``True`` -> int ``1``). Without strict parsing
+    # a JSON ``tenant_id: true`` would silently promote under tenant 1,
+    # bypassing the after-validator ``isinstance(value, bool)`` guard
+    # since by that point the value is already ``int``.
+    tenant_id: StrictInt = Field(gt=0)
     project_id: UUID
     research_task_id: UUID
     requested_by_actor_id: UUID

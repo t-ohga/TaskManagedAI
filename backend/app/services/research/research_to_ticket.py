@@ -159,6 +159,33 @@ class ResearchToTicketAdapter:
         )
 
     async def promote(self, request: ResearchToTicketRequest) -> ResearchToTicketOutcome:
+        # F-PR24-R5-001 P1 adopt: compute the canonical artifact AFTER the
+        # approval row is locked so concurrent claim / evidence mutations
+        # cannot slip between the artifact computation and the Ticket
+        # INSERT. The approval-row lock + same-transaction re-computation
+        # narrows the consistency window so the hash actually persisted to
+        # the Ticket matches what the approval row binds.
+        #
+        # F-PR24-R5-002 P1 adopt: if the approval row's binding does not
+        # match the recomputed canonical artifact (e.g., claims changed
+        # after approval submission), the stale approval is marked
+        # ``status='invalidated'`` before raising so it is no longer
+        # reusable. Per server-owned-boundary.md §3, any Approval 4
+        # mismatch must invalidate.
+        await _ensure_tenant_context(self.session, request.tenant_id)
+        approval = await self.session.scalar(
+            select(ApprovalRequest)
+            .where(
+                ApprovalRequest.tenant_id == request.tenant_id,
+                ApprovalRequest.id == request.approval_request_id,
+            )
+            .with_for_update()
+        )
+        if approval is None:
+            raise ValueError(
+                "approval_request_id is not reachable in tenant"
+            )
+
         preview = await self.prepare_promotion_artifact(
             tenant_id=request.tenant_id,
             project_id=request.project_id,
@@ -316,6 +343,13 @@ class ResearchToTicketAdapter:
                 "Research-to-Ticket promotion"
             )
         if approval.artifact_hash != artifact_hash:
+            # F-PR24-R5-002 P1 adopt: invalidate the stale approval per
+            # server-owned-boundary.md §3 (Approval 4 mismatch must
+            # invalidate) so the row is not replayable. The status flip
+            # is part of the same transaction; if the caller rolls back
+            # after this raise, the invalidation also rolls back -- this
+            # is acceptable because the original mismatch persists.
+            await self._invalidate_approval(approval)
             # Caller-supplied approval reaches a different artifact than the
             # server-computed canonical promotion hash; reject without
             # surfacing either hash in the error (audit only).
@@ -324,6 +358,8 @@ class ResearchToTicketAdapter:
                 "promotion artifact"
             )
         if approval.policy_version != policy_version:
+            # F-PR24-R5-002 P1 adopt: invalidate stale policy_version approval.
+            await self._invalidate_approval(approval)
             # F-PR24-R2-001 P1 adopt: stale policy_version reject -- prevents
             # replay of approval granted under a different policy pack.
             raise ValueError(
@@ -340,6 +376,8 @@ class ResearchToTicketAdapter:
         # (provider-bound workflow). Asymmetric None/non-None indicates
         # approval scope mismatch and is rejected fail-closed.
         if approval.provider_request_fingerprint != expected_provider_request_fingerprint:
+            # F-PR24-R5-002 P1 adopt: invalidate scope-mismatched approval.
+            await self._invalidate_approval(approval)
             raise ValueError(
                 "approval_request.provider_request_fingerprint does not "
                 "match the caller-asserted fingerprint for this promotion "
@@ -377,6 +415,22 @@ class ResearchToTicketAdapter:
                 "Research-to-Ticket promotion"
             )
 
+    async def _invalidate_approval(self, approval: ApprovalRequest) -> None:
+        """Mark a stale ApprovalRequest as invalidated (F-PR24-R5-002 P1).
+
+        Per ``.claude/rules/server-owned-boundary.md §3``, any Approval 4
+        binding mismatch must invalidate the approval so it cannot be
+        replayed. The status flip is part of the caller's transaction; if
+        the caller rolls back after the mismatch raise, the invalidation
+        also rolls back -- this is acceptable because the underlying
+        mismatch persists and any subsequent retry will re-detect it.
+        Caller-supplied approval rows with stale binding therefore become
+        unusable as approved on the next promotion attempt.
+        """
+
+        approval.status = "invalidated"
+        await self.session.flush()
+
     async def _fetch_research_bundle(
         self,
         *,
@@ -393,6 +447,15 @@ class ResearchToTicketAdapter:
         )
         if task is None:
             raise ValueError("research_task_id not reachable in tenant/project")
+        # F-PR24-R5-004 P2 adopt: only completed research tasks may be
+        # promoted. queued/running snapshots may not yet have stable claim
+        # / evidence sets, and failed tasks must not produce a Ticket
+        # artifact. Gate the promotion at the fetch boundary fail-closed.
+        if task.status != "completed":
+            raise ValueError(
+                f"research_task.status must be 'completed' for promotion; "
+                f"current status={task.status!r}"
+            )
 
         claims_result = await self.session.execute(
             select(Claim)
