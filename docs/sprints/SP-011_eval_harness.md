@@ -327,6 +327,54 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 - **既存 27 BL trace 維持**: 本 QL-C 拡充は BL-0079a〜BL-0130 の既存 trace を破壊しない
 - **cross-ref**: SP-010 で source schema (SearchRun / EvidenceSearchHit / GroundingSupport / RetrievalEvalRun) を同 PR で追記、SP-011 は集計責務のみ
 
+### Sprint 11 batch 5a 実装進捗
+
+- **batch_5a_implementation_pr**: 本 PR
+- **実装 BL**: BL-0122 (`dataset_versions` / `eval_runs` / `eval_cases` / `eval_scores` 4 tables + ORM models + fixture loader service) + BL-0123 (split directory + Anti-Gaming metadata enforcement integration) + BL-0129 (Anti-Gaming Rules dataset metadata enforcement CI gate)
+- **新規 file**:
+  - `migrations/versions/0018_eval_dataset_versions.py` (4 table 新規作成 + 4 index、複合 FK 3 column enforcement)
+  - `backend/app/db/models/{dataset_version,eval_run,eval_case,eval_score}.py` (4 ORM model + FixtureKind Literal + STANDARD_FIXTURE_KINDS frozenset)
+  - `backend/app/services/eval/{__init__,loader,anti_gaming}.py` (DB sync loader + Anti-Gaming CI gate helper)
+  - `tests/db/test_eval_schema_enum.py` (5+ source 整合 test for `fixture_kind` enum)
+  - `tests/db/test_eval_schema_migration.py` (Alembic upgrade/downgrade + cross-tenant FK boundary + 複合 FK enforcement)
+  - `tests/eval/test_eval_loader.py` (happy path + tamper detection + spoofed fixture_kind + raw secret scan + duplicate version reject)
+  - `tests/eval/test_anti_gaming.py` (author inversion + timestamp inversion + subprocess mock)
+- **修正 file**:
+  - `backend/app/db/models/__init__.py` (4 新 model + FixtureKind + STANDARD_FIXTURE_KINDS 追加)
+- **5+ source 整合**: DB CHECK + ORM CheckConstraint + Python Literal + frozenset + pytest EXPECTED constants
+- **既存 batch (Sprint 1-10) invariant 維持**: AgentRun 16 状態 / ContextSnapshot 10 列 / SecretBroker / Approval 4 整合 / RFC 8785 / Research/Evidence schema / Sprint 10 cross-tenant fixtures
+- **PR #28 Codex R1 review (R1 / 5 inline findings)**:
+  - **F-PR28-R1-001 P1 adopt**: `dataset_versions` の unique key を `(tenant_id, dataset_key, version, fixture_kind)` に拡張。spec の "1 dataset version は 3 splits (public/private/adversarial) を持ち得る" 要件を DB enforce。migration 0018 + ORM `__table_args__` + test expected + DD-02 §dataset_versions cross-ref を同期更新。
+  - **F-PR28-R1-002 P2 defer → Sprint 11 BL-0127**: 現 loader の hard-coded `_REQUIRED_FIXTURE_KEYS` は tenant_isolation 特化、他 Hard Gate / KPI fixtures (policy_block / secret_canary / citation_coverage 等) は異 expected_* field を使う。schema-driven required keys の generic 化は **Sprint 11 BL-0127 (Hard Gates 7 fixture registry / loader 統合)** で実装。本 batch 5a の scope は tenant_isolation 専用。
+  - **F-PR28-R1-003 P2 adopt**: `_RAW_SECRET_KEY_NAMES` から `"value"` を削除。`threshold.value` 等の generic KPI field を spurious reject していた。defense-in-depth は引き続き `_RAW_SECRET_VALUE_PATTERNS` (sk-/ghp_/AKIA prefix) で確保。
+  - **F-PR28-R1-004 P2 adopt**: `verify_fixture_commit_separation()` の timestamp_inversion を再設計。**latest policy commit per path** vs fixture creation の比較に変更、direction を spec の "fixture 作成後に policy を緩めた疑い" align (policy_commit > fixture_commit AND policy_lag ≤ window)。旧 ordinary policy history vs new fixture の false positive を除去、`test_verify_fixture_commit_separation_ignores_old_policy_history` で regression 防止。
+  - **F-PR28-R1-005 P2 adopt**: redacted splits (private_holdout / adversarial_new) の prohibited keys を `"expected_*"` prefix + `"assertions"` 全部 reject に拡張。他 corpora の `expected_block` / `expected_aggregate` / `expected_pattern_hit_kind` 等の漏えいも fail-closed で防御。
+- **PR #28 Codex R3 review (R3 / 6 new inline findings 累計 11)**:
+  - **F-PR28-R3-001 P1 adopt**: `sync_dataset_version_to_db` の pre-insert SELECT lookup が R1-001 の新 unique key `(tenant_id, dataset_key, version, fixture_kind)` と不一致だったため、SELECT に `fixture_kind` を追加。複数 split を同 version で順次 sync 可能に。
+  - **F-PR28-R3-002 P1 adopt (R1-002 P2 escalation 対応)**: tenant_isolation-specific な `_PUBLIC_EXPECTED_KEYS` を generic な `_is_expectation_key()` 述語 (expected_* prefix + `_KNOWN_NON_PREFIXED_EXPECTATION_KEYS={"pattern_hit_kind","assertions"}`) に置換。`_REQUIRED_PUBLIC_FIXTURE_KEYS` から TI-specific keys を削除、per-corpus required は `expected_schema.json` (jsonschema Draft 7 required) で enforce。他 Hard Gate / KPI corpora (policy_block / secret_canary / citation_coverage / cost_per_completed_task) でも `expected_aggregate` / `expected_pattern_hit_kind` 等の dataset-specific expectation keys を generic に case_json / expected_json split に振り分け可能。
+  - **F-PR28-R3-003 P1 partial adopt**: `tests/eval/test_anti_gaming_ci_gate.py` を新規追加、real-git による `verify_fixture_commit_separation` invocation を pytest 経由で実行可能に。`TASKMANAGEDAI_RUN_ANTI_GAMING_GATE=1` 環境変数で opt-in (P0 期間中は単一作者 = `t-ohga` のため `author_inversion` が常時 fire する制約を doc 化)。multi-actor scenario (Sprint 11.5+ multi-agent orchestration) で常時 ON 化予定。
+  - **F-PR28-R3-004 P2 defer → Sprint 11 BL-0127**: 既存 corpora (`eval/security/{prompt_injection,dangerous_command,forbidden_path}`、`eval/ops/backup_restore`) の `fixture_immutable_index` backfill + `require_immutable_index=False` opt-in flag は BL-0127 generic loader integration で実装。本 batch 5a の tenant_isolation 対象 corpus は immutable_index 完備済。
+  - **F-PR28-R3-005 P2 adopt**: `eval_runs` table に新 composite unique key `(tenant_id, id, run_id)` を追加 (`eval_runs_uq_tenant_id_run`)。SP-010 QL-C cross-ref の RetrievalEvalRun spec で必要となる 3-column composite FK `(tenant_id, eval_run_id, agent_run_id) references eval_runs(tenant_id, id, run_id)` の forward-compat 確保。
+  - **F-PR28-R3-006 P2 adopt**: `GitCommit` に `author_email: str` field 追加、`author_identity` property で安定的 contributor 識別を実現。`%H%x1f%an%x1f%ae%x1f%ct` git format に拡張、author_inversion の比較は `author_identity` ベース。同名別 author の誤検出 + author name 変更によるバイパスを防御。
+- **PR #28 Codex R4 review (R4 / 5 new inline findings 累計 16)**:
+  - **F-PR28-R4-001 P1 defer → Sprint 11 BL-0127**: `eval/quality/citation_coverage` 等の corpora は `expected_schema.json` で **non-prefixed expectation key** (`threshold` 等) を required 化している。現 `_is_expectation_key()` 述語は `expected_*` prefix + 既知非 prefix set のみ recognise するため、これらは case_json に混入し expected_json から落ちる。**schema-driven expectation extraction** (manifest-level `expectation_keys` override or schema.properties metadata 駆動) は本 batch 5a scope (tenant_isolation only) 外、generic loader integration BL-0127 で対応。
+  - **F-PR28-R4-002 P2 adopt**: R3-006 で導入した `author_identity` を `author<email>` → **email alone** に refine。Git ``user.name`` 変更だけで author_inversion バイパス可能だった脆弱性を fix (`author_email` が空の場合のみ `author` にフォールバック)。
+  - **F-PR28-R4-003 P1 defer → Sprint 11 BL-0127**: 既存 KPI corpora (`approval_wait_ms` / `citation_coverage` / `cost_per_completed_task`) は `kpi_id` field を使い `gate_id` を持たない。`_REQUIRED_FIXTURE_KEYS` は `gate_id` を必須化しているため、これらの corpora は本 loader で sync 不可。**`gate_id` ↔ `kpi_id` either-or required** は BL-0127 の generic loader integration で対応。
+  - **F-PR28-R4-004 P1 adopt**: `_manifest_version()` で `dataset_version_id: null` (JSON explicit null) を fallback target にできていなかった bug を fix。`dict.get(key, default)` は key が存在し値が null の場合 default を返さないため、明示的に isinstance check + 空チェックを行い legacy `dataset_version` field に fallback。
+  - **F-PR28-R4-005 P2 defer → Sprint 11 BL-0127**: `tests/eval/test_anti_gaming_ci_gate.py` の real-git CI gate が現状 `policy` + `runner` paths のみ scan、prompt construction code (`backend/app/services/output_validator/repair_prompt_builder.py` / `backend/app/services/policy_pack`) を含めていない。本 gate は P0 期間中 opt-in、policy_paths extension は BL-0127 の CI gate 本格化で対応。
+- **PR #28 Codex R5 review (R5 / 5 new inline findings 累計 21、全 P2 in-scope defense improvements)**:
+  - **F-PR28-R5-001 P2 adopt**: `_assert_index_split_consistency()` で malformed `fixture_immutable_index` entry を silently omit していたため、削除/改竄検出能力が弱まる可能性 (entry を non-object に書き換えれば missing_files から外れる)。malformed entry / invalid split / 不正 fixture_id を up-front で reject、append-only immutable index の tamper detection invariant を強化。
+  - **F-PR28-R5-002 P2 adopt**: `_fixture_paths_for_split()` が `*.json` glob の結果を symlink check なしに返していたため、corpus 外の file を fixture source として読み込む経路が存在。split_dir + 各 fixture file に対し `is_symlink()` reject + `is_file()` 確認を追加、`source_path` provenance bypass を防御。
+  - **F-PR28-R5-003 P2 adopt**: redacted splits (private_holdout / adversarial_new) は `expected_schema.json` validation を完全に skip していたため、`input` field が任意の string/object shape で persist 可能。新 `_validate_redacted_input_schema()` で `schema.properties.input` (定義されている場合) を抽出し input field 単独で Draft 7 validation。expectation 部分は引き続き validation 外 (holdout expectations は external vault)。
+  - **F-PR28-R5-004 P2 adopt**: `author_identity` property に email casing + whitespace normalization 追加 (`strip().lower()`)。`User@Example.com` ↔ `user@example.com` の casing 変更で `author_inversion` を bypass されないように R4-002 を強化。
+  - **F-PR28-R5-005 P2 adopt**: `tests/eval/test_anti_gaming_ci_gate.py` の real-git gate が `public_regression` のみ glob していたため、`private_holdout` / `adversarial_new` (expectation leakage が最も sensitive な split) を未 scan。`_FIXTURE_SPLIT_ROOTS` に 3 split 全部含めて glob 統一。
+- **PR #28 Codex R6 review (R6 / 5 new inline findings 累計 26、3 ADOPT + 2 DEFER)**:
+  - **F-PR28-R6-001 P2 defer → Sprint 11 BL-0127**: real-git CI gate が `eval/security/tenant_isolation` のみ scan、他 corpora (`eval/security/policy_block`, `eval/security/secret_canary`, `eval/quality/*`, `eval/ops/*`) は未 cover。本 batch 5a scope = tenant_isolation only、他 corpora の gate 統合は BL-0127 generic loader integration で対応。
+  - **F-PR28-R6-002 P2 adopt**: `verify_fixture_commit_separation` の timestamp_inversion を **latest policy commit only** から **window 内の全 post-fixture policy commit を scan** に変更。最新 policy commit が window 外であっても、過去に window 内で suspicious relaxation があれば検出可能に。
+  - **F-PR28-R6-003 P2 adopt (partial)**: `_POLICY_PATHS` に `backend/app/services/output_validator` + `backend/app/domain/policy` 追加。BL-0129 の "policy / runner / prompt construction code を分離" invariant を P0 で実現可能な範囲で拡大、registry-driven enumeration は BL-0127 で対応。
+  - **F-PR28-R6-004 P2 adopt**: R5-002 (fixture file symlink reject) follow-up、`_read_json_object()` で **manifest.json + expected_schema.json も symlink reject**。`Path.is_file()` は symlink を follow するため、manifest が symlink で repo 外 file を指していたら provenance bypass された。全 JSON file 共通の symlink check に統一。
+  - **F-PR28-R6-005 P2 defer → Sprint 11 BL-0127**: `tests/eval/test_anti_gaming_ci_gate.py` の `TASKMANAGEDAI_RUN_ANTI_GAMING_GATE=1` opt-in 化は **P0 期間中 single-author (`t-ohga` のみ)** の制約による意図的な設計 (author_inversion 常時 fire 回避)。CI workflow への wire-in は multi-actor scenario (Sprint 11.5+ multi-agent orchestration) で BL-0127 経由実施。
+
 frontmatter `status: draft` 維持。
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
