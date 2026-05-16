@@ -190,6 +190,7 @@ class ResearchToTicketAdapter:
             requested_by_actor_id=request.requested_by_actor_id,
             artifact_hash=artifact_hash,
             policy_version=policy_version,
+            expected_provider_request_fingerprint=request.expected_provider_request_fingerprint,
         )
 
         metadata = {
@@ -266,6 +267,7 @@ class ResearchToTicketAdapter:
         requested_by_actor_id: UUID,
         artifact_hash: str,
         policy_version: str,
+        expected_provider_request_fingerprint: str | None,
     ) -> None:
         """Validate ApprovalRequest before any Ticket mutation (F-PR24-R1-004 P1).
 
@@ -328,20 +330,21 @@ class ResearchToTicketAdapter:
                 "approval_request.policy_version does not match the current "
                 "policy snapshot used for promotion"
             )
-        # F-PR24-R3-002 P1 adopt: provider_request_fingerprint binding.
-        # Research-to-Ticket promotion is NOT a provider call, so the
-        # adapter does not produce a provider_request_fingerprint. The
-        # ApprovalRequest must therefore have ``provider_request_fingerprint``
-        # NULL (or matching None) -- a non-null fingerprint on the approval
-        # row indicates the approval was issued for a different scope
-        # (e.g., a provider_call action) and must not be replayable for
-        # Ticket mutation.
-        if approval.provider_request_fingerprint is not None:
+        # F-PR24-R3-002 P1 + F-PR24-R4-001 P1 adopt: provider_request_fingerprint
+        # binding (Approval 4 整合 §3 stale/replay protection). The Research
+        # session that produced the promotion artifact may or may not be
+        # provider-driven; when it is, the approval row carries the provider
+        # call's canonical OperationContext fingerprint, and the caller
+        # passes the same value via ``expected_provider_request_fingerprint``.
+        # Both must be None (non-provider workflow) OR both must match
+        # (provider-bound workflow). Asymmetric None/non-None indicates
+        # approval scope mismatch and is rejected fail-closed.
+        if approval.provider_request_fingerprint != expected_provider_request_fingerprint:
             raise ValueError(
-                "approval_request.provider_request_fingerprint must be NULL "
-                "for Research-to-Ticket promotion (this is not a provider "
-                "call); a non-null fingerprint indicates approval scope "
-                "mismatch"
+                "approval_request.provider_request_fingerprint does not "
+                "match the caller-asserted fingerprint for this promotion "
+                "(asymmetric None / mismatched value indicates approval "
+                "scope mismatch)"
             )
         expected_resource_ref = f"research_task:{research_task_id}"
         if approval.resource_ref != expected_resource_ref:

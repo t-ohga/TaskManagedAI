@@ -309,6 +309,7 @@ async def _insert_approval(
     session: AsyncSession,
     *,
     artifact_hash: str,
+    policy_version: str,
     research_task_id: UUID = RESEARCH_TASK_A_ID,
     actor_id: UUID = ACTOR_ID,
     status: str = "approved",
@@ -344,7 +345,7 @@ async def _insert_approval(
         "decided_by_actor_id, decided_at,"
         "metadata) values ("
         ":id, 1, :action_class, :resource_ref, 'low',"
-        ":artifact_hash, 'pp-test-1', :status,"
+        ":artifact_hash, :policy_version, :status,"
         ":actor_id, now(),"
         "DECIDED_CLAUSE_PLACEHOLDER,"
         "'{\"rls_ready\": true}'::jsonb)"
@@ -357,6 +358,7 @@ async def _insert_approval(
         "artifact_hash": artifact_hash,
         "status": status,
         "actor_id": actor_id,
+        "policy_version": policy_version,
     }
     if status == "approved":
         params["decider_id"] = DECIDER_ACTOR_ID
@@ -388,6 +390,7 @@ async def _setup_approval(
     approval_id = await _insert_approval(
         session,
         artifact_hash=preview.artifact_hash,
+        policy_version=preview.policy_version,
         research_task_id=research_task_id,
         actor_id=actor_id,
     )
@@ -442,8 +445,12 @@ async def test_artifact_hash_is_deterministic_and_server_side_computed(
 
     # Caller cannot supply artifact_hash via the schema (extra='forbid').
     async with session_factory() as session:
+        await _insert_fixtures(session)
+        from backend.app.services.policy_pack.loader import get_policy_pack as _get_pp
         approval_id = await _insert_approval(
-            session, artifact_hash=first_hash
+            session,
+            artifact_hash=first_hash,
+            policy_version=_get_pp().policy_version,
         )
         await session.commit()
         with pytest.raises((TypeError, ValueError)):

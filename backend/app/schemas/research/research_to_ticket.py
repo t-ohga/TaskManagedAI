@@ -28,6 +28,14 @@ class ResearchToTicketRequest(BaseModel):
     research_task_id: UUID
     requested_by_actor_id: UUID
     approval_request_id: UUID
+    # F-PR24-R4-001 P1 adopt: the Research session that produced the
+    # promotion artifact may have invoked a provider call (AI provider
+    # generating research_summary). When the approval was issued with a
+    # provider_request_fingerprint binding (Approval 4 整合 §3 stale/replay
+    # protection), the caller MUST pass the same fingerprint here so the
+    # adapter can verify equality. None on both sides indicates a non-
+    # provider-driven workflow (e.g., manual research) which is also valid.
+    expected_provider_request_fingerprint: str | None = Field(default=None)
     ticket_title_override: str | None = Field(default=None, max_length=2000)
 
     @field_validator("tenant_id")
