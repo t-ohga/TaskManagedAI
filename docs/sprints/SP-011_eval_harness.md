@@ -407,6 +407,23 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 - **5+ source 整合維持**: `_KNOWN_NON_PREFIXED_EXPECTATION_KEYS` + `_VALID_EXPECTATION_KEY_PATTERN`
 - **既存 batch 1-10 + batch 5a/5b invariant 維持**: ContextSnapshot 10 列 / AgentRun 16 状態 / SecretBroker / Approval 4 整合 / RFC 8785 / batch 5a loader (gate_id removal は backwards-compat) / batch 5b aggregator
 
+### Sprint 11 batch 5d 実装進捗 (PR #?? merge 後に commit hash 追記)
+
+- **batch_5d_implementation_pr**: 本 PR (BL-0126 AC-KPI-04 citation_coverage aggregator)
+- **実装 BL**: BL-0126 (research eval suite + citation_coverage 判定、batch 5c generic loader 上に構築)
+- **新規 file**:
+  - `backend/app/services/eval/kpis/__init__.py`
+  - `backend/app/services/eval/kpis/citation_coverage.py` (~290 LOC、AC_KPI_04_* constants + ClaimCoverageEntry + CitationCoverageFixtureResult + CitationCoverageMetricResult + evaluate_citation_coverage)
+  - `tests/eval/test_kpis_citation_coverage.py` (~640 LOC、40 test cases including 5+ source enum cross-check + happy path against live corpus + manifest drift × 6 + spec violations × 11 + edge cases + sut_results integration × 9 + Anti-Gaming raw-content non-leakage + frozen dataclass + weighted average correctness)
+- **実装手法**: 新 workflow に従い **Claude が直接実装** (Codex は計画 review 用、本 batch では Codex の draft output を design reference として使用後、Claude が Write tool で書き起こし)
+- **Anti-Gaming invariant**: manifest `anti_gaming_rules.kpi_specific[0]` "citation_coverage is recomputed from input.sample_claims, not copied from expected_aggregate" を厳格遵守。recomputed_coverage_ratio が canonical、expected_aggregate.coverage_ratio は drift-detection oracle としてのみ使用 (drift > 1e-9 → spec_violation:expected_aggregate_drift)
+- **server-owned boundary §1+§3**: caller-supplied `list[Fixture]` 直接受け取り signature なし、sut_results は read-only `Mapping[str, bool] | None`、pure function (DB / file system / network access なし)
+- **5+ source enum integrity**: 4 AC_KPI_04_* constants (KPI_ID / METRIC_KEY / THRESHOLD / THRESHOLD_OPERATOR) が Python Literal + Final + `__all__` export + pytest EXPECTED constants + 実 manifest values + 実 fixture envelope の 5 source で exact set 比較
+- **BL-0127b / SP-012 forward-compat**: optional `sut_results: Mapping[str, bool] | None` parameter で programmatic SUT 実行結果を注入可能、batch 5d では spec compliance + Anti-Gaming recomputation で metric 計算
+- **redacted splits skip**: `_SUPPORTED_FIXTURE_KINDS=("public_regression",)` 限定、private_holdout / adversarial_new は SP-022+ で encrypted-holdout decryption path 追加後に対応
+- **threshold semantics**: AC_KPI_04_THRESHOLD=0.9、AC_KPI_04_THRESHOLD_OPERATOR=">="、threshold_met=True iff `metric_value >= 0.9 AND fixture_count > 0 AND spec_violation 0 AND manifest_violation None`
+- **既存 batch 1-10 + batch 5a/5b/5c invariant 維持**: ContextSnapshot 10 列 / AgentRun 16 状態 / SecretBroker / Approval 4 整合 / RFC 8785 / batch 5a loader / batch 5b tenant_isolation aggregator / batch 5c generic loader
+
 frontmatter `status: draft` 維持。
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
