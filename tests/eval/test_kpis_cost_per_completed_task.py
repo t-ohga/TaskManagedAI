@@ -612,6 +612,112 @@ def test_duplicate_run_id_is_detected() -> None:
 
 
 # ---------------------------------------------------------------------------
+# F-PR32-R1 hardening — persisted-corpus / JSON Schema bypass defences
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("uuid_text", "expected_reason"),
+    (
+        # Nil UUID (all zeros) violates the version constraint.
+        ("00000000-0000-0000-0000-000000000000", "spec_violation:run_id"),
+        # Version nibble outside 1-5.
+        ("11111111-2222-6333-8aaa-bbbbbbbbbbbb", "spec_violation:run_id"),
+        ("11111111-2222-7333-8aaa-bbbbbbbbbbbb", "spec_violation:run_id"),
+        ("11111111-2222-0333-8aaa-bbbbbbbbbbbb", "spec_violation:run_id"),
+        # Variant nibble outside 8/9/a/b (must be the ``10xx`` RFC variant).
+        ("11111111-2222-4333-0aaa-bbbbbbbbbbbb", "spec_violation:run_id"),
+        ("11111111-2222-4333-caaa-bbbbbbbbbbbb", "spec_violation:run_id"),
+        ("11111111-2222-4333-faaa-bbbbbbbbbbbb", "spec_violation:run_id"),
+    ),
+)
+def test_uuid_version_and_variant_enforcement(
+    uuid_text: str, expected_reason: str
+) -> None:
+    """F-PR32-R1-005 P2 adopt: ``run_id`` must be a canonical RFC 4122 UUID."""
+
+    runs = _sample_runs(completed_cost_usds=(0.3, 0.2, 0.1), prefix="rfc")
+    runs[0]["run_id"] = uuid_text
+    fixture = _synthetic_fixture(sample_runs=runs)
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == expected_reason
+
+
+def test_project_id_zero_is_rejected() -> None:
+    """F-PR32-R1-004 P2 adopt: AC-KPI-05 schema requires ``project_id >= 1``."""
+
+    runs = _sample_runs(completed_cost_usds=(0.3, 0.2, 0.1), prefix="proj0")
+    runs[0]["project_id"] = 0  # type: ignore[assignment]
+    fixture = _synthetic_fixture(sample_runs=runs)
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == "spec_violation:project_id"
+
+
+def test_expected_aggregate_threshold_usd_must_be_present() -> None:
+    """F-PR32-R1-001 P2 adopt: ``threshold_usd`` is a required drift oracle."""
+
+    runs = _sample_runs(completed_cost_usds=(0.3, 0.2, 0.1), prefix="threcho")
+    fixture = _synthetic_fixture(
+        sample_runs=runs,
+        expected_aggregate={
+            "total_completed_runs": 3,
+            "total_cost_usd": 0.6,
+            "cost_per_completed_task_usd": 0.2,
+            # threshold_usd intentionally omitted
+            "threshold_passed": True,
+        },
+    )
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == "spec_violation:expected_aggregate"
+
+
+def test_expected_aggregate_threshold_passed_must_be_present() -> None:
+    """F-PR32-R1-002 P2 adopt: ``threshold_passed`` is a required drift oracle."""
+
+    runs = _sample_runs(completed_cost_usds=(0.3, 0.2, 0.1), prefix="passecho")
+    fixture = _synthetic_fixture(
+        sample_runs=runs,
+        expected_aggregate={
+            "total_completed_runs": 3,
+            "total_cost_usd": 0.6,
+            "cost_per_completed_task_usd": 0.2,
+            "threshold_usd": 0.5,
+            # threshold_passed intentionally omitted
+        },
+    )
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == "spec_violation:expected_aggregate"
+
+
+def test_zero_completed_runs_must_declare_ratio_zero() -> None:
+    """F-PR32-R1-003 P2 adopt: when recomputed ratio is undefined, the
+    declared ratio must be ``0.0`` (the canonical undefined sentinel).
+    """
+
+    fixture = _synthetic_fixture(
+        sample_runs=[
+            {
+                "tenant_id": 1,
+                "project_id": 10,
+                "run_id": _uuid_for("zero-completed-non-zero-decl"),
+                "status": "failed",
+                "cost_usd": 1.0,
+            }
+        ],
+        expected_aggregate={
+            "total_completed_runs": 0,
+            "total_cost_usd": 0.0,
+            # Lie: should be 0.0 (undefined), but declared 999.
+            "cost_per_completed_task_usd": 999.0,
+            "threshold_usd": 0.5,
+            "threshold_passed": False,
+        },
+    )
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == "spec_violation:expected_aggregate_ratio_drift"
+
+
+# ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
 

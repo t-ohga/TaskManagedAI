@@ -91,8 +91,14 @@ _AGGREGATE_NOT_PROVIDED: Final[object] = object()
 # AC-KPI-05 contract (the live fixture explicitly leaves it ``null``), so
 # we do NOT validate it here. Status enum and UUID structural validation
 # carry the Anti-Gaming load instead.
+# F-PR32-R1-005 P2 adopt: AC-KPI-05 fixture schema constrains ``run_id`` to a
+# canonical RFC 4122 UUID. The version nibble (first hex of the 3rd group) must
+# be 1-5 and the variant nibble (first hex of the 4th group) must be 8/9/a/b
+# (the ``10xx`` variant). The nil UUID (all zeros) is excluded by the version
+# constraint. Persisted corpora that bypass JSON Schema can otherwise carry
+# arbitrary hex strings that ``uuid.UUID(...)`` would happily parse.
 _UUID_TEXT_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
 
@@ -258,8 +264,12 @@ def _collect_sample_runs(
         if not _is_non_bool_int(tenant_id) or tenant_id < 1:  # type: ignore[operator]
             return [], "spec_violation:tenant_id"
 
+        # F-PR32-R1-004 P2 adopt: AC-KPI-05 fixture schema requires
+        # ``project_id`` to be an integer with minimum 1. Persisted corpora
+        # could carry ``project_id=0`` (or negative) and otherwise feed the
+        # completed-run totals; tighten to ``>= 1``.
         project_id = raw_run.get("project_id")
-        if not _is_non_bool_int(project_id) or project_id < 0:  # type: ignore[operator]
+        if not _is_non_bool_int(project_id) or project_id < 1:  # type: ignore[operator]
             return [], "spec_violation:project_id"
 
         status = raw_run.get("status")
@@ -352,34 +362,43 @@ def _expected_aggregate_violation_reason(
     if not _costs_match(float(declared_total_cost), recomputed_total_cost_usd):  # type: ignore[arg-type]
         return "spec_violation:expected_aggregate_total_cost_drift"
 
-    if recomputed_ratio is not None:
-        declared_ratio = raw.get("cost_per_completed_task_usd")
-        if not _is_finite_number(declared_ratio):
-            return "spec_violation:expected_aggregate"
-        if not _costs_match(float(declared_ratio), recomputed_ratio):  # type: ignore[arg-type]
+    declared_ratio = raw.get("cost_per_completed_task_usd")
+    if not _is_finite_number(declared_ratio):
+        return "spec_violation:expected_aggregate"
+    if recomputed_ratio is None:
+        # F-PR32-R1-003 P2 adopt: with zero completed runs, the recomputed
+        # ratio is undefined. The fixture must declare ``0.0`` (the canonical
+        # "undefined" sentinel for cost rollups); any other value is drift.
+        if float(declared_ratio) != 0.0:  # type: ignore[arg-type]
             return "spec_violation:expected_aggregate_ratio_drift"
+    elif not _costs_match(float(declared_ratio), recomputed_ratio):  # type: ignore[arg-type]
+        return "spec_violation:expected_aggregate_ratio_drift"
 
-    # ``threshold_usd`` and ``threshold_passed`` are documented in the
-    # expected_aggregate as denormalized echoes of the manifest threshold +
-    # the per-fixture pass/fail. Validate them too so a persisted fixture
-    # cannot quietly weaken the ceiling.
-    declared_threshold_usd = raw.get("threshold_usd")
-    if declared_threshold_usd is not None:
-        if not _is_finite_number(declared_threshold_usd):
-            return "spec_violation:expected_aggregate"
-        if abs(float(declared_threshold_usd) - AC_KPI_05_THRESHOLD_USD) > _THRESHOLD_USD_ABS_TOL:
-            return "spec_violation:expected_aggregate_threshold_drift"
+    # F-PR32-R1-001 P2 + R1-002 P2 adopt: ``threshold_usd`` and
+    # ``threshold_passed`` are documented in the expected_aggregate as
+    # denormalized echoes of the manifest threshold + the per-fixture
+    # pass/fail. Both are required (the AC-KPI-05 schema and this
+    # aggregator's contract list them as drift oracles); fail-closed when
+    # absent so a persisted corpus cannot silently weaken the ceiling.
+    if "threshold_usd" not in raw:
+        return "spec_violation:expected_aggregate"
+    declared_threshold_usd = raw["threshold_usd"]
+    if not _is_finite_number(declared_threshold_usd):
+        return "spec_violation:expected_aggregate"
+    if abs(float(declared_threshold_usd) - AC_KPI_05_THRESHOLD_USD) > _THRESHOLD_USD_ABS_TOL:
+        return "spec_violation:expected_aggregate_threshold_drift"
 
-    declared_threshold_passed = raw.get("threshold_passed")
-    if declared_threshold_passed is not None:
-        if not isinstance(declared_threshold_passed, bool):
-            return "spec_violation:expected_aggregate"
-        actual_passed = (
-            recomputed_ratio is not None
-            and recomputed_ratio <= AC_KPI_05_THRESHOLD_USD + _THRESHOLD_USD_ABS_TOL
-        )
-        if declared_threshold_passed != actual_passed:
-            return "spec_violation:expected_aggregate_passed_drift"
+    if "threshold_passed" not in raw:
+        return "spec_violation:expected_aggregate"
+    declared_threshold_passed = raw["threshold_passed"]
+    if not isinstance(declared_threshold_passed, bool):
+        return "spec_violation:expected_aggregate"
+    actual_passed = (
+        recomputed_ratio is not None
+        and recomputed_ratio <= AC_KPI_05_THRESHOLD_USD + _THRESHOLD_USD_ABS_TOL
+    )
+    if declared_threshold_passed != actual_passed:
+        return "spec_violation:expected_aggregate_passed_drift"
 
     return None
 
