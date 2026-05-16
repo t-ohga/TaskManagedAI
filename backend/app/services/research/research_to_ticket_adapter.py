@@ -174,6 +174,18 @@ async def promote_research_to_ticket(
             "summary must be a non-empty string.",
         )
 
+    # F-PR25-R1-007 + F-PR25-R9-002 + F-PR25-R10-001 fix:
+    # establish ``app.tenant_id`` BEFORE any tenant-scoped read —
+    # including the ApprovalRequest lookup that follows. R9 added
+    # the prologue comment but accidentally left the block at the
+    # bottom of the function (line ~308). R10 moves the actual
+    # set/assert calls to the top so the first tenant-scoped query
+    # (the approval lookup) runs under the correct RLS context.
+    current_tenant_id = await get_tenant_context(session)
+    if current_tenant_id is None:
+        await set_tenant_context(session, tenant_id)
+    await assert_tenant_context(session, tenant_id)
+
     # F-PR25-R3-002 + F-PR25-R8-001 fix Stage 2 (Codex R3 P1 + R8 P1):
     # Research-to-Ticket promotion is ``task_write`` action class per
     # ADR-00003 and must bind an **approved** ApprovalRequest before
@@ -305,17 +317,9 @@ async def promote_research_to_ticket(
             f"summary failed raw-secret scan: {exc}",
         ) from exc
 
-    # F-PR25-R1-007 + F-PR25-R9-002 fix (Codex R1 P2 + R9 P1):
-    # establish the tenant context **before any tenant-scoped read**
-    # (including the ApprovalRequest lookup that follows). Pre-R9 the
-    # tenant context was only set later; on a fresh RLS-enabled
-    # pooled session the approval row would appear missing and a
-    # legitimate approved request would be rejected as
-    # ``approval_request_not_found``.
-    current_tenant_id = await get_tenant_context(session)
-    if current_tenant_id is None:
-        await set_tenant_context(session, tenant_id)
-    await assert_tenant_context(session, tenant_id)
+    # F-PR25-R10-001 fix: tenant context is established at the
+    # function prologue (see top) ahead of the approval lookup.
+    # The duplicate block that used to live here has been removed.
 
     # F-PR25-R1-001 fix (Codex R1 P1): also load the AgentRun and
     # require its ``project_id`` to match. The
