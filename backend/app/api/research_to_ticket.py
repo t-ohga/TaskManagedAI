@@ -10,6 +10,7 @@ POST /api/v1/projects/{project_id}/research-tasks/{research_task_id}/promote
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID
@@ -29,6 +30,39 @@ from backend.app.services.research.research_to_ticket_adapter import (
     ResearchToTicketError,
     promote_research_to_ticket,
 )
+
+# F-PR25-R4-005 fix (Codex R4 P1): the request's X-Trace-Id / X-
+# Correlation-Id headers land directly in audit_events.trace_id /
+# correlation_id. The shared raw-secret scanner only inspects JSON
+# payload bodies, so a copy-pasted OpenAI key or canary in either
+# header would become durable audit data. Narrow the accepted format
+# to OpenTelemetry / W3C Trace Context (16-32 hex chars) or canonical
+# UUID, mirroring backend/app/api/claims.py::_TRACE_ID_RE.
+_TRACE_ID_RE = re.compile(
+    r"^(?:[0-9a-f]{16}|[0-9a-f]{32}|"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
+)
+
+
+def _sanitize_trace_header(value: str | None, *, header_name: str) -> str | None:
+    """Return ``value`` if it matches the trace ID grammar, else raise 400.
+
+    Returning ``None`` for unset headers is allowed so callers without
+    distributed tracing still produce well-formed audit events.
+    """
+
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if not _TRACE_ID_RE.match(normalized):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"{header_name} must be OpenTelemetry 16/32-char hex "
+                f"or canonical UUID (got {len(value)} chars matching neither)."
+            ),
+        )
+    return normalized
 
 router = APIRouter(
     prefix="/api/v1/projects/{project_id}/research-tasks/{research_task_id}",
@@ -141,22 +175,48 @@ async def promote(
             detail=f"promotion integrity violation: {exc.orig}",
         ) from exc
 
-    # F-PR25-R2-005 + F-PR25-R3-001 fix (Codex R2 P2 + R3 P2): append
-    # the ``research_to_ticket_promoted`` audit event so the human/API
+    # F-PR25-R4-005 fix (Codex R4 P1): sanitize the trace headers
+    # before they reach ``audit_events.trace_id`` /
+    # ``correlation_id``. Mirrors backend/app/api/claims.py.
+    safe_trace_id = _sanitize_trace_header(
+        x_trace_id, header_name="X-Trace-Id"
+    )
+    safe_correlation_id = _sanitize_trace_header(
+        x_correlation_id, header_name="X-Correlation-Id"
+    )
+
+    # F-PR25-R4-006 fix (Codex R4 P2): the documented "all claims of
+    # the ResearchTask" path leaves ``payload.claim_ids`` empty; the
+    # adapter resolves the actual set into ``content_jsonb`` so the
+    # promotion artifact freezes the scope. Use the resolved
+    # ``claim_count`` from the artifact body for the audit record so
+    # consumers do not see ``0`` for full-scope promotions.
+    resolved_claim_count = int(
+        view.artifact.content_jsonb.get("claim_count")
+        or len(payload.claim_ids)
+    )
+
+    # F-PR25-R2-005 + F-PR25-R3-001 + F-PR25-R4-001 fix: append the
+    # ``research_to_ticket_promoted`` audit event so the human/API
     # caller is durably linked to the evidence set seeding downstream
-    # ticket work (SP-010 audit contract §line 175-183). R3 adds the
-    # ``timestamp`` / ``trace_id`` / ``correlation_id`` /
-    # ``approval_request_id`` fields the contract requires; tenant_id
-    # is already captured by ``AuditEventRepository.append`` itself
-    # so we do not duplicate it in the payload dict.
+    # ticket work (SP-010 audit contract §line 175-183). R4 fix
+    # mirrors tenant_id / actor_id / trace_id / correlation_id into
+    # the JSON payload too — the audit table columns capture them but
+    # consumers that export only ``event_payload`` (existing claim /
+    # evidence event consumers do this) cannot otherwise correlate the
+    # promotion back to the request.
     audit = AuditEventRepository(session)
     await audit.append(
         tenant_id=tenant_id,
         actor_id=actor_id,
         event_type="research_to_ticket_promoted",
-        trace_id=x_trace_id,
-        correlation_id=x_correlation_id,
+        trace_id=safe_trace_id,
+        correlation_id=safe_correlation_id,
         payload={
+            "tenant_id": tenant_id,
+            "actor_id": str(actor_id),
+            "trace_id": safe_trace_id,
+            "correlation_id": safe_correlation_id,
             "project_id": str(project_id),
             "research_task_id": str(research_task_id),
             "run_id": str(view.artifact.run_id),
@@ -164,7 +224,7 @@ async def promote(
             "approval_request_id": str(payload.approval_request_id),
             "evidence_set_hash": view.evidence_set_hash,
             "content_hash": view.artifact.content_hash,
-            "claim_id_count": len(payload.claim_ids),
+            "claim_id_count": resolved_claim_count,
             "evidence_item_id_count": len(payload.evidence_item_ids),
             # ISO-8601 server timestamp so consumers do not need to
             # rely on the audit_event row's created_at for ordering

@@ -263,6 +263,68 @@ async def promote_research_to_ticket(
             f"ResearchSetReference validation failed: {exc}",
         ) from exc
 
+    # F-PR25-R4-003 fix (Codex R4 P2): when ``parent_artifact_id`` is
+    # supplied, verify the parent is (1) an existing artifact for the
+    # same ``(tenant_id, run_id)`` (the ``artifacts_parent_artifact_fkey``
+    # would also catch this at flush, but we want a structured 4xx
+    # error_code instead of a raw IntegrityError) and (2) a
+    # ``research_promotion`` for the same ``research_task_id``. Pre-R4
+    # any same-run promotion could name an unrelated promotion as its
+    # parent, and the downstream coverage query would treat the
+    # unrelated parent as superseded — letting a malicious caller
+    # shrink the active denominator and inflate citation_coverage.
+    if parent_artifact_id is not None:
+        parent_row = (
+            await session.execute(
+                select(Artifact.kind, Artifact.content_jsonb).where(
+                    Artifact.tenant_id == tenant_id,
+                    Artifact.run_id == run_id,
+                    Artifact.id == parent_artifact_id,
+                )
+            )
+        ).one_or_none()
+        if parent_row is None:
+            raise ResearchToTicketError(
+                "parent_artifact_not_in_run",
+                f"parent_artifact_id {parent_artifact_id} does not belong "
+                f"to run {run_id} for tenant {tenant_id}.",
+            )
+        parent_kind, parent_body = parent_row
+        if parent_kind != _RESEARCH_PROMOTION_KIND:
+            raise ResearchToTicketError(
+                "parent_artifact_wrong_kind",
+                f"parent_artifact_id {parent_artifact_id} has kind "
+                f"{parent_kind!r}, expected {_RESEARCH_PROMOTION_KIND!r}.",
+            )
+        parent_task_id = (parent_body or {}).get("research_task_id")
+        if str(parent_task_id) != str(research_task_id):
+            raise ResearchToTicketError(
+                "parent_artifact_research_task_mismatch",
+                f"parent_artifact_id {parent_artifact_id} promotes a "
+                f"different research_task ({parent_task_id!r}); supersede "
+                f"only promotions of the same research_task.",
+            )
+
+    # F-PR25-R4-002 fix (Codex R4 P2): the documented "all claims of
+    # the ResearchTask" path (empty ``claim_ids``) previously stored
+    # only the task id in ``content_jsonb`` and let
+    # ``compute_citation_coverage`` re-query the ``claims`` table at
+    # read time. If claims were added after promotion the same run's
+    # coverage shifted retroactively — the immutable
+    # ``evidence_set_hash`` was bound to the older set. Resolve the
+    # actual claim_ids server-side now and persist them in
+    # ``content_jsonb`` so the scope is frozen at promotion time.
+    resolved_claim_ids: tuple[UUID, ...] = tuple(claim_ids)
+    if not resolved_claim_ids:
+        rows = await session.execute(
+            select(Claim.id).where(
+                Claim.tenant_id == tenant_id,
+                Claim.project_id == project_id,
+                Claim.research_task_id == research_task_id,
+            )
+        )
+        resolved_claim_ids = tuple(sorted(rows.scalars().all()))
+
     # Server-owned evidence_set_hash. Catches dangling claim_ids /
     # evidence_item_ids before we hash anything.
     try:
@@ -284,24 +346,25 @@ async def promote_research_to_ticket(
     # Validate sha256 hex shape one more time as defense-in-depth.
     assert_sha256_hex(evidence_set_hash, field_name="evidence_set_hash")
 
-    # Resolve claim count for the body so downstream Tickets can display
-    # the promotion scope without re-fetching.
-    claim_count = await session.scalar(
-        _claim_count_for_reference(tenant_id, reference)
-    )
-    if claim_count is None:
-        # Defensive: scalar can return None on empty result; treat as 0.
-        claim_count = 0
-
+    # F-PR25-R4-002 fix continued: persist the *resolved* claim_ids
+    # in the artifact body so the scope is frozen at promotion time.
+    # ``claim_count`` equals ``len(resolved_claim_ids)`` by
+    # construction now.
     payload: dict[str, Any] = {
         "algorithm": _PROMOTION_ALGORITHM_ID,
         "project_id": str(project_id),
         "research_task_id": str(research_task_id),
         "evidence_set_hash": evidence_set_hash,
         "summary": _canonical_summary(summary),
-        "claim_count": int(claim_count),
-        "claim_ids": [str(c) for c in sorted(claim_ids)],
+        "claim_count": len(resolved_claim_ids),
+        "claim_ids": [str(c) for c in resolved_claim_ids],
         "evidence_item_ids": [str(e) for e in sorted(evidence_item_ids)],
+        # F-PR25-R4-003 trace: record parent for audit even though it
+        # is also on the artifact row (downstream consumers reading
+        # only content_jsonb need it).
+        "parent_artifact_id": (
+            str(parent_artifact_id) if parent_artifact_id is not None else None
+        ),
     }
     content_hash = _content_hash(payload)
 

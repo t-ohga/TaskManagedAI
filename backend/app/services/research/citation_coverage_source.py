@@ -276,19 +276,29 @@ async def compute_citation_coverage(
             if scoped_claim_filter:
                 grounded_stmt = grounded_stmt.where(or_(*scoped_claim_filter))
 
-    # F-PR25-R2-003 fix (Codex R2 P1): SP-010 QL-C spec line 165 says
-    # an AgentRun whose latest ``ContextSnapshot.evidence_set_hash`` is
-    # null must be included in the denominator with numerator=0
-    # (uncovered). Pre-fix the numerator query still counted any
-    # GroundingSupport rows attached to the run, so a run that never
-    # wired Research/Evidence could mask AC-KPI-04 failure by
-    # reporting positive coverage. Force grounded_claims to 0 when
-    # the snapshot hash is missing — the run *has* a defined scope
-    # (we already counted distinct_claims from the promotion
-    # artifact) but its ContextSnapshot does not yet have the hash
-    # binding the scope to the claim/evidence set, so we treat all
-    # claims as uncovered.
-    if evidence_set_hash is None:
+    # F-PR25-R2-003 + F-PR25-R4-004 fix: the numerator is forced to 0
+    # unless the ContextSnapshot.evidence_set_hash actually binds the
+    # **promoted** scope. SP-010 QL-C spec line 165 only requires
+    # checking that the hash is non-null, but a stale or unrelated
+    # snapshot hash with a non-null value can otherwise pass
+    # AC-KPI-04 with positive coverage on a run whose ContextSnapshot
+    # never bound the promoted claim/evidence set. Verify the snapshot
+    # hash matches one of the resolved promotion artifacts'
+    # ``evidence_set_hash`` before allowing a non-zero numerator.
+    promotion_hashes: set[str] = set()
+    for (content_jsonb,) in promotion_rows:
+        cjson = content_jsonb or {}
+        promo_hash = cjson.get("evidence_set_hash")
+        if isinstance(promo_hash, str):
+            promotion_hashes.add(promo_hash)
+
+    snapshot_matches_promotion = (
+        evidence_set_hash is not None
+        and evidence_set_hash in promotion_hashes
+    )
+
+    if not snapshot_matches_promotion:
+        # null / mismatched snapshot hash → numerator=0 (uncovered).
         grounded_claims_final = 0
     else:
         grounded_claims_final = int((await session.scalar(grounded_stmt)) or 0)
