@@ -89,8 +89,8 @@ def _sample_public_fixture() -> dict[str, Any]:
 
 def _redacted_fixture(kind: str) -> dict[str, Any]:
     return {
-        "fixture_id": f"AC-HARD-03_v2026.05.01-skeleton_{kind}_redacted_case",
-        "dataset_version_id": "v2026.05.01-skeleton",
+        "fixture_id": f"AC-HARD-03_v2026.05.16-sprint10-batch5_{kind}_redacted_case",
+        "dataset_version_id": "v2026.05.16-sprint10-batch5",
         "fixture_kind": kind,
         "gate_id": "AC-HARD-03",
         "metric_key": "tenant_isolation_negative_pass",
@@ -258,7 +258,7 @@ def _direct_redacted_fixture(
     metadata: dict[str, Any] | None = None,
 ) -> RedactedFixture:
     return RedactedFixture(
-        fixture_id="AC-HARD-03_v2026.05.01-skeleton_private_holdout_direct_case",
+        fixture_id="AC-HARD-03_v2026.05.16-sprint10-batch5_private_holdout_direct_case",
         dataset_version_id=dataset_version_id,
         fixture_kind=cast(Any, fixture_kind),
         gate_id="AC-HARD-03",
@@ -350,8 +350,8 @@ def test_read_json_object_rejects_duplicate_expected_decision_in_redacted(
     redacted_path.parent.mkdir(parents=True, exist_ok=True)
     redacted_path.write_text(
         """{
-  "fixture_id": "AC-HARD-03_v2026.05.01-skeleton_private_holdout_duplicate_expected_decision",
-  "dataset_version_id": "v2026.05.01-skeleton",
+  "fixture_id": "AC-HARD-03_v2026.05.16-sprint10-batch5_private_holdout_duplicate_expected_decision",
+  "dataset_version_id": "v2026.05.16-sprint10-batch5",
   "fixture_kind": "private_holdout",
   "gate_id": "AC-HARD-03",
   "metric_key": "tenant_isolation_negative_pass",
@@ -401,7 +401,7 @@ def test_existing_sample_passes_strict_json_parse() -> None:
     """F-027 (R24): 既存 sample は strict parser でも通過する。"""
     data = _read_json_object(BASE_PATH / "public_regression/sample.json")
 
-    assert data["fixture_id"] == "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role"
+    assert data["fixture_id"] == "AC-HARD-03_v2026.05.16-sprint10-batch5_cross_tenant_select_app_role"
     assert data["metadata"]["created_at"] == "2026-05-01"
 
 
@@ -410,7 +410,7 @@ def test_load_manifest_normalizes_ac_hard_03_gate_id() -> None:
 
     assert manifest["gate_id"] == "AC-HARD-03"
     assert manifest["metric_key"] == "tenant_isolation_negative_pass"
-    assert manifest["dataset_version_id"] == "v2026.05.01-skeleton"
+    assert manifest["dataset_version_id"] == "v2026.05.16-sprint10-batch5"
 
 
 def test_load_manifest_rejects_top_level_expected_decision(tmp_path: Path) -> None:
@@ -771,15 +771,15 @@ def test_load_public_regression_fixtures_rejects_invalid_metadata_created_at_for
 def test_load_public_regression_fixtures_reads_expected_values() -> None:
     fixtures = load_public_regression_fixtures(BASE_PATH)
 
-    # Sprint 10 batch 5 (BL-0029c full integration) added 10 cross-tenant
+    # Sprint 10 batch 5 R1 fix (BL-0029c + Codex F-PR27-R1-002 P2 adopt) added 13 cross-tenant
     # fixtures for research_tasks / claims / evidence_items /
     # evidence_sources / research_to_ticket / citation_coverage, plus
-    # the original Sprint 2 skeleton. Total = 11 (manifest expected_count = 11).
-    assert len(fixtures) == 11
+    # the original Sprint 2 skeleton. Total = 14 (manifest expected_count = 14).
+    assert len(fixtures) == 14
 
     by_id = {f.fixture_id: f for f in fixtures}
     legacy = by_id[
-        "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role"
+        "AC-HARD-03_v2026.05.16-sprint10-batch5_cross_tenant_select_app_role"
     ]
     assert isinstance(legacy, PublicFixture)
     assert legacy.fixture_kind == "public_regression"
@@ -867,10 +867,10 @@ def test_extract_db_secret_metadata_keys_raises_on_key_count_mismatch(
 def test_existing_sample_passes_raw_secret_check() -> None:
     fixtures = load_public_regression_fixtures(BASE_PATH)
 
-    # Sprint 10 batch 5 expanded the fixture set from 1 to 11. Verify
+    # Sprint 10 batch 5 expanded the fixture set from 1 to 14. Verify
     # that EVERY fixture (legacy + new) passes the raw-secret canary
     # check on metadata and input (anti-gaming + raw secret 非含 invariant).
-    assert len(fixtures) == 11
+    assert len(fixtures) == 14
     for fixture in fixtures:
         assert _find_prohibited_keys_recursive(
             fixture.metadata,
@@ -883,7 +883,7 @@ def test_existing_sample_passes_raw_secret_check() -> None:
     # Spot-check the legacy Sprint 2 fixture metadata.
     by_id = {f.fixture_id: f for f in fixtures}
     legacy = by_id[
-        "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role"
+        "AC-HARD-03_v2026.05.16-sprint10-batch5_cross_tenant_select_app_role"
     ]
     assert legacy.metadata["created_at"] == "2026-05-01"
 
@@ -1263,7 +1263,7 @@ def test_load_public_regression_fixtures_rejects_extra_file(tmp_path: Path) -> N
     _write_public_sample(base_path)
 
     extra = _sample_public_fixture()
-    extra["fixture_id"] = "AC-HARD-03_v2026.05.01-skeleton_extra_cross_tenant_select"
+    extra["fixture_id"] = "AC-HARD-03_v2026.05.16-sprint10-batch5_extra_cross_tenant_select"
     extra["case_key"] = "extra_cross_tenant_select"
     _write_json(base_path / "public_regression/extra.json", extra)
 
@@ -1284,7 +1284,7 @@ def test_load_public_regression_fixtures_rejects_missing_registered_index_entry(
     tmp_path: Path,
 ) -> None:
     base_path = tmp_path / "tenant_isolation"
-    orphan_fixture_id = "AC-HARD-03_v2026.05.01-skeleton_deleted_public_case"
+    orphan_fixture_id = "AC-HARD-03_v2026.05.16-sprint10-batch5_deleted_public_case"
     _write_manifest(
         base_path,
         public_expected_count=0,
@@ -1357,7 +1357,7 @@ def test_load_public_regression_fixtures_rejects_unregistered_fixture(
 ) -> None:
     base_path = tmp_path / "tenant_isolation"
     fixture = _sample_public_fixture()
-    fixture["fixture_id"] = "AC-HARD-03_v2026.05.01-skeleton_unregistered_case"
+    fixture["fixture_id"] = "AC-HARD-03_v2026.05.16-sprint10-batch5_unregistered_case"
     fixture["case_key"] = "unregistered_case"
     _write_manifest(base_path, public_expected_count=1)
     _write_expected_schema(base_path)
@@ -1386,12 +1386,12 @@ def test_load_public_regression_fixtures_accepts_unmodified_registered_fixture()
     fixtures = load_public_regression_fixtures(BASE_PATH)
     manifest = load_manifest(BASE_PATH / "manifest.json")
 
-    # Sprint 10 batch 5: fixture count is now 11 (added 10 cross-tenant).
+    # Sprint 10 batch 5: fixture count is now 14 (added 13 cross-tenant including claims/evidence_items mutator coverage).
     # Validate every registered fixture has a sha256 entry in the
     # immutable_index and a split == "public_regression". The pinned
     # sha256 of the original Sprint 2 legacy fixture is verified
     # separately via its registered entry below.
-    assert len(fixtures) == 11
+    assert len(fixtures) == 14
     immutable_index = manifest["fixture_immutable_index"]
     for fixture in fixtures:
         registered = immutable_index[fixture.fixture_id]

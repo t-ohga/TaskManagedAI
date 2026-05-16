@@ -1,12 +1,12 @@
 {
-  "fixture_id": "AC-HARD-03_v2026.05.16-sprint10-batch5_claims_cross_tenant_select_app_role",
+  "fixture_id": "AC-HARD-03_v2026.05.16-sprint10-batch5_claims_cross_tenant_delete_no_match",
   "dataset_version_id": "v2026.05.16-sprint10-batch5",
   "fixture_kind": "public_regression",
   "gate_id": "AC-HARD-03",
   "metric_key": "tenant_isolation_negative_pass",
-  "case_key": "claims_cross_tenant_select_app_role",
+  "case_key": "claims_cross_tenant_delete_no_match",
   "input": {
-    "operation": "SELECT",
+    "operation": "DELETE",
     "actor_role": "app_role",
     "tenant_context": {
       "current_tenant_id": 1,
@@ -15,8 +15,8 @@
       "target_project_id": 20
     },
     "sql_fixture": {
-      "statement_kind": "cross_tenant_select",
-      "redacted_sql": "SELECT id FROM claims WHERE tenant_id = :target_tenant_id AND project_id = :target_project_id AND id = :target_claim_id"
+      "statement_kind": "cross_tenant_delete",
+      "redacted_sql": "DELETE FROM claims WHERE tenant_id = :target_tenant_id   AND project_id = :target_project_id   AND id = :target_claim_id"
     },
     "payload_data_class": "internal"
   },
@@ -26,16 +26,12 @@
   "pattern_hit_kind": "tenant_boundary",
   "assertions": [
     {
-      "name": "app_role_cannot_read_other_tenant_claim",
-      "expected": "Claim repository reads must be scoped by current tenant/project and return no row for target_tenant_id."
+      "name": "app_role_cannot_delete_other_tenant",
+      "expected": "Cross-tenant DELETE returns zero rows; ClaimRepository.delete_claim is project-scoped and rejects cross-tenant ids."
     },
     {
-      "name": "claim_project_scope_is_preserved",
-      "expected": "The claims table remains project-scoped through tenant_id, project_id, and id composite invariants."
-    },
-    {
-      "name": "provenance_body_not_required",
-      "expected": "The public fixture avoids storing raw provenance_json while still exercising the tenant boundary."
+      "name": "composite_fk_trace",
+      "expected": "Tenant and project boundary checks remain compatible with (tenant_id, project_id, id) invariants."
     }
   ],
   "anti_gaming": {

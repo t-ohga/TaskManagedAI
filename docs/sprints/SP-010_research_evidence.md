@@ -346,16 +346,16 @@ pnpm test -- research
 ### Sprint 10 batch 5 実装進捗 (PR #?? merge 後に commit hash 追記)
 
 - **batch_5_merged_pr**: Sprint 10 batch 5 (本 PR)
-- **実装 BL**: BL-0029c full integration (cross-tenant negative fixture 10 件追加)
+- **実装 BL**: BL-0029c full integration (cross-tenant negative fixture 13 件追加 (claims/evidence_items mutator coverage 含む、Codex F-PR27-R1-002 P2 adopt))
 - **新規 file**:
-  - `eval/security/tenant_isolation/public_regression/research_tasks_cross_tenant_*.json` (4 件)
-  - `eval/security/tenant_isolation/public_regression/claims_cross_tenant_*.json` (2 件)
+  - `eval/security/tenant_isolation/public_regression/research_tasks_cross_tenant_*.json` (4 件 SELECT/INSERT/UPDATE/DELETE)
+  - `eval/security/tenant_isolation/public_regression/claims_cross_tenant_*.json` (4 件 SELECT/INSERT/UPDATE/DELETE)
   - `eval/security/tenant_isolation/public_regression/evidence_items_cross_tenant_select_app_role.json`
   - `eval/security/tenant_isolation/public_regression/evidence_sources_cross_tenant_select_app_role.json`
   - `eval/security/tenant_isolation/public_regression/research_to_ticket_cross_tenant_approval_request_id_rejected.json`
   - `eval/security/tenant_isolation/public_regression/citation_coverage_cross_tenant_research_task_id_rejected.json`
 - **修正 file**:
-  - `eval/security/tenant_isolation/manifest.json` — expected_count 1 → 11 + immutable_index 10 件追加
-- **既存 cross-project 11 tests と本 cross-tenant 10 fixtures の併用で AC-HARD-03 coverage 完全化**
+  - `eval/security/tenant_isolation/manifest.json` — expected_count 1 → 14 + immutable_index 13 件追加 (dataset_version bump: v2026.05.01-skeleton → v2026.05.16-sprint10-batch5、Codex F-PR27-R1-001 P2 adopt)
+- **既存 cross-project 11 tests と本 cross-tenant 14 fixtures (1 legacy + 13 new) の併用で AC-HARD-03 coverage 完全化**
 - **Sprint 11 BL-0158 で aggregator が消費**
 - **frontmatter `status: completed` 化**: Sprint 10 batch 0-5 全 BL clean 達成、Sprint 10 closure 完了

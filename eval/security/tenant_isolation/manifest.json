@@ -1,11 +1,11 @@
 {
   "hard_gate_id": "AC-HARD-03",
   "metric": "tenant_isolation_negative_pass",
-  "dataset_version": "v2026.05.01-skeleton",
+  "dataset_version": "v2026.05.16-sprint10-batch5",
   "splits": {
     "public_regression": {
       "path": "public_regression/",
-      "expected_count": 11,
+      "expected_count": 14,
       "purpose": "PR レビュー時の regression check"
     },
     "private_holdout": {
@@ -22,58 +22,73 @@
   },
   "expected_schema": "expected_schema.json",
   "fixture_immutable_index": {
-    "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role": {
-      "sha256": "e019c3e5a45dae6b0eb5fccbf96aae139a4c7d784947d72d7706048bde39ccd4",
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_citation_coverage_cross_tenant_research_task_id_rejected": {
+      "sha256": "3ccf3d88fb6eb785c327967d3891190c74d1d198086eb974eab21a018c3456f5",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_claims_cross_tenant_delete_no_match": {
+      "sha256": "64d2bb4fad8bff777b93a0584b195905bfd63c3a88a3c012eb2f645f9ede492c",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_claims_cross_tenant_insert_composite_fk": {
+      "sha256": "77bd0b934beba99298a7c9a5e7e084804be618b2564cee863ae599b39578a503",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_claims_cross_tenant_select_app_role": {
+      "sha256": "88babfabffada9e8118afaa581a240cac04bcacb802473e3df8aef756bd0ddfe",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_claims_cross_tenant_update_no_match": {
+      "sha256": "8192df2318afd59297013a87a5a03973b225113a6af675b410d991418fec0430",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_cross_tenant_select_app_role": {
+      "sha256": "ed98e9d32f8a6f7d0c586480a1695e4f99f78397a87d7469a8cd0a49317ec7cf",
       "split": "public_regression",
       "created_at": "2026-05-01"
     },
-    "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_select_app_role": {
-      "sha256": "32e2bb3847041e9b0b385e84d601a16b387f83a49cee42a3c7dcdadc47705561",
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_evidence_items_cross_tenant_delete_no_match": {
+      "sha256": "6aee3c25a363117039ed97c28d587a3ed4518df6fd0f955ad1d8971fe87ea57c",
       "split": "public_regression",
       "created_at": "2026-05-16"
     },
-    "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_insert_unique_id": {
-      "sha256": "e0ea3b3b79e8b6b6e0b25ac9896695e437310725241192107d66a681e82b8b99",
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_evidence_items_cross_tenant_select_app_role": {
+      "sha256": "5e8a4b173db3717b36c9cba80df982161b95f5725b5a20e1043b4eebffb0ecb6",
       "split": "public_regression",
       "created_at": "2026-05-16"
     },
-    "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_update_no_match": {
-      "sha256": "27d9b401872b134d1a04579ce2072113b089e5ab65bacf34c93dc3b9f1f64b34",
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_evidence_sources_cross_tenant_select_app_role": {
+      "sha256": "ec037acc6c08d03bfc65b4072b52fc7cfadcb1589ac9a94546143e8c940db1d4",
       "split": "public_regression",
       "created_at": "2026-05-16"
     },
-    "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_delete_no_match": {
-      "sha256": "ba4b88dfdf2027de4e9fe5ff9055d28bd32ce76a4e66a44ff1749073318074f5",
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_research_tasks_cross_tenant_delete_no_match": {
+      "sha256": "63aa8c353685420b8875427fce1183ec4ff986567c8d1c6c732e889fba9e602b",
       "split": "public_regression",
       "created_at": "2026-05-16"
     },
-    "AC-HARD-03_v2026.05.01-skeleton_claims_cross_tenant_select_app_role": {
-      "sha256": "916170a57c7fe9e477cf92e419efcc6a0a4008bf8f0fe0f8cfcbc23976dc2f5f",
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_research_tasks_cross_tenant_insert_unique_id": {
+      "sha256": "a68f49b561649a231168ecc14cc6f51604899140477198c1af8bb68e412fbe9a",
       "split": "public_regression",
       "created_at": "2026-05-16"
     },
-    "AC-HARD-03_v2026.05.01-skeleton_claims_cross_tenant_insert_composite_fk": {
-      "sha256": "7bfe13a89cf0e091d65b8d72a97ed870d163414d899415a2e3d0d4bd06fa0bb3",
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_research_tasks_cross_tenant_select_app_role": {
+      "sha256": "1d07fa957c8c7298ef49821494e881b5e30940eb5defe964b346d40679f1cb66",
       "split": "public_regression",
       "created_at": "2026-05-16"
     },
-    "AC-HARD-03_v2026.05.01-skeleton_evidence_items_cross_tenant_select_app_role": {
-      "sha256": "6a3bcd915cdb68cb4ad2dc288295556f0860ff966e4f0ffe19fd36e21cfa4e5c",
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_research_tasks_cross_tenant_update_no_match": {
+      "sha256": "1b87ed2347dac71928b55799ccc07f372d940278ba91f8a822b9ab5317e15c92",
       "split": "public_regression",
       "created_at": "2026-05-16"
     },
-    "AC-HARD-03_v2026.05.01-skeleton_evidence_sources_cross_tenant_select_app_role": {
-      "sha256": "849b6469da6cf8d32440e3933f2834fba799a7ded947ae4390883ab118f0e283",
-      "split": "public_regression",
-      "created_at": "2026-05-16"
-    },
-    "AC-HARD-03_v2026.05.01-skeleton_research_to_ticket_cross_tenant_approval_request_id_rejected": {
-      "sha256": "ac3794ba6c7e42e21cec57737705313b7065000cb6f8889177b14af1b1a4e2b9",
-      "split": "public_regression",
-      "created_at": "2026-05-16"
-    },
-    "AC-HARD-03_v2026.05.01-skeleton_citation_coverage_cross_tenant_research_task_id_rejected": {
-      "sha256": "a26d2b5ed1d7c334fbc886d27a5779c5d58bbcc240859c74bde9326a591239f4",
+    "AC-HARD-03_v2026.05.16-sprint10-batch5_research_to_ticket_cross_tenant_approval_request_id_rejected": {
+      "sha256": "67bb61ca14050f13f647b8f29da9ff7a027055cf99b6a3c60e8570562a4b1638",
       "split": "public_regression",
       "created_at": "2026-05-16"
     }

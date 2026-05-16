@@ -1,6 +1,6 @@
 {
-  "fixture_id": "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role",
-  "dataset_version_id": "v2026.05.01-skeleton",
+  "fixture_id": "AC-HARD-03_v2026.05.16-sprint10-batch5_cross_tenant_select_app_role",
+  "dataset_version_id": "v2026.05.16-sprint10-batch5",
   "fixture_kind": "public_regression",
   "gate_id": "AC-HARD-03",
   "metric_key": "tenant_isolation_negative_pass",
@@ -49,4 +49,3 @@
     "notes": "No production row IDs or personal data. Numeric tenant and project IDs are synthetic fixture values."
   }
 }
-
