@@ -48,23 +48,87 @@ def _hash_text(value: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+# RFC 8785 / I-JSON safe integer range (IEEE-754 double precision interior).
+# Values outside (-2^53, 2^53) cannot round-trip through JCS-compliant
+# JavaScript implementations (they use double-precision floats), so we
+# reject them to keep ``evidence_set_hash`` interoperable.
+_JCS_SAFE_INT_MAX = 2**53
+
+
+def _jcs_expand_exponential_to_fixed(rendered: str) -> str:
+    """Expand a Python exponential repr (``"1e-06"``) to its JCS fixed form.
+
+    ``f"{x:.{N}f}"`` exposes IEEE-754 rounding artifacts for many small
+    floats (e.g. ``f"{1e-06:.21f}" == "0.000001000000000000000"`` but
+    ``f"{1e-06:.16f} != "0.000001..."`` cleanly), so we instead walk the
+    shortest-round-trip mantissa digits returned by ``repr(x)`` and shift
+    the decimal point by the explicit exponent. This preserves the
+    shortest-decimal property (F-PR22-R3-004 P2 adopt).
+    """
+
+    lowered = rendered.lower()
+    if "e" not in lowered:
+        return rendered
+
+    mantissa_str, exp_str = lowered.split("e")
+    exp_int = int(exp_str)
+
+    sign = ""
+    if mantissa_str.startswith("-"):
+        sign = "-"
+        mantissa_str = mantissa_str[1:]
+    elif mantissa_str.startswith("+"):
+        mantissa_str = mantissa_str[1:]
+
+    if "." in mantissa_str:
+        int_part, frac_part = mantissa_str.split(".", 1)
+    else:
+        int_part, frac_part = mantissa_str, ""
+
+    digits = int_part + frac_part
+    decimal_pos = len(int_part) + exp_int
+
+    if decimal_pos <= 0:
+        result = "0." + "0" * (-decimal_pos) + digits
+    elif decimal_pos >= len(digits):
+        result = digits + "0" * (decimal_pos - len(digits))
+    else:
+        result = digits[:decimal_pos] + "." + digits[decimal_pos:]
+
+    if "." in result:
+        result = result.rstrip("0").rstrip(".")
+    if not result:
+        result = "0"
+    return sign + result
+
+
 def _jcs_format_number(value: int | float) -> str:
     """Format a number per RFC 8785 §3.2.2.3 / ECMA-262 §7.1.12.1.
 
-    Python ``json.dumps`` diverges from RFC 8785 (JCS) in two ways that
-    matter for cross-implementation reproducibility of ``evidence_set_hash``:
+    Python ``json.dumps`` diverges from RFC 8785 (JCS) in several ways
+    that matter for cross-implementation reproducibility of
+    ``evidence_set_hash``:
 
     - Whole-number floats emit a trailing ``.0`` (``1.0`` -> ``"1.0"``)
       while JCS / ECMAScript ``Number.prototype.toString`` collapses them
-      to integer form (``"1"``) (F-PR22-003 P2 adopt).
+      to integer form (``"1"``) when inside the fixed-notation range
+      (F-PR22-003 P2 adopt).
     - Very small floats emit exponential form (``1e-06``) even when the
       exponent is within the ECMAScript fixed-notation range
       ``[-6, 21)`` where JCS expects fixed-decimal form (``"0.000001"``)
       (F-PR22-R2-004 P2 adopt).
+    - Integer-valued floats whose magnitude is outside the ECMAScript
+      fixed-notation range must serialize in exponential form
+      (e.g. ``1e21`` -> ``"1e+21"`` per ECMAScript Number.toString,
+      F-PR22-R3-001 P2 adopt).
+    - Integers outside the I-JSON safe range cannot round-trip through
+      JCS-compliant JavaScript implementations and are rejected
+      (F-PR22-R3-003 P2 adopt).
+    - Fixed-form decimals for small floats use the shortest round-trip
+      representation rather than precision-bounded ``f"{x:.21f}"``
+      output, which exposes IEEE-754 rounding artifacts
+      (F-PR22-R3-004 P2 adopt).
 
-    This formatter implements the minimal RFC 8785 number rules needed
-    for ``evidence_set_hash`` so server-emitted hashes match other JCS-
-    compliant implementations (e.g. Sprint 11 evaluators).
     NaN / +-Infinity are rejected as JSON-incompatible.
     """
 
@@ -73,6 +137,11 @@ def _jcs_format_number(value: int | float) -> str:
             "bool must be encoded as JSON true/false, not as a number."
         )
     if isinstance(value, int):
+        if not (-_JCS_SAFE_INT_MAX < value < _JCS_SAFE_INT_MAX):
+            raise ValueError(
+                f"integer {value!r} is outside the JCS I-JSON safe range "
+                f"(|n| < 2^53); convert to bounded-precision form before hashing."
+            )
         return str(value)
     if not isinstance(value, float):
         raise TypeError(
@@ -87,29 +156,32 @@ def _jcs_format_number(value: int | float) -> str:
     if value == 0.0:
         return "0"
 
-    if value.is_integer():
-        return str(int(value))
-
     abs_value = abs(value)
     decimal_exp = math.floor(math.log10(abs_value))
 
     if -6 <= decimal_exp < 21:
         # Fixed notation per ECMA-262.
-        # Python ``repr`` is round-trip safe (shortest decimal repr); if
-        # repr produced exponential form, fall back to a precision-bounded
-        # fixed format and strip trailing zeros.
+        if value.is_integer():
+            # 1.0 -> "1", 1234.0 -> "1234". F-PR22-R3-003 P2 adopt: the
+            # I-JSON safe-range check is enforced for Python ``int``
+            # sources (which carry arbitrary precision and would otherwise
+            # diverge from JavaScript-side round-tripping) but not for
+            # ``float`` sources -- IEEE-754 floats are already in
+            # double-precision representation, so integer-valued floats
+            # in the ECMAScript fixed range (e.g. ``1e20``) reproduce
+            # consistently across JCS implementations.
+            return str(int(value))
         rendered = repr(value)
         if "e" in rendered or "E" in rendered:
-            precision = max(0, 17 - decimal_exp)
-            rendered = format(value, f".{precision}f")
-            if "." in rendered:
-                rendered = rendered.rstrip("0").rstrip(".")
+            rendered = _jcs_expand_exponential_to_fixed(rendered)
         if not rendered or rendered in {"-", "-."}:
             rendered = "0"
         return rendered
 
-    # Exponential notation: dE+/-n with leading-zero stripped on the
-    # exponent and no trailing zeros on the mantissa.
+    # Exponential notation per ECMA-262: dE+/-n with no trailing zeros on
+    # the mantissa and no leading zeros on the exponent. Both integer-
+    # valued floats outside the fixed range (e.g. 1e21 -> "1e+21",
+    # F-PR22-R3-001 P2 adopt) and small floats below 1e-6 land here.
     rendered = repr(value)
     if "e" not in rendered and "E" not in rendered:
         rendered = format(value, ".17e")
@@ -133,14 +205,30 @@ def _jcs_encode_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def _jcs_utf16_sort_key(key: str) -> bytes:
+    """Return a sort key matching JCS §3.2.3 UTF-16 code-unit ordering.
+
+    JCS canonical JSON sorts object members by UTF-16 code-unit
+    comparison rather than Unicode code-point comparison. Python's
+    default ``str`` ordering compares code points, which diverges for
+    non-BMP characters (surrogate-paired code points such as emoji).
+    Encoding to UTF-16 big-endian bytes produces a sequence whose
+    lexicographic byte comparison is equivalent to UTF-16 code-unit
+    comparison (F-PR22-R3-002 P2 adopt).
+    """
+
+    return key.encode("utf-16-be")
+
+
 def _jcs_canonical_json(value: object) -> str:
     """Minimal RFC 8785 canonical JSON serializer (F-PR22-R2-004 P2 adopt).
 
     Differs from ``backend.app.domain.agent_runtime.operation_context.
     canonical_json_dumps`` in that numbers go through ``_jcs_format_number``
     so whole-number floats collapse to integer form and small floats use
-    fixed-decimal notation within the ECMAScript range, matching other
-    JCS / RFC 8785 implementations.
+    fixed-decimal notation within the ECMAScript range, and object keys
+    are ordered by UTF-16 code units (JCS §3.2.3) so non-BMP characters
+    sort consistently with other JCS implementations.
     """
 
     if value is None:
@@ -152,7 +240,7 @@ def _jcs_canonical_json(value: object) -> str:
     if isinstance(value, str):
         return _jcs_encode_string(value)
     if isinstance(value, Mapping):
-        ordered = sorted(value.items(), key=lambda kv: str(kv[0]))
+        ordered = sorted(value.items(), key=lambda kv: _jcs_utf16_sort_key(str(kv[0])))
         return (
             "{"
             + ",".join(
