@@ -121,6 +121,21 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
                 "evidence_set_reference and "
                 "inherit_evidence_set_hash_from_snapshot_id are mutually exclusive."
             )
+        # F-PR22-R2-007 P2 adopt: only resume snapshots may inherit a prior
+        # ``evidence_set_hash``. input / pre_tool / post_tool / final
+        # snapshots are paired with the currently active research binding
+        # and must recompute the hash from the latest ResearchSetReference
+        # (or fall back to the deterministic empty-set hash). Allowing
+        # inheritance for non-resume kinds would let callers create new
+        # snapshots that carry stale evidence bindings.
+        if (
+            inherit_evidence_set_hash_from_snapshot_id is not None
+            and snapshot_kind != "resume"
+        ):
+            raise ValueError(
+                "inherit_evidence_set_hash_from_snapshot_id is only valid "
+                "for snapshot_kind='resume'."
+            )
 
         self._assert_snapshot_contract(
             prompt_pack_version=prompt_pack_version,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import math
 import unicodedata
 from collections import defaultdict
 from collections.abc import Mapping
@@ -19,7 +21,6 @@ from backend.app.db.models.claim import Claim
 from backend.app.db.models.evidence_item import EvidenceItem
 from backend.app.db.models.evidence_source import EvidenceSource
 from backend.app.db.models.research_task import ResearchTask
-from backend.app.domain.agent_runtime.operation_context import canonical_json_dumps
 from backend.app.schemas.research.evidence_set import ResearchSetReference
 
 _ALGORITHM_ID = "taskmanagedai.evidence_set_hash.v1"
@@ -47,37 +48,128 @@ def _hash_text(value: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def _jcs_number_normalize(value: object) -> object:
-    """Normalize numeric values for JCS / RFC 8785 compatible canonicalization.
+def _jcs_format_number(value: int | float) -> str:
+    """Format a number per RFC 8785 §3.2.2.3 / ECMA-262 §7.1.12.1.
 
-    Python ``json.dumps`` emits whole-number floats with a trailing ``.0``
-    (``1.0`` -> ``"1.0"``) while JCS / ECMA-262 canonical form drops the
-    fractional part when the value is an integer (``"1"``). For
-    cross-implementation reproducibility of ``evidence_set_hash``
-    (F-PR22-003 P2 adopt), this helper collapses integer-valued floats to
-    ``int`` before passing to ``canonical_json_dumps``. Lists and mappings
-    are walked recursively; other types pass through unchanged. ``bool`` is
-    treated as itself (JSON booleans), not coerced.
+    Python ``json.dumps`` diverges from RFC 8785 (JCS) in two ways that
+    matter for cross-implementation reproducibility of ``evidence_set_hash``:
+
+    - Whole-number floats emit a trailing ``.0`` (``1.0`` -> ``"1.0"``)
+      while JCS / ECMAScript ``Number.prototype.toString`` collapses them
+      to integer form (``"1"``) (F-PR22-003 P2 adopt).
+    - Very small floats emit exponential form (``1e-06``) even when the
+      exponent is within the ECMAScript fixed-notation range
+      ``[-6, 21)`` where JCS expects fixed-decimal form (``"0.000001"``)
+      (F-PR22-R2-004 P2 adopt).
+
+    This formatter implements the minimal RFC 8785 number rules needed
+    for ``evidence_set_hash`` so server-emitted hashes match other JCS-
+    compliant implementations (e.g. Sprint 11 evaluators).
+    NaN / +-Infinity are rejected as JSON-incompatible.
     """
 
-    if isinstance(value, bool):  # bool is subclass of int; guard first
-        return value
-    if isinstance(value, float):
-        if value.is_integer():
-            return int(value)
-        return value
+    if isinstance(value, bool):  # bool is subclass of int; reject early
+        raise TypeError(
+            "bool must be encoded as JSON true/false, not as a number."
+        )
+    if isinstance(value, int):
+        return str(value)
+    if not isinstance(value, float):
+        raise TypeError(
+            f"unsupported numeric type for JCS serialization: {type(value)!r}"
+        )
+
+    if math.isnan(value) or math.isinf(value):
+        raise ValueError(
+            f"NaN / Infinity are not permitted in canonical JSON: {value!r}"
+        )
+
+    if value == 0.0:
+        return "0"
+
+    if value.is_integer():
+        return str(int(value))
+
+    abs_value = abs(value)
+    decimal_exp = math.floor(math.log10(abs_value))
+
+    if -6 <= decimal_exp < 21:
+        # Fixed notation per ECMA-262.
+        # Python ``repr`` is round-trip safe (shortest decimal repr); if
+        # repr produced exponential form, fall back to a precision-bounded
+        # fixed format and strip trailing zeros.
+        rendered = repr(value)
+        if "e" in rendered or "E" in rendered:
+            precision = max(0, 17 - decimal_exp)
+            rendered = format(value, f".{precision}f")
+            if "." in rendered:
+                rendered = rendered.rstrip("0").rstrip(".")
+        if not rendered or rendered in {"-", "-."}:
+            rendered = "0"
+        return rendered
+
+    # Exponential notation: dE+/-n with leading-zero stripped on the
+    # exponent and no trailing zeros on the mantissa.
+    rendered = repr(value)
+    if "e" not in rendered and "E" not in rendered:
+        rendered = format(value, ".17e")
+    mantissa_str, exp_str = rendered.lower().split("e")
+    if "." in mantissa_str:
+        mantissa_str = mantissa_str.rstrip("0").rstrip(".")
+    if not mantissa_str or mantissa_str == "-":
+        mantissa_str = "0"
+    exp_int = int(exp_str)
+    return f"{mantissa_str}e{exp_int:+d}"
+
+
+def _jcs_encode_string(value: str) -> str:
+    """Encode a JSON string per RFC 8259 §7 with NFC-normalized contents.
+
+    NFC normalization happens at the outer ``_hash_canonical_payload``
+    boundary to keep the JCS encoding pure; here we delegate JSON string
+    escaping to ``json.dumps`` (which is JCS-compatible for strings).
+    """
+
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _jcs_canonical_json(value: object) -> str:
+    """Minimal RFC 8785 canonical JSON serializer (F-PR22-R2-004 P2 adopt).
+
+    Differs from ``backend.app.domain.agent_runtime.operation_context.
+    canonical_json_dumps`` in that numbers go through ``_jcs_format_number``
+    so whole-number floats collapse to integer form and small floats use
+    fixed-decimal notation within the ECMAScript range, matching other
+    JCS / RFC 8785 implementations.
+    """
+
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return _jcs_format_number(value)
+    if isinstance(value, str):
+        return _jcs_encode_string(value)
     if isinstance(value, Mapping):
-        return {key: _jcs_number_normalize(val) for key, val in value.items()}
-    if isinstance(value, list):
-        return [_jcs_number_normalize(item) for item in value]
-    if isinstance(value, tuple):
-        return [_jcs_number_normalize(item) for item in value]
-    return value
+        ordered = sorted(value.items(), key=lambda kv: str(kv[0]))
+        return (
+            "{"
+            + ",".join(
+                f"{_jcs_encode_string(str(key))}:{_jcs_canonical_json(val)}"
+                for key, val in ordered
+            )
+            + "}"
+        )
+    if isinstance(value, list | tuple):
+        return "[" + ",".join(_jcs_canonical_json(item) for item in value) + "]"
+    raise TypeError(
+        f"unsupported type for canonical JSON: {type(value)!r}"
+    )
 
 
 def _hash_canonical_payload(payload: object) -> str:
-    normalized_payload = _jcs_number_normalize(payload)
-    canonical_json = canonical_json_dumps(normalized_payload)
+    canonical_json = _jcs_canonical_json(payload)
     normalized = unicodedata.normalize("NFC", canonical_json)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
@@ -99,8 +191,16 @@ def _normalize_url(value: str) -> str:
 
     try:
         port = parsed.port
-    except ValueError:
-        port = None
+    except ValueError as exc:
+        # F-PR22-R2-005 P2 adopt: a malformed / out-of-range port (e.g.
+        # ``http://example.com:99999/``) must be rejected at the URL
+        # normalization boundary rather than silently dropped. Dropping it
+        # collapses distinct evidence sources into the same hash, which
+        # would make ``evidence_set_hash`` ambiguous for AC-HARD-03 and
+        # AC-KPI-04 reproducibility. Fail-closed instead.
+        raise ValueError(
+            f"invalid port in evidence source URL: {value!r}"
+        ) from exc
 
     default_port = (scheme == "http" and port == 80) or (
         scheme == "https" and port == 443
