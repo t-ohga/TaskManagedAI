@@ -771,17 +771,35 @@ def test_load_public_regression_fixtures_rejects_invalid_metadata_created_at_for
 def test_load_public_regression_fixtures_reads_expected_values() -> None:
     fixtures = load_public_regression_fixtures(BASE_PATH)
 
-    assert len(fixtures) == 1
-    assert isinstance(fixtures[0], PublicFixture)
-    assert fixtures[0].fixture_id == "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role"
-    assert fixtures[0].fixture_kind == "public_regression"
-    assert fixtures[0].gate_id == "AC-HARD-03"
-    assert fixtures[0].metric_key == "tenant_isolation_negative_pass"
-    assert fixtures[0].expected_decision == "block"
-    assert fixtures[0].expected_failure == "tenant_boundary_violation"
-    assert fixtures[0].expected_reason_code == "tenant_boundary_violation"
-    assert fixtures[0].pattern_hit_kind == "tenant_boundary"
-    assert fixtures[0].assertions[0]["name"] == "app_role_cannot_read_other_tenant"
+    # Sprint 10 batch 5 R1 fix (BL-0029c + Codex F-PR27-R1-002 P2 adopt) added 13 cross-tenant
+    # fixtures for research_tasks / claims / evidence_items /
+    # evidence_sources / research_to_ticket / citation_coverage, plus
+    # the original Sprint 2 skeleton. Total = 17 (manifest expected_count = 17).
+    assert len(fixtures) == 17
+
+    by_id = {f.fixture_id: f for f in fixtures}
+    legacy = by_id[
+        "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role"
+    ]
+    assert isinstance(legacy, PublicFixture)
+    assert legacy.fixture_kind == "public_regression"
+    assert legacy.gate_id == "AC-HARD-03"
+    assert legacy.metric_key == "tenant_isolation_negative_pass"
+    assert legacy.expected_decision == "block"
+    assert legacy.expected_failure == "tenant_boundary_violation"
+    assert legacy.expected_reason_code == "tenant_boundary_violation"
+    assert legacy.pattern_hit_kind == "tenant_boundary"
+    assert legacy.assertions[0]["name"] == "app_role_cannot_read_other_tenant"
+
+    # All Sprint 10 batch 5 fixtures share the same gate / metric / decision
+    # invariants (anti-gaming: append-only refresh, same dataset_version).
+    for fixture in fixtures:
+        assert fixture.gate_id == "AC-HARD-03"
+        assert fixture.metric_key == "tenant_isolation_negative_pass"
+        assert fixture.expected_decision == "block"
+        assert fixture.expected_failure == "tenant_boundary_violation"
+        assert fixture.expected_reason_code == "tenant_boundary_violation"
+        assert fixture.pattern_hit_kind == "tenant_boundary"
 
 
 def test_prohibited_secret_metadata_keys_match_secret_refs_db_check() -> None:
@@ -849,16 +867,25 @@ def test_extract_db_secret_metadata_keys_raises_on_key_count_mismatch(
 def test_existing_sample_passes_raw_secret_check() -> None:
     fixtures = load_public_regression_fixtures(BASE_PATH)
 
-    assert len(fixtures) == 1
-    assert fixtures[0].metadata["created_at"] == "2026-05-01"
-    assert _find_prohibited_keys_recursive(
-        fixtures[0].metadata,
-        _PROHIBITED_SECRET_METADATA_KEYS,
-    ) == []
-    assert _find_prohibited_keys_recursive(
-        fixtures[0].input,
-        _PROHIBITED_SECRET_METADATA_KEYS,
-    ) == []
+    # Sprint 10 batch 5 expanded the fixture set from 1 to 17. Verify
+    # that EVERY fixture (legacy + new) passes the raw-secret canary
+    # check on metadata and input (anti-gaming + raw secret 非含 invariant).
+    assert len(fixtures) == 17
+    for fixture in fixtures:
+        assert _find_prohibited_keys_recursive(
+            fixture.metadata,
+            _PROHIBITED_SECRET_METADATA_KEYS,
+        ) == []
+        assert _find_prohibited_keys_recursive(
+            fixture.input,
+            _PROHIBITED_SECRET_METADATA_KEYS,
+        ) == []
+    # Spot-check the legacy Sprint 2 fixture metadata.
+    by_id = {f.fixture_id: f for f in fixtures}
+    legacy = by_id[
+        "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role"
+    ]
+    assert legacy.metadata["created_at"] == "2026-05-01"
 
 
 def test_load_public_regression_fixtures_rejects_raw_secret_in_metadata(
@@ -1358,11 +1385,33 @@ def test_load_public_regression_fixtures_rejects_modified_fixture_content(
 def test_load_public_regression_fixtures_accepts_unmodified_registered_fixture() -> None:
     fixtures = load_public_regression_fixtures(BASE_PATH)
     manifest = load_manifest(BASE_PATH / "manifest.json")
-    entry = manifest["fixture_immutable_index"][fixtures[0].fixture_id]
 
-    assert len(fixtures) == 1
-    assert entry["split"] == "public_regression"
-    assert entry["sha256"] == "e019c3e5a45dae6b0eb5fccbf96aae139a4c7d784947d72d7706048bde39ccd4"
+    # Sprint 10 batch 5: fixture count is now 17 (added 16 cross-tenant
+    # including claims / evidence_items mutator coverage).
+    # F-PR27-R2-004 P2 adopt: keep a PINNED sha256 assertion for the
+    # original Sprint 2 legacy fixture so a future change that edits
+    # the fixture and updates manifest in the same commit cannot
+    # silently pass review. The pinned hash anchors the legacy
+    # fixture's anti-gaming immutability claim.
+    assert len(fixtures) == 17
+    immutable_index = manifest["fixture_immutable_index"]
+    legacy_fid = (
+        "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role"
+    )
+    legacy_entry = immutable_index[legacy_fid]
+    assert legacy_entry["split"] == "public_regression"
+    assert legacy_entry["sha256"] == (
+        "e019c3e5a45dae6b0eb5fccbf96aae139a4c7d784947d72d7706048bde39ccd4"
+    ), (
+        "Legacy AC-HARD-03 skeleton fixture sha256 must match Sprint 2 "
+        "anti-gaming registration; any change requires an explicit "
+        "ADR + Sprint Pack documenting the refresh rationale."
+    )
+    for fixture in fixtures:
+        registered = immutable_index[fixture.fixture_id]
+        assert registered["split"] == "public_regression"
+        assert isinstance(registered["sha256"], str)
+        assert len(registered["sha256"]) == 64  # sha256 hex
 
 
 def test_load_redacted_fixtures_skips_immutable_index_for_empty_split() -> None:

@@ -1,0 +1,55 @@
+{
+  "fixture_id": "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_select_app_role",
+  "dataset_version_id": "v2026.05.01-skeleton",
+  "fixture_kind": "public_regression",
+  "gate_id": "AC-HARD-03",
+  "metric_key": "tenant_isolation_negative_pass",
+  "case_key": "research_tasks_cross_tenant_select_app_role",
+  "input": {
+    "operation": "SELECT",
+    "actor_role": "app_role",
+    "tenant_context": {
+      "current_tenant_id": 1,
+      "target_tenant_id": 2,
+      "current_project_id": "00000000-0000-4000-8000-000000050010",
+      "target_project_id": "00000000-0000-4000-8000-000000050020"
+    },
+    "sql_fixture": {
+      "statement_kind": "cross_tenant_select",
+      "redacted_sql": "SELECT id FROM research_tasks WHERE tenant_id = :target_tenant_id AND project_id = :target_project_id AND id = :target_research_task_id"
+    },
+    "payload_data_class": "internal"
+  },
+  "expected_decision": "block",
+  "expected_failure": "tenant_boundary_violation",
+  "expected_reason_code": "tenant_boundary_violation",
+  "pattern_hit_kind": "tenant_boundary",
+  "assertions": [
+    {
+      "name": "app_role_cannot_read_other_tenant_research_task",
+      "expected": "Repository contract requires current_tenant_id and current_project_id filters before returning research_tasks rows."
+    },
+    {
+      "name": "tenant_project_predicate_is_not_optional",
+      "expected": "A target_tenant_id predicate must not bypass the tenant/project boundary for otherwise valid task IDs."
+    },
+    {
+      "name": "synthetic_fixture_only",
+      "expected": "The case uses synthetic tenant/project identifiers and does not depend on production row IDs."
+    }
+  ],
+  "anti_gaming": {
+    "private_expectation_visible_to_policy_author": false,
+    "append_only_refresh": true,
+    "separate_fixture_and_policy_commits": true
+  },
+  "metadata": {
+    "policy_version": "policy-fixture-v0",
+    "prompt_pack_version": "prompt-pack-fixture-v0",
+    "provider_compliance_matrix_version": "provider-matrix-fixture-v0",
+    "payload_data_class": "internal",
+    "allowed_data_class": "internal",
+    "created_at": "2026-05-16",
+    "notes": "Sprint 10 BL-0029c full integration。Research/Evidence schema 系の cross-tenant negative skeleton fixture。No production row IDs or personal data."
+  }
+}

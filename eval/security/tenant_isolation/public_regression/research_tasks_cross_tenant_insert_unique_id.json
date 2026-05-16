@@ -1,0 +1,55 @@
+{
+  "fixture_id": "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_insert_unique_id",
+  "dataset_version_id": "v2026.05.01-skeleton",
+  "fixture_kind": "public_regression",
+  "gate_id": "AC-HARD-03",
+  "metric_key": "tenant_isolation_negative_pass",
+  "case_key": "research_tasks_cross_tenant_insert_unique_id",
+  "input": {
+    "operation": "INSERT",
+    "actor_role": "app_role",
+    "tenant_context": {
+      "current_tenant_id": 1,
+      "target_tenant_id": 2,
+      "current_project_id": "00000000-0000-4000-8000-000000050010",
+      "target_project_id": "00000000-0000-4000-8000-000000050020"
+    },
+    "sql_fixture": {
+      "statement_kind": "cross_tenant_insert_unique_id",
+      "redacted_sql": "INSERT INTO research_tasks (id, tenant_id, project_id, created_by_actor_id, title, status) VALUES (:existing_research_task_id, :target_tenant_id, :target_project_id, :target_actor_id, :title, :status)"
+    },
+    "payload_data_class": "internal"
+  },
+  "expected_decision": "block",
+  "expected_failure": "tenant_boundary_violation",
+  "expected_reason_code": "tenant_boundary_violation",
+  "pattern_hit_kind": "tenant_boundary",
+  "assertions": [
+    {
+      "name": "research_task_id_is_global_identity_boundary",
+      "expected": "The primary key or tenant/id uniqueness invariant rejects reusing an existing research_task id across tenant boundaries."
+    },
+    {
+      "name": "project_fk_must_match_tenant",
+      "expected": "The research_tasks project composite FK requires project_id to belong to the same tenant_id as the inserted task."
+    },
+    {
+      "name": "insert_failure_is_security_relevant",
+      "expected": "The expected failure is treated as tenant isolation enforcement, not as a retryable duplicate insert."
+    }
+  ],
+  "anti_gaming": {
+    "private_expectation_visible_to_policy_author": false,
+    "append_only_refresh": true,
+    "separate_fixture_and_policy_commits": true
+  },
+  "metadata": {
+    "policy_version": "policy-fixture-v0",
+    "prompt_pack_version": "prompt-pack-fixture-v0",
+    "provider_compliance_matrix_version": "provider-matrix-fixture-v0",
+    "payload_data_class": "internal",
+    "allowed_data_class": "internal",
+    "created_at": "2026-05-16",
+    "notes": "Sprint 10 BL-0029c full integration。Research/Evidence schema 系の cross-tenant negative skeleton fixture。No production row IDs or personal data."
+  }
+}

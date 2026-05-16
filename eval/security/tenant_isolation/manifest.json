@@ -5,7 +5,7 @@
   "splits": {
     "public_regression": {
       "path": "public_regression/",
-      "expected_count": 1,
+      "expected_count": 17,
       "purpose": "PR レビュー時の regression check"
     },
     "private_holdout": {
@@ -22,6 +22,86 @@
   },
   "expected_schema": "expected_schema.json",
   "fixture_immutable_index": {
+    "AC-HARD-03_v2026.05.01-skeleton_citation_coverage_cross_tenant_research_task_id_rejected": {
+      "sha256": "4c14764ab9a3750a0c0bf6caa35d3e23fb68c745809d63ede97d5b5f4c0fa32e",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_claims_cross_project_select_same_tenant": {
+      "sha256": "1a5ca9eedec62341405be7f7a621da22edcde57206d696aa78bd95870f328af3",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_claims_cross_tenant_delete_no_match": {
+      "sha256": "d553751543a11df43b4deaa36e5a0f1cbe3afb99442f1ee7af39464ebdb05532",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_claims_cross_tenant_insert_composite_fk": {
+      "sha256": "375f27127e4d651d9621c6964dd9409f73a021eb244bd046f9333103ab53a77b",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_claims_cross_tenant_select_app_role": {
+      "sha256": "f1bc1e7f1f268e7181b2856a24f9f1532b8f61e44ddb765ec2a984b7842a8873",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_claims_cross_tenant_update_no_match": {
+      "sha256": "a51359aa58ee78550c48af9a56775dc3425d11075e3877861969c5966fbfd6b5",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_evidence_items_cross_project_select_same_tenant": {
+      "sha256": "bb2053b93bc856cf3881829ef233303c72cd2dbb4ea9129934c7a76de51c98b1",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_evidence_items_cross_tenant_delete_no_match": {
+      "sha256": "85596047f4e764603808bc667fbe7a73f2e9c3e118d7c925bddf2159e0d75f39",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_evidence_items_cross_tenant_select_app_role": {
+      "sha256": "7e95020e8a682c2e4e05e78f366b5b510a3a6b7e3681b3c2db9905cadd10b902",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_evidence_sources_cross_tenant_select_app_role": {
+      "sha256": "7c65ff098098b1134c8ab30cdcab20751be73f384eba607bd4c3ca1541863d48",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_project_select_same_tenant": {
+      "sha256": "ea842ccebd35af48cbc802cbb507181240e15544fa481b290156f8178eab3341",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_delete_no_match": {
+      "sha256": "1a08d822ca38e1a771873e4c5b38f405dbca1c8307558a71b8ba1640f17f0e2f",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_insert_unique_id": {
+      "sha256": "ebc33fe2c4b88ddaa43e935d1cda77c519aa4bef20ef2bc9604380dd59fc87c6",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_select_app_role": {
+      "sha256": "c4ca7cc550b822bdccd133b0d272bd2a56621789ea7e39677166db0e6a73b187",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_update_no_match": {
+      "sha256": "62058abef03b98f9b64244edd82cac2ef468a9ceaea3e15445a98221843e78ab",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_research_to_ticket_cross_tenant_approval_request_id_rejected": {
+      "sha256": "97bf96cc7a931eed97a6988a136e6448e77468bff075dbd6921ef7c2167a3f56",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
     "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role": {
       "sha256": "e019c3e5a45dae6b0eb5fccbf96aae139a4c7d784947d72d7706048bde39ccd4",
       "split": "public_regression",
@@ -59,4 +139,3 @@
     "source": ".claude/rules/testing.md §10"
   }
 }
-
