@@ -23,13 +23,21 @@ Idempotent + deterministic: 同一 input は常に同一 hash (1000+ test で検
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
+import re
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
+
+# F-003 fix (Codex P2): sha256 hex shape regex (lowercase or uppercase).
+_SHA256_HEX_RE: Final[re.Pattern[str]] = re.compile(r"^[0-9a-fA-F]{64}$")
+# F-002 fix (Codex P2): percent-escape canonicalization (RFC 3986 §6.2.2.1 —
+# percent-encoded triplets MUST be uppercase hex digits).
+_PERCENT_ESCAPE_RE: Final[re.Pattern[str]] = re.compile(r"%([0-9a-fA-F]{2})")
 
 # W3C PROV-DM minimal 5 relation (P0 minimal subset、Sprint Pack §レビュー観点)
 PROV_RELATIONS_MINIMAL: Final[frozenset[str]] = frozenset(
@@ -109,7 +117,10 @@ class SourceNormalized:
                 "canonical_url_type_invalid",
                 f"canonical_url must be str, got {type(canonical_url).__name__}",
             )
-        if not isinstance(content_hash, str) or len(content_hash) != HASH_HEX_LEN:
+        # F-003 fix (Codex P2): length check alone accepted ``zzzz...`` (non-hex 64
+        # chars). Add explicit regex so server-owned producer fails closed on
+        # malformed source hashes even if the DB constraint is bypassed.
+        if not isinstance(content_hash, str) or not _SHA256_HEX_RE.fullmatch(content_hash):
             raise EvidenceSetHashError(
                 "content_hash_shape_invalid",
                 f"content_hash must be 64-char sha256 hex, got {content_hash!r}",
@@ -122,22 +133,104 @@ class SourceNormalized:
         )
 
 
+def _normalize_percent_escapes(text: str) -> str:
+    """RFC 3986 §6.2.2.1: percent-encoded triplets MUST be uppercase hex.
+
+    ``%7e`` and ``%7E`` are equivalent; canonicalize to uppercase so two URLs
+    that differ only in the case of percent-escapes hash identically.
+
+    F-002 fix (Codex P2): we deliberately do **not** unescape unreserved
+    characters here. While RFC 3986 §6.2.2.2 permits it, doing so requires a
+    valid UTF-8 decoder pass over the bytes, and evidence URLs may legitimately
+    contain percent-encoded non-UTF8 byte sequences (PDF anchors etc.).
+    Case normalization alone covers the realistic drift surface for our hash.
+    """
+    return _PERCENT_ESCAPE_RE.sub(lambda m: "%" + m.group(1).upper(), text)
+
+
+def _remove_dot_segments(path: str) -> str:
+    """RFC 3986 §5.2.4: remove "./" and "../" path segments.
+
+    Implements the algorithm directly (Python's stdlib does not expose it).
+    Input is expected to be a path (the part of a URL after the authority,
+    starting with ``/`` or empty / relative).
+    """
+    if not path:
+        return path
+    input_buf = path
+    output_buf = ""
+    while input_buf:
+        # A. ../ or ./
+        if input_buf.startswith("../"):
+            input_buf = input_buf[3:]
+        elif input_buf.startswith("./"):
+            input_buf = input_buf[2:]
+        # B. /./ or /. (end)
+        elif input_buf.startswith("/./"):
+            input_buf = "/" + input_buf[3:]
+        elif input_buf == "/.":
+            input_buf = "/"
+        # C. /../ or /.. (end) — pop last segment from output
+        elif input_buf.startswith("/../"):
+            input_buf = "/" + input_buf[4:]
+            output_buf = output_buf.rsplit("/", 1)[0] if "/" in output_buf else ""
+        elif input_buf == "/..":
+            input_buf = "/"
+            output_buf = output_buf.rsplit("/", 1)[0] if "/" in output_buf else ""
+        # D. only . or ..
+        elif input_buf in (".", ".."):
+            input_buf = ""
+        # E. move first path segment from input to output
+        else:
+            # find next '/' starting at position 1 (preserve leading '/')
+            slash = input_buf.find("/", 1)
+            if slash == -1:
+                output_buf += input_buf
+                input_buf = ""
+            else:
+                output_buf += input_buf[:slash]
+                input_buf = input_buf[slash:]
+    return output_buf
+
+
+def _format_host_for_netloc(hostname: str | None) -> str:
+    """F-004 fix (Codex P2): preserve IPv6 brackets.
+
+    ``urlsplit(...).hostname`` strips the surrounding ``[]`` from IPv6 literals,
+    but ``urlunsplit`` requires them to produce a valid URL. Detect IPv6 by
+    attempting to parse the hostname; if it parses, wrap with brackets.
+    """
+    if hostname is None or hostname == "":
+        return ""
+    # Try IPv6 (no brackets at this point — urlsplit stripped them).
+    try:
+        ipaddress.IPv6Address(hostname)
+        return f"[{hostname}]"
+    except (ipaddress.AddressValueError, ValueError):
+        pass
+    return hostname
+
+
 def normalize_url(url: Any) -> str:  # noqa: ANN401
     """RFC 3986 + RFC 6596 URL normalization for evidence_set_hash.
 
-    Steps:
-    - lowercase scheme + host
-    - strip default port (80 for http, 443 for https)
+    Steps (post-fix for Codex P2 findings):
+    - lowercase scheme + host (RFC 3986 §6.2.2.1)
+    - preserve IPv6 brackets after ``urlsplit`` strip (F-004)
+    - strip default port (80 for http, 443 for https; RFC 3986 §6.2.3)
     - collapse empty path "" → "/"
+    - remove dot-segments ``./`` / ``../`` (RFC 3986 §5.2.4, F-005)
     - strip single trailing slash on non-root paths
     - drop fragment (RFC 3986 §3.5 — fragments are client-side, not part of
       the resource identity)
-    - keep query string verbatim (caller-controlled)
+    - uppercase percent-encoded triplets in both path and query
+      (RFC 3986 §6.2.2.1, F-002)
+    - keep query string content verbatim (caller-controlled, only case-
+      normalize the percent triplets)
 
-    NOTE: this is intentionally narrow. We do not unescape percent-encoded
-    bytes here because that would lose information for non-UTF8 byte
-    sequences in evidence URLs (PDF fragments etc.). NFC normalization
-    happens at the caller level (SourceNormalized.from_raw).
+    NOTE: we still do not unescape unreserved characters because evidence URLs
+    may legitimately contain non-UTF8 percent-encoded byte sequences (PDF
+    anchors etc.). Case normalization alone covers the realistic drift surface.
     """
     if not isinstance(url, str):
         raise EvidenceSetHashError(
@@ -146,13 +239,15 @@ def normalize_url(url: Any) -> str:  # noqa: ANN401
         )
     parts = urlsplit(url)
     scheme = parts.scheme.lower()
-    netloc = parts.hostname or ""
-    netloc = netloc.lower()
+    host = _format_host_for_netloc(parts.hostname)
+    # lowercase the registered host (DNS is case-insensitive; IPv6 literals
+    # have already been bracket-wrapped, lowercase has no effect on them).
+    host = host.lower()
+    netloc = host
     if parts.port is not None:
-        # strip default port
         default = {"http": 80, "https": 443}.get(scheme)
         if parts.port != default:
-            netloc = f"{netloc}:{parts.port}"
+            netloc = f"{host}:{parts.port}"
     if parts.username or parts.password:
         # preserve userinfo verbatim (rare in evidence URLs, but stable)
         userinfo = parts.username or ""
@@ -160,22 +255,46 @@ def normalize_url(url: Any) -> str:  # noqa: ANN401
             userinfo = f"{userinfo}:{parts.password}"
         netloc = f"{userinfo}@{netloc}"
     path = parts.path or "/"
+    # F-005: remove dot-segments before trailing-slash logic.
+    path = _remove_dot_segments(path)
+    if not path:
+        # dot-segment removal can produce empty path (e.g. "/.." on root).
+        path = "/"
     # strip single trailing slash on non-root paths
     if len(path) > 1 and path.endswith("/"):
         path = path[:-1]
+    # F-002: uppercase percent triplets in path + query.
+    path = _normalize_percent_escapes(path)
+    query = _normalize_percent_escapes(parts.query)
     # drop fragment (RFC 3986 §3.5)
-    return urlunsplit((scheme, netloc, path, parts.query, ""))
+    return urlunsplit((scheme, netloc, path, query, ""))
 
 
 def _normalize_prov_bundle(prov: Any) -> dict[str, Any]:  # noqa: ANN401
     """Canonicalize the PROV bundle subset embedded in a claim's
     ``provenance_json``.
 
-    Accepts either:
-      - top-level dict shaped as ``{"activities": [...], "entities": [...],
-        "agents": [...], "relations": {<rel_name>: [...]}}`` (PROV-DM minimal),
-      - or a flat dict containing only ``relations`` (claims that did not
-        record activities / entities / agents separately).
+    F-001 fix (Codex P1): align with the **actual** ProvBundle schema used by
+    ``backend/app/services/research/prov_validator.py``. The validated shape
+    is::
+
+        {
+            "activities": [...],
+            "entities": [...],
+            "agents": [...],
+            "wasGeneratedBy": [...],   # top-level relation arrays
+            "used": [...],
+            "wasAttributedTo": [...],
+            "wasInformedBy": [...],
+            "wasDerivedFrom": [...],
+        }
+
+    The previous implementation hashed ``prov.get("relations", {})``, which
+    always returned ``{}`` for production-shaped bundles and silently defeated
+    the PROV-aware part of evidence_set_hash. We now read each PROV relation
+    array at the top level; for backward compat we *also* honour a legacy
+    ``relations`` sub-mapping if present (it must use the same relation
+    names from ``PROV_RELATIONS_MINIMAL``).
 
     NFC-normalizes every string leaf and rejects unknown relation names
     (fail-closed: keeps evidence_set_hash stable against future spec drift).
@@ -194,31 +313,46 @@ def _normalize_prov_bundle(prov: Any) -> dict[str, Any]:  # noqa: ANN401
                 f"provenance_json.{section} must be list, got {type(items).__name__}",
             )
         canonical[section] = [_nfc_walk(item) for item in items]
-    relations_raw = prov.get("relations", {})
-    if not isinstance(relations_raw, dict):
-        raise EvidenceSetHashError(
-            "prov_relations_not_object",
-            f"provenance_json.relations must be dict, got {type(relations_raw).__name__}",
-        )
+
+    # F-001 fix: pull each PROV relation array from the top-level keys, with a
+    # legacy ``relations`` sub-mapping fallback. Unknown keys at the top level
+    # are tolerated (the bundle may carry other PROV-DM extensions or the
+    # caller's own metadata); only the relations we know are hashed so the
+    # hash stays stable against unrelated schema additions.
     canonical_relations: dict[str, list[Any]] = {}
-    for rel_name, rel_items in relations_raw.items():
-        if rel_name not in PROV_RELATIONS_MINIMAL:
-            raise EvidenceSetHashError(
-                "prov_relation_unknown",
-                (
-                    f"provenance_json.relations contains unknown relation "
-                    f"{rel_name!r}; allowed: {sorted(PROV_RELATIONS_MINIMAL)}"
-                ),
-            )
+    for rel_name in sorted(PROV_RELATIONS_MINIMAL):
+        rel_items: Any = prov.get(rel_name)
+        if rel_items is None:
+            # Legacy fallback: pre-Sprint-10 bundles may have nested under "relations".
+            legacy = prov.get("relations")
+            if isinstance(legacy, dict):
+                rel_items = legacy.get(rel_name)
+        if rel_items is None:
+            canonical_relations[rel_name] = []
+            continue
         if not isinstance(rel_items, list):
             raise EvidenceSetHashError(
                 "prov_relation_not_list",
                 (
-                    f"provenance_json.relations[{rel_name!r}] must be list, "
+                    f"provenance_json.{rel_name} must be list, "
                     f"got {type(rel_items).__name__}"
                 ),
             )
         canonical_relations[rel_name] = [_nfc_walk(item) for item in rel_items]
+
+    # Reject any explicitly-named relations that fall outside the minimal set.
+    legacy_relations = prov.get("relations")
+    if isinstance(legacy_relations, dict):
+        unknown = set(legacy_relations.keys()) - PROV_RELATIONS_MINIMAL
+        if unknown:
+            raise EvidenceSetHashError(
+                "prov_relation_unknown",
+                (
+                    f"provenance_json.relations contains unknown relation "
+                    f"{sorted(unknown)!r}; allowed: {sorted(PROV_RELATIONS_MINIMAL)}"
+                ),
+            )
+
     canonical["relations"] = canonical_relations
     return canonical
 

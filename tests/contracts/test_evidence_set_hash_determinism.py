@@ -162,6 +162,46 @@ class TestUrlNormalize:
             normalize_url(123)  # type: ignore[arg-type]
         assert exc.value.reason_code == "url_type_invalid"
 
+    def test_percent_escape_case_canonical(self) -> None:
+        """F-002 fix (Codex P2): RFC 3986 §6.2.2.1 — percent-encoded triplets
+        must be uppercase. ``%7e`` and ``%7E`` are equivalent."""
+        assert (
+            normalize_url("https://example.com/a%7eb")
+            == normalize_url("https://example.com/a%7Eb")
+        )
+        # also applies to the query string
+        assert (
+            normalize_url("https://example.com/p?k=%2fa")
+            == normalize_url("https://example.com/p?k=%2Fa")
+        )
+
+    def test_dot_segments_removed(self) -> None:
+        """F-005 fix (Codex P2): RFC 3986 §5.2.4 — remove "./" and "../"."""
+        assert (
+            normalize_url("https://example.com/a/../b")
+            == "https://example.com/b"
+        )
+        assert (
+            normalize_url("https://example.com/./a/b")
+            == "https://example.com/a/b"
+        )
+        assert (
+            normalize_url("https://example.com/a/b/..")
+            == "https://example.com/a"
+        )
+
+    def test_ipv6_host_brackets_preserved(self) -> None:
+        """F-004 fix (Codex P2): IPv6 literals must keep their ``[]`` after
+        urlsplit/urlunsplit round-trip."""
+        out = normalize_url("https://[2001:db8::1]/x")
+        assert out == "https://[2001:db8::1]/x"
+        # default port for IPv6 also stripped
+        out_port = normalize_url("https://[2001:db8::1]:443/x")
+        assert out_port == "https://[2001:db8::1]/x"
+        # non-default port kept
+        out_nondefault = normalize_url("https://[2001:db8::1]:8443/x")
+        assert out_nondefault == "https://[2001:db8::1]:8443/x"
+
 
 class TestPROVBundle:
     def test_minimal_relations_constant_is_5(self) -> None:
@@ -184,6 +224,53 @@ class TestPROVBundle:
                 [_claim("c", claim_id=cid)], [], prov
             )
         assert exc.value.reason_code == "prov_relation_unknown"
+
+    def test_top_level_relations_change_hash(self) -> None:
+        """F-001 fix (Codex P1): PROV relations at top level (ProvBundle schema)
+        must affect evidence_set_hash. Previously the hash read
+        ``prov.get("relations", {})`` and silently dropped real PROV content."""
+        cid = uuid4()
+        prov_with = {
+            cid: {
+                "activities": [{"id": "act-1"}],
+                "entities": [{"id": "ent-1"}],
+                "agents": [{"id": "agt-1"}],
+                "wasGeneratedBy": [{"generated": "ent-1", "activity": "act-1"}],
+                "used": [{"activity": "act-1", "used": "ent-1"}],
+            }
+        }
+        prov_without = {cid: {}}
+        h_with = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)], [], prov_with
+        )
+        h_without = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)], [], prov_without
+        )
+        assert h_with != h_without
+
+    def test_legacy_relations_sub_mapping_still_accepted(self) -> None:
+        """Legacy bundles that nest relations under ``relations`` still hash
+        correctly (backward compat fallback path)."""
+        cid = uuid4()
+        prov_top = {
+            cid: {
+                "wasGeneratedBy": [{"generated": "e1", "activity": "a1"}],
+            }
+        }
+        prov_legacy = {
+            cid: {
+                "relations": {
+                    "wasGeneratedBy": [{"generated": "e1", "activity": "a1"}],
+                },
+            }
+        }
+        h_top = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)], [], prov_top
+        )
+        h_legacy = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)], [], prov_legacy
+        )
+        assert h_top == h_legacy
 
     def test_missing_prov_treated_as_empty(self) -> None:
         # No PROV entry for the claim → not an error, just hashes the empty
@@ -226,6 +313,27 @@ class TestInputValidation:
                 content_hash="abc",
             )
         assert exc.value.reason_code == "content_hash_shape_invalid"
+
+    def test_source_content_hash_non_hex_rejected(self) -> None:
+        """F-003 fix (Codex P2): a 64-char non-hex string (e.g. 'zzzz...')
+        previously passed the length check; require regex hex validation."""
+        with pytest.raises(EvidenceSetHashError) as exc:
+            SourceNormalized.from_raw(
+                source_id=uuid4(),
+                canonical_url="https://example.com",
+                content_hash="z" * 64,
+            )
+        assert exc.value.reason_code == "content_hash_shape_invalid"
+
+    def test_source_content_hash_uppercase_hex_accepted_normalized_lower(self) -> None:
+        """sha256 hex MAY be uppercase from some callers; we accept and
+        lowercase canonically so the stored value is stable."""
+        s = SourceNormalized.from_raw(
+            source_id=uuid4(),
+            canonical_url="https://example.com",
+            content_hash="A" * 64,
+        )
+        assert s.content_hash == "a" * 64
 
     def test_source_canonical_url_non_string(self) -> None:
         with pytest.raises(EvidenceSetHashError) as exc:
