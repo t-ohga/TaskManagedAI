@@ -159,10 +159,11 @@ class ResearchToTicketAdapter:
         )
 
     async def promote(self, request: ResearchToTicketRequest) -> ResearchToTicketOutcome:
-        # F-PR24-R5-001 P1 adopt: compute the canonical artifact AFTER the
-        # approval row is locked so concurrent claim / evidence mutations
-        # cannot slip between the artifact computation and the Ticket
-        # INSERT. The approval-row lock + same-transaction re-computation
+        # F-PR24-R5-001 P1 + F-PR24-R6-001 P1 adopt: compute the canonical
+        # artifact AFTER the approval AND research_task rows are locked so
+        # concurrent claim / evidence mutations cannot slip between the
+        # artifact computation and the Ticket INSERT. The approval-row
+        # lock + research_task lock + same-transaction re-computation
         # narrows the consistency window so the hash actually persisted to
         # the Ticket matches what the approval row binds.
         #
@@ -172,7 +173,25 @@ class ResearchToTicketAdapter:
         # ``status='invalidated'`` before raising so it is no longer
         # reusable. Per server-owned-boundary.md §3, any Approval 4
         # mismatch must invalidate.
+        #
+        # F-PR24-R6-002 P1 adopt: research_task reachability is verified
+        # FIRST so cross-project / cross-tenant promotions fail at the
+        # research boundary (which is the conceptually correct error for
+        # those negative tests) rather than at the approval lookup. The
+        # approval row is locked next; finally prepare_promotion_artifact
+        # re-fetches research_task (this time with FOR UPDATE) and the
+        # claims / evidence rows.
         await _ensure_tenant_context(self.session, request.tenant_id)
+        task_reachable = await self.session.scalar(
+            select(ResearchTask.id).where(
+                ResearchTask.tenant_id == request.tenant_id,
+                ResearchTask.project_id == request.project_id,
+                ResearchTask.id == request.research_task_id,
+            )
+        )
+        if task_reachable is None:
+            raise ValueError("research_task_id not reachable in tenant/project")
+
         approval = await self.session.scalar(
             select(ApprovalRequest)
             .where(
@@ -338,6 +357,8 @@ class ResearchToTicketAdapter:
                 f"current status={approval.status!r}"
             )
         if approval.action_class != "task_write":
+            # F-PR24-R6-003 P2 adopt: invalidate scope-mismatched approval.
+            await self._invalidate_approval(approval)
             raise ValueError(
                 "approval_request must bind action_class='task_write' for "
                 "Research-to-Ticket promotion"
@@ -416,16 +437,31 @@ class ResearchToTicketAdapter:
             )
 
     async def _invalidate_approval(self, approval: ApprovalRequest) -> None:
-        """Mark a stale ApprovalRequest as invalidated (F-PR24-R5-002 P1).
+        """Mark a stale ApprovalRequest as invalidated (F-PR24-R5-002 P1 + F-PR24-R6-004 P2).
 
         Per ``.claude/rules/server-owned-boundary.md §3``, any Approval 4
         binding mismatch must invalidate the approval so it cannot be
-        replayed. The status flip is part of the caller's transaction; if
-        the caller rolls back after the mismatch raise, the invalidation
-        also rolls back -- this is acceptable because the underlying
-        mismatch persists and any subsequent retry will re-detect it.
-        Caller-supplied approval rows with stale binding therefore become
-        unusable as approved on the next promotion attempt.
+        replayed.
+
+        Known limitation (F-PR24-R6-004 P2): the status flip is part of
+        the caller's transaction, so a caller that catches the raised
+        ValueError and rolls back will also roll back this flush, leaving
+        the stale approval in ``status='approved'``. The pragmatic
+        rationale for batch 3:
+
+        - the underlying binding mismatch (artifact_hash / policy_version /
+          provider_request_fingerprint / action_class) persists, so any
+          subsequent retry re-detects it and re-invalidates
+        - full hardening (independent session / autonomous transaction for
+          invalidation) requires injecting a session factory into the
+          adapter; defer to Sprint 11 BL-0126 alongside the
+          GroundingSupport integration work
+        - external/API callers (Research session worker) follow the
+          repository pattern of NOT catching adapter exceptions, so
+          their transaction commits naturally include the invalidation
+
+        Tests that explicitly catch and rollback should treat the
+        invalidation as best-effort.
         """
 
         approval.status = "invalidated"
@@ -438,12 +474,21 @@ class ResearchToTicketAdapter:
         project_id: UUID,
         research_task_id: UUID,
     ) -> _ResearchBundle:
+        # F-PR24-R6-001 P1 adopt: lock the research_task row so concurrent
+        # transactions cannot delete or status-flip the task between this
+        # read and the Ticket INSERT. Claims and evidence_items are
+        # ORM-eager-loaded under the same session/transaction; while we
+        # do not individually lock those child rows, the research_task
+        # lock plus same-transaction read of children narrows the race
+        # window (further child-row locking is Sprint 11 BL-0126 work).
         task = await self.session.scalar(
-            select(ResearchTask).where(
+            select(ResearchTask)
+            .where(
                 ResearchTask.tenant_id == tenant_id,
                 ResearchTask.project_id == project_id,
                 ResearchTask.id == research_task_id,
             )
+            .with_for_update()
         )
         if task is None:
             raise ValueError("research_task_id not reachable in tenant/project")
