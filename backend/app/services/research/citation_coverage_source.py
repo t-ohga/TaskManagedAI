@@ -22,14 +22,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.db.app_role import (
+    assert_tenant_context,
+    get_tenant_context,
+    set_tenant_context,
+)
 from backend.app.db.models.agent_run import AgentRun
+from backend.app.db.models.artifact import Artifact
 from backend.app.db.models.claim import Claim
 from backend.app.db.models.context_snapshot import ContextSnapshot
 from backend.app.db.models.grounding_support import GroundingSupport
-from backend.app.db.models.research_task import ResearchTask
 
 
 class CitationCoverageError(ValueError):
@@ -87,6 +92,15 @@ async def compute_citation_coverage(
             "tenant_id must be a positive integer.",
         )
 
+    # F-PR25-R1-006 fix (Codex R1 P1): establish tenant context before
+    # any tenant-scoped read so RLS-enabled deployments do not silently
+    # return empty rows on a fresh / pooled connection where
+    # ``app.tenant_id`` has not been set yet.
+    current_tenant_id = await get_tenant_context(session)
+    if current_tenant_id is None:
+        await set_tenant_context(session, tenant_id)
+    await assert_tenant_context(session, tenant_id)
+
     # Confirm the AgentRun belongs to the supplied project. Bypassing
     # this lets a caller compute coverage for an AgentRun outside the
     # project boundary.
@@ -118,70 +132,108 @@ async def compute_citation_coverage(
         .limit(1)
     )
 
-    # Distinct claims in scope of the AgentRun. We resolve scope via
-    # the ResearchTasks that the AgentRun's claims attach to — claims
-    # are the canonical "what should be cited" unit (SP-010 §line 162).
+    # F-PR25-R1-005 fix (Codex R1 P2): scope (denominator) is now
+    # derived from the **research_promotion artifact** (BL-0118) bound
+    # to this AgentRun, not from GroundingSupport rows. Previously, an
+    # AgentRun that produced 0 GroundingSupports would report
+    # ``distinct_claims=0`` and ``denominator_nonzero=False``, masking
+    # the all-uncovered failure that AC-KPI-04 must catch.
     #
-    # For P0 the AgentRun ↔ ResearchTask binding is single-tenant +
-    # single-project; a run without any claim/research_task linkage has
-    # ``denominator_nonzero=False`` and coverage=0.0 (uncovered) so the
-    # AC-KPI-04 gate can distinguish "no scope" from "scope but all
-    # uncovered".
-    #
-    # F-R5-003 mirror: dangling research_task / claim refs cannot leak
-    # in because both are bound to the same (tenant_id, project_id)
-    # via composite FKs from migration 0017.
-    distinct_claim_stmt = (
-        select(func.count(distinct(Claim.id)))
-        .select_from(Claim)
-        .join(
-            ResearchTask,
-            (Claim.tenant_id == ResearchTask.tenant_id)
-            & (Claim.project_id == ResearchTask.project_id)
-            & (Claim.research_task_id == ResearchTask.id),
+    # The research_promotion artifact's ``content_jsonb.claim_ids`` is
+    # the canonical scope. If the artifact lists explicit ``claim_ids``,
+    # that exact set is the denominator (caller chose specific claims).
+    # If ``claim_ids`` is empty, the scope is **all** claims of the
+    # promotion's ``research_task_id`` — same semantics as
+    # ``ResearchSetReference`` empty-tuple convention.
+    promotion_rows = (
+        await session.execute(
+            select(Artifact.content_jsonb)
+            .where(
+                Artifact.tenant_id == tenant_id,
+                Artifact.run_id == agent_run_id,
+                Artifact.kind == "research_promotion",
+            )
+            .order_by(Artifact.created_at.desc(), Artifact.id.desc())
         )
-        .where(
-            Claim.tenant_id == tenant_id,
-            Claim.project_id == project_id,
-            Claim.id.in_(
-                select(GroundingSupport.claim_id).where(
-                    GroundingSupport.tenant_id == tenant_id,
-                    GroundingSupport.project_id == project_id,
-                    GroundingSupport.agent_run_id == agent_run_id,
-                )
-            ),
-        )
-    )
-    # Note: we evaluate scope by union of "claims grounded by this run"
-    # plus "claims of the same ResearchTask as any grounded claim", to
-    # match the QL-C definition ("claims within evaluated AgentRun").
-    # Pre-Sprint-11 there is no separate AgentRun↔ResearchTask binding
-    # column, so we use the claim → ResearchTask chain.
-    scope_claims_stmt = (
-        select(func.count(distinct(Claim.id)))
-        .where(
-            Claim.tenant_id == tenant_id,
-            Claim.project_id == project_id,
-            Claim.research_task_id.in_(
-                select(distinct(Claim.research_task_id))
-                .select_from(Claim)
-                .join(
-                    GroundingSupport,
-                    (Claim.tenant_id == GroundingSupport.tenant_id)
-                    & (Claim.project_id == GroundingSupport.project_id)
-                    & (Claim.id == GroundingSupport.claim_id),
-                )
-                .where(
-                    GroundingSupport.tenant_id == tenant_id,
-                    GroundingSupport.project_id == project_id,
-                    GroundingSupport.agent_run_id == agent_run_id,
-                )
-            ),
-        )
-    )
+    ).all()
 
-    distinct_claims = (await session.scalar(scope_claims_stmt)) or 0
-    grounded_claims = (await session.scalar(distinct_claim_stmt)) or 0
+    # Initialise scope sets up-front so the post-loop numerator filter
+    # branch can rely on them even when ``promotion_rows`` is empty.
+    scope_claim_ids: set[str] = set()
+    scope_task_ids: set[str] = set()
+
+    if not promotion_rows:
+        # No research_promotion artifact: the AgentRun has no defined
+        # citation scope. ``denominator_nonzero=False`` so AC-KPI-04
+        # gating can distinguish "no scope" from "scope but uncovered".
+        distinct_claims_count = 0
+    else:
+        # Union of all promotion artifacts' scopes (an AgentRun may
+        # promote multiple times). Each promotion contributes either a
+        # specific claim_id set or the full ResearchTask scope.
+        for (content_jsonb,) in promotion_rows:
+            cjson = content_jsonb or {}
+            task_id_str = cjson.get("research_task_id")
+            claim_id_strs = cjson.get("claim_ids", [])
+            if claim_id_strs:
+                scope_claim_ids.update(str(c) for c in claim_id_strs)
+            elif task_id_str:
+                scope_task_ids.add(str(task_id_str))
+
+        # Count distinct claims in scope:
+        #   = explicit claim_ids + all claims of any open-scope task_ids
+        # Both filtered by (tenant_id, project_id) for safety.
+        if scope_task_ids or scope_claim_ids:
+            scope_stmt = select(func.count(distinct(Claim.id))).where(
+                Claim.tenant_id == tenant_id,
+                Claim.project_id == project_id,
+            )
+            id_filter = []
+            if scope_claim_ids:
+                id_filter.append(Claim.id.in_(scope_claim_ids))
+            if scope_task_ids:
+                id_filter.append(Claim.research_task_id.in_(scope_task_ids))
+            scope_stmt = scope_stmt.where(or_(*id_filter))
+            distinct_claims_count = (await session.scalar(scope_stmt)) or 0
+        else:
+            # Promotion artifact present but malformed (no claim_ids /
+            # task_id) — defensively treat as no-scope.
+            distinct_claims_count = 0
+
+    # Numerator: distinct claims with >= 1 GroundingSupport from this
+    # run, intersected with the scope (a stray GroundingSupport for a
+    # claim outside the promoted scope should not inflate coverage).
+    grounded_stmt = (
+        select(func.count(distinct(GroundingSupport.claim_id)))
+        .where(
+            GroundingSupport.tenant_id == tenant_id,
+            GroundingSupport.project_id == project_id,
+            GroundingSupport.agent_run_id == agent_run_id,
+        )
+    )
+    if distinct_claims_count > 0:
+        # Restrict numerator to scope to avoid >100% coverage.
+        if promotion_rows:
+            scoped_claim_filter = []
+            if scope_claim_ids:
+                scoped_claim_filter.append(
+                    GroundingSupport.claim_id.in_(scope_claim_ids)
+                )
+            if scope_task_ids:
+                scoped_claim_filter.append(
+                    GroundingSupport.claim_id.in_(
+                        select(Claim.id).where(
+                            Claim.tenant_id == tenant_id,
+                            Claim.project_id == project_id,
+                            Claim.research_task_id.in_(scope_task_ids),
+                        )
+                    )
+                )
+            if scoped_claim_filter:
+                grounded_stmt = grounded_stmt.where(or_(*scoped_claim_filter))
+
+    grounded_claims = (await session.scalar(grounded_stmt)) or 0
+    distinct_claims = distinct_claims_count
 
     if distinct_claims == 0:
         # 0/0 path — denominator_nonzero=False, coverage=0.0 so the

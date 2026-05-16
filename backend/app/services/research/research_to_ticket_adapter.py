@@ -22,13 +22,21 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
+from backend.app.db.app_role import (
+    assert_tenant_context,
+    get_tenant_context,
+    set_tenant_context,
+)
+from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.artifact import Artifact
 from backend.app.db.models.claim import Claim
 from backend.app.db.models.research_task import ResearchTask
+from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 from backend.app.repositories.artifact import assert_sha256_hex
 from backend.app.schemas.research.evidence_set import ResearchSetReference
 from backend.app.services.research.evidence_set_hash import (
@@ -153,6 +161,45 @@ async def promote_research_to_ticket(
             "summary must be a non-empty string.",
         )
 
+    # F-PR25-R1-004 fix (Codex R1 P1): the adapter bypasses
+    # ``ArtifactRepository.create_artifact``, so the free-form summary
+    # would skip the shared raw-secret scanner. Run the scanner here
+    # against the caller-supplied string so a token-shaped value
+    # (e.g. an OpenAI key copy-pasted into a summary) is rejected
+    # **before** it lands in ``content_jsonb`` and becomes exportable.
+    assert_no_raw_secret({"summary": summary}, path="$research_to_ticket.summary")
+
+    # F-PR25-R1-007 fix (Codex R1 P2) + F-PR25-R1-006 wider fix:
+    # establish the tenant context before the first read so an RLS-
+    # enabled deployment does not reject a legitimate request because
+    # ``app.tenant_id`` was unset on a pooled connection.
+    current_tenant_id = await get_tenant_context(session)
+    if current_tenant_id is None:
+        await set_tenant_context(session, tenant_id)
+    await assert_tenant_context(session, tenant_id)
+
+    # F-PR25-R1-001 fix (Codex R1 P1): also load the AgentRun and
+    # require its ``project_id`` to match. The
+    # ``artifacts_run_fkey`` is only ``(tenant_id, run_id)``, so a run
+    # belonging to project B could otherwise receive a promotion
+    # artifact whose payload says it promotes a project A research task.
+    run_project_id = await session.scalar(
+        select(AgentRun.project_id).where(
+            AgentRun.tenant_id == tenant_id,
+            AgentRun.id == run_id,
+        )
+    )
+    if run_project_id is None:
+        raise ResearchToTicketError(
+            "agent_run_not_found",
+            f"agent_run_id {run_id} not found for tenant {tenant_id}.",
+        )
+    if run_project_id != project_id:
+        raise ResearchToTicketError(
+            "agent_run_project_mismatch",
+            f"agent_run_id {run_id} does not belong to project {project_id}.",
+        )
+
     # Verify the ResearchTask belongs to the tenant + project. Bypassing
     # this would let a caller promote claims that exist in a different
     # project (the FK chain catches this at insert, but failing here
@@ -170,12 +217,23 @@ async def promote_research_to_ticket(
             f"research_task_id {research_task_id} does not belong to project {project_id}.",
         )
 
-    reference = ResearchSetReference(
-        project_id=project_id,
-        research_task_id=research_task_id,
-        claim_ids=tuple(claim_ids),
-        evidence_item_ids=tuple(evidence_item_ids),
-    )
+    # F-PR25-R1-008 fix (Codex R1 P2): ``ResearchSetReference`` rejects
+    # duplicate claim_ids / evidence_item_ids via Pydantic validators,
+    # which raises ``ValidationError`` rather than
+    # ``ResearchToTicketError`` and would surface as a 500 to the
+    # caller. Wrap so the API can return a structured 4xx instead.
+    try:
+        reference = ResearchSetReference(
+            project_id=project_id,
+            research_task_id=research_task_id,
+            claim_ids=tuple(claim_ids),
+            evidence_item_ids=tuple(evidence_item_ids),
+        )
+    except ValidationError as exc:
+        raise ResearchToTicketError(
+            "research_set_reference_invalid",
+            f"ResearchSetReference validation failed: {exc}",
+        ) from exc
 
     # Server-owned evidence_set_hash. Catches dangling claim_ids /
     # evidence_item_ids before we hash anything.

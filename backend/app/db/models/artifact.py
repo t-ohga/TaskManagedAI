@@ -27,6 +27,7 @@ ArtifactKind = Literal[
     "cli_stderr",
     "cli_exit",
     "cli_result_summary",
+    "research_promotion",
 ]
 
 ALL_ARTIFACT_KINDS: tuple[ArtifactKind, ...] = (
@@ -41,6 +42,7 @@ ALL_ARTIFACT_KINDS: tuple[ArtifactKind, ...] = (
     "cli_stderr",
     "cli_exit",
     "cli_result_summary",
+    "research_promotion",
 )
 
 # Codex SP6B2 R2 update: agent_run_events 側と同期して 21 keys 化

@@ -26,7 +26,15 @@ from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 from backend.app.repositories.base import BaseRepository
 
 _SERVER_OWNED_FIELDS: frozenset[str] = frozenset(
-    {"id", "tenant_id", "project_id", "run_id", "created_at", "updated_at"}
+    # F-PR25-R1-002 fix (Codex R1 P1): ``tenant_id`` is server-owned but
+    # MUST NOT be popped here — ``_payload_with_tenant_id`` just injected
+    # the authenticated value above, and popping would fall through to
+    # the DB column default (``1``), corrupting non-default tenants.
+    # Strip ``id`` / ``project_id`` / ``run_id`` / timestamps (the
+    # repository derives ``project_id`` + ``run_id`` from the path and
+    # the ``agent_run_id``); keep ``tenant_id`` so the trusted injected
+    # value reaches the INSERT.
+    {"id", "project_id", "run_id", "created_at", "updated_at"}
 )
 
 
