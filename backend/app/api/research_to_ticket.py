@@ -185,15 +185,19 @@ async def promote(
         x_correlation_id, header_name="X-Correlation-Id"
     )
 
-    # F-PR25-R4-006 fix (Codex R4 P2): the documented "all claims of
-    # the ResearchTask" path leaves ``payload.claim_ids`` empty; the
-    # adapter resolves the actual set into ``content_jsonb`` so the
-    # promotion artifact freezes the scope. Use the resolved
-    # ``claim_count`` from the artifact body for the audit record so
-    # consumers do not see ``0`` for full-scope promotions.
+    # F-PR25-R4-006 + F-PR25-R5-007 fix: the documented "all" paths
+    # leave ``payload.claim_ids`` / ``payload.evidence_item_ids``
+    # empty; the adapter resolves the actual sets into
+    # ``content_jsonb`` so the promotion artifact freezes the scope.
+    # Use the resolved counts for the audit record so consumers do
+    # not see ``0`` for full-scope promotions.
     resolved_claim_count = int(
         view.artifact.content_jsonb.get("claim_count")
         or len(payload.claim_ids)
+    )
+    resolved_evidence_item_count = int(
+        view.artifact.content_jsonb.get("evidence_item_count")
+        or len(payload.evidence_item_ids)
     )
 
     # F-PR25-R2-005 + F-PR25-R3-001 + F-PR25-R4-001 fix: append the
@@ -225,7 +229,7 @@ async def promote(
             "evidence_set_hash": view.evidence_set_hash,
             "content_hash": view.artifact.content_hash,
             "claim_id_count": resolved_claim_count,
-            "evidence_item_id_count": len(payload.evidence_item_ids),
+            "evidence_item_id_count": resolved_evidence_item_count,
             # ISO-8601 server timestamp so consumers do not need to
             # rely on the audit_event row's created_at for ordering
             # within a single transaction.

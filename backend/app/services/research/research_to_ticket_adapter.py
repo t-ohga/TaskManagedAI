@@ -305,7 +305,7 @@ async def promote_research_to_ticket(
                 f"only promotions of the same research_task.",
             )
 
-    # F-PR25-R4-002 fix (Codex R4 P2): the documented "all claims of
+    # F-PR25-R4-002 + F-PR25-R5-006 fix: the documented "all claims of
     # the ResearchTask" path (empty ``claim_ids``) previously stored
     # only the task id in ``content_jsonb`` and let
     # ``compute_citation_coverage`` re-query the ``claims`` table at
@@ -314,7 +314,12 @@ async def promote_research_to_ticket(
     # ``evidence_set_hash`` was bound to the older set. Resolve the
     # actual claim_ids server-side now and persist them in
     # ``content_jsonb`` so the scope is frozen at promotion time.
-    resolved_claim_ids: tuple[UUID, ...] = tuple(claim_ids)
+    # R5-006: sort the *explicit* claim_ids path too so the artifact
+    # body's JSON array order is canonical and two requests with the
+    # same claim_ids in different orders produce the same
+    # ``content_hash`` (otherwise approval / dedup keyed on the hash
+    # would diverge).
+    resolved_claim_ids: tuple[UUID, ...] = tuple(sorted(claim_ids))
     if not resolved_claim_ids:
         rows = await session.execute(
             select(Claim.id).where(
@@ -324,6 +329,53 @@ async def promote_research_to_ticket(
             )
         )
         resolved_claim_ids = tuple(sorted(rows.scalars().all()))
+
+    # F-PR25-R5-002 fix (Codex R5 P2): same immutability concern for
+    # ``evidence_item_ids``. Pre-R5 the empty-tuple path let the hash
+    # cover all current evidence items but persisted ``[]`` in the
+    # artifact body, so an evidence item attached later would alter
+    # the resolved set and diverge from the stored
+    # ``evidence_set_hash``. Resolve and freeze the evidence_items
+    # scope at promotion time too.
+    resolved_evidence_item_ids: tuple[UUID, ...] = tuple(sorted(evidence_item_ids))
+    if not resolved_evidence_item_ids and resolved_claim_ids:
+        # Match compute_evidence_set_hash's ``_fetch_evidence_items``
+        # logic: when no explicit evidence_item_ids are requested,
+        # include all evidence_items attached to the promoted claims.
+        from backend.app.db.models.evidence_item import EvidenceItem
+
+        rows = await session.execute(
+            select(EvidenceItem.id).where(
+                EvidenceItem.tenant_id == tenant_id,
+                EvidenceItem.project_id == project_id,
+                EvidenceItem.claim_id.in_(resolved_claim_ids),
+            )
+        )
+        resolved_evidence_item_ids = tuple(sorted(rows.scalars().all()))
+
+    # F-PR25-R5-003 fix (Codex R5 P2): rebuild the
+    # ``ResearchSetReference`` with the resolved (frozen) ID sets
+    # before computing ``evidence_set_hash``. Pre-R5 the hash query
+    # used the original open-ended reference, so under READ COMMITTED
+    # isolation a concurrent INSERT between the resolve query and
+    # the hash query could let the hash cover a claim/evidence item
+    # not persisted in ``content_jsonb`` — splitting the artifact
+    # body and its server-owned hash across different scopes.
+    if resolved_claim_ids != tuple(sorted(claim_ids)) or (
+        resolved_evidence_item_ids != tuple(sorted(evidence_item_ids))
+    ):
+        try:
+            reference = ResearchSetReference(
+                project_id=project_id,
+                research_task_id=research_task_id,
+                claim_ids=resolved_claim_ids,
+                evidence_item_ids=resolved_evidence_item_ids,
+            )
+        except ValidationError as exc:
+            raise ResearchToTicketError(
+                "research_set_reference_invalid",
+                f"ResearchSetReference rebuild failed: {exc}",
+            ) from exc
 
     # Server-owned evidence_set_hash. Catches dangling claim_ids /
     # evidence_item_ids before we hash anything.
@@ -358,7 +410,10 @@ async def promote_research_to_ticket(
         "summary": _canonical_summary(summary),
         "claim_count": len(resolved_claim_ids),
         "claim_ids": [str(c) for c in resolved_claim_ids],
-        "evidence_item_ids": [str(e) for e in sorted(evidence_item_ids)],
+        # F-PR25-R5-002 fix: persist the resolved (frozen) evidence_item_ids
+        # so the artifact body matches the evidence_set_hash exactly.
+        "evidence_item_count": len(resolved_evidence_item_ids),
+        "evidence_item_ids": [str(e) for e in resolved_evidence_item_ids],
         # F-PR25-R4-003 trace: record parent for audit even though it
         # is also on the artifact row (downstream consumers reading
         # only content_jsonb need it).

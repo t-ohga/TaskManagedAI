@@ -203,22 +203,56 @@ async def compute_citation_coverage(
     scope_claim_ids: set[UUID] = set()
     scope_task_ids: set[UUID] = set()
 
-    if not promotion_rows:
-        # No research_promotion artifact: the AgentRun has no defined
-        # citation scope. ``denominator_nonzero=False`` so AC-KPI-04
+    # F-PR25-R5-004 fix (Codex R5 P2): filter promotion_rows to those
+    # whose ``evidence_set_hash`` matches the latest snapshot hash.
+    # Pre-R5 the snapshot match check only verified *one* of the
+    # active promotions matched — multi-promotion runs could let a
+    # snapshot bound to promotion A make GroundingSupport for an
+    # unbound promotion B count as covered, inflating
+    # citation_coverage. Restrict the scope to the snapshot-bound
+    # subset.
+    if evidence_set_hash is not None:
+        active_promotion_rows = [
+            row for row in promotion_rows
+            if isinstance((row[0] or {}).get("evidence_set_hash"), str)
+            and (row[0] or {}).get("evidence_set_hash") == evidence_set_hash
+        ]
+    else:
+        active_promotion_rows = []
+
+    if not active_promotion_rows:
+        # No research_promotion artifact matches the latest snapshot
+        # hash. The AgentRun has no defined citation scope for the
+        # current snapshot. ``denominator_nonzero=False`` so AC-KPI-04
         # gating can distinguish "no scope" from "scope but uncovered".
         distinct_claims_count = 0
     else:
-        # Union of all promotion artifacts' scopes (an AgentRun may
-        # promote multiple times). Each promotion contributes either a
+        # Union of all snapshot-bound promotion artifacts' scopes
+        # (an AgentRun may promote multiple times against the same
+        # snapshot hash, e.g. via parent_artifact_id chains where R3
+        # left only the leaves). Each promotion contributes either a
         # specific claim_id set or the full ResearchTask scope.
-        for (content_jsonb,) in promotion_rows:
+        for (content_jsonb,) in active_promotion_rows:
             cjson = content_jsonb or {}
             task_id_raw = cjson.get("research_task_id")
-            claim_id_raw = cjson.get("claim_ids", [])
-            if claim_id_raw:
-                scope_claim_ids.update(_parse_uuid_set(claim_id_raw))
+            # F-PR25-R5-001 fix (Codex R5 P2): distinguish
+            # *present-but-empty* ``claim_ids`` (the R4-002 frozen
+            # all-claims-at-promotion-time path produces this for a
+            # ResearchTask with no claims) from *missing* ``claim_ids``
+            # field (legacy artifacts from before R4-002). The
+            # present-empty case is itself the canonical "zero
+            # claims" scope and must NOT fall back to expanding the
+            # task — doing so would retroactively grow the scope when
+            # claims are added later, defeating R4-002 immutability.
+            if "claim_ids" in cjson:
+                claim_id_raw = cjson["claim_ids"]
+                if claim_id_raw:
+                    scope_claim_ids.update(_parse_uuid_set(claim_id_raw))
+                # else: frozen empty scope — leave both sets untouched.
             elif task_id_raw is not None:
+                # Legacy artifact lacking ``claim_ids`` — fall back to
+                # task scope (kept for backward compat with pre-R4-002
+                # promotion artifacts).
                 try:
                     scope_task_ids.add(UUID(str(task_id_raw)))
                 except (ValueError, AttributeError):
@@ -276,29 +310,18 @@ async def compute_citation_coverage(
             if scoped_claim_filter:
                 grounded_stmt = grounded_stmt.where(or_(*scoped_claim_filter))
 
-    # F-PR25-R2-003 + F-PR25-R4-004 fix: the numerator is forced to 0
-    # unless the ContextSnapshot.evidence_set_hash actually binds the
-    # **promoted** scope. SP-010 QL-C spec line 165 only requires
-    # checking that the hash is non-null, but a stale or unrelated
-    # snapshot hash with a non-null value can otherwise pass
-    # AC-KPI-04 with positive coverage on a run whose ContextSnapshot
-    # never bound the promoted claim/evidence set. Verify the snapshot
-    # hash matches one of the resolved promotion artifacts'
-    # ``evidence_set_hash`` before allowing a non-zero numerator.
-    promotion_hashes: set[str] = set()
-    for (content_jsonb,) in promotion_rows:
-        cjson = content_jsonb or {}
-        promo_hash = cjson.get("evidence_set_hash")
-        if isinstance(promo_hash, str):
-            promotion_hashes.add(promo_hash)
-
-    snapshot_matches_promotion = (
-        evidence_set_hash is not None
-        and evidence_set_hash in promotion_hashes
-    )
-
-    if not snapshot_matches_promotion:
+    # F-PR25-R2-003 + F-PR25-R4-004 + F-PR25-R5-004 fix: the numerator
+    # is forced to 0 unless at least one ``research_promotion``
+    # artifact's ``evidence_set_hash`` matches the latest
+    # ``ContextSnapshot.evidence_set_hash``. ``active_promotion_rows``
+    # (computed earlier) is exactly that subset, so the boolean
+    # collapses to "did we find any snapshot-bound active promotion?".
+    if not active_promotion_rows:
         # null / mismatched snapshot hash → numerator=0 (uncovered).
+        # ``distinct_claims_count`` is also 0 in this branch (the
+        # scope-building loop above only runs when active_promotion_rows
+        # is non-empty), so the metric reports
+        # ``denominator_nonzero=False`` for this path.
         grounded_claims_final = 0
     else:
         grounded_claims_final = int((await session.scalar(grounded_stmt)) or 0)
