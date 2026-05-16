@@ -590,6 +590,9 @@ def test_sut_results_missing_fixture_id_marks_failure() -> None:
     assert per_fixture.passed is False
     assert per_fixture.sut_result is None
     assert per_fixture.spec_violation_reason == "sut_result_missing"
+    # F-PR31-R2-001 P2 adopt: missing SUT result is a runner failure, not a
+    # spec violation; threshold_reason must surface as ``sut_failure``.
+    assert result.threshold_reason == "sut_failure"
 
 
 @pytest.mark.parametrize(
@@ -606,6 +609,10 @@ def test_non_boolean_sut_result_is_rejected(raw_sut_value: object) -> None:
     assert per_fixture.passed is False
     assert per_fixture.sut_result is None
     assert per_fixture.spec_violation_reason == "sut_result_invalid_type"
+    # F-PR31-R2-001 P2 adopt: a non-boolean SUT payload is a runner-side
+    # failure; threshold_reason must be ``sut_failure`` rather than
+    # ``spec_violation``.
+    assert result.threshold_reason == "sut_failure"
 
 
 # ---------------------------------------------------------------------------
@@ -805,6 +812,49 @@ def test_high_coverage_with_sut_failure_blocks_threshold_met() -> None:
     assert result.per_fixture[0].sut_result is False
     assert result.per_fixture[0].sut_attempted is True
     assert result.per_fixture[0].passed is False
+
+
+@pytest.mark.parametrize(
+    ("aggregate_override", "expected_reason"),
+    (
+        # F-PR31-R2-003 P2 adopt: strict integer presence — string-typed
+        # counts (e.g., from a DB-row path bypassing JSON Schema) must fail
+        # rather than skip the drift oracle.
+        (
+            {"total_claims": "5", "claims_with_citation": 3, "coverage_ratio": 0.6},
+            "spec_violation:expected_aggregate",
+        ),
+        (
+            {"total_claims": 5, "claims_with_citation": "3", "coverage_ratio": 0.6},
+            "spec_violation:expected_aggregate",
+        ),
+        # Missing field must also fail-closed.
+        (
+            {"claims_with_citation": 3, "coverage_ratio": 0.6},
+            "spec_violation:expected_aggregate",
+        ),
+        (
+            {"total_claims": 5, "coverage_ratio": 0.6},
+            "spec_violation:expected_aggregate",
+        ),
+        # Bool subtype must not be accepted as integer.
+        (
+            {"total_claims": True, "claims_with_citation": 3, "coverage_ratio": 0.6},
+            "spec_violation:expected_aggregate",
+        ),
+    ),
+)
+def test_expected_aggregate_count_types_are_strict(
+    aggregate_override: JsonDict, expected_reason: str
+) -> None:
+    """F-PR31-R2-003 P2 adopt: count oracles must be strict ``int`` instances."""
+
+    fixture = _synthetic_fixture(
+        sample_claims=_sample_claims(total=5, with_citation=3, prefix="strict"),
+        expected_aggregate=aggregate_override,
+    )
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == expected_reason
 
 
 @pytest.mark.parametrize(

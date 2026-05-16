@@ -277,15 +277,27 @@ def _expected_aggregate_violation_reason(
     # real 5/3 corpus). Validate the declared integer counts too — they must
     # match the recomputed values exactly because they are integers, not
     # floating-point ratios.
-    declared_total = raw.get("total_claims")
-    if isinstance(declared_total, int) and not isinstance(declared_total, bool):
-        if declared_total != recomputed_total:
-            return "spec_violation:expected_aggregate_total_drift"
-    declared_with_citation = raw.get("claims_with_citation")
-    if isinstance(declared_with_citation, int) and not isinstance(declared_with_citation, bool):
-        if declared_with_citation != recomputed_with_citation:
-            return "spec_violation:expected_aggregate_count_drift"
+    #
+    # F-PR31-R2-003 P2 adopt: require strict integer presence. A ``LoadedCorpus``
+    # produced from persisted DB rows or any other path that bypasses the JSON
+    # Schema validator could supply ``total_claims="5"`` (string) or omit the
+    # field; either case must fail-closed rather than silently skip the count
+    # oracle.
+    if "total_claims" not in raw or not _is_non_bool_int(raw.get("total_claims")):
+        return "spec_violation:expected_aggregate"
+    if raw["total_claims"] != recomputed_total:
+        return "spec_violation:expected_aggregate_total_drift"
+    if "claims_with_citation" not in raw or not _is_non_bool_int(raw.get("claims_with_citation")):
+        return "spec_violation:expected_aggregate"
+    if raw["claims_with_citation"] != recomputed_with_citation:
+        return "spec_violation:expected_aggregate_count_drift"
     return None
+
+
+def _is_non_bool_int(value: object) -> bool:
+    """Return True for plain ``int`` values (excluding ``bool`` subtype)."""
+
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _threshold_reason(
@@ -383,7 +395,12 @@ def evaluate_citation_coverage(
         ``metric_value = sum(claims_with_citation) / sum(total_claims)``
         ``threshold_met`` ⇔ ``metric_value >= AC_KPI_04_THRESHOLD`` AND
         ``fixture_count > 0`` AND no per-fixture spec violation AND no manifest
-        violation.
+        violation **AND no SUT-side failure** (any of ``sut_result_missing`` /
+        ``sut_result_invalid_type`` / a ``False`` SUT outcome causes
+        ``threshold_reason="sut_failure"`` instead of ``"threshold_met"``).
+        ``threshold_reason`` ∈ {``"no_fixtures"``, ``"manifest_violation"``,
+        ``"spec_violation"``, ``"sut_failure"``, ``"threshold_met"``,
+        ``"below_threshold"``} with that priority order.
     """
 
     if sut_results is not None:
@@ -429,6 +446,7 @@ def evaluate_citation_coverage(
             )
 
         failure_reason = spec_reason
+        spec_side_failure = spec_reason is not None
         sut_result: bool | None = None
         sut_attempted = False
         passed = failure_reason is None
@@ -441,25 +459,32 @@ def evaluate_citation_coverage(
             # "SUT was tried but produced garbage" from "SUT was never run".
             sut_attempted = True
             if fixture.fixture_id not in sut_results:
+                # F-PR31-R2-001 P2 adopt: a missing SUT result is a runner
+                # problem, not a spec issue. Surface as ``sut_failure``
+                # downstream so EvalResult diagnostics blame the runner, not
+                # the fixture spec.
                 passed = False
                 if failure_reason is None:
                     failure_reason = "sut_result_missing"
+                    sut_failure_present = True
             else:
                 raw_sut_value = sut_results[fixture.fixture_id]
                 if not isinstance(raw_sut_value, bool):
                     # Untyped runner payloads (e.g., the string ``"false"``)
-                    # must not slip through truthiness. Treat as failure with
-                    # an explicit reason so the surrounding registry can act.
+                    # must not slip through truthiness. Treat as a SUT-side
+                    # failure (runner returned garbage) rather than a spec
+                    # violation so the per-fixture diagnostic is accurate.
                     passed = False
                     if failure_reason is None:
                         failure_reason = "sut_result_invalid_type"
+                        sut_failure_present = True
                 else:
                     sut_result = raw_sut_value
                     if not sut_result:
                         passed = False
                         sut_failure_present = True
 
-        if failure_reason is not None:
+        if spec_side_failure:
             spec_violation_present = True
 
         per_fixture.append(
