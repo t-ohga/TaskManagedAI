@@ -53,6 +53,12 @@ class EvidenceItem(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         sa.UniqueConstraint("tenant_id", "id", name="evidence_items_uq_tenant_id"),
         sa.UniqueConstraint(
             "tenant_id",
+            "project_id",
+            "id",
+            name="evidence_items_uq_tenant_project_id",
+        ),
+        sa.UniqueConstraint(
+            "tenant_id",
             "claim_id",
             "source_id",
             "locator",

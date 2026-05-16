@@ -9,6 +9,7 @@ from backend.app.db.models.base import Base
 from backend.app.db.models.claim import Claim
 from backend.app.db.models.evidence_item import EvidenceItem
 from backend.app.db.models.evidence_source import EvidenceSource
+from backend.app.db.models.grounding_support import SUPPORT_TYPE_ENUM, GroundingSupport
 from backend.app.db.models.notification_event import NotificationEvent
 from backend.app.db.models.policy_decision import PolicyDecision
 from backend.app.db.models.policy_rule import PolicyRule
@@ -38,7 +39,9 @@ __all__ = [
     "Claim",
     "EvidenceItem",
     "EvidenceSource",
+    "GroundingSupport",
     "NotificationEvent",
+    "SUPPORT_TYPE_ENUM",
     "PolicyDecision",
     "PolicyRule",
     "Principal",

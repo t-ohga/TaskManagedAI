@@ -88,7 +88,8 @@ class Artifact(TenantIdMixin, Base):
         sa.CheckConstraint(
             "kind in "
             "('plan','patch','evidence','citation','provider_continuation_ref','other',"
-            "'cli_input','cli_stdout','cli_stderr','cli_exit','cli_result_summary')",
+            "'cli_input','cli_stdout','cli_stderr','cli_exit','cli_result_summary',"
+            "'research_promotion')",
             name="artifacts_ck_kind",
         ),
         sa.CheckConstraint(
