@@ -539,6 +539,7 @@ class ResearchToTicketAdapter:
                 EvidenceItem.claim_id.in_(claim_ids),
             )
             .order_by(EvidenceItem.claim_id, EvidenceItem.id)
+            .with_for_update()
         )
         evidence_items = tuple(evidence_items_result.scalars().all())
         evidence_sources = await self._fetch_evidence_sources(
