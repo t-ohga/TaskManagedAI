@@ -79,7 +79,9 @@ def _sample_runs(
     ``completed_cost_usds`` is the list of costs for completed runs (one entry
     per completed run). ``extra_runs`` carries additional runs with arbitrary
     statuses (failed / cancelled / etc.) so tests can verify the completed-only
-    Anti-Gaming filter.
+    Anti-Gaming filter. Token counters are populated with synthetic but
+    schema-valid values so the F-PR32-R2-001 token validation passes by
+    default.
     """
 
     runs: list[JsonDict] = []
@@ -91,10 +93,15 @@ def _sample_runs(
                 "run_id": _uuid_for(f"{prefix}-completed-{index}"),
                 "status": "completed",
                 "cost_usd": cost,
+                "tokens_input": 1000,
+                "tokens_output": 200,
             }
         )
     for entry in extra_runs:
-        runs.append(dict(entry))
+        run = dict(entry)
+        run.setdefault("tokens_input", 1000)
+        run.setdefault("tokens_output", 200)
+        runs.append(run)
     return runs
 
 
@@ -689,6 +696,86 @@ def test_expected_aggregate_threshold_passed_must_be_present() -> None:
     assert per_fixture.spec_violation_reason == "spec_violation:expected_aggregate"
 
 
+@pytest.mark.parametrize(
+    ("token_field", "value", "expected_reason"),
+    (
+        # F-PR32-R2-001 P2 adopt: tokens_input / tokens_output strict validation.
+        ("tokens_input", None, "spec_violation:tokens_input"),
+        ("tokens_input", -1, "spec_violation:tokens_input"),
+        ("tokens_input", "100", "spec_violation:tokens_input"),
+        ("tokens_input", True, "spec_violation:tokens_input"),
+        ("tokens_output", None, "spec_violation:tokens_output"),
+        ("tokens_output", -10, "spec_violation:tokens_output"),
+        ("tokens_output", "200", "spec_violation:tokens_output"),
+        ("tokens_output", True, "spec_violation:tokens_output"),
+    ),
+)
+def test_token_fields_strict_validation(
+    token_field: str, value: object, expected_reason: str
+) -> None:
+    """F-PR32-R2-001 P2 adopt: token usage fields must be non-negative ints."""
+
+    runs = _sample_runs(completed_cost_usds=(0.3, 0.2, 0.1), prefix="tokens")
+    if value is None:
+        del runs[0][token_field]
+    else:
+        runs[0][token_field] = value  # type: ignore[assignment]
+    fixture = _synthetic_fixture(sample_runs=runs)
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == expected_reason
+
+
+def test_token_field_missing_is_detected() -> None:
+    """F-PR32-R2-001 P2 adopt: missing ``tokens_input`` is rejected."""
+
+    runs = _sample_runs(completed_cost_usds=(0.3,), prefix="tokmiss")
+    del runs[0]["tokens_input"]
+    fixture = _synthetic_fixture(
+        sample_runs=runs,
+        expected_aggregate={
+            "total_completed_runs": 1,
+            "total_cost_usd": 0.3,
+            "cost_per_completed_task_usd": 0.3,
+            "threshold_usd": 0.5,
+            "threshold_passed": True,
+        },
+    )
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == "spec_violation:tokens_input"
+
+
+def test_empty_sample_runs_is_rejected() -> None:
+    """F-PR32-R2-003 P2 adopt: ``sample_runs`` must have at least one entry."""
+
+    fixture = _synthetic_fixture(
+        sample_runs=[],
+        expected_aggregate={
+            "total_completed_runs": 0,
+            "total_cost_usd": 0.0,
+            "cost_per_completed_task_usd": 0.0,
+            "threshold_usd": 0.5,
+            "threshold_passed": False,
+        },
+    )
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == "spec_violation:sample_runs"
+
+
+def test_uppercase_uuid_run_id_is_rejected() -> None:
+    """F-PR32-R2-004 P2 adopt: ``run_id`` must be canonical lowercase.
+
+    Mixed-case UUIDs are a Anti-Gaming bypass because the duplicate-detection
+    set compares raw strings; the same logical UUID could appear once in
+    each case and be counted twice.
+    """
+
+    runs = _sample_runs(completed_cost_usds=(0.3, 0.2, 0.1), prefix="upper")
+    runs[0]["run_id"] = runs[0]["run_id"].upper()  # type: ignore[union-attr]
+    fixture = _synthetic_fixture(sample_runs=runs)
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == "spec_violation:run_id"
+
+
 def test_zero_completed_runs_must_declare_ratio_zero() -> None:
     """F-PR32-R1-003 P2 adopt: when recomputed ratio is undefined, the
     declared ratio must be ``0.0`` (the canonical undefined sentinel).
@@ -702,6 +789,8 @@ def test_zero_completed_runs_must_declare_ratio_zero() -> None:
                 "run_id": _uuid_for("zero-completed-non-zero-decl"),
                 "status": "failed",
                 "cost_usd": 1.0,
+                "tokens_input": 100,
+                "tokens_output": 50,
             }
         ],
         expected_aggregate={
@@ -739,6 +828,8 @@ def test_corpus_with_no_completed_runs_returns_no_completed_runs_reason() -> Non
                 "run_id": _uuid_for("no-completed-failed"),
                 "status": "failed",
                 "cost_usd": 0.5,
+                "tokens_input": 800,
+                "tokens_output": 0,
             }
         ],
         expected_aggregate={
@@ -978,6 +1069,8 @@ def test_completed_only_filter_excludes_failed_and_cancelled_costs() -> None:
                 "run_id": _uuid_for("anti-gaming-failed"),
                 "status": "failed",
                 "cost_usd": 99.0,
+                "tokens_input": 5000,
+                "tokens_output": 0,
             },
             {
                 "tenant_id": 1,
@@ -985,6 +1078,8 @@ def test_completed_only_filter_excludes_failed_and_cancelled_costs() -> None:
                 "run_id": _uuid_for("anti-gaming-cancelled"),
                 "status": "cancelled",
                 "cost_usd": 99.0,
+                "tokens_input": 5000,
+                "tokens_output": 0,
             },
             {
                 "tenant_id": 1,
@@ -992,6 +1087,8 @@ def test_completed_only_filter_excludes_failed_and_cancelled_costs() -> None:
                 "run_id": _uuid_for("anti-gaming-blocked"),
                 "status": "blocked",
                 "cost_usd": 99.0,
+                "tokens_input": 5000,
+                "tokens_output": 0,
             },
         ]
     )

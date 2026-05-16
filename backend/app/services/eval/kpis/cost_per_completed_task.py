@@ -91,15 +91,15 @@ _AGGREGATE_NOT_PROVIDED: Final[object] = object()
 # AC-KPI-05 contract (the live fixture explicitly leaves it ``null``), so
 # we do NOT validate it here. Status enum and UUID structural validation
 # carry the Anti-Gaming load instead.
-# F-PR32-R1-005 P2 adopt: AC-KPI-05 fixture schema constrains ``run_id`` to a
-# canonical RFC 4122 UUID. The version nibble (first hex of the 3rd group) must
-# be 1-5 and the variant nibble (first hex of the 4th group) must be 8/9/a/b
-# (the ``10xx`` variant). The nil UUID (all zeros) is excluded by the version
-# constraint. Persisted corpora that bypass JSON Schema can otherwise carry
-# arbitrary hex strings that ``uuid.UUID(...)`` would happily parse.
+# F-PR32-R1-005 P2 + R2-004 P2 adopt: AC-KPI-05 fixture schema constrains
+# ``run_id`` to a canonical RFC 4122 UUID **in lowercase**. The version nibble
+# (first hex of the 3rd group) must be 1-5 and the variant nibble (first hex
+# of the 4th group) must be 8/9/a/b (the ``10xx`` variant). The nil UUID
+# (all zeros) is excluded by the version constraint. The pattern is
+# case-sensitive so an upper-case spelling fails — preventing the same logical
+# UUID from being counted twice via mixed-case duplicate-detection bypass.
 _UUID_TEXT_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-    re.IGNORECASE,
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
 
 
@@ -246,6 +246,14 @@ def _collect_sample_runs(
     sample_runs = case_input.get("sample_runs")
     if not isinstance(sample_runs, list):
         return [], "spec_violation:sample_runs"
+    # F-PR32-R2-003 P2 adopt: AC-KPI-05 fixture schema declares
+    # ``sample_runs`` with ``minItems=1``. Persisted corpora that bypass JSON
+    # Schema and ship an empty list would otherwise yield ``passed=True`` as
+    # long as the declared aggregate matches zero completed runs; the
+    # corpus-level threshold path still falls through to ``no_completed_runs``,
+    # but the per-fixture row should already mark the fixture spec-invalid.
+    if not sample_runs:
+        return [], "spec_violation:sample_runs"
 
     runs: list[SampleRun] = []
     seen_run_ids: set[str] = set()
@@ -281,6 +289,20 @@ def _collect_sample_runs(
             return [], "spec_violation:cost_usd"
         if float(cost_usd) < 0.0:  # type: ignore[arg-type]
             return [], "spec_violation:cost_usd"
+
+        # F-PR32-R2-001 P2 adopt: AC-KPI-05 fixture schema requires both
+        # ``tokens_input`` and ``tokens_output`` as non-negative integers.
+        # The manifest declares the KPI is based on normalized provider usage
+        # **after BudgetGuard accounting**, so accepting rows without token
+        # counters lets a persisted corpus drop the provider-usage trace while
+        # still recording a cost — exactly the kind of Anti-Gaming bypass the
+        # token oracles exist to catch.
+        tokens_input = raw_run.get("tokens_input")
+        if not _is_non_bool_int(tokens_input) or tokens_input < 0:  # type: ignore[operator]
+            return [], "spec_violation:tokens_input"
+        tokens_output = raw_run.get("tokens_output")
+        if not _is_non_bool_int(tokens_output) or tokens_output < 0:  # type: ignore[operator]
+            return [], "spec_violation:tokens_output"
 
         runs.append(
             SampleRun(
