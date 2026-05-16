@@ -260,7 +260,45 @@ uv run ruff check backend tests
 
 - **batch_0_completed_commit**: `314b5bb` (BL-0113 research_tasks DDL/model/migration + BL-0114 evidence_sources DDL/model/migration、Codex R1-R2 clean)
 - **既実装 BL**: `BL-0113` (research_tasks)、`BL-0114` (evidence_sources)
-- **未着手 BL**: BL-0115〜BL-0130 (claims / evidence_items / evidence_set_hash / Research-to-Ticket adapter / cross-project FK / UI 等、Sprint 10 batch 1+ で順次着手)
+- **未着手 BL**: BL-0117〜BL-0130 (evidence_set_hash / Research-to-Ticket adapter / cross-project FK / UI 等、Sprint 10 batch 2+ で順次着手)
 - **ADR 状態**: ADR-00002 + ADR-00003 は commit `3f11d00` で proposed 起票済 (frontmatter `status: proposed`)、accepted 化は Sprint 10 全 batch 完了時に別 run で実施
+
+### Sprint 10 batch 1 実装進捗 (PR #19、2026-05-16、merge commit `5e6a38d`)
+
+- **batch_1_merged_pr**: PR #19 (squash merge at 2026-05-16T00:02:47Z)
+- **実装 BL**:
+  - `BL-0115` (claims + evidence_items DDL/model/schemas/repositories/API)
+  - `BL-0116` (PROV validation: W3C PROV-DM minimal subset、Counter O(N) unique id check + refs existence + id disjointness)
+  - `BL-0029c (partial)` — cross-project negative test fixture の **claims + evidence_items 部分のみ** coverage 完了:
+    - `test_claims_cross_project_select_and_insert_rejected`
+    - `test_evidence_items_cross_project_select_and_insert_rejected`
+    - `test_same_tenant_other_project_research_task_attach_rejected` (claims→research_tasks の cross-project attach negative)
+    - `test_same_tenant_other_project_claim_attach_rejected` (evidence_items→claims の cross-project attach negative)
+  - **BL-0029c の残作業 (Sprint 10 batch 2+ defer)**: `research_tasks` 自身への cross-project SELECT/INSERT/UPDATE/DELETE coverage は batch 2 で BL-0029c-b として実装する (ADR-00002 + P0 backlog AC-HARD-03 で要求される coverage の完全性は batch 2 完遂で達成)
+- **新規 file (主要)**:
+  - `migrations/versions/0017_claims_evidence_items.py` (composite FK + CHECK enum `relation` supports/contradicts/context + updated_at trigger + supporting index)
+  - `backend/app/db/models/{claim,evidence_item}.py`
+  - `backend/app/schemas/{claim,evidence_item}.py` (`Literal["supports","contradicts","context"]` relation + rls_ready force True validators)
+  - `backend/app/repositories/{claim,evidence_item}.py` (project-scoped methods、server-owned UUID strip、secret scan UUID exclude、PROV validation in create + update、generic `create/update/list/get/delete` 全 override で `NotImplementedError`)
+  - `backend/app/services/research/prov_validator.py`
+  - `backend/app/api/{claims,evidence_items}.py` (`/api/v1/projects/{project_id}/...` prefix、`_TRACE_ID_RE` narrowed hex/UUID only、`sk-` prefix bypass 遮断)
+  - `tests/db/test_schema_introspection.py` (4 new test methods including relation column check)
+  - `tests/security/test_research_cross_project_negative.py`
+  - `tests/contracts/test_provenance_json_schema.py`
+  - `tests/services/research/test_prov_validator.py`
+  - `tests/repositories/test_{claim,evidence_item}_repository.py`
+- **Codex multi-round adoption (累計 46 件、R1-R13 全 round)**:
+  - R1-R12 累計: P1×12 + P2×34 = 46 件 adopt
+  - R13: reaction-only clean (👍 at 2026-05-16T00:01:13Z、新規 finding 0、新規 top-level review 0)
+  - **主要 finding カテゴリ**:
+    - server-owned-boundary: caller-supplied UUID / timestamp 削除 (`id` / `created_at` / `updated_at` strip)
+    - generic `create/list/get/update/delete` 全 override で project-scoped 経路強制
+    - `metadata` ↔ `metadata_` Pydantic alias rename 対応 (for/else loop + fallback assign)
+    - secret scan with UUID type exclusion (`assert_no_raw_secret` is dict[str, JsonValue])
+    - `_TRACE_ID_RE` narrowed to hex/UUID (block `sk-` prefix OpenAI key bypass)
+    - PROV validation in create + update (bypass 経路遮断)
+    - `relation` column in schema introspection test (R9 schema addition trace)
+    - `rls_ready: true` invariant enforcement at schema + repository layer (4-layer defense)
+- **CRITICAL invariant 維持**: AgentRun 16 状態 / ContextSnapshot 10 列 / SecretBroker atomic claim / Provider Compliance / actor/principal/approval / 5+ source enum integrity / composite FK `(tenant_id, project_id, id)` / RLS-ready metadata
 
 frontmatter `status: draft` 維持 (Pack 全体の Sprint 完了は batch 0〜5 全 BL clean 到達時)。
