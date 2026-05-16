@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.app_role import (
@@ -20,7 +21,9 @@ from backend.app.db.models.claim import Claim
 from backend.app.db.models.evidence_item import EvidenceItem
 from backend.app.db.models.evidence_source import EvidenceSource
 from backend.app.db.models.research_task import ResearchTask
+from backend.app.db.session import AsyncSessionFactory
 from backend.app.domain.agent_runtime.operation_context import canonical_json_dumps
+from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 from backend.app.repositories.audit_event import AuditEventRepository
 from backend.app.repositories.ticket import TicketRepository
 from backend.app.schemas.research.evidence_set import ResearchSetReference
@@ -121,6 +124,20 @@ class ResearchToTicketAdapter:
             policy_version=policy_version,
             provenance_json_hash_prefix=provenance_json_hash_prefix,
         )
+        # F-PR24-R8-003 P1 adopt: caller-supplied ticket_title_override is
+        # untrusted (callers include Research session workers, orchestrators,
+        # and API clients), so it must pass through the same raw-secret
+        # canary scanner that ClaimRepository / EvidenceItemRepository use
+        # for free-text fields before being persisted into Ticket.title /
+        # description. Reject canary / provider-key / token-pattern hits
+        # fail-closed at the boundary, BEFORE the canonical artifact hash
+        # is computed so no approval can match a payload containing a
+        # raw secret.
+        if ticket_title_override is not None:
+            assert_no_raw_secret(
+                {"ticket_title_override": ticket_title_override},
+                path="$.ticket_title_override",
+            )
         title_source = ticket_title_override or bundle.task.title
         title = _normalize_title(title_source)
         slug = _ticket_slug(research_task_id)
@@ -444,28 +461,32 @@ class ResearchToTicketAdapter:
             )
 
     async def _invalidate_approval(self, approval: ApprovalRequest) -> None:
-        """Mark a stale ApprovalRequest as invalidated and PERSIST the flip.
+        """Mark a stale ApprovalRequest as invalidated using a sibling session.
 
-        F-PR24-R5-002 P1 + F-PR24-R6-004 P2 + F-PR24-R7-003 P1 adopt: per
-        ``.claude/rules/server-owned-boundary.md §3``, any Approval 4
-        binding mismatch must invalidate the approval so it cannot be
-        replayed. We commit the invalidation explicitly here so a
-        caller that subsequently catches the raised ValueError cannot
-        roll back the invalidation -- the stale-approval flip persists
-        independently of the caller's transaction outcome.
+        F-PR24-R5-002 P1 + F-PR24-R6-004 P2 + F-PR24-R7-003 P1 +
+        F-PR24-R8-002 P2 adopt: per ``.claude/rules/server-owned-boundary.md
+        §3``, any Approval 4 binding mismatch must invalidate the
+        approval so it cannot be replayed. To persist the invalidation
+        independent of the caller's transaction outcome (rollback /
+        commit) WITHOUT also committing the caller's prior writes, open
+        a sibling AsyncSession bound to the same engine. The sibling
+        session has its own transaction; the UPDATE commits there and
+        survives any subsequent rollback on ``self.session``.
 
-        Note: this commits the entire caller transaction including any
-        prior writes (e.g., tenant context). For the Research-to-Ticket
-        promotion path, the only writes prior to invalidation are the
-        ``set_tenant_context`` calls which are safe to persist (they
-        also occur on the next promotion attempt). Sprint 11 BL-0126
-        introduces a sibling session / engine injection so the
-        invalidation can use a strictly-independent transaction; until
-        then this commit semantics is the pragmatic enforcement.
+        Note: ``self.session.get_bind()`` returns the engine; a sibling
+        AsyncSession is constructed on it for the single UPDATE. The
+        caller's session retains its own transaction state untouched.
         """
 
-        approval.status = "invalidated"
-        await self.session.commit()
+        async with AsyncSessionFactory() as sibling, sibling.begin():
+            await sibling.execute(
+                sa_update(ApprovalRequest)
+                .where(
+                    ApprovalRequest.tenant_id == approval.tenant_id,
+                    ApprovalRequest.id == approval.id,
+                )
+                .values(status="invalidated")
+            )
 
     async def _fetch_research_bundle(
         self,
