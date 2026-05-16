@@ -1344,3 +1344,166 @@ def test_loader_rounded_corpus_metric_at_threshold_reports_met() -> None:
     result = evaluate_cost_per_completed_task(_synthetic_corpus([fixture]))
     assert result.threshold_met is True
     assert result.threshold_reason == "threshold_met"
+
+
+# ---------------------------------------------------------------------------
+# F-PR32-R5: ROUND_HALF_UP + reject negative declared money + late-commit corpus seen
+# ---------------------------------------------------------------------------
+
+
+def test_money_normalization_uses_round_half_up_matching_loader() -> None:
+    """F-PR32-R5-001 P2 adopt: ``_normalize_money`` must use the loader's
+    ``Decimal(_MONEY_QUANT, ROUND_HALF_UP)`` rounding mode, **not** Python's
+    half-even (banker's) ``round``.
+
+    For an exact-halfway value of ``$0.5000005``, the loader's
+    ``_money_to_float`` produces ``0.500001`` (rounds up) and declares
+    ``threshold_passed: False`` (above $0.5 + 1e-9). The aggregator must
+    therefore also round 0.5000005 → 0.500001 and report ``threshold_met``
+    as False. With Python's half-even ``round``, the value would land at
+    ``0.5`` and silently flip the gate to True.
+    """
+
+    # 1 completed run at exactly $0.5000005 → loader-rounded to $0.500001.
+    runs = _sample_runs(
+        completed_cost_usds=(0.5000005,),
+        prefix="halfway",
+    )
+    fixture = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_halfway",
+        sample_runs=runs,
+        expected_aggregate={
+            "total_completed_runs": 1,
+            "total_cost_usd": 0.500001,  # loader's HALF_UP rounding
+            "cost_per_completed_task_usd": 0.500001,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            "threshold_passed": False,  # 0.500001 > 0.5 + 1e-9 → False
+        },
+    )
+    result = evaluate_cost_per_completed_task(_synthetic_corpus([fixture]))
+    assert result.per_fixture[0].spec_violation_reason is None
+    # The corpus gate must agree: 0.500001 (HALF_UP) > 0.5 + 1e-9 → above.
+    assert result.threshold_met is False
+    assert result.threshold_reason == "above_threshold"
+
+
+def test_declared_total_cost_usd_negative_drift_is_rejected() -> None:
+    """F-PR32-R5-002 P2 adopt: a tiny-negative ``total_cost_usd`` (within
+    ``_COST_ABS_TOL``) must be rejected before the tolerance check.
+
+    The cost fixture schema requires non-negative aggregates. A persisted
+    corpus that bypasses JSON Schema and declares
+    ``total_cost_usd=-0.0000005`` against a recomputed ``0.0`` would
+    otherwise pass ``_costs_match`` because the difference is within the
+    1e-6 absolute tolerance.
+    """
+
+    fixture = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_neg_total",
+        sample_runs=[
+            {
+                "tenant_id": 1,
+                "project_id": 10,
+                "run_id": _uuid_for("neg-total-skip"),
+                "status": "failed",
+                "cost_usd": 1.0,
+                "tokens_input": 100,
+                "tokens_output": 50,
+            }
+        ],
+        expected_aggregate={
+            "total_completed_runs": 0,
+            # Negative declared cost within ``_COST_ABS_TOL`` of zero.
+            "total_cost_usd": -0.0000005,
+            "cost_per_completed_task_usd": 0.0,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            "threshold_passed": False,
+        },
+    )
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == "spec_violation:expected_aggregate"
+
+
+def test_invalid_fixture_does_not_poison_corpus_seen_run_ids() -> None:
+    """F-PR32-R5-003 P2 adopt: when an earlier fixture fails partway
+    through validation, its ``run_id`` values must **not** leak into the
+    corpus-wide seen-set. Otherwise a later valid fixture that legitimately
+    reuses an unrelated UUID could be misreported as
+    ``spec_violation:duplicate_run_id_across_fixtures``.
+
+    Construct fixture A with one valid run followed by one row that fails
+    on ``tokens_input`` (causing the whole fixture to be rejected). Then
+    fixture B reuses A's first ``run_id`` as a completed run. Without the
+    late-commit guard, B would falsely fail; with it, B is accepted.
+    """
+
+    shared_run_id = _uuid_for("late-commit-shared")
+
+    fixture_a_runs = [
+        # Row 1: valid; without late-commit, this UUID would leak into the
+        # corpus seen-set even though the fixture is rejected below.
+        {
+            "tenant_id": 1,
+            "project_id": 10,
+            "run_id": shared_run_id,
+            "status": "completed",
+            "cost_usd": 0.1,
+            "tokens_input": 100,
+            "tokens_output": 50,
+        },
+        # Row 2: tokens_input is negative → fixture A is rejected.
+        {
+            "tenant_id": 1,
+            "project_id": 10,
+            "run_id": _uuid_for("late-commit-fail-row"),
+            "status": "completed",
+            "cost_usd": 0.1,
+            "tokens_input": -1,
+            "tokens_output": 50,
+        },
+    ]
+    fixture_a = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_late_a",
+        sample_runs=fixture_a_runs,
+        # Expected aggregate for a fully-valid version (it won't be checked
+        # because the parser rejects on tokens_input first).
+        expected_aggregate={
+            "total_completed_runs": 2,
+            "total_cost_usd": 0.2,
+            "cost_per_completed_task_usd": 0.1,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            "threshold_passed": True,
+        },
+    )
+
+    fixture_b = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_late_b",
+        sample_runs=[
+            {
+                "tenant_id": 1,
+                "project_id": 10,
+                "run_id": shared_run_id,  # would collide if A leaked
+                "status": "completed",
+                "cost_usd": 0.2,
+                "tokens_input": 1000,
+                "tokens_output": 200,
+            }
+        ],
+        expected_aggregate={
+            "total_completed_runs": 1,
+            "total_cost_usd": 0.2,
+            "cost_per_completed_task_usd": 0.2,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            "threshold_passed": True,
+        },
+    )
+    result = evaluate_cost_per_completed_task(
+        _synthetic_corpus([fixture_a, fixture_b])
+    )
+
+    # Fixture A is rejected on the malformed row.
+    assert result.per_fixture[0].spec_violation_reason == "spec_violation:tokens_input"
+    # Fixture B is **not** falsely flagged as cross-fixture duplicate.
+    assert result.per_fixture[1].spec_violation_reason is None
+    assert result.total_completed_runs_across_corpus == 1
+    assert result.total_cost_usd_across_corpus == pytest.approx(0.2)

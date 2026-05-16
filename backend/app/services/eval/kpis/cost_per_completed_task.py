@@ -28,6 +28,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Final, Literal
 from uuid import UUID
 
@@ -100,13 +101,35 @@ _THRESHOLD_USD_ABS_TOL: Final[float] = 1e-9
 # normalization so a fixture / corpus whose declared aggregate sits at the
 # rounded threshold (e.g., recomputed 0.5000004 rounded to 0.500000) is not
 # falsely rejected as drift / above_threshold.
+#
+# F-PR32-R5-001 P2 adopt: the loader uses ``Decimal(_MONEY_QUANT, ROUND_HALF_UP)``
+# (banker's-round NOT used). Python's built-in ``round()`` is half-even, so
+# exact-halfway values (e.g., $0.5000005) would diverge between the loader
+# (-> $0.500001) and the aggregator (-> $0.500000). Mirror the loader's
+# ``ROUND_HALF_UP`` quantization here so threshold_passed / threshold_met
+# decisions agree at the documented precision.
 _MONEY_DECIMAL_PLACES: Final[int] = 6
+_MONEY_QUANT: Final[Decimal] = Decimal("0.000001")
 
 
 def _normalize_money(value: float) -> float:
-    """Round a money value to the loader's documented 6-decimal precision."""
+    """Quantize money to the loader's 6-decimal ``ROUND_HALF_UP`` precision.
 
-    return round(value, _MONEY_DECIMAL_PLACES)
+    Mirrors ``eval/quality/cost_per_completed_task/loader.py::_money_to_float``
+    (``Decimal(value).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)``)
+    so the aggregator's threshold decisions never diverge from the loader's
+    rounding for fixtures that bypass JSON Schema validation.
+    """
+
+    try:
+        quantized = Decimal(str(value)).quantize(_MONEY_QUANT, rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        # ``value`` should be finite by the time we get here (the caller
+        # already passes through ``_is_finite_number``); fall back to a
+        # half-even ``round`` rather than re-raise so an unexpected float
+        # cannot crash the aggregator.
+        return round(value, _MONEY_DECIMAL_PLACES)
+    return float(quantized)
 
 # Sentinel that distinguishes "key absent" from "key present but malformed"
 # (mirrors the citation_coverage aggregator).
@@ -292,6 +315,13 @@ def _collect_sample_runs(
 
     runs: list[SampleRun] = []
     seen_run_ids: set[str] = set()
+    # F-PR32-R5-003 P2 adopt: stage the corpus-level seen-set delta locally
+    # and only commit it after the fixture has fully validated. Otherwise a
+    # malformed fixture that fails partway through its rows (e.g., a valid
+    # ``run_id`` followed by an invalid ``tokens_input``) would leak its
+    # UUIDs into ``corpus_seen_run_ids``, causing the next otherwise-valid
+    # fixture to falsely fail as ``duplicate_run_id_across_fixtures``.
+    pending_corpus_ids: set[str] = set()
     for raw_run in sample_runs:
         if not isinstance(raw_run, dict):
             return [], "spec_violation:sample_runs"
@@ -305,7 +335,7 @@ def _collect_sample_runs(
             return [], "spec_violation:duplicate_run_id_across_fixtures"
         seen_run_ids.add(run_id)
         if corpus_seen_run_ids is not None:
-            corpus_seen_run_ids.add(run_id)
+            pending_corpus_ids.add(run_id)
 
         tenant_id = raw_run.get("tenant_id")
         if not _is_non_bool_int(tenant_id) or tenant_id < 1:  # type: ignore[operator]
@@ -353,6 +383,12 @@ def _collect_sample_runs(
             )
         )
 
+    # F-PR32-R5-003 P2 adopt: commit the pending corpus-wide UUIDs only after
+    # *all* rows in this fixture validated. If any row above had raised a
+    # spec violation we returned early and ``pending_corpus_ids`` is
+    # discarded along with the function frame.
+    if corpus_seen_run_ids is not None and pending_corpus_ids:
+        corpus_seen_run_ids.update(pending_corpus_ids)
     return runs, None
 
 
@@ -420,6 +456,14 @@ def _expected_aggregate_violation_reason(
     declared_total_cost = raw.get("total_cost_usd")
     if not _is_finite_number(declared_total_cost):
         return "spec_violation:expected_aggregate"
+    # F-PR32-R5-002 P2 adopt: the fixture schema requires
+    # ``total_cost_usd >= 0.0``. Persisted corpora that bypass JSON Schema
+    # could declare a tiny-negative drift (e.g., ``-0.0000005``) and slip
+    # past ``_costs_match`` because the absolute tolerance is ``1e-6``.
+    # Reject negative declared money values **before** applying the
+    # tolerance so the drift oracle stays trustworthy.
+    if float(declared_total_cost) < 0.0:  # type: ignore[arg-type]
+        return "spec_violation:expected_aggregate"
     if not _costs_match(float(declared_total_cost), recomputed_total_cost_usd):  # type: ignore[arg-type]
         return "spec_violation:expected_aggregate_total_cost_drift"
 
@@ -440,6 +484,11 @@ def _expected_aggregate_violation_reason(
             return "spec_violation:expected_aggregate_ratio_drift"
     else:
         if not _is_finite_number(declared_ratio_raw):
+            return "spec_violation:expected_aggregate"
+        # F-PR32-R5-002 P2 adopt: same non-negative guard for the declared
+        # ratio. Negative declared ratios cannot occur for a real cost
+        # KPI; reject before tolerance.
+        if float(declared_ratio_raw) < 0.0:
             return "spec_violation:expected_aggregate"
         if not _costs_match(float(declared_ratio_raw), recomputed_ratio):
             return "spec_violation:expected_aggregate_ratio_drift"
