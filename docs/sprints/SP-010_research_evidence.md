@@ -4,7 +4,7 @@ type: "heavy"
 status: "draft"
 sprint_no: 10
 created_at: "2026-05-13"
-updated_at: "2026-05-13"
+updated_at: "2026-05-16"
 target_days: 4.3
 max_days: 7
 adr_refs:
@@ -32,7 +32,7 @@ risks:
 
 このテンプレの使い方: ADR Gate Criteria #2 DB schema + #3 API contract に該当する Sprint。Research / Evidence schema を first-class にし、`evidence_set_hash` を ContextSnapshot 10 column の中核として固定する。Sprint 11 (Eval Harness) の AC-KPI-04 citation_coverage の source ticket を提供する。
 
-最終更新: 2026-05-13
+最終更新: 2026-05-16
 
 ## 目的
 
@@ -56,6 +56,35 @@ risks:
 - source trust registry — P1 へ defer
 - 自動矛盾解決 — P1 へ defer
 - freshness_score の自動更新 cron — Sprint 11.5 へ defer (Observability で再計算 metric として可視化)
+
+## P1 defer placeholder (BL-0121)
+
+本 section は Sprint 10 batch 4 で追加する **BL-0121 placeholder**。P0 では schema / runtime behavior を変更せず、P1 で activate する DB / service / UI contract を先に固定する。batch 4 では migration 実列追加なし、comment-only migration も作成しない。P1 実装時に ADR-00002 / ADR-00003 の update と alembic migration を同時に行う。
+
+- `conflict_group_id` (矛盾解決グループ):
+  - 予定列: `claims.conflict_group_id UUID NULL`
+  - 予定親 table: `conflict_groups`
+  - 予定 FK: `(tenant_id, project_id, conflict_group_id) -> conflict_groups(tenant_id, project_id, id)`
+  - 目的: 同一 ResearchTask 内または同一 project 内で contradictory claims を束ね、reviewer が採用 / 保留 / reject を判断できる単位にする
+  - P0 invariant: `claims` の project boundary は既存 `(tenant_id, project_id, research_task_id)` と `(tenant_id, project_id, id)` のまま維持し、P0 UI は contradiction grouping を表示しない
+  - P1 activation TODO: `conflict_groups` table、`claims.conflict_group_id` nullable column、composite FK、cross-project negative test、read-only admin UI filter を同一 batch で追加
+
+- `source_trust_registry` (EvidenceSource trust):
+  - 予定列: `evidence_sources.trust_level TEXT NULL`
+  - 予定列: `evidence_sources.trust_score DOUBLE PRECISION NULL`
+  - 予定 enum/check: `trust_level in ('low','medium','high')`、`trust_score is null or trust_score between 0.0 and 1.0`
+  - 目的: tenant-shared EvidenceSource に対し、source registry / manual review / future evaluator 由来の trust signal を保持する
+  - P0 invariant: `evidence_sources` は project_id を持たない tenant-scoped table のまま。project binding は `claims` / `evidence_items` 経由で保証し、trust registry は citation_coverage source と混同しない
+  - P1 activation TODO: registry adapter、trust_level / trust_score columns、source trust update audit event、UI read-only badge、trust registry drift test を Sprint 11 以降で追加
+
+- Migration TODO comment:
+  - P1 migration では `claims` / `evidence_sources` table comment に BL-0121 activation note を残す
+  - P0 batch 4 では DB comment も追加しない。P0 DB schema drift を避け、Sprint 10 batch 0〜3 の migration chain を変更しないため
+
+- 非ゴール:
+  - P0 では automatic contradiction resolution を実装しない
+  - P0 では source trust を citation_coverage, research_evidence_attachment_rate, evidence_set_hash の入力にしない
+  - P0 では `allowed_data_class` / `payload_data_class` と trust_level を混同しない
 
 ## 設計判断
 
@@ -111,6 +140,9 @@ risks:
 - PROV bundle hash (BL-0116) が provenance_json の wasGeneratedBy + used + wasAttributedTo を含む
 - 越境 SELECT / INSERT / UPDATE / DELETE が全件 reject (BL-0029c)
 - 同一 tenant・別 project の cross reference (research_task → ticket / claim → evidence_source) も reject
+- BL-0120: `(admin)/research/` と `(admin)/research/[id]/` が read-only で ResearchTask / Claim / EvidenceItem / EvidenceSource を表示し、POST/PATCH/DELETE UI を持たない
+- BL-0120: secret_ref / capability token / raw api_key / provider raw payload は DOM に表示しない
+- BL-0121: conflict_group_id / source trust registry は P1 defer placeholder として本 Pack に記録され、P0 DB schema には列追加しない
 
 ### QL-C 拡充 acceptance spec (R29 §5 QL-C、P-09 + P-18 反映、doc-only)
 
@@ -204,6 +236,12 @@ uv run pytest tests/agent_runtime/test_context_snapshot_evidence_set_hash.py -q
 # lint / type
 uv run mypy backend
 uv run ruff check backend tests
+
+# frontend BL-0120
+cd frontend
+pnpm typecheck
+pnpm lint
+pnpm test -- research
 ```
 
 ## レビュー観点
@@ -213,6 +251,9 @@ uv run ruff check backend tests
 - PROV bundle hash が W3C PROV-DM minimal subset の 5 relation (wasGeneratedBy / used / wasAttributedTo / wasInformedBy / wasDerivedFrom) を含む (P0 では minimal でも extensibility 維持)
 - 複合 FK が `(tenant_id, project_id, claim_id)` / `(tenant_id, project_id, evidence_source_id)` で閉じている
 - ContextSnapshot.evidence_set_hash の nullable backward compat を破壊していない
+- BL-0120 UI は GET-only client だけを使い、mutation button / form / Server Action を追加していない
+- BL-0120 UI は secret_ref / capability token / raw api_key / raw provenance_json dump を DOM に出していない
+- BL-0121 placeholder は P1 の conflict_group_id / source trust registry を明示しつつ、P0 DB migration chain を変更していない
 
 ## Rollback (per batch)
 
@@ -228,6 +269,7 @@ uv run ruff check backend tests
 - evidence_set_hash drift (NFC UTF-8 + JCS canonical の Python 実装差異): `jcs` library + `unicodedata.normalize('NFC', ...)` で deterministic 化、ただし claim 数が 10000+ になると hash computation 性能課題が発生する可能性 (Sprint 11.5 で metric 観察)
 - research_tasks cross-project FK 制約遅延 (BL-0029c): Sprint 2 から carry-over、本 Sprint で完成しないと AC-HARD-03 cross-project negative が pass しない
 - ContextSnapshot.evidence_set_hash backfill 戦略 (null = "未関連付け" semantics で合意): Sprint 11 で Eval Harness が citation_coverage 計算時に null を 0 として扱う仕様統一が必要
+- BL-0120 frontend は default dev project (`00000000-0000-4000-8000-000000000004`) を server env から解決する暫定 P0 admin surface。multi-project selector は P1 以降の Project Settings / route design で扱う
 
 ## 次スプリント候補
 

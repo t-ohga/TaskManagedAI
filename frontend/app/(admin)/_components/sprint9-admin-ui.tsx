@@ -138,6 +138,7 @@ const BLOCKED_REASON_DESCRIPTIONS: Record<BlockedReason, string> = {
 // aria-current).
 const KEYBOARD_NAV_ITEMS = [
   { label: "Tickets", href: "/tickets", keys: ["g", "t"] },
+  { label: "Research", href: "/research", keys: ["g", "e"] },
   { label: "Approval Inbox", href: "/approvals", keys: ["g", "i"] },
   { label: "Agent Runs", href: "/runs", keys: ["g", "r"] },
   { label: "Audit Log", href: "/audit", keys: ["g", "a"] },
