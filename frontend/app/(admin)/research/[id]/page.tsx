@@ -4,8 +4,8 @@ import { BackendApiError } from "@/lib/api/client";
 import {
   getResearchTask,
   listClaims,
+  getEvidenceSource,
   listEvidenceItems,
-  listEvidenceSources,
   type Claim,
   type EvidenceItem,
   type EvidenceSource,
@@ -41,10 +41,15 @@ type ResearchDetailData = {
 };
 
 async function loadResearchDetail(researchTaskId: string): Promise<ResearchDetailData> {
-  const [task, claims, sources] = await Promise.all([
+  // F-PR26-R1-002 P2 adopt: resolve evidence_sources by the specific
+  // ``source_id``s referenced from this research task's evidence_items,
+  // NOT by fetching the tenant-wide first 200 rows. With >200 sources
+  // per tenant the prior approach silently rendered out-of-page
+  // references as "source unavailable" even though the backend
+  // ``GET /api/v1/evidence-sources/{id}`` endpoint can resolve them.
+  const [task, claims] = await Promise.all([
     getResearchTask(researchTaskId),
-    listClaims(researchTaskId),
-    listEvidenceSources({ limit: 200 })
+    listClaims(researchTaskId)
   ]);
 
   const evidenceItemGroups = await Promise.all(
@@ -52,8 +57,21 @@ async function loadResearchDetail(researchTaskId: string): Promise<ResearchDetai
   );
   const evidenceItemsByClaimId = new Map<string, EvidenceItem[]>(evidenceItemGroups);
   const allEvidenceItems = evidenceItemGroups.flatMap(([, items]) => items);
+  const referencedSourceIds = Array.from(
+    new Set(allEvidenceItems.map((item) => item.source_id))
+  );
+  const resolvedSources = await Promise.all(
+    referencedSourceIds.map(async (sourceId) => {
+      try {
+        const source = await getEvidenceSource(sourceId);
+        return [sourceId, source] as const;
+      } catch {
+        return null;
+      }
+    })
+  );
   const sourcesById = new Map<string, EvidenceSource>(
-    sources.items.map((source) => [source.id, source])
+    resolvedSources.filter((entry): entry is readonly [string, EvidenceSource] => entry !== null)
   );
 
   return {

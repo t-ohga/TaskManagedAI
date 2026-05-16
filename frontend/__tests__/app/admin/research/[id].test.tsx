@@ -10,7 +10,7 @@ const apiMocks = vi.hoisted(() => ({
   getResearchTask: vi.fn(),
   listClaims: vi.fn(),
   listEvidenceItems: vi.fn(),
-  listEvidenceSources: vi.fn()
+  getEvidenceSource: vi.fn()
 }));
 
 vi.mock("next/navigation", () => ({
@@ -26,7 +26,7 @@ vi.mock("@/lib/api/research", async (importOriginal) => {
     getResearchTask: apiMocks.getResearchTask,
     listClaims: apiMocks.listClaims,
     listEvidenceItems: apiMocks.listEvidenceItems,
-    listEvidenceSources: apiMocks.listEvidenceSources
+    getEvidenceSource: apiMocks.getEvidenceSource
   };
 });
 
@@ -34,7 +34,7 @@ afterEach(() => {
   apiMocks.getResearchTask.mockReset();
   apiMocks.listClaims.mockReset();
   apiMocks.listEvidenceItems.mockReset();
-  apiMocks.listEvidenceSources.mockReset();
+  apiMocks.getEvidenceSource.mockReset();
 });
 
 describe("ResearchDetailPage", () => {
@@ -101,23 +101,16 @@ describe("ResearchDetailPage", () => {
         updated_at: "2026-05-16T00:06:00Z"
       }
     ]);
-    apiMocks.listEvidenceSources.mockResolvedValue({
-      items: [
-        {
-          id: sourceId,
-          tenant_id: 1,
-          canonical_url: "https://example.com/source?api_key=raw-secret-key",
-          content_hash: "b".repeat(64),
-          retrieved_at: "2026-05-16T00:07:00Z",
-          published_at: null,
-          created_at: "2026-05-16T00:08:00Z",
-          updated_at: "2026-05-16T00:09:00Z",
-          metadata: { rls_ready: true }
-        }
-      ],
-      total: 1,
-      limit: 200,
-      offset: 0
+    apiMocks.getEvidenceSource.mockResolvedValue({
+      id: sourceId,
+      tenant_id: 1,
+      canonical_url: "https://example.com/source",
+      content_hash: "b".repeat(64),
+      retrieved_at: "2026-05-16T00:07:00Z",
+      published_at: null,
+      created_at: "2026-05-16T00:08:00Z",
+      updated_at: "2026-05-16T00:09:00Z",
+      metadata: { rls_ready: true }
     });
 
     render(await ResearchDetailPage({ params: Promise.resolve({ id: researchTaskId }) }));

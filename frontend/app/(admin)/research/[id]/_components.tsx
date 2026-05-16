@@ -22,9 +22,20 @@ function formatRate(value: number | null): string {
   return `${Math.round(value * 1000) / 10}%`;
 }
 
+// F-PR26-R1-001 P2 adopt: reject non-HTTP(S) schemes. javascript: / data: /
+// file: / etc. URLs are accepted by `new URL()` but rendering them as
+// `<a href>` would XSS or expose unsafe navigation targets. The
+// evidence_sources.canonical_url column is data-backed and not yet
+// constrained to http(s) at write time, so the read-side allowlist is
+// authoritative.
+const SAFE_URL_PROTOCOLS = new Set(["http:", "https:"]);
+
 function safeEvidenceSourceUrl(value: string): string | null {
   try {
     const url = new URL(value);
+    if (!SAFE_URL_PROTOCOLS.has(url.protocol)) {
+      return null;
+    }
     url.username = "";
     url.password = "";
     url.search = "";

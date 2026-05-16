@@ -51,11 +51,21 @@ function sanitizeFrontendUrl(value: string): string {
 
   try {
     const url = new URL(value);
+    // F-PR26-R1-005 P2 adopt: also redact secret-shaped path / host /
+    // pathname before returning. A syntactically valid URL whose
+    // pathname embeds an `sk-...` token or a presigned-style segment
+    // would otherwise reach the DOM after only credentials/query/fragment
+    // stripping. Apply the same secret-pattern check to the sanitized
+    // path + host as the non-URL fallback.
     url.username = "";
     url.password = "";
     url.search = "";
     url.hash = "";
-    return url.toString();
+    const sanitized = url.toString();
+    if (SECRETISH_PATTERN.test(`${url.host}${url.pathname}`)) {
+      return "[redacted]";
+    }
+    return sanitized;
   } catch {
     return SECRETISH_PATTERN.test(value) ? "[redacted]" : value;
   }
@@ -149,16 +159,46 @@ const ProvWasDerivedFromSchema = z.object({
   used: z.string()
 });
 
-export const ProvBundleSchema = z.object({
-  activities: z.array(ProvNodeSchema).default([]),
-  entities: z.array(ProvNodeSchema).default([]),
-  agents: z.array(ProvNodeSchema).default([]),
-  wasGeneratedBy: z.array(ProvWasGeneratedBySchema).default([]),
-  used: z.array(ProvUsedSchema).default([]),
-  wasAttributedTo: z.array(ProvWasAttributedToSchema).default([]),
-  wasInformedBy: z.array(ProvWasInformedBySchema).default([]),
-  wasDerivedFrom: z.array(ProvWasDerivedFromSchema).default([])
-});
+// F-PR26-R1-004 P2 adopt: the backend PROV validator accepts both
+// unprefixed (``activities``) and namespace-prefixed (``prov:activities``)
+// keys for top-level aliases. Without the preprocess step Zod would
+// silently drop the prefixed keys and apply empty defaults, rendering
+// valid claims as 0 activities / entities / relations in the detail
+// page. Normalize the alias keys to the unprefixed form before parsing.
+const PROV_KEY_ALIASES: Record<string, string> = {
+  "prov:activities": "activities",
+  "prov:entities": "entities",
+  "prov:agents": "agents",
+  "prov:wasGeneratedBy": "wasGeneratedBy",
+  "prov:used": "used",
+  "prov:wasAttributedTo": "wasAttributedTo",
+  "prov:wasInformedBy": "wasInformedBy",
+  "prov:wasDerivedFrom": "wasDerivedFrom"
+};
+
+function normalizeProvAliases(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const result: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    const canonical = PROV_KEY_ALIASES[key] ?? key;
+    result[canonical] = val;
+  }
+  return result;
+}
+
+export const ProvBundleSchema = z
+  .preprocess(normalizeProvAliases, z.object({
+    activities: z.array(ProvNodeSchema).default([]),
+    entities: z.array(ProvNodeSchema).default([]),
+    agents: z.array(ProvNodeSchema).default([]),
+    wasGeneratedBy: z.array(ProvWasGeneratedBySchema).default([]),
+    used: z.array(ProvUsedSchema).default([]),
+    wasAttributedTo: z.array(ProvWasAttributedToSchema).default([]),
+    wasInformedBy: z.array(ProvWasInformedBySchema).default([]),
+    wasDerivedFrom: z.array(ProvWasDerivedFromSchema).default([])
+  }));
 
 export type ProvBundle = z.infer<typeof ProvBundleSchema>;
 
@@ -300,4 +340,17 @@ export async function listEvidenceSources(
   return fetchBackendJson(path, EvidenceSourceListResponseSchema, {
     headers: { accept: "application/json" }
   });
+}
+
+// F-PR26-R1-002 P2 adopt: fetch a single evidence_source by id so the
+// detail page can resolve sources referenced beyond the tenant-wide
+// first page.
+export async function getEvidenceSource(
+  sourceId: string
+): Promise<EvidenceSource> {
+  return fetchBackendJson(
+    `/api/v1/evidence-sources/${sourceId}`,
+    EvidenceSourceSchema,
+    { headers: { accept: "application/json" } }
+  );
 }
