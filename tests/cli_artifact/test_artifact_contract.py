@@ -55,6 +55,10 @@ EXPECTED_ALL_ARTIFACT_KINDS: tuple[str, ...] = (
     "cli_stderr",
     "cli_exit",
     "cli_result_summary",
+    # SP-010 batch 3 (BL-0118 Research-to-Ticket adapter): the 12th
+    # artifact kind. Added by migration 0018 (drop + recreate
+    # ``artifacts_ck_kind`` with the extended set).
+    "research_promotion",
 )
 
 
@@ -66,16 +70,24 @@ def test_cli_artifact_kinds_literal_matches_constant() -> None:
     assert set(get_args(CliArtifactKind)) == set(EXPECTED_CLI_ARTIFACT_KINDS)
 
 
-def test_artifact_kinds_literal_11_after_cli_extension() -> None:
+def test_artifact_kinds_literal_12_after_sp010_batch3() -> None:
+    """SP-010 batch 3 (BL-0118) extended this 11 -> 12 by adding
+    ``research_promotion`` for the Research-to-Ticket adapter."""
     assert ALL_ARTIFACT_KINDS == EXPECTED_ALL_ARTIFACT_KINDS
     literal_args = set(get_args(ArtifactKind))
     assert literal_args == set(EXPECTED_ALL_ARTIFACT_KINDS)
-    assert len(literal_args) == 11
+    assert len(literal_args) == 12
     for cli_kind in EXPECTED_CLI_ARTIFACT_KINDS:
         assert cli_kind in literal_args, cli_kind
+    assert "research_promotion" in literal_args
 
 
 def test_migration_0012_check_constraint_contains_11_kinds() -> None:
+    """Migration 0012 added the 11 kinds known at that time (Sprint 6).
+    ``research_promotion`` (the 12th) was added later by migration 0018
+    (SP-010 batch 3); the 0012 file is unchanged from its original
+    11-kind state and we verify the 11 are still present, not the
+    superset of 12 from EXPECTED_ALL_ARTIFACT_KINDS."""
     migration_path = (
         Path(__file__).resolve().parents[2]
         / "migrations"
@@ -83,7 +95,20 @@ def test_migration_0012_check_constraint_contains_11_kinds() -> None:
         / "0012_cli_artifact_kind_11.py"
     )
     text = migration_path.read_text(encoding="utf-8")
-    for kind in EXPECTED_ALL_ARTIFACT_KINDS:
+    _MIGRATION_0012_KINDS: tuple[str, ...] = (
+        "plan",
+        "patch",
+        "evidence",
+        "citation",
+        "provider_continuation_ref",
+        "other",
+        "cli_input",
+        "cli_stdout",
+        "cli_stderr",
+        "cli_exit",
+        "cli_result_summary",
+    )
+    for kind in _MIGRATION_0012_KINDS:
         assert f"'{kind}'" in text, f"migration missing kind literal {kind!r}"
     # downgrade SQL must contain only the legacy 6
     assert "_ARTIFACT_KIND_6_CHECK_SQL" in text
