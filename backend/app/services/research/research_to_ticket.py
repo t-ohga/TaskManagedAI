@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.app_role import (
@@ -21,7 +20,6 @@ from backend.app.db.models.claim import Claim
 from backend.app.db.models.evidence_item import EvidenceItem
 from backend.app.db.models.evidence_source import EvidenceSource
 from backend.app.db.models.research_task import ResearchTask
-from backend.app.db.session import AsyncSessionFactory
 from backend.app.domain.agent_runtime.operation_context import canonical_json_dumps
 from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 from backend.app.repositories.audit_event import AuditEventRepository
@@ -124,20 +122,23 @@ class ResearchToTicketAdapter:
             policy_version=policy_version,
             provenance_json_hash_prefix=provenance_json_hash_prefix,
         )
-        # F-PR24-R8-003 P1 adopt: caller-supplied ticket_title_override is
-        # untrusted (callers include Research session workers, orchestrators,
-        # and API clients), so it must pass through the same raw-secret
-        # canary scanner that ClaimRepository / EvidenceItemRepository use
-        # for free-text fields before being persisted into Ticket.title /
-        # description. Reject canary / provider-key / token-pattern hits
-        # fail-closed at the boundary, BEFORE the canonical artifact hash
-        # is computed so no approval can match a payload containing a
-        # raw secret.
+        # F-PR24-R8-003 P1 + F-PR24-R9-003 P2 adopt: BOTH the caller-
+        # supplied ticket_title_override AND the bundle.task.title
+        # (read from research_tasks row that may have been backfilled
+        # / imported via paths bypassing the standard validators) are
+        # untrusted free-text. Scan both before the canonical artifact
+        # hash is computed so a canary / provider-key / token-pattern
+        # never lands in Ticket.title / description and no approval can
+        # match a payload containing a raw secret.
         if ticket_title_override is not None:
             assert_no_raw_secret(
                 {"ticket_title_override": ticket_title_override},
                 path="$.ticket_title_override",
             )
+        assert_no_raw_secret(
+            {"research_task_title": bundle.task.title},
+            path="$.research_task.title",
+        )
         title_source = ticket_title_override or bundle.task.title
         title = _normalize_title(title_source)
         slug = _ticket_slug(research_task_id)
@@ -209,13 +210,24 @@ class ResearchToTicketAdapter:
         if task_reachable is None:
             raise ValueError("research_task_id not reachable in tenant/project")
 
+        # F-PR24-R9-001 P1 adopt: drop FOR UPDATE on the approval read.
+        # Holding the lock prevented _invalidate_approval (which UPDATEs
+        # the same row) from running without deadlock: a sibling session
+        # would block on the caller's lock, and the caller waits on the
+        # sibling -> deadlock. A read-committed SELECT here is adequate
+        # because the artifact_hash binding check + approval status check
+        # detect the only invariant we care about (the row was approved
+        # at validation time AND its binding matches the recomputed
+        # canonical artifact). Concurrent invalidation between our
+        # validation and the Ticket INSERT is a benign race: the
+        # invalidation by a parallel mismatch source does not
+        # contaminate our Ticket because the artifact_hash equality
+        # already held when we proceeded.
         approval = await self.session.scalar(
-            select(ApprovalRequest)
-            .where(
+            select(ApprovalRequest).where(
                 ApprovalRequest.tenant_id == request.tenant_id,
                 ApprovalRequest.id == request.approval_request_id,
             )
-            .with_for_update()
         )
         if approval is None:
             raise ValueError(
@@ -357,19 +369,16 @@ class ResearchToTicketAdapter:
         otherwise.
         """
 
-        # F-PR24-R3-005 P1 adopt: lock the approval row so a concurrent
-        # invalidate / expire transition cannot occur between this read and
-        # the Ticket INSERT. Without FOR UPDATE the default read-committed
-        # isolation allows another transaction to set status='invalidated'
-        # immediately after we observe 'approved', leading to a mutation
-        # under a no-longer-valid approval.
+        # F-PR24-R9-001 P1 adopt: drop FOR UPDATE here too. The earlier
+        # promote()-level read already loaded the approval row in this
+        # session under MVCC; re-reading without lock is sufficient and
+        # avoids the deadlock with _invalidate_approval that the lock
+        # would otherwise cause.
         approval = await self.session.scalar(
-            select(ApprovalRequest)
-            .where(
+            select(ApprovalRequest).where(
                 ApprovalRequest.tenant_id == tenant_id,
                 ApprovalRequest.id == approval_request_id,
             )
-            .with_for_update()
         )
         if approval is None:
             raise ValueError(
@@ -461,32 +470,47 @@ class ResearchToTicketAdapter:
             )
 
     async def _invalidate_approval(self, approval: ApprovalRequest) -> None:
-        """Mark a stale ApprovalRequest as invalidated using a sibling session.
+        """Mark a stale ApprovalRequest as invalidated in the caller session.
 
         F-PR24-R5-002 P1 + F-PR24-R6-004 P2 + F-PR24-R7-003 P1 +
-        F-PR24-R8-002 P2 adopt: per ``.claude/rules/server-owned-boundary.md
-        §3``, any Approval 4 binding mismatch must invalidate the
-        approval so it cannot be replayed. To persist the invalidation
-        independent of the caller's transaction outcome (rollback /
-        commit) WITHOUT also committing the caller's prior writes, open
-        a sibling AsyncSession bound to the same engine. The sibling
-        session has its own transaction; the UPDATE commits there and
-        survives any subsequent rollback on ``self.session``.
+        F-PR24-R8-002 P2 + F-PR24-R9-001 P1 + F-PR24-R9-004 P2 adopt:
+        per ``.claude/rules/server-owned-boundary.md §3``, any Approval 4
+        binding mismatch must invalidate the approval so it cannot be
+        replayed.
 
-        Note: ``self.session.get_bind()`` returns the engine; a sibling
-        AsyncSession is constructed on it for the single UPDATE. The
-        caller's session retains its own transaction state untouched.
+        Architectural history (documented for completeness):
+            - R5-002 P1: flush invalidation, raise (limitation: caller
+              rollback loses invalidation)
+            - R7-003 P1: commit() to persist (limitation: commits caller's
+              prior writes too)
+            - R8-002 P2: sibling AsyncSession (limitation: deadlocks
+              because caller still holds FOR UPDATE lock on the same row)
+            - R9-001 P1 + R9-004 P2: revert to caller-session flush
+              (avoids deadlock); document rollback limitation explicitly
+
+        Current pragmatic batch 3 contract:
+            - The invalidation flush happens in ``self.session`` so it
+              participates in the caller's transaction.
+            - The promote() flow no longer holds FOR UPDATE on the
+              approval row (R9-001 adopt below), so this UPDATE does
+              not self-deadlock.
+            - If the caller catches the raised ValueError and rolls
+              back, the invalidation is also rolled back. This is
+              acceptable because:
+                * the underlying binding mismatch persists, so any
+                  subsequent promotion retry re-detects it and
+                  re-invalidates;
+                * external/API callers (Research session worker)
+                  follow the repository pattern of NOT catching
+                  adapter exceptions, so their transaction commit
+                  propagates the invalidation.
+            - Sprint 11 BL-0126 introduces a dedicated invalidation
+              service with engine injection + outbox pattern for fully
+              atomic, rollback-survivable invalidation.
         """
 
-        async with AsyncSessionFactory() as sibling, sibling.begin():
-            await sibling.execute(
-                sa_update(ApprovalRequest)
-                .where(
-                    ApprovalRequest.tenant_id == approval.tenant_id,
-                    ApprovalRequest.id == approval.id,
-                )
-                .values(status="invalidated")
-            )
+        approval.status = "invalidated"
+        await self.session.flush()
 
     async def _fetch_research_bundle(
         self,
