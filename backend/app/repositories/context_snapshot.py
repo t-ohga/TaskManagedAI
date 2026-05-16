@@ -5,8 +5,10 @@ from datetime import datetime
 from typing import Any, NoReturn, cast
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.context_snapshot import (
     CONTEXT_SNAPSHOT_REQUIRED_COLUMNS,
     ContextSnapshot,
@@ -23,6 +25,8 @@ from backend.app.repositories._payload_secret_scan import (
 )
 from backend.app.repositories.artifact import assert_sha256_hex
 from backend.app.repositories.base import BaseRepository
+from backend.app.schemas.research.evidence_set import ResearchSetReference
+from backend.app.services.research.evidence_set_hash import compute_evidence_set_hash
 
 _CONTEXT_SNAPSHOT_REQUIRED_NONNULL_COLUMNS: tuple[str, ...] = (
     "prompt_pack_version",
@@ -90,12 +94,49 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
         policy_pack_lock: str | None = None,
         repo_state: dict[str, Any] | None = None,
         tool_manifest: dict[str, Any] | None = None,
-        evidence_set_hash: str | None = None,
+        evidence_set_reference: ResearchSetReference | None = None,
+        inherit_evidence_set_hash_from_snapshot_id: UUID | None = None,
         provider_continuation_ref: dict[str, Any] | None = None,
         provider_request_fingerprint: dict[str, Any] | None = None,
         snapshot_kind: SnapshotKind | str | None = None,
     ) -> ContextSnapshot:
         self._require_tenant_id(tenant_id)
+        if evidence_set_reference is not None and not isinstance(
+            evidence_set_reference,
+            ResearchSetReference,
+        ):
+            raise TypeError("evidence_set_reference must be ResearchSetReference or None.")
+        # F-PR22-001 P2 adopt: ``inherit_evidence_set_hash_from_snapshot_id``
+        # carries a prior server-emitted ``evidence_set_hash`` forward to
+        # resume/repair snapshots without breaking server-owned-boundary §1.
+        # The caller supplies only the prior ContextSnapshot.id (a UUID); the
+        # hash itself is loaded from the DB row, so it remains
+        # server-trusted by transitivity. Mutually exclusive with
+        # ``evidence_set_reference``.
+        if (
+            evidence_set_reference is not None
+            and inherit_evidence_set_hash_from_snapshot_id is not None
+        ):
+            raise ValueError(
+                "evidence_set_reference and "
+                "inherit_evidence_set_hash_from_snapshot_id are mutually exclusive."
+            )
+        # F-PR22-R2-007 P2 adopt: only resume snapshots may inherit a prior
+        # ``evidence_set_hash``. input / pre_tool / post_tool / final
+        # snapshots are paired with the currently active research binding
+        # and must recompute the hash from the latest ResearchSetReference
+        # (or fall back to the deterministic empty-set hash). Allowing
+        # inheritance for non-resume kinds would let callers create new
+        # snapshots that carry stale evidence bindings.
+        if (
+            inherit_evidence_set_hash_from_snapshot_id is not None
+            and snapshot_kind != "resume"
+        ):
+            raise ValueError(
+                "inherit_evidence_set_hash_from_snapshot_id is only valid "
+                "for snapshot_kind='resume'."
+            )
+
         self._assert_snapshot_contract(
             prompt_pack_version=prompt_pack_version,
             prompt_pack_lock=prompt_pack_lock,
@@ -103,30 +144,101 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
             policy_pack_lock=policy_pack_lock,
             repo_state=repo_state,
             tool_manifest=tool_manifest,
-            evidence_set_hash=evidence_set_hash,
             provider_continuation_ref=provider_continuation_ref,
             provider_request_fingerprint=provider_request_fingerprint,
             snapshot_kind=snapshot_kind,
         )
         await self._ensure_tenant_context(tenant_id)
 
-        snapshot = ContextSnapshot(
-            tenant_id=tenant_id,
-            run_id=run_id,
-            prompt_pack_version=cast(str, prompt_pack_version),
-            prompt_pack_lock=cast(str, prompt_pack_lock),
-            policy_version=cast(str, policy_version),
-            policy_pack_lock=cast(str, policy_pack_lock),
-            repo_state=cast(JsonDict, repo_state),
-            tool_manifest=cast(JsonDict, tool_manifest),
-            evidence_set_hash=cast(str, evidence_set_hash),
-            provider_continuation_ref=provider_continuation_ref,
-            provider_request_fingerprint=cast(JsonDict, provider_request_fingerprint),
-            snapshot_kind=cast(SnapshotKind, snapshot_kind),
-        )
+        if evidence_set_reference is not None:
+            run_project_id = await self._get_run_project_id(tenant_id, run_id)
+            if run_project_id is None:
+                raise ValueError("run_id does not belong to tenant_id.")
+            if run_project_id != evidence_set_reference.project_id:
+                raise ValueError(
+                    "evidence_set_reference.project_id must match AgentRun.project_id."
+                )
+
+        if inherit_evidence_set_hash_from_snapshot_id is not None:
+            evidence_set_hash = await self._inherit_evidence_set_hash(
+                tenant_id,
+                run_id,
+                inherit_evidence_set_hash_from_snapshot_id,
+            )
+        else:
+            evidence_set_hash = await compute_evidence_set_hash(
+                self.session,
+                tenant_id,
+                evidence_set_reference,
+            )
+
+        # F-PR22-CI-001 P1 fix: SQLAlchemy serializes Python ``None`` to JSONB
+        # ``'null'`` literal for nullable JSONB columns, which violates the
+        # ``context_snapshots_ck_continuation_ref_required`` CHECK constraint
+        # (it allows SQL NULL but rejects JSON null). Omit the column from the
+        # ORM constructor when None so the DB default (SQL NULL) applies.
+        snapshot_kwargs: dict[str, Any] = {
+            "tenant_id": tenant_id,
+            "run_id": run_id,
+            "prompt_pack_version": cast(str, prompt_pack_version),
+            "prompt_pack_lock": cast(str, prompt_pack_lock),
+            "policy_version": cast(str, policy_version),
+            "policy_pack_lock": cast(str, policy_pack_lock),
+            "repo_state": cast(JsonDict, repo_state),
+            "tool_manifest": cast(JsonDict, tool_manifest),
+            "evidence_set_hash": evidence_set_hash,
+            "provider_request_fingerprint": cast(JsonDict, provider_request_fingerprint),
+            "snapshot_kind": cast(SnapshotKind, snapshot_kind),
+        }
+        if provider_continuation_ref is not None:
+            snapshot_kwargs["provider_continuation_ref"] = provider_continuation_ref
+        snapshot = ContextSnapshot(**snapshot_kwargs)
         self.session.add(snapshot)
         await self.session.flush()
         return snapshot
+
+    async def _get_run_project_id(self, tenant_id: int, run_id: UUID) -> UUID | None:
+        return cast(
+            UUID | None,
+            await self.session.scalar(
+                select(AgentRun.project_id).where(
+                    AgentRun.tenant_id == tenant_id,
+                    AgentRun.id == run_id,
+                )
+            ),
+        )
+
+    async def _inherit_evidence_set_hash(
+        self,
+        tenant_id: int,
+        run_id: UUID,
+        previous_snapshot_id: UUID,
+    ) -> str:
+        """Carry forward a server-emitted ``evidence_set_hash`` (F-PR22-001 P2).
+
+        Reads the hash from a prior ``ContextSnapshot`` row scoped to
+        ``(tenant_id, run_id)``. The DB CHECK ``^[0-9a-f]{64}$`` guarantees
+        the value is a canonical sha256 hex. The caller supplies only the
+        previous snapshot's UUID; this method does not accept caller-supplied
+        hash material.
+        """
+
+        previous_hash = cast(
+            str | None,
+            await self.session.scalar(
+                select(ContextSnapshot.evidence_set_hash).where(
+                    ContextSnapshot.tenant_id == tenant_id,
+                    ContextSnapshot.run_id == run_id,
+                    ContextSnapshot.id == previous_snapshot_id,
+                )
+            ),
+        )
+        if previous_hash is None:
+            raise ValueError(
+                "inherit_evidence_set_hash_from_snapshot_id does not match a "
+                "ContextSnapshot row in (tenant_id, run_id)."
+            )
+        return previous_hash
 
     @classmethod
     def _assert_snapshot_contract(
@@ -138,7 +250,6 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
         policy_pack_lock: str | None,
         repo_state: dict[str, Any] | None,
         tool_manifest: dict[str, Any] | None,
-        evidence_set_hash: str | None,
         provider_continuation_ref: dict[str, Any] | None,
         provider_request_fingerprint: dict[str, Any] | None,
         snapshot_kind: SnapshotKind | str | None,
@@ -150,7 +261,6 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
             "policy_pack_lock": policy_pack_lock,
             "repo_state": repo_state,
             "tool_manifest": tool_manifest,
-            "evidence_set_hash": evidence_set_hash,
             "provider_request_fingerprint": provider_request_fingerprint,
             "snapshot_kind": snapshot_kind,
         }
@@ -168,7 +278,6 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
 
         assert_sha256_hex(cast(str, prompt_pack_lock), field_name="prompt_pack_lock")
         assert_sha256_hex(cast(str, policy_pack_lock), field_name="policy_pack_lock")
-        assert_sha256_hex(cast(str, evidence_set_hash), field_name="evidence_set_hash")
 
         if snapshot_kind not in ALL_SNAPSHOT_KINDS:
             raise ValueError(f"unknown snapshot_kind: {snapshot_kind!r}")
@@ -202,7 +311,6 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
                 "policy_pack_lock": policy_pack_lock,
                 "repo_state": repo_state,
                 "tool_manifest": tool_manifest,
-                "evidence_set_hash": evidence_set_hash,
                 "provider_continuation_ref": provider_continuation_ref,
                 "provider_request_fingerprint": provider_request_fingerprint,
                 "snapshot_kind": snapshot_kind,
@@ -277,7 +385,8 @@ async def create_snapshot(
     policy_pack_lock: str,
     repo_state: dict[str, Any],
     tool_manifest: dict[str, Any],
-    evidence_set_hash: str,
+    evidence_set_reference: ResearchSetReference | None = None,
+    inherit_evidence_set_hash_from_snapshot_id: UUID | None = None,
     provider_continuation_ref: dict[str, Any] | None,
     provider_request_fingerprint: dict[str, Any],
     snapshot_kind: SnapshotKind | str,
@@ -291,7 +400,8 @@ async def create_snapshot(
         policy_pack_lock=policy_pack_lock,
         repo_state=repo_state,
         tool_manifest=tool_manifest,
-        evidence_set_hash=evidence_set_hash,
+        evidence_set_reference=evidence_set_reference,
+        inherit_evidence_set_hash_from_snapshot_id=inherit_evidence_set_hash_from_snapshot_id,
         provider_continuation_ref=provider_continuation_ref,
         provider_request_fingerprint=provider_request_fingerprint,
         snapshot_kind=snapshot_kind,
@@ -306,4 +416,3 @@ __all__ = [
     "assert_no_raw_secret",
     "create_snapshot",
 ]
-

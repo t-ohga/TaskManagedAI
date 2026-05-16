@@ -120,6 +120,14 @@ def _sqlstate(error: BaseException) -> str | None:
     return None
 
 
+def _constraint_name(error: BaseException) -> str | None:
+    return (
+        getattr(error, "constraint_name", None)
+        or getattr(getattr(error, "orig", None), "constraint_name", None)
+        or getattr(getattr(getattr(error, "orig", None), "__cause__", None), "constraint_name", None)
+    )
+
+
 def _assert_integrity_error(
     error: IntegrityError,
     *,
@@ -127,11 +135,7 @@ def _assert_integrity_error(
     constraint_name: str,
 ) -> None:
     assert _sqlstate(error) == sqlstate
-    actual_constraint_name = (
-        getattr(error.orig, "constraint_name", None)
-        or getattr(getattr(error.orig, "__cause__", None), "constraint_name", None)
-    )
-    assert actual_constraint_name == constraint_name
+    assert _constraint_name(error) == constraint_name
 
 
 async def _reset_tables(session: AsyncSession) -> None:
@@ -377,3 +381,226 @@ async def test_same_tenant_other_project_claim_attach_rejected(
             constraint_name="evidence_items_claim_fkey",
         )
         await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_research_tasks_cross_project_select_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Task A must be reachable only via its real project_id (Project A).
+
+    F-PR22-R2-006 P2 adopt: assert positive reachability via Project A
+    first so the negative-case ``project_id=B AND id=A`` empty result is
+    proven to come from the project_id filter, not from an impossible
+    data predicate. Without the positive control, this test would pass
+    even if no isolation enforcement existed at all.
+    """
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+        # Positive control: Task A is reachable via its real project_id (A).
+        reachable_via_a = await session.scalar(
+            text(
+                """
+                select id
+                from research_tasks
+                where tenant_id = 1
+                  and project_id = :project_a_id
+                  and id = :task_a_id
+                """
+            ),
+            {"project_a_id": PROJECT_A_ID, "task_a_id": RESEARCH_TASK_A_ID},
+        )
+        assert reachable_via_a == RESEARCH_TASK_A_ID
+
+        # Tenant-only lookup also resolves Task A, proving the row exists.
+        reachable_by_tenant_and_id = await session.scalar(
+            text(
+                """
+                select id
+                from research_tasks
+                where tenant_id = 1
+                  and id = :task_a_id
+                """
+            ),
+            {"task_a_id": RESEARCH_TASK_A_ID},
+        )
+        assert reachable_by_tenant_and_id == RESEARCH_TASK_A_ID
+
+        # Negative: project_id=B filter must hide Task A from Project B.
+        selected = await session.scalar(
+            text(
+                """
+                select id
+                from research_tasks
+                where tenant_id = 1
+                  and project_id = :project_b_id
+                  and id = :task_a_id
+                """
+            ),
+            {"project_b_id": PROJECT_B_ID, "task_a_id": RESEARCH_TASK_A_ID},
+        )
+
+    assert selected is None
+
+
+@pytest.mark.asyncio
+async def test_research_tasks_cross_project_insert_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+        with pytest.raises(IntegrityError) as exc_info:
+            await session.execute(
+                text(
+                    """
+                    insert into research_tasks (
+                      id, tenant_id, project_id, created_by_actor_id, title, status, metadata
+                    )
+                    values (
+                      :task_a_id, 1, :project_b_id, :actor_id,
+                      'Cross project duplicate task id', 'queued',
+                      '{"rls_ready": true}'::jsonb
+                    )
+                    """
+                ),
+                {
+                    "task_a_id": RESEARCH_TASK_A_ID,
+                    "project_b_id": PROJECT_B_ID,
+                    "actor_id": ACTOR_ID,
+                },
+            )
+            await session.commit()
+
+        assert _sqlstate(exc_info.value) == "23505"
+        assert _constraint_name(exc_info.value) in {
+            "research_tasks_pkey",
+            "research_tasks_uq_tenant_id",
+        }
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_research_tasks_cross_project_update_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Updating Task A must require Project A in the predicate.
+
+    F-PR22-R2-006 P2 adopt: positive control (update via Project A
+    succeeds) proves the row is reachable; the cross-project negative
+    (update via Project B) then meaningfully verifies the project_id
+    filter blocks the otherwise-reachable row.
+    """
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+        # Positive control: update via Project A succeeds and changes title.
+        updated_via_a = await session.scalar(
+            text(
+                """
+                update research_tasks
+                set title = 'Updated via Project A'
+                where tenant_id = 1
+                  and project_id = :project_a_id
+                  and id = :task_a_id
+                returning id
+                """
+            ),
+            {"project_a_id": PROJECT_A_ID, "task_a_id": RESEARCH_TASK_A_ID},
+        )
+        assert updated_via_a == RESEARCH_TASK_A_ID
+
+        # Negative: update predicate scoped to Project B must not match.
+        updated = await session.scalar(
+            text(
+                """
+                update research_tasks
+                set title = 'Cross project update should not apply'
+                where tenant_id = 1
+                  and project_id = :project_b_id
+                  and id = :task_a_id
+                returning id
+                """
+            ),
+            {"project_b_id": PROJECT_B_ID, "task_a_id": RESEARCH_TASK_A_ID},
+        )
+        title = await session.scalar(
+            text(
+                """
+                select title
+                from research_tasks
+                where tenant_id = 1 and id = :task_a_id
+                """
+            ),
+            {"task_a_id": RESEARCH_TASK_A_ID},
+        )
+
+    assert updated is None
+    # Title reflects the positive control change, not the cross-project update.
+    assert title == "Updated via Project A"
+
+
+@pytest.mark.asyncio
+async def test_research_tasks_cross_project_delete_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Deleting Task A must require Project A in the predicate.
+
+    F-PR22-R2-006 P2 adopt: confirm Task A exists prior to the cross-
+    project delete attempt so the post-condition (still_exists == 1)
+    meaningfully shows the project_id filter prevented an otherwise
+    successful delete. Without the existence proof, ``still_exists == 1``
+    could also be satisfied by an absent row.
+    """
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+        # Positive control: Task A exists prior to the negative attempt.
+        pre_count = await session.scalar(
+            text(
+                """
+                select count(*)
+                from research_tasks
+                where tenant_id = 1
+                  and project_id = :project_a_id
+                  and id = :task_a_id
+                """
+            ),
+            {"project_a_id": PROJECT_A_ID, "task_a_id": RESEARCH_TASK_A_ID},
+        )
+        assert pre_count == 1
+
+        # Negative: delete predicate scoped to Project B must not match.
+        deleted = await session.scalar(
+            text(
+                """
+                delete from research_tasks
+                where tenant_id = 1
+                  and project_id = :project_b_id
+                  and id = :task_a_id
+                returning id
+                """
+            ),
+            {"project_b_id": PROJECT_B_ID, "task_a_id": RESEARCH_TASK_A_ID},
+        )
+        still_exists = await session.scalar(
+            text(
+                """
+                select count(*)
+                from research_tasks
+                where tenant_id = 1 and id = :task_a_id
+                """
+            ),
+            {"task_a_id": RESEARCH_TASK_A_ID},
+        )
+
+    assert deleted is None
+    assert still_exists == 1
