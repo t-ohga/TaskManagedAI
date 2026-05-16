@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, NoReturn, cast
 from uuid import UUID
@@ -23,6 +24,12 @@ from backend.app.repositories._payload_secret_scan import (
 )
 from backend.app.repositories.artifact import assert_sha256_hex
 from backend.app.repositories.base import BaseRepository
+from backend.app.services.research.evidence_set_hash import (
+    ClaimNormalized,
+    EvidenceItemNormalized,
+    SourceNormalized,
+    compute_evidence_set_hash,
+)
 
 _CONTEXT_SNAPSHOT_REQUIRED_NONNULL_COLUMNS: tuple[str, ...] = (
     "prompt_pack_version",
@@ -77,6 +84,75 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
     def statement_for_delete(self, tenant_id: int, id: UUID) -> NoReturn:
         raise NotImplementedError(
             "ContextSnapshot rows are immutable. statement_for_delete is prohibited."
+        )
+
+    async def create_snapshot_from_evidence(
+        self,
+        *,
+        tenant_id: int,
+        run_id: UUID,
+        claims: Sequence[ClaimNormalized],
+        sources: Sequence[SourceNormalized],
+        provenance_per_claim: Mapping[UUID, Any],
+        evidence_items: Sequence[EvidenceItemNormalized] = (),
+        prompt_pack_version: str,
+        prompt_pack_lock: str,
+        policy_version: str,
+        policy_pack_lock: str,
+        repo_state: dict[str, Any],
+        tool_manifest: dict[str, Any],
+        provider_continuation_ref: dict[str, Any] | None,
+        provider_request_fingerprint: dict[str, Any],
+        snapshot_kind: SnapshotKind | str,
+    ) -> ContextSnapshot:
+        """**Server-owned** ContextSnapshot construction (Sprint 10 BL-0117).
+
+        Sprint Pack SP-010 受け入れ条件 §line 211:
+        ``evidence_set_hash の caller-supplied hash 経路がない``
+        (server-owned-boundary §1). This helper is the **only** production
+        path that should reach ``create_snapshot`` for fresh (non-resume)
+        snapshots: it takes the **inputs** (claims / sources / provenance /
+        evidence_items) and computes ``evidence_set_hash`` internally via
+        ``compute_evidence_set_hash`` so callers cannot smuggle a pre-
+        computed hash past the boundary.
+
+        ``create_snapshot(evidence_set_hash=...)`` remains for two
+        transitional cases that are themselves server-owned, not caller-
+        supplied:
+
+        - resume snapshots (orchestrator carries the previous snapshot's
+          hash forward verbatim — the previous snapshot is a server-owned
+          DB row, not caller input)
+        - test fixtures that exercise the lower-level contract
+
+        F-R4-004 fix (Codex R4 P1): pre-fix the helper had no production
+        wiring (``rg compute_evidence_set_hash`` only found the module +
+        tests), so the BL-0117 server-owned invariant was not actually
+        enforced outside unit tests.
+        """
+        # provenance_per_claim is a Mapping for API ergonomics; rebuild as
+        # a dict[UUID, Any] for compute_evidence_set_hash's signature.
+        prov_dict: dict[UUID, Any] = dict(provenance_per_claim)
+        computed_hash = compute_evidence_set_hash(
+            claims,
+            sources,
+            prov_dict,
+            evidence_items=evidence_items,
+            require_provenance=True,
+        )
+        return await self.create_snapshot(
+            tenant_id=tenant_id,
+            run_id=run_id,
+            prompt_pack_version=prompt_pack_version,
+            prompt_pack_lock=prompt_pack_lock,
+            policy_version=policy_version,
+            policy_pack_lock=policy_pack_lock,
+            repo_state=repo_state,
+            tool_manifest=tool_manifest,
+            evidence_set_hash=computed_hash,
+            provider_continuation_ref=provider_continuation_ref,
+            provider_request_fingerprint=provider_request_fingerprint,
+            snapshot_kind=snapshot_kind,
         )
 
     async def create_snapshot(
@@ -298,6 +374,51 @@ async def create_snapshot(
     )
 
 
+async def create_snapshot_from_evidence(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    run_id: UUID,
+    claims: Sequence[ClaimNormalized],
+    sources: Sequence[SourceNormalized],
+    provenance_per_claim: Mapping[UUID, Any],
+    evidence_items: Sequence[EvidenceItemNormalized] = (),
+    prompt_pack_version: str,
+    prompt_pack_lock: str,
+    policy_version: str,
+    policy_pack_lock: str,
+    repo_state: dict[str, Any],
+    tool_manifest: dict[str, Any],
+    provider_continuation_ref: dict[str, Any] | None,
+    provider_request_fingerprint: dict[str, Any],
+    snapshot_kind: SnapshotKind | str,
+) -> ContextSnapshot:
+    """Module-level wrapper for ``ContextSnapshotRepository
+    .create_snapshot_from_evidence``.
+
+    F-R4-004 fix (Codex R4 P1): this is the **only** server-owned production
+    path that should be used to create a fresh ContextSnapshot. It computes
+    ``evidence_set_hash`` from the supplied inputs (server-owned-boundary §1).
+    """
+    return await ContextSnapshotRepository(session).create_snapshot_from_evidence(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        claims=claims,
+        sources=sources,
+        provenance_per_claim=provenance_per_claim,
+        evidence_items=evidence_items,
+        prompt_pack_version=prompt_pack_version,
+        prompt_pack_lock=prompt_pack_lock,
+        policy_version=policy_version,
+        policy_pack_lock=policy_pack_lock,
+        repo_state=repo_state,
+        tool_manifest=tool_manifest,
+        provider_continuation_ref=provider_continuation_ref,
+        provider_request_fingerprint=provider_request_fingerprint,
+        snapshot_kind=snapshot_kind,
+    )
+
+
 __all__ = [
     "CONTEXT_SNAPSHOT_REQUIRED_COLUMNS",
     "ContextSnapshotRepository",
@@ -305,5 +426,6 @@ __all__ = [
     "_RAW_SECRET_PATTERNS",
     "assert_no_raw_secret",
     "create_snapshot",
+    "create_snapshot_from_evidence",
 ]
 

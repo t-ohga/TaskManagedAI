@@ -452,6 +452,28 @@ def _normalize_prov_bundle(prov: Any) -> dict[str, Any]:  # noqa: ANN401
         aliased[normalized_key] = v
     prov = aliased
 
+    # F-R4-002 fix (Codex R4 P2): the prov_validator's ``ProvBundle`` has
+    # ``extra="forbid"`` — any top-level key outside the known set (node
+    # sections + minimal relations + legacy ``"relations"`` sub-map) means
+    # the bundle was either bypassed past the validator or carries a new
+    # PROV-DM concept that this helper hasn't been audited for. Fail closed
+    # so two bundles that differ only in an unknown top-level key cannot
+    # silently share a hash.
+    _allowed_top_level_keys: frozenset[str] = (
+        frozenset({"activities", "entities", "agents", "relations"})
+        | PROV_RELATIONS_MINIMAL
+    )
+    unknown_top_level = set(prov.keys()) - _allowed_top_level_keys
+    if unknown_top_level:
+        raise EvidenceSetHashError(
+            "prov_unknown_top_level_key",
+            (
+                f"provenance_json has unknown top-level key(s) "
+                f"{sorted(unknown_top_level)!r}; allowed: "
+                f"{sorted(_allowed_top_level_keys)!r}"
+            ),
+        )
+
     canonical: dict[str, Any] = {}
     for section in ("activities", "entities", "agents"):
         items = prov.get(section, [])
@@ -529,24 +551,34 @@ def _nfc_walk(value: Any) -> Any:  # noqa: ANN401
 
 
 def _ecma_number_to_string(x: float | int) -> str:
-    """F-R3-004 fix (Codex R3 P2): RFC 8785 §3.2.2.3 / ECMAScript
-    ``Number.prototype.toString`` number canonicalization for floats.
+    """RFC 8785 §3.2.2.3 / ECMA-262 §6.1.6.1.13 ``Number::toString`` for the
+    JCS encoder.
 
-    Python's stock ``json.dumps`` emits ``1.0`` (RFC 8785 wants ``1``),
-    ``1e-06`` (wants ``0.000001``), and ``-0.0`` (wants ``0``). Since
+    Python ``json.dumps`` deviates from RFC 8785 in several places; since
     ``evidence_items.relevance_score`` rides in the canonical body, drift
     here would silently change the hash across stacks.
 
-    Algorithm (relevance_score is validated to ``[0, 1]`` so the scientific-
-    form / large-magnitude branches of ECMAScript ToString are unreachable):
+    F-R3-004 fix (Codex R3 P2): the initial fix used fixed-point ``Decimal``
+    formatting which produced ``0.0000001`` for ``1e-7``.
 
-    1. ``0`` / ``-0.0`` / integer-valued ``int`` → ``str(int)`` (no decimal
-       point, no sign on zero).
-    2. Convert via ``Decimal(repr(x))`` to keep the IEEE-754 shortest
-       round-trip representation, then ``format(d, "f")`` to force decimal
-       (no ``e``) form.
-    3. Strip trailing zeros and a trailing decimal point so ``1.0 -> 1``
-       and ``0.5000 -> 0.5``.
+    F-R4-001 fix (Codex R4 P2): the corrected algorithm follows ECMA-262
+    exactly — for any ``|x|`` in [1e-6, 1e21) we emit decimal form, and we
+    fall through to scientific form (``1e-7``, ``1e+21``) outside that
+    window. ``relevance_score`` is validated to ``[0, 1]`` and the score
+    granularity is unconstrained (subnormal-floor floats like ``1e-308``
+    are legitimately accepted), so the scientific branch is reachable in
+    production.
+
+    Algorithm (ECMA-262 ToString(Number) §6.1.6.1.13):
+
+    - ``±0``, ``int`` short-circuit (``"0"`` / ``str(int)``)
+    - reject ``NaN`` / ``±∞`` / ``bool`` with structured reason_codes
+    - decompose finite ``x`` via ``Decimal(repr(x)).normalize().as_tuple()``
+      into ``(sign, digits, exponent)`` where ``digits`` carries the
+      shortest IEEE-754 round-trip mantissa, then compute ``k`` (digit
+      count) and ``n = exponent + k`` (the ECMA "n" exponent).
+    - emit per case table (k ≤ n ≤ 21 | 0 < n ≤ 21 | -6 < n ≤ 0 | else
+      scientific). See `<https://262.ecma-international.org/15.0/#sec-numeric-types-number-tostring>`_.
 
     The PyPI ``jcs`` package is intentionally not used so the hash producer
     keeps zero third-party surface.
@@ -558,20 +590,52 @@ def _ecma_number_to_string(x: float | int) -> str:
         )
     if isinstance(x, int):
         return str(x)
-    # float
     if x != x:  # NaN
         raise EvidenceSetHashError("jcs_nan_forbidden", "NaN is not JSON")
     if x in (float("inf"), float("-inf")):
         raise EvidenceSetHashError("jcs_infinity_forbidden", "Infinity is not JSON")
     if x == 0:
         return "0"  # collapse +0.0 / -0.0
-    # repr(x) gives the shortest round-trip decimal (Python 3.1+ uses dtoa /
-    # "shortest" algorithm matching ECMA-262 ToString).
-    d = Decimal(repr(x))
-    s = format(d, "f")
-    if "." in s:
-        s = s.rstrip("0").rstrip(".")
-    return s or "0"
+    if x < 0:
+        return "-" + _ecma_finite_positive_to_string(-x)
+    return _ecma_finite_positive_to_string(x)
+
+
+def _ecma_finite_positive_to_string(x: float) -> str:
+    """ECMA-262 §6.1.6.1.13 step 5+ for finite positive ``x``.
+
+    Sub-helper isolated so the sign + special-value handling sits in
+    ``_ecma_number_to_string`` and this function deals only with the
+    positive-finite branch (the bulk of the algorithm).
+    """
+    # repr(x) is Python's shortest round-trip decimal (CPython 3.1+ uses
+    # the same David Gay / dtoa "shortest" algorithm that V8 / SpiderMonkey
+    # use under the hood for ECMA-262 ToString). Decimal(repr(x)) is
+    # therefore exact for the IEEE-754 value, and .normalize() strips
+    # trailing-zero artifacts so ``s`` has no trailing zeros (the algorithm
+    # requires ``s % 10 != 0`` when ``k > 1`` for canonical form).
+    d = Decimal(repr(x)).normalize()
+    _sign, digit_tuple, exponent_raw = d.as_tuple()
+    # exponent can be int or one of the special strings ('F', 'n', 'N');
+    # _ecma_number_to_string already rejected NaN/∞ so this is always int.
+    exponent = int(exponent_raw)
+    k = len(digit_tuple)
+    n = exponent + k
+    s_str = "".join(str(d) for d in digit_tuple)
+    if k <= n <= 21:
+        return s_str + "0" * (n - k)
+    if 0 < n <= 21:
+        return s_str[:n] + "." + s_str[n:]
+    if -6 < n <= 0:
+        return "0." + "0" * (-n) + s_str
+    # n < -5 or n > 21: scientific notation
+    if k == 1:
+        mantissa = s_str
+    else:
+        mantissa = s_str[0] + "." + s_str[1:]
+    exp_disp = n - 1
+    sign_char = "+" if exp_disp >= 0 else "-"
+    return f"{mantissa}e{sign_char}{abs(exp_disp)}"
 
 
 def _jcs_dumps(obj: Any) -> str:  # noqa: ANN401
@@ -673,6 +737,33 @@ def compute_evidence_set_hash(
         evidence_items,
         key=lambda e: (e.claim_id, e.source_id, e.locator, e.relation, e.id),
     )
+
+    # F-R4-003 fix (Codex R4 P2): evidence_item must reference a claim and
+    # source from the same input set. A dangling claim_id / source_id means
+    # the assembler dropped the underlying row from `claims`/`sources`
+    # before passing them in, so the canonical body would record only the
+    # bare UUID and two snapshots with the same evidence_item IDs but
+    # different *omitted* claim text / source URL would collide. Fail
+    # closed with structured reason_codes.
+    _claim_id_set = {c.claim_id for c in claim_list}
+    _source_id_set = {s.source_id for s in source_list}
+    for item in item_list:
+        if item.claim_id not in _claim_id_set:
+            raise EvidenceSetHashError(
+                "evidence_item_claim_dangling",
+                (
+                    f"evidence_item id={item.id} references claim_id "
+                    f"{item.claim_id} which is not in the claims input set"
+                ),
+            )
+        if item.source_id not in _source_id_set:
+            raise EvidenceSetHashError(
+                "evidence_item_source_dangling",
+                (
+                    f"evidence_item id={item.id} references source_id "
+                    f"{item.source_id} which is not in the sources input set"
+                ),
+            )
 
     # F-R2-004 fix (Codex R2 P2): in production, every claim must carry a
     # validated provenance_json (API/repository enforce this via

@@ -827,6 +827,162 @@ class TestR3EvidenceItemsTotalOrdering:
         assert h1 != h2
 
 
+class TestR4EcmaScientificNotation:
+    """F-R4-001 fix (Codex R4 P2): ECMA-262 ToString(Number) uses scientific
+    notation for ``|x| < 1e-6`` and ``|x| >= 1e21``. Pre-R4 the producer
+    used ``Decimal`` fixed-point formatting which emitted ``0.0000001``
+    instead of the canonical ``1e-7``."""
+
+    def test_tiny_relevance_score_uses_scientific(self) -> None:
+        # 1e-7: ECMA-262 emits "1e-7" (n=-6 fails the "-6 < n ≤ 0" gate).
+        assert _ecma_number_to_string(1e-7) == "1e-7"
+
+    def test_subnormal_floor_uses_scientific(self) -> None:
+        # 1e-308 is near the IEEE-754 double precision floor; must canonicalize.
+        assert _ecma_number_to_string(1e-308) == "1e-308"
+
+    def test_boundary_1e_minus_6_decimal(self) -> None:
+        # 1e-6 sits on the boundary; ECMA emits "0.000001" (n=-5, in "-6 < n ≤ 0").
+        assert _ecma_number_to_string(1e-6) == "0.000001"
+
+    def test_large_magnitude_uses_scientific(self) -> None:
+        # 1e21 crosses into scientific (n=22 > 21).
+        assert _ecma_number_to_string(1e21) == "1e+21"
+
+    def test_large_magnitude_boundary_decimal(self) -> None:
+        # 1e20 stays decimal (n=21, in "k ≤ n ≤ 21").
+        assert _ecma_number_to_string(1e20) == "100000000000000000000"
+
+    def test_negative_number_preserves_sign(self) -> None:
+        assert _ecma_number_to_string(-1.5) == "-1.5"
+        assert _ecma_number_to_string(-1e-7) == "-1e-7"
+
+
+class TestR4ProvUnknownTopLevelReject:
+    """F-R4-002 fix (Codex R4 P2): unknown top-level PROV keys (not in the
+    minimal 5 relations / 3 node sections / legacy ``relations`` map) must
+    fail-closed. Pre-R4 the helper silently ignored them, so a bundle
+    differing only in an extra relation hashed identically."""
+
+    def test_unknown_top_level_relation_rejected(self) -> None:
+        cid = uuid4()
+        prov = {
+            cid: {
+                "wasGeneratedBy": [{"generated": "e1", "activity": "a1"}],
+                "wasInvalidatedBy": [{"entity": "e1", "activity": "a1"}],
+            }
+        }
+        with pytest.raises(EvidenceSetHashError) as exc:
+            compute_evidence_set_hash([_claim("c", claim_id=cid)], [], prov)
+        assert exc.value.reason_code == "prov_unknown_top_level_key"
+
+    def test_unknown_top_level_metadata_rejected(self) -> None:
+        cid = uuid4()
+        prov = {
+            cid: {
+                "wasGeneratedBy": [{"generated": "e1", "activity": "a1"}],
+                "custom_extension": {"foo": "bar"},
+            }
+        }
+        with pytest.raises(EvidenceSetHashError) as exc:
+            compute_evidence_set_hash([_claim("c", claim_id=cid)], [], prov)
+        assert exc.value.reason_code == "prov_unknown_top_level_key"
+
+    def test_known_top_level_keys_accepted(self) -> None:
+        # All minimal relations + node sections + legacy "relations" allowed.
+        cid = uuid4()
+        prov = {
+            cid: {
+                "activities": [],
+                "entities": [],
+                "agents": [],
+                "wasGeneratedBy": [{"generated": "e1", "activity": "a1"}],
+                "used": [],
+                "wasAttributedTo": [],
+                "wasInformedBy": [],
+                "wasDerivedFrom": [],
+                "relations": {},  # legacy fallback
+            }
+        }
+        h = compute_evidence_set_hash([_claim("c", claim_id=cid)], [], prov)
+        assert len(h) == 64
+
+
+class TestR4EvidenceItemDanglingReject:
+    """F-R4-003 fix (Codex R4 P2): evidence_items referencing a claim_id or
+    source_id absent from the input sets must fail-closed. Pre-R4 the
+    producer hashed only the bare UUID + locator/relation/score so two
+    snapshots with the same evidence_item UUID but *missing* claim text
+    or source URL would collide on hash."""
+
+    def test_dangling_claim_id_rejected(self) -> None:
+        cid_in_set = uuid4()
+        cid_dangling = uuid4()
+        sid = uuid4()
+        eid = uuid4()
+        prov = {cid_in_set: {"wasGeneratedBy": [{"generated": "e1", "activity": "a1"}]}}
+        with pytest.raises(EvidenceSetHashError) as exc:
+            compute_evidence_set_hash(
+                [_claim("c", claim_id=cid_in_set)],
+                [_source("https://example.com", source_id=sid)],
+                prov,
+                evidence_items=[
+                    EvidenceItemNormalized.from_raw(
+                        id=eid,
+                        claim_id=cid_dangling,  # NOT in claims input
+                        source_id=sid,
+                        locator="p.1",
+                        relation="supports",
+                    )
+                ],
+            )
+        assert exc.value.reason_code == "evidence_item_claim_dangling"
+
+    def test_dangling_source_id_rejected(self) -> None:
+        cid = uuid4()
+        sid_in_set = uuid4()
+        sid_dangling = uuid4()
+        eid = uuid4()
+        prov = {cid: {"wasGeneratedBy": [{"generated": "e1", "activity": "a1"}]}}
+        with pytest.raises(EvidenceSetHashError) as exc:
+            compute_evidence_set_hash(
+                [_claim("c", claim_id=cid)],
+                [_source("https://example.com", source_id=sid_in_set)],
+                prov,
+                evidence_items=[
+                    EvidenceItemNormalized.from_raw(
+                        id=eid,
+                        claim_id=cid,
+                        source_id=sid_dangling,  # NOT in sources input
+                        locator="p.1",
+                        relation="supports",
+                    )
+                ],
+            )
+        assert exc.value.reason_code == "evidence_item_source_dangling"
+
+    def test_valid_membership_accepted(self) -> None:
+        cid = uuid4()
+        sid = uuid4()
+        eid = uuid4()
+        prov = {cid: {"wasGeneratedBy": [{"generated": "e1", "activity": "a1"}]}}
+        h = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)],
+            [_source("https://example.com", source_id=sid)],
+            prov,
+            evidence_items=[
+                EvidenceItemNormalized.from_raw(
+                    id=eid,
+                    claim_id=cid,
+                    source_id=sid,
+                    locator="p.1",
+                    relation="supports",
+                )
+            ],
+        )
+        assert len(h) == 64
+
+
 class TestRandomFuzz:
     @pytest.mark.parametrize("seed", range(20))
     def test_random_inputs_deterministic(self, seed: int) -> None:
