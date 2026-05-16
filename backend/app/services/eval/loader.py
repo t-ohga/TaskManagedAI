@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from backend.app.db.models.base import JsonDict
 from backend.app.db.models.dataset_version import DatasetVersion, FixtureKind
 from backend.app.db.models.eval_case import EvalCase
 
+_LOGGER = logging.getLogger(__name__)
+
 LOADER_FIXTURE_KIND_VALUES: Final[tuple[FixtureKind, ...]] = (
     "public_regression",
     "private_holdout",
@@ -29,6 +32,7 @@ LOADER_FIXTURE_KINDS: Final[frozenset[FixtureKind]] = frozenset(LOADER_FIXTURE_K
 _VALID_SPLIT_KINDS: Final[frozenset[str]] = frozenset(LOADER_FIXTURE_KIND_VALUES)
 
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_VALID_EXPECTATION_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 _EXPECTED_SCHEMA_FILENAME = "expected_schema.json"
 # F-PR28-R3-002 P1 adopt: hard-coded TI-specific expectation set replaced with a
 # generic ``expected_*``-prefix heuristic plus a small known-non-prefixed set.
@@ -40,12 +44,13 @@ _KNOWN_NON_PREFIXED_EXPECTATION_KEYS: Final[frozenset[str]] = frozenset(
         "assertions",
     }
 )
+_EMPTY_EXPECTATION_KEYS: Final[frozenset[str]] = frozenset()
+_FIXTURE_IDENTIFIER_KEYS: Final[frozenset[str]] = frozenset({"gate_id", "kpi_id"})
 _REQUIRED_FIXTURE_KEYS: Final[frozenset[str]] = frozenset(
     {
         "fixture_id",
         "dataset_version_id",
         "fixture_kind",
-        "gate_id",
         "metric_key",
         "case_key",
         "input",
@@ -53,22 +58,41 @@ _REQUIRED_FIXTURE_KEYS: Final[frozenset[str]] = frozenset(
         "metadata",
     }
 )
+_FIXTURE_ENVELOPE_KEYS: Final[frozenset[str]] = _REQUIRED_FIXTURE_KEYS | _FIXTURE_IDENTIFIER_KEYS
 # Required envelope keys are common to all corpora. Dataset-specific required
 # expectation keys are enforced by the dataset's expected_schema.json
 # (jsonschema Draft 7 validation), not by this set.
 _REQUIRED_PUBLIC_FIXTURE_KEYS: Final[frozenset[str]] = _REQUIRED_FIXTURE_KEYS
 
 
-def _is_expectation_key(key: object) -> bool:
+def _is_expectation_key(
+    key: object,
+    *,
+    extra_expectation_keys: frozenset[str] = _EMPTY_EXPECTATION_KEYS,
+) -> bool:
     """True if ``key`` denotes a fixture expectation (vs. input / identification)."""
 
     if not isinstance(key, str):
         return False
-    return key.startswith("expected_") or key in _KNOWN_NON_PREFIXED_EXPECTATION_KEYS
+    return (
+        key.startswith("expected_")
+        or key in _KNOWN_NON_PREFIXED_EXPECTATION_KEYS
+        or key in extra_expectation_keys
+    )
 
 
-def _expectation_keys_in(raw_fixture: JsonDict) -> frozenset[str]:
-    return frozenset(key for key in raw_fixture if _is_expectation_key(key))
+def _expectation_keys_in(
+    raw_fixture: JsonDict,
+    *,
+    extra_expectation_keys: frozenset[str] = _EMPTY_EXPECTATION_KEYS,
+) -> frozenset[str]:
+    return frozenset(
+        key
+        for key in raw_fixture
+        if _is_expectation_key(key, extra_expectation_keys=extra_expectation_keys)
+    )
+
+
 _REQUIRED_INDEX_ENTRY_KEYS: Final[frozenset[str]] = frozenset({"sha256", "split", "created_at"})
 _REQUIRED_ANTI_GAMING_RULES: Final[frozenset[str]] = frozenset(
     {
@@ -146,7 +170,7 @@ class Fixture:
     fixture_id: str
     dataset_version_id: str
     fixture_kind: FixtureKind
-    gate_id: str
+    gate_id: str | None
     metric_key: str
     case_key: str
     case_json: JsonDict
@@ -155,6 +179,7 @@ class Fixture:
     anti_gaming: JsonDict
     source_path: Path
     raw_json: JsonDict
+    kpi_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -367,6 +392,90 @@ def _load_expected_schema(root: Path, manifest: JsonDict) -> JsonDict:
     return schema
 
 
+def _manifest_expectation_keys(manifest: JsonDict) -> frozenset[str]:
+    raw_keys = manifest.get("expectation_keys")
+    if raw_keys is None:
+        return _EMPTY_EXPECTATION_KEYS
+    if not isinstance(raw_keys, list):
+        raise FixtureLoadError("manifest expectation_keys must be an array")
+
+    expectation_keys: set[str] = set()
+    for index, key in enumerate(raw_keys):
+        if not isinstance(key, str):
+            raise FixtureLoadError(f"manifest expectation_keys[{index}] must be a string")
+        if not key:
+            raise FixtureLoadError(f"manifest expectation_keys[{index}] must be a non-empty string")
+        if not _VALID_EXPECTATION_KEY_PATTERN.fullmatch(key):
+            raise FixtureLoadError(
+                f"manifest expectation_keys[{index}] must be snake_case lowercase: {key!r}"
+            )
+        if key in _FIXTURE_ENVELOPE_KEYS:
+            raise FixtureLoadError(
+                f"manifest expectation_keys[{index}] conflicts with fixture envelope key {key!r}"
+            )
+        if key in expectation_keys:
+            raise FixtureLoadError(f"manifest expectation_keys contains duplicate key {key!r}")
+        expectation_keys.add(key)
+
+    return frozenset(expectation_keys)
+
+
+def _schema_required_expectation_keys(schema: JsonDict) -> frozenset[str]:
+    required = schema.get("required")
+    if not isinstance(required, list):
+        return _EMPTY_EXPECTATION_KEYS
+
+    inferred: set[str] = set()
+    for key in required:
+        if not isinstance(key, str):
+            continue
+        if key in _FIXTURE_ENVELOPE_KEYS:
+            continue
+        if _is_expectation_key(key):
+            inferred.add(key)
+            continue
+        if _VALID_EXPECTATION_KEY_PATTERN.fullmatch(key):
+            inferred.add(key)
+    return frozenset(inferred)
+
+
+def _expectation_keys_for_corpus(manifest: JsonDict, schema: JsonDict) -> frozenset[str]:
+    return _manifest_expectation_keys(manifest) | _schema_required_expectation_keys(schema)
+
+
+def _optional_identifier(value: object, *, source_path: Path, key: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise FixtureLoadError(f"{source_path}: {key} must be a non-empty string when present")
+    if not value:
+        return None
+    return value
+
+
+def _fixture_identifier(
+    raw_fixture: JsonDict,
+    *,
+    source_path: Path,
+) -> tuple[str | None, str | None]:
+    gate_id = _optional_identifier(raw_fixture.get("gate_id"), source_path=source_path, key="gate_id")
+    kpi_id = _optional_identifier(raw_fixture.get("kpi_id"), source_path=source_path, key="kpi_id")
+    if gate_id is None and kpi_id is None:
+        raise FixtureLoadError(f"{source_path}: missing gate_id or kpi_id")
+    return gate_id, kpi_id
+
+
+def _manifest_immutable_index(manifest: JsonDict) -> JsonDict | None:
+    raw_index = manifest.get("fixture_immutable_index")
+    if raw_index is None:
+        return None
+    if not isinstance(raw_index, dict):
+        raise FixtureLoadError("manifest.json: fixture_immutable_index must be a JSON object")
+    if not raw_index:
+        return None
+    return cast(JsonDict, raw_index)
+
+
 def _validate_public_fixture_schema(raw_fixture: JsonDict, schema: JsonDict, source_path: Path) -> None:
     validator = Draft7Validator(schema, format_checker=FormatChecker())
     errors: list[JsonSchemaValidationError] = sorted(
@@ -464,18 +573,13 @@ def _assert_manifest_anti_gaming(manifest: JsonDict) -> None:
 
 
 def _assert_immutable_index_entry(
-    manifest: JsonDict,
+    index: JsonDict,
     *,
-    raw_fixture: JsonDict,
+    actual_sha: str,
     fixture_id: str,
     fixture_kind: FixtureKind,
     source_path: Path,
 ) -> None:
-    index = _require_object(
-        manifest.get("fixture_immutable_index"),
-        source_path=Path("manifest.json"),
-        key="fixture_immutable_index",
-    )
     entry = _require_object(
         index.get(fixture_id),
         source_path=Path("manifest.json"),
@@ -494,7 +598,6 @@ def _assert_immutable_index_entry(
     if not isinstance(expected_sha, str) or not _SHA256_PATTERN.fullmatch(expected_sha):
         raise FixtureLoadError(f"fixture_immutable_index entry for {fixture_id} has invalid sha256")
 
-    actual_sha = _canonical_fixture_hash(raw_fixture)
     if actual_sha != expected_sha:
         raise FixtureLoadError(
             f"{source_path}: fixture content sha256 mismatch "
@@ -503,16 +606,11 @@ def _assert_immutable_index_entry(
 
 
 def _assert_index_split_consistency(
-    manifest: JsonDict,
+    index: JsonDict,
     *,
     fixture_kind: FixtureKind,
     actual_fixture_ids: set[str],
 ) -> None:
-    index = _require_object(
-        manifest.get("fixture_immutable_index"),
-        source_path=Path("manifest.json"),
-        key="fixture_immutable_index",
-    )
     # F-PR28-R5-001 P2 adopt: previously a malformed entry (non-object or with
     # missing/invalid ``split``) was silently omitted from ``registered``, so a
     # tampered/removed fixture could escape detection by lowering
@@ -543,18 +641,32 @@ def _assert_index_split_consistency(
         )
 
 
-def _case_json(raw_fixture: JsonDict) -> JsonDict:
+def _case_json(
+    raw_fixture: JsonDict,
+    *,
+    extra_expectation_keys: frozenset[str] = _EMPTY_EXPECTATION_KEYS,
+) -> JsonDict:
     # F-PR28-R3-002 P1 adopt: schema-agnostic split — any key recognised as an
-    # expectation key (expected_* prefix or known non-prefixed) goes to
-    # expected_json; everything else (envelope + input + metadata) stays in
-    # case_json.
-    expectation_keys = _expectation_keys_in(raw_fixture)
+    # expectation key (expected_* prefix, known non-prefixed, or manifest/schema
+    # supplied extra key) goes to expected_json; everything else stays in case_json.
+    expectation_keys = _expectation_keys_in(
+        raw_fixture,
+        extra_expectation_keys=extra_expectation_keys,
+    )
     return {key: value for key, value in raw_fixture.items() if key not in expectation_keys}
 
 
-def _expected_json(raw_fixture: JsonDict, fixture_kind: FixtureKind) -> JsonDict:
+def _expected_json(
+    raw_fixture: JsonDict,
+    fixture_kind: FixtureKind,
+    *,
+    extra_expectation_keys: frozenset[str] = _EMPTY_EXPECTATION_KEYS,
+) -> JsonDict:
     if fixture_kind == "public_regression":
-        expectation_keys = _expectation_keys_in(raw_fixture)
+        expectation_keys = _expectation_keys_in(
+            raw_fixture,
+            extra_expectation_keys=extra_expectation_keys,
+        )
         return {key: raw_fixture[key] for key in sorted(expectation_keys)}
 
     metadata = _require_object(raw_fixture.get("metadata"), source_path=Path("fixture.json"), key="metadata")
@@ -572,6 +684,7 @@ def _fixture_from_raw(
     source_path: Path,
     manifest_version: str,
     schema: JsonDict,
+    extra_expectation_keys: frozenset[str] = _EMPTY_EXPECTATION_KEYS,
 ) -> Fixture:
     required = _REQUIRED_PUBLIC_FIXTURE_KEYS if fixture_kind == "public_regression" else _REQUIRED_FIXTURE_KEYS
     missing = sorted(required - set(raw_fixture))
@@ -590,6 +703,8 @@ def _fixture_from_raw(
     if dataset_version_id != manifest_version:
         raise FixtureLoadError(f"{source_path}: dataset_version_id does not match manifest dataset version")
 
+    gate_id, kpi_id = _fixture_identifier(raw_fixture, source_path=source_path)
+
     if fixture_kind == "public_regression":
         _validate_public_fixture_schema(raw_fixture, schema, source_path)
     else:
@@ -598,7 +713,12 @@ def _fixture_from_raw(
         # the case/expected split so corpora with expected_block / expected_aggregate /
         # expected_pattern_hit_kind etc. cannot leak holdout expectations into
         # case_json.
-        leaked_expectation_keys = sorted(_expectation_keys_in(raw_fixture))
+        leaked_expectation_keys = sorted(
+            _expectation_keys_in(
+                raw_fixture,
+                extra_expectation_keys=extra_expectation_keys,
+            )
+        )
         if leaked_expectation_keys:
             raise FixtureLoadError(
                 f"{source_path}: redacted fixture contains prohibited expectation keys {leaked_expectation_keys}"
@@ -619,15 +739,20 @@ def _fixture_from_raw(
         fixture_id=_require_str(raw_fixture.get("fixture_id"), source_path=source_path, key="fixture_id"),
         dataset_version_id=dataset_version_id,
         fixture_kind=fixture_kind,
-        gate_id=_require_str(raw_fixture.get("gate_id"), source_path=source_path, key="gate_id"),
+        gate_id=gate_id,
         metric_key=_require_str(raw_fixture.get("metric_key"), source_path=source_path, key="metric_key"),
         case_key=_require_str(raw_fixture.get("case_key"), source_path=source_path, key="case_key"),
-        case_json=_case_json(raw_fixture),
-        expected_json=_expected_json(raw_fixture, fixture_kind),
+        case_json=_case_json(raw_fixture, extra_expectation_keys=extra_expectation_keys),
+        expected_json=_expected_json(
+            raw_fixture,
+            fixture_kind,
+            extra_expectation_keys=extra_expectation_keys,
+        ),
         metadata=metadata,
         anti_gaming=_require_object(raw_fixture.get("anti_gaming"), source_path=source_path, key="anti_gaming"),
         source_path=source_path,
         raw_json=raw_fixture,
+        kpi_id=kpi_id,
     )
 
     if fixture.anti_gaming.get("append_only_refresh") is not True:
@@ -650,6 +775,13 @@ def load_fixture_corpus(root: Path, *, dataset_key: str) -> LoadedCorpus:
 
     version = _manifest_version(manifest)
     schema = _load_expected_schema(root, manifest)
+    extra_expectation_keys = _expectation_keys_for_corpus(manifest, schema)
+    immutable_index = _manifest_immutable_index(manifest)
+    if immutable_index is None:
+        _LOGGER.warning(
+            "fixture_immutable_index absent for corpus dataset_key=%s; tamper detection disabled",
+            dataset_key,
+        )
     fixtures: list[Fixture] = []
 
     for fixture_kind in LOADER_FIXTURE_KIND_VALUES:
@@ -668,22 +800,26 @@ def load_fixture_corpus(root: Path, *, dataset_key: str) -> LoadedCorpus:
                 source_path=fixture_path,
                 manifest_version=version,
                 schema=schema,
+                extra_expectation_keys=extra_expectation_keys,
             )
-            _assert_immutable_index_entry(
-                manifest,
-                raw_fixture=raw_fixture,
-                fixture_id=fixture.fixture_id,
-                fixture_kind=fixture_kind,
-                source_path=fixture_path,
-            )
+            fixture_sha = _canonical_fixture_hash(raw_fixture)
+            if immutable_index is not None:
+                _assert_immutable_index_entry(
+                    immutable_index,
+                    actual_sha=fixture_sha,
+                    fixture_id=fixture.fixture_id,
+                    fixture_kind=fixture_kind,
+                    source_path=fixture_path,
+                )
             actual_fixture_ids.add(fixture.fixture_id)
             fixtures.append(fixture)
 
-        _assert_index_split_consistency(
-            manifest,
-            fixture_kind=fixture_kind,
-            actual_fixture_ids=actual_fixture_ids,
-        )
+        if immutable_index is not None:
+            _assert_index_split_consistency(
+                immutable_index,
+                fixture_kind=fixture_kind,
+                actual_fixture_ids=actual_fixture_ids,
+            )
 
     return LoadedCorpus(
         dataset_key=dataset_key,
