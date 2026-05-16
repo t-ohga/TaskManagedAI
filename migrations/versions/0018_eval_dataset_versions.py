@@ -74,7 +74,8 @@ def upgrade() -> None:
             "tenant_id",
             "dataset_key",
             "version",
-            name="dataset_versions_uq_tenant_dataset_key_version",
+            "fixture_kind",
+            name="dataset_versions_uq_tenant_dataset_key_version_kind",
         ),
     )
     op.create_index(

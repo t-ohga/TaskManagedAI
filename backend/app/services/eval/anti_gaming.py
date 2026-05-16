@@ -128,21 +128,17 @@ def _creation_commit(commits: Sequence[GitCommit]) -> GitCommit | None:
     return min(commits, key=lambda commit: commit.committed_at)
 
 
-def _policy_commits(
+def _policy_commits_grouped_by_path(
     repo_root: Path,
     policy_paths: Sequence[Path],
     runner: GitLogRunner,
-) -> list[tuple[Path, GitCommit]]:
-    commits: list[tuple[Path, GitCommit]] = []
-    seen: set[tuple[Path, str]] = set()
+) -> dict[Path, list[GitCommit]]:
+    grouped: dict[Path, list[GitCommit]] = {}
     for policy_path in policy_paths:
-        for commit in runner(repo_root, policy_path):
-            key = (policy_path, commit.sha)
-            if key in seen:
-                continue
-            seen.add(key)
-            commits.append((policy_path, commit))
-    return commits
+        commits = list(runner(repo_root, policy_path))
+        if commits:
+            grouped[policy_path] = commits
+    return grouped
 
 
 def verify_fixture_commit_separation(
@@ -153,14 +149,29 @@ def verify_fixture_commit_separation(
     window_seconds: int = 3600,
     git_log_runner: GitLogRunner | None = None,
 ) -> AntiGamingReport:
+    """Detect anti-gaming violations between fixture and policy commits.
+
+    Two attack patterns are flagged:
+
+    1. ``author_inversion``: the fixture commit and the policy/runner/prompt commit
+       share an author and were committed within ``window_seconds`` of each other
+       (either direction). This catches a single actor authoring both the fixture
+       and the policy that the fixture is evaluated against.
+    2. ``timestamp_inversion``: the **latest** policy commit was authored
+       ``window_seconds`` or less **after** the fixture creation commit. This
+       catches the "fixture 作成後に policy を緩めた" pattern — the spec's
+       primary concern (PR #28 F-PR28-R1-004 P2 adopt). Older policy commits
+       in the same path's history are ignored to avoid false positives on
+       newly added fixtures versus long-standing policy code.
+    """
     if window_seconds < 0:
         raise ValueError("window_seconds must be non-negative")
     if not fixture_paths:
         return AntiGamingReport(violations=())
 
     runner = git_log_runner or _default_git_log_runner
-    policy_commit_pairs = _policy_commits(repo_root, policy_paths, runner)
-    if not policy_commit_pairs:
+    policy_commits_by_path = _policy_commits_grouped_by_path(repo_root, policy_paths, runner)
+    if not policy_commits_by_path:
         return AntiGamingReport(violations=())
 
     violations: list[AntiGamingViolation] = []
@@ -169,29 +180,38 @@ def verify_fixture_commit_separation(
         if fixture_commit is None:
             continue
 
-        for policy_path, policy_commit in policy_commit_pairs:
-            if (
-                fixture_commit.author == policy_commit.author
-                and abs(fixture_commit.committed_at - policy_commit.committed_at) <= window_seconds
-            ):
-                violations.append(
-                    AntiGamingViolation(
-                        reason_code="author_inversion",
-                        path=fixture_path,
-                        policy_path=policy_path,
-                        fixture_commit=fixture_commit,
-                        policy_commit=policy_commit,
+        for policy_path, policy_commits in policy_commits_by_path.items():
+            # author_inversion: scan all policy commits for the same author within window.
+            for policy_commit in policy_commits:
+                if (
+                    fixture_commit.author == policy_commit.author
+                    and abs(fixture_commit.committed_at - policy_commit.committed_at) <= window_seconds
+                ):
+                    violations.append(
+                        AntiGamingViolation(
+                            reason_code="author_inversion",
+                            path=fixture_path,
+                            policy_path=policy_path,
+                            fixture_commit=fixture_commit,
+                            policy_commit=policy_commit,
+                        )
                     )
-                )
+                    break
 
-            if fixture_commit.committed_at > policy_commit.committed_at + window_seconds:
+            # timestamp_inversion: compare against the latest policy commit only.
+            # Triggers when the latest policy modification occurred AFTER the
+            # fixture creation but within ``window_seconds`` (suspicion: policy
+            # was relaxed to make the new fixture pass).
+            latest_policy_commit = max(policy_commits, key=lambda commit: commit.committed_at)
+            policy_lag = latest_policy_commit.committed_at - fixture_commit.committed_at
+            if 0 < policy_lag <= window_seconds:
                 violations.append(
                     AntiGamingViolation(
                         reason_code="timestamp_inversion",
                         path=fixture_path,
                         policy_path=policy_path,
                         fixture_commit=fixture_commit,
-                        policy_commit=policy_commit,
+                        policy_commit=latest_policy_commit,
                     )
                 )
 

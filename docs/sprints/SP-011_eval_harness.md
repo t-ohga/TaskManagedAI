@@ -343,6 +343,12 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
   - `backend/app/db/models/__init__.py` (4 新 model + FixtureKind + STANDARD_FIXTURE_KINDS 追加)
 - **5+ source 整合**: DB CHECK + ORM CheckConstraint + Python Literal + frozenset + pytest EXPECTED constants
 - **既存 batch (Sprint 1-10) invariant 維持**: AgentRun 16 状態 / ContextSnapshot 10 列 / SecretBroker / Approval 4 整合 / RFC 8785 / Research/Evidence schema / Sprint 10 cross-tenant fixtures
+- **PR #28 Codex R1 review (R1 / 5 inline findings)**:
+  - **F-PR28-R1-001 P1 adopt**: `dataset_versions` の unique key を `(tenant_id, dataset_key, version, fixture_kind)` に拡張。spec の "1 dataset version は 3 splits (public/private/adversarial) を持ち得る" 要件を DB enforce。migration 0018 + ORM `__table_args__` + test expected + DD-02 §dataset_versions cross-ref を同期更新。
+  - **F-PR28-R1-002 P2 defer → Sprint 11 BL-0127**: 現 loader の hard-coded `_REQUIRED_FIXTURE_KEYS` は tenant_isolation 特化、他 Hard Gate / KPI fixtures (policy_block / secret_canary / citation_coverage 等) は異 expected_* field を使う。schema-driven required keys の generic 化は **Sprint 11 BL-0127 (Hard Gates 7 fixture registry / loader 統合)** で実装。本 batch 5a の scope は tenant_isolation 専用。
+  - **F-PR28-R1-003 P2 adopt**: `_RAW_SECRET_KEY_NAMES` から `"value"` を削除。`threshold.value` 等の generic KPI field を spurious reject していた。defense-in-depth は引き続き `_RAW_SECRET_VALUE_PATTERNS` (sk-/ghp_/AKIA prefix) で確保。
+  - **F-PR28-R1-004 P2 adopt**: `verify_fixture_commit_separation()` の timestamp_inversion を再設計。**latest policy commit per path** vs fixture creation の比較に変更、direction を spec の "fixture 作成後に policy を緩めた疑い" align (policy_commit > fixture_commit AND policy_lag ≤ window)。旧 ordinary policy history vs new fixture の false positive を除去、`test_verify_fixture_commit_separation_ignores_old_policy_history` で regression 防止。
+  - **F-PR28-R1-005 P2 adopt**: redacted splits (private_holdout / adversarial_new) の prohibited keys を `"expected_*"` prefix + `"assertions"` 全部 reject に拡張。他 corpora の `expected_block` / `expected_aggregate` / `expected_pattern_hit_kind` 等の漏えいも fail-closed で防御。
 
 frontmatter `status: draft` 維持。
 

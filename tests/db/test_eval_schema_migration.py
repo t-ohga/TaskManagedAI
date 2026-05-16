@@ -213,10 +213,13 @@ async def test_0018_upgrade_and_downgrade_create_and_drop_eval_tables(
             "tenant_id",
             "id",
         )
-        assert upgraded["unique_constraints"]["dataset_versions"]["dataset_versions_uq_tenant_dataset_key_version"] == (
+        assert upgraded["unique_constraints"]["dataset_versions"][
+            "dataset_versions_uq_tenant_dataset_key_version_kind"
+        ] == (
             "tenant_id",
             "dataset_key",
             "version",
+            "fixture_kind",
         )
         assert upgraded["unique_constraints"]["eval_runs"]["eval_runs_uq_tenant_id_dataset_version"] == (
             "tenant_id",

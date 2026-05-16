@@ -55,7 +55,8 @@ class DatasetVersion(TenantIdMixin, CreatedAtMixin, Base):
             "tenant_id",
             "dataset_key",
             "version",
-            name="dataset_versions_uq_tenant_dataset_key_version",
+            "fixture_kind",
+            name="dataset_versions_uq_tenant_dataset_key_version_kind",
         ),
         sa.Index(
             "dataset_versions_ix_tenant_kind_created",

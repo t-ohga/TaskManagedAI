@@ -77,6 +77,9 @@ def test_verify_fixture_commit_separation_detects_author_inversion() -> None:
 
 
 def test_verify_fixture_commit_separation_detects_timestamp_inversion() -> None:
+    # F-PR28-R1-004 P2 adopt: timestamp_inversion now fires when the LATEST policy
+    # commit was authored shortly AFTER the fixture creation (suspicion: policy
+    # was relaxed to make the new fixture pass).
     fixture_path = Path("eval/security/tenant_isolation/private_holdout/case.json")
     policy_path = Path("backend/app/prompts/policy_prompt.md")
     report = verify_fixture_commit_separation(
@@ -86,8 +89,14 @@ def test_verify_fixture_commit_separation_detects_timestamp_inversion() -> None:
         window_seconds=3600,
         git_log_runner=_fake_git_log(
             {
-                fixture_path: [GitCommit("a" * 40, "Fixture Author", 10_000)],
-                policy_path: [GitCommit("b" * 40, "Policy Author", 1_000)],
+                fixture_path: [GitCommit("a" * 40, "Fixture Author", 1_000)],
+                # The newer policy commit is within window — suspicious.
+                # The older policy commit is unrelated history and must not
+                # trigger a violation by itself.
+                policy_path: [
+                    GitCommit("c" * 40, "Old Policy Author", 1),
+                    GitCommit("b" * 40, "Policy Author", 2_500),
+                ],
             }
         ),
     )
@@ -100,3 +109,26 @@ def test_verify_fixture_commit_separation_detects_timestamp_inversion() -> None:
     assert "timestamp_inversion" in str(violation)
     assert ("a" * 12) in str(violation)
     assert ("b" * 12) in str(violation)
+
+
+def test_verify_fixture_commit_separation_ignores_old_policy_history() -> None:
+    # F-PR28-R1-004 P2 adopt: a newly added fixture must NOT be flagged against
+    # ordinary older policy history (a fixture authored well after the latest
+    # policy change should pass timestamp_inversion).
+    fixture_path = Path("eval/security/tenant_isolation/public_regression/case.json")
+    policy_path = Path("backend/app/services/policy/decision_service.py")
+    report = verify_fixture_commit_separation(
+        Path("/repo"),
+        fixture_paths=[fixture_path],
+        policy_paths=[policy_path],
+        window_seconds=3600,
+        git_log_runner=_fake_git_log(
+            {
+                fixture_path: [GitCommit("a" * 40, "Fixture Author", 100_000)],
+                policy_path: [GitCommit("b" * 40, "Policy Author", 1_000)],
+            }
+        ),
+    )
+
+    assert report.is_clean()
+    assert report.violations == ()

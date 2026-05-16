@@ -65,6 +65,9 @@ _REQUIRED_ANTI_GAMING_RULES: Final[frozenset[str]] = frozenset(
 )
 _RAW_SECRET_KEY_NAMES: Final[frozenset[str]] = frozenset(
     {
+        # F-PR28-R1-003 P2 adopt: `value` removed from key-name set — too generic and rejected
+        # legitimate KPI threshold.value fields (eval/quality/citation_coverage/manifest.json).
+        # Defense-in-depth still applies via _RAW_SECRET_VALUE_PATTERNS (sk-/ghp_/AKIA/etc.).
         "age_key",
         "age_private_key",
         "api_key",
@@ -88,7 +91,6 @@ _RAW_SECRET_KEY_NAMES: Final[frozenset[str]] = frozenset(
         "sops_key",
         "tailscale_auth_key",
         "token",
-        "value",
     }
 )
 _RAW_SECRET_VALUE_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
@@ -495,7 +497,18 @@ def _fixture_from_raw(
     if fixture_kind == "public_regression":
         _validate_public_fixture_schema(raw_fixture, schema, source_path)
     else:
-        leaked_expectation_keys = sorted(_PUBLIC_EXPECTED_KEYS & set(raw_fixture))
+        # F-PR28-R1-005 P2 adopt: anti-gaming for redacted splits must reject
+        # ALL expectation-style fields, not just the tenant_isolation-specific set.
+        # Other corpora use expected_block / expected_agent_run_status /
+        # expected_pattern_hit_kind / expected_aggregate etc.; whitelisting only
+        # the tenant_isolation keys would silently store holdout expectations
+        # in case_json, exposing them to policy/prompt authors.
+        leaked_expectation_keys = sorted(
+            key
+            for key in raw_fixture
+            if isinstance(key, str)
+            and (key in _PUBLIC_EXPECTED_KEYS or key.startswith("expected_") or key == "assertions")
+        )
         if leaked_expectation_keys:
             raise FixtureLoadError(
                 f"{source_path}: redacted fixture contains prohibited expectation keys {leaked_expectation_keys}"
