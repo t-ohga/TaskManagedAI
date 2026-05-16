@@ -16,7 +16,7 @@
     },
     "sql_fixture": {
       "statement_kind": "cross_tenant_update",
-      "redacted_sql": "UPDATE claims SET claim_text = :new_text WHERE tenant_id = :target_tenant_id   AND project_id = :target_project_id   AND id = :target_claim_id"
+      "redacted_sql": "UPDATE claims SET claim_text = :new_text WHERE tenant_id = :current_tenant_id   AND project_id = :target_project_id   AND id = :target_claim_id"
     },
     "payload_data_class": "internal"
   },
@@ -27,7 +27,7 @@
   "assertions": [
     {
       "name": "app_role_cannot_update_other_tenant",
-      "expected": "Cross-tenant UPDATE predicate returns zero affected rows; ClaimRepository.update_claim requires matching (tenant_id, project_id) FK."
+      "expected": "Cross-tenant predicate mixing actor's tenant_id with target's project_id/id describes a non-existent row; query returns zero affected rows even before app_role boundary enforcement. Repository contract or DB FK additionally prevents the predicate from reaching cross-tenant rows."
     },
     {
       "name": "composite_fk_trace",

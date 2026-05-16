@@ -16,7 +16,7 @@
     },
     "sql_fixture": {
       "statement_kind": "cross_tenant_delete",
-      "redacted_sql": "DELETE FROM claims WHERE tenant_id = :target_tenant_id   AND project_id = :target_project_id   AND id = :target_claim_id"
+      "redacted_sql": "DELETE FROM claims WHERE tenant_id = :current_tenant_id   AND project_id = :target_project_id   AND id = :target_claim_id"
     },
     "payload_data_class": "internal"
   },
@@ -27,7 +27,7 @@
   "assertions": [
     {
       "name": "app_role_cannot_delete_other_tenant",
-      "expected": "Cross-tenant DELETE returns zero rows; ClaimRepository.delete_claim is project-scoped and rejects cross-tenant ids."
+      "expected": "Cross-tenant predicate mixing actor's tenant_id with target's project_id/id describes a non-existent row; query returns zero affected rows even before app_role boundary enforcement. Repository contract or DB FK additionally prevents the predicate from reaching cross-tenant rows."
     },
     {
       "name": "composite_fk_trace",

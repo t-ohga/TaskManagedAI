@@ -774,8 +774,8 @@ def test_load_public_regression_fixtures_reads_expected_values() -> None:
     # Sprint 10 batch 5 R1 fix (BL-0029c + Codex F-PR27-R1-002 P2 adopt) added 13 cross-tenant
     # fixtures for research_tasks / claims / evidence_items /
     # evidence_sources / research_to_ticket / citation_coverage, plus
-    # the original Sprint 2 skeleton. Total = 14 (manifest expected_count = 14).
-    assert len(fixtures) == 14
+    # the original Sprint 2 skeleton. Total = 17 (manifest expected_count = 17).
+    assert len(fixtures) == 17
 
     by_id = {f.fixture_id: f for f in fixtures}
     legacy = by_id[
@@ -867,10 +867,10 @@ def test_extract_db_secret_metadata_keys_raises_on_key_count_mismatch(
 def test_existing_sample_passes_raw_secret_check() -> None:
     fixtures = load_public_regression_fixtures(BASE_PATH)
 
-    # Sprint 10 batch 5 expanded the fixture set from 1 to 14. Verify
+    # Sprint 10 batch 5 expanded the fixture set from 1 to 17. Verify
     # that EVERY fixture (legacy + new) passes the raw-secret canary
     # check on metadata and input (anti-gaming + raw secret 非含 invariant).
-    assert len(fixtures) == 14
+    assert len(fixtures) == 17
     for fixture in fixtures:
         assert _find_prohibited_keys_recursive(
             fixture.metadata,
@@ -1386,14 +1386,14 @@ def test_load_public_regression_fixtures_accepts_unmodified_registered_fixture()
     fixtures = load_public_regression_fixtures(BASE_PATH)
     manifest = load_manifest(BASE_PATH / "manifest.json")
 
-    # Sprint 10 batch 5: fixture count is now 14 (added 13 cross-tenant
+    # Sprint 10 batch 5: fixture count is now 17 (added 16 cross-tenant
     # including claims / evidence_items mutator coverage).
     # F-PR27-R2-004 P2 adopt: keep a PINNED sha256 assertion for the
     # original Sprint 2 legacy fixture so a future change that edits
     # the fixture and updates manifest in the same commit cannot
     # silently pass review. The pinned hash anchors the legacy
     # fixture's anti-gaming immutability claim.
-    assert len(fixtures) == 14
+    assert len(fixtures) == 17
     immutable_index = manifest["fixture_immutable_index"]
     legacy_fid = (
         "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role"

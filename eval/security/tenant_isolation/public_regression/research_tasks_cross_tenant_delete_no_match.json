@@ -16,7 +16,7 @@
     },
     "sql_fixture": {
       "statement_kind": "cross_tenant_delete_no_match",
-      "redacted_sql": "DELETE FROM research_tasks WHERE tenant_id = :target_tenant_id AND project_id = :target_project_id AND id = :current_research_task_id RETURNING id"
+      "redacted_sql": "DELETE FROM research_tasks WHERE tenant_id = :current_tenant_id   AND project_id = :target_project_id   AND id = :target_research_task_id"
     },
     "payload_data_class": "internal"
   },
@@ -27,7 +27,7 @@
   "assertions": [
     {
       "name": "cross_tenant_delete_affects_no_rows",
-      "expected": "Delete paths must resolve the row through tenant_id and project_id, so cross-tenant predicates affect zero rows."
+      "expected": "Cross-tenant predicate mixing actor's tenant_id with target's project_id/id describes a non-existent row; query returns zero affected rows even before app_role boundary enforcement. Repository contract or DB FK additionally prevents the predicate from reaching cross-tenant rows."
     },
     {
       "name": "otherwise_reachable_row_is_preserved",

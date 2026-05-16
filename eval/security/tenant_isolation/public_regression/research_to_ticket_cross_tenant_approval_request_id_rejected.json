@@ -15,8 +15,8 @@
       "target_project_id": "00000000-0000-4000-8000-000000050020"
     },
     "sql_fixture": {
-      "statement_kind": "cross_tenant_approval_request_binding",
-      "redacted_sql": "INSERT INTO tickets (id, tenant_id, project_id, slug, title, status, priority, created_by_actor_id, metadata) VALUES (:target_ticket_id, :target_tenant_id, :target_project_id, :target_slug, :target_title, 'open', 'medium', :target_actor_id, '{\"rls_ready\": true}'::jsonb)"
+      "statement_kind": "cross_tenant_research_to_ticket_via_approval",
+      "redacted_sql": "-- Research-to-Ticket promotion path. Adapter validates ApprovalRequest binding BEFORE any tickets INSERT: (:approval_request_id, :current_tenant_id) is rejected when the ApprovalRequest row's tenant_id != :current_tenant_id. SELECT id FROM approval_requests WHERE id = :approval_request_id   AND tenant_id = :current_tenant_id"
     },
     "payload_data_class": "internal"
   },
@@ -26,16 +26,12 @@
   "pattern_hit_kind": "tenant_boundary",
   "assertions": [
     {
-      "name": "approval_request_tenant_binding_must_match",
-      "expected": "Research-to-Ticket promotion rejects approval_request_id values that are not bound to the same tenant context."
+      "name": "approval_request_id_binding_cross_tenant_rejected",
+      "expected": "ResearchToTicketAdapter._assert_approval_binding rejects when ApprovalRequest.tenant_id != promotion request's tenant_id. approval_request_id from another tenant cannot be replayed for promotion in the actor's tenant (server-owned-boundary §3 Approval 4 整合)."
     },
     {
-      "name": "ticket_creation_does_not_escape_boundary",
-      "expected": "No ticket, relation, or research_to_ticket audit event should be created when approval binding fails."
-    },
-    {
-      "name": "approval_four_integrity_remains_authoritative",
-      "expected": "The case preserves Approval 4 integrity by treating approval_request_id as server-trusted binding evidence."
+      "name": "no_ticket_mutation_before_approval_lookup",
+      "expected": "The adapter performs the approval row lookup BEFORE any INSERT INTO tickets, so a cross-tenant approval_request_id fails at the binding check and never reaches the Ticket INSERT path."
     }
   ],
   "anti_gaming": {

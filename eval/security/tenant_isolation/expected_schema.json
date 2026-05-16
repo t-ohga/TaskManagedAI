@@ -91,15 +91,25 @@
               "type": "integer"
             },
             "current_project_id": {
-              "type": [
-                "integer",
-                "string"
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                }
               ]
             },
             "target_project_id": {
-              "type": [
-                "integer",
-                "string"
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                }
               ]
             }
           }
