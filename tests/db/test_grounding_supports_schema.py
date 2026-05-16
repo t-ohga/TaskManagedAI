@@ -24,7 +24,6 @@ from backend.app.db.models.grounding_support import (
     GroundingSupport,
 )
 
-
 EXPECTED_GROUNDING_SUPPORTS_COLUMNS: frozenset[str] = frozenset(
     {
         "id",
