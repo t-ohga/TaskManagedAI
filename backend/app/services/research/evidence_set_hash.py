@@ -39,6 +39,25 @@ _SHA256_HEX_RE: Final[re.Pattern[str]] = re.compile(r"^[0-9a-fA-F]{64}$")
 # percent-encoded triplets MUST be uppercase hex digits).
 _PERCENT_ESCAPE_RE: Final[re.Pattern[str]] = re.compile(r"%([0-9a-fA-F]{2})")
 
+# F-R2-002 fix (Codex R2 P2): mirror prov_validator's _PROV_TOP_LEVEL_ALIASES so
+# bundles persisted with ``prov:`` prefixes still hash identically to their
+# unprefixed counterparts. We keep this list in sync with
+# ``backend/app/services/research/prov_validator.py`` (cross-source-enum-
+# integrity §1: drift must be caught by tests that compare both lists).
+_PROV_NAMESPACE_ALIASES: Final[dict[str, str]] = {
+    "prov:wasGeneratedBy": "wasGeneratedBy",
+    "prov:used": "used",
+    "prov:wasAttributedTo": "wasAttributedTo",
+    "prov:wasInformedBy": "wasInformedBy",
+    "prov:wasDerivedFrom": "wasDerivedFrom",
+}
+
+# F-R2-003 fix (Codex R2 P2): allowed evidence_item relations per
+# evidence_items_ck_relation_enum (mirror of DB CHECK).
+EVIDENCE_ITEM_RELATIONS: Final[frozenset[str]] = frozenset(
+    {"supports", "contradicts", "context"}
+)
+
 # W3C PROV-DM minimal 5 relation (P0 minimal subset、Sprint Pack §レビュー観点)
 PROV_RELATIONS_MINIMAL: Final[frozenset[str]] = frozenset(
     {
@@ -88,6 +107,84 @@ class ClaimNormalized:
             )
         cid = claim_id if isinstance(claim_id, UUID) else UUID(str(claim_id))
         return cls(claim_id=cid, claim_text=unicodedata.normalize("NFC", claim_text))
+
+
+@dataclass(frozen=True)
+class EvidenceItemNormalized:
+    """F-R2-001 fix (Codex R2 P1): server-owned normalized evidence_item shape.
+
+    Mirrors the ``evidence_items`` table columns that affect citation /
+    reproducibility identity:
+
+    - ``id`` — evidence_item PK (UUID)
+    - ``claim_id`` — owning claim
+    - ``source_id`` — referenced evidence_source
+    - ``locator`` — NFC-normalized text (page anchor / quote span / etc.)
+    - ``relation`` — supports / contradicts / context (DB CHECK enum)
+    - ``relevance_score`` — optional float ∈ [0, 1]
+
+    Changing any of these on an existing snapshot's evidence_items must change
+    evidence_set_hash; pre-R2 producers omitted this layer entirely so two
+    snapshots with different citation locators / relations could share a hash.
+    """
+
+    id: UUID
+    claim_id: UUID
+    source_id: UUID
+    locator: str
+    relation: str
+    relevance_score: float | None
+
+    @classmethod
+    def from_raw(
+        cls,
+        id: UUID | str,  # noqa: A002 — match DB column name
+        claim_id: UUID | str,
+        source_id: UUID | str,
+        locator: Any,  # noqa: ANN401
+        relation: Any,  # noqa: ANN401
+        relevance_score: float | int | None = None,
+    ) -> EvidenceItemNormalized:
+        if not isinstance(locator, str):
+            raise EvidenceSetHashError(
+                "evidence_item_locator_type_invalid",
+                f"locator must be str, got {type(locator).__name__}",
+            )
+        if not isinstance(relation, str) or relation not in EVIDENCE_ITEM_RELATIONS:
+            raise EvidenceSetHashError(
+                "evidence_item_relation_invalid",
+                f"relation must be in {sorted(EVIDENCE_ITEM_RELATIONS)}, got {relation!r}",
+            )
+        if relevance_score is not None:
+            if isinstance(relevance_score, bool) or not isinstance(
+                relevance_score, (int, float)
+            ):
+                raise EvidenceSetHashError(
+                    "evidence_item_relevance_type_invalid",
+                    (
+                        f"relevance_score must be float or None, "
+                        f"got {type(relevance_score).__name__}"
+                    ),
+                )
+            score = float(relevance_score)
+            if not (0.0 <= score <= 1.0):
+                raise EvidenceSetHashError(
+                    "evidence_item_relevance_out_of_range",
+                    f"relevance_score must be in [0,1], got {score}",
+                )
+        else:
+            score = None
+        eid = id if isinstance(id, UUID) else UUID(str(id))
+        cid = claim_id if isinstance(claim_id, UUID) else UUID(str(claim_id))
+        sid = source_id if isinstance(source_id, UUID) else UUID(str(source_id))
+        return cls(
+            id=eid,
+            claim_id=cid,
+            source_id=sid,
+            locator=unicodedata.normalize("NFC", locator),
+            relation=relation,
+            relevance_score=score,
+        )
 
 
 @dataclass(frozen=True)
@@ -237,17 +334,36 @@ def normalize_url(url: Any) -> str:  # noqa: ANN401
             "url_type_invalid",
             f"url must be str, got {type(url).__name__}",
         )
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError as exc:
+        # urlsplit itself only raises on a few esoteric cases (e.g. NUL bytes
+        # in Python 3.11+). Wrap so callers see EvidenceSetHashError.
+        raise EvidenceSetHashError(
+            "url_split_failed",
+            f"urlsplit rejected url: {exc}",
+        ) from exc
     scheme = parts.scheme.lower()
     host = _format_host_for_netloc(parts.hostname)
     # lowercase the registered host (DNS is case-insensitive; IPv6 literals
     # have already been bracket-wrapped, lowercase has no effect on them).
     host = host.lower()
     netloc = host
-    if parts.port is not None:
+    # F-R2-003 fix (Codex R2 P2): ``parts.port`` raises a bare ``ValueError``
+    # when the URL contains a non-numeric / out-of-range port (e.g.
+    # ``https://example.com:abc/x``). Wrap so downstream sees a structured
+    # EvidenceSetHashError instead of an uncontrolled exception.
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise EvidenceSetHashError(
+            "url_port_invalid",
+            f"url port is not a valid integer: {exc}",
+        ) from exc
+    if port is not None:
         default = {"http": 80, "https": 443}.get(scheme)
-        if parts.port != default:
-            netloc = f"{host}:{parts.port}"
+        if port != default:
+            netloc = f"{host}:{port}"
     if parts.username or parts.password:
         # preserve userinfo verbatim (rare in evidence URLs, but stable)
         userinfo = parts.username or ""
@@ -304,6 +420,29 @@ def _normalize_prov_bundle(prov: Any) -> dict[str, Any]:  # noqa: ANN401
             "prov_bundle_not_object",
             f"provenance_json must be dict, got {type(prov).__name__}",
         )
+    # F-R2-002 fix (Codex R2 P2): apply prov_validator's namespace alias map up
+    # front so ``prov:wasGeneratedBy`` becomes ``wasGeneratedBy`` before the
+    # relation lookup below. Without this, bundles persisted with the ``prov:``
+    # prefix would hash as if they had no relations.
+    aliased: dict[str, Any] = {}
+    for k, v in prov.items():
+        if not isinstance(k, str):
+            raise EvidenceSetHashError(
+                "prov_top_level_key_not_string",
+                f"PROV top-level key must be str, got {type(k).__name__}",
+            )
+        normalized_key = _PROV_NAMESPACE_ALIASES.get(k, k)
+        if normalized_key in aliased and aliased[normalized_key] != v:
+            raise EvidenceSetHashError(
+                "prov_duplicate_aliased_key",
+                (
+                    f"PROV bundle has both {k!r} and its alias "
+                    f"{normalized_key!r} with conflicting values"
+                ),
+            )
+        aliased[normalized_key] = v
+    prov = aliased
+
     canonical: dict[str, Any] = {}
     for section in ("activities", "entities", "agents"):
         items = prov.get(section, [])
@@ -408,6 +547,9 @@ def compute_evidence_set_hash(
     claims: Sequence[ClaimNormalized],
     sources: Sequence[SourceNormalized],
     provenance_per_claim: dict[UUID, Any],
+    evidence_items: Sequence[EvidenceItemNormalized] = (),
+    *,
+    require_provenance: bool = True,
 ) -> str:
     """Compute evidence_set_hash from a normalized claim + source set.
 
@@ -417,8 +559,17 @@ def compute_evidence_set_hash(
             canonical_url + sha256 content_hash)
         provenance_per_claim: mapping of ``claim_id`` → raw provenance JSON
             (W3C PROV-DM minimal subset). Each value is run through
-            ``_normalize_prov_bundle`` before hashing. Use ``{}`` to skip
-            provenance for a particular claim.
+            ``_normalize_prov_bundle`` before hashing.
+        evidence_items: iterable of ``EvidenceItemNormalized`` (claim↔source
+            attachments with locator / relation / relevance_score).
+            **F-R2-001 fix**: changes at the evidence_item layer must change
+            the hash. Pre-R2 producers omitted this layer entirely.
+        require_provenance: when True (default, server-owned production
+            invariant), every claim must have an entry in
+            ``provenance_per_claim`` — caller-side assembly misses fail
+            closed instead of silently hashing an empty PROV bundle.
+            Set False only for test fixtures that intentionally exercise
+            unprovenanced claim sets.
 
     Returns:
         sha256 hex (64 lowercase chars). Idempotent for identical input.
@@ -429,17 +580,38 @@ def compute_evidence_set_hash(
     # Deterministic ordering (Sprint Pack §設計判断: claim_id / source_id 昇順)
     claim_list = sorted(claims, key=lambda c: c.claim_id)
     source_list = sorted(sources, key=lambda s: s.source_id)
+    # F-R2-001 fix: evidence_items sorted by (claim_id, source_id, locator) so
+    # locator-level changes shift the hash deterministically.
+    item_list = sorted(
+        evidence_items,
+        key=lambda e: (e.claim_id, e.source_id, e.locator, e.relation),
+    )
 
-    # Collect normalized provenance per claim in the same sorted order; missing
-    # provenance defaults to {} (claim has no PROV bundle yet — still part of
-    # the evidence set, just unattributed).
+    # F-R2-004 fix (Codex R2 P2): in production, every claim must carry a
+    # validated provenance_json (API/repository enforce this via
+    # prov_validator). A caller that omits a claim from provenance_per_claim
+    # is a broken integration and must fail-closed rather than silently
+    # hashing an empty PROV bundle. Test fixtures opt out via
+    # ``require_provenance=False``.
     prov_canonical: dict[str, dict[str, Any]] = {}
     for claim in claim_list:
-        raw = provenance_per_claim.get(claim.claim_id, {})
+        if claim.claim_id in provenance_per_claim:
+            raw = provenance_per_claim[claim.claim_id]
+        else:
+            if require_provenance:
+                raise EvidenceSetHashError(
+                    "provenance_missing_for_claim",
+                    (
+                        f"claim {claim.claim_id} has no provenance_json entry "
+                        "in provenance_per_claim (set require_provenance=False "
+                        "for test fixtures that intentionally exercise this case)"
+                    ),
+                )
+            raw = {}
         prov_canonical[str(claim.claim_id)] = _normalize_prov_bundle(raw)
 
     canonical_body = {
-        "schema_version": "1",  # bump on any breaking semantic change
+        "schema_version": "2",  # F-R2-001 layered evidence_items input
         "claims": [
             {
                 "claim_id": str(c.claim_id),
@@ -455,6 +627,17 @@ def compute_evidence_set_hash(
             }
             for s in source_list
         ],
+        "evidence_items": [
+            {
+                "id": str(e.id),
+                "claim_id": str(e.claim_id),
+                "source_id": str(e.source_id),
+                "locator": e.locator,
+                "relation": e.relation,
+                "relevance_score": e.relevance_score,
+            }
+            for e in item_list
+        ],
         "provenance": prov_canonical,
     }
     canonical_json = _jcs_dumps(canonical_body)
@@ -469,10 +652,12 @@ def compute_evidence_set_hash(
 
 __all__ = [
     "ClaimNormalized",
-    "SourceNormalized",
+    "EvidenceItemNormalized",
     "EvidenceSetHashError",
+    "EVIDENCE_ITEM_RELATIONS",
     "PROV_RELATIONS_MINIMAL",
     "HASH_HEX_LEN",
-    "normalize_url",
+    "SourceNormalized",
     "compute_evidence_set_hash",
+    "normalize_url",
 ]

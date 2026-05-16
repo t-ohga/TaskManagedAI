@@ -17,8 +17,10 @@ from uuid import UUID, uuid4
 import pytest
 
 from backend.app.services.research.evidence_set_hash import (
+    EVIDENCE_ITEM_RELATIONS,
     PROV_RELATIONS_MINIMAL,
     ClaimNormalized,
+    EvidenceItemNormalized,
     EvidenceSetHashError,
     SourceNormalized,
     compute_evidence_set_hash,
@@ -47,8 +49,8 @@ def _source(
 
 class TestHashDeterminism:
     def test_empty_set_is_stable(self) -> None:
-        h1 = compute_evidence_set_hash([], [], {})
-        h2 = compute_evidence_set_hash([], [], {})
+        h1 = compute_evidence_set_hash([], [], {}, require_provenance=False)
+        h2 = compute_evidence_set_hash([], [], {}, require_provenance=False)
         assert h1 == h2
         assert len(h1) == 64
         assert all(c in "0123456789abcdef" for c in h1)
@@ -58,8 +60,8 @@ class TestHashDeterminism:
         sid = uuid4()
         claims = [_claim("statement A", claim_id=cid)]
         sources = [_source("https://example.com/page", source_id=sid)]
-        h1 = compute_evidence_set_hash(claims, sources, {})
-        h2 = compute_evidence_set_hash(claims, sources, {})
+        h1 = compute_evidence_set_hash(claims, sources, {}, require_provenance=False)
+        h2 = compute_evidence_set_hash(claims, sources, {}, require_provenance=False)
         assert h1 == h2
 
     def test_input_order_irrelevant(self) -> None:
@@ -69,13 +71,13 @@ class TestHashDeterminism:
         c2 = _claim("second", claim_id=cid2)
         s1 = _source("https://a.example/x", source_id=sid1)
         s2 = _source("https://b.example/y", source_id=sid2)
-        h_forward = compute_evidence_set_hash([c1, c2], [s1, s2], {})
-        h_reverse = compute_evidence_set_hash([c2, c1], [s2, s1], {})
+        h_forward = compute_evidence_set_hash([c1, c2], [s1, s2], {}, require_provenance=False)
+        h_reverse = compute_evidence_set_hash([c2, c1], [s2, s1], {}, require_provenance=False)
         assert h_forward == h_reverse
 
     def test_different_text_produces_different_hash(self) -> None:
-        h1 = compute_evidence_set_hash([_claim("alpha")], [], {})
-        h2 = compute_evidence_set_hash([_claim("beta")], [], {})
+        h1 = compute_evidence_set_hash([_claim("alpha")], [], {}, require_provenance=False)
+        h2 = compute_evidence_set_hash([_claim("beta")], [], {}, require_provenance=False)
         assert h1 != h2
 
     def test_1000_replays_match(self) -> None:
@@ -111,17 +113,17 @@ class TestNFC:
         cid = uuid4()
         h_nfc = compute_evidence_set_hash(
             [_claim(nfc_text, claim_id=cid)], [], {}
-        )
+        , require_provenance=False)
         h_nfd = compute_evidence_set_hash(
             [_claim(nfd_text, claim_id=cid)], [], {}
-        )
+        , require_provenance=False)
         assert h_nfc == h_nfd  # NFC normalization erases the encoding diff
 
     def test_unicode_confusable_rejected_by_normalization(self) -> None:
         """Fullwidth 'A' (U+FF21) and ASCII 'A' (U+0041) are distinct codepoints
         even after NFC; the hash must reflect that."""
-        h_ascii = compute_evidence_set_hash([_claim("Apple")], [], {})
-        h_fullwidth = compute_evidence_set_hash([_claim("Ａpple")], [], {})
+        h_ascii = compute_evidence_set_hash([_claim("Apple")], [], {}, require_provenance=False)
+        h_fullwidth = compute_evidence_set_hash([_claim("Ａpple")], [], {}, require_provenance=False)
         assert h_ascii != h_fullwidth
 
 
@@ -278,7 +280,7 @@ class TestPROVBundle:
         cid = uuid4()
         h = compute_evidence_set_hash(
             [_claim("c", claim_id=cid)], [], {}
-        )
+        , require_provenance=False)
         assert len(h) == 64
 
     def test_prov_bundle_not_object_rejected(self) -> None:
@@ -297,6 +299,208 @@ class TestPROVBundle:
                 [_claim("c", claim_id=cid)], [], prov
             )
         assert exc.value.reason_code == "prov_activities_not_list"
+
+
+class TestR2EvidenceItems:
+    """F-R2-001 fix (Codex R2 P1): evidence_items must affect hash."""
+
+    def _ei(
+        self,
+        claim_id: UUID,
+        source_id: UUID,
+        locator: str = "p1",
+        relation: str = "supports",
+        relevance_score: float | None = 0.9,
+        ei_id: UUID | None = None,
+    ) -> EvidenceItemNormalized:
+        return EvidenceItemNormalized.from_raw(
+            id=ei_id or uuid4(),
+            claim_id=claim_id,
+            source_id=source_id,
+            locator=locator,
+            relation=relation,
+            relevance_score=relevance_score,
+        )
+
+    def test_locator_change_shifts_hash(self) -> None:
+        cid = uuid4()
+        sid = uuid4()
+        c = _claim("c", claim_id=cid)
+        s = _source("https://example.com/a", source_id=sid)
+        ei_id = uuid4()
+        ei_p1 = self._ei(cid, sid, locator="p1", ei_id=ei_id)
+        ei_p2 = self._ei(cid, sid, locator="p2", ei_id=ei_id)
+        h1 = compute_evidence_set_hash(
+            [c], [s], {}, [ei_p1], require_provenance=False
+        )
+        h2 = compute_evidence_set_hash(
+            [c], [s], {}, [ei_p2], require_provenance=False
+        )
+        assert h1 != h2
+
+    def test_relation_change_shifts_hash(self) -> None:
+        cid = uuid4()
+        sid = uuid4()
+        c = _claim("c", claim_id=cid)
+        s = _source("https://example.com/a", source_id=sid)
+        ei_id = uuid4()
+        ei_s = self._ei(cid, sid, relation="supports", ei_id=ei_id)
+        ei_c = self._ei(cid, sid, relation="contradicts", ei_id=ei_id)
+        h_s = compute_evidence_set_hash(
+            [c], [s], {}, [ei_s], require_provenance=False
+        )
+        h_c = compute_evidence_set_hash(
+            [c], [s], {}, [ei_c], require_provenance=False
+        )
+        assert h_s != h_c
+
+    def test_relevance_score_change_shifts_hash(self) -> None:
+        cid = uuid4()
+        sid = uuid4()
+        c = _claim("c", claim_id=cid)
+        s = _source("https://example.com/a", source_id=sid)
+        ei_id = uuid4()
+        ei_low = self._ei(cid, sid, relevance_score=0.3, ei_id=ei_id)
+        ei_high = self._ei(cid, sid, relevance_score=0.9, ei_id=ei_id)
+        h_low = compute_evidence_set_hash(
+            [c], [s], {}, [ei_low], require_provenance=False
+        )
+        h_high = compute_evidence_set_hash(
+            [c], [s], {}, [ei_high], require_provenance=False
+        )
+        assert h_low != h_high
+
+    def test_evidence_items_order_irrelevant(self) -> None:
+        cid = uuid4()
+        sid = uuid4()
+        c = _claim("c", claim_id=cid)
+        s = _source("https://example.com/a", source_id=sid)
+        ei1 = self._ei(cid, sid, locator="p1")
+        ei2 = self._ei(cid, sid, locator="p2")
+        h_forward = compute_evidence_set_hash(
+            [c], [s], {}, [ei1, ei2], require_provenance=False
+        )
+        h_reverse = compute_evidence_set_hash(
+            [c], [s], {}, [ei2, ei1], require_provenance=False
+        )
+        assert h_forward == h_reverse
+
+    def test_relation_enum_invalid_rejected(self) -> None:
+        with pytest.raises(EvidenceSetHashError) as exc:
+            EvidenceItemNormalized.from_raw(
+                id=uuid4(),
+                claim_id=uuid4(),
+                source_id=uuid4(),
+                locator="p1",
+                relation="madeup",
+            )
+        assert exc.value.reason_code == "evidence_item_relation_invalid"
+
+    def test_relation_enum_constant_matches_db(self) -> None:
+        assert EVIDENCE_ITEM_RELATIONS == {"supports", "contradicts", "context"}
+
+    def test_relevance_out_of_range_rejected(self) -> None:
+        with pytest.raises(EvidenceSetHashError) as exc:
+            EvidenceItemNormalized.from_raw(
+                id=uuid4(),
+                claim_id=uuid4(),
+                source_id=uuid4(),
+                locator="p1",
+                relation="supports",
+                relevance_score=1.5,
+            )
+        assert exc.value.reason_code == "evidence_item_relevance_out_of_range"
+
+    def test_relevance_bool_rejected(self) -> None:
+        """bool is subclass of int; reject explicitly so True/False can't mask."""
+        with pytest.raises(EvidenceSetHashError) as exc:
+            EvidenceItemNormalized.from_raw(
+                id=uuid4(),
+                claim_id=uuid4(),
+                source_id=uuid4(),
+                locator="p1",
+                relation="supports",
+                relevance_score=True,  # type: ignore[arg-type]
+            )
+        assert exc.value.reason_code == "evidence_item_relevance_type_invalid"
+
+
+class TestR2ProvNamespaceAlias:
+    """F-R2-002 fix (Codex R2 P2): prov: namespace aliases hash identically."""
+
+    def test_prefixed_relation_same_as_unprefixed(self) -> None:
+        cid = uuid4()
+        prov_unprefixed = {
+            cid: {
+                "wasGeneratedBy": [
+                    {"generated": "ent-1", "activity": "act-1"}
+                ],
+            }
+        }
+        prov_prefixed = {
+            cid: {
+                "prov:wasGeneratedBy": [
+                    {"generated": "ent-1", "activity": "act-1"}
+                ],
+            }
+        }
+        h_un = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)], [], prov_unprefixed
+        )
+        h_pre = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)], [], prov_prefixed
+        )
+        assert h_un == h_pre
+
+    def test_duplicate_aliased_key_with_conflict_rejected(self) -> None:
+        cid = uuid4()
+        prov = {
+            cid: {
+                "wasGeneratedBy": [{"a": 1}],
+                "prov:wasGeneratedBy": [{"a": 2}],
+            }
+        }
+        with pytest.raises(EvidenceSetHashError) as exc:
+            compute_evidence_set_hash([_claim("c", claim_id=cid)], [], prov)
+        assert exc.value.reason_code == "prov_duplicate_aliased_key"
+
+
+class TestR2UrlPortWrap:
+    """F-R2-003 fix (Codex R2 P2): malformed port → EvidenceSetHashError."""
+
+    def test_non_numeric_port_wrapped(self) -> None:
+        with pytest.raises(EvidenceSetHashError) as exc:
+            normalize_url("https://example.com:abc/x")
+        assert exc.value.reason_code == "url_port_invalid"
+
+    def test_out_of_range_port_wrapped(self) -> None:
+        with pytest.raises(EvidenceSetHashError) as exc:
+            normalize_url("https://example.com:99999/x")
+        assert exc.value.reason_code == "url_port_invalid"
+
+
+class TestR2ProvenanceFailClosed:
+    """F-R2-004 fix (Codex R2 P2): missing provenance fails closed."""
+
+    def test_missing_provenance_default_fails_closed(self) -> None:
+        cid = uuid4()
+        with pytest.raises(EvidenceSetHashError) as exc:
+            compute_evidence_set_hash(
+                [_claim("c", claim_id=cid)],
+                [],
+                {},
+            )
+        assert exc.value.reason_code == "provenance_missing_for_claim"
+
+    def test_require_provenance_false_test_fixture_still_works(self) -> None:
+        cid = uuid4()
+        h = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)],
+            [],
+            {},
+            require_provenance=False,
+        )
+        assert len(h) == 64
 
 
 class TestInputValidation:
@@ -366,6 +570,6 @@ class TestRandomFuzz:
             )
             for i in range(2)
         ]
-        h1 = compute_evidence_set_hash(claims, sources, {})
-        h2 = compute_evidence_set_hash(claims, sources, {})
+        h1 = compute_evidence_set_hash(claims, sources, {}, require_provenance=False)
+        h2 = compute_evidence_set_hash(claims, sources, {}, require_provenance=False)
         assert h1 == h2 and len(h1) == 64
