@@ -37,6 +37,25 @@ from backend.app.db.models.context_snapshot import ContextSnapshot
 from backend.app.db.models.grounding_support import GroundingSupport
 
 
+# F-PR25-R2-006 (Codex R2 P1): the promotion payload stores claim_ids /
+# research_task_id as JSON strings. ``asyncpg`` requires ``uuid.UUID``
+# values when binding to PG ``uuid`` columns; passing raw strings via
+# ``IN`` raises ``DBAPIError`` at execute time. Parse the JSON strings
+# back to UUID here so the SQL bind matches the column type.
+def _parse_uuid_set(values: object) -> set[UUID]:
+    result: set[UUID] = set()
+    if not isinstance(values, (list, tuple, set)):
+        return result
+    for v in values:
+        try:
+            result.add(UUID(str(v)))
+        except (ValueError, AttributeError):
+            # Skip malformed entries silently — the producer is server-
+            # owned (BL-0118 adapter) so this is defensive only.
+            continue
+    return result
+
+
 class CitationCoverageError(ValueError):
     def __init__(self, reason_code: str, message: str) -> None:
         self.reason_code = reason_code
@@ -159,8 +178,11 @@ async def compute_citation_coverage(
 
     # Initialise scope sets up-front so the post-loop numerator filter
     # branch can rely on them even when ``promotion_rows`` is empty.
-    scope_claim_ids: set[str] = set()
-    scope_task_ids: set[str] = set()
+    # F-PR25-R2-006 fix (Codex R2 P1): bind as ``uuid.UUID`` rather
+    # than ``str`` — asyncpg requires UUID type for PG ``uuid`` column
+    # IN predicates.
+    scope_claim_ids: set[UUID] = set()
+    scope_task_ids: set[UUID] = set()
 
     if not promotion_rows:
         # No research_promotion artifact: the AgentRun has no defined
@@ -173,12 +195,15 @@ async def compute_citation_coverage(
         # specific claim_id set or the full ResearchTask scope.
         for (content_jsonb,) in promotion_rows:
             cjson = content_jsonb or {}
-            task_id_str = cjson.get("research_task_id")
-            claim_id_strs = cjson.get("claim_ids", [])
-            if claim_id_strs:
-                scope_claim_ids.update(str(c) for c in claim_id_strs)
-            elif task_id_str:
-                scope_task_ids.add(str(task_id_str))
+            task_id_raw = cjson.get("research_task_id")
+            claim_id_raw = cjson.get("claim_ids", [])
+            if claim_id_raw:
+                scope_claim_ids.update(_parse_uuid_set(claim_id_raw))
+            elif task_id_raw is not None:
+                try:
+                    scope_task_ids.add(UUID(str(task_id_raw)))
+                except (ValueError, AttributeError):
+                    continue
 
         # Count distinct claims in scope:
         #   = explicit claim_ids + all claims of any open-scope task_ids
@@ -232,7 +257,22 @@ async def compute_citation_coverage(
             if scoped_claim_filter:
                 grounded_stmt = grounded_stmt.where(or_(*scoped_claim_filter))
 
-    grounded_claims = (await session.scalar(grounded_stmt)) or 0
+    # F-PR25-R2-003 fix (Codex R2 P1): SP-010 QL-C spec line 165 says
+    # an AgentRun whose latest ``ContextSnapshot.evidence_set_hash`` is
+    # null must be included in the denominator with numerator=0
+    # (uncovered). Pre-fix the numerator query still counted any
+    # GroundingSupport rows attached to the run, so a run that never
+    # wired Research/Evidence could mask AC-KPI-04 failure by
+    # reporting positive coverage. Force grounded_claims to 0 when
+    # the snapshot hash is missing — the run *has* a defined scope
+    # (we already counted distinct_claims from the promotion
+    # artifact) but its ContextSnapshot does not yet have the hash
+    # binding the scope to the claim/evidence set, so we treat all
+    # claims as uncovered.
+    if evidence_set_hash is None:
+        grounded_claims_final = 0
+    else:
+        grounded_claims_final = int((await session.scalar(grounded_stmt)) or 0)
     distinct_claims = distinct_claims_count
 
     if distinct_claims == 0:
@@ -241,8 +281,9 @@ async def compute_citation_coverage(
         coverage = 0.0
         denominator_nonzero = False
     else:
-        coverage = grounded_claims / distinct_claims
+        coverage = grounded_claims_final / distinct_claims
         denominator_nonzero = True
+    grounded_claims = grounded_claims_final
 
     return CitationCoverageMetric(
         agent_run_id=agent_run_id,

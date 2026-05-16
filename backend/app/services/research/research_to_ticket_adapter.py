@@ -167,7 +167,17 @@ async def promote_research_to_ticket(
     # against the caller-supplied string so a token-shaped value
     # (e.g. an OpenAI key copy-pasted into a summary) is rejected
     # **before** it lands in ``content_jsonb`` and becomes exportable.
-    assert_no_raw_secret({"summary": summary}, path="$research_to_ticket.summary")
+    #
+    # F-PR25-R2-007 fix (Codex R2 P2): ``assert_no_raw_secret`` raises a
+    # plain ``ValueError`` rather than ``ResearchToTicketError``. Wrap
+    # so the API handler maps it to a 4xx instead of a 500.
+    try:
+        assert_no_raw_secret({"summary": summary}, path="$research_to_ticket.summary")
+    except ValueError as exc:
+        raise ResearchToTicketError(
+            "summary_contains_secret",
+            f"summary failed raw-secret scan: {exc}",
+        ) from exc
 
     # F-PR25-R1-007 fix (Codex R1 P2) + F-PR25-R1-006 wider fix:
     # establish the tenant context before the first read so an RLS-

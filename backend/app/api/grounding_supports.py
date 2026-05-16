@@ -84,6 +84,12 @@ async def register_grounding_support(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
+    # F-PR25-R2-002 fix (Codex R2 P1): the repository only flushes; the
+    # ``get_db_session`` dependency does not auto-commit on teardown,
+    # so the inserted row would be rolled back on response. Commit
+    # explicitly so the GroundingSupport row is durable before the
+    # 201 reaches the caller.
+    await session.commit()
     return GroundingSupportRead.model_validate(support)
 
 
@@ -158,6 +164,9 @@ async def delete_grounding_support(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"grounding_support {grounding_support_id} not found.",
         )
+    # F-PR25-R2-002 fix (Codex R2 P1): commit so the DELETE is durable;
+    # otherwise the row reappears after request teardown.
+    await session.commit()
 
 
 __all__ = ["project_router", "run_router"]
