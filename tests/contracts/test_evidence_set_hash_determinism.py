@@ -983,6 +983,124 @@ class TestR4EvidenceItemDanglingReject:
         assert len(h) == 64
 
 
+class TestR5LegacyRelationsValidation:
+    """F-R5-001 fix (Codex R5 P2): legacy ``"relations"`` top-level key
+    must be a dict if present; non-dict (array / string / number) silently
+    skipped pre-R5 so a bad migration could share a hash with the no-
+    relations variant."""
+
+    def test_legacy_relations_array_rejected(self) -> None:
+        cid = uuid4()
+        prov = {
+            cid: {
+                "wasGeneratedBy": [{"generated": "e1", "activity": "a1"}],
+                "relations": [],  # array instead of dict
+            }
+        }
+        with pytest.raises(EvidenceSetHashError) as exc:
+            compute_evidence_set_hash([_claim("c", claim_id=cid)], [], prov)
+        assert exc.value.reason_code == "prov_legacy_relations_not_object"
+
+    def test_legacy_relations_string_rejected(self) -> None:
+        cid = uuid4()
+        prov = {
+            cid: {
+                "wasGeneratedBy": [{"generated": "e1", "activity": "a1"}],
+                "relations": "oops",  # string instead of dict
+            }
+        }
+        with pytest.raises(EvidenceSetHashError) as exc:
+            compute_evidence_set_hash([_claim("c", claim_id=cid)], [], prov)
+        assert exc.value.reason_code == "prov_legacy_relations_not_object"
+
+    def test_legacy_relations_dict_still_accepted(self) -> None:
+        # Backward compat: legacy dict shape still works.
+        cid = uuid4()
+        prov = {
+            cid: {
+                "wasGeneratedBy": [{"generated": "e1", "activity": "a1"}],
+                "relations": {
+                    "used": [{"activity": "a1", "entity": "e2"}],
+                },
+            }
+        }
+        h = compute_evidence_set_hash([_claim("c", claim_id=cid)], [], prov)
+        assert len(h) == 64
+
+
+class TestR5SupplementaryPlaneKeyReject:
+    """F-R5-002 fix (Codex R5 P3): JCS sorts by UTF-16 code units, not by
+    Unicode code point. The two orderings diverge as soon as a key
+    contains a supplementary-plane character. Reject so the hash stays
+    portable across stacks (BMP-only paths are unaffected)."""
+
+    def test_supplementary_plane_key_in_prov_rejected(self) -> None:
+        cid = uuid4()
+        # \U0001F600 (😀) is a supplementary-plane code point that JCS
+        # would sort before BMP keys above U+DFFF — divergent from Python.
+        prov = {
+            cid: {
+                "wasGeneratedBy": [{"generated": "e1", "activity": "a1"}],
+                # Smuggle a supplementary-plane field name into a relation
+                # item (bypasses prov_validator's strict schema — only
+                # reachable when callers skip the validator).
+                "used": [{"activity": "a1", "entity": "e1", "\U0001F600": "x"}],
+            }
+        }
+        with pytest.raises(EvidenceSetHashError) as exc:
+            compute_evidence_set_hash([_claim("c", claim_id=cid)], [], prov)
+        assert exc.value.reason_code == "jcs_supplementary_plane_key"
+
+    def test_bmp_key_accepted(self) -> None:
+        # BMP characters (codepoint < 0x10000) sort identically to UTF-16
+        # code units — accept.
+        cid = uuid4()
+        prov = {
+            cid: {
+                "wasGeneratedBy": [{"generated": "e1", "activity": "a1"}],
+                # Latin-1 + CJK BMP characters
+                "used": [{"activity": "a1", "entity": "e1", "日本語": "ok"}],
+            }
+        }
+        h = compute_evidence_set_hash([_claim("c", claim_id=cid)], [], prov)
+        assert len(h) == 64
+
+
+class TestR5ExtraProvenanceReject:
+    """F-R5-003 fix (Codex R5 P2): ``provenance_per_claim`` entries for
+    claim_ids absent from the ``claims`` input set must fail-closed. Pre-
+    R5 they were silently dropped, hiding snapshot-assembly bugs where
+    a claim row is removed but its provenance lingers."""
+
+    def test_extra_provenance_entry_rejected(self) -> None:
+        cid_in_set = uuid4()
+        cid_extra = uuid4()
+        prov = {
+            cid_in_set: {"wasGeneratedBy": [{"generated": "e1", "activity": "a1"}]},
+            cid_extra: {"wasGeneratedBy": [{"generated": "e1", "activity": "a1"}]},
+        }
+        with pytest.raises(EvidenceSetHashError) as exc:
+            compute_evidence_set_hash([_claim("c", claim_id=cid_in_set)], [], prov)
+        assert exc.value.reason_code == "provenance_extra_claim_id"
+
+    def test_extra_provenance_rejected_even_with_require_false(self) -> None:
+        """Symmetric direction is always enforced; ``require_provenance``
+        only controls whether *missing* provenance is fatal."""
+        cid_in_set = uuid4()
+        cid_extra = uuid4()
+        prov = {
+            cid_extra: {"wasGeneratedBy": [{"generated": "e1", "activity": "a1"}]},
+        }
+        with pytest.raises(EvidenceSetHashError) as exc:
+            compute_evidence_set_hash(
+                [_claim("c", claim_id=cid_in_set)],
+                [],
+                prov,
+                require_provenance=False,
+            )
+        assert exc.value.reason_code == "provenance_extra_claim_id"
+
+
 class TestRandomFuzz:
     @pytest.mark.parametrize("seed", range(20))
     def test_random_inputs_deterministic(self, seed: int) -> None:

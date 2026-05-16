@@ -27,8 +27,13 @@ from backend.app.repositories.base import BaseRepository
 from backend.app.services.research.evidence_set_hash import (
     ClaimNormalized,
     EvidenceItemNormalized,
+    EvidenceSetHashError,
     SourceNormalized,
     compute_evidence_set_hash,
+)
+from backend.app.services.research.prov_validator import (
+    ProvValidationError,
+    validate_provenance_json,
 )
 
 _CONTEXT_SNAPSHOT_REQUIRED_NONNULL_COLUMNS: tuple[str, ...] = (
@@ -133,6 +138,34 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
         # provenance_per_claim is a Mapping for API ergonomics; rebuild as
         # a dict[UUID, Any] for compute_evidence_set_hash's signature.
         prov_dict: dict[UUID, Any] = dict(provenance_per_claim)
+
+        # F-R4-004 fix (Codex R4 P1): server-owned production path. The
+        # caller cannot pass a pre-computed hash through — we compute it
+        # from the inputs (server-owned-boundary §1).
+        #
+        # F-R5-004 fix (Codex R5 P2): also validate each PROV bundle via
+        # the canonical ``prov_validator.validate_provenance_json`` BEFORE
+        # we canonicalize for the hash. ``compute_evidence_set_hash`` still
+        # accepts the legacy ``{"relations": {...}}`` sub-mapping shape
+        # for backward compat with pre-Sprint-10 test fixtures, but the
+        # production wiring here forces the canonical W3C PROV-DM minimal
+        # shape (top-level ``wasGeneratedBy`` etc., ``extra="forbid"``).
+        # A snapshot assembler that tries to slip a non-validated bundle
+        # past this boundary fails closed with
+        # ``provenance_validation_failed`` rather than producing a hash
+        # against arbitrary input.
+        for claim_id, raw_prov in prov_dict.items():
+            try:
+                validate_provenance_json(raw_prov)
+            except ProvValidationError as exc:
+                raise EvidenceSetHashError(
+                    "provenance_validation_failed",
+                    (
+                        f"claim {claim_id}: provenance failed prov_validator "
+                        f"({exc.detail})"
+                    ),
+                ) from exc
+
         computed_hash = compute_evidence_set_hash(
             claims,
             sources,

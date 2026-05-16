@@ -67,6 +67,23 @@ def _valid_provider_request_fingerprint() -> dict[str, Any]:
     return {"model_resolved": "gpt-test"}
 
 
+def _valid_prov_bundle() -> dict[str, Any]:
+    """Minimal PROV-DM bundle that satisfies prov_validator.validate_provenance_json.
+
+    Required by F-R5-004: the production path
+    ``create_snapshot_from_evidence`` runs the canonical
+    ``validate_provenance_json`` before computing the hash, so test
+    fixtures must use schema-valid bundles with referenced activities /
+    entities declared up front and proper relation field names
+    (``entity`` + ``activity``, not ``generated`` + ``activity``).
+    """
+    return {
+        "activities": [{"id": "a1", "type": "prov:Activity"}],
+        "entities": [{"id": "e1", "type": "prov:Entity"}],
+        "wasGeneratedBy": [{"entity": "e1", "activity": "a1"}],
+    }
+
+
 @pytest.fixture
 def repo() -> ContextSnapshotRepository:
     """ContextSnapshotRepository with a mocked AsyncSession; we patch
@@ -87,9 +104,7 @@ async def test_create_snapshot_from_evidence_computes_hash_server_side(
     eid = uuid4()
     claims = [_make_claim(claim_id=cid)]
     sources = [_make_source(source_id=sid)]
-    prov: dict[UUID, Any] = {
-        cid: {"wasGeneratedBy": [{"generated": "e1", "activity": "a1"}]}
-    }
+    prov: dict[UUID, Any] = {cid: _valid_prov_bundle()}
     items = [
         EvidenceItemNormalized.from_raw(
             id=eid,
@@ -196,9 +211,7 @@ async def test_create_snapshot_from_evidence_dangling_evidence_item_rejected(
     sid_dangling = uuid4()
     claims = [_make_claim(claim_id=cid)]
     sources = [_make_source(source_id=sid_in_set)]
-    prov: dict[UUID, Any] = {
-        cid: {"wasGeneratedBy": [{"generated": "e1", "activity": "a1"}]}
-    }
+    prov: dict[UUID, Any] = {cid: _valid_prov_bundle()}
     items = [
         EvidenceItemNormalized.from_raw(
             id=uuid4(),
@@ -241,3 +254,88 @@ def test_module_level_create_snapshot_from_evidence_exported() -> None:
 
     assert hasattr(cs_mod, "create_snapshot_from_evidence")
     assert "create_snapshot_from_evidence" in cs_mod.__all__
+
+
+@pytest.mark.asyncio
+async def test_create_snapshot_from_evidence_runs_prov_validator(
+    repo: ContextSnapshotRepository,
+) -> None:
+    """F-R5-004 fix (Codex R5 P2): the production wiring must run the
+    canonical ``prov_validator.validate_provenance_json`` before computing
+    the hash, so an assembler that bypasses ``ClaimRepository`` and feeds
+    raw / malformed provenance into ``create_snapshot_from_evidence``
+    fails closed rather than producing a hash against unvalidated input."""
+    cid = uuid4()
+    sid = uuid4()
+    claims = [_make_claim(claim_id=cid)]
+    sources = [_make_source(source_id=sid)]
+    # Missing required ``wasGeneratedBy`` — prov_validator rejects this.
+    malformed_prov: dict[UUID, Any] = {cid: {}}
+
+    repo.create_snapshot = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(EvidenceSetHashError) as exc:
+        await repo.create_snapshot_from_evidence(
+            tenant_id=1,
+            run_id=uuid4(),
+            claims=claims,
+            sources=sources,
+            provenance_per_claim=malformed_prov,
+            prompt_pack_version="pp-1",
+            prompt_pack_lock="3" * 64,
+            policy_version="pv-1",
+            policy_pack_lock="4" * 64,
+            repo_state=_valid_repo_state(),
+            tool_manifest=_valid_tool_manifest(),
+            provider_continuation_ref=None,
+            provider_request_fingerprint=_valid_provider_request_fingerprint(),
+            snapshot_kind="input",
+        )
+    assert exc.value.reason_code == "provenance_validation_failed"
+    repo.create_snapshot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_snapshot_from_evidence_rejects_extra_top_level_relations(
+    repo: ContextSnapshotRepository,
+) -> None:
+    """F-R5-004 + F-R4-002 integration: bundles that survive
+    ``compute_evidence_set_hash``'s minimal-relation gate but would fail
+    ``prov_validator``'s ``extra="forbid"`` must also fail-close at the
+    production boundary. Example: legacy ``{"relations": {...}}`` shape
+    is *accepted* by ``compute_evidence_set_hash`` for test back-compat
+    but rejected by the production wiring (the validator forbids it)."""
+    cid = uuid4()
+    sid = uuid4()
+    claims = [_make_claim(claim_id=cid)]
+    sources = [_make_source(source_id=sid)]
+    legacy_prov: dict[UUID, Any] = {
+        cid: {
+            "wasGeneratedBy": [{"generated": "e1", "activity": "a1"}],
+            # legacy sub-map — accepted by compute_evidence_set_hash but
+            # rejected by prov_validator (extra="forbid").
+            "relations": {},
+        }
+    }
+
+    repo.create_snapshot = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(EvidenceSetHashError) as exc:
+        await repo.create_snapshot_from_evidence(
+            tenant_id=1,
+            run_id=uuid4(),
+            claims=claims,
+            sources=sources,
+            provenance_per_claim=legacy_prov,
+            prompt_pack_version="pp-1",
+            prompt_pack_lock="3" * 64,
+            policy_version="pv-1",
+            policy_pack_lock="4" * 64,
+            repo_state=_valid_repo_state(),
+            tool_manifest=_valid_tool_manifest(),
+            provider_continuation_ref=None,
+            provider_request_fingerprint=_valid_provider_request_fingerprint(),
+            snapshot_kind="input",
+        )
+    assert exc.value.reason_code == "provenance_validation_failed"
+    repo.create_snapshot.assert_not_awaited()

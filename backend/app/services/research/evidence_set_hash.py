@@ -511,7 +511,21 @@ def _normalize_prov_bundle(prov: Any) -> dict[str, Any]:  # noqa: ANN401
         canonical_relations[rel_name] = [_nfc_walk(item) for item in rel_items]
 
     # Reject any explicitly-named relations that fall outside the minimal set.
+    # F-R5-001 fix (Codex R5 P2): if the legacy ``relations`` key is present
+    # at the top level but not an object, the prior code silently fell
+    # through (the ``isinstance(legacy_relations, dict)`` check above
+    # accepts the absence + non-dict cases identically). A bundle that
+    # carries ``"relations": []`` from a bad migration would then hash the
+    # same as one without legacy relations. Fail closed.
     legacy_relations = prov.get("relations")
+    if legacy_relations is not None and not isinstance(legacy_relations, dict):
+        raise EvidenceSetHashError(
+            "prov_legacy_relations_not_object",
+            (
+                f"provenance_json.relations must be object (legacy sub-map) "
+                f"or absent, got {type(legacy_relations).__name__}"
+            ),
+        )
     if isinstance(legacy_relations, dict):
         unknown = set(legacy_relations.keys()) - PROV_RELATIONS_MINIMAL
         if unknown:
@@ -677,6 +691,30 @@ def _jcs_dumps(obj: Any) -> str:  # noqa: ANN401
                     "jcs_non_string_key",
                     f"JCS requires string keys, got {type(key).__name__}",
                 )
+            # F-R5-002 fix (Codex R5 P3): RFC 8785 §3.2.3 sorts object keys
+            # by their UTF-16 code units, *not* by Unicode code point.
+            # Python's ``sorted()`` is code-point-ordered; the two orderings
+            # diverge as soon as a key contains a supplementary-plane
+            # character (codepoint >= U+10000) because UTF-16 encodes it as
+            # a surrogate pair starting in the U+D800-U+DBFF range, which is
+            # *less* than any BMP key above U+DFFF. Implementing the full
+            # UTF-16BE sort here is feasible but premature; our canonical
+            # body never uses supplementary-plane keys (PROV node fields
+            # are validated to a small ASCII set, evidence_item fields are
+            # ASCII, top-level keys are ASCII). Fail closed if a caller
+            # smuggles one through so cross-stack reproducibility cannot
+            # silently break. The threshold is U+10000, the first
+            # supplementary-plane code point.
+            if any(ord(ch) >= 0x10000 for ch in key):
+                raise EvidenceSetHashError(
+                    "jcs_supplementary_plane_key",
+                    (
+                        "JCS sort order would diverge from RFC 8785 / "
+                        "UTF-16 code units when an object key contains a "
+                        "supplementary-plane character (codepoint >= "
+                        "U+10000); reject so the hash stays portable"
+                    ),
+                )
             parts.append(
                 f"{json.dumps(key, ensure_ascii=False)}:{_jcs_dumps(obj[key])}"
             )
@@ -771,6 +809,27 @@ def compute_evidence_set_hash(
     # is a broken integration and must fail-closed rather than silently
     # hashing an empty PROV bundle. Test fixtures opt out via
     # ``require_provenance=False``.
+    #
+    # F-R5-003 fix (Codex R5 P2): the converse direction was previously
+    # unchecked — a caller could pass ``provenance_per_claim`` entries
+    # keyed by claim_ids that are absent from the ``claims`` input set,
+    # and those extra entries would silently disappear into the hash. In
+    # a snapshot-assembly bug where a claim row is dropped while its
+    # provenance is left in the map, the resulting hash would match the
+    # never-had-it variant. Fail closed regardless of
+    # ``require_provenance`` because dangling provenance entries always
+    # indicate broken caller wiring.
+    extra_provenance_keys = set(provenance_per_claim.keys()) - _claim_id_set
+    if extra_provenance_keys:
+        raise EvidenceSetHashError(
+            "provenance_extra_claim_id",
+            (
+                f"provenance_per_claim has entries for {sorted(extra_provenance_keys)!r} "
+                "which are not in the claims input set (snapshot assembler "
+                "must drop these or include the matching claim)"
+            ),
+        )
+
     prov_canonical: dict[str, dict[str, Any]] = {}
     for claim in claim_list:
         if claim.claim_id in provenance_per_claim:
