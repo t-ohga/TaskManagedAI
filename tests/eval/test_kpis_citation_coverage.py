@@ -20,6 +20,7 @@ import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, Literal
+from unittest import mock
 
 import pytest
 
@@ -331,6 +332,13 @@ def test_live_fixture_recomputed_ratio_matches_expected_aggregate() -> None:
         ),
         (
             {"threshold": {"operator": ">=", "value": 0.5}},
+            "manifest_violation:threshold_value",
+        ),
+        # F-CR-004 P2 adopt: bool is a numeric subtype in Python; reject
+        # explicitly so a future regression cannot silently let ``True``
+        # pretend to be ``1.0``.
+        (
+            {"threshold": {"operator": ">=", "value": True}},
             "manifest_violation:threshold_value",
         ),
     ),
@@ -652,6 +660,151 @@ def test_live_corpus_round_trip_via_recomputation_matches_loader_classification(
         1 for claim in sample_claims if isinstance(claim, dict) and len(claim.get("citation_ids") or []) > 0
     ) / max(len(sample_claims), 1)
     assert aggregator_result.metric_value == pytest.approx(naive_recompute)
+
+
+def test_expected_aggregate_with_bool_coverage_ratio_is_rejected() -> None:
+    """F-CR-004 P2 adopt: bool coverage_ratio must not pass _is_finite_number."""
+
+    fixture = _synthetic_fixture(
+        sample_claims=_sample_claims(total=5, with_citation=3, prefix="bool"),
+        expected_aggregate={
+            "total_claims": 5,
+            "claims_with_citation": 3,
+            "coverage_ratio": True,
+        },
+    )
+    _, per_fixture = _result_for(fixture)
+    # ``True`` is rejected by ``_is_finite_number``; _expected_coverage_ratio
+    # returns ``None`` and the violation surfaces as ``expected_aggregate``
+    # (object present but coverage_ratio malformed).
+    assert per_fixture.spec_violation_reason == "spec_violation:expected_aggregate"
+
+
+def test_no_claims_takes_priority_over_missing_expected_aggregate() -> None:
+    """F-CR-005 P2 adopt: reason priority documented in evaluator docstring.
+
+    With both ``sample_claims=[]`` and ``expected_aggregate`` absent, the
+    aggregator surfaces ``no_claims`` (claim-parsing-tier violation) ahead
+    of the lower-priority ``expected_aggregate_missing`` reason. Downstream
+    consumers know to re-inspect raw fixtures when chasing co-occurring
+    problems.
+    """
+
+    fixture = _synthetic_fixture(
+        sample_claims=[],
+        expected_aggregate=OMIT_EXPECTED_AGGREGATE,
+    )
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == "spec_violation:no_claims"
+
+
+def test_stale_sut_result_fixture_id_is_logged_and_dropped() -> None:
+    """F-CR-006 P2 adopt: align with batch 5b tenant_isolation warn pattern.
+
+    ``sut_results`` keys not in the corpus are silently dropped from the
+    evaluation but surface as a warning so the caller can audit drift. The
+    warning carries only the fixture_id (Anti-Gaming-safe identifier) and
+    must not embed the raw fixture marker.
+    """
+
+    raw_marker = "raw-content-must-not-leak"
+    fixture = _synthetic_fixture(
+        sample_claims=_sample_claims(
+            total=5,
+            with_citation=3,
+            prefix="stale",
+            claim_text=raw_marker,
+        )
+    )
+
+    with mock.patch.object(citation_coverage, "_LOGGER") as mock_logger:
+        result = evaluate_citation_coverage(
+            _synthetic_corpus([fixture]),
+            sut_results={
+                fixture.fixture_id: True,
+                "AC-KPI-04_v2026.05.09-synthetic_stale_unknown": True,
+            },
+        )
+
+    assert result.fixture_count == 1
+    assert result.per_fixture[0].passed is True
+    assert result.per_fixture[0].sut_attempted is True
+    warning_calls = mock_logger.warning.call_args_list
+    assert warning_calls, "expected warning for the stale fixture_id"
+    formatted = "\n".join(
+        (call.args[0] % call.args[1:]) if len(call.args) > 1 else str(call.args[0])
+        for call in warning_calls
+    )
+    assert "AC-KPI-04_v2026.05.09-synthetic_stale_unknown" in formatted
+    assert raw_marker not in formatted
+
+
+def test_sut_attempted_field_distinguishes_unverified_from_attempted() -> None:
+    """F-CR-002 P1 adopt: ``sut_attempted`` makes ``passed`` semantics explicit."""
+
+    fixture = _synthetic_fixture()
+    # No sut_results → spec compliance only, SUT was never attempted.
+    result_unattempted = evaluate_citation_coverage(_synthetic_corpus([fixture]))
+    assert result_unattempted.per_fixture[0].sut_attempted is False
+    assert result_unattempted.per_fixture[0].passed is True
+    assert result_unattempted.per_fixture[0].sut_result is None
+
+    # sut_results provided + fixture_id matched → SUT attempted.
+    result_attempted = evaluate_citation_coverage(
+        _synthetic_corpus([fixture]),
+        sut_results={fixture.fixture_id: True},
+    )
+    assert result_attempted.per_fixture[0].sut_attempted is True
+    assert result_attempted.per_fixture[0].passed is True
+    assert result_attempted.per_fixture[0].sut_result is True
+
+    # sut_results provided but fixture_id missing → SUT attempted but failed.
+    result_missing = evaluate_citation_coverage(
+        _synthetic_corpus([fixture]),
+        sut_results={},
+    )
+    assert result_missing.per_fixture[0].sut_attempted is True
+    assert result_missing.per_fixture[0].passed is False
+    assert result_missing.per_fixture[0].spec_violation_reason == "sut_result_missing"
+
+    # sut_results provided + non-boolean value → SUT attempted, invalid.
+    result_invalid = evaluate_citation_coverage(
+        _synthetic_corpus([fixture]),
+        sut_results={fixture.fixture_id: "true"},  # type: ignore[dict-item]
+    )
+    assert result_invalid.per_fixture[0].sut_attempted is True
+    assert result_invalid.per_fixture[0].passed is False
+    assert result_invalid.per_fixture[0].spec_violation_reason == "sut_result_invalid_type"
+
+
+def test_drift_tolerance_absorbs_float64_round_trip_noise() -> None:
+    """F-CR-003 P1 adopt: math.isclose tolerances must absorb ulp noise.
+
+    Construct a coverage_ratio that differs from the recomputed value by
+    one ulp (≈ 2.2e-16). The aggregator must NOT flag this as
+    ``expected_aggregate_drift`` — the tolerances exist precisely to absorb
+    benign round-trip noise.
+    """
+
+    claims = _sample_claims(total=5, with_citation=3, prefix="ulp")
+    recomputed_ratio = 3 / 5
+    # Math.nextafter walks 1 ulp toward ``recomputed_ratio + 1`` (i.e., the
+    # closest distinguishable float64 greater than ``recomputed_ratio``).
+    import math
+
+    near_ratio = math.nextafter(recomputed_ratio, recomputed_ratio + 1)
+    assert near_ratio != recomputed_ratio  # confirms we picked a different float
+    fixture = _synthetic_fixture(
+        sample_claims=claims,
+        expected_aggregate={
+            "total_claims": 5,
+            "claims_with_citation": 3,
+            "coverage_ratio": near_ratio,
+        },
+    )
+    result, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason is None
+    assert result.threshold_reason == "below_threshold"
 
 
 def test_live_corpus_immutable_against_synthetic_mutation(tmp_path: Path) -> None:

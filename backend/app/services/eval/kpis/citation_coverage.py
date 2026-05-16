@@ -24,6 +24,7 @@ programmatic SUT execution path introduced by BL-0127b / SP-012.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -32,16 +33,37 @@ from typing import Final, Literal
 from backend.app.db.models.dataset_version import FixtureKind
 from backend.app.services.eval.loader import Fixture, LoadedCorpus
 
+_LOGGER = logging.getLogger(__name__)
+
 AC_KPI_04_KPI_ID: Final[Literal["AC-KPI-04"]] = "AC-KPI-04"
 AC_KPI_04_METRIC_KEY: Final[Literal["citation_coverage"]] = "citation_coverage"
 AC_KPI_04_THRESHOLD: Final[float] = 0.9
 AC_KPI_04_THRESHOLD_OPERATOR: Final[Literal[">="]] = ">="
 
 _SUPPORTED_FIXTURE_KINDS: Final[Sequence[FixtureKind]] = ("public_regression",)
-# Tolerance for float drift between recomputed and expected coverage ratios.
-# 1e-9 catches any drift larger than typical float64 round-trip noise while
-# tolerating JSON-round-trip rounding.
-_COVERAGE_RATIO_EPSILON: Final[float] = 1e-9
+# F-CR-003 P1 adopt: Tolerance for float drift between recomputed and expected
+# coverage ratios. The original ``1e-9`` constant is too tight to survive
+# float64 round-trip noise once fixtures originate from heterogeneous writers
+# (Python, jq, generated JSON, etc.). ``math.isclose`` with these tolerances
+# gives ~6 decimal digits of agreement, which still catches the documented
+# Anti-Gaming attack (intentional 0.6 → 0.8 drift) while absorbing benign
+# ulp-level noise.
+_COVERAGE_RATIO_REL_TOL: Final[float] = 1e-6
+_COVERAGE_RATIO_ABS_TOL: Final[float] = 1e-9
+# Threshold comparison uses an explicit absolute tolerance for manifest drift
+# checks (the manifest declares the canonical 0.9 threshold).
+_THRESHOLD_VALUE_ABS_TOL: Final[float] = 1e-9
+
+
+def _ratios_match(recomputed: float, expected: float) -> bool:
+    """Return True when two ratios agree within the documented tolerances."""
+
+    return math.isclose(
+        recomputed,
+        expected,
+        rel_tol=_COVERAGE_RATIO_REL_TOL,
+        abs_tol=_COVERAGE_RATIO_ABS_TOL,
+    )
 
 
 @dataclass(frozen=True)
@@ -60,6 +82,15 @@ class CitationCoverageFixtureResult:
     ``expected_coverage_ratio`` mirrors what the fixture declares in
     ``expected_aggregate.coverage_ratio`` and is reported for diagnostic
     purposes; it is not used to compute the corpus-level metric.
+
+    ``passed`` semantics (F-CR-002 P1 adopt):
+        * ``sut_attempted is False`` (caller did not supply ``sut_results`` for
+          this fixture): ``passed=True`` means **spec compliance only**, the
+          SUT was not executed and its outcome is not represented.
+        * ``sut_attempted is True``: ``passed=True`` means **both** spec
+          compliance AND the SUT returned ``True``. Downstream consumers
+          building pass/fail rollups must filter on ``sut_attempted`` to
+          distinguish "spec ok, SUT unverified" from "spec + SUT ok".
     """
 
     fixture_id: str
@@ -71,6 +102,7 @@ class CitationCoverageFixtureResult:
     passed: bool
     spec_violation_reason: str | None
     sut_result: bool | None
+    sut_attempted: bool
 
 
 @dataclass(frozen=True)
@@ -124,7 +156,7 @@ def _manifest_violation_reason(corpus: LoadedCorpus) -> str | None:
     value = threshold_map.get("value")
     if not _is_finite_number(value):
         return "manifest_violation:threshold_value"
-    if abs(float(value) - AC_KPI_04_THRESHOLD) > _COVERAGE_RATIO_EPSILON:  # type: ignore[arg-type]
+    if abs(float(value) - AC_KPI_04_THRESHOLD) > _THRESHOLD_VALUE_ABS_TOL:  # type: ignore[arg-type]
         return "manifest_violation:threshold_value"
     return None
 
@@ -135,18 +167,16 @@ _AGGREGATE_NOT_PROVIDED: Final[object] = object()
 def _raw_expected_aggregate(fixture: Fixture) -> object:
     """Return the raw ``expected_aggregate`` payload (or sentinel if absent).
 
-    The generic loader places ``expected_aggregate`` in ``expected_json`` (the
-    ``expected_*`` prefix matches the expectation heuristic), but we also read
-    ``raw_json`` as a fallback so the evaluator stays robust to future
-    schema-driven classification changes. The sentinel distinguishes "absent"
-    from "present but malformed" so the per-fixture reason can pick the
-    correct violation code.
+    F-CR-001 P3 adopt: the generic loader places ``expected_aggregate`` in
+    ``expected_json`` (the ``expected_*`` prefix matches the expectation
+    heuristic), so we read only ``expected_json``. The sentinel distinguishes
+    "absent" from "present but malformed" so the per-fixture reason can pick
+    the correct violation code. If a future loader change moves the field
+    elsewhere, this single accessor is the touch-point.
     """
 
     if "expected_aggregate" in fixture.expected_json:
         return fixture.expected_json["expected_aggregate"]
-    if "expected_aggregate" in fixture.raw_json:
-        return fixture.raw_json["expected_aggregate"]
     return _AGGREGATE_NOT_PROVIDED
 
 
@@ -232,7 +262,11 @@ def _expected_aggregate_violation_reason(
     if expected_ratio is None:
         # Aggregate is an object but ``coverage_ratio`` is missing or malformed.
         return "spec_violation:expected_aggregate"
-    if abs(recomputed_ratio - expected_ratio) > _COVERAGE_RATIO_EPSILON:
+    # F-CR-003 P1 adopt: replace fixed-epsilon equality with ``math.isclose``
+    # so float64 round-trip noise across heterogeneous writers does not produce
+    # false positives. Intentional Anti-Gaming drift (e.g., 0.6 → 0.8 in the
+    # documented attack) still exceeds these tolerances by orders of magnitude.
+    if not _ratios_match(recomputed_ratio, expected_ratio):
         return "spec_violation:expected_aggregate_drift"
     return None
 
@@ -255,6 +289,24 @@ def _threshold_reason(
     return "below_threshold"
 
 
+def _warn_unknown_sut_results(corpus: LoadedCorpus, sut_results: Mapping[str, bool]) -> None:
+    """Log a warning for ``sut_results`` keys that do not correspond to a fixture.
+
+    F-CR-006 P2 adopt: aligning with the ``tenant_isolation`` aggregator,
+    stale ``fixture_id`` entries in ``sut_results`` are dropped silently from
+    the evaluation but surface as a warning so the caller can audit the
+    drift. The warning carries only the ``fixture_id`` keys (which are
+    Anti-Gaming-safe identifiers) and never embeds raw fixture content.
+    """
+
+    fixture_ids = {fixture.fixture_id for fixture in corpus.fixtures}
+    for fixture_id in sorted(set(sut_results) - fixture_ids):
+        _LOGGER.warning(
+            "Ignoring SUT result for unknown AC-KPI-04 fixture_id=%s",
+            fixture_id,
+        )
+
+
 def evaluate_citation_coverage(
     corpus: LoadedCorpus,
     *,
@@ -271,7 +323,8 @@ def evaluate_citation_coverage(
     Anti-Gaming invariant (manifest ``anti_gaming_rules.kpi_specific[0]``):
         ``citation_coverage`` is recomputed from ``input.sample_claims``; the
         fixture's ``expected_aggregate.coverage_ratio`` is consumed only as a
-        drift-detection oracle.
+        drift-detection oracle (``math.isclose`` with relative tolerance
+        ``1e-6`` + absolute tolerance ``1e-9``).
 
     Per-fixture procedure:
         1. Skip non-public-regression fixtures (redacted splits are out of
@@ -282,10 +335,23 @@ def evaluate_citation_coverage(
            (``citation_ids`` non-empty → ``has_citation=True``).
         4. Compute ``recomputed_coverage_ratio = claims_with_citation /
            total_claims``.
-        5. Compare with ``expected_aggregate.coverage_ratio`` (drift epsilon
-           ``1e-9``); a drift → ``spec_violation:expected_aggregate_drift``.
+        5. Compare with ``expected_aggregate.coverage_ratio``; drift →
+           ``spec_violation:expected_aggregate_drift``.
         6. Optionally cross-check ``sut_results[fixture_id]``; non-boolean
            values are rejected (``sut_result_invalid_type``).
+
+    Per-fixture reason priority (F-CR-005 P2 adopt):
+        ``envelope_violation`` > ``claim_parsing_violation`` > ``no_claims`` >
+        ``expected_aggregate_*`` violations. At most one reason is surfaced
+        per fixture; downstream consumers must re-inspect the raw fixture if
+        they need to enumerate co-occurring problems.
+
+    SUT result handling (F-CR-006 P2 adopt):
+        * Missing ``fixture_id`` in ``sut_results`` → ``sut_result_missing``.
+        * Non-boolean value → ``sut_result_invalid_type``.
+        * Stale ``fixture_id`` (in ``sut_results`` but not in ``corpus``) is
+          logged as a warning and silently dropped (consistent with batch 5b
+          ``tenant_isolation`` aggregator). The corpus is the source of truth.
 
     Corpus-level metric:
         ``metric_value = sum(claims_with_citation) / sum(total_claims)``
@@ -293,6 +359,9 @@ def evaluate_citation_coverage(
         ``fixture_count > 0`` AND no per-fixture spec violation AND no manifest
         violation.
     """
+
+    if sut_results is not None:
+        _warn_unknown_sut_results(corpus, sut_results)
 
     per_fixture: list[CitationCoverageFixtureResult] = []
     spec_violation_present = False
@@ -332,9 +401,16 @@ def evaluate_citation_coverage(
 
         failure_reason = spec_reason
         sut_result: bool | None = None
+        sut_attempted = False
         passed = failure_reason is None
 
         if sut_results is not None:
+            # F-CR-002 P1 adopt: ``sut_attempted`` makes the dual meaning of
+            # ``passed`` explicit. We mark a SUT attempt for every fixture
+            # the caller addressed — including ``sut_result_invalid_type``
+            # outcomes — so the downstream registry can distinguish
+            # "SUT was tried but produced garbage" from "SUT was never run".
+            sut_attempted = True
             if fixture.fixture_id not in sut_results:
                 passed = False
                 if failure_reason is None:
@@ -367,6 +443,7 @@ def evaluate_citation_coverage(
                 passed=passed,
                 spec_violation_reason=failure_reason,
                 sut_result=sut_result,
+                sut_attempted=sut_attempted,
             )
         )
 
