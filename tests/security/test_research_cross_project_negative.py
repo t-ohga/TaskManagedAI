@@ -120,6 +120,14 @@ def _sqlstate(error: BaseException) -> str | None:
     return None
 
 
+def _constraint_name(error: BaseException) -> str | None:
+    return (
+        getattr(error, "constraint_name", None)
+        or getattr(getattr(error, "orig", None), "constraint_name", None)
+        or getattr(getattr(getattr(error, "orig", None), "__cause__", None), "constraint_name", None)
+    )
+
+
 def _assert_integrity_error(
     error: IntegrityError,
     *,
@@ -127,11 +135,7 @@ def _assert_integrity_error(
     constraint_name: str,
 ) -> None:
     assert _sqlstate(error) == sqlstate
-    actual_constraint_name = (
-        getattr(error.orig, "constraint_name", None)
-        or getattr(getattr(error.orig, "__cause__", None), "constraint_name", None)
-    )
-    assert actual_constraint_name == constraint_name
+    assert _constraint_name(error) == constraint_name
 
 
 async def _reset_tables(session: AsyncSession) -> None:
@@ -377,3 +381,136 @@ async def test_same_tenant_other_project_claim_attach_rejected(
             constraint_name="evidence_items_claim_fkey",
         )
         await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_research_tasks_cross_project_select_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+        selected = await session.scalar(
+            text(
+                """
+                select id
+                from research_tasks
+                where tenant_id = 1
+                  and project_id = :project_b_id
+                  and id = :task_a_id
+                """
+            ),
+            {"project_b_id": PROJECT_B_ID, "task_a_id": RESEARCH_TASK_A_ID},
+        )
+
+    assert selected is None
+
+
+@pytest.mark.asyncio
+async def test_research_tasks_cross_project_insert_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+        with pytest.raises(IntegrityError) as exc_info:
+            await session.execute(
+                text(
+                    """
+                    insert into research_tasks (
+                      id, tenant_id, project_id, created_by_actor_id, title, status, metadata
+                    )
+                    values (
+                      :task_a_id, 1, :project_b_id, :actor_id,
+                      'Cross project duplicate task id', 'queued',
+                      '{"rls_ready": true}'::jsonb
+                    )
+                    """
+                ),
+                {
+                    "task_a_id": RESEARCH_TASK_A_ID,
+                    "project_b_id": PROJECT_B_ID,
+                    "actor_id": ACTOR_ID,
+                },
+            )
+            await session.commit()
+
+        assert _sqlstate(exc_info.value) == "23505"
+        assert _constraint_name(exc_info.value) in {
+            "research_tasks_pkey",
+            "research_tasks_uq_tenant_id",
+        }
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_research_tasks_cross_project_update_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+        updated = await session.scalar(
+            text(
+                """
+                update research_tasks
+                set title = 'Cross project update should not apply'
+                where tenant_id = 1
+                  and project_id = :project_b_id
+                  and id = :task_a_id
+                returning id
+                """
+            ),
+            {"project_b_id": PROJECT_B_ID, "task_a_id": RESEARCH_TASK_A_ID},
+        )
+        title = await session.scalar(
+            text(
+                """
+                select title
+                from research_tasks
+                where tenant_id = 1 and id = :task_a_id
+                """
+            ),
+            {"task_a_id": RESEARCH_TASK_A_ID},
+        )
+
+    assert updated is None
+    assert title == "Research A"
+
+
+@pytest.mark.asyncio
+async def test_research_tasks_cross_project_delete_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+        deleted = await session.scalar(
+            text(
+                """
+                delete from research_tasks
+                where tenant_id = 1
+                  and project_id = :project_b_id
+                  and id = :task_a_id
+                returning id
+                """
+            ),
+            {"project_b_id": PROJECT_B_ID, "task_a_id": RESEARCH_TASK_A_ID},
+        )
+        still_exists = await session.scalar(
+            text(
+                """
+                select count(*)
+                from research_tasks
+                where tenant_id = 1 and id = :task_a_id
+                """
+            ),
+            {"task_a_id": RESEARCH_TASK_A_ID},
+        )
+
+    assert deleted is None
+    assert still_exists == 1

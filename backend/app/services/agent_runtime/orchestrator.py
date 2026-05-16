@@ -513,10 +513,11 @@ class AgentRunOrchestrator:
     ) -> ContextSnapshot:
         """Derive a ``snapshot_kind='resume'`` snapshot from the previous one.
 
-        All 10 required columns (DD-03 §10) are carried over from
-        ``previous_snapshot`` so the new resume snapshot satisfies the
-        ContextSnapshot contract. Only ``provider_request_fingerprint`` is
-        refreshed for the retry, plus ``snapshot_kind`` is overridden.
+        All reproducibility columns except ``evidence_set_hash`` are carried
+        over. ``evidence_set_hash`` remains server-owned and is recomputed by
+        ContextSnapshotRepository from a ResearchSetReference; resume retries
+        without an active research binding receive the deterministic empty set
+        hash instead of passing through caller-supplied hash material.
         """
 
         return await create_snapshot(
@@ -529,7 +530,7 @@ class AgentRunOrchestrator:
             policy_pack_lock=previous_snapshot.policy_pack_lock,
             repo_state=previous_snapshot.repo_state,
             tool_manifest=previous_snapshot.tool_manifest,
-            evidence_set_hash=previous_snapshot.evidence_set_hash,
+            evidence_set_reference=None,
             provider_continuation_ref=previous_snapshot.provider_continuation_ref,
             provider_request_fingerprint=new_provider_request_fingerprint,
             snapshot_kind="resume",

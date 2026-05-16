@@ -661,11 +661,13 @@ async def test_context_snapshot_repository_rejects_raw_secret_recursively() -> N
         "temperature": 0,
         "safety_settings": {"nested": {"provider_key": "redacted"}},
     }
+    payload.pop("evidence_set_hash")
 
     with pytest.raises(ValueError, match="prohibited key"):
         await repo.create_snapshot(
             tenant_id=1,
             run_id=TENANT_ONE_RUN_ID,
+            evidence_set_reference=None,
             **payload,
         )
 
@@ -692,11 +694,13 @@ async def test_context_snapshot_repository_rejects_invalid_provider_continuation
     ref = _valid_provider_continuation_ref()
     ref.update(override)
     payload["provider_continuation_ref"] = ref
+    payload.pop("evidence_set_hash")
 
     with pytest.raises(ValueError, match=match):
         await repo.create_snapshot(
             tenant_id=1,
             run_id=TENANT_ONE_RUN_ID,
+            evidence_set_reference=None,
             **payload,
         )
 
@@ -750,4 +754,3 @@ async def test_context_snapshot_run_id_composite_fk_rejects_cross_tenant_run(
             constraint_name="context_snapshots_run_fkey",
         )
         await session.rollback()
-

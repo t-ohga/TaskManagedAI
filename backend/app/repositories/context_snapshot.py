@@ -5,8 +5,10 @@ from datetime import datetime
 from typing import Any, NoReturn, cast
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.context_snapshot import (
     CONTEXT_SNAPSHOT_REQUIRED_COLUMNS,
     ContextSnapshot,
@@ -23,6 +25,8 @@ from backend.app.repositories._payload_secret_scan import (
 )
 from backend.app.repositories.artifact import assert_sha256_hex
 from backend.app.repositories.base import BaseRepository
+from backend.app.schemas.research.evidence_set import ResearchSetReference
+from backend.app.services.research.evidence_set_hash import compute_evidence_set_hash
 
 _CONTEXT_SNAPSHOT_REQUIRED_NONNULL_COLUMNS: tuple[str, ...] = (
     "prompt_pack_version",
@@ -90,12 +94,18 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
         policy_pack_lock: str | None = None,
         repo_state: dict[str, Any] | None = None,
         tool_manifest: dict[str, Any] | None = None,
-        evidence_set_hash: str | None = None,
+        evidence_set_reference: ResearchSetReference | None = None,
         provider_continuation_ref: dict[str, Any] | None = None,
         provider_request_fingerprint: dict[str, Any] | None = None,
         snapshot_kind: SnapshotKind | str | None = None,
     ) -> ContextSnapshot:
         self._require_tenant_id(tenant_id)
+        if evidence_set_reference is not None and not isinstance(
+            evidence_set_reference,
+            ResearchSetReference,
+        ):
+            raise TypeError("evidence_set_reference must be ResearchSetReference or None.")
+
         self._assert_snapshot_contract(
             prompt_pack_version=prompt_pack_version,
             prompt_pack_lock=prompt_pack_lock,
@@ -103,12 +113,26 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
             policy_pack_lock=policy_pack_lock,
             repo_state=repo_state,
             tool_manifest=tool_manifest,
-            evidence_set_hash=evidence_set_hash,
             provider_continuation_ref=provider_continuation_ref,
             provider_request_fingerprint=provider_request_fingerprint,
             snapshot_kind=snapshot_kind,
         )
         await self._ensure_tenant_context(tenant_id)
+
+        if evidence_set_reference is not None:
+            run_project_id = await self._get_run_project_id(tenant_id, run_id)
+            if run_project_id is None:
+                raise ValueError("run_id does not belong to tenant_id.")
+            if run_project_id != evidence_set_reference.project_id:
+                raise ValueError(
+                    "evidence_set_reference.project_id must match AgentRun.project_id."
+                )
+
+        evidence_set_hash = await compute_evidence_set_hash(
+            self.session,
+            tenant_id,
+            evidence_set_reference,
+        )
 
         snapshot = ContextSnapshot(
             tenant_id=tenant_id,
@@ -119,7 +143,7 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
             policy_pack_lock=cast(str, policy_pack_lock),
             repo_state=cast(JsonDict, repo_state),
             tool_manifest=cast(JsonDict, tool_manifest),
-            evidence_set_hash=cast(str, evidence_set_hash),
+            evidence_set_hash=evidence_set_hash,
             provider_continuation_ref=provider_continuation_ref,
             provider_request_fingerprint=cast(JsonDict, provider_request_fingerprint),
             snapshot_kind=cast(SnapshotKind, snapshot_kind),
@@ -127,6 +151,17 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
         self.session.add(snapshot)
         await self.session.flush()
         return snapshot
+
+    async def _get_run_project_id(self, tenant_id: int, run_id: UUID) -> UUID | None:
+        return cast(
+            UUID | None,
+            await self.session.scalar(
+                select(AgentRun.project_id).where(
+                    AgentRun.tenant_id == tenant_id,
+                    AgentRun.id == run_id,
+                )
+            ),
+        )
 
     @classmethod
     def _assert_snapshot_contract(
@@ -138,7 +173,6 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
         policy_pack_lock: str | None,
         repo_state: dict[str, Any] | None,
         tool_manifest: dict[str, Any] | None,
-        evidence_set_hash: str | None,
         provider_continuation_ref: dict[str, Any] | None,
         provider_request_fingerprint: dict[str, Any] | None,
         snapshot_kind: SnapshotKind | str | None,
@@ -150,7 +184,6 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
             "policy_pack_lock": policy_pack_lock,
             "repo_state": repo_state,
             "tool_manifest": tool_manifest,
-            "evidence_set_hash": evidence_set_hash,
             "provider_request_fingerprint": provider_request_fingerprint,
             "snapshot_kind": snapshot_kind,
         }
@@ -168,7 +201,6 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
 
         assert_sha256_hex(cast(str, prompt_pack_lock), field_name="prompt_pack_lock")
         assert_sha256_hex(cast(str, policy_pack_lock), field_name="policy_pack_lock")
-        assert_sha256_hex(cast(str, evidence_set_hash), field_name="evidence_set_hash")
 
         if snapshot_kind not in ALL_SNAPSHOT_KINDS:
             raise ValueError(f"unknown snapshot_kind: {snapshot_kind!r}")
@@ -202,7 +234,6 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
                 "policy_pack_lock": policy_pack_lock,
                 "repo_state": repo_state,
                 "tool_manifest": tool_manifest,
-                "evidence_set_hash": evidence_set_hash,
                 "provider_continuation_ref": provider_continuation_ref,
                 "provider_request_fingerprint": provider_request_fingerprint,
                 "snapshot_kind": snapshot_kind,
@@ -277,7 +308,7 @@ async def create_snapshot(
     policy_pack_lock: str,
     repo_state: dict[str, Any],
     tool_manifest: dict[str, Any],
-    evidence_set_hash: str,
+    evidence_set_reference: ResearchSetReference | None = None,
     provider_continuation_ref: dict[str, Any] | None,
     provider_request_fingerprint: dict[str, Any],
     snapshot_kind: SnapshotKind | str,
@@ -291,7 +322,7 @@ async def create_snapshot(
         policy_pack_lock=policy_pack_lock,
         repo_state=repo_state,
         tool_manifest=tool_manifest,
-        evidence_set_hash=evidence_set_hash,
+        evidence_set_reference=evidence_set_reference,
         provider_continuation_ref=provider_continuation_ref,
         provider_request_fingerprint=provider_request_fingerprint,
         snapshot_kind=snapshot_kind,
@@ -306,4 +337,3 @@ __all__ = [
     "assert_no_raw_secret",
     "create_snapshot",
 ]
-
