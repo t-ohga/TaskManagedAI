@@ -25,17 +25,20 @@ class GitCommit:
     sha: str
     author: str
     committed_at: int
-    # F-PR28-R3-006 P2 adopt: ``author`` (%an) is a mutable display name. Including
-    # ``author_email`` (%ae) provides a more stable contributor identity for
-    # author_inversion checks. An empty string is used when git format does not
-    # return an email (legacy paths).
+    # F-PR28-R3-006 P2 + R4-002 P2 adopt: ``author`` (%an) is a mutable display
+    # name. Including ``author_email`` (%ae) provides a stable contributor
+    # identity for author_inversion checks. F-PR28-R4-002 refined the identity
+    # rule: when an email is present, the identity is the email **alone**, so
+    # that an actor cannot bypass author_inversion by renaming their git
+    # ``user.name`` while keeping the same email. Only when no email is
+    # available (legacy paths) do we fall back to the display name.
     author_email: str = ""
 
     @property
     def author_identity(self) -> str:
-        """Stable identity: ``author<email>``. Falls back to author when email blank."""
+        """Stable identity. Prefers ``author_email`` alone; falls back to ``author`` only when no email is recorded."""
 
-        return f"{self.author}<{self.author_email}>" if self.author_email else self.author
+        return self.author_email if self.author_email else self.author
 
 
 class AntiGamingViolation(Exception):

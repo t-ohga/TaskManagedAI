@@ -292,7 +292,13 @@ def _scan_for_raw_secret(fixture_json: JsonDict) -> None:
 
 
 def _manifest_version(manifest: JsonDict) -> str:
-    version = manifest.get("dataset_version_id", manifest.get("dataset_version"))
+    # F-PR28-R4-004 P1 adopt: `dict.get("dataset_version_id", fallback)` returns
+    # the explicit None when the key is present with a null value (existing
+    # manifests under eval/security/* and eval/quality/* set `dataset_version_id: null`).
+    # Fall back to the legacy `dataset_version` string when the modern key is
+    # absent or null.
+    version_id = manifest.get("dataset_version_id")
+    version = version_id if isinstance(version_id, str) and version_id else manifest.get("dataset_version")
     if not isinstance(version, str) or not version:
         raise FixtureLoadError("manifest dataset_version must be a non-empty string")
     return version
