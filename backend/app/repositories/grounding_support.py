@@ -21,9 +21,22 @@ from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.db.models.artifact import Artifact
 from backend.app.db.models.grounding_support import GroundingSupport
 from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 from backend.app.repositories.base import BaseRepository
+
+# F-PR25-R3-004 fix (Codex R3 P1): allowed ``artifacts.kind`` values
+# that count as "generated answer". A GroundingSupport row attached to
+# anything else (e.g. ``research_promotion`` which is an *input* not an
+# output, ``cli_*`` which are runner I/O, ``provider_continuation_ref``)
+# would inflate AC-KPI-04 by counting non-answer artifacts as
+# citation-grounded. Only kinds that represent task answers / outputs
+# qualify: ``plan`` / ``patch`` / ``citation`` / ``evidence`` /
+# ``other`` (catch-all for project-specific answer kinds).
+_GENERATED_ANSWER_ARTIFACT_KINDS: frozenset[str] = frozenset(
+    {"plan", "patch", "citation", "evidence", "other"}
+)
 
 _SERVER_OWNED_FIELDS: frozenset[str] = frozenset(
     # F-PR25-R1-002 fix (Codex R1 P1): ``tenant_id`` is server-owned but
@@ -134,6 +147,37 @@ class GroundingSupportRepository(BaseRepository[GroundingSupport]):
         # ``run_id`` parameter.
         data["run_id"] = agent_run_id
         data["project_id"] = project_id
+
+        # F-PR25-R3-004 fix (Codex R3 P1): the supplied
+        # ``generated_artifact_id`` must reference an artifact whose
+        # ``kind`` is in the answer-producing set. Without this check
+        # a caller could attach GroundingSupport to a
+        # ``research_promotion`` (input artifact), ``cli_stdout``
+        # (runner I/O), or any other non-answer artifact, and
+        # ``compute_citation_coverage`` would still count it by
+        # ``agent_run_id`` — inflating AC-KPI-04 without an actual
+        # generated answer grounding the claim.
+        generated_artifact_id = data.get("generated_artifact_id")
+        if not isinstance(generated_artifact_id, UUID):
+            raise ValueError("generated_artifact_id must be a UUID.")
+        artifact_kind = await self.session.scalar(
+            select(Artifact.kind).where(
+                Artifact.tenant_id == tenant_id,
+                Artifact.id == generated_artifact_id,
+            )
+        )
+        if artifact_kind is None:
+            raise ValueError(
+                f"generated_artifact_id {generated_artifact_id} not found "
+                f"for tenant {tenant_id}."
+            )
+        if artifact_kind not in _GENERATED_ANSWER_ARTIFACT_KINDS:
+            raise ValueError(
+                f"generated_artifact_id {generated_artifact_id} has kind "
+                f"{artifact_kind!r}; GroundingSupport requires an answer-"
+                f"producing artifact (one of "
+                f"{sorted(_GENERATED_ANSWER_ARTIFACT_KINDS)})."
+            )
 
         support = GroundingSupport(**data)
         self.session.add(support)

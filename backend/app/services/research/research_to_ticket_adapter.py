@@ -120,6 +120,7 @@ async def promote_research_to_ticket(
     run_id: UUID,
     summary: str,
     parent_artifact_id: UUID | None = None,
+    approval_request_id: UUID | None = None,
 ) -> ResearchToTicketArtifactView:
     """Create a Research-to-Ticket promotion artifact.
 
@@ -159,6 +160,23 @@ async def promote_research_to_ticket(
         raise ResearchToTicketError(
             "summary_required",
             "summary must be a non-empty string.",
+        )
+
+    # F-PR25-R3-002 fix Stage 1 (Codex R3 P1): Research-to-Ticket
+    # promotion is ``task_write`` action class per ADR-00003 and must
+    # bind an Approval. Full 4-binding verification against an
+    # approved ApprovalRequest row (artifact_hash + policy_version +
+    # provider_request_fingerprint + action_class) is deferred to
+    # SP-010 batch 4 / SP-008 Approval integration; for now we enforce
+    # the *presence* of an approval_request_id so unapproved promotions
+    # cannot seed Ticket work. The full check lands when the Approval
+    # repository surface stabilises.
+    if approval_request_id is None:
+        raise ResearchToTicketError(
+            "approval_request_required",
+            "approval_request_id is required for Research-to-Ticket promotion "
+            "(ADR-00003 task_write action class). Full Approval 4-binding "
+            "verification lands in SP-010 batch 4.",
         )
 
     # F-PR25-R1-004 fix (Codex R1 P1): the adapter bypasses

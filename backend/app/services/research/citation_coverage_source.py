@@ -164,6 +164,24 @@ async def compute_citation_coverage(
     # If ``claim_ids`` is empty, the scope is **all** claims of the
     # promotion's ``research_task_id`` — same semantics as
     # ``ResearchSetReference`` empty-tuple convention.
+    # F-PR25-R3-003 fix (Codex R3 P2): a later promotion can supersede
+    # an earlier one via ``parent_artifact_id``. Pre-R3 every
+    # ``research_promotion`` row was unioned into the scope, so a
+    # narrowing promotion left stale claims from its parent counted in
+    # the denominator and citation coverage was under-reported. Filter
+    # out artifacts that are themselves a ``parent_artifact_id`` of
+    # another ``research_promotion`` for the same run, keeping only
+    # the leaf-most active chain links.
+    superseded_subq = (
+        select(Artifact.parent_artifact_id)
+        .where(
+            Artifact.tenant_id == tenant_id,
+            Artifact.run_id == agent_run_id,
+            Artifact.kind == "research_promotion",
+            Artifact.parent_artifact_id.isnot(None),
+        )
+        .subquery()
+    )
     promotion_rows = (
         await session.execute(
             select(Artifact.content_jsonb)
@@ -171,6 +189,7 @@ async def compute_citation_coverage(
                 Artifact.tenant_id == tenant_id,
                 Artifact.run_id == agent_run_id,
                 Artifact.kind == "research_promotion",
+                Artifact.id.notin_(select(superseded_subq)),
             )
             .order_by(Artifact.created_at.desc(), Artifact.id.desc())
         )
