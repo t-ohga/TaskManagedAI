@@ -227,6 +227,26 @@ class ArtifactRepository(BaseRepository[Artifact]):
     ) -> None:
         if kind not in ALL_ARTIFACT_KINDS:
             raise ValueError(f"unknown artifact kind: {kind!r}")
+        # F-PR25-R7-003 fix (Codex R7 P2): ``research_promotion``
+        # artifacts must go through the BL-0118 adapter
+        # (``services/research/research_to_ticket_adapter.py``)
+        # because that path enforces approval presence, project /
+        # run binding, resolved/frozen claim & evidence scope, and
+        # the server-owned ``evidence_set_hash`` computation. The
+        # generic repository accepts caller-supplied
+        # ``content_jsonb`` / ``content_hash`` and would let any
+        # internal code path mint a promotion artifact that bypasses
+        # those boundaries — directly affecting AC-KPI-04
+        # citation_coverage. Reject the kind here so the adapter is
+        # the only mint path.
+        if kind == "research_promotion":
+            raise ValueError(
+                "research_promotion artifacts must be created via "
+                "services.research.research_to_ticket_adapter."
+                "promote_research_to_ticket (BL-0118 boundary); "
+                "the generic ArtifactRepository does not enforce "
+                "the adapter's approval / scope / hash invariants."
+            )
         if payload_data_class not in ALL_PAYLOAD_DATA_CLASSES:
             raise ValueError(f"unknown payload_data_class: {payload_data_class!r}")
         if not isinstance(exportable, bool):

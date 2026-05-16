@@ -203,29 +203,46 @@ async def compute_citation_coverage(
     scope_claim_ids: set[UUID] = set()
     scope_task_ids: set[UUID] = set()
 
-    # F-PR25-R6-001 fix (Codex R6 P1): SP-010 QL-C spec line 165
+    # F-PR25-R6-001 + F-PR25-R7-002 fix: SP-010 QL-C spec line 165
     # mandates that a null ``ContextSnapshot.evidence_set_hash`` keep
     # the AgentRun in the **denominator** with **numerator=0**
     # (uncovered). R5-004 inadvertently regressed this by gating both
-    # the denominator and the numerator on snapshot match — null /
-    # mismatched snapshot dropped all promotion_rows, returning
-    # ``denominator_nonzero=False``. Split the gates:
+    # the denominator and the numerator on snapshot match; R6 split
+    # the gates. R7 tightens the numerator gate to be **per-promotion**:
     #
-    # - **Denominator scope** is built from *all* leaf promotion_rows
-    #   regardless of snapshot match (R3-003 already filtered
-    #   superseded). A run with a promotion artifact but no/mismatched
-    #   snapshot now reports ``distinct_claims=N`` and
-    #   ``denominator_nonzero=True``.
-    # - **Numerator** only runs when the snapshot hash matches at
-    #   least one active promotion. This preserves the R4-004 /
-    #   R5-004 guard against stale snapshots inflating coverage.
-    snapshot_matches_active = False
+    # - **Denominator scope** = all leaf promotion_rows regardless of
+    #   snapshot match (R3-003 filtered superseded). Null / mismatched
+    #   snapshot still counts the scope; coverage just reports 0.
+    # - **Numerator scope** = only claims belonging to the active
+    #   promotion(s) whose ``evidence_set_hash`` matches the
+    #   ``ContextSnapshot.evidence_set_hash``. Pre-R7 a single
+    #   snapshot match enabled the numerator over **all** active
+    #   scopes, so a run with two promotions where only one matched
+    #   the snapshot could count GroundingSupport rows for the
+    #   unbound promotion as covered. R7 narrows the numerator's
+    #   claim-set filter to the snapshot-bound subset.
+    snapshot_bound_claim_ids: set[UUID] = set()
+    snapshot_bound_task_ids: set[UUID] = set()
     if evidence_set_hash is not None:
         for row in promotion_rows:
-            promo_hash = (row[0] or {}).get("evidence_set_hash")
-            if isinstance(promo_hash, str) and promo_hash == evidence_set_hash:
-                snapshot_matches_active = True
-                break
+            cjson = row[0] or {}
+            promo_hash = cjson.get("evidence_set_hash")
+            if not (isinstance(promo_hash, str) and promo_hash == evidence_set_hash):
+                continue
+            if "claim_ids" in cjson:
+                claim_id_raw = cjson["claim_ids"]
+                if claim_id_raw:
+                    snapshot_bound_claim_ids.update(_parse_uuid_set(claim_id_raw))
+            else:
+                task_id_raw = cjson.get("research_task_id")
+                if task_id_raw is not None:
+                    try:
+                        snapshot_bound_task_ids.add(UUID(str(task_id_raw)))
+                    except (ValueError, AttributeError):
+                        pass
+    snapshot_matches_active = bool(
+        snapshot_bound_claim_ids or snapshot_bound_task_ids
+    )
 
     if not promotion_rows:
         # No research_promotion artifact at all: the AgentRun has no
@@ -269,17 +286,26 @@ async def compute_citation_coverage(
         # Count distinct claims in scope:
         #   = explicit claim_ids + all claims of any open-scope task_ids
         # Both filtered by (tenant_id, project_id) for safety.
-        # F-PR25-R6-002 fix: frozen claim_ids count is immutable —
-        # use the in-memory cardinality directly rather than
-        # re-querying the live ``claims`` table (which would lose
-        # claims that have been deleted post-promotion). Only legacy
-        # task-scope artifacts go through the SQL expansion path.
+        # F-PR25-R6-002 + F-PR25-R7-001 fix: frozen claim_ids count is
+        # immutable — use the in-memory cardinality directly rather
+        # than re-querying the live ``claims`` table (which would
+        # lose claims that have been deleted post-promotion). Only
+        # legacy task-scope artifacts go through the SQL expansion
+        # path, and the legacy count **excludes** claim IDs already
+        # captured in ``frozen_claim_ids`` to preserve
+        # ``count(distinct claim_id)`` semantics. Pre-R7 a mixed run
+        # (legacy promotion overlapping a frozen promotion) added
+        # ``len(frozen_claim_ids)`` to the legacy task count without
+        # de-dup, under-reporting coverage by inflating the
+        # denominator.
         if scope_task_ids:
             scope_stmt = select(func.count(distinct(Claim.id))).where(
                 Claim.tenant_id == tenant_id,
                 Claim.project_id == project_id,
                 Claim.research_task_id.in_(scope_task_ids),
             )
+            if frozen_claim_ids:
+                scope_stmt = scope_stmt.where(Claim.id.notin_(frozen_claim_ids))
             legacy_count = (await session.scalar(scope_stmt)) or 0
             distinct_claims_count = int(legacy_count) + len(frozen_claim_ids)
         elif frozen_claim_ids:
@@ -302,26 +328,31 @@ async def compute_citation_coverage(
             GroundingSupport.agent_run_id == agent_run_id,
         )
     )
-    if distinct_claims_count > 0:
-        # Restrict numerator to scope to avoid >100% coverage.
-        if promotion_rows:
-            scoped_claim_filter = []
-            if scope_claim_ids:
-                scoped_claim_filter.append(
-                    GroundingSupport.claim_id.in_(scope_claim_ids)
-                )
-            if scope_task_ids:
-                scoped_claim_filter.append(
-                    GroundingSupport.claim_id.in_(
-                        select(Claim.id).where(
-                            Claim.tenant_id == tenant_id,
-                            Claim.project_id == project_id,
-                            Claim.research_task_id.in_(scope_task_ids),
-                        )
+    if distinct_claims_count > 0 and snapshot_matches_active:
+        # F-PR25-R7-002 fix: restrict the numerator's claim-set filter
+        # to **snapshot-bound** scopes only. Pre-R7 we used the union
+        # of all active scopes (``scope_claim_ids`` /
+        # ``scope_task_ids``), so a snapshot bound to promotion A let
+        # GroundingSupport rows for promotion B (no matching snapshot)
+        # count as covered. The per-promotion ``snapshot_bound_*``
+        # sets are subsets of the denominator scopes by construction.
+        scoped_claim_filter = []
+        if snapshot_bound_claim_ids:
+            scoped_claim_filter.append(
+                GroundingSupport.claim_id.in_(snapshot_bound_claim_ids)
+            )
+        if snapshot_bound_task_ids:
+            scoped_claim_filter.append(
+                GroundingSupport.claim_id.in_(
+                    select(Claim.id).where(
+                        Claim.tenant_id == tenant_id,
+                        Claim.project_id == project_id,
+                        Claim.research_task_id.in_(snapshot_bound_task_ids),
                     )
                 )
-            if scoped_claim_filter:
-                grounded_stmt = grounded_stmt.where(or_(*scoped_claim_filter))
+            )
+        if scoped_claim_filter:
+            grounded_stmt = grounded_stmt.where(or_(*scoped_claim_filter))
 
     # F-PR25-R2-003 + F-PR25-R4-004 + F-PR25-R5-004 + F-PR25-R6-001
     # fix: the numerator is forced to 0 unless at least one
