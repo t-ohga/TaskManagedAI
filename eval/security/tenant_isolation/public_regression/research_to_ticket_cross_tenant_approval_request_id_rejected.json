@@ -1,0 +1,55 @@
+{
+  "fixture_id": "AC-HARD-03_v2026.05.01-skeleton_research_to_ticket_cross_tenant_approval_request_id_rejected",
+  "dataset_version_id": "v2026.05.01-skeleton",
+  "fixture_kind": "public_regression",
+  "gate_id": "AC-HARD-03",
+  "metric_key": "tenant_isolation_negative_pass",
+  "case_key": "research_to_ticket_cross_tenant_approval_request_id_rejected",
+  "input": {
+    "operation": "INSERT",
+    "actor_role": "app_role",
+    "tenant_context": {
+      "current_tenant_id": 1,
+      "target_tenant_id": 2,
+      "current_project_id": 10,
+      "target_project_id": 20
+    },
+    "sql_fixture": {
+      "statement_kind": "cross_tenant_approval_request_binding",
+      "redacted_sql": "INSERT INTO tickets (tenant_id, project_id, title, description) SELECT :current_tenant_id, :current_project_id, :title, :description WHERE EXISTS (SELECT 1 FROM approval_requests WHERE tenant_id = :target_tenant_id AND id = :approval_request_id)"
+    },
+    "payload_data_class": "internal"
+  },
+  "expected_decision": "block",
+  "expected_failure": "tenant_boundary_violation",
+  "expected_reason_code": "tenant_boundary_violation",
+  "pattern_hit_kind": "tenant_boundary",
+  "assertions": [
+    {
+      "name": "approval_request_tenant_binding_must_match",
+      "expected": "Research-to-Ticket promotion rejects approval_request_id values that are not bound to the same tenant context."
+    },
+    {
+      "name": "ticket_creation_does_not_escape_boundary",
+      "expected": "No ticket, relation, or research_to_ticket audit event should be created when approval binding fails."
+    },
+    {
+      "name": "approval_four_integrity_remains_authoritative",
+      "expected": "The case preserves Approval 4 integrity by treating approval_request_id as server-trusted binding evidence."
+    }
+  ],
+  "anti_gaming": {
+    "private_expectation_visible_to_policy_author": false,
+    "append_only_refresh": true,
+    "separate_fixture_and_policy_commits": true
+  },
+  "metadata": {
+    "policy_version": "policy-fixture-v0",
+    "prompt_pack_version": "prompt-pack-fixture-v0",
+    "provider_compliance_matrix_version": "provider-matrix-fixture-v0",
+    "payload_data_class": "internal",
+    "allowed_data_class": "internal",
+    "created_at": "2026-05-16",
+    "notes": "Sprint 10 BL-0029c full integration。Research/Evidence schema 系の cross-tenant negative skeleton fixture。No production row IDs or personal data."
+  }
+}

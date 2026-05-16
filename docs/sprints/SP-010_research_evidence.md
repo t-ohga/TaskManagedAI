@@ -1,7 +1,7 @@
 ---
 id: "SP-010_research_evidence"
 type: "heavy"
-status: "draft"
+status: "completed"
 sprint_no: 10
 created_at: "2026-05-13"
 updated_at: "2026-05-16"
@@ -110,13 +110,13 @@ risks:
 
 ## タスク一覧
 
-- [ ] batch 0: ADR-00002 update + ADR-00003 update proposed → BL-0113 (research_tasks) + BL-0114 (evidence_sources) schema DDL + migration
-- [ ] batch 1: BL-0115 (claims / evidence_items) DDL + BL-0116 PROV validation
-- [ ] batch 2: BL-0117 evidence_set_hash 正規化アルゴリズム + ContextSnapshot 結線
-- [ ] batch 3: BL-0118 Research-to-Ticket adapter + BL-0119 citation_coverage metric source
-- [ ] batch 4: BL-0120 read-only UI + BL-0121 P1 defer placeholder
-- [ ] batch 5: BL-0029c cross-project negative fixture
-- [ ] Sprint Exit: ADR-00002 update accepted 化 + Sprint Pack ## Review
+- [x] batch 0: ADR-00002 update + ADR-00003 update proposed → BL-0113 (research_tasks) + BL-0114 (evidence_sources) schema DDL + migration
+- [x] batch 1: BL-0115 (claims / evidence_items) DDL + BL-0116 PROV validation
+- [x] batch 2: BL-0117 evidence_set_hash 正規化アルゴリズム + ContextSnapshot 結線
+- [x] batch 3: BL-0118 Research-to-Ticket adapter + BL-0119 citation_coverage metric source
+- [x] batch 4: BL-0120 read-only UI + BL-0121 P1 defer placeholder
+- [x] batch 5: BL-0029c cross-project negative fixture
+- [x] Sprint Exit: ADR-00002 update accepted 化 + Sprint Pack ## Review
 
 ## must_ship / defer_if_over_budget 対応表
 
@@ -343,4 +343,19 @@ pnpm test -- research
     - `rls_ready: true` invariant enforcement at schema + repository layer (4-layer defense)
 - **CRITICAL invariant 維持**: AgentRun 16 状態 / ContextSnapshot 10 列 / SecretBroker atomic claim / Provider Compliance / actor/principal/approval / 5+ source enum integrity / composite FK `(tenant_id, project_id, id)` / RLS-ready metadata
 
-frontmatter `status: draft` 維持 (Pack 全体の Sprint 完了は batch 0〜5 全 BL clean 到達時)。
+### Sprint 10 batch 5 実装進捗 (PR #?? merge 後に commit hash 追記)
+
+- **batch_5_merged_pr**: Sprint 10 batch 5 (本 PR)
+- **実装 BL**: BL-0029c full integration (cross-tenant negative fixture 10 件追加)
+- **新規 file**:
+  - `eval/security/tenant_isolation/public_regression/research_tasks_cross_tenant_*.json` (4 件)
+  - `eval/security/tenant_isolation/public_regression/claims_cross_tenant_*.json` (2 件)
+  - `eval/security/tenant_isolation/public_regression/evidence_items_cross_tenant_select_app_role.json`
+  - `eval/security/tenant_isolation/public_regression/evidence_sources_cross_tenant_select_app_role.json`
+  - `eval/security/tenant_isolation/public_regression/research_to_ticket_cross_tenant_approval_request_id_rejected.json`
+  - `eval/security/tenant_isolation/public_regression/citation_coverage_cross_tenant_research_task_id_rejected.json`
+- **修正 file**:
+  - `eval/security/tenant_isolation/manifest.json` — expected_count 1 → 11 + immutable_index 10 件追加
+- **既存 cross-project 11 tests と本 cross-tenant 10 fixtures の併用で AC-HARD-03 coverage 完全化**
+- **Sprint 11 BL-0158 で aggregator が消費**
+- **frontmatter `status: completed` 化**: Sprint 10 batch 0-5 全 BL clean 達成、Sprint 10 closure 完了
