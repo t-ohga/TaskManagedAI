@@ -229,22 +229,25 @@ def verify_fixture_commit_separation(
                     )
                     break
 
-            # timestamp_inversion: compare against the latest policy commit only.
-            # Triggers when the latest policy modification occurred AFTER the
-            # fixture creation but within ``window_seconds`` (suspicion: policy
-            # was relaxed to make the new fixture pass).
-            latest_policy_commit = max(policy_commits, key=lambda commit: commit.committed_at)
-            policy_lag = latest_policy_commit.committed_at - fixture_commit.committed_at
-            if 0 < policy_lag <= window_seconds:
-                violations.append(
-                    AntiGamingViolation(
-                        reason_code="timestamp_inversion",
-                        path=fixture_path,
-                        policy_path=policy_path,
-                        fixture_commit=fixture_commit,
-                        policy_commit=latest_policy_commit,
+            # timestamp_inversion: F-PR28-R6-002 P2 adopt: scan **every** policy
+            # commit authored within ``window_seconds`` *after* the fixture
+            # creation. Comparing only the latest policy commit lets a
+            # subsequent unrelated policy edit move the latest beyond the
+            # window, hiding a real suspicious relaxation that occurred within
+            # the window. Older policy commits (before fixture creation) are
+            # still ignored.
+            for policy_commit in policy_commits:
+                policy_lag = policy_commit.committed_at - fixture_commit.committed_at
+                if 0 < policy_lag <= window_seconds:
+                    violations.append(
+                        AntiGamingViolation(
+                            reason_code="timestamp_inversion",
+                            path=fixture_path,
+                            policy_path=policy_path,
+                            fixture_commit=fixture_commit,
+                            policy_commit=policy_commit,
+                        )
                     )
-                )
 
     return AntiGamingReport(violations=tuple(violations))
 

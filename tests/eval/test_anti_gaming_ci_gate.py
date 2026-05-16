@@ -40,8 +40,14 @@ _FIXTURE_SPLIT_ROOTS = (
     _REPO_ROOT / "eval/security/tenant_isolation/adversarial_new",
 )
 _POLICY_PATHS = (
+    # F-PR28-R6-003 P2 adopt: BL-0129 separation must cover **all** policy /
+    # runner / prompt construction code that could influence fixture pass/fail.
+    # The minimum P0 surface is enumerated here; BL-0127 will replace this list
+    # with a registry-driven enumeration for all corpora.
     _REPO_ROOT / "backend/app/services/policy",
     _REPO_ROOT / "backend/app/services/runner",
+    _REPO_ROOT / "backend/app/services/output_validator",
+    _REPO_ROOT / "backend/app/domain/policy",
 )
 
 _OPT_IN_ENV_VAR = "TASKMANAGEDAI_RUN_ANTI_GAMING_GATE"

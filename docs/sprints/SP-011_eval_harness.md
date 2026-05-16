@@ -368,6 +368,12 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
   - **F-PR28-R5-003 P2 adopt**: redacted splits (private_holdout / adversarial_new) は `expected_schema.json` validation を完全に skip していたため、`input` field が任意の string/object shape で persist 可能。新 `_validate_redacted_input_schema()` で `schema.properties.input` (定義されている場合) を抽出し input field 単独で Draft 7 validation。expectation 部分は引き続き validation 外 (holdout expectations は external vault)。
   - **F-PR28-R5-004 P2 adopt**: `author_identity` property に email casing + whitespace normalization 追加 (`strip().lower()`)。`User@Example.com` ↔ `user@example.com` の casing 変更で `author_inversion` を bypass されないように R4-002 を強化。
   - **F-PR28-R5-005 P2 adopt**: `tests/eval/test_anti_gaming_ci_gate.py` の real-git gate が `public_regression` のみ glob していたため、`private_holdout` / `adversarial_new` (expectation leakage が最も sensitive な split) を未 scan。`_FIXTURE_SPLIT_ROOTS` に 3 split 全部含めて glob 統一。
+- **PR #28 Codex R6 review (R6 / 5 new inline findings 累計 26、3 ADOPT + 2 DEFER)**:
+  - **F-PR28-R6-001 P2 defer → Sprint 11 BL-0127**: real-git CI gate が `eval/security/tenant_isolation` のみ scan、他 corpora (`eval/security/policy_block`, `eval/security/secret_canary`, `eval/quality/*`, `eval/ops/*`) は未 cover。本 batch 5a scope = tenant_isolation only、他 corpora の gate 統合は BL-0127 generic loader integration で対応。
+  - **F-PR28-R6-002 P2 adopt**: `verify_fixture_commit_separation` の timestamp_inversion を **latest policy commit only** から **window 内の全 post-fixture policy commit を scan** に変更。最新 policy commit が window 外であっても、過去に window 内で suspicious relaxation があれば検出可能に。
+  - **F-PR28-R6-003 P2 adopt (partial)**: `_POLICY_PATHS` に `backend/app/services/output_validator` + `backend/app/domain/policy` 追加。BL-0129 の "policy / runner / prompt construction code を分離" invariant を P0 で実現可能な範囲で拡大、registry-driven enumeration は BL-0127 で対応。
+  - **F-PR28-R6-004 P2 adopt**: R5-002 (fixture file symlink reject) follow-up、`_read_json_object()` で **manifest.json + expected_schema.json も symlink reject**。`Path.is_file()` は symlink を follow するため、manifest が symlink で repo 外 file を指していたら provenance bypass された。全 JSON file 共通の symlink check に統一。
+  - **F-PR28-R6-005 P2 defer → Sprint 11 BL-0127**: `tests/eval/test_anti_gaming_ci_gate.py` の `TASKMANAGEDAI_RUN_ANTI_GAMING_GATE=1` opt-in 化は **P0 期間中 single-author (`t-ohga` のみ)** の制約による意図的な設計 (author_inversion 常時 fire 回避)。CI workflow への wire-in は multi-actor scenario (Sprint 11.5+ multi-agent orchestration) で BL-0127 経由実施。
 
 frontmatter `status: draft` 維持。
 

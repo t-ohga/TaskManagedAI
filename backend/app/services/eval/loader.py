@@ -174,6 +174,13 @@ class RawSecretHit:
 
 
 def _read_json_object(path: Path) -> JsonDict:
+    # F-PR28-R5-002 + R6-004 P2 adopt: ``Path.is_file()`` follows symlinks, so a
+    # committed corpus manifest / expected_schema / fixture pointing outside the
+    # repository would otherwise read through silently and pollute case_json with
+    # external content while ``source_path`` still looked in-tree. Reject every
+    # JSON object source that is a symlink, regardless of its target.
+    if path.is_symlink():
+        raise FixtureLoadError(f"json file must not be a symlink: {path}")
     if not path.is_file():
         raise FixtureLoadError(f"json file not found: {path}")
 
