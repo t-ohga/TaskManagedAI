@@ -182,19 +182,43 @@ async def delete_grounding_support(
     actor_id: UUID = Depends(get_current_actor_id),
 ) -> None:
     repo = GroundingSupportRepository(session)
+    # F-PR25-R9-003 fix (Codex R9 P2): load the row **before** the
+    # delete so the audit event can preserve which citation edge was
+    # erased (claim / source / item / artifact / support_type).
+    # Pre-R9 the audit payload only had the grounding_support_id,
+    # which is not enough for an export consumer to reconstruct the
+    # AC-KPI-04 input that was deflated.
+    existing = await repo.get_grounding_support_by_id(
+        tenant_id=tenant_id,
+        project_id=project_id,
+        grounding_support_id=grounding_support_id,
+    )
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"grounding_support {grounding_support_id} not found.",
+        )
+
     deleted = await repo.delete_grounding_support(
         tenant_id=tenant_id,
         project_id=project_id,
         grounding_support_id=grounding_support_id,
     )
     if not deleted:
+        # Race between the get and the delete (concurrent DELETE).
+        # Surface as 404 so the caller does not see the audit event
+        # for a row we did not actually erase.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"grounding_support {grounding_support_id} not found.",
+            detail=(
+                f"grounding_support {grounding_support_id} deleted "
+                "concurrently."
+            ),
         )
-    # F-PR25-R8-002 fix: record an audit event for the deletion too —
-    # erasing a GroundingSupport row can deflate AC-KPI-04 just as
-    # readily as adding one can inflate it.
+
+    # F-PR25-R8-002 + F-PR25-R9-003 fix: record an audit event with
+    # the full deleted-row fingerprint so an export consumer can
+    # reconstruct which AC-KPI-04 input was deflated.
     audit = AuditEventRepository(session)
     await audit.append(
         tenant_id=tenant_id,
@@ -205,6 +229,12 @@ async def delete_grounding_support(
             "actor_id": str(actor_id),
             "project_id": str(project_id),
             "grounding_support_id": str(grounding_support_id),
+            "agent_run_id": str(existing.agent_run_id),
+            "generated_artifact_id": str(existing.generated_artifact_id),
+            "claim_id": str(existing.claim_id),
+            "evidence_source_id": str(existing.evidence_source_id),
+            "evidence_item_id": str(existing.evidence_item_id),
+            "support_type": existing.support_type,
             "timestamp": datetime.now(UTC).isoformat(),
         },
     )

@@ -166,6 +166,7 @@ async def promote(
             "approval_request_required",
             "approval_request_not_found",
             "approval_request_tenant_mismatch",
+            "approval_request_run_unbound",
             "approval_request_run_mismatch",
             "approval_request_action_class_mismatch",
             "approval_request_not_approved",

@@ -200,6 +200,13 @@ async def promote_research_to_ticket(
             "approval_request_id is required for Research-to-Ticket promotion "
             "(ADR-00003 task_write action class).",
         )
+    # F-PR25-R9-004 fix (Codex R9 P1): lock the ApprovalRequest row
+    # with ``FOR UPDATE`` so a concurrent invalidation/decision
+    # cannot flip ``status`` from ``approved`` to ``invalidated``
+    # between the verify query and the artifact INSERT below. The
+    # whole adapter runs inside the request transaction; the row
+    # lock is released on commit/rollback alongside the new
+    # promotion artifact.
     approval_row = (
         await session.execute(
             select(
@@ -207,10 +214,12 @@ async def promote_research_to_ticket(
                 ApprovalRequest.run_id,
                 ApprovalRequest.action_class,
                 ApprovalRequest.status,
-            ).where(
+            )
+            .where(
                 ApprovalRequest.tenant_id == tenant_id,
                 ApprovalRequest.id == approval_request_id,
             )
+            .with_for_update()
         )
     ).one_or_none()
     if approval_row is None:
@@ -228,7 +237,22 @@ async def promote_research_to_ticket(
             f"approval_request_id {approval_request_id} belongs to a "
             f"different tenant.",
         )
-    if approval_run_id is not None and approval_run_id != run_id:
+    # F-PR25-R9-001 fix (Codex R9 P1): require ``approval_run_id ==
+    # run_id`` strictly. Pre-R9 we accepted null ``run_id`` (the
+    # "project-scope approval" case), but the schema does not yet
+    # carry a project_id on ApprovalRequest, so an unbound approval
+    # could be replayed across runs in the same tenant — letting a
+    # previously approved promotion seed Ticket work for a different
+    # AgentRun. Until the project-scope approval contract lands,
+    # require an exact run binding.
+    if approval_run_id is None:
+        raise ResearchToTicketError(
+            "approval_request_run_unbound",
+            f"approval_request_id {approval_request_id} has run_id=NULL; "
+            f"Research-to-Ticket requires run-bound approvals until the "
+            f"project-scope approval contract lands.",
+        )
+    if approval_run_id != run_id:
         raise ResearchToTicketError(
             "approval_request_run_mismatch",
             f"approval_request_id {approval_request_id} is bound to run "
@@ -281,10 +305,13 @@ async def promote_research_to_ticket(
             f"summary failed raw-secret scan: {exc}",
         ) from exc
 
-    # F-PR25-R1-007 fix (Codex R1 P2) + F-PR25-R1-006 wider fix:
-    # establish the tenant context before the first read so an RLS-
-    # enabled deployment does not reject a legitimate request because
-    # ``app.tenant_id`` was unset on a pooled connection.
+    # F-PR25-R1-007 + F-PR25-R9-002 fix (Codex R1 P2 + R9 P1):
+    # establish the tenant context **before any tenant-scoped read**
+    # (including the ApprovalRequest lookup that follows). Pre-R9 the
+    # tenant context was only set later; on a fresh RLS-enabled
+    # pooled session the approval row would appear missing and a
+    # legitimate approved request would be rejected as
+    # ``approval_request_not_found``.
     current_tenant_id = await get_tenant_context(session)
     if current_tenant_id is None:
         await set_tenant_context(session, tenant_id)

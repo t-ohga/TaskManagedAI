@@ -12,6 +12,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.db.app_role import (
+    assert_tenant_context,
+    get_tenant_context,
+    set_tenant_context,
+)
 from backend.app.db.models.actor import Actor
 from backend.app.db.models.approval_request import ApprovalRequest
 from backend.app.db.session import get_session
@@ -59,6 +64,17 @@ async def get_current_actor_id(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="actor context missing",
         )
+
+    # F-PR25-R9-005 fix (Codex R9 P2): establish ``app.tenant_id``
+    # before the Actor lookup so an RLS-enabled deployment on a
+    # fresh pooled session does not reject the actor as missing.
+    # Mirror of the same pattern in
+    # ``compute_evidence_set_hash`` / ``compute_citation_coverage`` /
+    # ``promote_research_to_ticket``.
+    current_tenant_id = await get_tenant_context(session)
+    if current_tenant_id is None:
+        await set_tenant_context(session, tenant_id)
+    await assert_tenant_context(session, tenant_id)
 
     actor_ref = str(actor_reference)
     conditions = [Actor.actor_id == actor_ref]
