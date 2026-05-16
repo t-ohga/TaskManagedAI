@@ -4,7 +4,7 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -20,6 +20,9 @@ from backend.app.repositories.claim import ClaimRepository
 from backend.app.repositories.evidence_item import EvidenceItemRepository
 from backend.app.schemas.claim import ClaimCreate
 from backend.app.schemas.evidence_item import EvidenceItemCreate
+from backend.app.schemas.research.research_to_ticket import ResearchToTicketRequest
+from backend.app.services.research.research_evidence_attachment import compute_research_evidence_attachment_rate
+from backend.app.services.research.research_to_ticket import ResearchToTicketAdapter
 
 _DEFAULT_DATABASE_URL = (
     "postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test"
@@ -142,8 +145,9 @@ async def _reset_tables(session: AsyncSession) -> None:
     await session.execute(
         text(
             """
-            truncate evidence_items, claims, evidence_sources, research_tasks,
-              projects, workspaces, actors, tenants
+            truncate notification_events, audit_events, ticket_relations,
+              acceptance_criteria, tickets, evidence_items, claims, evidence_sources,
+              research_tasks, projects, workspaces, actors, tenants
             restart identity cascade
             """
         )
@@ -384,6 +388,81 @@ async def test_same_tenant_other_project_claim_attach_rejected(
 
 
 @pytest.mark.asyncio
+async def test_research_to_ticket_cross_project_research_task_id_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+        with pytest.raises(ValueError, match="research_task_id not reachable in tenant/project"):
+            await ResearchToTicketAdapter(session).promote(
+                ResearchToTicketRequest(
+                    tenant_id=1,
+                    project_id=PROJECT_B_ID,
+                    research_task_id=RESEARCH_TASK_A_ID,
+                    requested_by_actor_id=ACTOR_ID,
+                    approval_request_id=uuid4(),
+                )
+            )
+
+
+@pytest.mark.asyncio
+async def test_research_to_ticket_cross_project_ticket_creation_does_not_escape_boundary(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+        with pytest.raises(ValueError, match="research_task_id not reachable in tenant/project"):
+            await ResearchToTicketAdapter(session).promote(
+                ResearchToTicketRequest(
+                    tenant_id=1,
+                    project_id=PROJECT_B_ID,
+                    research_task_id=RESEARCH_TASK_A_ID,
+                    requested_by_actor_id=ACTOR_ID,
+                    approval_request_id=uuid4(),
+                )
+            )
+
+        ticket_count = await session.scalar(
+            text(
+                """
+                select count(*)
+                from tickets
+                where tenant_id = 1
+                """
+            )
+        )
+        audit_count = await session.scalar(
+            text(
+                """
+                select count(*)
+                from audit_events
+                where tenant_id = 1
+                  and event_type = 'research_to_ticket_promoted'
+                """
+            )
+        )
+
+    assert ticket_count == 0
+    assert audit_count == 0
+
+
+@pytest.mark.asyncio
+async def test_citation_coverage_cross_project_research_task_id_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+        with pytest.raises(ValueError, match="research_task_id not reachable in tenant/project"):
+            await compute_research_evidence_attachment_rate(session, 1, PROJECT_B_ID, RESEARCH_TASK_A_ID)
+
+
+@pytest.mark.asyncio
 async def test_research_tasks_cross_project_select_rejected(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -400,7 +479,6 @@ async def test_research_tasks_cross_project_select_rejected(
         await _reset_tables(session)
         await _insert_fixtures(session)
 
-        # Positive control: Task A is reachable via its real project_id (A).
         reachable_via_a = await session.scalar(
             text(
                 """
@@ -415,7 +493,6 @@ async def test_research_tasks_cross_project_select_rejected(
         )
         assert reachable_via_a == RESEARCH_TASK_A_ID
 
-        # Tenant-only lookup also resolves Task A, proving the row exists.
         reachable_by_tenant_and_id = await session.scalar(
             text(
                 """
@@ -429,7 +506,6 @@ async def test_research_tasks_cross_project_select_rejected(
         )
         assert reachable_by_tenant_and_id == RESEARCH_TASK_A_ID
 
-        # Negative: project_id=B filter must hide Task A from Project B.
         selected = await session.scalar(
             text(
                 """
@@ -500,7 +576,6 @@ async def test_research_tasks_cross_project_update_rejected(
         await _reset_tables(session)
         await _insert_fixtures(session)
 
-        # Positive control: update via Project A succeeds and changes title.
         updated_via_a = await session.scalar(
             text(
                 """
@@ -516,7 +591,6 @@ async def test_research_tasks_cross_project_update_rejected(
         )
         assert updated_via_a == RESEARCH_TASK_A_ID
 
-        # Negative: update predicate scoped to Project B must not match.
         updated = await session.scalar(
             text(
                 """
@@ -542,7 +616,6 @@ async def test_research_tasks_cross_project_update_rejected(
         )
 
     assert updated is None
-    # Title reflects the positive control change, not the cross-project update.
     assert title == "Updated via Project A"
 
 
@@ -563,7 +636,6 @@ async def test_research_tasks_cross_project_delete_rejected(
         await _reset_tables(session)
         await _insert_fixtures(session)
 
-        # Positive control: Task A exists prior to the negative attempt.
         pre_count = await session.scalar(
             text(
                 """
@@ -578,7 +650,6 @@ async def test_research_tasks_cross_project_delete_rejected(
         )
         assert pre_count == 1
 
-        # Negative: delete predicate scoped to Project B must not match.
         deleted = await session.scalar(
             text(
                 """
