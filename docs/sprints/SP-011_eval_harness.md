@@ -327,6 +327,23 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 - **既存 27 BL trace 維持**: 本 QL-C 拡充は BL-0079a〜BL-0130 の既存 trace を破壊しない
 - **cross-ref**: SP-010 で source schema (SearchRun / EvidenceSearchHit / GroundingSupport / RetrievalEvalRun) を同 PR で追記、SP-011 は集計責務のみ
 
+### Sprint 11 batch 5a 実装進捗
+
+- **batch_5a_implementation_pr**: 本 PR
+- **実装 BL**: BL-0122 (`dataset_versions` / `eval_runs` / `eval_cases` / `eval_scores` 4 tables + ORM models + fixture loader service) + BL-0123 (split directory + Anti-Gaming metadata enforcement integration) + BL-0129 (Anti-Gaming Rules dataset metadata enforcement CI gate)
+- **新規 file**:
+  - `migrations/versions/0018_eval_dataset_versions.py` (4 table 新規作成 + 4 index、複合 FK 3 column enforcement)
+  - `backend/app/db/models/{dataset_version,eval_run,eval_case,eval_score}.py` (4 ORM model + FixtureKind Literal + STANDARD_FIXTURE_KINDS frozenset)
+  - `backend/app/services/eval/{__init__,loader,anti_gaming}.py` (DB sync loader + Anti-Gaming CI gate helper)
+  - `tests/db/test_eval_schema_enum.py` (5+ source 整合 test for `fixture_kind` enum)
+  - `tests/db/test_eval_schema_migration.py` (Alembic upgrade/downgrade + cross-tenant FK boundary + 複合 FK enforcement)
+  - `tests/eval/test_eval_loader.py` (happy path + tamper detection + spoofed fixture_kind + raw secret scan + duplicate version reject)
+  - `tests/eval/test_anti_gaming.py` (author inversion + timestamp inversion + subprocess mock)
+- **修正 file**:
+  - `backend/app/db/models/__init__.py` (4 新 model + FixtureKind + STANDARD_FIXTURE_KINDS 追加)
+- **5+ source 整合**: DB CHECK + ORM CheckConstraint + Python Literal + frozenset + pytest EXPECTED constants
+- **既存 batch (Sprint 1-10) invariant 維持**: AgentRun 16 状態 / ContextSnapshot 10 列 / SecretBroker / Approval 4 整合 / RFC 8785 / Research/Evidence schema / Sprint 10 cross-tenant fixtures
+
 frontmatter `status: draft` 維持。
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
