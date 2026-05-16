@@ -13,7 +13,13 @@ AC_HARD_03_METRIC_KEY: Final[Literal["tenant_isolation_negative_pass"]] = "tenan
 AC_HARD_03_PATTERN_HIT_KIND: Final[Literal["tenant_boundary"]] = "tenant_boundary"
 AC_HARD_03_EXPECTED_DECISION: Final[Literal["block"]] = "block"
 AC_HARD_03_EXPECTED_REASON_CODE: Final[Literal["tenant_boundary_violation"]] = "tenant_boundary_violation"
+AC_HARD_03_EXPECTED_FAILURE: Final[Literal["tenant_boundary_violation"]] = "tenant_boundary_violation"
 AC_HARD_03_THRESHOLD: Final[float] = 1.0
+# F-PR29-R1-003 P2 adopt: AC-HARD-03 hard-gate contract requires cross-tenant /
+# cross-project negative coverage across all four mutation classes. A corpus
+# that omits any class (e.g., only SELECT) cannot satisfy the gate even when
+# every present fixture is spec-compliant.
+AC_HARD_03_REQUIRED_OPERATION_CLASSES: Final[frozenset[str]] = frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"})
 
 _SUPPORTED_FIXTURE_KINDS: Final[Sequence[FixtureKind]] = ("public_regression",)
 _LOGGER = logging.getLogger(__name__)
@@ -38,6 +44,12 @@ class TenantIsolationMetricResult:
     threshold: float
     threshold_met: bool
     threshold_reason: str
+    # F-PR29-R1-001 P2 adopt: when the manifest top-level constants drift away
+    # from AC-HARD-03, the gate must reject regardless of per-fixture state.
+    manifest_violation_reason: str | None = None
+    # F-PR29-R1-003 P2 adopt: surface which operation classes the corpus covered
+    # so consumers can see whether all four mutation classes were exercised.
+    missing_operation_classes: tuple[str, ...] = ()
 
 
 def _expected_value(fixture: Fixture, key: str) -> object:
@@ -56,9 +68,43 @@ def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
         return "spec_violation:expected_decision"
     if _expected_value(fixture, "expected_reason_code") != AC_HARD_03_EXPECTED_REASON_CODE:
         return "spec_violation:expected_reason_code"
+    # F-PR29-R1-004 P2 adopt: also validate the `expected_failure` field. The
+    # corpus schema currently requires it but if a future schema relaxation
+    # widens the type, this evaluator still rejects drift away from
+    # ``tenant_boundary_violation`` directly.
+    if _expected_value(fixture, "expected_failure") != AC_HARD_03_EXPECTED_FAILURE:
+        return "spec_violation:expected_failure"
     if _expected_value(fixture, "pattern_hit_kind") != AC_HARD_03_PATTERN_HIT_KIND:
         return "spec_violation:pattern_hit_kind"
     return None
+
+
+def _manifest_violation_reason(corpus: LoadedCorpus) -> str | None:
+    # F-PR29-R1-001 P2 adopt: validate manifest top-level constants for AC-HARD-03.
+    # ``load_fixture_corpus`` validates per-fixture invariants but does not pin
+    # the manifest's ``hard_gate_id`` / ``metric`` / ``dataset_version``; a
+    # misregistered corpus would otherwise pass the gate.
+    manifest = corpus.manifest
+    if manifest.get("hard_gate_id") != AC_HARD_03_GATE_ID:
+        return "manifest_violation:hard_gate_id"
+    if manifest.get("metric") != AC_HARD_03_METRIC_KEY:
+        return "manifest_violation:metric"
+    return None
+
+
+def _missing_operation_classes(corpus: LoadedCorpus) -> tuple[str, ...]:
+    # F-PR29-R1-003 P2 adopt: AC-HARD-03 requires cross-tenant negative coverage
+    # for SELECT / INSERT / UPDATE / DELETE. The corpus's case_json carries the
+    # input shape (loader keeps non-expectation keys in case_json), so we read
+    # ``input.operation`` to identify which mutation class each fixture exercises.
+    observed: set[str] = set()
+    for fixture in corpus.fixtures:
+        case_input = fixture.case_json.get("input")
+        if isinstance(case_input, dict):
+            operation = case_input.get("operation")
+            if isinstance(operation, str):
+                observed.add(operation.strip().upper())
+    return tuple(sorted(AC_HARD_03_REQUIRED_OPERATION_CLASSES - observed))
 
 
 def _warn_unknown_sut_results(corpus: LoadedCorpus, sut_results: Mapping[str, bool]) -> None:
@@ -72,9 +118,18 @@ def _threshold_reason(
     fixture_count: int,
     metric_value: float,
     spec_violation_present: bool,
+    manifest_violation_present: bool,
+    missing_operation_classes_present: bool,
 ) -> str:
     if fixture_count == 0:
         return "no_fixtures"
+    # F-PR29-R1-001 P2 + R1-003 P2 adopt: manifest drift and missing operation
+    # class coverage are both gate-breaking — surface them as the threshold
+    # reason instead of letting per-fixture pass counts hide the violation.
+    if manifest_violation_present:
+        return "manifest_violation"
+    if missing_operation_classes_present:
+        return "missing_operation_classes"
     if spec_violation_present:
         return "spec_violation"
     if metric_value >= AC_HARD_03_THRESHOLD:
@@ -116,9 +171,20 @@ def evaluate_tenant_isolation_negative_pass(
                 if failure_reason is None:
                     failure_reason = "sut_result_missing"
             else:
-                sut_result = sut_results[fixture.fixture_id]
-                if not sut_result:
+                raw_sut_value = sut_results[fixture.fixture_id]
+                # F-PR29-R1-002 P2 adopt: reject non-boolean SUT results. An
+                # untyped runner payload could carry strings like "false" (truthy)
+                # or integers; treating those as success would turn a real
+                # AC-HARD-03 failure into a pass once BL-0127 wires programmatic
+                # SUT output. Require an actual ``bool`` instance.
+                if not isinstance(raw_sut_value, bool):
                     passed = False
+                    if failure_reason is None:
+                        failure_reason = "sut_result_invalid_type"
+                else:
+                    sut_result = raw_sut_value
+                    if not sut_result:
+                        passed = False
 
         per_fixture.append(
             TenantIsolationFixtureResult(
@@ -130,6 +196,9 @@ def evaluate_tenant_isolation_negative_pass(
             )
         )
 
+    manifest_reason = _manifest_violation_reason(corpus)
+    missing_op_classes = _missing_operation_classes(corpus) if corpus.fixtures else ()
+
     fixture_count = len(per_fixture)
     pass_count = sum(1 for result in per_fixture if result.passed)
     fail_count = fixture_count - pass_count
@@ -138,6 +207,8 @@ def evaluate_tenant_isolation_negative_pass(
         fixture_count=fixture_count,
         metric_value=metric_value,
         spec_violation_present=spec_violation_present,
+        manifest_violation_present=manifest_reason is not None,
+        missing_operation_classes_present=bool(missing_op_classes),
     )
 
     return TenantIsolationMetricResult(
@@ -149,15 +220,19 @@ def evaluate_tenant_isolation_negative_pass(
         threshold=AC_HARD_03_THRESHOLD,
         threshold_met=threshold_reason == "threshold_met",
         threshold_reason=threshold_reason,
+        manifest_violation_reason=manifest_reason,
+        missing_operation_classes=missing_op_classes,
     )
 
 
 __all__ = [
     "AC_HARD_03_EXPECTED_DECISION",
+    "AC_HARD_03_EXPECTED_FAILURE",
     "AC_HARD_03_EXPECTED_REASON_CODE",
     "AC_HARD_03_GATE_ID",
     "AC_HARD_03_METRIC_KEY",
     "AC_HARD_03_PATTERN_HIT_KIND",
+    "AC_HARD_03_REQUIRED_OPERATION_CLASSES",
     "AC_HARD_03_THRESHOLD",
     "TenantIsolationFixtureResult",
     "TenantIsolationMetricResult",
