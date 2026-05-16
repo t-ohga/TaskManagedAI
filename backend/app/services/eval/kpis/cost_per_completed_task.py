@@ -86,9 +86,27 @@ _SUPPORTED_FIXTURE_KINDS: Final[Sequence[FixtureKind]] = ("public_regression",)
 # unrounded float recomputation can otherwise differ from the rounded
 # declared aggregate by ~1e-7 on penny-sized cost rows even though both
 # sides agree to the documented 6-decimal precision.
-_COST_REL_TOL: Final[float] = 1e-6
+#
+# F-PR32-R4-001 P2 adopt: ``rel_tol`` is now ``0.0`` so money drift checks
+# use the loader's documented **absolute** 6-decimal precision only. The
+# earlier ``rel_tol=1e-6`` accepted whole-dollar drift on large aggregates
+# (e.g., a declared $5_000_005 on a recomputed $5_000_000 would have passed
+# even though the loader rejects any money-field drift > 0.000001).
+_COST_REL_TOL: Final[float] = 0.0
 _COST_ABS_TOL: Final[float] = 1e-6
 _THRESHOLD_USD_ABS_TOL: Final[float] = 1e-9
+# F-PR32-R4-002/003 P2 adopt: the cost fixture loader normalizes money
+# values to 6 decimal places. Threshold comparisons must use that same
+# normalization so a fixture / corpus whose declared aggregate sits at the
+# rounded threshold (e.g., recomputed 0.5000004 rounded to 0.500000) is not
+# falsely rejected as drift / above_threshold.
+_MONEY_DECIMAL_PLACES: Final[int] = 6
+
+
+def _normalize_money(value: float) -> float:
+    """Round a money value to the loader's documented 6-decimal precision."""
+
+    return round(value, _MONEY_DECIMAL_PLACES)
 
 # Sentinel that distinguishes "key absent" from "key present but malformed"
 # (mirrors the citation_coverage aggregator).
@@ -445,9 +463,16 @@ def _expected_aggregate_violation_reason(
     declared_threshold_passed = raw["threshold_passed"]
     if not isinstance(declared_threshold_passed, bool):
         return "spec_violation:expected_aggregate"
+    # F-PR32-R4-002 P2 adopt: normalize the recomputed ratio to the loader's
+    # documented 6-decimal money precision before the threshold comparison.
+    # Otherwise an unrounded ratio of 0.5000004 (declared as 0.500000 by the
+    # loader's ``_money_to_float()``) would be reported as
+    # ``spec_violation:expected_aggregate_passed_drift`` even though both
+    # sides agree at the documented precision.
     actual_passed = (
         recomputed_ratio is not None
-        and recomputed_ratio <= AC_KPI_05_THRESHOLD_USD + _THRESHOLD_USD_ABS_TOL
+        and _normalize_money(recomputed_ratio)
+        <= AC_KPI_05_THRESHOLD_USD + _THRESHOLD_USD_ABS_TOL
     )
     if declared_threshold_passed != actual_passed:
         return "spec_violation:expected_aggregate_passed_drift"
@@ -483,7 +508,13 @@ def _threshold_reason(
         return "sut_failure"
     if total_completed_runs == 0 or metric_value is None:
         return "no_completed_runs"
-    if metric_value <= AC_KPI_05_THRESHOLD_USD + _THRESHOLD_USD_ABS_TOL:
+    # F-PR32-R4-003 P2 adopt: normalize the corpus metric to the loader's
+    # documented 6-decimal money precision before the corpus-gate threshold
+    # comparison. A corpus-wide average of 0.5000004 (which the loader
+    # records as 0.500000) must report ``threshold_met`` instead of
+    # ``above_threshold`` so the corpus gate agrees with the per-fixture
+    # drift oracle at the documented precision.
+    if _normalize_money(metric_value) <= AC_KPI_05_THRESHOLD_USD + _THRESHOLD_USD_ABS_TOL:
         return "threshold_met"
     return "above_threshold"
 

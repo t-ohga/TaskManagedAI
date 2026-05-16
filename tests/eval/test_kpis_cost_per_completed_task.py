@@ -1237,3 +1237,110 @@ def test_six_decimal_rounded_cost_aggregate_drift_absorbed() -> None:
     _, per_fixture = _result_for(fixture)
     assert per_fixture.spec_violation_reason is None
     assert per_fixture.sut_failure_reason is None
+
+
+# ---------------------------------------------------------------------------
+# F-PR32-R4: absolute-only money tolerance + threshold normalization
+# ---------------------------------------------------------------------------
+
+
+def test_large_aggregate_uses_absolute_tolerance_not_relative() -> None:
+    """F-PR32-R4-001 P2 adopt: ``_costs_match`` must use the loader's
+    absolute 6-decimal money precision, not a relative tolerance.
+
+    Without the absolute-only contract, a recomputed ``total_cost_usd`` of
+    ``5_000_000`` would accept a declared ``5_000_005`` (±0.0001% relative
+    drift), even though the cost loader rejects any money-field drift
+    above ``0.000001``. This test forces a high-magnitude aggregate and
+    proves whole-dollar drift is rejected.
+    """
+
+    # 3 completed runs at $2,000,000 each → $6,000,000 / 3 = $2,000,000 ratio.
+    # That sits well above the documented threshold so we also enable the
+    # spec_violation check to fire on the rejected drift.
+    runs = _sample_runs(
+        completed_cost_usds=(2_000_000.0, 2_000_000.0, 2_000_000.0),
+        prefix="huge",
+    )
+    fixture = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_huge_drift",
+        sample_runs=runs,
+        expected_aggregate={
+            "total_completed_runs": 3,
+            # Declare a $5 drift on the total — well under ``rel_tol=1e-6``
+            # but well over the documented absolute precision of 1e-6.
+            "total_cost_usd": 6_000_005.0,
+            "cost_per_completed_task_usd": 2_000_000.0,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            # Declared "passed" matches whatever the threshold comparison
+            # would say (ratio $2M is well above $0.5 → False) so the
+            # passed-drift oracle does not mask the total-cost drift oracle.
+            "threshold_passed": False,
+        },
+    )
+    _, per_fixture = _result_for(fixture)
+    assert (
+        per_fixture.spec_violation_reason
+        == "spec_violation:expected_aggregate_total_cost_drift"
+    )
+
+
+def test_loader_rounded_per_fixture_metric_at_threshold_does_not_drift() -> None:
+    """F-PR32-R4-002 P2 adopt: the fixture's ``threshold_passed`` drift
+    oracle must compare against the **rounded** ratio (loader's 6-decimal
+    money precision), not the unrounded float recomputation.
+
+    Otherwise a fixture with a single completed run at $0.5000004 — which
+    the loader rounds to $0.500000 and declares as ``threshold_passed:
+    True`` — would be falsely rejected as
+    ``spec_violation:expected_aggregate_passed_drift`` even though both
+    sides agree at the documented precision.
+    """
+
+    runs = _sample_runs(
+        completed_cost_usds=(0.5000004,),
+        prefix="rounded-pass",
+    )
+    fixture = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_rounded_pass",
+        sample_runs=runs,
+        expected_aggregate={
+            "total_completed_runs": 1,
+            "total_cost_usd": 0.500000,  # loader-rounded
+            "cost_per_completed_task_usd": 0.500000,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            "threshold_passed": True,  # rounded ratio == threshold → True
+        },
+    )
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason is None
+
+
+def test_loader_rounded_corpus_metric_at_threshold_reports_met() -> None:
+    """F-PR32-R4-003 P2 adopt: corpus-level ``threshold_met`` must also use
+    the loader's 6-decimal money normalization.
+
+    A corpus-wide average of $0.5000004 (which the loader records as
+    $0.500000) must report ``threshold_met=True`` instead of
+    ``above_threshold`` so the corpus gate agrees with the per-fixture
+    drift oracle at the documented precision.
+    """
+
+    runs = _sample_runs(
+        completed_cost_usds=(0.5000004,),
+        prefix="rounded-corpus",
+    )
+    fixture = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_rounded_corpus",
+        sample_runs=runs,
+        expected_aggregate={
+            "total_completed_runs": 1,
+            "total_cost_usd": 0.500000,
+            "cost_per_completed_task_usd": 0.500000,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            "threshold_passed": True,
+        },
+    )
+    result = evaluate_cost_per_completed_task(_synthetic_corpus([fixture]))
+    assert result.threshold_met is True
+    assert result.threshold_reason == "threshold_met"
