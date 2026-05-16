@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Self
+from typing import Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+
+# F-PR24-R7-002 P1 adopt: ``metric_kind`` is a strict Literal that physically
+# prevents Sprint 11 BL-0126 aggregators from mistakenly treating this
+# evidence-attachment source as AC-KPI-04 ``citation_coverage``. The aggregator
+# must check ``metric_kind == "research_evidence_attachment"`` and convert /
+# join with GroundingSupport-derived citation_presence before producing the
+# AC-KPI-04 metric. Any consumer that treats this directly as citation_coverage
+# is calling the wrong source.
+ResearchEvidenceMetricKind = Literal["research_evidence_attachment"]
 
 
 class ResearchEvidenceAttachmentMetric(BaseModel):
@@ -27,6 +36,15 @@ class ResearchEvidenceAttachmentMetric(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    metric_kind: ResearchEvidenceMetricKind = Field(
+        default="research_evidence_attachment",
+        description=(
+            "Hard discriminator vs AC-KPI-04 citation_coverage (Sprint 11 "
+            "BL-0126 GroundingSupport-based). Always emits the literal "
+            "'research_evidence_attachment'; consumers MUST check this "
+            "before treating numerator/denominator as a citation metric."
+        ),
+    )
     research_task_id: UUID
     numerator: int = Field(ge=0)
     denominator: int = Field(ge=0)

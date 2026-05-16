@@ -33,14 +33,19 @@ class ResearchToTicketRequest(BaseModel):
     research_task_id: UUID
     requested_by_actor_id: UUID
     approval_request_id: UUID
-    # F-PR24-R4-001 P1 adopt: the Research session that produced the
-    # promotion artifact may have invoked a provider call (AI provider
-    # generating research_summary). When the approval was issued with a
-    # provider_request_fingerprint binding (Approval 4 整合 §3 stale/replay
-    # protection), the caller MUST pass the same fingerprint here so the
-    # adapter can verify equality. None on both sides indicates a non-
-    # provider-driven workflow (e.g., manual research) which is also valid.
-    expected_provider_request_fingerprint: str | None = Field(default=None)
+    # F-PR24-R7-001 P1 adopt: ``expected_provider_request_fingerprint`` was
+    # removed from this schema. server-owned-boundary §1/§2 forbid
+    # caller-supplied fingerprint paths. The correct server-side derivation
+    # is to navigate ``research_task -> source AgentRun -> ContextSnapshot.
+    # provider_request_fingerprint`` and compare against
+    # ``ApprovalRequest.provider_request_fingerprint``, but ResearchTask
+    # does not yet carry the source ``agent_run_id`` column in the batch 3
+    # DB schema. The pragmatic batch 3 contract is therefore:
+    #     ApprovalRequest.provider_request_fingerprint MUST be NULL
+    # (Research-to-Ticket promotion in batch 3 is not provider-bound).
+    # Sprint 11 BL-0126 adds the ResearchTask.agent_run_id column and
+    # corresponding server-side fingerprint derivation to enable
+    # provider-bound research workflows under server-owned-boundary §3.
     ticket_title_override: str | None = Field(default=None, max_length=2000)
 
     @field_validator("tenant_id")

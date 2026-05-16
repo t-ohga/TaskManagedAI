@@ -228,6 +228,13 @@ class ResearchToTicketAdapter:
         # adapter never creates ApprovalRequest itself (caller manages submit
         # via the existing Approval repository) and never mutates Tickets
         # without a matching approval.
+        # F-PR24-R7-001 P1 adopt: expected_provider_request_fingerprint is
+        # not derived from caller input. ResearchTask does not yet carry
+        # a source agent_run_id in batch 3, so the only correct server-
+        # owned value here is None -- the binding therefore requires
+        # ApprovalRequest.provider_request_fingerprint to also be None.
+        # Sprint 11 BL-0126 introduces the agent_run_id linkage and
+        # provider-bound research workflows.
         await self._assert_approval_binding(
             tenant_id=request.tenant_id,
             project_id=request.project_id,
@@ -236,7 +243,7 @@ class ResearchToTicketAdapter:
             requested_by_actor_id=request.requested_by_actor_id,
             artifact_hash=artifact_hash,
             policy_version=policy_version,
-            expected_provider_request_fingerprint=request.expected_provider_request_fingerprint,
+            expected_provider_request_fingerprint=None,
         )
 
         metadata = {
@@ -437,35 +444,28 @@ class ResearchToTicketAdapter:
             )
 
     async def _invalidate_approval(self, approval: ApprovalRequest) -> None:
-        """Mark a stale ApprovalRequest as invalidated (F-PR24-R5-002 P1 + F-PR24-R6-004 P2).
+        """Mark a stale ApprovalRequest as invalidated and PERSIST the flip.
 
-        Per ``.claude/rules/server-owned-boundary.md §3``, any Approval 4
+        F-PR24-R5-002 P1 + F-PR24-R6-004 P2 + F-PR24-R7-003 P1 adopt: per
+        ``.claude/rules/server-owned-boundary.md §3``, any Approval 4
         binding mismatch must invalidate the approval so it cannot be
-        replayed.
+        replayed. We commit the invalidation explicitly here so a
+        caller that subsequently catches the raised ValueError cannot
+        roll back the invalidation -- the stale-approval flip persists
+        independently of the caller's transaction outcome.
 
-        Known limitation (F-PR24-R6-004 P2): the status flip is part of
-        the caller's transaction, so a caller that catches the raised
-        ValueError and rolls back will also roll back this flush, leaving
-        the stale approval in ``status='approved'``. The pragmatic
-        rationale for batch 3:
-
-        - the underlying binding mismatch (artifact_hash / policy_version /
-          provider_request_fingerprint / action_class) persists, so any
-          subsequent retry re-detects it and re-invalidates
-        - full hardening (independent session / autonomous transaction for
-          invalidation) requires injecting a session factory into the
-          adapter; defer to Sprint 11 BL-0126 alongside the
-          GroundingSupport integration work
-        - external/API callers (Research session worker) follow the
-          repository pattern of NOT catching adapter exceptions, so
-          their transaction commits naturally include the invalidation
-
-        Tests that explicitly catch and rollback should treat the
-        invalidation as best-effort.
+        Note: this commits the entire caller transaction including any
+        prior writes (e.g., tenant context). For the Research-to-Ticket
+        promotion path, the only writes prior to invalidation are the
+        ``set_tenant_context`` calls which are safe to persist (they
+        also occur on the next promotion attempt). Sprint 11 BL-0126
+        introduces a sibling session / engine injection so the
+        invalidation can use a strictly-independent transaction; until
+        then this commit semantics is the pragmatic enforcement.
         """
 
         approval.status = "invalidated"
-        await self.session.flush()
+        await self.session.commit()
 
     async def _fetch_research_bundle(
         self,
