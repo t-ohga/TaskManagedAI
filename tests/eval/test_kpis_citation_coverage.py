@@ -573,8 +573,10 @@ def test_sut_results_all_false_marks_failure() -> None:
     assert per_fixture.sut_result is False
     # ``spec_violation_reason`` stays ``None`` because the spec is satisfied;
     # the failure source is the SUT result itself, which is surfaced via
-    # ``threshold_reason="sut_failure"`` instead (F-PR31-R1-001).
+    # ``threshold_reason="sut_failure"`` (F-PR31-R1-001) and the dedicated
+    # ``sut_failure_reason="sut_result_false"`` field (F-PR31-R3-001).
     assert per_fixture.spec_violation_reason is None
+    assert per_fixture.sut_failure_reason == "sut_result_false"
     assert result.fail_count == 1
     assert result.threshold_reason == "sut_failure"
     assert result.threshold_met is False
@@ -589,7 +591,10 @@ def test_sut_results_missing_fixture_id_marks_failure() -> None:
     per_fixture = result.per_fixture[0]
     assert per_fixture.passed is False
     assert per_fixture.sut_result is None
-    assert per_fixture.spec_violation_reason == "sut_result_missing"
+    # F-PR31-R3-001 P2 adopt: SUT runner failures live on the dedicated
+    # ``sut_failure_reason`` field, not in ``spec_violation_reason``.
+    assert per_fixture.spec_violation_reason is None
+    assert per_fixture.sut_failure_reason == "sut_result_missing"
     # F-PR31-R2-001 P2 adopt: missing SUT result is a runner failure, not a
     # spec violation; threshold_reason must surface as ``sut_failure``.
     assert result.threshold_reason == "sut_failure"
@@ -608,7 +613,11 @@ def test_non_boolean_sut_result_is_rejected(raw_sut_value: object) -> None:
     per_fixture = result.per_fixture[0]
     assert per_fixture.passed is False
     assert per_fixture.sut_result is None
-    assert per_fixture.spec_violation_reason == "sut_result_invalid_type"
+    # F-PR31-R3-001 P2 adopt: runner-side failures are surfaced on the
+    # dedicated ``sut_failure_reason`` field, keeping ``spec_violation_reason``
+    # exclusively for fixture-spec issues.
+    assert per_fixture.spec_violation_reason is None
+    assert per_fixture.sut_failure_reason == "sut_result_invalid_type"
     # F-PR31-R2-001 P2 adopt: a non-boolean SUT payload is a runner-side
     # failure; threshold_reason must be ``sut_failure`` rather than
     # ``spec_violation``.
@@ -775,7 +784,9 @@ def test_sut_attempted_field_distinguishes_unverified_from_attempted() -> None:
     )
     assert result_missing.per_fixture[0].sut_attempted is True
     assert result_missing.per_fixture[0].passed is False
-    assert result_missing.per_fixture[0].spec_violation_reason == "sut_result_missing"
+    # F-PR31-R3-001 P2 adopt: runner failure lives on sut_failure_reason.
+    assert result_missing.per_fixture[0].spec_violation_reason is None
+    assert result_missing.per_fixture[0].sut_failure_reason == "sut_result_missing"
 
     # sut_results provided + non-boolean value → SUT attempted, invalid.
     result_invalid = evaluate_citation_coverage(
@@ -784,7 +795,8 @@ def test_sut_attempted_field_distinguishes_unverified_from_attempted() -> None:
     )
     assert result_invalid.per_fixture[0].sut_attempted is True
     assert result_invalid.per_fixture[0].passed is False
-    assert result_invalid.per_fixture[0].spec_violation_reason == "sut_result_invalid_type"
+    assert result_invalid.per_fixture[0].spec_violation_reason is None
+    assert result_invalid.per_fixture[0].sut_failure_reason == "sut_result_invalid_type"
 
 
 def test_high_coverage_with_sut_failure_blocks_threshold_met() -> None:

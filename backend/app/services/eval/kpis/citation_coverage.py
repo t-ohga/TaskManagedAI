@@ -91,6 +91,14 @@ class CitationCoverageFixtureResult:
           compliance AND the SUT returned ``True``. Downstream consumers
           building pass/fail rollups must filter on ``sut_attempted`` to
           distinguish "spec ok, SUT unverified" from "spec + SUT ok".
+
+    Failure-reason fields (F-PR31-R3-001 P2 adopt):
+        ``spec_violation_reason`` carries **only** fixture-spec failures
+        (envelope, claim parsing, no_claims, expected_aggregate). Runner-side
+        problems live on the separate ``sut_failure_reason`` field so
+        consumers that surface ``spec_violation_reason`` in dashboards do not
+        misclassify a SUT outage as a fixture defect. At most one of these
+        fields is non-None per fixture row.
     """
 
     fixture_id: str
@@ -101,6 +109,7 @@ class CitationCoverageFixtureResult:
     expected_coverage_ratio: float | None
     passed: bool
     spec_violation_reason: str | None
+    sut_failure_reason: str | None
     sut_result: bool | None
     sut_attempted: bool
 
@@ -445,11 +454,14 @@ def evaluate_citation_coverage(
                 recomputed_with_citation=claims_with_citation,
             )
 
-        failure_reason = spec_reason
-        spec_side_failure = spec_reason is not None
+        # F-PR31-R3-001 P2 adopt: keep ``spec_violation_reason`` and
+        # ``sut_failure_reason`` strictly separate so dashboards / aggregators
+        # surfacing one cannot misattribute the other.
+        spec_violation_reason = spec_reason
+        sut_failure_reason: str | None = None
         sut_result: bool | None = None
         sut_attempted = False
-        passed = failure_reason is None
+        passed = spec_reason is None
 
         if sut_results is not None:
             # F-CR-002 P1 adopt: ``sut_attempted`` makes the dual meaning of
@@ -464,8 +476,8 @@ def evaluate_citation_coverage(
                 # downstream so EvalResult diagnostics blame the runner, not
                 # the fixture spec.
                 passed = False
-                if failure_reason is None:
-                    failure_reason = "sut_result_missing"
+                if sut_failure_reason is None:
+                    sut_failure_reason = "sut_result_missing"
                     sut_failure_present = True
             else:
                 raw_sut_value = sut_results[fixture.fixture_id]
@@ -475,16 +487,18 @@ def evaluate_citation_coverage(
                     # failure (runner returned garbage) rather than a spec
                     # violation so the per-fixture diagnostic is accurate.
                     passed = False
-                    if failure_reason is None:
-                        failure_reason = "sut_result_invalid_type"
+                    if sut_failure_reason is None:
+                        sut_failure_reason = "sut_result_invalid_type"
                         sut_failure_present = True
                 else:
                     sut_result = raw_sut_value
                     if not sut_result:
                         passed = False
+                        if sut_failure_reason is None:
+                            sut_failure_reason = "sut_result_false"
                         sut_failure_present = True
 
-        if spec_side_failure:
+        if spec_violation_reason is not None:
             spec_violation_present = True
 
         per_fixture.append(
@@ -496,7 +510,8 @@ def evaluate_citation_coverage(
                 recomputed_coverage_ratio=recomputed_ratio,
                 expected_coverage_ratio=expected_ratio,
                 passed=passed,
-                spec_violation_reason=failure_reason,
+                spec_violation_reason=spec_violation_reason,
+                sut_failure_reason=sut_failure_reason,
                 sut_result=sut_result,
                 sut_attempted=sut_attempted,
             )
