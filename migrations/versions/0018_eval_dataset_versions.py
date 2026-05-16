@@ -144,6 +144,17 @@ def upgrade() -> None:
             "dataset_version_id",
             name="eval_runs_uq_tenant_id_dataset_version",
         ),
+        # F-PR28-R3-005 P2 adopt: composite unique key needed as the FK target
+        # for future RetrievalEvalRun spec (SP-010 QL-C cross-ref):
+        # ``(tenant_id, eval_run_id, agent_run_id) references eval_runs(tenant_id, id, run_id)``.
+        # Even though ``(tenant_id, id)`` is already unique, the FK target tuple
+        # must be declared explicitly.
+        sa.UniqueConstraint(
+            "tenant_id",
+            "id",
+            "run_id",
+            name="eval_runs_uq_tenant_id_run",
+        ),
     )
     op.create_index(
         "eval_runs_ix_tenant_dataset_started",

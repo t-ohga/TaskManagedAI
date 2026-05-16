@@ -25,6 +25,17 @@ class GitCommit:
     sha: str
     author: str
     committed_at: int
+    # F-PR28-R3-006 P2 adopt: ``author`` (%an) is a mutable display name. Including
+    # ``author_email`` (%ae) provides a more stable contributor identity for
+    # author_inversion checks. An empty string is used when git format does not
+    # return an email (legacy paths).
+    author_email: str = ""
+
+    @property
+    def author_identity(self) -> str:
+        """Stable identity: ``author<email>``. Falls back to author when email blank."""
+
+        return f"{self.author}<{self.author_email}>" if self.author_email else self.author
 
 
 class AntiGamingViolation(Exception):
@@ -92,7 +103,9 @@ def _default_git_log_runner(repo_root: Path, path: Path) -> Sequence[GitCommit]:
             "-C",
             str(repo_root),
             "log",
-            "--format=%H%x1f%an%x1f%ct",
+            # F-PR28-R3-006 P2 adopt: include %ae (author email) for stable
+            # contributor identity. ``%an`` alone is a mutable display name.
+            "--format=%H%x1f%an%x1f%ae%x1f%ct",
             "--",
             str(git_path),
         ],
@@ -111,14 +124,21 @@ def _default_git_log_runner(repo_root: Path, path: Path) -> Sequence[GitCommit]:
         if not line:
             continue
         parts = line.split(_UNIT_SEPARATOR)
-        if len(parts) != 3:
+        if len(parts) != 4:
             raise RuntimeError(f"unexpected git log format for path {git_path}")
-        sha, author, committed_at = parts
+        sha, author, author_email, committed_at = parts
         try:
             committed_at_int = int(committed_at)
         except ValueError as exc:
             raise RuntimeError(f"unexpected git commit timestamp for path {git_path}") from exc
-        commits.append(GitCommit(sha=sha, author=author, committed_at=committed_at_int))
+        commits.append(
+            GitCommit(
+                sha=sha,
+                author=author,
+                author_email=author_email,
+                committed_at=committed_at_int,
+            )
+        )
     return commits
 
 
@@ -181,10 +201,11 @@ def verify_fixture_commit_separation(
             continue
 
         for policy_path, policy_commits in policy_commits_by_path.items():
-            # author_inversion: scan all policy commits for the same author within window.
+            # author_inversion: scan all policy commits for the same stable
+            # author identity (name<email>, F-PR28-R3-006 P2 adopt) within window.
             for policy_commit in policy_commits:
                 if (
-                    fixture_commit.author == policy_commit.author
+                    fixture_commit.author_identity == policy_commit.author_identity
                     and abs(fixture_commit.committed_at - policy_commit.committed_at) <= window_seconds
                 ):
                     violations.append(

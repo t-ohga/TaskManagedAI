@@ -29,11 +29,12 @@ LOADER_FIXTURE_KINDS: Final[frozenset[FixtureKind]] = frozenset(LOADER_FIXTURE_K
 
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 _EXPECTED_SCHEMA_FILENAME = "expected_schema.json"
-_PUBLIC_EXPECTED_KEYS: Final[frozenset[str]] = frozenset(
+# F-PR28-R3-002 P1 adopt: hard-coded TI-specific expectation set replaced with a
+# generic ``expected_*``-prefix heuristic plus a small known-non-prefixed set.
+# Per-corpus required expectation keys come from ``expected_schema.json``
+# (Draft 7 ``required``), making the loader generic across Hard Gate / KPI corpora.
+_KNOWN_NON_PREFIXED_EXPECTATION_KEYS: Final[frozenset[str]] = frozenset(
     {
-        "expected_decision",
-        "expected_failure",
-        "expected_reason_code",
         "pattern_hit_kind",
         "assertions",
     }
@@ -51,7 +52,22 @@ _REQUIRED_FIXTURE_KEYS: Final[frozenset[str]] = frozenset(
         "metadata",
     }
 )
-_REQUIRED_PUBLIC_FIXTURE_KEYS: Final[frozenset[str]] = _REQUIRED_FIXTURE_KEYS | _PUBLIC_EXPECTED_KEYS
+# Required envelope keys are common to all corpora. Dataset-specific required
+# expectation keys are enforced by the dataset's expected_schema.json
+# (jsonschema Draft 7 validation), not by this set.
+_REQUIRED_PUBLIC_FIXTURE_KEYS: Final[frozenset[str]] = _REQUIRED_FIXTURE_KEYS
+
+
+def _is_expectation_key(key: object) -> bool:
+    """True if ``key`` denotes a fixture expectation (vs. input / identification)."""
+
+    if not isinstance(key, str):
+        return False
+    return key.startswith("expected_") or key in _KNOWN_NON_PREFIXED_EXPECTATION_KEYS
+
+
+def _expectation_keys_in(raw_fixture: JsonDict) -> frozenset[str]:
+    return frozenset(key for key in raw_fixture if _is_expectation_key(key))
 _REQUIRED_INDEX_ENTRY_KEYS: Final[frozenset[str]] = frozenset({"sha256", "split", "created_at"})
 _REQUIRED_ANTI_GAMING_RULES: Final[frozenset[str]] = frozenset(
     {
@@ -450,16 +466,18 @@ def _assert_index_split_consistency(
 
 
 def _case_json(raw_fixture: JsonDict) -> JsonDict:
-    return {
-        key: value
-        for key, value in raw_fixture.items()
-        if key not in _PUBLIC_EXPECTED_KEYS
-    }
+    # F-PR28-R3-002 P1 adopt: schema-agnostic split — any key recognised as an
+    # expectation key (expected_* prefix or known non-prefixed) goes to
+    # expected_json; everything else (envelope + input + metadata) stays in
+    # case_json.
+    expectation_keys = _expectation_keys_in(raw_fixture)
+    return {key: value for key, value in raw_fixture.items() if key not in expectation_keys}
 
 
 def _expected_json(raw_fixture: JsonDict, fixture_kind: FixtureKind) -> JsonDict:
     if fixture_kind == "public_regression":
-        return {key: raw_fixture[key] for key in sorted(_PUBLIC_EXPECTED_KEYS) if key in raw_fixture}
+        expectation_keys = _expectation_keys_in(raw_fixture)
+        return {key: raw_fixture[key] for key in sorted(expectation_keys)}
 
     metadata = _require_object(raw_fixture.get("metadata"), source_path=Path("fixture.json"), key="metadata")
     expectation_ref = metadata.get("expectation_ref")
@@ -497,18 +515,12 @@ def _fixture_from_raw(
     if fixture_kind == "public_regression":
         _validate_public_fixture_schema(raw_fixture, schema, source_path)
     else:
-        # F-PR28-R1-005 P2 adopt: anti-gaming for redacted splits must reject
-        # ALL expectation-style fields, not just the tenant_isolation-specific set.
-        # Other corpora use expected_block / expected_agent_run_status /
-        # expected_pattern_hit_kind / expected_aggregate etc.; whitelisting only
-        # the tenant_isolation keys would silently store holdout expectations
-        # in case_json, exposing them to policy/prompt authors.
-        leaked_expectation_keys = sorted(
-            key
-            for key in raw_fixture
-            if isinstance(key, str)
-            and (key in _PUBLIC_EXPECTED_KEYS or key.startswith("expected_") or key == "assertions")
-        )
+        # F-PR28-R1-005 P2 + R3-002 P1 adopt: anti-gaming for redacted splits must
+        # reject ALL expectation-style fields. Use the same generic predicate as
+        # the case/expected split so corpora with expected_block / expected_aggregate /
+        # expected_pattern_hit_kind etc. cannot leak holdout expectations into
+        # case_json.
+        leaked_expectation_keys = sorted(_expectation_keys_in(raw_fixture))
         if leaked_expectation_keys:
             raise FixtureLoadError(
                 f"{source_path}: redacted fixture contains prohibited expectation keys {leaked_expectation_keys}"
@@ -640,17 +652,24 @@ async def sync_dataset_version_to_db(
             f"content_hash mismatch (expected={content_hash[:8]}..., actual={calculated_hash[:8]}...)"
         )
 
+    # F-PR28-R3-001 P1 adopt: SELECT must match the DB unique key
+    # (tenant_id, dataset_key, version, fixture_kind). Without fixture_kind, the
+    # second split (e.g., private_holdout after public_regression) would be
+    # falsely rejected as a duplicate even though the migration's unique key
+    # permits separate rows per split.
     existing = await session.scalar(
         sa.select(DatasetVersion).where(
             DatasetVersion.tenant_id == tenant_id,
             DatasetVersion.dataset_key == dataset_key,
             DatasetVersion.version == version,
+            DatasetVersion.fixture_kind == fixture_kind,
         )
     )
     if existing is not None:
         raise DatasetVersionSyncError(
             "dataset version already exists for "
-            f"tenant_id={tenant_id}, dataset_key={dataset_key!r}, version={version!r}"
+            f"tenant_id={tenant_id}, dataset_key={dataset_key!r}, "
+            f"version={version!r}, fixture_kind={fixture_kind!r}"
         )
 
     dataset_version = DatasetVersion(

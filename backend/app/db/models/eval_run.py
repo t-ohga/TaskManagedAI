@@ -51,6 +51,14 @@ class EvalRun(TenantIdMixin, Base):
             "dataset_version_id",
             name="eval_runs_uq_tenant_id_dataset_version",
         ),
+        # F-PR28-R3-005 P2 adopt: composite unique key for future RetrievalEvalRun
+        # FK target (SP-010 QL-C cross-ref).
+        sa.UniqueConstraint(
+            "tenant_id",
+            "id",
+            "run_id",
+            name="eval_runs_uq_tenant_id_run",
+        ),
         sa.Index(
             "eval_runs_ix_tenant_dataset_started",
             "tenant_id",
