@@ -29,6 +29,7 @@ import re
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Final
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
@@ -39,17 +40,25 @@ _SHA256_HEX_RE: Final[re.Pattern[str]] = re.compile(r"^[0-9a-fA-F]{64}$")
 # percent-encoded triplets MUST be uppercase hex digits).
 _PERCENT_ESCAPE_RE: Final[re.Pattern[str]] = re.compile(r"%([0-9a-fA-F]{2})")
 
-# F-R2-002 fix (Codex R2 P2): mirror prov_validator's _PROV_TOP_LEVEL_ALIASES so
-# bundles persisted with ``prov:`` prefixes still hash identically to their
-# unprefixed counterparts. We keep this list in sync with
-# ``backend/app/services/research/prov_validator.py`` (cross-source-enum-
-# integrity §1: drift must be caught by tests that compare both lists).
+# F-R2-002 + F-R3-003 fix (Codex R2 P2 + R3 P1): mirror prov_validator's
+# _PROV_TOP_LEVEL_ALIASES so bundles persisted with ``prov:`` prefixes still
+# hash identically to their unprefixed counterparts. **R3 fix**: also alias
+# the *node* sections (``prov:activities`` / ``prov:entities`` /
+# ``prov:agents``); a claim that uses these prefixed keys would otherwise
+# hash with empty node sections even though the validator accepts them.
+# Keep in sync with backend/app/services/research/prov_validator.py
+# (cross-source-enum-integrity §1).
 _PROV_NAMESPACE_ALIASES: Final[dict[str, str]] = {
+    # relation aliases
     "prov:wasGeneratedBy": "wasGeneratedBy",
     "prov:used": "used",
     "prov:wasAttributedTo": "wasAttributedTo",
     "prov:wasInformedBy": "wasInformedBy",
     "prov:wasDerivedFrom": "wasDerivedFrom",
+    # node section aliases (F-R3-003)
+    "prov:activities": "activities",
+    "prov:entities": "entities",
+    "prov:agents": "agents",
 }
 
 # F-R2-003 fix (Codex R2 P2): allowed evidence_item relations per
@@ -519,27 +528,98 @@ def _nfc_walk(value: Any) -> Any:  # noqa: ANN401
     return value
 
 
+def _ecma_number_to_string(x: float | int) -> str:
+    """F-R3-004 fix (Codex R3 P2): RFC 8785 §3.2.2.3 / ECMAScript
+    ``Number.prototype.toString`` number canonicalization for floats.
+
+    Python's stock ``json.dumps`` emits ``1.0`` (RFC 8785 wants ``1``),
+    ``1e-06`` (wants ``0.000001``), and ``-0.0`` (wants ``0``). Since
+    ``evidence_items.relevance_score`` rides in the canonical body, drift
+    here would silently change the hash across stacks.
+
+    Algorithm (relevance_score is validated to ``[0, 1]`` so the scientific-
+    form / large-magnitude branches of ECMAScript ToString are unreachable):
+
+    1. ``0`` / ``-0.0`` / integer-valued ``int`` → ``str(int)`` (no decimal
+       point, no sign on zero).
+    2. Convert via ``Decimal(repr(x))`` to keep the IEEE-754 shortest
+       round-trip representation, then ``format(d, "f")`` to force decimal
+       (no ``e``) form.
+    3. Strip trailing zeros and a trailing decimal point so ``1.0 -> 1``
+       and ``0.5000 -> 0.5``.
+
+    The PyPI ``jcs`` package is intentionally not used so the hash producer
+    keeps zero third-party surface.
+    """
+    if isinstance(x, bool):  # bool ⊂ int — never hash as number
+        raise EvidenceSetHashError(
+            "jcs_bool_not_number",
+            "bool must not appear where a JCS number is expected",
+        )
+    if isinstance(x, int):
+        return str(x)
+    # float
+    if x != x:  # NaN
+        raise EvidenceSetHashError("jcs_nan_forbidden", "NaN is not JSON")
+    if x in (float("inf"), float("-inf")):
+        raise EvidenceSetHashError("jcs_infinity_forbidden", "Infinity is not JSON")
+    if x == 0:
+        return "0"  # collapse +0.0 / -0.0
+    # repr(x) gives the shortest round-trip decimal (Python 3.1+ uses dtoa /
+    # "shortest" algorithm matching ECMA-262 ToString).
+    d = Decimal(repr(x))
+    s = format(d, "f")
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s or "0"
+
+
 def _jcs_dumps(obj: Any) -> str:  # noqa: ANN401
     """RFC 8785 JSON Canonicalization Scheme (JCS) serialization.
 
-    Python's ``json.dumps(sort_keys=True, separators=(",", ":"),
-    ensure_ascii=False)`` already covers the JCS-mandated I-JSON subset for
-    our use case (no JS-style numbers, all values are strings / ints /
-    bools / null / arrays / objects). We additionally enforce
-    ``ensure_ascii=False`` so NFC-normalized UTF-8 stays byte-exact.
+    Walk the tree recursively and emit each node in JCS canonical form:
 
-    NOTE: full JCS (with IEEE-754 number canonicalization) requires the
-    ``jcs`` PyPI package; that dependency is intentionally avoided here so
-    the hash producer has zero third-party surface. The evidence_set_hash
-    inputs are all server-side normalized values (sha256 hexes, UUIDs,
-    NFC strings), none of which require RFC 8785 number serialization.
+    - object keys are sorted by their UTF-16 code-unit ordering (Python's
+      default ``sorted`` over Unicode code points happens to coincide for
+      the BMP characters that appear in our canonical body; the canonical
+      body never contains supplementary-plane keys);
+    - array order is preserved (callers must sort beforehand for
+      deterministic ordering, which is what ``compute_evidence_set_hash``
+      does);
+    - numbers use ECMA-262 ToString canonicalization via
+      ``_ecma_number_to_string`` (F-R3-004 fix);
+    - strings round-trip through ``json.dumps`` to share the escape
+      sequence rules with the rest of the codebase;
+    - booleans / null map to ``true`` / ``false`` / ``null`` verbatim.
+
+    Reject any unsupported type with a structured ``EvidenceSetHashError``
+    so callers cannot silently smuggle non-JSON inputs through.
     """
-    return json.dumps(
-        obj,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
+    if obj is None:
+        return "null"
+    if isinstance(obj, bool):
+        return "true" if obj else "false"
+    if isinstance(obj, (int, float)):
+        return _ecma_number_to_string(obj)
+    if isinstance(obj, str):
+        return json.dumps(obj, ensure_ascii=False)
+    if isinstance(obj, list):
+        return "[" + ",".join(_jcs_dumps(v) for v in obj) + "]"
+    if isinstance(obj, dict):
+        parts: list[str] = []
+        for key in sorted(obj.keys()):
+            if not isinstance(key, str):
+                raise EvidenceSetHashError(
+                    "jcs_non_string_key",
+                    f"JCS requires string keys, got {type(key).__name__}",
+                )
+            parts.append(
+                f"{json.dumps(key, ensure_ascii=False)}:{_jcs_dumps(obj[key])}"
+            )
+        return "{" + ",".join(parts) + "}"
+    raise EvidenceSetHashError(
+        "jcs_unsupported_type",
+        f"unsupported type in canonical body: {type(obj).__name__}",
     )
 
 
@@ -580,11 +660,18 @@ def compute_evidence_set_hash(
     # Deterministic ordering (Sprint Pack §設計判断: claim_id / source_id 昇順)
     claim_list = sorted(claims, key=lambda c: c.claim_id)
     source_list = sorted(sources, key=lambda s: s.source_id)
-    # F-R2-001 fix: evidence_items sorted by (claim_id, source_id, locator) so
-    # locator-level changes shift the hash deterministically.
+    # F-R2-001 + F-R3-005 fix: evidence_items sorted by
+    # (claim_id, source_id, locator, relation, id) so:
+    #   * locator-level changes shift the hash deterministically
+    #     (F-R2-001 layered input invariant), and
+    #   * two evidence_items that share claim/source/locator/relation but
+    #     differ on ``id`` (or downstream on relevance_score) hash to a
+    #     **total** ordering (F-R3-005). Without the ``id`` tiebreaker the
+    #     sort is stable, so caller-side row ordering would leak into the
+    #     hash for that degenerate-but-legal case.
     item_list = sorted(
         evidence_items,
-        key=lambda e: (e.claim_id, e.source_id, e.locator, e.relation),
+        key=lambda e: (e.claim_id, e.source_id, e.locator, e.relation, e.id),
     )
 
     # F-R2-004 fix (Codex R2 P2): in production, every claim must carry a
@@ -611,7 +698,13 @@ def compute_evidence_set_hash(
         prov_canonical[str(claim.claim_id)] = _normalize_prov_bundle(raw)
 
     canonical_body = {
-        "schema_version": "2",  # F-R2-001 layered evidence_items input
+        # schema_version bumped on every shape / serialization-affecting change:
+        #   "1" — pre-R2 (claims + sources + provenance only)
+        #   "2" — F-R2-001 evidence_items layer
+        #   "3" — F-R3-003 PROV node-section alias map +
+        #         F-R3-004 RFC 8785 / ECMA-262 number canonicalization +
+        #         F-R3-005 total-ordering id tiebreaker
+        "schema_version": "3",
         "claims": [
             {
                 "claim_id": str(c.claim_id),

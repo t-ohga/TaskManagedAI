@@ -23,6 +23,8 @@ from backend.app.services.research.evidence_set_hash import (
     EvidenceItemNormalized,
     EvidenceSetHashError,
     SourceNormalized,
+    _ecma_number_to_string,
+    _jcs_dumps,
     compute_evidence_set_hash,
     normalize_url,
 )
@@ -547,6 +549,282 @@ class TestInputValidation:
                 content_hash="0" * 64,
             )
         assert exc.value.reason_code == "canonical_url_type_invalid"
+
+
+class TestR3ProvNodeSectionAlias:
+    """F-R3-003 fix (Codex R3 P1): ``prov:activities`` / ``prov:entities`` /
+    ``prov:agents`` are accepted by the validator and MUST hash identically to
+    their unprefixed forms. Pre-R3 the alias map only covered relations, so a
+    bundle persisted with prefixed node sections silently hashed with empty
+    activities/entities/agents."""
+
+    def test_prefixed_activities_same_as_unprefixed(self) -> None:
+        cid = uuid4()
+        unprefixed = {
+            cid: {
+                "activities": [{"id": "act-1", "type": "prov:Activity"}],
+                "wasGeneratedBy": [
+                    {"generated": "ent-1", "activity": "act-1"}
+                ],
+            }
+        }
+        prefixed = {
+            cid: {
+                "prov:activities": [{"id": "act-1", "type": "prov:Activity"}],
+                "wasGeneratedBy": [
+                    {"generated": "ent-1", "activity": "act-1"}
+                ],
+            }
+        }
+        h_un = compute_evidence_set_hash([_claim("c", claim_id=cid)], [], unprefixed)
+        h_pre = compute_evidence_set_hash([_claim("c", claim_id=cid)], [], prefixed)
+        assert h_un == h_pre
+
+    def test_prefixed_entities_same_as_unprefixed(self) -> None:
+        cid = uuid4()
+        unprefixed = {
+            cid: {
+                "entities": [{"id": "ent-1", "type": "prov:Entity"}],
+                "wasGeneratedBy": [
+                    {"generated": "ent-1", "activity": "act-1"}
+                ],
+            }
+        }
+        prefixed = {
+            cid: {
+                "prov:entities": [{"id": "ent-1", "type": "prov:Entity"}],
+                "wasGeneratedBy": [
+                    {"generated": "ent-1", "activity": "act-1"}
+                ],
+            }
+        }
+        h_un = compute_evidence_set_hash([_claim("c", claim_id=cid)], [], unprefixed)
+        h_pre = compute_evidence_set_hash([_claim("c", claim_id=cid)], [], prefixed)
+        assert h_un == h_pre
+
+    def test_prefixed_agents_same_as_unprefixed(self) -> None:
+        cid = uuid4()
+        unprefixed = {
+            cid: {
+                "agents": [{"id": "agent-1", "type": "prov:Agent"}],
+                "wasGeneratedBy": [
+                    {"generated": "ent-1", "activity": "act-1"}
+                ],
+            }
+        }
+        prefixed = {
+            cid: {
+                "prov:agents": [{"id": "agent-1", "type": "prov:Agent"}],
+                "wasGeneratedBy": [
+                    {"generated": "ent-1", "activity": "act-1"}
+                ],
+            }
+        }
+        h_un = compute_evidence_set_hash([_claim("c", claim_id=cid)], [], unprefixed)
+        h_pre = compute_evidence_set_hash([_claim("c", claim_id=cid)], [], prefixed)
+        assert h_un == h_pre
+
+    def test_prefixed_and_unprefixed_node_section_conflict_rejected(self) -> None:
+        cid = uuid4()
+        prov = {
+            cid: {
+                "activities": [{"id": "a1"}],
+                "prov:activities": [{"id": "a2"}],
+                "wasGeneratedBy": [{"generated": "ent-1", "activity": "act-1"}],
+            }
+        }
+        with pytest.raises(EvidenceSetHashError) as exc:
+            compute_evidence_set_hash([_claim("c", claim_id=cid)], [], prov)
+        assert exc.value.reason_code == "prov_duplicate_aliased_key"
+
+
+class TestR3JCSNumberCanonical:
+    """F-R3-004 fix (Codex R3 P2): RFC 8785 / ECMA-262 ToString(Number)
+    canonicalization. Python ``json.dumps`` deviates from JCS for several
+    float subcases that ride in the canonical body via
+    ``evidence_items.relevance_score``."""
+
+    def test_integer_float_emits_no_decimal_point(self) -> None:
+        assert _ecma_number_to_string(1.0) == "1"
+        assert _ecma_number_to_string(0.0) == "0"
+        assert _ecma_number_to_string(-0.0) == "0"  # collapse signed zero
+
+    def test_small_magnitude_uses_decimal_form_not_scientific(self) -> None:
+        assert _ecma_number_to_string(1e-06) == "0.000001"
+        assert _ecma_number_to_string(1e-05) == "0.00001"
+
+    def test_normal_floats_round_trip_shortest_decimal(self) -> None:
+        assert _ecma_number_to_string(0.5) == "0.5"
+        assert _ecma_number_to_string(0.9) == "0.9"
+
+    def test_int_emits_str(self) -> None:
+        assert _ecma_number_to_string(0) == "0"
+        assert _ecma_number_to_string(1) == "1"
+        assert _ecma_number_to_string(42) == "42"
+
+    def test_nan_rejected(self) -> None:
+        with pytest.raises(EvidenceSetHashError) as exc:
+            _ecma_number_to_string(float("nan"))
+        assert exc.value.reason_code == "jcs_nan_forbidden"
+
+    def test_infinity_rejected(self) -> None:
+        with pytest.raises(EvidenceSetHashError) as exc:
+            _ecma_number_to_string(float("inf"))
+        assert exc.value.reason_code == "jcs_infinity_forbidden"
+
+    def test_bool_rejected_as_number(self) -> None:
+        """bool is a subclass of int in Python; the JCS encoder must short-
+        circuit booleans to ``true`` / ``false`` and never hash them as
+        numbers."""
+        with pytest.raises(EvidenceSetHashError) as exc:
+            _ecma_number_to_string(True)  # type: ignore[arg-type]
+        assert exc.value.reason_code == "jcs_bool_not_number"
+
+    def test_jcs_dumps_emits_canonical_floats(self) -> None:
+        body = {"a": 1.0, "b": 1e-06, "c": -0.0}
+        out = _jcs_dumps(body)
+        # keys sorted, no spaces, floats canonical
+        assert out == '{"a":1,"b":0.000001,"c":0}'
+
+    def test_jcs_dumps_emits_canonical_strings_and_bools(self) -> None:
+        out = _jcs_dumps({"k": "v", "b": True, "n": None, "l": [1, 2]})
+        assert out == '{"b":true,"k":"v","l":[1,2],"n":null}'
+
+    def test_jcs_dumps_unsupported_type_rejected(self) -> None:
+        with pytest.raises(EvidenceSetHashError) as exc:
+            _jcs_dumps({"k": object()})  # type: ignore[dict-item]
+        assert exc.value.reason_code == "jcs_unsupported_type"
+
+    def test_jcs_dumps_non_string_key_rejected(self) -> None:
+        with pytest.raises(EvidenceSetHashError) as exc:
+            _jcs_dumps({1: "v"})  # type: ignore[dict-item]
+        assert exc.value.reason_code == "jcs_non_string_key"
+
+    def test_float_drift_in_relevance_score_visible_in_hash(self) -> None:
+        """End-to-end: an evidence_item with relevance_score=1.0 must hash
+        identically to relevance_score=1 (int); pre-R3 they would have
+        diverged via ``1.0`` vs ``1`` JSON encoding."""
+        cid = uuid4()
+        sid = uuid4()
+        eid = uuid4()
+        prov = {cid: {"wasGeneratedBy": [{"generated": "e1", "activity": "a1"}]}}
+        h_float = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)],
+            [_source("https://example.com", source_id=sid)],
+            prov,
+            evidence_items=[
+                EvidenceItemNormalized.from_raw(
+                    id=eid,
+                    claim_id=cid,
+                    source_id=sid,
+                    locator="p.1",
+                    relation="supports",
+                    relevance_score=1.0,
+                )
+            ],
+        )
+        h_int = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)],
+            [_source("https://example.com", source_id=sid)],
+            prov,
+            evidence_items=[
+                EvidenceItemNormalized.from_raw(
+                    id=eid,
+                    claim_id=cid,
+                    source_id=sid,
+                    locator="p.1",
+                    relation="supports",
+                    relevance_score=1,
+                )
+            ],
+        )
+        assert h_float == h_int
+
+
+class TestR3EvidenceItemsTotalOrdering:
+    """F-R3-005 fix (Codex R3 P2): evidence_items sort key must include the
+    PK so two rows that share claim/source/locator/relation but differ in
+    ``id`` (and downstream relevance_score) have a deterministic total
+    ordering. Pre-R3 the stable sort leaked caller-side input order."""
+
+    def test_same_compound_key_different_id_deterministic(self) -> None:
+        cid = uuid4()
+        sid = uuid4()
+        # Pick IDs whose UUID ordering is known so we can flip caller-side
+        # ordering and verify the producer re-sorts deterministically.
+        eid_a = UUID("00000000-0000-0000-0000-000000000001")
+        eid_b = UUID("00000000-0000-0000-0000-000000000002")
+        prov = {cid: {"wasGeneratedBy": [{"generated": "e1", "activity": "a1"}]}}
+
+        item_a = EvidenceItemNormalized.from_raw(
+            id=eid_a,
+            claim_id=cid,
+            source_id=sid,
+            locator="p.1",
+            relation="supports",
+            relevance_score=0.5,
+        )
+        item_b = EvidenceItemNormalized.from_raw(
+            id=eid_b,
+            claim_id=cid,
+            source_id=sid,
+            locator="p.1",
+            relation="supports",
+            relevance_score=0.7,
+        )
+
+        h_ab = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)],
+            [_source("https://example.com", source_id=sid)],
+            prov,
+            evidence_items=[item_a, item_b],
+        )
+        h_ba = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)],
+            [_source("https://example.com", source_id=sid)],
+            prov,
+            evidence_items=[item_b, item_a],
+        )
+        assert h_ab == h_ba
+
+    def test_id_change_only_shifts_hash(self) -> None:
+        """If the only difference is the evidence_item ``id`` (claim/source/
+        locator/relation/score identical), the hash must still shift — the
+        ``id`` is part of the canonical body, not just the sort key."""
+        cid = uuid4()
+        sid = uuid4()
+        prov = {cid: {"wasGeneratedBy": [{"generated": "e1", "activity": "a1"}]}}
+        h1 = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)],
+            [_source("https://example.com", source_id=sid)],
+            prov,
+            evidence_items=[
+                EvidenceItemNormalized.from_raw(
+                    id=UUID("00000000-0000-0000-0000-000000000001"),
+                    claim_id=cid,
+                    source_id=sid,
+                    locator="p.1",
+                    relation="supports",
+                    relevance_score=0.5,
+                )
+            ],
+        )
+        h2 = compute_evidence_set_hash(
+            [_claim("c", claim_id=cid)],
+            [_source("https://example.com", source_id=sid)],
+            prov,
+            evidence_items=[
+                EvidenceItemNormalized.from_raw(
+                    id=UUID("00000000-0000-0000-0000-000000000002"),
+                    claim_id=cid,
+                    source_id=sid,
+                    locator="p.1",
+                    relation="supports",
+                    relevance_score=0.5,
+                )
+            ],
+        )
+        assert h1 != h2
 
 
 class TestRandomFuzz:
