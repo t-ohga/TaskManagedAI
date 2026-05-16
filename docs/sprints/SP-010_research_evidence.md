@@ -355,7 +355,7 @@ pnpm test -- research
   - `eval/security/tenant_isolation/public_regression/research_to_ticket_cross_tenant_approval_request_id_rejected.json`
   - `eval/security/tenant_isolation/public_regression/citation_coverage_cross_tenant_research_task_id_rejected.json`
 - **修正 file**:
-  - `eval/security/tenant_isolation/manifest.json` — expected_count 1 → 14 + immutable_index 13 件追加 (dataset_version bump: v2026.05.01-skeleton → v2026.05.16-sprint10-batch5、Codex F-PR27-R1-001 P2 adopt)
+  - `eval/security/tenant_isolation/manifest.json` — expected_count 1 → 14 + immutable_index 13 件追加 (dataset_version 維持 v2026.05.01-skeleton (Codex F-PR27-R2-001 P1 adopt: append-only refresh per testing.md §10、legacy fixture identity 不変)、F-PR27-R1-001 P2 (aggregate score comparability) は Sprint 11 BL-0158 multi-version loader 拡張へ defer)
 - **既存 cross-project 11 tests と本 cross-tenant 14 fixtures (1 legacy + 13 new) の併用で AC-HARD-03 coverage 完全化**
 - **Sprint 11 BL-0158 で aggregator が消費**
 - **frontmatter `status: completed` 化**: Sprint 10 batch 0-5 全 BL clean 達成、Sprint 10 closure 完了

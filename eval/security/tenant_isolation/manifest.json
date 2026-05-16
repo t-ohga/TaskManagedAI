@@ -1,7 +1,7 @@
 {
   "hard_gate_id": "AC-HARD-03",
   "metric": "tenant_isolation_negative_pass",
-  "dataset_version": "v2026.05.16-sprint10-batch5",
+  "dataset_version": "v2026.05.01-skeleton",
   "splits": {
     "public_regression": {
       "path": "public_regression/",
@@ -22,75 +22,75 @@
   },
   "expected_schema": "expected_schema.json",
   "fixture_immutable_index": {
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_citation_coverage_cross_tenant_research_task_id_rejected": {
-      "sha256": "3ccf3d88fb6eb785c327967d3891190c74d1d198086eb974eab21a018c3456f5",
+    "AC-HARD-03_v2026.05.01-skeleton_citation_coverage_cross_tenant_research_task_id_rejected": {
+      "sha256": "4c14764ab9a3750a0c0bf6caa35d3e23fb68c745809d63ede97d5b5f4c0fa32e",
       "split": "public_regression",
       "created_at": "2026-05-16"
     },
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_claims_cross_tenant_delete_no_match": {
-      "sha256": "64d2bb4fad8bff777b93a0584b195905bfd63c3a88a3c012eb2f645f9ede492c",
+    "AC-HARD-03_v2026.05.01-skeleton_claims_cross_tenant_delete_no_match": {
+      "sha256": "a6858f14ab35d895e9cc501c5de8d63d1fed42b5b01993bac1313b0e561a0a40",
       "split": "public_regression",
       "created_at": "2026-05-16"
     },
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_claims_cross_tenant_insert_composite_fk": {
-      "sha256": "77bd0b934beba99298a7c9a5e7e084804be618b2564cee863ae599b39578a503",
+    "AC-HARD-03_v2026.05.01-skeleton_claims_cross_tenant_insert_composite_fk": {
+      "sha256": "375f27127e4d651d9621c6964dd9409f73a021eb244bd046f9333103ab53a77b",
       "split": "public_regression",
       "created_at": "2026-05-16"
     },
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_claims_cross_tenant_select_app_role": {
-      "sha256": "88babfabffada9e8118afaa581a240cac04bcacb802473e3df8aef756bd0ddfe",
+    "AC-HARD-03_v2026.05.01-skeleton_claims_cross_tenant_select_app_role": {
+      "sha256": "f1bc1e7f1f268e7181b2856a24f9f1532b8f61e44ddb765ec2a984b7842a8873",
       "split": "public_regression",
       "created_at": "2026-05-16"
     },
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_claims_cross_tenant_update_no_match": {
-      "sha256": "8192df2318afd59297013a87a5a03973b225113a6af675b410d991418fec0430",
+    "AC-HARD-03_v2026.05.01-skeleton_claims_cross_tenant_update_no_match": {
+      "sha256": "90ca2eecc25a6b8b27bf60a00e4e868b898e5e796203164b3d94896e5c4df935",
       "split": "public_regression",
       "created_at": "2026-05-16"
     },
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_cross_tenant_select_app_role": {
-      "sha256": "ed98e9d32f8a6f7d0c586480a1695e4f99f78397a87d7469a8cd0a49317ec7cf",
+    "AC-HARD-03_v2026.05.01-skeleton_evidence_items_cross_tenant_delete_no_match": {
+      "sha256": "85defad594ff92e496f212a1389f336b083b6c201fe342291b31dda7ea58392b",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_evidence_items_cross_tenant_select_app_role": {
+      "sha256": "7e95020e8a682c2e4e05e78f366b5b510a3a6b7e3681b3c2db9905cadd10b902",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_evidence_sources_cross_tenant_select_app_role": {
+      "sha256": "7c65ff098098b1134c8ab30cdcab20751be73f384eba607bd4c3ca1541863d48",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_delete_no_match": {
+      "sha256": "51e51f2f9b741ea5012ec8c911894557106e0ff951ac60db54e55cf3454461ca",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_insert_unique_id": {
+      "sha256": "ebc33fe2c4b88ddaa43e935d1cda77c519aa4bef20ef2bc9604380dd59fc87c6",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_select_app_role": {
+      "sha256": "c4ca7cc550b822bdccd133b0d272bd2a56621789ea7e39677166db0e6a73b187",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_update_no_match": {
+      "sha256": "f59d07ff5310267fe9651365dedac5eb56d6667ba0e102e8f3f65ac4fa075929",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_research_to_ticket_cross_tenant_approval_request_id_rejected": {
+      "sha256": "616ee6cb91223d6145d9b1cc31e2deceb3691773bf22988c7eabee2d1b8d6f9c",
+      "split": "public_regression",
+      "created_at": "2026-05-16"
+    },
+    "AC-HARD-03_v2026.05.01-skeleton_cross_tenant_select_app_role": {
+      "sha256": "e019c3e5a45dae6b0eb5fccbf96aae139a4c7d784947d72d7706048bde39ccd4",
       "split": "public_regression",
       "created_at": "2026-05-01"
-    },
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_evidence_items_cross_tenant_delete_no_match": {
-      "sha256": "6aee3c25a363117039ed97c28d587a3ed4518df6fd0f955ad1d8971fe87ea57c",
-      "split": "public_regression",
-      "created_at": "2026-05-16"
-    },
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_evidence_items_cross_tenant_select_app_role": {
-      "sha256": "5e8a4b173db3717b36c9cba80df982161b95f5725b5a20e1043b4eebffb0ecb6",
-      "split": "public_regression",
-      "created_at": "2026-05-16"
-    },
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_evidence_sources_cross_tenant_select_app_role": {
-      "sha256": "ec037acc6c08d03bfc65b4072b52fc7cfadcb1589ac9a94546143e8c940db1d4",
-      "split": "public_regression",
-      "created_at": "2026-05-16"
-    },
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_research_tasks_cross_tenant_delete_no_match": {
-      "sha256": "63aa8c353685420b8875427fce1183ec4ff986567c8d1c6c732e889fba9e602b",
-      "split": "public_regression",
-      "created_at": "2026-05-16"
-    },
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_research_tasks_cross_tenant_insert_unique_id": {
-      "sha256": "a68f49b561649a231168ecc14cc6f51604899140477198c1af8bb68e412fbe9a",
-      "split": "public_regression",
-      "created_at": "2026-05-16"
-    },
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_research_tasks_cross_tenant_select_app_role": {
-      "sha256": "1d07fa957c8c7298ef49821494e881b5e30940eb5defe964b346d40679f1cb66",
-      "split": "public_regression",
-      "created_at": "2026-05-16"
-    },
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_research_tasks_cross_tenant_update_no_match": {
-      "sha256": "1b87ed2347dac71928b55799ccc07f372d940278ba91f8a822b9ab5317e15c92",
-      "split": "public_regression",
-      "created_at": "2026-05-16"
-    },
-    "AC-HARD-03_v2026.05.16-sprint10-batch5_research_to_ticket_cross_tenant_approval_request_id_rejected": {
-      "sha256": "67bb61ca14050f13f647b8f29da9ff7a027055cf99b6a3c60e8570562a4b1638",
-      "split": "public_regression",
-      "created_at": "2026-05-16"
     }
   },
   "current_sprint_owners": [

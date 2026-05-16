@@ -1,6 +1,6 @@
 {
-  "fixture_id": "AC-HARD-03_v2026.05.16-sprint10-batch5_research_tasks_cross_tenant_insert_unique_id",
-  "dataset_version_id": "v2026.05.16-sprint10-batch5",
+  "fixture_id": "AC-HARD-03_v2026.05.01-skeleton_research_tasks_cross_tenant_insert_unique_id",
+  "dataset_version_id": "v2026.05.01-skeleton",
   "fixture_kind": "public_regression",
   "gate_id": "AC-HARD-03",
   "metric_key": "tenant_isolation_negative_pass",
@@ -11,8 +11,8 @@
     "tenant_context": {
       "current_tenant_id": 1,
       "target_tenant_id": 2,
-      "current_project_id": 10,
-      "target_project_id": 20
+      "current_project_id": "00000000-0000-4000-8000-000000050010",
+      "target_project_id": "00000000-0000-4000-8000-000000050020"
     },
     "sql_fixture": {
       "statement_kind": "cross_tenant_insert_unique_id",
