@@ -78,8 +78,16 @@ _SUPPORTED_FIXTURE_KINDS: Final[Sequence[FixtureKind]] = ("public_regression",)
 # noise across heterogeneous fixture writers cannot trigger false-positive
 # drift, but documented attack-pattern drifts (e.g., declaring $0.2 while the
 # real run set sums to $0.6) exceed these orders of magnitude trivially.
+#
+# F-PR32-R3-003 P2 adopt: ``abs_tol`` was tightened to ``1e-6`` so the
+# evaluator's drift oracle matches the existing
+# ``eval/quality/cost_per_completed_task/loader.py`` which rounds money
+# values to 6 decimal places and accepts ``±0.000001`` drift. The
+# unrounded float recomputation can otherwise differ from the rounded
+# declared aggregate by ~1e-7 on penny-sized cost rows even though both
+# sides agree to the documented 6-decimal precision.
 _COST_REL_TOL: Final[float] = 1e-6
-_COST_ABS_TOL: Final[float] = 1e-9
+_COST_ABS_TOL: Final[float] = 1e-6
 _THRESHOLD_USD_ABS_TOL: Final[float] = 1e-9
 
 # Sentinel that distinguishes "key absent" from "key present but malformed"
@@ -231,12 +239,21 @@ def _validate_uuid_text(value: object) -> bool:
 
 def _collect_sample_runs(
     fixture: Fixture,
+    *,
+    corpus_seen_run_ids: set[str] | None = None,
 ) -> tuple[list[SampleRun], str | None]:
     """Walk ``input.sample_runs`` and validate each run's shape.
 
     Returns ``(runs, spec_violation_reason)``. On any structural violation the
     parser returns an empty list so the aggregator does not undercount via a
     partial parse.
+
+    F-PR32-R3-001 P2 adopt: ``corpus_seen_run_ids`` is shared across all
+    fixtures within a single ``evaluate_cost_per_completed_task`` call so
+    duplicate ``run_id`` values **across fixtures** are detected too. A
+    multi-fixture corpus that reuses the same low-cost completed run would
+    otherwise lower the corpus weighted average, even though ``run_id``
+    identifies one AgentRun globally.
     """
 
     case_input = fixture.case_json.get("input")
@@ -266,7 +283,11 @@ def _collect_sample_runs(
             return [], "spec_violation:run_id"
         if run_id in seen_run_ids:
             return [], "spec_violation:duplicate_run_id"
+        if corpus_seen_run_ids is not None and run_id in corpus_seen_run_ids:
+            return [], "spec_violation:duplicate_run_id_across_fixtures"
         seen_run_ids.add(run_id)
+        if corpus_seen_run_ids is not None:
+            corpus_seen_run_ids.add(run_id)
 
         tenant_id = raw_run.get("tenant_id")
         if not _is_non_bool_int(tenant_id) or tenant_id < 1:  # type: ignore[operator]
@@ -384,17 +405,26 @@ def _expected_aggregate_violation_reason(
     if not _costs_match(float(declared_total_cost), recomputed_total_cost_usd):  # type: ignore[arg-type]
         return "spec_violation:expected_aggregate_total_cost_drift"
 
-    declared_ratio = raw.get("cost_per_completed_task_usd")
-    if not _is_finite_number(declared_ratio):
+    if "cost_per_completed_task_usd" not in raw:
         return "spec_violation:expected_aggregate"
+    declared_ratio_raw = raw["cost_per_completed_task_usd"]
     if recomputed_ratio is None:
-        # F-PR32-R1-003 P2 adopt: with zero completed runs, the recomputed
-        # ratio is undefined. The fixture must declare ``0.0`` (the canonical
-        # "undefined" sentinel for cost rollups); any other value is drift.
-        if float(declared_ratio) != 0.0:  # type: ignore[arg-type]
+        # F-PR32-R1-003 P2 + R3-002 P2 adopt: with zero completed runs, the
+        # recomputed ratio is undefined. The fixture must declare either
+        # ``None`` (the existing cost-loader emits ``null`` in this case
+        # since the schema permits it) or ``0.0`` (the canonical undefined
+        # sentinel for cost rollups). Any other value is drift.
+        if declared_ratio_raw is None:
+            pass  # acceptable null sentinel
+        elif _is_finite_number(declared_ratio_raw) and float(declared_ratio_raw) == 0.0:
+            pass  # acceptable zero sentinel
+        else:
             return "spec_violation:expected_aggregate_ratio_drift"
-    elif not _costs_match(float(declared_ratio), recomputed_ratio):  # type: ignore[arg-type]
-        return "spec_violation:expected_aggregate_ratio_drift"
+    else:
+        if not _is_finite_number(declared_ratio_raw):
+            return "spec_violation:expected_aggregate"
+        if not _costs_match(float(declared_ratio_raw), recomputed_ratio):
+            return "spec_violation:expected_aggregate_ratio_drift"
 
     # F-PR32-R1-001 P2 + R1-002 P2 adopt: ``threshold_usd`` and
     # ``threshold_passed`` are documented in the expected_aggregate as
@@ -521,6 +551,9 @@ def evaluate_cost_per_completed_task(
     sut_failure_present = False
     total_completed_runs_across_corpus = 0
     total_cost_usd_across_corpus = 0.0
+    # F-PR32-R3-001 P2 adopt: share the seen-set across fixtures so duplicate
+    # ``run_id`` values across the corpus are flagged.
+    corpus_seen_run_ids: set[str] = set()
 
     for fixture in corpus.fixtures:
         if fixture.fixture_kind not in _SUPPORTED_FIXTURE_KINDS:
@@ -531,7 +564,10 @@ def evaluate_cost_per_completed_task(
         threshold_reason_violation = (
             _fixture_threshold_violation_reason(fixture) if envelope_reason is None else None
         )
-        runs, run_violation = _collect_sample_runs(fixture)
+        runs, run_violation = _collect_sample_runs(
+            fixture,
+            corpus_seen_run_ids=corpus_seen_run_ids,
+        )
         completed_runs = [run for run in runs if run.status == _KPI_05_COMPLETED_STATUS]
         recomputed_completed_count = len(completed_runs)
         recomputed_total_cost = sum(run.cost_usd for run in completed_runs)

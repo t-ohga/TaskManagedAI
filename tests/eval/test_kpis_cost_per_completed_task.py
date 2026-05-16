@@ -1108,3 +1108,132 @@ def test_completed_only_filter_excludes_failed_and_cancelled_costs() -> None:
     assert result.total_cost_usd_across_corpus == pytest.approx(0.2)
     assert result.threshold_met is True
     assert result.per_fixture[0].spec_violation_reason is None
+
+
+# ---------------------------------------------------------------------------
+# F-PR32-R3: cross-fixture duplicate run_id / null aggregate / 6-decimal tolerance
+# ---------------------------------------------------------------------------
+
+
+def test_cross_fixture_duplicate_run_id_is_detected() -> None:
+    """F-PR32-R3-001 P2 adopt: the same AgentRun UUID cannot appear in
+    multiple public fixtures within the same corpus. If it does, the second
+    occurrence is flagged ``spec_violation:duplicate_run_id_across_fixtures``
+    so it is excluded from the corpus-level numerator/denominator.
+
+    Anti-Gaming rationale: without this guard, a fixture author could split
+    the same favorable AgentRun across N public fixtures and inflate the
+    corpus-level completed-task count to lower the per-task ratio.
+    """
+
+    shared_run_id = _uuid_for("cross-fixture-duplicate")
+
+    def _build(fid: str) -> Fixture:
+        runs = [
+            {
+                "tenant_id": 1,
+                "project_id": 10,
+                "run_id": shared_run_id,
+                "status": "completed",
+                "cost_usd": 0.2,
+                "tokens_input": 1000,
+                "tokens_output": 200,
+            }
+        ]
+        return _synthetic_fixture(
+            fixture_id=fid,
+            sample_runs=runs,
+            expected_aggregate={
+                "total_completed_runs": 1,
+                "total_cost_usd": 0.2,
+                "cost_per_completed_task_usd": 0.2,
+                "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+                "threshold_passed": True,
+            },
+        )
+
+    fixture_a = _build("AC-KPI-05_v2026.05.09-synthetic_dup_a")
+    fixture_b = _build("AC-KPI-05_v2026.05.09-synthetic_dup_b")
+    result = evaluate_cost_per_completed_task(
+        _synthetic_corpus([fixture_a, fixture_b])
+    )
+
+    # Fixture A is parsed first and accepted; fixture B sees the shared
+    # run_id and is rejected at the corpus boundary.
+    assert result.per_fixture[0].spec_violation_reason is None
+    assert (
+        result.per_fixture[1].spec_violation_reason
+        == "spec_violation:duplicate_run_id_across_fixtures"
+    )
+    # The corpus aggregate therefore counts only fixture A's contribution.
+    assert result.total_completed_runs_across_corpus == 1
+    assert result.total_cost_usd_across_corpus == pytest.approx(0.2)
+
+
+def test_zero_completed_runs_accepts_null_ratio() -> None:
+    """F-PR32-R3-002 P2 adopt: when ``total_completed_runs == 0``, the
+    recomputed ratio is undefined. Both ``null`` (JSON ``None``) and
+    ``0.0`` are accepted as the canonical undefined sentinel; any other
+    value remains a drift violation (covered by the existing
+    ``test_zero_completed_runs_must_declare_ratio_zero``).
+    """
+
+    fixture_null = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_null_ratio",
+        sample_runs=[
+            {
+                "tenant_id": 1,
+                "project_id": 10,
+                "run_id": _uuid_for("zero-completed-null-decl"),
+                "status": "failed",
+                "cost_usd": 1.0,
+                "tokens_input": 100,
+                "tokens_output": 50,
+            }
+        ],
+        expected_aggregate={
+            "total_completed_runs": 0,
+            "total_cost_usd": 0.0,
+            # Acceptable null sentinel for undefined ratio.
+            "cost_per_completed_task_usd": None,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            "threshold_passed": False,
+        },
+    )
+    _, per_null = _result_for(fixture_null)
+    assert per_null.spec_violation_reason is None
+
+
+def test_six_decimal_rounded_cost_aggregate_drift_absorbed() -> None:
+    """F-PR32-R3-003 P2 adopt: live persisted corpus rounds cost values to
+    six decimal places. The aggregator's drift tolerance must absorb the
+    round-trip noise so that authors-of-good-faith fixtures with
+    ``0.123457`` declared aggregates are not falsely flagged when the raw
+    recompute lands at ``0.12345678`` (∆ ≈ 2.2e-6).
+
+    This codifies the ``_COST_REL_TOL`` and ``_COST_ABS_TOL`` widening to
+    1e-6 in the implementation file (previously 1e-9).
+    """
+
+    raw_costs = (0.12345678, 0.23456789, 0.34567891)
+    rounded_total = round(sum(raw_costs), 6)  # = 0.703703
+    rounded_ratio = round(rounded_total / 3, 6)  # ≈ 0.234568
+    # Live total recomputed without rounding is ~0.70370358.
+    runs = _sample_runs(
+        completed_cost_usds=raw_costs,
+        prefix="rounded",
+    )
+    fixture = _synthetic_fixture(
+        fixture_id="AC-KPI-05_v2026.05.09-synthetic_rounded",
+        sample_runs=runs,
+        expected_aggregate={
+            "total_completed_runs": 3,
+            "total_cost_usd": rounded_total,
+            "cost_per_completed_task_usd": rounded_ratio,
+            "threshold_usd": EXPECTED_AC_KPI_05_THRESHOLD_USD,
+            "threshold_passed": True,
+        },
+    )
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason is None
+    assert per_fixture.sut_failure_reason is None
