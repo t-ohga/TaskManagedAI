@@ -252,6 +252,8 @@ def _expected_aggregate_violation_reason(
     *,
     expected_ratio: float | None,
     recomputed_ratio: float,
+    recomputed_total: int,
+    recomputed_with_citation: int,
 ) -> str | None:
     raw = _raw_expected_aggregate(fixture)
     if raw is _AGGREGATE_NOT_PROVIDED:
@@ -268,6 +270,21 @@ def _expected_aggregate_violation_reason(
     # documented attack) still exceeds these tolerances by orders of magnitude.
     if not _ratios_match(recomputed_ratio, expected_ratio):
         return "spec_violation:expected_aggregate_drift"
+    # F-PR31-R1-002 P2 adopt: the fixture schema documents ``total_claims`` and
+    # ``claims_with_citation`` as additional drift oracles. Leaving them
+    # unchecked lets an attacker keep ``coverage_ratio=0.6`` while declaring
+    # arbitrary counts (e.g., ``total_claims=10, claims_with_citation=6`` for a
+    # real 5/3 corpus). Validate the declared integer counts too — they must
+    # match the recomputed values exactly because they are integers, not
+    # floating-point ratios.
+    declared_total = raw.get("total_claims")
+    if isinstance(declared_total, int) and not isinstance(declared_total, bool):
+        if declared_total != recomputed_total:
+            return "spec_violation:expected_aggregate_total_drift"
+    declared_with_citation = raw.get("claims_with_citation")
+    if isinstance(declared_with_citation, int) and not isinstance(declared_with_citation, bool):
+        if declared_with_citation != recomputed_with_citation:
+            return "spec_violation:expected_aggregate_count_drift"
     return None
 
 
@@ -277,6 +294,7 @@ def _threshold_reason(
     metric_value: float,
     spec_violation_present: bool,
     manifest_violation_present: bool,
+    sut_failure_present: bool,
 ) -> str:
     if fixture_count == 0:
         return "no_fixtures"
@@ -284,6 +302,14 @@ def _threshold_reason(
         return "manifest_violation"
     if spec_violation_present:
         return "spec_violation"
+    # F-PR31-R1-001 P1 adopt: SUT failure must block ``threshold_met`` even
+    # when the recomputed coverage already satisfies the threshold. Without
+    # this guard, a corpus with ``coverage_ratio >= 0.9`` would report
+    # ``threshold_met=True`` while the programmatic SUT path reported every
+    # fixture as failed — letting AC-KPI-04 pass while the actual integration
+    # is broken.
+    if sut_failure_present:
+        return "sut_failure"
     if metric_value >= AC_KPI_04_THRESHOLD:
         return "threshold_met"
     return "below_threshold"
@@ -365,6 +391,7 @@ def evaluate_citation_coverage(
 
     per_fixture: list[CitationCoverageFixtureResult] = []
     spec_violation_present = False
+    sut_failure_present = False
     total_claims_across_corpus = 0
     claims_with_citation_across_corpus = 0
 
@@ -397,6 +424,8 @@ def evaluate_citation_coverage(
                 fixture,
                 expected_ratio=expected_ratio,
                 recomputed_ratio=recomputed_ratio,
+                recomputed_total=total_claims,
+                recomputed_with_citation=claims_with_citation,
             )
 
         failure_reason = spec_reason
@@ -428,6 +457,7 @@ def evaluate_citation_coverage(
                     sut_result = raw_sut_value
                     if not sut_result:
                         passed = False
+                        sut_failure_present = True
 
         if failure_reason is not None:
             spec_violation_present = True
@@ -461,6 +491,7 @@ def evaluate_citation_coverage(
         metric_value=metric_value,
         spec_violation_present=spec_violation_present,
         manifest_violation_present=manifest_reason is not None,
+        sut_failure_present=sut_failure_present,
     )
 
     return CitationCoverageMetricResult(

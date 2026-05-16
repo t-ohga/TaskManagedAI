@@ -572,9 +572,12 @@ def test_sut_results_all_false_marks_failure() -> None:
     assert per_fixture.passed is False
     assert per_fixture.sut_result is False
     # ``spec_violation_reason`` stays ``None`` because the spec is satisfied;
-    # the failure source is the SUT result itself.
+    # the failure source is the SUT result itself, which is surfaced via
+    # ``threshold_reason="sut_failure"`` instead (F-PR31-R1-001).
     assert per_fixture.spec_violation_reason is None
     assert result.fail_count == 1
+    assert result.threshold_reason == "sut_failure"
+    assert result.threshold_met is False
 
 
 def test_sut_results_missing_fixture_id_marks_failure() -> None:
@@ -775,6 +778,66 @@ def test_sut_attempted_field_distinguishes_unverified_from_attempted() -> None:
     assert result_invalid.per_fixture[0].sut_attempted is True
     assert result_invalid.per_fixture[0].passed is False
     assert result_invalid.per_fixture[0].spec_violation_reason == "sut_result_invalid_type"
+
+
+def test_high_coverage_with_sut_failure_blocks_threshold_met() -> None:
+    """F-PR31-R1-001 P1 adopt: SUT failure must block threshold_met.
+
+    Construct a fixture whose recomputed coverage >= 0.9 (threshold passes
+    on spec alone) and verify that ``threshold_reason="sut_failure"`` (NOT
+    ``"threshold_met"``) when the corresponding SUT result is ``False``. The
+    earlier implementation only consulted ``spec_violation_present``, so a
+    BL-0127b / SP-012 runtime that returned ``False`` for every fixture
+    would still let AC-KPI-04 pass.
+    """
+
+    fixture = _synthetic_fixture(
+        sample_claims=_sample_claims(total=10, with_citation=10, prefix="full"),
+    )
+    result = evaluate_citation_coverage(
+        _synthetic_corpus([fixture]),
+        sut_results={fixture.fixture_id: False},
+    )
+
+    assert result.metric_value == pytest.approx(1.0)
+    assert result.threshold_met is False
+    assert result.threshold_reason == "sut_failure"
+    assert result.per_fixture[0].sut_result is False
+    assert result.per_fixture[0].sut_attempted is True
+    assert result.per_fixture[0].passed is False
+
+
+@pytest.mark.parametrize(
+    ("declared_total", "declared_count", "expected_reason"),
+    (
+        # F-PR31-R1-002 P2 adopt: any integer declared in
+        # ``expected_aggregate`` that drifts from the recomputed value must be
+        # flagged. ``total_claims`` drift comes first in the validation order.
+        (10, 3, "spec_violation:expected_aggregate_total_drift"),
+        (5, 4, "spec_violation:expected_aggregate_count_drift"),
+        (5, 6, "spec_violation:expected_aggregate_count_drift"),
+    ),
+)
+def test_expected_aggregate_integer_field_drift_is_detected(
+    declared_total: int, declared_count: int, expected_reason: str
+) -> None:
+    """Verify counts drift checks (not just ``coverage_ratio``).
+
+    The recomputed corpus is 5 claims / 3 cited (ratio 0.6). Each parametrize
+    case keeps ``coverage_ratio`` consistent (= 3/5 = 0.6) but mutates one
+    integer field so the ratio-only oracle would silently accept the drift.
+    """
+
+    fixture = _synthetic_fixture(
+        sample_claims=_sample_claims(total=5, with_citation=3, prefix="intdrift"),
+        expected_aggregate={
+            "total_claims": declared_total,
+            "claims_with_citation": declared_count,
+            "coverage_ratio": 0.6,
+        },
+    )
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == expected_reason
 
 
 def test_drift_tolerance_absorbs_float64_round_trip_noise() -> None:
