@@ -213,6 +213,41 @@ def _envelope_violation_reason(fixture: Fixture) -> str | None:
         return "spec_violation:metric_key"
     if fixture.fixture_kind not in _SUPPORTED_FIXTURE_KINDS:
         return "spec_violation:fixture_kind"
+    return _fixture_threshold_violation_reason(fixture)
+
+
+def _fixture_threshold(fixture: Fixture) -> object:
+    """Locate the fixture-declared ``threshold`` in ``expected_json`` / ``raw_json``."""
+
+    if "threshold" in fixture.expected_json:
+        return fixture.expected_json["threshold"]
+    if "threshold" in fixture.raw_json:
+        return fixture.raw_json["threshold"]
+    return _AGGREGATE_NOT_PROVIDED
+
+
+def _fixture_threshold_violation_reason(fixture: Fixture) -> str | None:
+    """F-PR31-R4-002 P2 adopt: fixture-declared threshold must match manifest.
+
+    Without this check, a persisted fixture (DB row / bypass JSON Schema) can
+    declare ``threshold: {"operator": ">=", "value": 0.5}`` while the manifest
+    keeps the AC-KPI-04 contract at ``0.9``. The aggregator already validates
+    the manifest threshold; here we close the gap by also requiring every
+    fixture's threshold to match the AC-KPI-04 constants.
+    """
+
+    threshold = _fixture_threshold(fixture)
+    if threshold is _AGGREGATE_NOT_PROVIDED:
+        return "spec_violation:threshold_missing"
+    if not isinstance(threshold, dict):
+        return "spec_violation:threshold"
+    if threshold.get("operator") != AC_KPI_04_THRESHOLD_OPERATOR:
+        return "spec_violation:threshold_operator"
+    value = threshold.get("value")
+    if not _is_finite_number(value):
+        return "spec_violation:threshold_value"
+    if abs(float(value) - AC_KPI_04_THRESHOLD) > _THRESHOLD_VALUE_ABS_TOL:  # type: ignore[arg-type]
+        return "spec_violation:threshold_value"
     return None
 
 
@@ -244,6 +279,18 @@ def _collect_claim_entries(fixture: Fixture) -> tuple[list[ClaimCoverageEntry], 
         if claim_id in seen_claim_ids:
             return [], "spec_violation:duplicate_claim_id"
         seen_claim_ids.add(claim_id)
+
+        # F-PR31-R4-001 P2 adopt: ``evidence_ids`` carries the same Anti-Gaming
+        # weight as ``citation_ids`` in the AC-KPI-04 corpus schema. Persisted
+        # corpora that bypass JSON Schema (e.g., loaded from ``eval_cases``
+        # DB rows) could omit it or set a wrong type while ``citation_ids``
+        # still reports coverage. Enforce the same structural shape.
+        evidence_ids = raw_claim.get("evidence_ids")
+        if not isinstance(evidence_ids, list):
+            return [], "spec_violation:evidence_ids"
+        for evidence_id in evidence_ids:
+            if not isinstance(evidence_id, str) or not evidence_id:
+                return [], "spec_violation:evidence_ids"
 
         citation_ids = raw_claim.get("citation_ids")
         if not isinstance(citation_ids, list):
@@ -463,7 +510,16 @@ def evaluate_citation_coverage(
         sut_attempted = False
         passed = spec_reason is None
 
-        if sut_results is not None:
+        if sut_results is not None and spec_violation_reason is None:
+            # F-PR31-R4-003 P2 adopt: the documented contract on
+            # ``CitationCoverageFixtureResult`` is that at most one of
+            # ``spec_violation_reason`` / ``sut_failure_reason`` is non-None.
+            # When the fixture itself is invalid, the SUT outcome is
+            # downstream-noise; skip SUT processing entirely so the per-fixture
+            # row stays consistent with the contract. ``sut_attempted`` also
+            # stays ``False`` — the caller's SUT plan never actually ran for
+            # this fixture once the spec violation was detected.
+            #
             # F-CR-002 P1 adopt: ``sut_attempted`` makes the dual meaning of
             # ``passed`` explicit. We mark a SUT attempt for every fixture
             # the caller addressed — including ``sut_result_invalid_type``
@@ -476,9 +532,8 @@ def evaluate_citation_coverage(
                 # downstream so EvalResult diagnostics blame the runner, not
                 # the fixture spec.
                 passed = False
-                if sut_failure_reason is None:
-                    sut_failure_reason = "sut_result_missing"
-                    sut_failure_present = True
+                sut_failure_reason = "sut_result_missing"
+                sut_failure_present = True
             else:
                 raw_sut_value = sut_results[fixture.fixture_id]
                 if not isinstance(raw_sut_value, bool):
@@ -487,15 +542,13 @@ def evaluate_citation_coverage(
                     # failure (runner returned garbage) rather than a spec
                     # violation so the per-fixture diagnostic is accurate.
                     passed = False
-                    if sut_failure_reason is None:
-                        sut_failure_reason = "sut_result_invalid_type"
-                        sut_failure_present = True
+                    sut_failure_reason = "sut_result_invalid_type"
+                    sut_failure_present = True
                 else:
                     sut_result = raw_sut_value
                     if not sut_result:
                         passed = False
-                        if sut_failure_reason is None:
-                            sut_failure_reason = "sut_result_false"
+                        sut_failure_reason = "sut_result_false"
                         sut_failure_present = True
 
         if spec_violation_reason is not None:

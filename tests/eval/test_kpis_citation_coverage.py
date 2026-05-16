@@ -500,6 +500,131 @@ def test_malformed_citation_ids_is_detected() -> None:
     assert per_fixture.spec_violation_reason == "spec_violation:citation_ids"
 
 
+@pytest.mark.parametrize(
+    "evidence_ids_mutation",
+    (
+        None,  # missing field
+        "not-a-list",  # non-list type
+        [""],  # empty string element
+        [None],  # non-string element
+    ),
+)
+def test_malformed_evidence_ids_is_detected(evidence_ids_mutation: object) -> None:
+    """F-PR31-R4-001 P2 adopt: ``evidence_ids`` must be a list of non-empty strings.
+
+    A persisted corpus that bypasses JSON Schema could omit ``evidence_ids``
+    while still declaring ``citation_ids`` non-empty; without this guard the
+    claim would be counted as covered.
+    """
+
+    claims = _sample_claims(total=2, with_citation=1, prefix="evbad")
+    if evidence_ids_mutation is None:
+        del claims[0]["evidence_ids"]
+    else:
+        claims[0]["evidence_ids"] = evidence_ids_mutation  # type: ignore[assignment]
+    fixture = _synthetic_fixture(sample_claims=claims)
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == "spec_violation:evidence_ids"
+
+
+def _override_fixture_threshold(fixture: Fixture, value: object) -> Fixture:
+    """Replace ``threshold`` in both ``expected_json`` and ``raw_json``.
+
+    Loader splits ``threshold`` into ``expected_json``; the evaluator also
+    reads ``raw_json`` as a fallback. Override both surfaces so the test
+    exercises the violation path regardless of which classification a future
+    loader change picks.
+    """
+
+    expected_json = dict(fixture.expected_json)
+    raw_json = dict(fixture.raw_json)
+    if value is _MISSING:  # type: ignore[comparison-overlap]
+        expected_json.pop("threshold", None)
+        raw_json.pop("threshold", None)
+    else:
+        expected_json["threshold"] = value  # type: ignore[assignment]
+        raw_json["threshold"] = value  # type: ignore[assignment]
+    return Fixture(
+        fixture_id=fixture.fixture_id,
+        dataset_version_id=fixture.dataset_version_id,
+        fixture_kind=fixture.fixture_kind,
+        gate_id=fixture.gate_id,
+        metric_key=fixture.metric_key,
+        case_key=fixture.case_key,
+        case_json=fixture.case_json,
+        expected_json=expected_json,
+        metadata=fixture.metadata,
+        anti_gaming=fixture.anti_gaming,
+        source_path=fixture.source_path,
+        raw_json=raw_json,
+        kpi_id=fixture.kpi_id,
+    )
+
+
+_MISSING: Final[object] = object()
+
+
+@pytest.mark.parametrize(
+    ("threshold_override", "expected_reason"),
+    (
+        (_MISSING, "spec_violation:threshold_missing"),
+        ("not-a-dict", "spec_violation:threshold"),
+        ({"operator": "<", "value": 0.9}, "spec_violation:threshold_operator"),
+        ({"operator": ">=", "value": "not-numeric"}, "spec_violation:threshold_value"),
+        ({"operator": ">=", "value": 0.5}, "spec_violation:threshold_value"),
+        ({"operator": ">=", "value": True}, "spec_violation:threshold_value"),
+    ),
+)
+def test_fixture_threshold_drift_is_detected(
+    threshold_override: object, expected_reason: str
+) -> None:
+    """F-PR31-R4-002 P2 adopt: fixture-declared threshold must match manifest.
+
+    Persisted fixtures could bypass JSON Schema and declare a relaxed
+    threshold (e.g., ``0.5``) while the manifest keeps the AC-KPI-04 contract
+    at ``0.9``. The aggregator now rejects any fixture that contradicts the
+    AC-KPI-04 constants.
+    """
+
+    fixture = _override_fixture_threshold(_synthetic_fixture(), threshold_override)
+    _, per_fixture = _result_for(fixture)
+    assert per_fixture.spec_violation_reason == expected_reason
+
+
+def test_spec_violation_skips_sut_processing() -> None:
+    """F-PR31-R4-003 P2 adopt: spec-invalid fixtures must not record SUT failures.
+
+    The dataclass contract guarantees that at most one of
+    ``spec_violation_reason`` / ``sut_failure_reason`` is non-None. When the
+    fixture spec is already invalid, the SUT outcome is downstream noise; the
+    evaluator must skip SUT processing entirely so the per-fixture row stays
+    consistent with the contract.
+    """
+
+    fixture = _synthetic_fixture(kpi_id="AC-KPI-99")  # envelope violation
+
+    result_with_missing_sut = evaluate_citation_coverage(
+        _synthetic_corpus([fixture]),
+        sut_results={},  # would otherwise trigger sut_result_missing
+    )
+    per_fixture = result_with_missing_sut.per_fixture[0]
+    assert per_fixture.spec_violation_reason == "spec_violation:kpi_id"
+    assert per_fixture.sut_failure_reason is None
+    assert per_fixture.sut_attempted is False
+    assert per_fixture.sut_result is None
+    assert result_with_missing_sut.threshold_reason == "spec_violation"
+
+    result_with_false_sut = evaluate_citation_coverage(
+        _synthetic_corpus([fixture]),
+        sut_results={fixture.fixture_id: False},  # would otherwise trigger sut_result_false
+    )
+    per_fixture_false = result_with_false_sut.per_fixture[0]
+    assert per_fixture_false.spec_violation_reason == "spec_violation:kpi_id"
+    assert per_fixture_false.sut_failure_reason is None
+    assert per_fixture_false.sut_attempted is False
+    assert result_with_false_sut.threshold_reason == "spec_violation"
+
+
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
