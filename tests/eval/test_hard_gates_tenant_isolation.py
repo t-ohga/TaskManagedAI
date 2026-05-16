@@ -545,13 +545,18 @@ def test_spec_violation_reason_does_not_embed_raw_fixture_content() -> None:
     assert "allow" not in reason
 
 
-def test_unknown_sut_result_logging_does_not_embed_raw_fixture_content(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_unknown_sut_result_logging_does_not_embed_raw_fixture_content() -> None:
+    """Direct handler attachment avoids pytest caplog CI/local propagation drift.
+
+    Previously this test relied on ``caplog.set_level`` to capture warnings via
+    the root logger, but in some CI configurations the propagation chain or
+    a prior test's logger mutation produced an empty ``caplog.text``. Attaching
+    a memory handler directly to the module logger and removing it in
+    ``finally`` is independent of any global pytest logging plugin state.
+    """
+
     raw_marker = "raw-content-that-must-stay-out-of-logs"
     fixtures = _valid_op_class_fixtures()
-    # Keep the marker only on the SELECT fixture (caller-supplied to ensure the
-    # raw_marker travels with at least one fixture).
     fixtures[0] = _synthetic_fixture(
         fixture_id=fixtures[0].fixture_id,
         operation="SELECT",
@@ -559,22 +564,32 @@ def test_unknown_sut_result_logging_does_not_embed_raw_fixture_content(
     )
     corpus = _synthetic_corpus(fixtures)
 
-    # Use the root logger to ensure pytest's logging plugin captures records
-    # regardless of the per-logger configuration in CI (the previous
-    # ``logger=tenant_isolation.__name__`` form produced an empty
-    # ``caplog.text`` in CI even though it worked locally).
-    caplog.set_level(logging.WARNING)
-    sut_results = {fixture.fixture_id: True for fixture in fixtures}
-    sut_results["AC-HARD-03_v2026.05.01-synthetic_unknown_fixture"] = True
-    result = evaluate_tenant_isolation_negative_pass(corpus, sut_results=sut_results)
+    module_logger = logging.getLogger(tenant_isolation.__name__)
+    previous_level = module_logger.level
+    captured_records: list[logging.LogRecord] = []
+
+    class _ListHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured_records.append(record)
+
+    handler = _ListHandler(level=logging.WARNING)
+    module_logger.addHandler(handler)
+    module_logger.setLevel(logging.WARNING)
+    try:
+        sut_results = {fixture.fixture_id: True for fixture in fixtures}
+        sut_results["AC-HARD-03_v2026.05.01-synthetic_unknown_fixture"] = True
+        result = evaluate_tenant_isolation_negative_pass(corpus, sut_results=sut_results)
+    finally:
+        module_logger.removeHandler(handler)
+        module_logger.setLevel(previous_level)
 
     assert result.metric_value == 1.0
     assert result.threshold_met is True
-    captured_warnings = "\n".join(
-        record.getMessage()
-        for record in caplog.records
-        if record.name == tenant_isolation.__name__ and record.levelno >= logging.WARNING
+
+    captured_messages = [record.getMessage() for record in captured_records]
+    combined = "\n".join(captured_messages)
+    assert any(
+        "AC-HARD-03_v2026.05.01-synthetic_unknown_fixture" in message
+        for message in captured_messages
     )
-    assert "AC-HARD-03_v2026.05.01-synthetic_unknown_fixture" in captured_warnings
-    assert raw_marker not in captured_warnings
-    assert raw_marker not in caplog.text
+    assert raw_marker not in combined
