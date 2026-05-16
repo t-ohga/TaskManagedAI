@@ -154,7 +154,11 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
         await engine.dispose()
 
 
-async def _foreign_key_signatures(session: AsyncSession) -> set[ForeignKeySignature]:
+async def _foreign_key_signatures(
+    session: AsyncSession,
+    tables: frozenset[str] | None = None,
+) -> set[ForeignKeySignature]:
+    target_tables = sorted(tables if tables is not None else TENANT_SCOPED_TABLES)
     result = await session.execute(
         text(
             """
@@ -178,7 +182,7 @@ async def _foreign_key_signatures(session: AsyncSession) -> set[ForeignKeySignat
             order by rel.relname, con.conname
             """
         ),
-        {"table_names": sorted(TENANT_SCOPED_TABLES)},
+        {"table_names": target_tables},
     )
     signatures: set[ForeignKeySignature] = set()
     for row in result.mappings():
@@ -1231,3 +1235,214 @@ async def test_audit_notification_contract_columns_and_constraints(
     assert notification_columns["created_at"]["is_nullable"] == "NO"
     assert notification_unique == ("tenant_id", "id")
 
+
+RESEARCH_EVIDENCE_TABLES = frozenset({"research_tasks", "evidence_sources", "claims", "evidence_items"})
+
+
+
+
+@pytest.mark.asyncio
+async def test_research_evidence_tables_have_tenant_id_not_null_bigint(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        result = await session.execute(
+            text(
+                """
+                select table_name, is_nullable, data_type
+                from information_schema.columns
+                where table_schema = 'public'
+                  and table_name = any(:table_names)
+                  and column_name = 'tenant_id'
+                """
+            ),
+            {"table_names": sorted(RESEARCH_EVIDENCE_TABLES)},
+        )
+
+    columns = {str(row["table_name"]): dict(row) for row in result.mappings()}
+    assert set(columns) == RESEARCH_EVIDENCE_TABLES
+    for table_name in sorted(RESEARCH_EVIDENCE_TABLES):
+        assert columns[table_name]["is_nullable"] == "NO"
+        assert columns[table_name]["data_type"] == "bigint"
+
+
+@pytest.mark.asyncio
+async def test_claims_schema_constraints_and_composite_foreign_keys(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    column_names = (
+        "id",
+        "tenant_id",
+        "project_id",
+        "research_task_id",
+        "claim_text",
+        "provenance_json",
+        "freshness_score",
+        "metadata",
+        "created_at",
+        "updated_at",
+    )
+
+    async with session_factory() as session:
+        columns = await _table_columns(session, "claims", column_names)
+        tenant_unique = await _constraint_columns(
+            session,
+            table_name="claims",
+            constraint_name="claims_uq_tenant_id",
+            constraint_type="u",
+        )
+        tenant_project_unique = await _constraint_columns(
+            session,
+            table_name="claims",
+            constraint_name="claims_uq_tenant_project_id",
+            constraint_type="u",
+        )
+        claim_text_check = await _constraint_definition(
+            session,
+            table_name="claims",
+            constraint_name="claims_ck_claim_text_length",
+        )
+        freshness_check = await _constraint_definition(
+            session,
+            table_name="claims",
+            constraint_name="claims_ck_freshness_score_range",
+        )
+        foreign_keys = await _foreign_key_signatures(session, frozenset({"claims"}))
+
+    assert set(columns) == set(column_names)
+    assert columns["tenant_id"]["data_type"] == "bigint"
+    assert columns["tenant_id"]["is_nullable"] == "NO"
+    assert columns["project_id"]["data_type"] == "uuid"
+    assert columns["project_id"]["is_nullable"] == "NO"
+    assert columns["research_task_id"]["data_type"] == "uuid"
+    assert columns["research_task_id"]["is_nullable"] == "NO"
+    assert columns["claim_text"]["data_type"] == "text"
+    assert columns["claim_text"]["is_nullable"] == "NO"
+    assert columns["provenance_json"]["data_type"] == "jsonb"
+    assert columns["provenance_json"]["is_nullable"] == "NO"
+    assert columns["freshness_score"]["data_type"] == "double precision"
+    assert columns["freshness_score"]["is_nullable"] == "YES"
+    assert columns["metadata"]["data_type"] == "jsonb"
+    assert columns["metadata"]["is_nullable"] == "NO"
+
+    assert tenant_unique == ("tenant_id", "id")
+    assert tenant_project_unique == ("tenant_id", "project_id", "id")
+    assert "length(claim_text)" in claim_text_check
+    assert "2000" in claim_text_check
+    assert "freshness_score" in freshness_check
+    assert "0" in freshness_check
+    assert "1" in freshness_check
+    assert {
+        ("claims", ("tenant_id",), "tenants", ("id",)),
+        (
+            "claims",
+            ("tenant_id", "project_id", "research_task_id"),
+            "research_tasks",
+            ("tenant_id", "project_id", "id"),
+        ),
+    } <= foreign_keys
+
+
+@pytest.mark.asyncio
+async def test_evidence_items_schema_constraints_and_composite_foreign_keys(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    column_names = (
+        "id",
+        "tenant_id",
+        "project_id",
+        "claim_id",
+        "source_id",
+        "locator",
+        "relation",
+        "relevance_score",
+        "metadata",
+        "created_at",
+        "updated_at",
+    )
+
+    async with session_factory() as session:
+        columns = await _table_columns(session, "evidence_items", column_names)
+        tenant_unique = await _constraint_columns(
+            session,
+            table_name="evidence_items",
+            constraint_name="evidence_items_uq_tenant_id",
+            constraint_type="u",
+        )
+        item_unique = await _constraint_columns(
+            session,
+            table_name="evidence_items",
+            constraint_name="evidence_items_uq_claim_source_locator",
+            constraint_type="u",
+        )
+        locator_check = await _constraint_definition(
+            session,
+            table_name="evidence_items",
+            constraint_name="evidence_items_ck_locator_length",
+        )
+        relevance_check = await _constraint_definition(
+            session,
+            table_name="evidence_items",
+            constraint_name="evidence_items_ck_relevance_score_range",
+        )
+        foreign_keys = await _foreign_key_signatures(session, frozenset({"evidence_items"}))
+
+    assert set(columns) == set(column_names)
+    assert columns["tenant_id"]["data_type"] == "bigint"
+    assert columns["tenant_id"]["is_nullable"] == "NO"
+    assert columns["project_id"]["data_type"] == "uuid"
+    assert columns["project_id"]["is_nullable"] == "NO"
+    assert columns["claim_id"]["data_type"] == "uuid"
+    assert columns["claim_id"]["is_nullable"] == "NO"
+    assert columns["source_id"]["data_type"] == "uuid"
+    assert columns["source_id"]["is_nullable"] == "NO"
+    assert columns["locator"]["data_type"] == "text"
+    assert columns["locator"]["is_nullable"] == "NO"
+    assert columns["relevance_score"]["data_type"] == "double precision"
+    assert columns["relevance_score"]["is_nullable"] == "YES"
+    assert columns["metadata"]["data_type"] == "jsonb"
+    assert columns["metadata"]["is_nullable"] == "NO"
+
+    assert tenant_unique == ("tenant_id", "id")
+    assert item_unique == ("tenant_id", "claim_id", "source_id", "locator")
+    assert "length(locator)" in locator_check
+    assert "500" in locator_check
+    assert "relevance_score" in relevance_check
+    assert "0" in relevance_check
+    assert "1" in relevance_check
+    assert {
+        ("evidence_items", ("tenant_id",), "tenants", ("id",)),
+        (
+            "evidence_items",
+            ("tenant_id", "project_id", "claim_id"),
+            "claims",
+            ("tenant_id", "project_id", "id"),
+        ),
+        (
+            "evidence_items",
+            ("tenant_id", "source_id"),
+            "evidence_sources",
+            ("tenant_id", "id"),
+        ),
+    } <= foreign_keys
+
+
+@pytest.mark.asyncio
+async def test_research_evidence_has_no_id_only_foreign_keys(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        foreign_keys = await _foreign_key_signatures(session, RESEARCH_EVIDENCE_TABLES)
+
+    bad_constraints: list[ForeignKeySignature] = []
+    for table_name, constrained_columns, referenced_table, referred_columns in foreign_keys:
+        if referenced_table != "tenants" and (
+            constrained_columns == ("id",)
+            or "tenant_id" not in constrained_columns
+            or referred_columns == ("id",)
+        ):
+            bad_constraints.append(
+                (table_name, constrained_columns, referenced_table, referred_columns)
+            )
+
+    assert bad_constraints == []
