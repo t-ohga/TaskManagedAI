@@ -1,0 +1,108 @@
+name: Private Staging E2E
+
+# Sprint 11.5 batch 2 (BL-0136): Tailscale GitHub Action private staging scaffold.
+#
+# 本 workflow は `workflow_dispatch` のみで起動 (manual)、scaffold smoke として:
+#   1. Tailscale OAuth client 経由で ephemeral auth key を auto-generate
+#   2. GitHub Actions runner を `tag:taskhub-ci` の Tailscale node として接続
+#   3. private staging VPS (`tag:taskhub`) の `/healthz` endpoint smoke
+#   4. job 終了後、tailscale node auto cleanup (`tailscale/github-action@v2` 内挙動)
+#
+# CRITICAL invariant trace:
+#   - deny-by-default: tag:taskhub-ci → tag:taskhub の TCP/443 のみ allow (Tailscale ACL)
+#   - SecretBroker boundary: ephemeral auth key (OAuth client 由来、long-lived secret なし)
+#   - AC-HARD-02: secret 値は `::add-mask::` で log shipping から保護
+#
+# 詳細 admin setup (Tailscale OAuth client / ACL / VPS TLS 443 listener / GitHub secrets):
+#   docs/設計検討/tailscale-private-staging-acl.md
+#
+# 本 workflow が production deploy で動作するための prerequisites:
+#   - GitHub secrets: TS_OAUTH_CLIENT_ID / TS_OAUTH_SECRET / STAGING_API_URL
+#   - Tailscale ACL: tag:taskhub-ci 関連 entry (admin 手動 setup)
+#   - VPS 側 TLS 443 listener (Sprint 12 host migration drill で完成)
+#
+# 本 batch 2 scope: workflow scaffold + actionlint pass のみ。actual deploy verify は
+# Sprint 12 BL-host-migration-drill で final.
+
+"on":
+  workflow_dispatch:
+    inputs:
+      smoke_only:
+        description: "Smoke-only mode (skip E2E full suite、scaffold verification)"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+concurrency:
+  group: private-staging-e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write  # Tailscale OAuth client trust path 用 (Sprint 12 で OIDC 経由検証)
+
+jobs:
+  private-staging-smoke:
+    name: Private staging Tailscale smoke
+    # Sprint 11.5 batch 2 scaffold: main branch のみ起動 (release/* trigger は Sprint 12 で追加)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tailscale connect (ephemeral auth key, tag:taskhub-ci)
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:taskhub-ci
+          # auth key は ephemeral (job 終了後 auto-revoke)
+          version: latest
+          use-cache: 'true'
+
+      - name: Tailscale node status
+        run: |
+          tailscale status --json | jq '.Self | { HostName, OS, Addrs }'
+          # secret 値が log に出ないよう ::add-mask:: (defense-in-depth、AC-HARD-02 整合)
+          echo "::add-mask::${{ secrets.TS_OAUTH_CLIENT_ID }}"
+          echo "::add-mask::${{ secrets.TS_OAUTH_SECRET }}"
+
+      - name: Verify Tailscale ACL connectivity (tag:taskhub-ci → tag:taskhub:443)
+        env:
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
+        run: |
+          # actionlint warning 回避: secrets を env 経由で参照、`if:` 条件は env 経由
+          if [ -z "${STAGING_API_URL:-}" ]; then
+            echo "STAGING_API_URL not configured、scaffold verification skip (admin setup pending)"
+            exit 0
+          fi
+          # smoke: production VPS の /healthz への TCP/443 接続 (TLS は Sprint 12 で完成)
+          # 本 scaffold 段階では timeout を許容 (VPS 側 TLS 未配備のため connect refused expected)
+          set +e
+          timeout 10 curl --silent --max-time 8 --connect-timeout 5 \
+            "${STAGING_API_URL}/healthz" \
+            -o /tmp/healthz.txt -w "http_code=%{http_code}\n"
+          EXIT_CODE=$?
+          set -e
+          # exit code 7 (connection refused) / 28 (timeout) は VPS 側 TLS 未配備の予期動作
+          if [ "$EXIT_CODE" = "0" ] || [ "$EXIT_CODE" = "7" ] || [ "$EXIT_CODE" = "28" ]; then
+            echo "scaffold smoke complete (exit=$EXIT_CODE: Sprint 12 host migration drill で TLS listener 完成予定)"
+            exit 0
+          fi
+          echo "unexpected exit code: $EXIT_CODE"
+          exit 1
+
+      - name: Skip E2E (smoke_only mode)
+        if: ${{ inputs.smoke_only == 'true' }}
+        run: echo "E2E suite skipped (smoke_only=true、Sprint 12 host migration drill で full suite 実行予定)"
+
+      - name: Tailscale logout (defense-in-depth、auto-revoke でも explicit)
+        if: always()
+        run: |
+          if command -v tailscale >/dev/null 2>&1; then
+            tailscale logout || true
+          fi

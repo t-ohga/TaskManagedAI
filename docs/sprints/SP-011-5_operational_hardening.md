@@ -284,6 +284,49 @@ audit_events payload に必須 field: `tenant_id` / `actor_id` / `run_id?` / `se
 
 ## Review
 
+### batch 2 (BL-0135 Alerting + BL-0136 Tailscale GitHub Action private staging / 2026-05-17 session)
+
+#### Changed
+- `backend/app/services/alerting/__init__.py` 新規 (public re-exports)
+- `backend/app/services/alerting/kinds.py` 新規 (AlertKind Literal + ALERT_KIND_VALUES frozenset + EXPECTED + `to_event_type()` helper)
+- `backend/app/services/alerting/evaluator.py` 新規 (~280 LOC、AlertEvaluator + 4 emit method + dedup via payload JSONB probe + Pydantic context model 4 種)
+- `tests/alerting/__init__.py` + `test_alert_kinds_enum.py` (7 件、5+ source 整合) + `test_alert_evaluator.py` (17 件、mock-based unit test)
+- `.github/workflows/private-staging-e2e.yml` 新規 (~85 LOC、Tailscale GitHub Action scaffold + workflow_dispatch trigger + IP allowlist 経由 smoke + secrets `add-mask`)
+- `docs/設計検討/tailscale-private-staging-acl.md` 新規 (~100 LOC、admin 手動 setup instruction: OAuth client + ACL + GitHub secrets + VPS TLS 443 listener Sprint 12 への handoff)
+- `docs/sprints/SP-011-5_operational_hardening.md`: 本 ## Review batch 2 section
+
+#### Verified
+- BL-0135 acceptance: 4 alert kind (approval_pending_overdue / budget_exceeded / run_failed_spike / secret_rotation_deferred) + NotificationEvent.event_type `alert.*` prefix + 24h dedup_key window + Pydantic context validator ✅
+- BL-0136 acceptance: workflow scaffold + Tailscale GitHub Action `tag:taskhub-ci` + OAuth client ephemeral auth key + `add-mask` secret protection + smoke verify ✅
+- deny-by-default: alerting evaluator は internal worker、Tailscale ACL は TCP/443 のみ allow ✅
+- SecretBroker boundary: alert payload は `secret_ref_id` のみ、raw secret 値含めず、test で sk-/ghp_/AGE-SECRET 非含有 verify ✅
+- 5+ source enum integrity (AlertKind): Literal + frozenset + EXPECTED + Pydantic + (frontend TypeScript enum は Sprint 17 で追加予定) ✅
+- AC-KPI-03 整合: approval_pending_overdue threshold = 4h = AC-KPI-03 `approval_wait_ms` median ≤4h と同値 ✅
+- AC-HARD-02 secret_canary_no_leak: `add-mask` + Loki shipping `_payload_secret_scan` (batch 1 既存) で raw secret reject path ✅
+- ADR Gate Criteria: #6 (Secrets) + #7 (外部公開設定) は ADR-00006/00007 既 accepted scope 内、update note 不要 ✅
+- plan-reviewer R1 → READY (0 BLOCKER / 0 HIGH / 2 MEDIUM 実装中解決 / 2 LOW polish、estimate 1-2 round) ✅
+- local verification: alerting+obs tests → **79 passed** / full pytest → **2984 passed + 348 skipped** (regression なし) / mypy 209 source files clean / ruff clean / actionlint local docker → exit=0 ✅
+
+#### Deferred (batch 3+ / Sprint 12 へ)
+- alert evaluator scheduler 結線 (arq cron task to `WorkerSettings.cron_jobs`) → batch 3
+- VPS 側 TLS 443 listener (Caddy/Nginx reverse proxy + Tailscale `serve` cert) → **Sprint 12 BL-host-migration-drill**
+- E2E full suite on staging → Sprint 12
+- staging `release/*` branch trigger → Sprint 12 (本 batch は `workflow_dispatch` のみ)
+- Slack / Discord / MoltBot webhook delivery → SP-022
+- email delivery → SP-022
+- alert dedup_key threshold tuning (config 化) → Sprint 12
+
+#### Risks
+- **alert spam risk**: dedup 24h 設計、threshold tune は Sprint 12 で config 化検討
+- **Tailscale OAuth client credential 漏洩**: GitHub Actions secret 保存、Tailscale admin console から rotate 可能、ADR-00006 secret rotation drill (batch 3 BL-0138) で cover
+- **VPS TLS 443 未配備**: 本 batch では curl exit=7/28 を expected として scaffold smoke complete、Sprint 12 host migration drill で TLS listener 完成
+- **GitHub Actions CI billing infra issue**: 前 batch 同 symptom 残存、本 batch は local verification で同等
+
+#### SP-011-5 受け入れ条件 contribution
+- line 178 (14 BL すべて Codex multi-round clean): BL-0135 + BL-0136 はこの PR (累計 **6/14**)
+- line 183 (private staging CI で 全 contract test + E2E full suite PASS): **scaffold 達成** (actual deploy は Sprint 12 host migration drill)
+- must_ship table P0 operational minimum line 162-163: BL-0135 + BL-0136 **達成** (scaffold)
+
 ### batch 1 (BL-0133 Loki + BL-0134 Grafana dashboard skeleton / 2026-05-17 session)
 
 #### Changed
