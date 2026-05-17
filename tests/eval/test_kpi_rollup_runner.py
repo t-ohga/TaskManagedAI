@@ -76,3 +76,57 @@ def test_run_kpi_rollup_raises_on_partial_corpus(tmp_path: Path) -> None:
     # 何もない dir を作って 5 KPI 全件 load 失敗を誘発
     with pytest.raises(KpiRollupRunnerError, match="corpus load failed"):
         run_kpi_rollup(eval_quality_root=partial)
+
+
+def test_run_kpi_rollup_rejects_partial_sut_results_map() -> None:
+    """Codex F-PR57-001 P2 adopt: sut_results_by_kpi が非 None で KPI key 欠落
+    の場合 fail-closed (Anti-Gaming、KPI 未指定 caller を pass にしない)。
+    """
+    partial_map = {
+        "AC-KPI-01": {"fixture-1": True},
+        "AC-KPI-02": {"fixture-1": True},
+        # AC-KPI-03, 04, 05 を意図的に omit
+    }
+    with pytest.raises(
+        KpiRollupRunnerError,
+        match="sut_results_by_kpi must contain exactly 5 keys",
+    ):
+        run_kpi_rollup(sut_results_by_kpi=partial_map)
+
+
+def test_run_kpi_rollup_rejects_extraneous_sut_results_key() -> None:
+    """sut_results_by_kpi に AC-KPI-NN 以外の key が含まれると fail-closed。"""
+    extraneous_map = {
+        "AC-KPI-01": {},
+        "AC-KPI-02": {},
+        "AC-KPI-03": {},
+        "AC-KPI-04": {},
+        "AC-KPI-05": {},
+        "AC-KPI-99": {"fixture-fake": True},  # 不正な key
+    }
+    with pytest.raises(
+        KpiRollupRunnerError,
+        match=r"extraneous=\['AC-KPI-99'\]",
+    ):
+        run_kpi_rollup(sut_results_by_kpi=extraneous_map)
+
+
+def test_run_kpi_rollup_accepts_full_sut_results_map() -> None:
+    """5 KPI 全件 key が揃っていれば accept (empty dict は許容)。"""
+    full_map = {
+        "AC-KPI-01": {},
+        "AC-KPI-02": {},
+        "AC-KPI-03": {},
+        "AC-KPI-04": {},
+        "AC-KPI-05": {},
+    }
+    summary, _ = run_kpi_rollup(sut_results_by_kpi=full_map)
+    # 全件 fixture-only evaluate に fallback (sut_results={} は evaluator に
+    # よっては "no SUT" 扱いだが、本 test の主目的は full map accept verify)
+    assert summary.kpi_count == 5
+
+
+def test_run_kpi_rollup_default_none_sut_results_works() -> None:
+    """default (sut_results_by_kpi=None) は従来通り全 KPI に None を渡す。"""
+    summary, _ = run_kpi_rollup()
+    assert summary.kpi_count == 5

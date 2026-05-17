@@ -23,6 +23,7 @@ import logging
 from typing import Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.api.approval_inbox import get_current_actor_id, get_tenant_id
@@ -110,7 +111,11 @@ async def get_kpi_rollup(
     """
 
     try:
-        summary, load_results = run_kpi_rollup()
+        # Codex F-PR57-002 P2 adopt: synchronous filesystem-bound runner を
+        # threadpool で実行し、event loop block を防ぐ (fixture corpus が
+        # 大規模化したときも同一 worker 内の concurrent request を blocking
+        # しない invariant).
+        summary, load_results = await run_in_threadpool(run_kpi_rollup)
     except KpiRollupRunnerError as exc:
         logger.warning("kpi_rollup_corpus_load_failed: %s", exc)
         raise HTTPException(

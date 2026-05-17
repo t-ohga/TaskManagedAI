@@ -104,6 +104,23 @@ def run_kpi_rollup(
             f"eval_quality_root not found: {eval_quality_root}"
         )
 
+    # Codex F-PR57-001 P2 adopt: top-level `sut_results_by_kpi` が非 None なら
+    # 5 KPI 全件の key が必須 (Anti-Gaming fail-closed)。partial map で
+    # 欠落 KPI を fixture data だけで pass させない invariant.
+    # None (default) は "no SUT cross-check" 意図として全 KPI に None を渡す
+    # (本 batch default、BL-0140b で sut_results integration 経由で全 KPI 揃う).
+    if sut_results_by_kpi is not None:
+        expected_kpi_ids = {kpi_id for kpi_id, _ in KPI_DATASET_KEYS}
+        actual_kpi_ids = set(sut_results_by_kpi.keys())
+        missing = expected_kpi_ids - actual_kpi_ids
+        extraneous = actual_kpi_ids - expected_kpi_ids
+        if missing or extraneous:
+            raise KpiRollupRunnerError(
+                f"sut_results_by_kpi must contain exactly 5 keys (AC-KPI-01..05) "
+                f"when provided; missing={sorted(missing)} "
+                f"extraneous={sorted(extraneous)}"
+            )
+
     metric_results: dict[str, object] = {}
     load_results: list[CorpusLoadResult] = []
 
