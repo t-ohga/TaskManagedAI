@@ -468,6 +468,36 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 - **Anti-Gaming defense matrix (HIGH-005 + batch 5e R3-R6 carry-over)**: 11 defense (cross-fixture duplicate criterion_id late-commit / non-negative non-bool int / ratio in [0,1] before tolerance / null vs 0.0 sentinel / overflow guard `OverflowError` catch / spec_violation vs sut_failure 物理分離 / spec_violation 時 SUT skip / duplicate within-fixture early reject / envelope/aggregate-invalid fixture corpus state poisoning 回避 / closure invariant / partition invariant)
 - **既存 batch 1-10 + batch 5a〜5e invariant 維持**: ContextSnapshot 10 列 / AgentRun 16 状態 / SecretBroker / Approval 4 整合 / RFC 8785 / batch 5a loader / batch 5b tenant_isolation aggregator / batch 5c generic loader / batch 5d citation_coverage aggregator / batch 5e cost_per_completed_task aggregator R6 lessons (corpus_seen_run_ids late-commit / ROUND_HALF_UP / negative declared reject / overflow guard)
 
+### Sprint 11 batch 5g 実装進捗 (PR #?? merge 後に commit hash 追記)
+
+- **batch_5g_implementation_pr**: 本 PR (AC-KPI-02 time_to_merge aggregator)
+- **Pivot rationale**: BL-0125 リテラル「coding/review eval suites」は SP-022 framework intake hardening へ移送し、本 batch は Sprint 11 受け入れ条件 line 186「AC-KPI 5 件すべて aggregator 経由」達成のため AC-KPI-02 time_to_merge aggregator を実装。BL-0125 SP-022 移送は plan v2 §1.1 HIGH-003 で正当化 (Sprint Exit ## Review で must_ship 表 line 167 を 6 領域 → 5 領域 + SP-022 carry-over に update、受け入れ条件 line 181 を「26 BL すべて Codex multi-round で `verdict=clean` 到達 (BL-0125 は SP-022 移送)」へ更新予定)
+- **実装 BL**: AC-KPI-02 time_to_merge aggregator → **4/5 件目達成** (5d=AC-KPI-04, 5e=AC-KPI-05, 5f=AC-KPI-01, **5g=AC-KPI-02**, 残 AC-KPI-03 は batch 5h-pre)
+- **新規 file**:
+  - `backend/app/services/eval/kpis/time_to_merge.py` (~700 LOC、AC_KPI_02_* constants + SamplePullRequest + TimeToMergeFixtureResult + TimeToMergeMetricResult + evaluate_time_to_merge)
+  - `eval/quality/time_to_merge/{manifest.json, expected_schema.json, README.md, public_regression/skeleton.json, private_holdout/.gitkeep+README.md, adversarial_new/.gitkeep+README.md, __init__.py}` (live skeleton 5 PRs / 3 merged @ 30m/60m/90m / median 1.0h)
+  - `tests/eval/test_kpis_time_to_merge.py` (~1000 LOC、69 test cases)
+- **実装手法**: plan-reviewer R1 (10 finding adopt: HIGH×3 + MEDIUM×4 + LOW×3) → R2 (READY 0 finding) → Claude direct (Codex review に専念)
+- **Anti-Gaming invariants** (manifest kpi_specific 7 件):
+  1. `time_to_merge is recomputed from input.sample_pull_requests, not copied from expected_aggregate`
+  2. `only PRs with status="merged" contribute to the median`
+  3. `open / draft / closed_without_merge are excluded from numerator (no opinion)`
+  4. **`merged_at >= ticket_created_at` causality invariant rejected at parse time (no `max(0,...)` clamping、HIGH-001 single source of truth)**
+  5. **corpus-wide uniqueness key is `(ticket_id, repository_id)` so one ticket may have multiple repos (Draft re-open / squash、MED-004)**
+  6. **mock-only contract: aggregator does NOT pull from live tickets table (SP-012 wire-up、defense #13)**
+  7. fixture_id and dataset_version_id are persisted to EvalResult
+- **server-owned boundary §1+§3**: caller-supplied `list[Fixture]` 直接受け取り signature なし、sut_results は read-only Mapping、pure function (DB / file system / network access なし)
+- **4+ source enum integrity (HIGH-003 partial、5th source SP-012 で追加)**: 5 AC_KPI_02_* constants + PR status 4-element enum (aggregator `_KNOWN_PR_STATUSES` frozenset、`_MERGED_STATUS` literal、fixture `expected_schema.json` enum、pytest `EXPECTED_KNOWN_PR_STATUSES`) を **exact name set 比較** + import-time partition invariant runtime raise。**Timestamp format cross-source contract (MED-001)**: fixture schema `date-time` + aggregator `_parse_timestamp_ms` で naive datetime reject / non-UTC normalize / `Z` suffix → `+00:00` / OverflowError catch
+- **BL-0127b / SP-012 forward-compat**: optional `sut_results: Mapping[str, bool] | None` parameter、batch 5d/5e/5f patterns 完全継承
+- **redacted splits skip**: `_SUPPORTED_FIXTURE_KINDS=("public_regression",)` 限定、private_holdout / adversarial_new は SP-022+
+- **threshold semantics (HIGH-002 adopt)**: AC_KPI_02_THRESHOLD_HOURS=2.0、**LOWER is better** ("<=" operator)。`threshold_reason ∈ {no_fixtures, manifest_violation, spec_violation, sut_failure, no_merged_pulls, threshold_met, above_threshold}` 7 priority + 各 `threshold_met` boolean 値を §4.2.2 matrix で明文化。`no_merged_pulls` は KPI 未充足 = `threshold_met=false` 単一経路で扱う (Anti-Gaming silent-pass 防止)
+- **median strategy (MED-002 adopt)**: 「pooled (un-weighted) corpus-wide median」for SP-012 live DB pooling と整合。NOT median-of-medians
+- **boundary equality (MED-003 adopt)**: `merged_at == ticket_created_at` (duration=0) は valid。Anti-Gaming counter-defense: 5+ merged で全 duration=0 は `_LOGGER.warning` 観測ログ (reject なし)
+- **per-PR structural validation**: ticket_id / project_id RFC 4122 UUID v1-5 strict、repository_id UUID OR null (merged 時 non-null 必須、LOW-R2-001)、tenant_id non-bool int >= 1、status enum、ticket_created_at + merged_at ISO-8601 with tzinfo (naive reject)
+- **expected_aggregate drift detection**: pulls_count / merged_count / open_count / draft_count / closed_without_merge_count / median_hours の 6 field 全てを recomputed と一致を要求 (5+1=6 reason_code: expected_aggregate_{pulls/merged/open/draft/closed}_drift + median_drift) + closure invariant `pulls_count == merged + open + draft + closed`
+- **Anti-Gaming defense matrix (HIGH-005 + batch 5e/5f 教訓 carry-over)**: 13 defense (cross-fixture duplicate `(ticket_id, repository_id)` late-commit / negative declared reject / null vs 0.0 sentinel / overflow guard / closure invariant / partition invariant + **timestamp causality (新規 #12)** + **mock-only contract (新規 #13)**)
+- **既存 batch 1-10 + batch 5a〜5f invariant 維持**: ContextSnapshot 10 列 / AgentRun 16 状態 / SecretBroker / Approval 4 整合 / RFC 8785 / batch 5a loader / batch 5b tenant_isolation / batch 5c generic loader / batch 5d citation_coverage / batch 5e cost_per_completed_task R6 lessons / batch 5f acceptance_pass_rate F-PR33-001 closure defense-in-depth comment pattern carry-over
+
 frontmatter `status: draft` 維持。
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)

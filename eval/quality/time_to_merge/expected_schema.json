@@ -1,0 +1,157 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://taskmanagedai.local/eval/quality/time_to_merge/expected_schema.json",
+  "title": "AC-KPI-02 time_to_merge fixture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fixture_id",
+    "dataset_version_id",
+    "fixture_kind",
+    "kpi_id",
+    "metric_key",
+    "case_key",
+    "input",
+    "expected_aggregate",
+    "threshold",
+    "assertions",
+    "anti_gaming",
+    "metadata"
+  ],
+  "properties": {
+    "fixture_id": { "type": "string", "pattern": "^AC-KPI-02_" },
+    "dataset_version_id": {
+      "type": "string",
+      "pattern": "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}(-[A-Za-z0-9_.-]+)?$"
+    },
+    "fixture_kind": { "type": "string", "const": "public_regression" },
+    "kpi_id": { "type": "string", "const": "AC-KPI-02" },
+    "metric_key": { "type": "string", "const": "time_to_merge" },
+    "case_key": { "type": "string", "minLength": 1 },
+
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sample_pull_requests"],
+      "properties": {
+        "sample_pull_requests": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ticket_id",
+              "tenant_id",
+              "project_id",
+              "repository_id",
+              "status",
+              "ticket_created_at",
+              "merged_at"
+            ],
+            "properties": {
+              "ticket_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "tenant_id": { "type": "integer", "minimum": 1 },
+              "project_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "repository_id": {
+                "type": ["string", "null"],
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["open", "draft", "merged", "closed_without_merge"]
+              },
+              "ticket_created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "merged_at": {
+                "type": ["string", "null"],
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "expected_aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pulls_count",
+        "merged_count",
+        "open_count",
+        "draft_count",
+        "closed_without_merge_count",
+        "median_hours"
+      ],
+      "properties": {
+        "pulls_count": { "type": "integer", "minimum": 1 },
+        "merged_count": { "type": "integer", "minimum": 0 },
+        "open_count": { "type": "integer", "minimum": 0 },
+        "draft_count": { "type": "integer", "minimum": 0 },
+        "closed_without_merge_count": { "type": "integer", "minimum": 0 },
+        "median_hours": {
+          "type": ["number", "null"],
+          "minimum": 0
+        }
+      }
+    },
+
+    "threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operator", "value", "unit"],
+      "properties": {
+        "operator": { "type": "string", "const": "<=" },
+        "value": { "type": "number", "const": 2.0 },
+        "unit": { "type": "string", "const": "hours" }
+      }
+    },
+
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["name", "expected"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "expected": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+
+    "anti_gaming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "private_expectation_visible_to_policy_author",
+        "append_only_refresh",
+        "separate_fixture_and_policy_commits"
+      ],
+      "properties": {
+        "private_expectation_visible_to_policy_author": { "type": "boolean" },
+        "append_only_refresh": { "type": "boolean" },
+        "separate_fixture_and_policy_commits": { "type": "boolean" }
+      }
+    },
+
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["rls_ready"],
+      "properties": {
+        "rls_ready": { "type": "boolean" }
+      }
+    }
+  }
+}

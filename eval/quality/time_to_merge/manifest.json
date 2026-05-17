@@ -1,0 +1,74 @@
+{
+  "dataset_version_id": "v2026.05.17-skeleton",
+  "dataset_version": "v2026.05.17-skeleton",
+  "kpi_id": "AC-KPI-02",
+  "metric_key": "time_to_merge",
+  "metric": "time_to_merge",
+  "kpi_threshold_ms_median": 7200000,
+  "kpi_threshold_hours_median": 2.0,
+  "threshold": {
+    "operator": "<=",
+    "value": 2.0,
+    "unit": "hours"
+  },
+  "splits": {
+    "public_regression": {
+      "path": "public_regression/",
+      "expected_count": 1,
+      "purpose": "PR regression check for deterministic time_to_merge median across the merged/open/draft/closed_without_merge status enum."
+    },
+    "private_holdout": {
+      "path": "private_holdout/",
+      "expected_count": 0,
+      "purpose": "Expectation leakage is forbidden; Sprint 11 / 12 adds encrypted holdout cases outside this repository.",
+      "value_storage": "external encrypted eval vault"
+    },
+    "adversarial_new": {
+      "path": "adversarial_new/",
+      "expected_count": 0,
+      "purpose": "Monthly append-only adversarial refresh for causality bypass, all-zero-duration, and >50% closed_without_merge attacks (plan v2 §2.2 / §7.10)."
+    }
+  },
+  "expected_schema": "expected_schema.json",
+  "fixture_immutable_index": {
+    "AC-KPI-02_v2026.05.17-skeleton_time_to_merge_minimal": {
+      "sha256": "fdb07195b53ba1950aca573d67369733b62c39eb97c9a6ea0477801adda60d9f",
+      "split": "public_regression",
+      "created_at": "2026-05-17"
+    }
+  },
+  "current_sprint_owners": [
+    "SP-011_eval_harness"
+  ],
+  "future_sprint_owners": [
+    "SP-012_p0_acceptance",
+    "SP-022_framework_intake_hardening"
+  ],
+  "agent_routing": {
+    "owner_skill": "release-suite",
+    "owner_agent": "release-auditor",
+    "hook": "none / eval-only",
+    "fixture_path": "eval/quality/time_to_merge/*",
+    "audit_ownership_matrix_ref": ".claude/reference/audit-ownership-matrix.md#§3 Quality KPIs 5"
+  },
+  "anti_gaming_rules": {
+    "common": {
+      "private_holdout_expectations_not_used_for_tuning": true,
+      "monthly_refresh_append_only": true,
+      "separate_fixture_and_policy_or_prompt_commits": true,
+      "persist_fixture_id_and_dataset_version": true,
+      "avoid_private_expectation_leakage": true,
+      "adversarial_new_append_only": true
+    },
+    "kpi_specific": [
+      "time_to_merge is recomputed from input.sample_pull_requests, not copied from expected_aggregate",
+      "only PRs with status=merged contribute to the median",
+      "open, draft, closed_without_merge are excluded from numerator (no opinion)",
+      "merged_at >= ticket_created_at causality invariant rejected at parse time (no max(0,...) clamping)",
+      "corpus-wide uniqueness key is (ticket_id, repository_id) so one ticket may have multiple repos (Draft re-open / squash)",
+      "mock-only contract: aggregator does not pull from live tickets table (SP-012 wire-up)",
+      "fixture_id and dataset_version_id are persisted to EvalResult"
+    ],
+    "source": ".claude/rules/testing.md §10 + batch 5g plan v2 §2.2 / §6"
+  }
+}
