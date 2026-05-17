@@ -1,0 +1,70 @@
+{
+  "dataset_version_id": "v2026.05.17-skeleton",
+  "dataset_version": "v2026.05.17-skeleton",
+  "kpi_id": "AC-KPI-01",
+  "metric_key": "acceptance_pass_rate",
+  "metric": "acceptance_pass_rate",
+  "threshold": {
+    "operator": ">=",
+    "value": 0.6
+  },
+  "splits": {
+    "public_regression": {
+      "path": "public_regression/",
+      "expected_count": 1,
+      "purpose": "PR regression check for deterministic acceptance_pass_rate aggregation across the AcceptanceCriteria status enum."
+    },
+    "private_holdout": {
+      "path": "private_holdout/",
+      "expected_count": 0,
+      "purpose": "Expectation leakage is forbidden; Sprint 11 / 12 adds encrypted holdout cases outside this repository.",
+      "value_storage": "external encrypted eval vault"
+    },
+    "adversarial_new": {
+      "path": "adversarial_new/",
+      "expected_count": 0,
+      "purpose": "Monthly append-only adversarial refresh for deferred-bypass / status-flip attacks. Counter-defense fixture for the satisfied / (satisfied + rejected) denominator chosen in batch 5f plan v2 §2.2."
+    }
+  },
+  "expected_schema": "expected_schema.json",
+  "fixture_immutable_index": {
+    "AC-KPI-01_v2026.05.17-skeleton_acceptance_pass_rate_minimal": {
+      "sha256": "f112b4b0887c4b1cf12a893107be488f028b212fd8a55db80c129bf56822afd5",
+      "split": "public_regression",
+      "created_at": "2026-05-17"
+    }
+  },
+  "current_sprint_owners": [
+    "SP-011_eval_harness"
+  ],
+  "future_sprint_owners": [
+    "SP-012_p0_acceptance",
+    "SP-022_framework_intake_hardening"
+  ],
+  "agent_routing": {
+    "owner_skill": "quality-suite",
+    "owner_agent": "code-reviewer",
+    "hook": "none / eval-only",
+    "fixture_path": "eval/quality/acceptance_pass_rate/*",
+    "audit_ownership_matrix_ref": ".claude/reference/audit-ownership-matrix.md#§3 Quality KPIs 5"
+  },
+  "anti_gaming_rules": {
+    "common": {
+      "private_holdout_expectations_not_used_for_tuning": true,
+      "monthly_refresh_append_only": true,
+      "separate_fixture_and_policy_or_prompt_commits": true,
+      "persist_fixture_id_and_dataset_version": true,
+      "avoid_private_expectation_leakage": true,
+      "adversarial_new_append_only": true
+    },
+    "kpi_specific": [
+      "acceptance_pass_rate is recomputed from input.sample_acceptance_criteria, not copied from expected_aggregate",
+      "only criteria with status in {satisfied, rejected} contribute to numerator and denominator",
+      "pending criteria are excluded from both (yet-to-be-evaluated, no opinion)",
+      "deferred criteria are excluded from both (explicit out-of-scope, defer_if_over_budget semantic)",
+      "unknown status values are rejected as spec_violation:status to prevent enum-drift bypass",
+      "fixture_id and dataset_version_id are persisted to EvalResult"
+    ],
+    "source": ".claude/rules/testing.md §10 + batch 5f plan v2 §2.2 / §2.2.2"
+  }
+}

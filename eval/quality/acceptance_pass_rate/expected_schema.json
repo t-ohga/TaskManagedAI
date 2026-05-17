@@ -1,0 +1,149 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://taskmanagedai.local/eval/quality/acceptance_pass_rate/expected_schema.json",
+  "title": "AC-KPI-01 acceptance_pass_rate fixture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fixture_id",
+    "dataset_version_id",
+    "fixture_kind",
+    "kpi_id",
+    "metric_key",
+    "case_key",
+    "input",
+    "expected_aggregate",
+    "threshold",
+    "assertions",
+    "anti_gaming",
+    "metadata"
+  ],
+  "properties": {
+    "fixture_id": { "type": "string", "pattern": "^AC-KPI-01_" },
+    "dataset_version_id": {
+      "type": "string",
+      "pattern": "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}(-[A-Za-z0-9_.-]+)?$"
+    },
+    "fixture_kind": { "type": "string", "const": "public_regression" },
+    "kpi_id": { "type": "string", "const": "AC-KPI-01" },
+    "metric_key": { "type": "string", "const": "acceptance_pass_rate" },
+    "case_key": { "type": "string", "minLength": 1 },
+
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sample_acceptance_criteria"],
+      "properties": {
+        "sample_acceptance_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "criterion_id",
+              "tenant_id",
+              "project_id",
+              "ticket_id",
+              "status"
+            ],
+            "properties": {
+              "criterion_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "tenant_id": { "type": "integer", "minimum": 1 },
+              "project_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "ticket_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["pending", "satisfied", "rejected", "deferred"]
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "expected_aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_criteria",
+        "evaluated_criteria",
+        "satisfied_criteria",
+        "rejected_criteria",
+        "pending_criteria",
+        "deferred_criteria",
+        "acceptance_pass_rate"
+      ],
+      "properties": {
+        "total_criteria": { "type": "integer", "minimum": 1 },
+        "evaluated_criteria": { "type": "integer", "minimum": 0 },
+        "satisfied_criteria": { "type": "integer", "minimum": 0 },
+        "rejected_criteria": { "type": "integer", "minimum": 0 },
+        "pending_criteria": { "type": "integer", "minimum": 0 },
+        "deferred_criteria": { "type": "integer", "minimum": 0 },
+        "acceptance_pass_rate": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+
+    "threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operator", "value"],
+      "properties": {
+        "operator": { "type": "string", "const": ">=" },
+        "value": { "type": "number", "const": 0.6 }
+      }
+    },
+
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["name", "expected"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "expected": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+
+    "anti_gaming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "private_expectation_visible_to_policy_author",
+        "append_only_refresh",
+        "separate_fixture_and_policy_commits"
+      ],
+      "properties": {
+        "private_expectation_visible_to_policy_author": { "type": "boolean" },
+        "append_only_refresh": { "type": "boolean" },
+        "separate_fixture_and_policy_commits": { "type": "boolean" }
+      }
+    },
+
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["rls_ready"],
+      "properties": {
+        "rls_ready": { "type": "boolean" }
+      }
+    }
+  }
+}
