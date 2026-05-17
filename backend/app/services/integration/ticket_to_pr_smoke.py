@@ -1,0 +1,231 @@
+"""Sprint 12 batch 2 (BL-0140b): Ticket-to-PR smoke gold flow orchestrator.
+
+Ticket → AgentRun → Approval → Mock Draft PR → Eval → Audit を sequential に
+通すための高レベル orchestrator skeleton. 各 stage は既存 service の callable
+を inject (Dependency Injection) する設計で、本 batch は **stage 順序 + 失敗時
+の skip invariant + audit emission** を確立する.
+
+実 DB / real provider / real RepoProxy は本 batch では config 不要 (caller が
+mock / stub callable を inject)。real DB integration は SP-012 batch 3+ で
+host migration drill + private staging E2E と統合.
+
+Anti-Gaming invariant:
+- stage 順序は固定 enum (TICKET → RUN → APPROVE → REPO → EVAL → AUDIT)
+- 任意 stage skip / reorder は不可 (signature 上、6 callable を順序固定で受ける)
+- 失敗 stage 以降は skipped (cascading failure を audit に正直に記録、
+  途中で「成功扱い」する経路を物理削除)
+
+Security boundary:
+- orchestrator は pure (no DB / network access、injected callable が境界)
+- raw secret は audit_payload に含めない (caller が redaction 済 metadata を渡す)
+- approval 4 整合 (artifact_hash / diff_hash / policy_version / fingerprint)
+  は injected approval_callable の責務
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class SmokeStage(StrEnum):
+    """6 stage gold flow (固定順序、reorder 禁止)."""
+
+    TICKET = "ticket"
+    RUN = "run"
+    APPROVE = "approve"
+    REPO = "repo"
+    EVAL = "eval"
+    AUDIT = "audit"
+
+
+# 固定順序 tuple (Anti-Gaming、caller / test / audit で 1 source of truth)
+SMOKE_STAGE_ORDER: tuple[SmokeStage, ...] = (
+    SmokeStage.TICKET,
+    SmokeStage.RUN,
+    SmokeStage.APPROVE,
+    SmokeStage.REPO,
+    SmokeStage.EVAL,
+    SmokeStage.AUDIT,
+)
+
+
+class TicketToPrSmokeError(RuntimeError):
+    """Ticket-to-PR smoke flow failure."""
+
+
+@dataclass(frozen=True, slots=True)
+class SmokeStageResult:
+    """単一 stage の実行結果 (frozen、append-only)."""
+
+    stage: SmokeStage
+    status: str  # "succeeded" / "failed" / "skipped"
+    duration_ms: int
+    error_code: str | None = None
+    error_summary: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class TicketToPrSmokeResult:
+    """Gold flow 全体結果 (frozen、append-only)."""
+
+    stage_count: int
+    succeeded_count: int
+    failed_count: int
+    skipped_count: int
+    overall_success: bool
+    stages: tuple[SmokeStageResult, ...]
+
+
+# stage callable contract: 入力 = previous stage の metadata (dict)、出力 =
+# 当該 stage の metadata (dict). 例外は TicketToPrSmokeError として伝播.
+StageCallable = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+async def run_ticket_to_pr_smoke(
+    *,
+    ticket_callable: StageCallable,
+    run_callable: StageCallable,
+    approve_callable: StageCallable,
+    repo_callable: StageCallable,
+    eval_callable: StageCallable,
+    audit_callable: StageCallable,
+    initial_context: dict[str, Any] | None = None,
+) -> TicketToPrSmokeResult:
+    """6 stage gold flow を sequential に実行.
+
+    各 stage は previous stage の metadata を入力として受け、自身の metadata を
+    返す。失敗 stage 以降は **skipped** として記録 (cascading failure を正直に
+    audit、途中で false success に経路を物理削除).
+
+    Args:
+        ticket_callable: Ticket fixture preparation (e.g. seed Ticket row)
+        run_callable: AgentRun orchestrator (provider call + validate + lint)
+        approve_callable: ApprovalDecisionService (human approval simulation)
+        repo_callable: RepoProxy / GitHubAppAdapter (Mock Draft PR open)
+        eval_callable: Eval runner (AC-KPI / AC-HARD evaluate)
+        audit_callable: AuditEvent emission (raw secret なし、final audit)
+        initial_context: 初期 metadata (default = empty dict)
+
+    Returns:
+        TicketToPrSmokeResult with 6 stages + overall_success.
+    """
+
+    import time
+
+    context = dict(initial_context or {})
+    stages: list[SmokeStageResult] = []
+    first_failure_seen = False
+
+    callables: dict[SmokeStage, StageCallable] = {
+        SmokeStage.TICKET: ticket_callable,
+        SmokeStage.RUN: run_callable,
+        SmokeStage.APPROVE: approve_callable,
+        SmokeStage.REPO: repo_callable,
+        SmokeStage.EVAL: eval_callable,
+        SmokeStage.AUDIT: audit_callable,
+    }
+
+    for stage in SMOKE_STAGE_ORDER:
+        if first_failure_seen:
+            stages.append(
+                SmokeStageResult(
+                    stage=stage,
+                    status="skipped",
+                    duration_ms=0,
+                    error_code="cascaded_skip",
+                    error_summary="previous stage failed; skipping to preserve audit truth",
+                    metadata={},
+                )
+            )
+            continue
+
+        callable_fn = callables[stage]
+        start_ns = time.monotonic_ns()
+        try:
+            stage_metadata = await callable_fn(context)
+        except TicketToPrSmokeError as exc:
+            duration_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+            logger.warning(
+                "ticket_to_pr_smoke_stage_failed",
+                extra={"stage": stage.value, "error": str(exc)},
+            )
+            stages.append(
+                SmokeStageResult(
+                    stage=stage,
+                    status="failed",
+                    duration_ms=int(duration_ms),
+                    error_code="stage_failed",
+                    error_summary=str(exc),
+                    metadata={},
+                )
+            )
+            first_failure_seen = True
+            continue
+        except Exception as exc:  # noqa: BLE001
+            duration_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+            logger.warning(
+                "ticket_to_pr_smoke_stage_unexpected_error",
+                extra={"stage": stage.value, "error_type": type(exc).__name__},
+            )
+            stages.append(
+                SmokeStageResult(
+                    stage=stage,
+                    status="failed",
+                    duration_ms=int(duration_ms),
+                    error_code=type(exc).__name__,
+                    error_summary=str(exc)[:200],  # truncate long messages
+                    metadata={},
+                )
+            )
+            first_failure_seen = True
+            continue
+
+        duration_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+        # context に stage metadata を merge (key 衝突は new 優先、explicit)
+        if not isinstance(stage_metadata, dict):
+            raise TicketToPrSmokeError(
+                f"stage {stage.value} returned non-dict metadata: "
+                f"{type(stage_metadata).__name__}"
+            )
+        context.update(stage_metadata)
+        stages.append(
+            SmokeStageResult(
+                stage=stage,
+                status="succeeded",
+                duration_ms=int(duration_ms),
+                error_code=None,
+                error_summary=None,
+                metadata=dict(stage_metadata),
+            )
+        )
+
+    succeeded = sum(1 for s in stages if s.status == "succeeded")
+    failed = sum(1 for s in stages if s.status == "failed")
+    skipped = sum(1 for s in stages if s.status == "skipped")
+
+    return TicketToPrSmokeResult(
+        stage_count=len(stages),
+        succeeded_count=succeeded,
+        failed_count=failed,
+        skipped_count=skipped,
+        overall_success=(failed == 0 and skipped == 0),
+        stages=tuple(stages),
+    )
+
+
+__all__ = [
+    "SMOKE_STAGE_ORDER",
+    "SmokeStage",
+    "SmokeStageResult",
+    "StageCallable",
+    "TicketToPrSmokeError",
+    "TicketToPrSmokeResult",
+    "run_ticket_to_pr_smoke",
+]
