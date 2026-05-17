@@ -726,28 +726,26 @@ def test_expected_aggregate_closure_violation_is_detected() -> None:
     assert per.spec_violation_reason == "spec_violation:expected_aggregate_total_drift"
 
 
-def test_closure_violation_fires_when_total_matches_but_partition_does_not() -> None:
-    """Construct a fixture where total declared matches recomputed total
-    but the per-status counts don't partition correctly.
+def test_total_drift_wins_over_closure_when_total_disagrees_with_recomputed() -> None:
+    """F-PR33-001 adopt: documents that ``total_drift`` is the actual
+    spec_violation when the declared total does not match recomputed
+    total — the closure check at the aggregator is *defensive dead code*
+    in the public API path because the upstream 6 count-drift checks
+    cannot all pass while the closure equation also fails (the four
+    status buckets exhaustively partition ``recomputed_total_criteria``).
+
+    The closure branch exists as defense-in-depth against future bugs in
+    ``_collect_sample_criteria`` (e.g., a fifth status leaking in via
+    incomplete enum updates). This test asserts the actual surfaced
+    reason — ``expected_aggregate_total_drift`` — rather than the
+    unreachable ``expected_aggregate_closure_violation``.
     """
 
     rows = _sample_criteria(satisfied=3, rejected=1, pending=1)
     aggregate = _expected_aggregate_for(rows)
-    # All recomputed counts match the input rows; but we lie about the
-    # PARTITION: claim 4 satisfied even though there are 3 + 1 rejected.
-    # The aggregator catches this with the satisfied_drift check first
-    # (which still fires before closure can). We need a case where the
-    # per-status declared counts each match recomputed counts but the
-    # closure (sum) declaration is wrong.
-    # → Add a synthetic 5th status declared that no row has; impossible
-    # via _sample_criteria. We craft directly:
-    aggregate["pending_criteria"] = 1
-    aggregate["deferred_criteria"] = 0
-    aggregate["satisfied_criteria"] = 3
-    aggregate["rejected_criteria"] = 1
-    aggregate["total_criteria"] = 5  # matches sum
-    aggregate["evaluated_criteria"] = 4
-    # Force closure violation by claiming total = 6 (one phantom).
+    # Inflate the declared total to 6 (one phantom row); recomputed = 5.
+    # The total-drift check at the aggregator fires first; closure check
+    # is unreachable here (and in the public API path generally).
     aggregate["total_criteria"] = 6
     fixture = _synthetic_fixture(sample_criteria=rows, expected_aggregate=aggregate)
     _, per = _result_for(fixture)

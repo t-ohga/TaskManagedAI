@@ -472,6 +472,17 @@ def _expected_aggregate_violation_reason(
 
     # Closure invariant (plan v2 §6 #10 / MEDIUM-004): the declared status
     # counts must partition ``total_criteria`` exactly.
+    #
+    # F-PR33-001 (code-reviewer PR #33 HIGH adopt) note: this branch is
+    # **defense-in-depth** and currently unreachable through the public
+    # API because each declared count above is already required to equal
+    # its recomputed counterpart, and ``_collect_sample_criteria``
+    # partitions every accepted row into one of the four status buckets
+    # exactly. The check stays here as a guardrail against future bugs in
+    # ``_collect_sample_criteria`` (e.g., a 5th status leaking in via
+    # incomplete enum updates) that would otherwise produce inconsistent
+    # bucket counts. SP-012 should revisit if a stricter raw-input
+    # partition recompute is introduced.
     if (
         declared_satisfied + declared_rejected + declared_pending + declared_deferred
         != declared_total
