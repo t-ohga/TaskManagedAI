@@ -177,7 +177,7 @@ Skill(
 
 レビューでは Type Safety、Security、DB、API contract、ADR Gate、Sprint Pack、tenant/project isolation、AI Output Boundary を確認する。
 
-## Step 6: Codex 敵対レビューと完了判定
+## Step 6: Codex 敵対レビューと完了判定 (Step 7-8 へ continue)
 
 Main Agent は user global skill `codex-adversarial-review` を呼び、敵対的観点で漏れを確認する。
 
@@ -193,6 +193,37 @@ Skill(
 - `adopt`: 指摘を実装または文書へ反映する。
 - `reject`: 根拠を Sprint Review に残す。
 - `defer`: defer_if_over_budget または次 Sprint 候補へ移す。
+
+## Step 7: security-suite (Codex F-PR44-006 fix、Hard Gate security pass 必須経路)
+
+CLAUDE.md §6.5.2 の 8 step workflow を本 skill で実体化するため、Step 7 = `security-suite` invocation を必須化:
+
+- 入力: Step 6 までの全成果物 (artifact / patch / diff / Sprint Pack / ADR)
+- skill: `security-suite` を Main Agent から invoke
+- 確認項目:
+  - Hard Gates 7 (policy_block_recall / secret_canary_no_leak / tenant_isolation_negative_pass / backup_restore_rpo_rto / forbidden_path_block / dangerous_command_block / prompt_injection_resist) 該当 fixture
+  - OWASP LLM Top 10 2025 / MCP Top 10 2025 sweep
+  - Provider Compliance Matrix 13 reason_code 検証
+  - SecretBroker raw secret 非保存 / atomic claim 4 要素 binding
+  - Runner sandbox forbidden path / dangerous command
+- 出力: `<results_dir>/step_7_security.md` (PASS / WARN / BLOCK 集約)
+- BLOCK 時: 修正して再実行、CRITICAL invariant 違反は実装着手保留
+
+## Step 8: release-suite + Sprint Exit 判定 (Codex F-PR44-006 fix、Sprint Pack `## Review` closure 必須経路)
+
+Sprint 着手 → 実装 → 品質 → セキュリティ完了後の Sprint Exit closure を本 skill で実体化:
+
+- 入力: Step 0-7 全成果物 + Sprint Pack
+- skill: `release-suite` + agent: `release-auditor` を Main Agent から invoke
+- 確認項目:
+  - Sprint Pack `## Review` 章生成: `changed` / `verified` / `deferred` / `risks` 4 項目
+  - Hard Gates 7 / Quality KPIs 5 集計 (実 fixture pass 状況: acceptance_pass_rate / time_to_merge / approval_wait_ms / citation_coverage / cost_per_completed_task)
+  - must_ship 達成確認、defer_if_over_budget の対応表更新
+  - VPS deploy smoke (Sprint 1 以降は Sprint Exit に含める、ADR-00021 host-portable 準拠)
+  - defer 移送: 本 Sprint 未消化チケットの次 Sprint defer entry 起票
+- 出力: `<results_dir>/step_8_release.md` (PASS / WARN / BLOCK 集約)
+- BLOCK 時 (must_ship 未達 / Hard Gates 未達 2 件以上): Sprint Exit 保留、修正 Sprint 追加検討
+- PASS 時: Sprint Pack ## Review 章を git commit、Sprint completed 宣言
 
 ## 出力 contract
 

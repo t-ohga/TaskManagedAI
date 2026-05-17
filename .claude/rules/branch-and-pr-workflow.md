@@ -237,3 +237,102 @@ git reset --hard origin/<branch>
 - 新 worktree branch 命名: `quality-loop/QL-C-research-eval-pack` 等
 - 旧 `worktree-sprint6-batch1-cli-artifact` は QL-A の PR merge 後 GitHub 側で auto-delete
 - PR-based workflow で divergence を physical 防止
+
+## 11. User 手元作業の代理処理 path (Codex F-PR44-005 fix、CLAUDE.md §6.5.8 圧縮で消失リスク指摘の正本化)
+
+User の手元 (uncommitted / staged / untracked / 6 state 全部) を Claude が代理で PR にする時の安全 protocol。本 § は本 protocol の正本、CLAUDE.md は link のみ。
+
+### 11.1 6 state 全部を漏れなく transfer
+
+User 手元の変更は以下 **6 state すべて** を考慮:
+
+1. **committed** (HEAD commits ahead of main): `git cherry-pick <hash>` で取り込み
+2. **untracked file/dir**: `cp -r <src> <worktree>/<dest>` で copy
+3. **tracked file の text 変更 (worktree edit + staged)**:
+   ```bash
+   # F-PR10-004 教訓: staged-only edit は `git diff <file>` で 0 byte、HEAD 基準で取得必須
+   git -C <src-checkout> diff HEAD -- <file> | git -C <worktree> apply
+   ```
+4. **tracked file の binary 変更**:
+   ```bash
+   # binary は `git diff` が marker のみで apply で no-op、直接 copy
+   mkdir -p "$(dirname <worktree>/<binary-file>)"   # F-PR10-014 教訓: 親 dir 作成
+   cp <src-checkout>/<binary-file> <worktree>/<binary-file>
+   ```
+5. **tracked file の deletion**:
+   ```bash
+   # text/binary 問わず削除は diff/cp で transfer されない、git rm で再現
+   git -C <worktree> rm <path>
+   ```
+6. **tracked file の rename (binary 含む)**:
+   ```bash
+   # `git diff --name-status -M HEAD -- .` の R<score> <old> <new> を git mv で再現
+   git -C <worktree> mv <old-path> <new-path>
+   # rename 後の内容変更 (F-PR10-018 教訓): 新 path に対し HEAD baseline で diff apply or 直接 copy
+   ```
+
+### 11.2 enumerate 段階の安全検査 (commit/copy 前必須)
+
+`find` で全 file 列挙 + 以下 safeguards:
+
+```bash
+# 全 file 数 + path 列挙 (cap なし、F-PR10-002/006/012 教訓)
+find <dir> -type f | wc -l
+find <dir> -type f
+
+# symlink 検出 (F-PR10-009 P2 adopt): workspace 外への symlink reject
+find <dir> -type l   # 1 件でも検出されたら user 確認なしに add しない
+
+# sensitive filename sweep (F-PR10-010 P2 adopt): filename glob で別途明示検出
+find <dir> -type f \( -name '.env*' -o -name '*.key' -o -name '*.pem' \
+  -o -name 'id_rsa*' -o -name 'id_ed25519*' -o -name '*.pfx' -o -name '*.p12' \
+  -o -name '*credentials*' -o -name '*secrets*' -o -name 'authorized_keys' \)
+
+# size 検査 (F-PR10-017 P2 adopt): 巨大 binary (>1MB) reject
+find <dir> -type f -size +1M -exec du -h {} +
+
+# 機密 content sweep (F-PR10-001 + R4 F-PR10-020 P1 adopt): `rg -l` で filename のみ表示、
+# secret value を terminal/log に echo しない (content review は user 直接、Claude session 経由禁止)
+rg -l -i --hidden --no-ignore \
+  -- 'password|secret|api[_-]?key|token|BEGIN.*PRIVATE.*KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]+|xox[bp]-[A-Za-z0-9-]+' \
+  <dir> > /tmp/secret-hit-files.txt 2>/dev/null || true
+test -s /tmp/secret-hit-files.txt && {
+  echo "ERROR: secret-suspect content detected (NOT shown for security)"
+  cat /tmp/secret-hit-files.txt
+  echo "→ user 確認なしに proceed しない、content 確認は user 直接 review (Claude session 越し禁止)"
+}
+```
+
+### 11.3 add 禁止条件
+
+以下のいずれかを検出したら **user 確認なしに add しない**:
+- 巨大 binary (>1MB) / `.env*` / `*.key` / `*.pem` / `id_rsa*` 等 sensitive filename
+- 機密疑い content (rg sweep ヒット、filename のみ表示)
+- **symlink** (`find -type l` で 1 件以上、F-PR10-009 教訓)
+- **100 file 超の untracked dir** → 複数 PR 分割 or user 承認 (F-PR10-006 教訓)
+- 25 file 超の add は別 session で慎重に (CLAUDE.md §6.5.8 注記、追加 review 必要)
+
+### 11.4 採用前 content review (text のみ、sensitive filename 除外)
+
+`cat` review 対象は **text file の全 body** (拡張子白 list + MIME fallback、F-PR10-005/016/021 教訓):
+
+```bash
+# sensitive filename を exclude (F-PR10-021 P1 adopt: content 出力 = secret leak)
+find <dir> -type f \( -name '*.md' -o -name '*.txt' -o -name '*.json' \
+  -o -name '*.yaml' -o -name '*.yml' -o -name '*.toml' -o -name '*.ini' -o -name '*.cfg' \
+  -o -name '*.py' -o -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \
+  -o -name '*.sh' -o -name '*.bash' -o -name '*.zsh' \
+  -o -name 'Dockerfile*' -o -name 'Makefile*' -o -name '*.mk' \
+  -o -name '*.go' -o -name '*.rs' -o -name '*.rb' -o -name '*.lua' \
+  -o -name '*.html' -o -name '*.css' -o -name '*.xml' -o -name '*.sql' -o -name '*.lock' \) \
+  ! -name '.env*' ! -name '*.key' ! -name '*.pem' ! -name 'id_rsa*' \
+  ! -name 'id_ed25519*' ! -name '*.pfx' ! -name '*.p12' \
+  ! -name '*credentials*' ! -name '*secrets*' ! -name 'authorized_keys' \
+  -print0 | while IFS= read -r -d '' f; do
+  echo "=== $f ==="; wc -l "$f"; cat "$f"
+done
+```
+
+### 11.5 transfer 実行順序
+
+(§11.1 の 6 state 全部) → enumerate (§11.2) → safeguards (§11.3) → text content review (§11.4) → `git add` (specific path のみ、`git add -A` / `git add .` 禁止、CLAUDE.md §6 7. Git 操作 + §11.3 add 禁止条件遵守) → `git commit` → `git push` → `gh pr create`
