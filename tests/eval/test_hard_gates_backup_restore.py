@@ -313,6 +313,59 @@ def test_live_skeleton_fixture_passes_hard_gate() -> None:
     assert result.missing_drill_kinds == ()
 
 
+def test_activation_mode_via_env_requires_three_drill_kinds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sprint 11.5 batch 3a (BL-0159b activation、ADR-00026 §3 採用):
+    env `TASKMANAGEDAI_AC_HARD_04_MODE=activation` で 3 drill_kinds 必須 mode に切替.
+    """
+
+    monkeypatch.setenv("TASKMANAGEDAI_AC_HARD_04_MODE", "activation")
+
+    from backend.app.services.eval.hard_gates.backup_restore import (
+        AC_HARD_04_ACTIVATED_REQUIRED_DRILL_KINDS,
+        AC_HARD_04_VALID_ACTIVATION_MODES,
+        _resolve_required_drill_kinds,
+    )
+
+    required = _resolve_required_drill_kinds()
+    assert required == AC_HARD_04_ACTIVATED_REQUIRED_DRILL_KINDS
+    assert required == frozenset({"dev_restore", "private_staging_restore", "pitr"})
+    assert AC_HARD_04_VALID_ACTIVATION_MODES == frozenset({"skeleton", "activation"})
+
+
+def test_activation_mode_default_is_skeleton(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """env 未設定 default は skeleton mode (既存挙動維持、Sprint 11 backward-compat)."""
+
+    monkeypatch.delenv("TASKMANAGEDAI_AC_HARD_04_MODE", raising=False)
+
+    from backend.app.services.eval.hard_gates.backup_restore import (
+        AC_HARD_04_REQUIRED_DRILL_KINDS_SKELETON,
+        _resolve_required_drill_kinds,
+    )
+
+    required = _resolve_required_drill_kinds()
+    assert required == AC_HARD_04_REQUIRED_DRILL_KINDS_SKELETON
+
+
+def test_activation_mode_invalid_falls_back_to_skeleton(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """不正値 mode は skeleton fallback (fail safe、AC-HARD-04 hard fail しない)."""
+
+    monkeypatch.setenv("TASKMANAGEDAI_AC_HARD_04_MODE", "bogus_mode_value")
+
+    from backend.app.services.eval.hard_gates.backup_restore import (
+        AC_HARD_04_REQUIRED_DRILL_KINDS_SKELETON,
+        _resolve_required_drill_kinds,
+    )
+
+    required = _resolve_required_drill_kinds()
+    assert required == AC_HARD_04_REQUIRED_DRILL_KINDS_SKELETON
+
+
 def test_skeleton_corpus_requires_only_dev_restore() -> None:
     # Synthetic single-fixture corpus with drill_kind=dev_restore covers
     # the skeleton-required set.

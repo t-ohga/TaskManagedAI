@@ -77,6 +77,40 @@ AC_HARD_04_REQUIRED_DRILL_KINDS_SKELETON: Final[frozenset[str]] = frozenset(
 AC_HARD_04_FUTURE_REQUIRED_DRILL_KINDS: Final[frozenset[str]] = frozenset(
     {"dev_restore", "private_staging_restore", "pitr"}
 )
+# Sprint 11.5 batch 3a (BL-0159b activation、ADR-00026 §3 採用):
+# skeleton → activation で 3 drill_kinds 必須に拡張. partition invariant により
+# SKELETON ⊆ ACTIVATION ⊆ KNOWN は維持.
+AC_HARD_04_ACTIVATED_REQUIRED_DRILL_KINDS: Final[frozenset[str]] = (
+    AC_HARD_04_FUTURE_REQUIRED_DRILL_KINDS
+)
+
+# Sprint 11.5 batch 3a: env-flag based gradual activation.
+# Default は "skeleton" (Sprint 11 BL-0159 既存挙動維持、test regression なし).
+# Sprint 12 host migration drill 完成後、本 env を "activation" に switch して
+# 3 drill_kinds required mode に運用切替.
+AC_HARD_04_ACTIVATION_MODE_ENV: Final[Literal["TASKMANAGEDAI_AC_HARD_04_MODE"]] = (
+    "TASKMANAGEDAI_AC_HARD_04_MODE"
+)
+AC_HARD_04_VALID_ACTIVATION_MODES: Final[frozenset[str]] = frozenset(
+    {"skeleton", "activation"}
+)
+
+
+def _resolve_required_drill_kinds() -> frozenset[str]:
+    """Sprint 11.5 batch 3a: env-flag で skeleton / activation mode を解決.
+
+    Default = "skeleton" (既存挙動維持). Sprint 12 で env "activation" に切替.
+    """
+
+    import os  # noqa: PLC0415 (env lookup は call site で resolution、cache しない)
+
+    mode = os.environ.get(AC_HARD_04_ACTIVATION_MODE_ENV, "skeleton").strip().lower()
+    if mode not in AC_HARD_04_VALID_ACTIVATION_MODES:
+        # 不正値は skeleton fallback (fail safe、AC-HARD-04 評価が hard fail しない).
+        mode = "skeleton"
+    if mode == "activation":
+        return AC_HARD_04_ACTIVATED_REQUIRED_DRILL_KINDS
+    return AC_HARD_04_REQUIRED_DRILL_KINDS_SKELETON
 # Plan v2 §6 #15 / MED-2 adopt: backup descriptors must not carry PII /
 # confidential content. payload_data_class ordinal is the canonical
 # Provider Compliance ordinal; AC-HARD-04 fixtures stay at "internal"
@@ -348,7 +382,10 @@ def _missing_drill_kinds(
         if result.drill_kind is None:
             continue
         observed.add(result.drill_kind)
-    return tuple(sorted(AC_HARD_04_REQUIRED_DRILL_KINDS_SKELETON - observed))
+    # Sprint 11.5 batch 3a (BL-0159b activation、ADR-00026 §3):
+    # env-flag で skeleton (default) / activation (3 drill_kinds) 切替.
+    required = _resolve_required_drill_kinds()
+    return tuple(sorted(required - observed))
 
 
 def _warn_unknown_sut_results(
@@ -520,7 +557,10 @@ def evaluate_backup_restore_rpo_rto(
 
 __all__ = [
     "AC_HARD_04_EXPECTED_DECISION",
+    "AC_HARD_04_ACTIVATED_REQUIRED_DRILL_KINDS",
+    "AC_HARD_04_ACTIVATION_MODE_ENV",
     "AC_HARD_04_FUTURE_REQUIRED_DRILL_KINDS",
+    "AC_HARD_04_VALID_ACTIVATION_MODES",
     "AC_HARD_04_GATE_ID",
     "AC_HARD_04_METRIC_KEY",
     "AC_HARD_04_PATTERN_HIT_KIND",
