@@ -31,12 +31,17 @@ logger = logging.getLogger("wal_archiving_check")
 
 @dataclass(frozen=True, slots=True)
 class WalArchivingReport:
-    """WAL archiving check result (JSON serializable)."""
+    """WAL archiving check result (JSON serializable).
+
+    Codex F-PR45-002 P2 adopt: `last_failed_wal` を report に含め、healthy 判定で
+    check (archiver failure を即時検出、operator alert 遅延防止).
+    """
 
     timestamp: str
     healthy: bool
     current_wal_lsn: str | None
     last_archived_wal: str | None
+    last_failed_wal: str | None
     archive_lag_bytes: int | None
     archive_command_configured: bool
     archive_mode_on: bool
@@ -70,19 +75,28 @@ def _parse_lsn(lsn_str: str) -> int:
 def compute_archive_lag_bytes(current_wal_lsn: str, last_archived_wal: str) -> int:
     """current_wal_lsn と last_archived_wal の lag を bytes で計算.
 
-    last_archived_wal は WAL filename (例: `000000010000000000000003`)、
-    16 hex chars * 3 segment (timeline-loglog-logseg)。LSN への変換:
-    `0/N000000` where N = log_seg。
+    WAL filename format (24 hex chars):
+    - chars [0:8]: timeline ID (e.g., 00000001)
+    - chars [8:16]: log ID (e.g., 00000000) — Codex F-PR45-001 P1 adopt
+    - chars [16:24]: segment ID (e.g., 00000003)
+
+    LSN への変換:
+        LSN = (log_id << 32) | (segment_id << 24)
+    例:
+        000000010000000100000000 → log_id=1, seg=0 → LSN 1/00000000 (4 GB)
+        000000010000000000000003 → log_id=0, seg=3 → LSN 0/03000000 (48 MB)
+
+    旧バグ: middle log field を無視して seg のみ使用 → 4 GB 超で永久 unhealthy.
     """
 
     if not last_archived_wal:
         return _parse_lsn(current_wal_lsn)
-    # WAL filename: <timeline><logfile_hi><logfile_lo>
-    # 例: 000000010000000000000003 → timeline=1, lo=3 → LSN 0/3000000
     if len(last_archived_wal) != 24:
         raise ValueError(f"invalid WAL filename: {last_archived_wal!r}")
+    # F-PR45-001 P1 adopt: log_id + seg を両方反映.
+    log_id = int(last_archived_wal[8:16], 16)
     log_seg = int(last_archived_wal[16:24], 16)
-    last_archived_lsn = log_seg << 24
+    last_archived_lsn = (log_id << 32) | (log_seg << 24)
     current_lsn = _parse_lsn(current_wal_lsn)
     return max(0, current_lsn - last_archived_lsn)
 
@@ -115,6 +129,7 @@ async def check_wal_archiving(database_url: str) -> WalArchivingReport:
             archive_command = await conn.fetchval("SHOW archive_command")
 
             last_archived = archive_status["last_archived_wal"] if archive_status else None
+            last_failed = archive_status["last_failed_wal"] if archive_status else None
             archive_mode_on = (str(archive_mode).lower() in ("on", "always"))
             archive_cmd_str = str(archive_command).strip() if archive_command else ""
             archive_command_configured = bool(
@@ -130,10 +145,15 @@ async def check_wal_archiving(database_url: str) -> WalArchivingReport:
                 except ValueError:
                     archive_lag_bytes = None
 
-            # healthy: archive_mode on + lag < 1GB
+            # Codex F-PR45-002 P2 adopt: last_failed_wal を healthy 判定に含める.
+            # archiver failure を即時検出 (操作員 alert 遅延防止).
+            archiver_failed = last_failed is not None and str(last_failed).strip() != ""
+
+            # healthy: archive_mode on + archive_command_configured + lag < 1GB + no recent failure
             healthy = (
                 archive_mode_on
                 and archive_command_configured
+                and not archiver_failed
                 and (archive_lag_bytes is None or archive_lag_bytes < 1024 * 1024 * 1024)
             )
 
@@ -142,6 +162,7 @@ async def check_wal_archiving(database_url: str) -> WalArchivingReport:
                 healthy=healthy,
                 current_wal_lsn=str(current_wal_lsn) if current_wal_lsn else None,
                 last_archived_wal=str(last_archived) if last_archived else None,
+                last_failed_wal=str(last_failed) if last_failed else None,
                 archive_lag_bytes=archive_lag_bytes,
                 archive_command_configured=archive_command_configured,
                 archive_mode_on=archive_mode_on,
@@ -154,6 +175,7 @@ async def check_wal_archiving(database_url: str) -> WalArchivingReport:
             healthy=False,
             current_wal_lsn=None,
             last_archived_wal=None,
+            last_failed_wal=None,
             archive_lag_bytes=None,
             archive_command_configured=False,
             archive_mode_on=False,

@@ -93,6 +93,7 @@ def test_wal_archiving_report_to_json() -> None:
         healthy=True,
         current_wal_lsn="0/3000000",
         last_archived_wal="000000010000000000000003",
+        last_failed_wal=None,
         archive_lag_bytes=0,
         archive_command_configured=True,
         archive_mode_on=True,
@@ -101,6 +102,7 @@ def test_wal_archiving_report_to_json() -> None:
     parsed = json.loads(report.to_json())
     assert parsed["healthy"] is True
     assert parsed["archive_lag_bytes"] == 0
+    assert parsed["last_failed_wal"] is None
     assert parsed["error_message"] is None
 
 
@@ -112,6 +114,7 @@ def test_wal_archiving_report_with_error() -> None:
         healthy=False,
         current_wal_lsn=None,
         last_archived_wal=None,
+        last_failed_wal=None,
         archive_lag_bytes=None,
         archive_command_configured=False,
         archive_mode_on=False,
@@ -119,3 +122,39 @@ def test_wal_archiving_report_with_error() -> None:
     )
     assert report.healthy is False
     assert report.error_message == "ConnectionRefusedError"
+
+
+def test_compute_archive_lag_bytes_log_field_reflected() -> None:
+    """Codex F-PR45-001 P1 adopt: WAL filename の middle log field を反映.
+
+    旧 bug: log_id を無視 → 4GB 超で永久 unhealthy.
+    Fix: LSN = (log_id << 32) | (seg << 24).
+    """
+
+    # WAL filename: timeline=1, log_id=1, seg=0 → LSN 1/00000000 (4 GB)
+    # current LSN も 1/00000000 → lag=0 (aligned).
+    current = "1/00000000"
+    last_archived = "000000010000000100000000"
+    lag = compute_archive_lag_bytes(current, last_archived)
+    assert lag == 0, f"log_field reflection bug: expected 0, got {lag}"
+
+
+def test_compute_archive_lag_bytes_log_field_advanced() -> None:
+    """log_id=2、seg=0 → LSN 2/00000000 (8 GB)、lag verification."""
+
+    current = "2/00000000"
+    last_archived = "000000010000000200000000"
+    lag = compute_archive_lag_bytes(current, last_archived)
+    assert lag == 0
+
+
+def test_compute_archive_lag_bytes_across_log_boundary() -> None:
+    """current LSN > last_archived LSN with log boundary."""
+
+    # last_archived: log=1, seg=0 → LSN 1/00000000
+    # current: log=1, seg=1 → LSN 1/01000000
+    # lag = 1 << 24 = 16 MB
+    current = "1/01000000"
+    last_archived = "000000010000000100000000"
+    lag = compute_archive_lag_bytes(current, last_archived)
+    assert lag == 0x01000000  # 16 MB

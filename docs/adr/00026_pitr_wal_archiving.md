@@ -79,13 +79,28 @@ archive_timeout = 3600  # 1h 内に WAL flush 強制
 
 ### Cron schedule (daily base backup、weekly PITR drill)
 
+**重要 (Codex F-PR45-004 P2 adopt)**: cron では `%` が newline separator として
+扱われるため、`date` の format 指定子は **wrapper script 経由** で実行する.
+インラインで書く場合は `\%` で escape 必要だが、可読性のため wrapper を推奨.
+
 ```cron
 # /etc/cron.d/taskmanagedai-backup
-# daily base backup (JST 02:00 = UTC 17:00)
-0 17 * * * postgres /usr/local/bin/pg_basebackup -D /var/lib/postgresql/backups/$(date -u +%Y-%m-%d) -X fetch
+# daily base backup (JST 02:00 = UTC 17:00) — wrapper script 経由
+0 17 * * * postgres /opt/taskmanagedai/scripts/daily_base_backup.sh
 
-# weekly PITR drill (JST Sun 04:00 = UTC Sat 19:00、staging restore)
-0 19 * * 6 root /opt/taskmanagedai/scripts/pitr_drill.py --staging --weekly
+# weekly PITR drill (JST Sun 04:00 = UTC Sat 19:00、staging restore) —
+# Codex F-PR45-005 P2 adopt: pitr_drill.py の actual flag を使用
+0 19 * * 6 root /opt/taskmanagedai/scripts/pitr_drill.py --kind private_staging_restore --dry-run
+```
+
+`/opt/taskmanagedai/scripts/daily_base_backup.sh` (wrapper、`%` escape 不要):
+
+```sh
+#!/bin/bash
+# Sprint 11.5 batch 3a (BL-0137): daily base backup wrapper
+set -euo pipefail
+TARGET_DIR="/var/lib/postgresql/backups/$(date -u +%Y-%m-%d)"
+pg_basebackup -D "${TARGET_DIR}" -X fetch -P -v
 ```
 
 ### Retention

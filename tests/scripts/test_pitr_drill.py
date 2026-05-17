@@ -113,9 +113,68 @@ async def test_run_pitr_drill_real_run_defers_pitr(tmp_path: Path) -> None:
     """pitr real-run も Sprint 12 へ defer."""
 
     backup_dir = tmp_path / "test_backup"
-    result = await run_pitr_drill("pitr", backup_dir=backup_dir, dry_run=False)
+    result = await run_pitr_drill(
+        "pitr",
+        backup_dir=backup_dir,
+        target_timestamp="2026-05-17T12:00:00+00:00",
+        dry_run=False,
+    )
     assert result.success is False
     assert result.error_message == "deferred_to_sprint12"
+
+
+@pytest.mark.asyncio
+async def test_pitr_dry_run_without_target_timestamp_fails(tmp_path: Path) -> None:
+    """Codex F-PR45-003 P2 adopt: pitr dry-run で `--target-timestamp` 未指定は failure.
+
+    旧 bug: placeholder 文字列で success=True 返し、実行不可能 drill を pass 報告.
+    """
+
+    backup_dir = tmp_path / "test_backup"
+    result = await run_pitr_drill(
+        "pitr",
+        backup_dir=backup_dir,
+        target_timestamp=None,  # 未指定
+        dry_run=True,
+    )
+    assert result.success is False
+    assert result.error_message == "missing_target_timestamp"
+    assert result.drill_kind == "pitr"
+    assert "requires --target-timestamp" in result.plan_or_log
+
+
+@pytest.mark.asyncio
+async def test_pitr_dry_run_with_target_timestamp_succeeds(tmp_path: Path) -> None:
+    """pitr kind でも target_timestamp 指定で dry-run success."""
+
+    backup_dir = tmp_path / "test_backup"
+    result = await run_pitr_drill(
+        "pitr",
+        backup_dir=backup_dir,
+        target_timestamp="2026-05-17T12:00:00+00:00",
+        dry_run=True,
+    )
+    assert result.success is True
+    assert result.error_message is None
+    assert "2026-05-17T12:00:00+00:00" in result.plan_or_log
+
+
+@pytest.mark.asyncio
+async def test_non_pitr_dry_run_does_not_require_target_timestamp(tmp_path: Path) -> None:
+    """dev_restore / private_staging_restore は target_timestamp 不要."""
+
+    backup_dir = tmp_path / "test_backup"
+    s_dev = await run_pitr_drill(
+        "dev_restore", backup_dir=backup_dir, target_timestamp=None, dry_run=True
+    )
+    assert s_dev.success is True
+    s_stg = await run_pitr_drill(
+        "private_staging_restore",
+        backup_dir=backup_dir,
+        target_timestamp=None,
+        dry_run=True,
+    )
+    assert s_stg.success is True
 
 
 def test_pitr_drill_result_to_json() -> None:

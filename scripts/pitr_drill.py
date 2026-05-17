@@ -195,6 +195,25 @@ async def run_pitr_drill(
     _validate_drill_kind(kind)
 
     if dry_run:
+        # Codex F-PR45-003 P2 adopt: pitr kind は target_timestamp が必須.
+        # 未指定で success=True を返すと「実行不可能 drill を pass と誤報告」する.
+        if kind == "pitr" and not target_timestamp:
+            duration = (datetime.now(tz=UTC) - started_at).total_seconds()
+            return PitrDrillResult(
+                timestamp=timestamp_iso,
+                drill_kind=kind,
+                dry_run=True,
+                success=False,
+                duration_seconds=duration,
+                rpo_hours=None,
+                rto_hours=None,
+                plan_or_log=(
+                    "pitr drill_kind requires --target-timestamp (ISO 8601). "
+                    "Plan cannot be executed without recovery target."
+                ),
+                error_message="missing_target_timestamp",
+            )
+
         plan = await run_dry_run(
             kind,
             backup_dir=backup_dir,
