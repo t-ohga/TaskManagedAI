@@ -17,6 +17,13 @@ from eval.provider.gold_task_v0.runner import run_gold_task_against_adapter
 
 _SHA256_HEX_RE = re.compile(r"^[a-f0-9]{64}$")
 
+# F-PR36-R2-003 P2 (LOW) adopt / DRY: Sprint 5 era originals exempt
+# from BL-0163 batch 5h metadata + oracle keywords enforcement. Single
+# source of truth for both invariant tests.
+_SPRINT5_ORIGINAL_IDS: frozenset[str] = frozenset(
+    {"simple_request", "structured_output", "safety_refusal"}
+)
+
 
 class _Response:
     def __init__(self, status_code: int = 200, payload: dict[str, Any] | None = None) -> None:
@@ -78,15 +85,39 @@ def _adapter_and_http_response(
 
 
 def _structured_output_for(case: GoldTaskCase) -> dict[str, Any]:
-    if case.case_id == "simple_request":
-        return {"answer": "Gold Task v0 simple answer"}
-    if case.case_id == "structured_output":
+    """Build a generic conforming structured output for the case's
+    ``structured_output_schema``.
+
+    BL-0163 batch 5h expansion: the dataset now has 30 cases sharing
+    two underlying schemas (``_SIMPLE_OUTPUT_SCHEMA`` with single
+    ``answer`` field, and ``_STRUCTURED_OUTPUT_SCHEMA`` with summary +
+    risk_score + next_actions). Detect the schema's top-level
+    required-keys signature instead of per-case dispatch, so adding new
+    cases does not require modifying this helper.
+    """
+
+    schema = case.request_template.get("structured_output_schema")
+    if not isinstance(schema, dict):
+        raise AssertionError(
+            f"case {case.case_id!r} has no structured_output_schema"
+        )
+    required = tuple(sorted(schema.get("required", [])))
+    if required == ("answer",):
+        return {"answer": f"Gold Task v0 generic answer for {case.case_id}"}
+    if required == ("next_actions", "risk_score", "summary"):
         return {
-            "summary": "Gold Task v0 structured summary",
+            "summary": f"Gold Task v0 generic summary for {case.case_id}",
             "risk_score": 0.2,
-            "next_actions": [{"title": "Review deterministic contract", "priority": "medium"}],
+            "next_actions": [
+                {
+                    "title": f"Generic next action for {case.case_id}",
+                    "priority": "medium",
+                }
+            ],
         }
-    raise AssertionError(f"case {case.case_id!r} has no structured output")
+    raise AssertionError(
+        f"case {case.case_id!r} has unsupported schema signature {required!r}"
+    )
 
 
 def _openai_response(case: GoldTaskCase) -> dict[str, Any]:
@@ -226,7 +257,9 @@ def test_gold_task_v0_all_adapters_share_expected_status_contract() -> None:
 
 
 def test_gold_task_v0_dataset_version_is_traceable_for_context_snapshot() -> None:
-    assert DATASET_VERSION_ID == "gold-task-v0-2026-05-09"
+    # F-PR36-001 P1 adopt: bumped from gold-task-v0-2026-05-09 (3 cases,
+    # Sprint 5) to gold-task-v0-2026-05-17 (30 cases, Sprint 11 batch 5h).
+    assert DATASET_VERSION_ID == "gold-task-v0-2026-05-17"
     for case in GOLD_TASK_V0_CASES:
         trace = case.request_template["context_snapshot_trace"]
         assert trace == {
@@ -234,4 +267,63 @@ def test_gold_task_v0_dataset_version_is_traceable_for_context_snapshot() -> Non
             "fixture_id": case.case_id,
             "snapshot_kind": "input",
         }
+
+
+def test_gold_task_v0_corpus_has_minimum_thirty_cases() -> None:
+    """BL-0163 must_ship line 171: private gold task 30-50 件 (30 件で達成可)."""
+
+    assert len(GOLD_TASK_V0_CASES) >= 30, (
+        f"BL-0163 requires ≥30 cases; got {len(GOLD_TASK_V0_CASES)}"
+    )
+
+
+def test_gold_task_v0_corpus_case_ids_are_unique() -> None:
+    case_ids = [case.case_id for case in GOLD_TASK_V0_CASES]
+    assert len(case_ids) == len(set(case_ids)), (
+        f"duplicate case_ids found: {[c for c in case_ids if case_ids.count(c) > 1]}"
+    )
+
+
+def test_gold_task_v0_expansion_cases_carry_metadata() -> None:
+    """F-PR36-003 P2 adopt: BL-0163 batch 5h expansion cases must
+    carry GoldTaskMetadata (source / domain / payload_data_class /
+    sanitization_status). Sprint 5 originals are exempt (3 cases) for
+    backwards compatibility.
+    """
+
+    for case in GOLD_TASK_V0_CASES:
+        if case.case_id in _SPRINT5_ORIGINAL_IDS:
+            continue
+        assert case.task_metadata is not None, (
+            f"case {case.case_id!r} from BL-0163 expansion missing task_metadata"
+        )
+        assert case.task_metadata.domain, (
+            f"case {case.case_id!r} task_metadata.domain is empty"
+        )
+        assert case.task_metadata.payload_data_class in {
+            "public",
+            "internal",
+            "confidential",
+            "pii",
+        }
+        assert case.task_metadata.sanitization_status in {
+            "clean",
+            "redacted",
+            "synthetic",
+        }
+
+
+def test_gold_task_v0_expansion_cases_have_oracle_keywords() -> None:
+    """F-PR36-002 P2 adopt: BL-0163 batch 5h expansion cases must
+    declare at least one oracle keyword for downstream SP-012
+    real-provider verification. Sprint 5 originals exempt.
+    """
+
+    for case in GOLD_TASK_V0_CASES:
+        if case.case_id in _SPRINT5_ORIGINAL_IDS:
+            continue
+        assert case.task_oracle_keywords, (
+            f"case {case.case_id!r} from BL-0163 expansion missing "
+            "task_oracle_keywords"
+        )
 
