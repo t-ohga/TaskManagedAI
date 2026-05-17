@@ -1,11 +1,11 @@
 ---
 id: "SP-008_github_app_repoproxy"
 type: "heavy"
-status: "done"
+status: "partial_skeleton"
 sprint_no: 8
 created_at: "2026-05-13"
 updated_at: "2026-05-17"
-review_summary: "Sprint 11 carry-over 7 BL (BL-0094/0095/0096a/0097/0100/0101a/0102) 完遂 (2026-05-17 SP-011 Exit)。broker-mediated installation token + 4 整合 binding server-owned 再計算 + Webhook HMAC service layer + AC-KPI-02 time_to_merge 達成。Codex audit 2026-05-13 で F-001/F-005 指摘 adopt 済 + Sprint 11 multi-round で全 BL clean。"
+review_summary: "Sprint 11 (2026-05-17 SP-011 Exit) で carry-over 7 BL のうち **5 BL 完遂** (BL-0094 / BL-0095 / BL-0097 / BL-0101a / BL-0102 aggregator)。**未実装 2 BL** (BL-0096a 4 整合 binding signature refactor、BL-0100 repo_pr_opened actual emission、BL-0102 KPI endpoint) は Sprint 12 へ defer。Codex audit 2026-05-13 で F-001/F-005 指摘 adopt 済。Codex PR #39 R1 F-PR39-002 (P2) 反映: SP-011 PR #39 で `status: done` 昇格を試みたが、未実装 BL が残る事実が判明、`partial_skeleton` 維持。"
 target_days: 5
 max_days: 7
 adr_refs:

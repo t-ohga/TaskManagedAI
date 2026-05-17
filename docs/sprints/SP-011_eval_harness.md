@@ -178,7 +178,7 @@ risks:
 
 ## 受け入れ条件
 
-- 27 BL すべて Codex multi-round で `verdict=clean` 到達 (CRITICAL=0 / HIGH ≤ 2、全 finding adopt / reject 判定済) ※ Sprint 11 Exit (2026-05-17) で BL-0125 を SP-022 へ defer 移送、本 Sprint 完遂は **26 BL clean** (BL-0125 を除く全件)。本文 line 351 / line 403 deferred table と整合
+- 27 BL すべて Codex multi-round で `verdict=clean` 到達 (CRITICAL=0 / HIGH ≤ 2、全 finding adopt / reject 判定済) ※ Sprint 11 Exit (2026-05-17、Codex PR #39 R1 F-PR39 全件 adopt 後) で **scope 縮減**: 本 Sprint 完遂は **16 BL clean** (Eval Harness 本来 scope 12 BL + Sprint 7-9 carry-over 完遂 5 BL = BL-0094/0095/0097/0101a/0102 aggregator)、未実装 carry-over 11 BL (BL-0079a/0080a/0081a/0096a/0100/0102 endpoint/0103a/0106a/0107a/0107b/EnumDrift) + BL-0125 SP-022 defer = 計 12 BL は Sprint 12 (P0 Acceptance) または SP-022 へ defer 移送。詳細は ## Review Sprint 11 Exit Summary 参照
 - Sprint 7-9 audit clean (2026-05-13) を本 Sprint で破壊しない (regression test PASS)
 - SP-008 status `partial_skeleton` → `done` 昇格
 - SP-009 status `skeleton_pending_backend` → `done` 昇格
@@ -317,32 +317,34 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 
 ## Review
 
-### Sprint 11 Exit Summary (2026-05-17、status: completed)
+### Sprint 11 Exit Summary (2026-05-17、status: completed for main scope、carry-over は Sprint 12 defer)
 
 **期間**: 2026-05-13 〜 2026-05-17 (5 day、target_days=5.6 / max=10 内、`time_to_merge` AC-KPI-02 median ~2h 維持)
 
-**全 BL 達成 (27 BL)**:
+**Scope 縮減宣言 (Codex PR #39 R1 F-PR39-001/002/003/004 P2 adopt)**:
 
-#### Sprint 7 carry-over (3 BL、完遂)
-- BL-0079a (runner audit payload + AgentRunEvent integration + `runner_cancelled` / `runner_cleanup_completed` event_type 拡張)
-- BL-0080a (AC-HARD-05 fixture private_holdout + adversarial_new 各 10+ 件)
-- BL-0081a (AC-HARD-06 fixture private_holdout + adversarial_new 各 10+ 件)
+SP-011 PR #39 起票時 (2026-05-17) に「27 BL 完遂」と記載していたが、Codex F-PR39-002/003/004 で **Sprint 7-9 carry-over の一部 (BL-0079a/0080a/0081a/0096a/0100/0102 endpoint/0103a/0106a/0107a/0107b/BL-EnumDrift 計 11 BL) が未実装** との指摘あり、repo 実態確認で事実と判明。事実誤認による Sprint Pack 虚偽記録を防ぐため、本 Sprint 11 Exit は **Eval Harness 本来 scope 12 BL + Sprint 7-9 carry-over の完遂分 5 BL = 計 16 BL のみ完遂** として記録し、未実装 carry-over 11 BL は Sprint 12 (P0 Acceptance) へ defer 移送。Sprint 11 受け入れ条件 line 181「27 BL clean」は本 Exit で **16 BL clean (carry-over 11 BL は Sprint 12 へ defer)** に再定義。
 
-#### Sprint 8 carry-over (7 BL、完遂)
-- BL-0094 (GitHub App 登録 + SecretBroker allowed_operations 拡張)
-- BL-0095 (`repo.push` / `repo.pr_open` capability_token issue flow 結線)
-- BL-0096a (RepoProxy 4 整合 binding server-owned 再計算 refactor)
-- BL-0097 (GitHubAppAdapter httpx wrapper + retries + rate limit + api_version=2022-11-28)
-- BL-0100 (`repo_pr_opened` AgentRunEvent actual emission)
-- BL-0101a (Webhook HMAC SecretBroker-mediated service layer)
-- BL-0102 (AC-KPI-02 `time_to_merge` 計測 endpoint + Draft PR created_at → merged_at median)
+#### Sprint 7 carry-over (3 BL 中 0 BL 完遂、3 BL Sprint 12 へ defer)
+- ❌ BL-0079a (`runner_cancelled` / `runner_cleanup_completed` event_type): 不在 (`backend/app/domain/agent_runtime/event_type.py` に追加されていない) → **Sprint 12 へ defer**
+- ❌ BL-0080a (AC-HARD-05 forbidden_path private_holdout + adversarial_new 各 10+ 件): `eval/security/forbidden_path/{private_holdout,adversarial_new}/` に README のみ → **Sprint 12 へ defer**
+- ❌ BL-0081a (AC-HARD-06 dangerous_command private_holdout + adversarial_new 各 10+ 件): `eval/security/dangerous_command/{private_holdout,adversarial_new}/` に README のみ → **Sprint 12 へ defer**
 
-#### Sprint 9 carry-over (5 BL、完遂)
-- BL-0103a (`GET /api/v1/tickets` list + detail + tenant boundary)
-- BL-0106a (`GET /api/v1/agent_runs` list + detail)
-- BL-0107a (`GET /api/v1/audit_events` route + cursor pagination + tenant filter)
-- BL-0107b (RedactedAuditPayloadSchema + DOM secret scan / AC-HARD-02 enforcement)
-- BL-EnumDrift (backend / DB / frontend 3 source enum drift detection contract test)
+#### Sprint 8 carry-over (7 BL 中 5 BL 完遂、2 BL Sprint 12 へ defer)
+- ✅ BL-0094 (GitHub App 登録 + SecretBroker `repo.push`/`repo.pr_open` allowed_operations 拡張): `backend/app/services/secrets/broker.py:445,647-648,657-658` 実在
+- ✅ BL-0095 (capability_token issue flow): `backend/app/services/secrets/broker.py` + `backend/app/repositories/secret_capability_token.py` + `backend/app/db/models/secret_capability_token.py` 実在
+- ❌ BL-0096a (RepoProxy 4 整合 binding signature refactor): `backend/app/services/repoproxy/repoproxy.py:85,122` で `create_draft_pr(request: DraftPRRequest)` のまま、`create_draft_pr(approval_id, agent_run_id)` への signature refactor が **未実施** (file 内コメント line 12 に「Sprint 11 で refactor」と書かれているが実装は未着手) → **Sprint 12 へ defer**
+- ✅ BL-0097 (GitHubAppAdapter / RepoProxy): `backend/app/services/repoproxy/{repoproxy,permission_matrix}.py` 実在 (mock 含む)
+- ❌ BL-0100 (`repo_pr_opened` AgentRunEvent actual emission): event_type は `event_type.py` に予約済だが、`backend/app/services/` 内に emission code が **不在** → **Sprint 12 へ defer**
+- ✅ BL-0101a (Webhook HMAC SecretBroker-mediated service layer): `backend/app/services/repoproxy/webhook_hmac.py:verify_github_webhook_signature` 実在
+- 🔶 BL-0102 (AC-KPI-02 `time_to_merge`): aggregator は `backend/app/services/eval/kpis/time_to_merge.py` 完成 (PR #34)、ただし **`/api/v1/agent-runs/{id}/kpi` endpoint は未実装** (backend/app/api/ に該当 endpoint 不在) → endpoint exposure は **Sprint 12 へ defer**
+
+#### Sprint 9 carry-over (5 BL 中 0 BL 完遂、5 BL Sprint 12 へ defer)
+- ❌ BL-0103a (`GET /api/v1/tickets` list + detail): `backend/app/api/tickets.py` **file 不在** → **Sprint 12 へ defer**
+- ❌ BL-0106a (`GET /api/v1/agent_runs` list + detail): `backend/app/api/agent_runs.py` に `POST /{run_id}/cancel` のみ、list/detail endpoint 不在 → **Sprint 12 へ defer**
+- ❌ BL-0107a (`GET /api/v1/audit_events` route): `backend/app/api/audit_events.py` **file 不在** → **Sprint 12 へ defer**
+- ❌ BL-0107b (RedactedAuditPayloadSchema + DOM secret scan / AC-HARD-02 enforcement): frontend 内に該当 schema 不在 → **Sprint 12 へ defer**
+- ❌ BL-EnumDrift (3 source enum drift detection contract test): `tests/contracts/test_frontend_backend_enum_drift*.py` **file 不在** → **Sprint 12 へ defer**
 
 #### Eval Harness 本来 scope (12 BL、完遂)
 - BL-0122 (`dataset_versions` / `eval_runs` / `eval_cases` / `eval_scores` 4 tables + loader、batch 5a / PR #28)
@@ -379,8 +381,8 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 | AC-HARD-02 secret_canary_no_leak | `eval/security/secret_canary/` + loader + DOM secret scan (BL-0107b) | Sprint 5 BL-0078 + Sprint 11 BL-0107b 統合 |
 | AC-HARD-03 tenant_isolation_negative_pass | `eval/security/tenant_isolation/` + loader (`tests/eval/test_hard_gates_tenant_isolation.py`) | **Sprint 11 BL-0158** |
 | AC-HARD-04 backup_restore_rpo_rto | `eval/ops/backup_restore/` + skeleton aggregator (`backend/app/services/eval/hard_gates/backup_restore.py`) | **Sprint 11 BL-0159 (skeleton)**、activation は Sprint 11.5 BL-0159b (PITR + 3 drill_kinds 拡張、ADR-00022 候補) |
-| AC-HARD-05 forbidden_path_block | `eval/security/forbidden_path/` + fixture (BL-0080a 拡充) | Sprint 7 + Sprint 11 BL-0080a |
-| AC-HARD-06 dangerous_command_block | `eval/security/dangerous_command/` + fixture (BL-0081a 拡充) | Sprint 7 + Sprint 11 BL-0081a |
+| AC-HARD-05 forbidden_path_block | `eval/security/forbidden_path/` (Sprint 7 で fixture skeleton 設置済、`private_holdout/adversarial_new/` は README のみ) | Sprint 7 (skeleton)、**BL-0080a (private_holdout/adversarial_new 各 10+ 件拡充) は Sprint 12 へ defer** |
+| AC-HARD-06 dangerous_command_block | `eval/security/dangerous_command/` (Sprint 7 で fixture skeleton 設置済、`private_holdout/adversarial_new/` は README のみ) | Sprint 7 (skeleton)、**BL-0081a (private_holdout/adversarial_new 各 10+ 件拡充) は Sprint 12 へ defer** |
 | AC-HARD-07 prompt_injection_resist | `eval/security/prompt_injection/` (Sprint 5 BL-0083) | Sprint 5 |
 
 **最終 verify (host migration drill / private staging CI/E2E 含む) は Sprint 12 で個別 verification**。
@@ -400,7 +402,18 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 
 | 項目 | 移送先 | 理由 |
 |---|---|---|
-| BL-0125 (coding / review eval suites) | **SP-022 framework intake hardening** | Sprint 5.5 Output Validator + BL-0090 dependency 未解決、本 Sprint で時間不足、受け入れ条件 line 181「26 BL clean」へ update |
+| **BL-0079a** (runner_cancelled / runner_cleanup_completed event_type 拡張) | **Sprint 12** | event_type.py に未追加、Codex F-PR39-004 で発覚 |
+| **BL-0080a** (AC-HARD-05 private_holdout/adversarial_new 各 10+ 件拡充) | **Sprint 12** | README 状態、fixture body 未実装、Codex F-PR39-004 で発覚 |
+| **BL-0081a** (AC-HARD-06 private_holdout/adversarial_new 各 10+ 件拡充) | **Sprint 12** | README 状態、fixture body 未実装、Codex F-PR39-004 で発覚 |
+| **BL-0096a** (RepoProxy 4 整合 binding signature refactor) | **Sprint 12** | repoproxy.py に comment のみ、signature 未 refactor、Codex F-PR39-002 で発覚 |
+| **BL-0100** (repo_pr_opened actual emission) | **Sprint 12** | event_type 予約済、emission code 未実装、Codex F-PR39-002 で発覚 |
+| **BL-0102 endpoint** (`/api/v1/agent-runs/{id}/kpi` time_to_merge exposure) | **Sprint 12** | aggregator (PR #34) は完成、API exposure 未実装、Codex F-PR39-002 で発覚 |
+| **BL-0103a** (`GET /api/v1/tickets` list+detail) | **Sprint 12** | backend/app/api/tickets.py 不在、Codex F-PR39-004 で発覚 |
+| **BL-0106a** (`GET /api/v1/agent_runs` list+detail) | **Sprint 12** | cancel のみ実装、list/detail 不在、Codex F-PR39-004 で発覚 |
+| **BL-0107a** (`GET /api/v1/audit_events` route) | **Sprint 12** | backend/app/api/audit_events.py 不在、Codex F-PR39-004 で発覚 |
+| **BL-0107b** (RedactedAuditPayloadSchema + DOM secret scan) | **Sprint 12** | frontend schema 不在、AC-HARD-02 enforcement 未着手、Codex F-PR39-003 で発覚 |
+| **BL-EnumDrift** (3 source enum drift detection contract test) | **Sprint 12** | tests/contracts/test_frontend_backend_enum_drift*.py 不在、Codex F-PR39-003 で発覚 |
+| BL-0125 (coding / review eval suites) | **SP-022 framework intake hardening** | Sprint 5.5 Output Validator + BL-0090 dependency 未解決、本 Sprint で時間不足、batch 5g plan v2 §1.1 HIGH-003 で正当化 |
 | BL-0163 Gold Task 50 件拡張 | **SP-022** | 本 Sprint 30 件達成、20 件は monthly refresh schedule で追加 |
 | BL-0159b PITR + 3 drill_kinds activation | **Sprint 11.5 (Operational Hardening)** | ADR-00022 候補 (PITR adoption) 起票必要 (ADR Gate Criteria #8 破壊的操作 / #6 secrets) |
 | ADR-00011 (GitHub App Permission Matrix) accepted 昇格 | **Sprint 11.5 BL-Permission-CLI 完遂後** | 本 Sprint で 7/8 unblock review 完了、frontmatter `proposed` 維持 (Codex R1 F-R1-004 + R2 F-R2-001 adopt) |
@@ -413,12 +426,13 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 
 #### 関連 Sprint Pack status 昇格
 
-- **SP-008 `partial_skeleton` → `done`**: Sprint 11 carry-over 7 BL (BL-0094/0095/0096a/0097/0100/0101a/0102) 完遂、broker-mediated installation token + 4 整合 binding + Webhook HMAC service layer + AC-KPI-02 達成
-- **SP-009 `skeleton_pending_backend` → `done`**: Sprint 11 carry-over 5 BL (BL-0103a/0106a/0107a/0107b/BL-EnumDrift) 完遂、backend list/detail route + frontend redaction + 3 source enum drift detection
-- **SP-011 `draft` → `completed`**: 本 Sprint Exit
+- **SP-008 `partial_skeleton` 維持** (Codex F-PR39-002 adopt): Sprint 11 で carry-over 7 BL 中 **5 BL 完遂** (BL-0094/0095/0097/0101a/0102 aggregator)、**未実装 2 BL** (BL-0096a 4 整合 signature refactor + BL-0100 repo_pr_opened emission + BL-0102 endpoint) は Sprint 12 へ defer、`done` 昇格は時期尚早
+- **SP-009 `skeleton_pending_backend` 維持** (Codex F-PR39-003 adopt): Sprint 11 で carry-over 5 BL すべて未着手 (backend routes / frontend redaction / EnumDrift contract test 全件未実装)、Sprint 12 (P0 Acceptance) で着手予定
+- **SP-011 `draft` → `completed`** (Eval Harness 本来 scope 12 BL + carry-over 完遂 5 BL = 16 BL scope に縮減): 本 Sprint Exit
 
 #### Risks (residual)
 
+- **Sprint 7-9 carry-over 未実装 11 BL の Sprint 12 移送 (Codex PR #39 R1 全件 adopt)**: 当初 SP-011 受け入れ条件 line 183 で「SP-008 partial_skeleton → done 昇格」/ line 184 で「SP-009 skeleton_pending_backend → done 昇格」を予定していたが、repo 実態確認で carry-over 11 BL が未実装と判明、SP-008 は `partial_skeleton` 維持、SP-009 は `skeleton_pending_backend` 維持。Sprint 12 完遂後に再度 status 昇格 review 実施
 - **ADR-00011 acceptance pending**: 7/8 unblock review 完了、最終 1 件 (BL-Permission-CLI) は Sprint 11.5 で完成、本 frontmatter `proposed` 維持。Sprint 11.5 Exit で accepted 昇格予定
 - **GitHub Actions CI billing infrastructure issue**: 本 Sprint 後半 (batch 5j / batch 5i merge 時) で全 job 1-3 秒即 fail 症状、user-side platform issue (code quality 問題なし)。Sprint 11 内で local pytest / actionlint / ruff / mypy で同等 verification 実施済、Sprint 12 着手前に CI billing 復旧 verify 必要
 - **AC-HARD-04 SUT activation Sprint 11.5 依存**: 本 Sprint は fixture contract skeleton のみ、実 PITR drill は Sprint 11.5 BL-0159b で実施 (ADR-00022 候補 accepted 必要)
@@ -427,7 +441,7 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 #### 次 Sprint handoff
 
 - **Sprint 11.5 (Operational Hardening)**: Permission Matrix CLI (BL-Permission-CLI) + Observability (OTel + Prometheus + Loki + Grafana) + secret rotation drill + `backup_restore_rpo_rto` SUT activation (BL-0159b、PITR + 3 drill_kinds + ADR-00022 起票) + private_holdout monthly decryption schedule + failure notification + `pytest.mark.no_leak` marker
-- **Sprint 12 (P0 Acceptance)**: Hard Gates 7 + KPIs 5 final verify + host migration drill (Mac/Linux/VPS) + backup/restore drill (RPO ≤24h / RTO ≤4h) + private staging CI/E2E + GitHub Actions CI billing 復旧 verify
+- **Sprint 12 (P0 Acceptance)**: Sprint 11 carry-over **未実装 11 BL** (BL-0079a/0080a/0081a/0096a/0100/0102 endpoint/0103a/0106a/0107a/0107b/EnumDrift) + Hard Gates 7 + KPIs 5 final verify + host migration drill (Mac/Linux/VPS) + backup/restore drill (RPO ≤24h / RTO ≤4h) + private staging CI/E2E + GitHub Actions CI billing 復旧 verify
 - **SP-022 (Framework Intake Hardening)**: BL-0125 coding/review eval suites + BL-0163 Gold Task 50 件拡張 + framework adoption checklist 8 項目 verify
 
 (SP-011 完了時に追記)
