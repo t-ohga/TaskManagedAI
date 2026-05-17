@@ -274,7 +274,7 @@ def test_manifest_hard_gate_id_parity() -> None:
     }
 
     manifest_ids = set()
-    for dataset_key, rel_path in manifest_paths.items():
+    for _dataset_key, rel_path in manifest_paths.items():
         full_path = _REPO_ROOT / rel_path
         assert full_path.exists(), f"manifest missing: {rel_path}"
         with full_path.open(encoding="utf-8") as fh:
