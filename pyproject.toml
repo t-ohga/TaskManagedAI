@@ -15,6 +15,17 @@ dependencies = [
   "fastapi>=0.115,<1.0",
   "httpx>=0.27,<1.0",
   "jsonschema>=4.0,<5.0",
+  # Observability (Sprint 11.5 batch 0、BL-0131 OTel + BL-0132 Prometheus)
+  # Pin instrumentation packages to `<0.52` to block unexpected beta upgrades
+  # (Sprint 11.5 batch 0 plan v2 §M-2 adopt、batch 1 で stable release 再評価)
+  "opentelemetry-api>=1.30,<2.0",
+  "opentelemetry-sdk>=1.30,<2.0",
+  "opentelemetry-exporter-otlp-proto-grpc>=1.30,<2.0",
+  "opentelemetry-instrumentation-fastapi>=0.51b0,<0.52",
+  "opentelemetry-instrumentation-httpx>=0.51b0,<0.52",
+  "opentelemetry-instrumentation-sqlalchemy>=0.51b0,<0.52",
+  "opentelemetry-instrumentation-redis>=0.51b0,<0.52",
+  "prometheus-client>=0.21,<1.0",
   "pydantic>=2.7,<3.0",
   "pydantic-settings>=2.2,<3.0",
   "sqlalchemy[asyncio]>=2.0,<3.0",
