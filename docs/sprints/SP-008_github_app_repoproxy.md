@@ -4,8 +4,8 @@ type: "heavy"
 status: "partial_skeleton"
 sprint_no: 8
 created_at: "2026-05-13"
-updated_at: "2026-05-13"
-review_summary: "skeleton + mock + ADR proposed のみ。BL-0094/0095/0097/0100/0102 (5/9 BL) は Sprint 11 で本実装。Codex audit 2026-05-13 で F-001/F-005 指摘 adopt 済。"
+updated_at: "2026-05-17"
+review_summary: "Sprint 11 (2026-05-17 SP-011 Exit) で carry-over 7 BL のうち **5 BL 完遂** (BL-0094 / BL-0095 / BL-0097 / BL-0101a / BL-0102 aggregator)。**未実装 3 BL** (BL-0096a 4 整合 binding signature refactor / BL-0100 repo_pr_opened actual emission / BL-0102 KPI endpoint) は Sprint 12 へ defer。Codex audit 2026-05-13 で F-001/F-005 指摘 adopt 済。Codex PR #39 R1 F-PR39-002 (P2) 反映: SP-011 PR #39 で `status: done` 昇格を試みたが、未実装 BL が残る事実が判明、`partial_skeleton` 維持。"
 target_days: 5
 max_days: 7
 adr_refs:

@@ -2,10 +2,10 @@
 id: "SP-009_p0_ui_pack"
 type: "heavy"
 status: "skeleton_pending_backend"
-review_summary: "5 page skeleton + 3 API client draft + Playwright spec のみ。実 backend route は未実装、API client は `_listXxxDraft` prefix で signal。Sprint 11 で backend route 実装 + integration test 結線。Codex audit 2026-05-13 で F-004/F-006/F-008 指摘 adopt 済。"
+review_summary: "Sprint 11 (2026-05-17 SP-011 Exit) で **carry-over 5 BL は未着手** のまま、Sprint 12 (P0 Acceptance) へ defer 移送。backend/app/api/tickets.py / audit_events.py 不在、agent_runs.py は POST cancel のみ。frontend RedactedAuditPayloadSchema + BL-EnumDrift contract test も未実装。Codex audit 2026-05-13 で F-004/F-006/F-008 指摘 adopt 済 + Sprint 11 main scope (Eval Harness 12 BL) 優先で carry-over は defer。Codex PR #39 R1 F-PR39-003 (P2) 反映: SP-011 PR #39 で `status: done` 昇格を試みたが、carry-over 未着手の事実が判明、`skeleton_pending_backend` 維持。"
 sprint_no: 9
 created_at: "2026-05-12"
-updated_at: "2026-05-14"
+updated_at: "2026-05-17"
 target_days: 6
 max_days: 9
 adr_refs:
