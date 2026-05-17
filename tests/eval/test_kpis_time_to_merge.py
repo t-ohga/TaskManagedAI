@@ -980,6 +980,81 @@ def test_threshold_just_above_boundary_fails() -> None:
     assert result.threshold_reason == "above_threshold"
 
 
+def test_threshold_within_ms_tolerance_passes() -> None:
+    """F-PR34-005 adopt: a fixture with a recomputed median of
+    ``2.0h + 1ms`` is within the ms-precision tolerance band
+    (``_THRESHOLD_HOURS_ABS_TOL = 1/3_600_000``). The aggregator must
+    report ``threshold_met=True`` even though the un-rounded float
+    metric_value is fractionally greater than 2.0.
+
+    This locks the inclusive boundary semantic at the tolerance edge.
+    A future regression that changes ``<=`` to ``<`` or removes
+    ``_THRESHOLD_HOURS_ABS_TOL`` would surface immediately here.
+    """
+
+    # 2 hours and 1 millisecond = 7_200_001 ms = 2:00:00.001
+    rows: list[JsonDict] = [
+        {
+            "ticket_id": _uuid_for("ms-tol-001"),
+            "tenant_id": 1,
+            "project_id": _DEFAULT_PROJECT_ID,
+            "repository_id": _DEFAULT_REPOSITORY_ID,
+            "status": "merged",
+            "ticket_created_at": "2026-05-01T10:00:00+00:00",
+            "merged_at": "2026-05-01T12:00:00.001+00:00",
+        }
+    ]
+    fixture = _synthetic_fixture(
+        sample_pulls=rows,
+        expected_aggregate={
+            "pulls_count": 1,
+            "merged_count": 1,
+            "open_count": 0,
+            "draft_count": 0,
+            "closed_without_merge_count": 0,
+            "median_hours": 7_200_001 / 3_600_000.0,
+        },
+    )
+    result = evaluate_time_to_merge(_synthetic_corpus([fixture]))
+    # 2.0 + 1/3_600_000 ≈ 2.000000278 hours — within abs_tol.
+    assert result.metric_value == pytest.approx(7_200_001 / 3_600_000.0)
+    assert result.threshold_met is True
+    assert result.threshold_reason == "threshold_met"
+
+
+def test_threshold_outside_ms_tolerance_fails() -> None:
+    """F-PR34-005 adopt: a fixture with median ``2.0h + 100ms`` is
+    well outside the 1 ms tolerance band and must report
+    ``above_threshold``.
+    """
+
+    rows: list[JsonDict] = [
+        {
+            "ticket_id": _uuid_for("ms-out-of-tol-001"),
+            "tenant_id": 1,
+            "project_id": _DEFAULT_PROJECT_ID,
+            "repository_id": _DEFAULT_REPOSITORY_ID,
+            "status": "merged",
+            "ticket_created_at": "2026-05-01T10:00:00+00:00",
+            "merged_at": "2026-05-01T12:00:00.100+00:00",
+        }
+    ]
+    fixture = _synthetic_fixture(
+        sample_pulls=rows,
+        expected_aggregate={
+            "pulls_count": 1,
+            "merged_count": 1,
+            "open_count": 0,
+            "draft_count": 0,
+            "closed_without_merge_count": 0,
+            "median_hours": 7_200_100 / 3_600_000.0,
+        },
+    )
+    result = evaluate_time_to_merge(_synthetic_corpus([fixture]))
+    assert result.threshold_met is False
+    assert result.threshold_reason == "above_threshold"
+
+
 def test_envelope_invalid_fixture_does_not_poison_corpus_state() -> None:
     """Plan v2 §6 #9 / batch 5e F-PR32-R6-001 carry-over."""
 

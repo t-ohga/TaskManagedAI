@@ -97,8 +97,9 @@ _UUID_TEXT_PATTERN: Final[re.Pattern[str]] = re.compile(
 )
 
 # Tolerance constants (plan v2 §4.1, MED-R2-001 rationale documented above).
+# _DURATION_ABS_TOL_HOURS = 1 ms in hours; the canonical name encodes both
+# the magnitude (≈ 2.78e-7) and the underlying ms-precision contract.
 _DURATION_REL_TOL: Final[float] = 0.0
-_DURATION_ABS_TOL_MS: Final[float] = 1.0  # 1 ms abs
 _DURATION_ABS_TOL_HOURS: Final[float] = 1.0 / 3_600_000  # 1 ms in hours
 _THRESHOLD_HOURS_ABS_TOL: Final[float] = _DURATION_ABS_TOL_HOURS
 
