@@ -1,0 +1,98 @@
+{
+  "fixture_id": "AC-KPI-02_v2026.05.17-skeleton_time_to_merge_minimal",
+  "dataset_version_id": "v2026.05.17-skeleton",
+  "fixture_kind": "public_regression",
+  "kpi_id": "AC-KPI-02",
+  "metric_key": "time_to_merge",
+  "case_key": "time_to_merge_minimal_five_pulls",
+  "input": {
+    "sample_pull_requests": [
+      {
+        "ticket_id": "fd8dd569-ac20-4391-8628-ffece2200025",
+        "tenant_id": 1,
+        "project_id": "c6d95749-c548-49e4-8c14-42a4df1ccf0c",
+        "repository_id": "578f448e-b067-46ea-868b-3c4d7f023784",
+        "status": "merged",
+        "ticket_created_at": "2026-05-01T09:00:00+00:00",
+        "merged_at": "2026-05-01T09:30:00+00:00"
+      },
+      {
+        "ticket_id": "aca369e1-deed-451f-8274-18b45ee72084",
+        "tenant_id": 1,
+        "project_id": "c6d95749-c548-49e4-8c14-42a4df1ccf0c",
+        "repository_id": "578f448e-b067-46ea-868b-3c4d7f023784",
+        "status": "merged",
+        "ticket_created_at": "2026-05-01T10:00:00+00:00",
+        "merged_at": "2026-05-01T11:00:00+00:00"
+      },
+      {
+        "ticket_id": "608f8a69-16d1-4b8d-8754-78e79dcd0fac",
+        "tenant_id": 1,
+        "project_id": "c6d95749-c548-49e4-8c14-42a4df1ccf0c",
+        "repository_id": "578f448e-b067-46ea-868b-3c4d7f023784",
+        "status": "merged",
+        "ticket_created_at": "2026-05-01T11:00:00+00:00",
+        "merged_at": "2026-05-01T12:30:00+00:00"
+      },
+      {
+        "ticket_id": "2b07bac8-219a-487e-8848-b803cda32a33",
+        "tenant_id": 1,
+        "project_id": "c6d95749-c548-49e4-8c14-42a4df1ccf0c",
+        "repository_id": null,
+        "status": "open",
+        "ticket_created_at": "2026-05-01T12:00:00+00:00",
+        "merged_at": null
+      },
+      {
+        "ticket_id": "983bb4f2-96b7-4888-851c-636152d1799e",
+        "tenant_id": 1,
+        "project_id": "c6d95749-c548-49e4-8c14-42a4df1ccf0c",
+        "repository_id": "578f448e-b067-46ea-868b-3c4d7f023784",
+        "status": "closed_without_merge",
+        "ticket_created_at": "2026-05-01T13:00:00+00:00",
+        "merged_at": null
+      }
+    ]
+  },
+  "expected_aggregate": {
+    "pulls_count": 5,
+    "merged_count": 3,
+    "open_count": 1,
+    "draft_count": 0,
+    "closed_without_merge_count": 1,
+    "median_hours": 1.0
+  },
+  "threshold": {
+    "operator": "<=",
+    "value": 2.0,
+    "unit": "hours"
+  },
+  "assertions": [
+    {
+      "name": "deterministic_median",
+      "expected": "median([0.5h, 1.0h, 1.5h]) = 1.0h (3 merged PRs)"
+    },
+    {
+      "name": "non_merged_excluded",
+      "expected": "open / draft / closed_without_merge are excluded from the median"
+    },
+    {
+      "name": "causality_invariant",
+      "expected": "merged_at >= ticket_created_at for every merged PR (boundary == valid)"
+    },
+    {
+      "name": "threshold_met",
+      "expected": "recomputed median_hours 1.0 <= manifest threshold 2.0 → threshold_met=True"
+    }
+  ],
+  "anti_gaming": {
+    "private_expectation_visible_to_policy_author": false,
+    "append_only_refresh": true,
+    "separate_fixture_and_policy_commits": true
+  },
+  "metadata": {
+    "rls_ready": true,
+    "created_at": "2026-05-17",
+    "notes": "Sprint 11 batch 5g deterministic skeleton. 5 PRs (3 merged at 30m/60m/90m + 1 open + 1 closed_without_merge) produce median time_to_merge = 1.0 hours."
+  }
+}
