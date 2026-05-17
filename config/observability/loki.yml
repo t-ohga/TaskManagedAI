@@ -1,0 +1,60 @@
+# Sprint 11.5 batch 1 (BL-0133): Loki server config.
+#
+# Retention 7 day default (Pack §設計判断 line 73、cost-aware、
+# SP-022 で 30 day 最適化検討).
+# Filesystem storage (single-node、production VPS は Tailscale 内のみ).
+
+auth_enabled: false  # Tailscale 内のみ accessible、auth は不要 (Pack §設計判断 line 78)
+
+server:
+  http_listen_address: 0.0.0.0
+  http_listen_port: 3100
+  grpc_listen_address: 0.0.0.0
+  grpc_listen_port: 9095
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2026-05-17
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  tsdb_shipper:
+    active_index_directory: /loki/index
+    cache_location: /loki/index_cache
+    cache_ttl: 24h
+
+limits_config:
+  # cardinality control (Pack §設計判断 line 76、5 label のみ promtail で label 化).
+  max_label_name_length: 1024
+  max_label_value_length: 2048
+  max_label_names_per_series: 30
+  retention_period: 168h  # 7 day (LOKI_RETENTION_PERIOD env で override 可、SP-022 で 30 day 検討)
+  ingestion_rate_mb: 10
+  ingestion_burst_size_mb: 20
+
+compactor:
+  working_directory: /loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+  delete_request_store: filesystem
+
+ruler:
+  alertmanager_url: ""  # Sprint 11.5 batch 2 BL-0135 で alerting integration

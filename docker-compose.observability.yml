@@ -1,0 +1,96 @@
+# Sprint 11.5 batch 1 (BL-0133 + BL-0134): Observability stack profile.
+#
+# `docker compose -f docker-compose.yml -f docker-compose.observability.yml
+#   --profile observability up -d` で Loki + Grafana + promtail + Prometheus を起動.
+#
+# CRITICAL invariant trace:
+# - deny-by-default (core.md §6): 全 service 127.0.0.1 bind、Tailscale 内のみ accessible
+# - Funnel/Cloudflare/public bind 使わない (ADR-00007 既 accepted、本 batch で変更なし)
+# - Loki retention 7 day default (LOKI_RETENTION_PERIOD env で override 可)
+# - Grafana anonymous read-only (Tailscale 内のみ、UI 編集は disable)
+# - promtail Docker socket scrape (host bind なし、container 内のみ)
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    container_name: taskmanagedai_prometheus
+    profiles: [observability]
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./config/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    networks:
+      - taskmanagedai_internal
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.3.0
+    container_name: taskmanagedai_loki
+    profiles: [observability]
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./config/observability/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    environment:
+      LOKI_RETENTION_PERIOD: "${LOKI_RETENTION_PERIOD:-168h}"  # 7 day default
+    networks:
+      - taskmanagedai_internal
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:3.3.0
+    container_name: taskmanagedai_promtail
+    profiles: [observability]
+    volumes:
+      - ./config/observability/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log:/var/log:ro
+      - promtail_positions:/tmp
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - taskmanagedai_internal
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0-ubuntu
+    container_name: taskmanagedai_grafana
+    profiles: [observability]
+    ports:
+      # frontend default 3000 と衝突回避のため host 3001 に publish.
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - ./config/observability/grafana/grafana.ini:/etc/grafana/grafana.ini:ro
+      - ./config/observability/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./config/observability/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_SECURITY_DISABLE_INITIAL_ADMIN_CREATION: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: ""
+    depends_on:
+      - loki
+      - prometheus
+    networks:
+      - taskmanagedai_internal
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  loki_data:
+  grafana_data:
+  promtail_positions:
+
+networks:
+  taskmanagedai_internal:
+    external: true

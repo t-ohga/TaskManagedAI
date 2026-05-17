@@ -1,0 +1,66 @@
+# Sprint 11.5 batch 1 (BL-0133): promtail scrape config.
+#
+# Docker stdout/stderr scrape + JSON parse + Loki label extract.
+# 5 label のみ promtail で label 化 (cardinality 制御):
+#   tenant_id / actor_id_hash / run_id / trace_id / payload_data_class
+# (Pack §設計判断 line 76).
+#
+# raw secret pattern は backend 側 `assert_no_raw_secret` で emit 前 reject 済、
+# promtail 側は label 抽出のみ.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    tenant_id: taskmanagedai
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: name
+            values: ["taskmanagedai_api", "taskmanagedai_worker"]
+
+    relabel_configs:
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: container_name
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: compose_service
+
+    pipeline_stages:
+      # Step 1: JSON parse (backend が JSON Lines を stdout に書く前提).
+      - json:
+          expressions:
+            level: level
+            logger: logger
+            tenant_id: tenant_id
+            actor_id_hash: actor_id_hash
+            run_id: run_id
+            trace_id: trace_id
+            payload_data_class: payload_data_class
+            service_role: service_role
+            service_name: service_name
+
+      # Step 2: 5 Loki label に extract (cardinality 制御).
+      - labels:
+          level:
+          tenant_id:
+          actor_id_hash:
+          run_id:
+          trace_id:
+          payload_data_class:
+          service_role:
+          service_name:
+
+      # Step 3: drop log if level missing (non-JSON noise log を除外).
+      - match:
+          selector: '{level=""}'
+          action: drop

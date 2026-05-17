@@ -1,0 +1,235 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "TaskManagedAI overview dashboard skeleton (Sprint 11.5 batch 1、BL-0134). 6 panel section: Hard Gates 7 / Quality KPIs 5 / Provider Compliance / SecretBroker / Runner+RepoProxy / Approval+Audit. KPI/metric 生データ bind は Sprint 12 BL-0164/0165、本 skeleton は metric contract + panel placeholder のみ.",
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Hard Gates 7 (AC-HARD-01 〜 07)",
+      "id": 100,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "AC-HARD-01 policy_block_recall (Sprint 12 BL-0164 で生データ)",
+      "id": 101,
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(taskmanagedai_agent_run_total{status=\"blocked\"}[5m]))",
+          "refId": "A"
+        }
+      ],
+      "options": { "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" }, "orientation": "auto", "textMode": "auto", "colorMode": "value", "graphMode": "area", "justifyMode": "auto" }
+    },
+    {
+      "type": "stat",
+      "title": "AC-HARD-02 secret_canary_no_leak (Sprint 12 で生データ)",
+      "id": 102,
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 1 },
+      "datasource": { "type": "loki", "uid": "Loki" },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({service_name=\"taskmanagedai\"} |~ \"secret_canary\" [5m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "AC-HARD-03 tenant_isolation (Sprint 12 で生データ)",
+      "id": 103,
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [{ "expr": "1", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "AC-HARD-04 backup_restore_rpo_rto (Sprint 12 で生データ)",
+      "id": 104,
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [{ "expr": "1", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "AC-HARD-05 forbidden_path_block (Sprint 12 で生データ)",
+      "id": 105,
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum(rate(taskmanagedai_runner_invocation_total{gateway_kind=\"runner\",result=\"forbidden_path_blocked\"}[5m]))", "refId": "A" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "AC-HARD-06 dangerous_command_block (Sprint 12 で生データ)",
+      "id": 106,
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum(rate(taskmanagedai_runner_invocation_total{gateway_kind=\"runner\",result=\"dangerous_command_blocked\"}[5m]))", "refId": "A" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "AC-HARD-07 prompt_injection_resist (Sprint 12 で生データ)",
+      "id": 107,
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [{ "expr": "1", "refId": "A" }]
+    },
+    {
+      "type": "row",
+      "title": "Quality KPIs 5 (AC-KPI-01 〜 05)",
+      "id": 200,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "AC-KPI-01 acceptance_pass_rate (Sprint 12 BL-0164 で生データ)",
+      "id": 201,
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [{ "expr": "rate(taskmanagedai_agent_run_total{status=\"completed\"}[5m]) / rate(taskmanagedai_agent_run_total[5m])", "refId": "A" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "AC-KPI-02 time_to_merge (Sprint 12 で生データ)",
+      "id": 202,
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [{ "expr": "histogram_quantile(0.5, rate(taskmanagedai_request_duration_seconds_bucket[5m]))", "refId": "A" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "AC-KPI-03 approval_wait_ms (Sprint 12 で生データ)",
+      "id": 203,
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [{ "expr": "1", "refId": "A" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "AC-KPI-04 citation_coverage (Sprint 12 で生データ)",
+      "id": 204,
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [{ "expr": "1", "refId": "A" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "AC-KPI-05 cost_per_completed_task (Sprint 12 で生データ)",
+      "id": 205,
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [{ "expr": "1", "refId": "A" }]
+    },
+    {
+      "type": "row",
+      "title": "Provider Compliance (3 別 dimension)",
+      "id": 300,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Provider call rate by payload_data_class / allowed / effective_allowed",
+      "id": 301,
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 27 },
+      "description": "3 別 dimension (合算禁止、provider-compliance.md §3 invariant).",
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum(rate(taskmanagedai_provider_call_total[5m])) by (provider, payload_data_class, allowed_data_class, effective_allowed_data_class, decision)", "refId": "A", "legendFormat": "{{provider}} payload={{payload_data_class}} allowed={{allowed_data_class}} eff={{effective_allowed_data_class}} {{decision}}" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "SecretBroker (capability token / canary)",
+      "id": 400,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "logs",
+      "title": "secret_capability_denied (Loki、Sprint 12 BL-0164 で event 結線)",
+      "id": 401,
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 36 },
+      "datasource": { "type": "loki", "uid": "Loki" },
+      "targets": [
+        { "expr": "{service_name=\"taskmanagedai\"} |~ \"secret_capability_denied\"", "refId": "A" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Runner + RepoProxy (gateway_kind 分離)",
+      "id": 500,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 44 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Runner invocation by gateway_kind (tool / runner、ai-output-boundary.md §9)",
+      "id": 501,
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum(rate(taskmanagedai_runner_invocation_total[5m])) by (gateway_kind, result)", "refId": "A", "legendFormat": "{{gateway_kind}} {{result}}" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Approval + Audit (decision flow)",
+      "id": 600,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 53 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Approval decision by action_class",
+      "id": 601,
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 54 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum(rate(taskmanagedai_approval_decision_total[5m])) by (action_class, decision)", "refId": "A", "legendFormat": "{{action_class}} {{decision}}" }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["taskmanagedai", "p0", "observability"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "TaskManagedAI Overview (Hard Gates / KPI / Provider Compliance / SecretBroker / Runner+RepoProxy / Approval+Audit)",
+  "uid": "taskmanagedai-overview",
+  "version": 1,
+  "weekStart": ""
+}
