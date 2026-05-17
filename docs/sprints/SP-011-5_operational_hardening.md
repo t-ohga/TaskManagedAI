@@ -284,6 +284,40 @@ audit_events payload に必須 field: `tenant_id` / `actor_id` / `run_id?` / `se
 
 ## Review
 
+### batch 4 (BL-0109a responsive + BL-0110a a11y / 2026-05-17 session)
+
+#### Changed
+- `frontend/package.json` + lockfile: `@axe-core/playwright` (^4.11.3) を devDependency に追加
+- `frontend/tests/e2e/_helpers/login.ts` 新規 (`loginAsDev` helper + dev-login token reader、Sprint 9 sprint9-pages.spec.ts と同 pattern を共有 module 化)
+- `frontend/tests/e2e/a11y.spec.ts` 新規 (BL-0110a、AxeBuilder WCAG 2.1 AA 違反 0 を /login + 6 protected page で verify)
+- `frontend/tests/e2e/responsive.spec.ts` 新規 (BL-0109a、768/1024/1440 viewport で navigation + main 表示 + horizontal overflow なし verify)
+- `docs/sprints/SP-011-5_operational_hardening.md`: 本 ## Review batch 4 section
+
+#### Verified
+- BL-0109a acceptance: 768x1024 (tablet) / 1024x768 (desktop small) / 1440x900 (desktop large) 各 viewport で navigation `aria-label="Admin"` + main region 表示 ✅
+- BL-0109a acceptance: 各 viewport で `document.scrollWidth - window.innerWidth ≤ 1` (sub-pixel 誤差以内、horizontal overflow なし) ✅
+- BL-0110a acceptance: AxeBuilder `withTags(["wcag2a","wcag2aa","wcag21a","wcag21aa"])` で各 P0 UI page (login + dashboard + tickets + approvals + runs + audit + settings) の `violations.length === 0` ✅
+- BL-0110a invariant: 違反検出時の root-cause-friendly assertion (`expect(violations).toEqual([])` + full payload を JSON.stringify で error message に注入)
+- AgentRun 16 状態 / ContextSnapshot 10 列 / approval 4 整合 / gateway 分離: 不変 (本 batch は frontend 限定、backend boundary 未変更)
+- AI 出力境界: test 自体は AI 出力含まず、Playwright + axe-core scan のみ
+- ADR Gate Criteria: 該当なし (frontend test 追加のみ、API 契約 / DB schema / Secrets / 外部公開 すべて未変更)
+- local verification: `pnpm typecheck` clean (TS strict) / `pnpm exec eslint tests/e2e/*.ts --max-warnings=0` clean
+
+#### Deferred (SP-022 / P0.1 へ)
+- < 768px (mobile portrait) viewport の Tailwind grid tuning → SP-022 (Sprint Pack で defer 明記済)
+- mobile burger menu / collapsed navigation → SP-022 (現状の `flex-wrap` で 768+ は機能、smaller viewport は SP-022 scope)
+- axe-core severity 別 (critical / serious / moderate / minor) reporting + Grafana panel → SP-022 (現状は違反 0 binary gate のみ)
+- axe scan の rule-set carve-out (色コントラストの brand exception 等) → P0.1 (現状は全 rule strict、必要時 ADR 経由で carve-out 検討)
+
+#### Risks
+- **Playwright run 未実行**: webServer (frontend dev + backend uvicorn) の prerequisite (DB + Redis) が未起動のため、本 commit では typecheck / lint clean のみ。Codex review + CI / Sprint 12 P0 Acceptance で full e2e run 経由 verify (CI billing infra 復旧後)
+- **Tailwind 4 (alpha) との互換性**: `@tailwindcss/postcss` 4.1.17 採用、axe-core scan が Tailwind 4 の generated CSS で false positive 出さないことは scan で確認 (現状の rule-set では問題なし、本格検証は CI 復旧後)
+- **navigation の base layout は変更せず**: 既存 `lg:flex-row` + `flex-wrap` で `md` (768) 以上は 機能、smaller viewport は defer。test は本 contract を ratify するのみ
+
+#### SP-011-5 受け入れ条件 contribution
+- line 179 (14 BL すべて Codex multi-round で `verdict=clean`): BL-0109a + BL-0110a はこの PR (累計 **13/14** with batch 0/1/2/3a/3b/3c/4)
+- must_ship P0 blocker line 154 + P0 operational minimum line 165 BL-0109a / BL-0110a **達成**
+
 ### batch 3c (BL-0139 audit export + BL-0156 data_class dimension / 2026-05-17 session)
 
 #### Changed
