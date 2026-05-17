@@ -234,6 +234,44 @@ async def test_export_jsonl_empty_events(tmp_path: Path) -> None:
     assert output.read_text(encoding="utf-8") == ""
 
 
+@pytest.mark.asyncio
+async def test_export_jsonl_payload_with_nested_uuid_not_falsely_rejected(
+    tmp_path: Path,
+) -> None:
+    """code-reviewer R1 MEDIUM adopt: payload nested UUID/datetime を
+    JSON-roundtrip normalize、`assert_no_raw_secret` の type strict 制約
+    で誤 reject しないこと verify.
+    """
+
+    approval_uuid = uuid4()
+    events = [
+        _mock_audit_event(
+            event_type="clean_event_with_nested_uuid",
+            payload={
+                "approval_id": approval_uuid,  # UUID (nested)
+                "created_at": datetime.now(tz=UTC),  # datetime (nested)
+                "payload_data_class": "internal",
+            },
+        ),
+    ]
+    svc, _session = _build_evaluator(events)
+    output = tmp_path / "audit-export.jsonl"
+
+    summary = await svc.export_jsonl(
+        tenant_id=_TENANT_ID,
+        start=datetime.now(tz=UTC) - timedelta(days=1),
+        end=datetime.now(tz=UTC) + timedelta(days=1),
+        output_path=output,
+    )
+    # JSON-roundtrip normalize により UUID/datetime が str に変換され reject されない
+    assert summary.rows_exported == 1
+    assert summary.rows_rejected_raw_secret == 0
+    body = output.read_text(encoding="utf-8").strip()
+    row = json.loads(body)
+    # payload 内の UUID は str 化されている
+    assert row["payload"]["approval_id"] == str(approval_uuid)
+
+
 def test_audit_export_summary_dataclass() -> None:
     """AuditExportSummary dataclass shape."""
 

@@ -84,7 +84,14 @@ def _build_export_row(event: AuditEvent) -> dict[str, Any]:
     pre-emptively str() 変換.
     """
 
-    payload = dict(event.event_payload) if event.event_payload else {}
+    # code-reviewer R1 MEDIUM adopt: payload nested UUID/datetime も
+    # JSON-roundtrip で normalize (`assert_no_raw_secret` が UUID/datetime を
+    # non-JSON-serializable として誤 reject するのを防ぐ).
+    raw_payload = dict(event.event_payload) if event.event_payload else {}
+    if raw_payload:
+        payload = json.loads(json.dumps(raw_payload, default=_serialize_uuid))
+    else:
+        payload = raw_payload
 
     # BL-0156: 3 別 data class dimension を top-level に抽出.
     # UUID / datetime は str に変換 (JSON-serializable + assert_no_raw_secret 整合).
