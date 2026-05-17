@@ -193,7 +193,14 @@ def compute_hard_gates_rollup(
         ),
     )
 
-    met_count = sum(1 for e in entries if e.threshold_met)
+    # Codex F-PR59-001 P1 adopt: Anti-Gaming invariant の defense-in-depth.
+    # `metric_value is None` (corpus undefined / malformed evaluator) かつ
+    # `threshold_met=True` の経路 (誤実装された future evaluator) を met と
+    # count してしまう脆弱性を物理削除。met と認めるには (1) threshold_met=True
+    # かつ (2) metric_value is not None の両方が必須.
+    met_count = sum(
+        1 for e in entries if e.threshold_met and e.metric_value is not None
+    )
     failed_count = len(entries) - met_count
     p0_accept = failed_count <= HARD_GATE_FAIL_TOLERANCE
 

@@ -162,7 +162,13 @@ def compute_kpi_rollup(
         ),
     )
 
-    met_count = sum(1 for e in entries if e.threshold_met)
+    # Codex PR #59 F-PR59-001 P1 adopt (波及 fix): hard_gates_rollup と同じ
+    # Anti-Gaming invariant defense-in-depth。`metric_value is None`
+    # (corpus undefined) かつ `threshold_met=True` の経路 (誤実装された
+    # future evaluator) を met と count してしまう脆弱性を物理削除.
+    met_count = sum(
+        1 for e in entries if e.threshold_met and e.metric_value is not None
+    )
     failed_count = len(entries) - met_count
 
     # P0 判定: 未達 <= KPI_FAIL_TOLERANCE

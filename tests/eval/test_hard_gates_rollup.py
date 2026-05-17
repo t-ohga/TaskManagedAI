@@ -220,6 +220,78 @@ def test_summary_is_frozen_dataclass() -> None:
         summary.entries[0].threshold_met = False  # type: ignore[misc]
 
 
+def test_threshold_met_true_with_metric_value_none_treated_as_fail() -> None:
+    """Codex F-PR59-001 P1 adopt: defense-in-depth。
+
+    誤実装された evaluator が `threshold_met=True` かつ `metric_value=None`
+    を返したとしても、aggregator は met と count せず failed として扱う
+    (Anti-Gaming invariant: 計測されていない gate を pass にしない).
+    """
+    summary = compute_hard_gates_rollup(
+        policy_block=_MockHardGateResult(
+            metric_value=None,
+            threshold_met=True,  # malformed evaluator が True を返した想定
+            threshold_reason="malformed_no_metric",
+        ),
+        secret_canary=_mock_result(threshold_met=True),
+        tenant_isolation=_mock_result(threshold_met=True),
+        backup_restore=_mock_result(threshold_met=True),
+        forbidden_path=_mock_result(threshold_met=True),
+        dangerous_command=_mock_result(threshold_met=True),
+        prompt_injection=_mock_result(threshold_met=True),
+    )
+    # AC-HARD-01 は threshold_met=True だが metric_value=None なので fail count
+    assert summary.failed_count == 1
+    assert summary.met_count == 6
+    assert summary.p0_accept is False
+    # entry 自体は evaluator が返した threshold_met=True を保存する
+    # (aggregator が defense-in-depth で count から除外する設計)
+    assert summary.entries[0].threshold_met is True
+    assert summary.entries[0].metric_value is None
+
+
+def test_manifest_hard_gate_id_parity() -> None:
+    """Codex F-PR59-002 P2 adopt: 5+ source 整合の 6 番目 source として、
+    実 manifest.json の hard_gate_id field と `ALL_HARD_GATE_IDS` を verify.
+
+    eval/security/<dataset>/manifest.json (AC-HARD-01/02/03/05/06/07) +
+    eval/ops/backup_restore/manifest.json (AC-HARD-04) を実 load.
+    """
+    import json
+    from pathlib import Path
+
+    _REPO_ROOT = Path(__file__).resolve().parents[2]
+    manifest_paths = {
+        # eval/security/ 配下: AC-HARD-01/02/03/05/06/07
+        "policy_block": "eval/security/policy_block/manifest.json",
+        "secret_canary": "eval/security/secret_canary/manifest.json",
+        "tenant_isolation": "eval/security/tenant_isolation/manifest.json",
+        "forbidden_path": "eval/security/forbidden_path/manifest.json",
+        "dangerous_command": "eval/security/dangerous_command/manifest.json",
+        "prompt_injection": "eval/security/prompt_injection/manifest.json",
+        # eval/ops/ 配下: AC-HARD-04 (backup_restore は ops fixture)
+        "backup_restore": "eval/ops/backup_restore/manifest.json",
+    }
+
+    manifest_ids = set()
+    for dataset_key, rel_path in manifest_paths.items():
+        full_path = _REPO_ROOT / rel_path
+        assert full_path.exists(), f"manifest missing: {rel_path}"
+        with full_path.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        hard_gate_id = data.get("hard_gate_id")
+        assert hard_gate_id is not None, (
+            f"{rel_path} missing hard_gate_id field"
+        )
+        manifest_ids.add(hard_gate_id)
+
+    # 7 manifests からの hard_gate_id set が ALL_HARD_GATE_IDS と完全一致
+    assert manifest_ids == ALL_HARD_GATE_IDS, (
+        f"manifest parity failed: manifests={manifest_ids} "
+        f"frozenset={ALL_HARD_GATE_IDS}"
+    )
+
+
 def test_hard_gates_vs_kpi_rollup_fail_tolerance_difference() -> None:
     """Hard Gates fail_tolerance=0 と KPI rollup fail_tolerance=1 の差分 verify.
 
