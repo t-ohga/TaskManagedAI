@@ -1,0 +1,7 @@
+base_sha: 068f5d9b656d9c40d11d4264cca27f5cfab2a51d
+created_at: 2026-05-17T10:55:29Z
+archived_files:
+  - plan-review.md
+  - branch-and-pr-workflow.md
+WARN: archive is convenience cache only; restore TRUTH is git object at base_sha.
+restore verification: shasum -a 256 -c manifest.sha256 + git show 068f5d9b656d9c40d11d4264cca27f5cfab2a51d:.claude/rules/<file>.md | shasum -a 256
