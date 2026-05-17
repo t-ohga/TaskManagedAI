@@ -444,6 +444,30 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 - **expected_aggregate drift detection**: total_completed_runs / total_cost_usd / cost_per_completed_task_usd / threshold_usd / threshold_passed の 5 field 全てを recomputed と一致を要求 (5 reason_code: expected_aggregate_{completed_drift,total_cost_drift,ratio_drift,threshold_drift,passed_drift})
 - **既存 batch 1-10 + batch 5a〜5d invariant 維持**: ContextSnapshot 10 列 / AgentRun 16 状態 / SecretBroker / Approval 4 整合 / RFC 8785 / batch 5a loader / batch 5b tenant_isolation aggregator / batch 5c generic loader / batch 5d citation_coverage aggregator
 
+### Sprint 11 batch 5f 実装進捗 (PR #?? merge 後に commit hash 追記)
+
+- **batch_5f_implementation_pr**: 本 PR (BL-0124 AC-KPI-01 acceptance_pass_rate aggregator)
+- **実装 BL**: BL-0124 (decomposition eval suite + acceptance_pass_rate aggregator、batch 5d / 5e patterns 拡張)
+- **新規 file**:
+  - `backend/app/services/eval/kpis/acceptance_pass_rate.py` (~590 LOC、AC_KPI_01_* constants + SampleAcceptanceCriterion + AcceptancePassRateFixtureResult + AcceptancePassRateMetricResult + evaluate_acceptance_pass_rate)
+  - `eval/quality/acceptance_pass_rate/{manifest.json, expected_schema.json, README.md, public_regression/skeleton.json, private_holdout/.gitkeep+README.md, adversarial_new/.gitkeep+README.md, __init__.py}` (live skeleton 5 criteria / 3 satisfied / 1 rejected / 1 pending → pass_rate=0.75)
+  - `tests/eval/test_kpis_acceptance_pass_rate.py` (~970 LOC、66 test cases: 5+ source enum × 6 / happy path × 2 / Anti-Gaming × 4 / manifest drift × 4 / spec violations × 12 / expected_aggregate violations × 14 / edge cases × 7 / SUT integration × 5 / overflow + frozen × 2 / log warning × 1)
+- **実装手法**: plan-reviewer R1 (14 finding adopt) → R2 (READY 0 finding) で plan v2 を 0 件 clean まで polish 後、Claude が Write tool で直接実装 (Codex は PR auto-review + multi-round で品質保証 phase に専念)
+- **Anti-Gaming invariants** (manifest kpi_specific):
+  1. `acceptance_pass_rate is recomputed from input.sample_acceptance_criteria, not copied from expected_aggregate`
+  2. `only criteria with status in {satisfied, rejected} contribute to numerator and denominator` (plan v2 §2.2 / §2.2.1 候補比較 + §2.2.2 deferred 悪用への counter-defense)
+  3. `pending` (yet-to-be-evaluated、no opinion) と `deferred` (explicit out-of-scope、`defer_if_over_budget` Sprint Pack pattern と semantic 一致) は分子 / 分母 両方から exclude
+  4. unknown status は `spec_violation:status` で fail-closed (5+ source enum drift bypass を遮断)
+- **server-owned boundary §1+§3**: caller-supplied `list[Fixture]` 直接受け取り signature なし、sut_results は read-only `Mapping[str, bool] | None`、pure function (DB / file system / network access なし)
+- **5+ source enum integrity (HIGH-003 adopt)**: 4 AC_KPI_01_* constants + AcceptanceCriteriaStatus 4-element enum (Python Literal `AcceptanceCriteriaStatus`、DB CHECK constraint `acceptance_criteria_ck_status`、aggregator `_KNOWN_ACCEPTANCE_STATUSES` frozenset、pytest `EXPECTED_KNOWN_STATUSES` + `EXPECTED_PASS_NUMERATOR` + `EXPECTED_PASS_DENOMINATOR`、fixture `expected_schema.json properties.input.items.properties.status.enum`) を **exact name set 比較** で 5+ source 整合 enforce。partition invariant `_PASS_NUMERATOR_STATUSES ⊊ _PASS_DENOMINATOR_STATUSES ⊆ _KNOWN_ACCEPTANCE_STATUSES` は import 時 runtime raise でも catch (S101 回避のため `assert` ではなく `if not ...: raise RuntimeError`)
+- **BL-0127b / SP-012 forward-compat**: optional `sut_results: Mapping[str, bool] | None` parameter、batch 5d/5e patterns 完全継承 (sut_failure_reason 分離 / spec_violation skip SUT / non-boolean strict reject / stale fixture_id warn log / sut_returned_false reason)
+- **redacted splits skip**: `_SUPPORTED_FIXTURE_KINDS=("public_regression",)` 限定、private_holdout / adversarial_new は SP-022+ で encrypted-holdout decryption path 追加後に対応
+- **threshold semantics**: AC_KPI_01_THRESHOLD=0.6、AC_KPI_01_THRESHOLD_OPERATOR=">="、**HIGHER is better**。threshold_met=True iff `metric_value >= 0.6 - epsilon AND fixture_count > 0 AND evaluated_criteria_across_corpus > 0 AND spec_violation 0 AND manifest_violation None AND sut_failure_present=False`。`threshold_reason ∈ {no_fixtures, manifest_violation, spec_violation, sut_failure, no_evaluated_criteria, threshold_met, below_threshold}` 7 priority enforcement (plan v2 §4.2.1)
+- **per-row structural validation**: criterion_id / project_id / ticket_id (RFC 4122 lowercase UUID v1-5 + RFC variant + UUID() parseability)、tenant_id (non-bool int ≥ 1)、status (4-element enum)。**全 ID field は PG_UUID** (plan v2 HIGH-004: batch 5e `SampleRun.project_id: int` (synthetic fixture identifier) と異なり、AC-KPI-01 は acceptance_criteria DB schema の column 型と直接一致)
+- **expected_aggregate drift detection (MEDIUM-004 adopt)**: total / evaluated / satisfied / rejected / pending / deferred + acceptance_pass_rate の 7 field 全てを recomputed と一致を要求 (8 reason_code: expected_aggregate_{total/evaluated/satisfied/rejected/pending/deferred/pass_rate}_drift + closure_violation)。**closure invariant**: `total == satisfied + rejected + pending + deferred` を partition で enforce
+- **Anti-Gaming defense matrix (HIGH-005 + batch 5e R3-R6 carry-over)**: 11 defense (cross-fixture duplicate criterion_id late-commit / non-negative non-bool int / ratio in [0,1] before tolerance / null vs 0.0 sentinel / overflow guard `OverflowError` catch / spec_violation vs sut_failure 物理分離 / spec_violation 時 SUT skip / duplicate within-fixture early reject / envelope/aggregate-invalid fixture corpus state poisoning 回避 / closure invariant / partition invariant)
+- **既存 batch 1-10 + batch 5a〜5e invariant 維持**: ContextSnapshot 10 列 / AgentRun 16 状態 / SecretBroker / Approval 4 整合 / RFC 8785 / batch 5a loader / batch 5b tenant_isolation aggregator / batch 5c generic loader / batch 5d citation_coverage aggregator / batch 5e cost_per_completed_task aggregator R6 lessons (corpus_seen_run_ids late-commit / ROUND_HALF_UP / negative declared reject / overflow guard)
+
 frontmatter `status: draft` 維持。
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
