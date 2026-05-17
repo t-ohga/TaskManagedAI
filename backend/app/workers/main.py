@@ -11,6 +11,7 @@ from urllib.parse import unquote, urlparse
 from arq.connections import RedisSettings
 
 from backend.app.config import Settings, get_settings
+from backend.app.observability import setup_otel
 from backend.app.workers.tasks import noop_task
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,11 @@ async def _cancel_pubsub_listener(pubsub: PubSubConnection, cancel_channel: str)
 
 async def on_startup(ctx: WorkerContext) -> None:
     settings = get_settings()
+
+    # Sprint 11.5 batch 0 BL-0131: worker process に OTel auto-instrument
+    # (httpx / SQLAlchemy / Redis). FastAPI instrumentor は role="worker" で skip.
+    setup_otel(role="worker")
+
     ctx["cancel_channel"] = settings.worker_cancel_channel
 
     pubsub = _redis_from_context(ctx).pubsub()
