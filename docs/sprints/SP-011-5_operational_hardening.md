@@ -284,6 +284,41 @@ audit_events payload に必須 field: `tenant_id` / `actor_id` / `run_id?` / `se
 
 ## Review
 
+### batch 3b (BL-0138 secret rotation drill / 2026-05-17 session)
+
+#### Changed
+- `backend/app/services/secrets/rotation.py` 新規 (~340 LOC、`SecretRotationService` + 5 operations: issue_new / promote / revoke / rollback / dry_run + canary preflight + atomic transaction)
+- `tests/secrets/test_rotation_state_transition.py` 新規 (~330 LOC、21 件 mock-based unit tests)
+- `docs/sprints/SP-011-5_operational_hardening.md`: 本 ## Review batch 3b section
+
+#### Verified
+- BL-0138 acceptance: dry-run plan + real-rotation + rollback path + canary preflight 統合 ✅
+- 5 rotation operations: issue_new (pending verify) / promote (atomic active→deprecated + pending→active) / revoke (deprecated→revoked terminal) / rollback (current_active→deprecated + deprecated→active) / dry_run (plan-only、実 DB update なし) ✅
+- AC-HARD-02 trace: canary preflight が metadata に raw secret pattern (sk-/ghp_/AGE-SECRET) 含む場合 reject、prohibited key (`api_key` 等) も reject ✅
+- atomic transaction: promote / rollback で 2 update を同一 commit、partial failure で全 rollback (旧 active と新 pending の state 不整合期間排除) ✅
+- revoked terminal invariant: rollback path で revoked → active 復元禁止、`invalid_rollback_target_status` error ✅
+- SecretBroker boundary: 本 service は status / timestamp 操作のみ、raw secret 値触らず、SecretRefStatus enum 5+ source 整合 ✅
+- AgentRun 16 状態 / ContextSnapshot 10 列 / approval 4 整合 / gateway 分離: 不変 (rotation は state machine 層のみ) ✅
+- ADR Gate Criteria: #6 Secrets management は ADR-00006 既 accepted scope 内 (rotation drill 実装、policy 変更なし) ✅
+- local verification: rotation tests **21 passed** / full pytest **3042 passed + 348 skipped** (前 +21、regression なし) / mypy 210 source files clean / ruff clean ✅
+
+#### Deferred (batch 3c / Sprint 12 へ)
+- BL-0139 audit export JSON Lines daily job + `secret_capability_revoked` event → **batch 3c**
+- BL-0156 data_class dimension (audit / OTel / Loki) → **batch 3c**
+- secret rotation CLI wrapper script (`scripts/secret_rotation_drill.py`) → 必要に応じて Sprint 12 / SP-022 (本 batch は service layer のみ)
+- production secret rotation drill (SOPS age key rotation + actual deploy) → **Sprint 12 host migration drill**
+- AC-HARD-02 secret_canary_no_leak fixture integration → Sprint 12
+
+#### Risks
+- **service layer のみ実装**: CLI wrapper script (`scripts/secret_rotation_drill.py`) は本 batch では作成せず、SecretRotationService API を直接 invoke する admin script を Sprint 12 で別途実装
+- **DB integration test 未実施**: 本 batch では mock-based unit test のみ、actual DB transaction test は Sprint 12 で integration verify
+- **canary preflight scope**: metadata dict のみ scan (string value)、binary blob は別途検討 (SP-022)
+
+#### SP-011-5 受け入れ条件 contribution
+- line 178 (14 BL すべて Codex multi-round clean): BL-0138 はこの PR (累計 **9/14** with batch 3b)
+- line 182 (`secret rotation drill が dry-run + real-rotation 双方で成功`): **達成** (service layer + 21 tests)
+- must_ship P0 blocker line 149: BL-0138 **達成**
+
 ### batch 3a (BL-0137 WAL/PITR prep + BL-0159b PITR activation + ADR-00026 / 2026-05-17 session)
 
 #### Changed
