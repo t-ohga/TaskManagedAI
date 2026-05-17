@@ -67,6 +67,22 @@ def test_cli_input_present_but_batch6_1_returns_exit_2() -> None:
         os.unlink(tmp_path)
 
 
+def test_cli_skeleton_mode_with_json_returns_valid_json() -> None:
+    """Codex F-PR62-002 P2 adopt: --json 指定時の skeleton mode は valid JSON 出力。
+
+    旧設計 (--json でも prose output) は CLI automation が parse 失敗 → 物理削除.
+    """
+    import json
+
+    result = _run_cli("--json")
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)  # parse error なく decode できる
+    assert payload["status"] == "skeleton"
+    assert payload["batch"] == "sp012-batch6"
+    assert payload["exit_code"] == 0
+    assert "next_batch" in payload
+
+
 def test_cli_no_raw_secret_in_output() -> None:
     """AC-HARD-02 trace: CLI output に raw secret pattern を含まない。"""
     result = _run_cli()

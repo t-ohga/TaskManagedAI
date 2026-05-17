@@ -315,6 +315,46 @@ def test_run_with_pass_gated_row_succeeds() -> None:
     assert output.report.gated_rows_satisfied is True
 
 
+def test_sp012_required_gated_row_ids_5_set() -> None:
+    """Codex F-PR62-003 P2 partial adopt: SP-012 表 2 由来の 5 必須 row ID set."""
+    from backend.app.services.eval.p0_acceptance_report_runner import (
+        SP012_REQUIRED_GATED_ROW_IDS,
+    )
+
+    assert isinstance(SP012_REQUIRED_GATED_ROW_IDS, frozenset)
+    assert len(SP012_REQUIRED_GATED_ROW_IDS) == 5
+    assert "BL-0140a-research-to-pr" in SP012_REQUIRED_GATED_ROW_IDS
+    assert "AC-KPI-04-research-coverage" in SP012_REQUIRED_GATED_ROW_IDS
+
+
+def test_runner_synchronizes_timestamp_between_report_and_artifact() -> None:
+    """Codex F-PR62-001 P2 adopt: runner で 1 つの timestamp を生成し
+    report.timestamp と artifact.timestamp / hash_chain.timestamp が一致する。
+
+    旧設計 (timestamp=None で generate と build が別々に datetime.now()) は
+    report と artifact の drift を生む経路 → 物理削除.
+    """
+    output = run_p0_acceptance_report(
+        hard_gates_summary=_hard_gates(),
+        kpi_summary=_kpi(),
+        smoke_result=_smoke(),
+        host_migration_drill=_drill("host_migration"),
+        backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=PrivateStagingStatus.PASSED,
+        gated_rows=(),
+        required_gated_row_ids=frozenset(),
+        timestamp=None,  # ← runner が自動生成
+    )
+    # report と artifact の timestamp が同一 (drift なし)
+    assert output.report.timestamp == output.artifact.timestamp
+    # hash_chain も同 timestamp
+    assert output.artifact.hash_chain.timestamp == output.artifact.timestamp
+    # gated_rows_artifact も同 timestamp
+    assert (
+        output.artifact.gated_rows_artifact.timestamp == output.artifact.timestamp
+    )
+
+
 def test_run_with_structured_defer_row_succeeds() -> None:
     """STRUCTURED_DEFER row (6 fields valid) を渡しても runner が正常動作。"""
     deferred_row = GatedAcceptanceRowEntry(

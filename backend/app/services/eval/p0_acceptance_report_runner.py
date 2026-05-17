@@ -21,6 +21,8 @@ Anti-Gaming:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Final
 
 from backend.app.services.eval.acceptance_artifact_builder import (
     P0AcceptanceArtifact,
@@ -37,6 +39,28 @@ from backend.app.services.eval.p0_acceptance_report import (
 )
 from backend.app.services.integration.ticket_to_pr_smoke import (
     TicketToPrSmokeResult,
+)
+
+# Codex F-PR62-003 P2 partial adopt: SP-012 line 87-99 表 2 由来の必須
+# gated row ID set (server-owned spec)。caller (CLI / endpoint / BL-0149
+# sign-off step) は本 constant を default で渡せる. batch 7+ で server-owned
+# spec loader (eval/acceptance/sp012_gated_rows.json 等) を配備すれば
+# 本 constant を loader 経由で derive 可能.
+#
+# SP-012 line 91-98 由来:
+# - BL-0140a Research-to-PR gold flow
+# - AC-KPI-04 Research path verify
+# - agent_runs.parent_run_id cross-project negative (BL-0029b)
+# - research_tasks cross-project negative (BL-0029c)
+# - secret_capability_tokens.agent_run_id FK Research binding (BL-0151b)
+SP012_REQUIRED_GATED_ROW_IDS: Final[frozenset[str]] = frozenset(
+    {
+        "BL-0140a-research-to-pr",
+        "AC-KPI-04-research-coverage",
+        "BL-0029b-agent_runs-parent_run_id-cross-project",
+        "BL-0029c-research_tasks-cross-project",
+        "BL-0151b-secret_capability_tokens-agent_run_id-research-binding",
+    }
 )
 
 
@@ -79,7 +103,19 @@ def run_p0_acceptance_report(
 
     Returns:
         report (verdict + deficiencies) + artifact (hash chain + persistence dict).
+
+    Note (Codex F-PR62-003 defer): `required_gated_row_ids` を空 frozenset で
+    渡すと、Sprint 12 P0 core (gated row 不在の場合) で all-pass する経路は
+    残っている。SP-012 表 2 由来の server-owned spec loader (gated rows 必須
+    set) は **batch 7+ で配備予定**。本 runner は caller (CLI / endpoint /
+    audit emit step) が `required_gated_row_ids` を渡す責務とし、empty が
+    意図的か誤入力かは caller 側で判断する設計 (BL-0140a の structured_defer 6
+    fields 永続化が完成するまでは empty が valid な P0 core 経路).
     """
+
+    # Codex F-PR62-001 P2 adopt: report と artifact の timestamp drift を物理削除.
+    # caller が timestamp を指定しない場合、runner で 1 つ生成して両方に渡す.
+    effective_timestamp = timestamp or datetime.now(tz=UTC).isoformat()
 
     try:
         report = generate_p0_acceptance_report(
@@ -91,7 +127,7 @@ def run_p0_acceptance_report(
             private_staging_status=private_staging_status,
             gated_rows=gated_rows,
             required_gated_row_ids=required_gated_row_ids,
-            timestamp=timestamp,
+            timestamp=effective_timestamp,
         )
     except ValueError as exc:
         raise P0AcceptanceReportRunnerError(
@@ -102,7 +138,7 @@ def run_p0_acceptance_report(
         artifact = build_p0_acceptance_artifact(
             report=report,
             required_gated_row_ids=required_gated_row_ids,
-            timestamp=timestamp,
+            timestamp=effective_timestamp,
         )
     except ValueError as exc:
         raise P0AcceptanceReportRunnerError(
@@ -113,6 +149,7 @@ def run_p0_acceptance_report(
 
 
 __all__ = [
+    "SP012_REQUIRED_GATED_ROW_IDS",
     "P0AcceptanceReportRunOutput",
     "P0AcceptanceReportRunnerError",
     "run_p0_acceptance_report",

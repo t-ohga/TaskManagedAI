@@ -142,13 +142,32 @@ def _format_json(output: P0AcceptanceReportRunOutput) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def _runner_skeleton_response() -> tuple[int, str]:
+def _runner_skeleton_response(*, as_json: bool = False) -> tuple[int, str]:
     """skeleton response: 本 batch では input parsing + runner 完成版を別 batch に defer.
+
+    Codex F-PR62-002 P2 adopt: `--json` 指定時は JSON-serializable skeleton
+    object を返し、CLI automation (smoke test 等) が stdout を parse 可能.
 
     実 input JSON deserialization (5 source frozen dataclass の reconstruction)
     は Pydantic schema が必要なため、batch 6.1 で配備. 本 batch では CLI
     structure + help + exit code contract のみ完成.
     """
+    if as_json:
+        skeleton_payload = {
+            "status": "skeleton",
+            "batch": "sp012-batch6",
+            "next_batch": "batch 6.1 (Pydantic schema input deserialization)",
+            "exit_code": 0,
+            "next_action": (
+                "call run_p0_acceptance_report from Python "
+                "(backend.app.services.eval.p0_acceptance_report_runner)"
+            ),
+            "help_url": (
+                "see docs/sprints/SP-012_p0_acceptance.md ## Review batch 6"
+            ),
+        }
+        return 0, json.dumps(skeleton_payload, ensure_ascii=False, indent=2)
+
     msg = (
         "INFO: Sprint 12 batch 6 — CLI skeleton.\n"
         "Input JSON deserialization (5 source + gated_rows + drill) is\n"
@@ -181,8 +200,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.input is None:
-        # skeleton mode: 本 batch では --input なしで help + skeleton info
-        exit_code, msg = _runner_skeleton_response()
+        # skeleton mode: 本 batch では --input なしで help + skeleton info.
+        # Codex F-PR62-002 P2 adopt: --json 指定時は JSON skeleton response.
+        exit_code, msg = _runner_skeleton_response(as_json=args.json)
         print(msg)  # noqa: T201
         return exit_code
 
