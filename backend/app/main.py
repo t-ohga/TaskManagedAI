@@ -75,12 +75,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Sprint 11.5 batch 0 BL-0131: OTel TracerProvider + auto-instrument
     # (FastAPI / httpx / SQLAlchemy / Redis). observability_enabled=False で NoOp.
-    setup_otel(role="api")
+    # Codex F-PR40-001 P2 adopt: instance-bound `instrument_app(app)` のため app= で渡す.
+    setup_otel(role="api", app=app)
 
     # Sprint 11.5 batch 0 BL-0132: Prometheus metrics + /metrics endpoint mount.
     # prometheus_metrics_enabled=False で NoOp.
     prometheus_registry = setup_prometheus()
     if prometheus_registry is not None:
+        from backend.app.observability.prometheus import PrometheusRequestDurationMiddleware
+
+        app.add_middleware(PrometheusRequestDurationMiddleware, registry=prometheus_registry)
         app.include_router(create_metrics_router(prometheus_registry))
 
     app.include_router(api_router)

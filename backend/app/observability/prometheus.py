@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
+import time
 from ipaddress import IPv4Address, IPv6Address, ip_address
 from typing import Final
 
@@ -38,6 +40,12 @@ _ALLOWED_DATA_CLASS_VALUES: Final[frozenset[str]] = frozenset(DATA_CLASS_ORDINAL
 
 _ACTOR_ID_HASH_PREFIX_LENGTH: Final[int] = 8
 
+# Sprint 11.5 batch 0 Codex F-PR40-002 P2 adopt: non-enum dynamic label
+# (provider / decision / result / status 等) を sanitize する正規表現.
+# `[A-Za-z0-9._:/-]{1,128}` のみ allow、それ以外 (raw secret pattern を含む)
+# は ValueError reject. cardinality control も兼ねる (128 char 上限).
+_SAFE_LABEL_VALUE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9._:/-]{1,128}$")
+
 
 def hash_actor_id(actor_id: str) -> str:
     """`actor_id` を sha256 8-char hex prefix に redact.
@@ -56,6 +64,38 @@ def _validate_data_class(value: str, *, label_name: str) -> str:
         raise ValueError(
             f"{label_name} must be one of {sorted(_ALLOWED_DATA_CLASS_VALUES)}, got {value!r}"
         )
+    return value
+
+
+def _sanitize_label_value(value: str, *, label_name: str) -> str:
+    """Sprint 11.5 batch 0 Codex F-PR40-002 P2 adopt: non-enum dynamic label を sanitize.
+
+    `provider` (e.g., `openai`/`anthropic`/`gemini`) / `decision` (e.g., `allow`/`deny`/
+    `defer`) / `result` (e.g., `completed`/`denied`/`failed`) / `status` (HTTP code 等) は
+    upstream payload 由来の動的 string を取りうる。本 helper は **2 layer 防御**:
+
+    1. `_SAFE_LABEL_VALUE_PATTERN` (`[A-Za-z0-9._:/-]{1,128}`) で safe char set
+       + 128 char 上限 (cardinality 制御)
+    2. `assert_no_raw_secret` で raw secret pattern (`sk-...`, `ghp_...`, `AGE-SECRET-KEY-`
+       等の 8 regex pattern + 21 prohibited key) を reject
+    """
+
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label_name} must be non-empty str, got {value!r}")
+    if not _SAFE_LABEL_VALUE_PATTERN.fullmatch(value):
+        raise ValueError(
+            f"{label_name} contains disallowed characters or exceeds 128 chars "
+            f"(label_name={label_name!r}); raw secret patterns and high-cardinality "
+            "free-form strings are rejected. Pass redacted/enumerated values only."
+        )
+    # raw secret pattern (sk-/ghp_/AGE-SECRET 等) の最終 check.
+    try:
+        assert_no_raw_secret(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{label_name} matches raw secret pattern (label_name={label_name!r}); "
+            f"original error redacted"
+        ) from exc
     return value
 
 
@@ -116,6 +156,7 @@ class PrometheusRegistry:
 
     def record_agent_run(self, *, status: str, payload_data_class: str, tenant_id: int) -> None:
         _validate_data_class(payload_data_class, label_name="payload_data_class")
+        _sanitize_label_value(status, label_name="status")
         if tenant_id is None:
             raise ValueError("tenant_id must not be None (tenant boundary invariant).")
         self.agent_run_total.labels(
@@ -144,6 +185,9 @@ class PrometheusRegistry:
         _validate_data_class(
             effective_allowed_data_class, label_name="effective_allowed_data_class"
         )
+        # Codex F-PR40-002 P2 adopt: non-enum dynamic label を sanitize.
+        _sanitize_label_value(provider, label_name="provider")
+        _sanitize_label_value(decision, label_name="decision")
         if tenant_id is None:
             raise ValueError("tenant_id must not be None (tenant boundary invariant).")
         self.provider_call_total.labels(
@@ -213,6 +257,58 @@ def create_metrics_router(registry: PrometheusRegistry) -> APIRouter:
     return router
 
 
+class PrometheusRequestDurationMiddleware(BaseHTTPMiddleware):
+    """HTTP request duration を `request_duration_seconds` Histogram に observe.
+
+    Sprint 11.5 batch 0 Codex F-PR40-004 P2 adopt: histogram は定義のみで
+    `observe()` 呼出がなければ metric が emit されない。本 middleware が
+    method / endpoint / status_code / tenant_id label で request duration を計測.
+
+    `tenant_id` の resolve: request.state に attach されている場合のみ label に使う、
+    なければ `"unknown"` (boundary invariant の boot-time/preauth path 対応).
+    """
+
+    def __init__(self, app: ASGIApp, *, registry: PrometheusRegistry) -> None:
+        super().__init__(app)
+        self._registry = registry
+
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        start = time.perf_counter()
+        response: Response | None = None
+        try:
+            response = await call_next(request)
+            return response
+        finally:
+            elapsed = time.perf_counter() - start
+            status_code = str(response.status_code) if response is not None else "500"
+            # endpoint label は route template (e.g., `/api/v1/tickets/{id}`) を優先、
+            # それがなければ raw path (high cardinality risk があるが、raw path も
+            # `_sanitize_label_value` で 128 char 上限 + safe character set で制約).
+            raw_endpoint = (
+                request.scope.get("route").path  # type: ignore[union-attr]
+                if request.scope.get("route") is not None
+                else request.url.path
+            )
+            try:
+                endpoint = _sanitize_label_value(raw_endpoint, label_name="endpoint")
+            except ValueError:
+                endpoint = "unsanitized"
+            tenant_id = getattr(request.state, "tenant_id", None)
+            tenant_label = str(tenant_id) if tenant_id is not None else "unknown"
+
+            try:
+                self._registry.request_duration_seconds.labels(
+                    method=request.method,
+                    endpoint=endpoint,
+                    status_code=status_code,
+                    tenant_id=tenant_label,
+                ).observe(elapsed)
+            except Exception as exc:  # noqa: BLE001 (telemetry must not break request flow)
+                logger.warning("prometheus_observe_failed", extra={"error": str(exc)})
+
+
 class PrometheusMetricsAccessGuard(BaseHTTPMiddleware):
     """`/metrics` endpoint を IP allowlist で防御 (Sprint 11.5 batch 0 plan v2 §H-1).
 
@@ -264,6 +360,7 @@ def _is_allowed(host: IPv4Address | IPv6Address) -> bool:
 __all__ = [
     "PrometheusMetricsAccessGuard",
     "PrometheusRegistry",
+    "PrometheusRequestDurationMiddleware",
     "create_metrics_router",
     "get_prometheus_registry",
     "hash_actor_id",

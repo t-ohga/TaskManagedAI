@@ -216,3 +216,73 @@ def test_record_agent_run_tenant_id_none_rejected() -> None:
         reg.record_agent_run(
             status="completed", payload_data_class="public", tenant_id=None  # type: ignore[arg-type]
         )
+
+
+def test_record_provider_call_raw_secret_in_provider_label_rejected() -> None:
+    """Sprint 11.5 batch 0 Codex F-PR40-002 P2 adopt: non-enum `provider` label に
+    raw secret pattern (`sk-...`) を渡すと reject される.
+    """
+
+    reg = PrometheusRegistry()
+    with pytest.raises(ValueError, match="provider"):
+        reg.record_provider_call(
+            provider="sk-fakeButLooksReal0123456789ABCDEF",
+            payload_data_class="public",
+            allowed_data_class="public",
+            effective_allowed_data_class="public",
+            decision="allow",
+            tenant_id=1,
+        )
+
+
+def test_record_provider_call_invalid_chars_in_decision_label_rejected() -> None:
+    """`decision` label に `[A-Za-z0-9._:/-]` 外の char (e.g., space) を渡すと reject."""
+
+    reg = PrometheusRegistry()
+    with pytest.raises(ValueError, match="decision"):
+        reg.record_provider_call(
+            provider="openai",
+            payload_data_class="public",
+            allowed_data_class="public",
+            effective_allowed_data_class="public",
+            decision="allow with space",  # invalid char
+            tenant_id=1,
+        )
+
+
+def test_record_agent_run_raw_secret_in_status_label_rejected() -> None:
+    """`status` label にも sanitize がかかる."""
+
+    reg = PrometheusRegistry()
+    with pytest.raises(ValueError, match="status"):
+        reg.record_agent_run(
+            status="ghp_FakeBut20PlusCharsABCDEFGHIJ",
+            payload_data_class="public",
+            tenant_id=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_request_duration_middleware_observes_metric() -> None:
+    """Sprint 11.5 batch 0 Codex F-PR40-004 P2 adopt: RequestDurationMiddleware
+    で `request_duration_seconds` histogram に observation が記録される.
+    """
+
+    from backend.app.observability.prometheus import PrometheusRequestDurationMiddleware
+
+    reg = PrometheusRegistry()
+    app = FastAPI()
+    app.add_middleware(PrometheusMetricsAccessGuard)
+    app.add_middleware(PrometheusRequestDurationMiddleware, registry=reg)
+    app.include_router(create_metrics_router(reg))
+
+    @app.get("/example")
+    async def example() -> dict[str, str]:
+        return {"hello": "world"}
+
+    async with _client_for(app, "127.0.0.1") as client:
+        await client.get("/example")
+        # 2 つ目: request_duration_seconds が増えていることを expose で verify.
+        response = await client.get("/metrics")
+    body = response.text
+    assert "taskmanagedai_request_duration_seconds_count" in body

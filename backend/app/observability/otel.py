@@ -15,6 +15,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Final, Literal
 
+from fastapi import FastAPI
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -24,6 +25,16 @@ from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+from backend.app.domain.artifact.data_class import (
+    DATA_CLASS_ORDINAL,
+    PayloadDataClass,
+)
+from backend.app.observability.config import (
+    ObservabilitySettings,
+    get_observability_settings,
+)
+from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 
 # OTel `Attributes` 型 (Mapping[str, AttributeValue]) と整合.
 AttributeValue = (
@@ -36,16 +47,6 @@ AttributeValue = (
     | Sequence[int]
     | Sequence[float]
 )
-
-from backend.app.domain.artifact.data_class import (
-    DATA_CLASS_ORDINAL,
-    PayloadDataClass,
-)
-from backend.app.observability.config import (
-    ObservabilitySettings,
-    get_observability_settings,
-)
-from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 
 logger = logging.getLogger(__name__)
 
@@ -67,15 +68,28 @@ def setup_otel(
     *,
     role: str | None = None,
     settings: ObservabilitySettings | None = None,
+    app: FastAPI | None = None,
 ) -> TracerProvider | None:
     """Initialize OTel TracerProvider + auto-instrument FastAPI / httpx / SQLAlchemy / Redis.
 
     `observability_enabled=False` の場合、NoOp を返す.
     `otel_exporter_otlp_endpoint` 空の場合、in-memory tracer のみ (export しない、test default).
 
+    **Idempotent (Codex F-PR40-005 P2 adopt)**: 同 process 内で複数回 call された場合
+    最初の call で set した provider を返し、後続 call で `set_tracer_provider()` 再呼出
+    しない (OpenTelemetry は最初の provider のみ effective).
+
+    **FastAPI instrument (F-PR40-001 adopt)**: `instrument()` (global future apps) ではなく
+    `instrument_app(app)` で既存 app instance に attach. `app=None` の場合 FastAPI
+    instrument は skip (worker role / test).
+
+    **SQLAlchemy instrument (F-PR40-006 adopt)**: 既存 `backend.app.db.session.async_engine`
+    の underlying sync engine に attach (import-time engine を wrap).
+
     Args:
         role: optional override (api / worker / runner). default は env から resolve.
         settings: optional override (test 用).
+        app: optional FastAPI app instance (role="api" 時に instrument_app する対象).
 
     Returns:
         TracerProvider instance、または NoOp 時は None.
@@ -85,6 +99,14 @@ def setup_otel(
     if not cfg.observability_enabled:
         logger.info("otel_setup_skipped_disabled")
         return None
+
+    # Idempotent: 既 init 済なら再 init せず existing provider 返す (F-PR40-005 adopt).
+    # 既存 provider に後から app だけ attach する経路は許容.
+    existing = _provider_state.get("provider")
+    if existing is not None:
+        if app is not None:
+            FastAPIInstrumentor.instrument_app(app, tracer_provider=existing)
+        return existing
 
     service_role = role or cfg.otel_service_role
     resource = Resource.create(
@@ -109,11 +131,25 @@ def setup_otel(
     # auto-instrument 5 種 (FastAPI / httpx / SQLAlchemy / Redis / arq).
     # arq は OTLP 公式 instrumentation を持たないため、custom span でカバー
     # (`record_runner_span` を arq task 内で呼ぶ runtime contract).
-    # role="api" 時のみ FastAPI instrumentor を有効化。worker role では FastAPI を持たないため skip.
-    if service_role == "api":
-        FastAPIInstrumentor().instrument(tracer_provider=provider)
+    # FastAPI instrumentor は instance bound (F-PR40-001 adopt):
+    # app=None なら skip (worker role / test 経路).
+    if app is not None and service_role == "api":
+        FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
+
     HTTPXClientInstrumentor().instrument(tracer_provider=provider)
-    SQLAlchemyInstrumentor().instrument(tracer_provider=provider)
+
+    # SQLAlchemy: 既存 import-time engine を wrap (F-PR40-006 adopt).
+    # `backend.app.db.session.async_engine` の sync_engine を pass。
+    try:
+        from backend.app.db.session import async_engine  # noqa: PLC0415 (avoid import cycle at module top)
+
+        SQLAlchemyInstrumentor().instrument(
+            engine=async_engine.sync_engine,
+            tracer_provider=provider,
+        )
+    except Exception as exc:  # noqa: BLE001 (boot-time guard: instrumentation failure should not block app start)
+        logger.warning("sqlalchemy_instrument_failed", extra={"error": str(exc)})
+
     RedisInstrumentor().instrument(tracer_provider=provider)
 
     return provider
