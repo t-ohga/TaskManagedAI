@@ -23,11 +23,11 @@ from __future__ import annotations
 import copy
 import dataclasses
 import json
-import logging
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Final, Literal, get_args
+from unittest import mock
 
 import pytest
 
@@ -1083,31 +1083,32 @@ def test_sample_criterion_dataclass_is_frozen() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_high_deferred_ratio_emits_warning_log(caplog: pytest.LogCaptureFixture) -> None:
-    """Plan v2 §2.2.2 #3: > 50% deferred ratio emits an informational log
-    warning. Does NOT affect passed / threshold_met (verified by no
-    spec_violation).
+def test_high_deferred_ratio_emits_warning_log() -> None:
+    """Plan v2 §2.2.2 #3: > 50% deferred ratio invokes
+    ``_LOGGER.warning`` with the deferred_ratio diagnostic. Does NOT
+    affect passed / threshold_met.
 
-    Uses ``caplog.at_level`` and root-level set_level to guarantee
-    capture across CI environments where logger propagation defaults
-    differ from local dev (observed: CI failed with empty caplog.records
-    while local PASS).
+    Uses ``mock.patch.object`` to directly observe the logger call
+    instead of relying on pytest's ``caplog`` (which proved CI-fragile:
+    pytest 8 + logger isolation can leave ``caplog.records`` empty even
+    after ``set_level`` + ``at_level`` + propagate=True).
     """
 
     rows = _sample_criteria(satisfied=1, deferred=2, prefix="high-defer")
     fixture = _synthetic_fixture(sample_criteria=rows)
-    # Force propagation + caplog handler at root level so the named
-    # logger's WARNING records are reliably captured in CI.
-    acceptance_pass_rate._LOGGER.propagate = True
-    with caplog.at_level(logging.WARNING):
+    with mock.patch.object(
+        acceptance_pass_rate._LOGGER, "warning", wraps=acceptance_pass_rate._LOGGER.warning
+    ) as mock_warning:
         result = evaluate_acceptance_pass_rate(_synthetic_corpus([fixture]))
+
     assert result.per_fixture[0].spec_violation_reason is None
     # The fixture is otherwise valid; the warning is informational.
-    matching = [
-        r for r in caplog.records if "deferred_ratio" in r.getMessage()
+    deferred_calls = [
+        call for call in mock_warning.call_args_list
+        if call.args and "deferred_ratio" in str(call.args[0])
     ]
-    assert matching, (
-        f"Expected at least one deferred_ratio warning. "
-        f"Got {len(caplog.records)} total record(s): "
-        f"{[r.getMessage() for r in caplog.records]}"
+    assert deferred_calls, (
+        f"Expected at least one _LOGGER.warning call with deferred_ratio. "
+        f"Got {mock_warning.call_count} total call(s): "
+        f"{mock_warning.call_args_list}"
     )
