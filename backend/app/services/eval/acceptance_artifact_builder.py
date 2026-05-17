@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Final
@@ -44,9 +45,13 @@ ARTIFACT_SCHEMA_VERSION: Final[str] = "p0-acceptance/v1"
 
 
 def _canonical_json_sha256(payload: object) -> str:
-    """RFC 8785 canonical JSON + SHA-256 (NFC UTF-8、append-only audit invariant).
+    """RFC 8785 canonical JSON + NFC normalize + SHA-256.
 
-    .claude/rules/cross-source-enum-integrity.md の hash invariant と整合.
+    Codex F-PR61-003 P2 adopt: `unicodedata.normalize("NFC", ...)` を
+    canonical JSON 全体に適用。Unicode decomposed (例: NFD) と precomposed
+    (NFC) で同じ意味の文字列が異なる SHA-256 を返す drift を物理削除。
+    SP-012 acceptance artifact contract と他 fingerprint helper (例:
+    evidence_set_hash) と整合.
     """
     canonical = json.dumps(
         payload,
@@ -54,11 +59,19 @@ def _canonical_json_sha256(payload: object) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    # Codex F-PR61-003 P2 adopt: NFC normalize で human-entered owner / impact /
+    # threshold_reason 等の Unicode canonical equivalence drift を排除.
+    normalized = unicodedata.normalize("NFC", canonical)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def _gated_row_to_dict(row: GatedAcceptanceRowEntry) -> dict[str, Any]:
-    """gated row 1 件を JSON-serializable dict に変換 (frozen 値のみ抽出)."""
+    """gated row 1 件を JSON-serializable dict に変換 (frozen 値のみ抽出).
+
+    Codex F-PR61-005 P2 adopt: PASS row も pass_evidence (target_hash /
+    evidence_artifact_hash / verified_by / verified_at) を永続化する。
+    persisted artifact 改ざん detect を可能にする invariant.
+    """
     sd_fields: dict[str, Any] | None = None
     if row.structured_defer_fields is not None:
         sf = row.structured_defer_fields
@@ -70,6 +83,15 @@ def _gated_row_to_dict(row: GatedAcceptanceRowEntry) -> dict[str, Any]:
             "verification": sf.verification,
             "target_hash": sf.target_hash,
         }
+    pe_fields: dict[str, Any] | None = None
+    if row.pass_evidence is not None:
+        pe = row.pass_evidence
+        pe_fields = {
+            "target_hash": pe.target_hash,
+            "evidence_artifact_hash": pe.evidence_artifact_hash,
+            "verified_by": pe.verified_by,
+            "verified_at": pe.verified_at,
+        }
     return {
         "row_id": row.row_id,
         "status": row.status.value,
@@ -80,6 +102,7 @@ def _gated_row_to_dict(row: GatedAcceptanceRowEntry) -> dict[str, Any]:
             if row.structured_defer_fields is not None
             else ()
         ),
+        "pass_evidence": pe_fields,  # Codex F-PR61-005 P2 adopt
     }
 
 
@@ -226,6 +249,12 @@ def build_acceptance_hash_chain(
                 "status": s.status,
                 "duration_ms": s.duration_ms,
                 "error_code": s.error_code,
+                "error_summary": s.error_summary,
+                # Codex F-PR61-002 P2 adopt: smoke stage metadata (approval_id /
+                # pr_artifact_hash / run_id / repo_state 等) を hash payload に
+                # 含めて、persisted artifact の改ざん detect 可能にする.
+                # MappingProxyType は dict に変換して JSON-serializable に.
+                "metadata": dict(s.metadata),
             }
             for s in report.smoke_result.stages
         ],
@@ -295,13 +324,34 @@ def build_p0_acceptance_artifact(
     required_gated_row_ids: frozenset[str],
     timestamp: str | None = None,
 ) -> P0AcceptanceArtifact:
-    """P0 Exit final artifact を server-owned に build (BL-0149 evidence chain)."""
+    """P0 Exit final artifact を server-owned に build (BL-0149 evidence chain).
+
+    Codex F-PR61-001 P1 adopt: report と本 builder で異なる `required_gated_row_ids`
+    が渡された場合、stale `report.p0_exit_decision=True` を copy する経路を物理削除.
+    builder が gated_rows_artifact.missing_required_row_ids を検出したら、
+    p0_exit_decision を **必ず False に override** し、deficiency に
+    `gated_rows_missing_required` を append する.
+    """
     ts = timestamp or datetime.now(tz=UTC).isoformat()
     gated_rows_artifact = build_gated_acceptance_rows_artifact(
         gated_rows=report.gated_rows,
         required_gated_row_ids=required_gated_row_ids,
         timestamp=ts,
     )
+
+    # Codex F-PR61-001 P1 adopt: builder 側で missing required row を再検出.
+    # report に既に同じ deficiency があれば duplicate しないが、ない場合は append.
+    effective_decision = report.p0_exit_decision
+    effective_deficiencies = list(report.deficiencies)
+    if gated_rows_artifact.missing_required_row_ids:
+        effective_decision = False  # 必ず False に override (stale decision 物理削除)
+        new_deficiency = (
+            f"gated_rows_missing_required_in_builder "
+            f"(missing={list(gated_rows_artifact.missing_required_row_ids)})"
+        )
+        if new_deficiency not in effective_deficiencies:
+            effective_deficiencies.append(new_deficiency)
+
     hash_chain = build_acceptance_hash_chain(
         report=report,
         gated_rows_artifact=gated_rows_artifact,
@@ -310,8 +360,8 @@ def build_p0_acceptance_artifact(
     return P0AcceptanceArtifact(
         schema_version=ARTIFACT_SCHEMA_VERSION,
         timestamp=ts,
-        p0_exit_decision=report.p0_exit_decision,
-        deficiencies=report.deficiencies,
+        p0_exit_decision=effective_decision,
+        deficiencies=tuple(effective_deficiencies),
         gated_rows_artifact=gated_rows_artifact,
         hash_chain=hash_chain,
     )

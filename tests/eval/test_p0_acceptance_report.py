@@ -546,7 +546,7 @@ def test_gated_row_structured_defer_with_fields_p0_exit_true() -> None:
                 resume_condition="BL-0140a complete",
                 blocked_by=("BL-0140a",),
                 verification="pytest tests/integration/test_research_to_pr.py",
-                target_hash="abc123def456",
+                target_hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             ),
         ),
     )
@@ -580,7 +580,7 @@ def test_gated_row_structured_defer_without_fields_p0_exit_false() -> None:
                 resume_condition="",  # ← 空文字 = schema 不備
                 blocked_by=("BL-0140a",),
                 verification="pytest",
-                target_hash="abc123",
+                target_hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             ),
         ),
     )
@@ -693,7 +693,7 @@ def test_partial_gated_rows_with_required_ids_fails_closed() -> None:
                 resume_condition="cond",
                 blocked_by=("BL-X",),
                 verification="verify",
-                target_hash="hash",
+                target_hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             ),
         ),
     )
@@ -728,7 +728,7 @@ def test_structured_defer_fields_schema_invalid_raises_via_property() -> None:
         resume_condition="cond",
         blocked_by=(),  # ← 空 list = schema-invalid
         verification="verify",
-        target_hash="hash",
+        target_hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
     row = GatedAcceptanceRowEntry(
         row_id="BL-x",
@@ -764,7 +764,7 @@ def test_structured_defer_all_6_fields_full_passes() -> None:
         resume_condition="BL-Y complete",
         blocked_by=("BL-Y", "ADR-00099"),
         verification="pytest tests/foo",
-        target_hash="sha256:abc",
+        target_hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
     assert valid_fields.is_schema_valid() is True
     assert valid_fields.missing_fields() == ()

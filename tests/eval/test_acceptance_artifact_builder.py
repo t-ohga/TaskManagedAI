@@ -45,7 +45,7 @@ def _valid_structured_defer() -> StructuredDeferFields:
         resume_condition="BL-X complete",
         blocked_by=("BL-X",),
         verification="pytest",
-        target_hash="sha256:abcdef0123456789",
+        target_hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
 
 
@@ -315,6 +315,201 @@ def test_build_p0_acceptance_artifact_records_deficiencies_from_report() -> None
     )
     assert artifact.p0_exit_decision is False
     assert artifact.deficiencies == ("hard_gates_failed (test fixture)",)
+
+
+def test_build_p0_artifact_overrides_decision_when_builder_detects_missing() -> None:
+    """Codex F-PR61-001 P1 adopt: report.p0_exit_decision=True でも builder で
+    missing required row 検出時に decision=False に override + deficiency 追加。
+    """
+    base = _build_report_all_pass()
+    # report は all-pass だが、required_gated_row_ids に新 row を追加して
+    # builder 側で missing を検出させる
+    artifact = build_p0_acceptance_artifact(
+        report=base,
+        required_gated_row_ids=frozenset({"BL-NEW-required-by-builder"}),
+        timestamp="2026-05-18T03:00:00+00:00",
+    )
+    assert artifact.p0_exit_decision is False  # builder で override
+    deficiency_text = " ".join(artifact.deficiencies)
+    assert "gated_rows_missing_required_in_builder" in deficiency_text
+    assert "BL-NEW-required-by-builder" in deficiency_text
+
+
+def test_canonical_hash_nfc_normalize() -> None:
+    """Codex F-PR61-003 P2 adopt: NFD vs NFC で同じ意味の文字列で同 hash。
+
+    decomposed (NFD) と precomposed (NFC) で同じ意味の Unicode 文字列を
+    含む StructuredDeferFields owner で同じ hash が出る invariant.
+    """
+    from backend.app.services.eval.p0_acceptance_report import (
+        StructuredDeferFields,
+    )
+
+    # "é" = U+00E9 (NFC) vs "é" = U+0065 U+0301 (NFD、e + combining acute)
+    valid_hash = "a" * 64
+    nfc_owner = "actor:Caféé"  # precomposed
+    nfd_owner = "actor:Caféé"  # decomposed
+
+    row_nfc = GatedAcceptanceRowEntry(
+        row_id="BL-X",
+        status=GatedRowStatus.STRUCTURED_DEFER,
+        structured_defer_fields=StructuredDeferFields(
+            owner=nfc_owner,
+            impact="i",
+            resume_condition="r",
+            blocked_by=("B",),
+            verification="v",
+            target_hash=valid_hash,
+        ),
+    )
+    row_nfd = GatedAcceptanceRowEntry(
+        row_id="BL-X",
+        status=GatedRowStatus.STRUCTURED_DEFER,
+        structured_defer_fields=StructuredDeferFields(
+            owner=nfd_owner,
+            impact="i",
+            resume_condition="r",
+            blocked_by=("B",),
+            verification="v",
+            target_hash=valid_hash,
+        ),
+    )
+    artifact_nfc = build_gated_acceptance_rows_artifact(
+        gated_rows=(row_nfc,),
+        required_gated_row_ids=frozenset({"BL-X"}),
+        timestamp="2026-05-18T00:00:00+00:00",
+    )
+    artifact_nfd = build_gated_acceptance_rows_artifact(
+        gated_rows=(row_nfd,),
+        required_gated_row_ids=frozenset({"BL-X"}),
+        timestamp="2026-05-18T00:00:00+00:00",
+    )
+    # NFC normalize により同じ hash になる (false drift 排除)
+    assert artifact_nfc.content_sha256 == artifact_nfd.content_sha256
+
+
+def test_smoke_metadata_included_in_hash() -> None:
+    """Codex F-PR61-002 P2 adopt: smoke stage metadata の改変が smoke_sha256
+    に反映される (approval_id / pr_artifact_hash の改ざん detect)。
+    """
+    from dataclasses import replace
+    from types import MappingProxyType
+
+    base = _build_report_all_pass()
+    # smoke の最初 stage の metadata を差し替えた report を作る
+    new_stages = list(base.smoke_result.stages)
+    original_first = new_stages[0]
+    tampered_first = SmokeStageResult(
+        stage=original_first.stage,
+        status=original_first.status,
+        duration_ms=original_first.duration_ms,
+        metadata=MappingProxyType({"approval_id": "ap-tampered"}),
+    )
+    new_stages[0] = tampered_first
+    tampered_smoke = TicketToPrSmokeResult(
+        stage_count=base.smoke_result.stage_count,
+        succeeded_count=base.smoke_result.succeeded_count,
+        failed_count=base.smoke_result.failed_count,
+        skipped_count=base.smoke_result.skipped_count,
+        overall_success=base.smoke_result.overall_success,
+        stages=tuple(new_stages),
+    )
+    tampered_report = replace(base, smoke_result=tampered_smoke)
+
+    rows_artifact = build_gated_acceptance_rows_artifact(
+        gated_rows=(),
+        required_gated_row_ids=frozenset(),
+        timestamp="2026-05-18T03:00:00+00:00",
+    )
+    chain_clean = build_acceptance_hash_chain(
+        report=base,
+        gated_rows_artifact=rows_artifact,
+        timestamp="2026-05-18T03:00:00+00:00",
+    )
+    chain_tampered = build_acceptance_hash_chain(
+        report=tampered_report,
+        gated_rows_artifact=rows_artifact,
+        timestamp="2026-05-18T03:00:00+00:00",
+    )
+    # metadata 改変が smoke_sha256 に反映される
+    assert chain_clean.smoke_sha256 != chain_tampered.smoke_sha256
+    # 結果 final_chain も変わる (改ざん detect)
+    assert chain_clean.final_chain_sha256 != chain_tampered.final_chain_sha256
+
+
+def test_pass_evidence_persisted_in_artifact() -> None:
+    """Codex F-PR61-005 P2 adopt: PASS gated row の pass_evidence が
+    artifact rows に永続化される (target_hash / evidence_artifact_hash /
+    verified_by / verified_at)。
+    """
+    from backend.app.services.eval.p0_acceptance_report import PassEvidence
+
+    valid_hash_a = "a" * 64
+    valid_hash_b = "b" * 64
+    pass_row = GatedAcceptanceRowEntry(
+        row_id="BL-Y-pass",
+        status=GatedRowStatus.PASS,
+        pass_evidence=PassEvidence(
+            target_hash=valid_hash_a,
+            evidence_artifact_hash=valid_hash_b,
+            verified_by="actor:human-verifier",
+            verified_at="2026-05-18T04:00:00+00:00",
+        ),
+    )
+    artifact = build_gated_acceptance_rows_artifact(
+        gated_rows=(pass_row,),
+        required_gated_row_ids=frozenset({"BL-Y-pass"}),
+        timestamp="2026-05-18T00:00:00+00:00",
+    )
+    pe = artifact.rows[0]["pass_evidence"]
+    assert pe is not None
+    assert pe["target_hash"] == valid_hash_a
+    assert pe["evidence_artifact_hash"] == valid_hash_b
+    assert pe["verified_by"] == "actor:human-verifier"
+    assert pe["verified_at"] == "2026-05-18T04:00:00+00:00"
+
+
+def test_pass_evidence_missing_raises_value_error() -> None:
+    """status=PASS で pass_evidence=None は contract 違反 (Codex F-PR61-005 P2)."""
+    with pytest.raises(ValueError, match="pass_evidence is required"):
+        GatedAcceptanceRowEntry(
+            row_id="BL-Y-pass",
+            status=GatedRowStatus.PASS,
+            pass_evidence=None,
+        )
+
+
+def test_pass_evidence_invalid_target_hash_raises() -> None:
+    """target_hash が SHA-256 hex 形式でなければ ValueError (Codex F-PR61-004 P1)."""
+    from backend.app.services.eval.p0_acceptance_report import PassEvidence
+
+    with pytest.raises(ValueError, match="target_hash must be SHA-256 hex"):
+        PassEvidence(
+            target_hash="todo",  # ← placeholder text、64 hex chars でない
+            evidence_artifact_hash="a" * 64,
+            verified_by="actor:human",
+            verified_at="2026-05-18T04:00:00+00:00",
+        )
+
+
+def test_structured_defer_target_hash_placeholder_rejected() -> None:
+    """Codex F-PR61-004 P1 adopt: StructuredDeferFields.target_hash が
+    placeholder text "todo" 等で is_schema_valid()=False。
+    """
+    from backend.app.services.eval.p0_acceptance_report import (
+        StructuredDeferFields,
+    )
+
+    invalid = StructuredDeferFields(
+        owner="actor:human",
+        impact="impact",
+        resume_condition="cond",
+        blocked_by=("BL-X",),
+        verification="verify",
+        target_hash="todo",  # placeholder
+    )
+    assert invalid.is_schema_valid() is False
+    assert "target_hash_not_sha256_hex" in invalid.missing_fields()
 
 
 def test_artifact_is_frozen_dataclass() -> None:

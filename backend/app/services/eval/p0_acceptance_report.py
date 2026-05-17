@@ -32,6 +32,7 @@ Security boundary:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -48,6 +49,11 @@ from backend.app.services.eval.kpi_rollup import (
 from backend.app.services.integration.ticket_to_pr_smoke import (
     TicketToPrSmokeResult,
 )
+
+# Codex F-PR61-004 P1 adopt: target_hash / evidence_artifact_hash は SHA-256
+# hex (64 chars lowercase) 必須。"todo" / placeholder text を schema-valid
+# として扱わない invariant.
+_SHA256_HEX_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-f0-9]{64}$")
 
 
 class OperationalDrillStatus(StrEnum):
@@ -151,18 +157,32 @@ class StructuredDeferFields:
     target_hash: str  # acceptance artifact hash (server-computed)
 
     def is_schema_valid(self) -> bool:
-        """6 fields 全件 non-empty なら True (schema-valid)."""
+        """6 fields 全件 non-empty + target_hash が SHA-256 hex (64 chars) なら True.
+
+        Codex F-PR61-004 P1 adopt: target_hash が placeholder text (例: "todo")
+        で schema-valid と扱われる経路を物理削除。SP-012 line 218-247 invariant
+        として target_hash は acceptance artifact の SHA-256 (server-verified).
+        """
         return (
             bool(self.owner.strip())
             and bool(self.impact.strip())
             and bool(self.resume_condition.strip())
             and len(self.blocked_by) > 0
             and bool(self.verification.strip())
-            and bool(self.target_hash.strip())
+            and self._is_valid_target_hash()
         )
 
+    def _is_valid_target_hash(self) -> bool:
+        """target_hash が SHA-256 hex (lowercase 64 chars) かを正規表現で検査."""
+        stripped = self.target_hash.strip()
+        return bool(stripped) and _SHA256_HEX_PATTERN.match(stripped) is not None
+
     def missing_fields(self) -> tuple[str, ...]:
-        """schema-invalid な fields の名前 tuple (audit / deficiency 用)."""
+        """schema-invalid な fields の名前 tuple (audit / deficiency 用).
+
+        Codex F-PR61-004 P1 adopt: target_hash が hex 形式でなければ
+        "target_hash_not_sha256_hex" として記録 (placeholder "todo" 等の検知).
+        """
         missing: list[str] = []
         if not self.owner.strip():
             missing.append("owner")
@@ -176,7 +196,41 @@ class StructuredDeferFields:
             missing.append("verification")
         if not self.target_hash.strip():
             missing.append("target_hash")
+        elif not self._is_valid_target_hash():
+            missing.append("target_hash_not_sha256_hex")
         return tuple(missing)
+
+
+@dataclass(frozen=True, slots=True)
+class PassEvidence:
+    """gated row が PASS の時に必須な evidence (frozen).
+
+    Codex F-PR61-005 P2 adopt: PASS row も target_hash / evidence_artifact_hash /
+    verified_by / verified_at を持ち、persisted artifact の改ざん detect を
+    可能にする invariant. evidence_artifact_hash と target_hash は SHA-256 hex.
+    """
+
+    target_hash: str  # acceptance target artifact の SHA-256 hex (64 chars)
+    evidence_artifact_hash: str  # evidence artifact (e.g. PR diff) の SHA-256 hex
+    verified_by: str  # 検証 actor_id (human + service 両方許容)
+    verified_at: str  # ISO 8601 UTC
+
+    def __post_init__(self) -> None:
+        """contract: target_hash / evidence_artifact_hash は SHA-256 hex 必須."""
+        if not _SHA256_HEX_PATTERN.match(self.target_hash.strip()):
+            raise ValueError(
+                f"PassEvidence.target_hash must be SHA-256 hex (64 chars), "
+                f"got {self.target_hash!r}"
+            )
+        if not _SHA256_HEX_PATTERN.match(self.evidence_artifact_hash.strip()):
+            raise ValueError(
+                f"PassEvidence.evidence_artifact_hash must be SHA-256 hex, "
+                f"got {self.evidence_artifact_hash!r}"
+            )
+        if not self.verified_by.strip():
+            raise ValueError("PassEvidence.verified_by must be non-empty")
+        if not self.verified_at.strip():
+            raise ValueError("PassEvidence.verified_at must be non-empty")
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,16 +240,20 @@ class GatedAcceptanceRowEntry:
     Codex 監査 (2026-05-18) F-AUDIT-002 P1 adopt: status=STRUCTURED_DEFER 時は
     `structured_defer_fields` 必須 + 6 fields schema-valid 必須.
     `structured_defer_fields_present` boolean は server 側で
-    `structured_defer_fields.is_schema_valid()` から自動算出 (caller-supplied
-    bool 経路を物理削除).
+    `structured_defer_fields.is_schema_valid()` から自動算出.
+
+    Codex F-PR61-005 P2 adopt: status=PASS 時は `pass_evidence` 必須 (PASS row も
+    target_hash / evidence_artifact_hash / verified_by / verified_at を持ち、
+    persisted artifact 改ざん detect を可能にする).
     """
 
     row_id: str  # SP-012 spec の "BL-0140a-research-to-pr" 等
     status: GatedRowStatus
     structured_defer_fields: StructuredDeferFields | None = None  # STRUCTURED_DEFER 時必須
+    pass_evidence: PassEvidence | None = None  # PASS 時必須 (F-PR61-005)
 
     def __post_init__(self) -> None:
-        """contract: STRUCTURED_DEFER 状態は structured_defer_fields 必須."""
+        """contract: STRUCTURED_DEFER は structured_defer_fields 必須、PASS は pass_evidence 必須."""
         if (
             self.status == GatedRowStatus.STRUCTURED_DEFER
             and self.structured_defer_fields is None
@@ -205,14 +263,19 @@ class GatedAcceptanceRowEntry:
                 f"status=STRUCTURED_DEFER): structured_defer_fields is required "
                 f"(SP-012 line 218-247 invariant)"
             )
+        if (
+            self.status == GatedRowStatus.PASS
+            and self.pass_evidence is None
+        ):
+            raise ValueError(
+                f"GatedAcceptanceRowEntry(row_id={self.row_id!r}, "
+                f"status=PASS): pass_evidence is required (Codex F-PR61-005 P2 "
+                f"adopt: PASS row must carry tamper-evident evidence)"
+            )
 
     @property
     def structured_defer_fields_present(self) -> bool:
-        """structured_defer_fields が 6 fields schema-valid なら True.
-
-        SP-012 line 87-99 invariant: STRUCTURED_DEFER は 6 fields full でなければ
-        P0 Exit 未達.
-        """
+        """structured_defer_fields が 6 fields schema-valid なら True."""
         return (
             self.structured_defer_fields is not None
             and self.structured_defer_fields.is_schema_valid()
@@ -451,6 +514,7 @@ __all__ = [
     "OperationalDrillEntry",
     "OperationalDrillStatus",
     "P0AcceptanceReportSummary",
+    "PassEvidence",
     "PrivateStagingStatus",
     "StructuredDeferFields",
     "generate_p0_acceptance_report",
