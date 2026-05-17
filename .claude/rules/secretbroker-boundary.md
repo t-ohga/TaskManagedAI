@@ -295,16 +295,5 @@ select status, allowed_consumers, allowed_operations, scope
 - caller-supplied fingerprint (設計違反)。
 - raw OperationContext 内訳 (target / payload / approval_id 等の plaintext)。fingerprint hash で参照する。
 
-## 12. Test / Review
 
-- [ ] raw secret が DB にない。
-- [ ] `secret_ref` URI が必須。
-- [ ] `runner_injectable=false` が DB で強制される。
-- [ ] TTL 5-30 分が強制される。
-- [ ] token 生値を DB 保存しない。
-- [ ] atomic claim UPDATE を使う。
-- [ ] actor / run / fingerprint / operation binding がある。
-- [ ] one-time redeem が並行実行で保証される。
-- [ ] AI / runner / artifact / audit に raw secret が出ない。
-- [ ] rotation 状態遷移が `pending -> active -> deprecated -> revoked` と一致する。
-
+<!-- Phase E 圧縮 (2026-05-17 PR #?): 末尾 verify checklist 削除、plan §3.1.1 invariant trace matrix で自動 verify -->

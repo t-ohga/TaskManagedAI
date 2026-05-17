@@ -197,16 +197,5 @@ Provider call 前に必須。
 - canary raw value。
 - unredacted request body。
 
-## 12. Test Requirements
 
-- [ ] `payload_data_class` 未設定 deny。
-- [ ] Matrix なし deny。
-- [ ] ordinal 比較。
-- [ ] conditional ZDR `condition_status=verified` 要件。
-- [ ] runtime downgrade。
-- [ ] `provider_request_preflight` secret canary。
-- [ ] audit payload に raw secret がない。
-- [ ] AgentRun status mapping。
-- [ ] `allowed_data_class` caller 入力の拒否。
-- [ ] Matrix TOML と docs の列同期。
-
+<!-- Phase E 圧縮 (2026-05-17 PR #?): 末尾 verify checklist 削除、plan §3.1.1 invariant trace matrix で自動 verify -->

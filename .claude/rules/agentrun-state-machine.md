@@ -245,16 +245,5 @@ Sprint 6 batch 2 (2026-05-13) で event_type は 25 → 28 に拡張済 (`cli_in
 - `final` は terminal 前後。
 - `provider_continuation_ref` は secret / provider key を含まない短命参照。
 
-## 12. Contract Test
 
-- [ ] enum が 16 状態と一致する。
-- [ ] DB check が `blocked_reason` consistency を強制する。
-- [ ] terminal state から遷移できない。
-- [ ] provider result mapping が正しい。
-- [ ] repair retry 上限到達で `repair_exhausted`。
-- [ ] `provider_incomplete` は terminal ではない。
-- [ ] status update と event append が同一 transaction。
-- [ ] ContextSnapshot 10 カラムが揃う。
-- [ ] event payload に raw secret がない。
-- [ ] `blocked_reason` を status と混同していない。
-
+<!-- Phase E 圧縮 (2026-05-17 PR #?): 末尾 verify checklist 削除、plan §3.1.1 invariant trace matrix で自動 verify -->

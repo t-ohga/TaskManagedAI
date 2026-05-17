@@ -152,15 +152,5 @@ artifact
 - raw secret を含めない。
 - `payload_data_class` と `allowed_data_class` を別 dimension で記録する。
 
-## 13. Review Checklist
 
-- [ ] AI 出力が直接 command / SQL / workflow / external tool に接続されていない。
-- [ ] artifact から approval までの段階が event で説明できる。
-- [ ] schema validation と repair retry 上限がある。
-- [ ] policy lint が action class / data class / forbidden path / secret canary を見る。
-- [ ] `tool_mutating_gateway_stub` と `runner_mutation_gateway` が分離されている。
-- [ ] ProviderAdapter が Matrix と preflight を通す。
-- [ ] SecretBroker が raw secret を返さない。
-- [ ] approval invalidation が diff / policy / provider fingerprint を見る。
-- [ ] audit event に raw value がない。
-
+<!-- Phase E 圧縮 (2026-05-17 PR #?): 末尾 verify checklist 削除、plan §3.1.1 invariant trace matrix で自動 verify -->
