@@ -6,25 +6,28 @@ PRD-01 / 計画(仮).md / .claude/reference/hard-gates-and-kpis.md による P0 
 1. Hard Gates 7 全件達成 (`hard_gates.p0_accept == True`、fail_tolerance=0)
 2. Quality KPIs 5 のうち未達 1 個以下 (`kpi.p0_accept == True`、fail_tolerance=1)
 3. Ticket-to-PR smoke gold flow 通し (`smoke.overall_success == True`)
-4. host migration drill (Mac → VPS、ADR-00021) — **user 物理確認必要、本 batch では defer**
-5. backup/restore drill (RPO ≤ 24h、RTO ≤ 4h、PITR 成功) — **user 物理確認必要、本 batch では defer**
+4. host migration drill — **user 物理確認必要、本 batch では defer**
+5. backup/restore drill — **user 物理確認必要、本 batch では defer**
+6. **private staging CI/E2E 完成** (SP-012 line 82 must_ship、Codex F-PR60-002 P1 adopt)
+7. **gated_acceptance_rows 全件 PASS or schema-valid STRUCTURED_DEFER**
+   (SP-012 line 89 invariant、Codex F-PR60-003 P1 adopt、Research-to-PR 等)
 
-本 module は (1)-(3) の集約と P0 Exit verdict を pure function で計算し、
-(4)-(5) は `OperationalDrillStatus` で **drill_status enum** (pending /
-in_progress / passed / failed / deferred_user_confirm) として記録する.
-real drill の実行・記録は user 確認後の別 batch / 別 session で配備.
+本 module は (1)-(3) の集約 + (4)-(7) の status 入力 + 最終 verdict を pure
+function で計算. real drill / staging / row 実行は別 session で配備.
 
 Anti-Gaming invariant:
-- P0 Exit decision は 5 source (HARD + KPI + smoke + host_migration + backup_restore)
-  全件 PASS で True、1 source でも未達なら False
-- drill_status=deferred_user_confirm は **未達** として扱う (Hard Gates と同 invariant)
+- P0 Exit decision は **7 source** 全件 PASS で True、1 source でも未達なら False
+- drill_status=deferred_user_confirm は未達として扱う (Hard Gates と同 invariant)
+- private_staging_status=not_run も未達 (Codex F-PR60-002 P1)
+- gated_row が schema-invalid な defer or missing は未達 (Codex F-PR60-003 P1)
+- Codex F-PR60-001 P1: drill.PASSED/FAILED は completed_at 非 None 必須
+- Codex F-PR60-004 P2: rollup summary integrity check (boolean を直接 trust せず recompute)
 - caller-supplied 経路なし (signature 上 inputs 固定)
 - frozen dataclass (event sourcing 整合、append-only)
 
 Security boundary:
 - pure function (no DB / FS / network access)
 - raw secret は input に含まれない (caller が redaction 済 summary を渡す)
-- evidence chain hash (kpi_rollup + smoke + hard_gates) は caller が compute (本 batch では shape のみ確立)
 """
 
 from __future__ import annotations
@@ -34,30 +37,57 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Final
 
-from backend.app.services.eval.hard_gates_rollup import HardGatesRollupSummary
-from backend.app.services.eval.kpi_rollup import KpiRollupSummary
+from backend.app.services.eval.hard_gates_rollup import (
+    HARD_GATE_FAIL_TOLERANCE,
+    HardGatesRollupSummary,
+)
+from backend.app.services.eval.kpi_rollup import (
+    KPI_FAIL_TOLERANCE,
+    KpiRollupSummary,
+)
 from backend.app.services.integration.ticket_to_pr_smoke import (
     TicketToPrSmokeResult,
 )
 
 
 class OperationalDrillStatus(StrEnum):
-    """Operational drill (host migration / backup restore) status enum.
+    """Operational drill (host migration / backup restore) status enum."""
 
-    P0 Exit gate で AC-HARD-04 backup_restore_rpo_rto / host migration drill の
-    実 run 結果を記録. real drill は user 物理確認必要、本 batch では
-    `deferred_user_confirm` を default として扱い、別 session で `passed` / `failed`
-    に上書きする経路.
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    PASSED = "passed"
+    FAILED = "failed"
+    DEFERRED_USER_CONFIRM = "deferred_user_confirm"
+
+
+class PrivateStagingStatus(StrEnum):
+    """Private staging CI/E2E status enum (Codex F-PR60-002 P1).
+
+    SP-012 line 82 must_ship: private staging CI/E2E 完成. PASSED 以外は P0 未達.
     """
 
-    PENDING = "pending"  # drill 未着手
-    IN_PROGRESS = "in_progress"  # 実行中
-    PASSED = "passed"  # 成功 (RPO ≤ 24h / RTO ≤ 4h verified)
-    FAILED = "failed"  # 失敗 (criteria 未達)
-    DEFERRED_USER_CONFIRM = "deferred_user_confirm"  # user 物理確認待ち (本 batch default)
+    NOT_RUN = "not_run"
+    IN_PROGRESS = "in_progress"
+    PASSED = "passed"
+    FAILED = "failed"
+    DEFERRED_USER_CONFIRM = "deferred_user_confirm"
 
 
-# P0 Exit に required な drill 種別 (固定 enum、reorder 禁止)
+class GatedRowStatus(StrEnum):
+    """Gated acceptance row status enum (Codex F-PR60-003 P1).
+
+    SP-012 line 89 invariant: BL-0149 sign-off は各 gated row が PASS、または
+    `STRUCTURED_DEFER` (6 fields full: owner / impact / resume_condition /
+    blocked_by / verification / target_hash) でなければ BLOCK. それ以外
+    (NATURAL_DEFER, MISSING) は未達.
+    """
+
+    PASS = "pass"  # noqa: S105 (P0 acceptance enum value, not a password)
+    STRUCTURED_DEFER = "structured_defer"  # 6 fields schema-valid
+    NATURAL_DEFER = "natural_defer"  # 自然文 defer (不可、P0 未達)
+    MISSING = "missing"  # 未記録 (P0 未達)
+
+
 REQUIRED_DRILLS: Final[tuple[str, ...]] = (
     "host_migration",
     "backup_restore",
@@ -66,38 +96,90 @@ REQUIRED_DRILLS: Final[tuple[str, ...]] = (
 
 @dataclass(frozen=True, slots=True)
 class OperationalDrillEntry:
-    """単一 drill の status entry (frozen、append-only)."""
+    """単一 drill の status entry (frozen、append-only).
 
-    drill_kind: str  # "host_migration" / "backup_restore"
+    Codex F-PR60-001 P1 adopt: status=PASSED/FAILED 時に completed_at が
+    None なら invalid (`__post_init__` で ValueError raise).
+    """
+
+    drill_kind: str
     status: OperationalDrillStatus
-    completed_at: str | None = None  # ISO 8601 (passed/failed 時のみ非 None)
-    notes: str | None = None  # redaction 済 summary (caller responsibility)
+    completed_at: str | None = None
+    notes: str | None = None
+
+    def __post_init__(self) -> None:
+        # Codex F-PR60-001 P1 adopt: drill completion evidence 必須
+        # (PASSED/FAILED 状態は ISO 8601 timestamp 必須、bare status を許さない)
+        if self.status in (
+            OperationalDrillStatus.PASSED,
+            OperationalDrillStatus.FAILED,
+        ) and not self.completed_at:
+            raise ValueError(
+                f"OperationalDrillEntry(drill_kind={self.drill_kind!r}, "
+                f"status={self.status}): completed_at is required when "
+                f"status is PASSED or FAILED (Codex F-PR60-001 P1 invariant)"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class GatedAcceptanceRowEntry:
+    """gated_acceptance_rows artifact の 1 row (frozen)."""
+
+    row_id: str  # SP-012 spec の "BL-0140a-research-to-pr" 等
+    status: GatedRowStatus
+    structured_defer_fields_present: bool = False  # 6 fields schema-valid 時 True
 
 
 @dataclass(frozen=True, slots=True)
 class P0AcceptanceReportSummary:
     """P0 Exit final report (frozen、append-only audit truth)."""
 
-    timestamp: str  # ISO 8601 UTC、report 生成時刻
-    # 5 sources の P0 判定状態
-    hard_gates_accept: bool  # HardGatesRollupSummary.p0_accept
-    kpi_accept: bool  # KpiRollupSummary.p0_accept
-    smoke_success: bool  # TicketToPrSmokeResult.overall_success
-    host_migration_passed: bool  # drill_status == passed
-    backup_restore_passed: bool  # drill_status == passed
-    # 最終 verdict (5 source 全件 PASS で True、1 source でも未達なら False)
+    timestamp: str
+    # 7 sources の P0 判定状態
+    hard_gates_accept: bool
+    kpi_accept: bool
+    smoke_success: bool
+    host_migration_passed: bool
+    backup_restore_passed: bool
+    private_staging_passed: bool  # Codex F-PR60-002 P1
+    gated_rows_satisfied: bool  # Codex F-PR60-003 P1
+    # 最終 verdict (7 source 全件 PASS で True)
     p0_exit_decision: bool
-    # 集計詳細 (audit / report 出力用)
+    # 集計詳細
     hard_gates_summary: HardGatesRollupSummary
     kpi_summary: KpiRollupSummary
     smoke_result: TicketToPrSmokeResult
     drill_entries: tuple[OperationalDrillEntry, ...]
-    # P0 未達時の reason codes (verdict=False 時のみ非空)
+    private_staging_status: PrivateStagingStatus
+    gated_rows: tuple[GatedAcceptanceRowEntry, ...]
     deficiencies: tuple[str, ...]
 
 
 def _now_utc_iso() -> str:
     return datetime.now(tz=UTC).isoformat()
+
+
+def _recompute_hard_gates_accept(summary: HardGatesRollupSummary) -> bool:
+    """Codex F-PR60-004 P2 adopt: rollup summary を trust せず entries から recompute.
+
+    `p0_accept=True` だが `failed_count > fail_tolerance` 等の inconsistent
+    summary を reject. entries の `threshold_met AND metric_value is not None`
+    で met を再計算し、`failed_count <= fail_tolerance` で判定.
+    """
+    recomputed_met = sum(
+        1 for e in summary.entries if e.threshold_met and e.metric_value is not None
+    )
+    recomputed_failed = len(summary.entries) - recomputed_met
+    return recomputed_failed <= HARD_GATE_FAIL_TOLERANCE
+
+
+def _recompute_kpi_accept(summary: KpiRollupSummary) -> bool:
+    """Codex F-PR60-004 P2 adopt: KPI rollup summary を trust せず recompute."""
+    recomputed_met = sum(
+        1 for e in summary.entries if e.threshold_met and e.metric_value is not None
+    )
+    recomputed_failed = len(summary.entries) - recomputed_met
+    return recomputed_failed <= KPI_FAIL_TOLERANCE
 
 
 def generate_p0_acceptance_report(
@@ -107,23 +189,17 @@ def generate_p0_acceptance_report(
     smoke_result: TicketToPrSmokeResult,
     host_migration_drill: OperationalDrillEntry,
     backup_restore_drill: OperationalDrillEntry,
+    private_staging_status: PrivateStagingStatus,
+    gated_rows: tuple[GatedAcceptanceRowEntry, ...],
     timestamp: str | None = None,
 ) -> P0AcceptanceReportSummary:
-    """5 source の P0 判定結果を集約し、最終 P0 Exit verdict を計算する pure function.
+    """7 source の P0 判定結果を集約し、最終 P0 Exit verdict を計算する pure function.
 
-    Args:
-        hard_gates_summary: Hard Gates 7 rollup result
-        kpi_summary: KPI 5 rollup result
-        smoke_result: Ticket-to-PR smoke gold flow result
-        host_migration_drill: host migration drill status
-        backup_restore_drill: backup/restore drill status
-        timestamp: report 生成時刻 (default = now UTC ISO 8601)
-
-    Returns:
-        P0AcceptanceReportSummary with p0_exit_decision + deficiency reasons.
+    Codex PR #60 R1 P1×3 + P2×1 adopt: 5 source → 7 source へ拡張、
+    drill completion evidence 必須化、rollup recompute integrity check.
     """
 
-    # drill kind 整合 verify (signature 固定だが contract 保護)
+    # drill kind 整合 verify
     if host_migration_drill.drill_kind != "host_migration":
         raise ValueError(
             f"host_migration_drill.drill_kind must be 'host_migration', "
@@ -135,6 +211,10 @@ def generate_p0_acceptance_report(
             f"got {backup_restore_drill.drill_kind!r}"
         )
 
+    # Codex F-PR60-004 P2 adopt: rollup summary integrity recompute
+    hard_gates_accept = _recompute_hard_gates_accept(hard_gates_summary)
+    kpi_accept = _recompute_kpi_accept(kpi_summary)
+
     host_migration_passed = (
         host_migration_drill.status == OperationalDrillStatus.PASSED
     )
@@ -142,26 +222,55 @@ def generate_p0_acceptance_report(
         backup_restore_drill.status == OperationalDrillStatus.PASSED
     )
 
-    # 5 source 全件 PASS で P0 Exit OK
+    # Codex F-PR60-002 P1 adopt: private staging も P0 verdict に必須
+    private_staging_passed = private_staging_status == PrivateStagingStatus.PASSED
+
+    # Codex F-PR60-003 P1 adopt: gated rows は PASS or STRUCTURED_DEFER のみ許容
+    # (NATURAL_DEFER / MISSING は P0 未達). row が 0 件の場合は許容 (caller
+    # が gated rows を採用しない場合の経路、SP-012 表 2 entry なしの worst case).
+    gated_rows_satisfied = all(
+        row.status == GatedRowStatus.PASS
+        or (
+            row.status == GatedRowStatus.STRUCTURED_DEFER
+            and row.structured_defer_fields_present
+        )
+        for row in gated_rows
+    )
+
+    # 7 source 全件 PASS で P0 Exit OK
     p0_exit_decision = (
-        hard_gates_summary.p0_accept
-        and kpi_summary.p0_accept
+        hard_gates_accept
+        and kpi_accept
         and smoke_result.overall_success
         and host_migration_passed
         and backup_restore_passed
+        and private_staging_passed
+        and gated_rows_satisfied
     )
 
-    # deficiency reasons (verdict=False 時の audit)
+    # deficiency reasons
     deficiencies: list[str] = []
-    if not hard_gates_summary.p0_accept:
+    if not hard_gates_accept:
+        # recompute と original p0_accept の不整合も明示
+        if hard_gates_summary.p0_accept:
+            deficiencies.append(
+                "hard_gates_inconsistent_summary "
+                "(p0_accept=True but recomputed_failed > tolerance)"
+            )
         deficiencies.append(
-            f"hard_gates_failed (failed_count={hard_gates_summary.failed_count}/7, "
-            f"fail_tolerance=0)"
+            f"hard_gates_failed (failed_count={hard_gates_summary.failed_count}/"
+            f"{hard_gates_summary.hard_gate_count}, fail_tolerance="
+            f"{HARD_GATE_FAIL_TOLERANCE})"
         )
-    if not kpi_summary.p0_accept:
+    if not kpi_accept:
+        if kpi_summary.p0_accept:
+            deficiencies.append(
+                "kpi_inconsistent_summary "
+                "(p0_accept=True but recomputed_failed > tolerance)"
+            )
         deficiencies.append(
-            f"kpi_failed (failed_count={kpi_summary.failed_count}/5, "
-            f"fail_tolerance=1)"
+            f"kpi_failed (failed_count={kpi_summary.failed_count}/"
+            f"{kpi_summary.kpi_count}, fail_tolerance={KPI_FAIL_TOLERANCE})"
         )
     if not smoke_result.overall_success:
         deficiencies.append(
@@ -178,27 +287,51 @@ def generate_p0_acceptance_report(
             f"backup_restore_drill_not_passed "
             f"(status={backup_restore_drill.status})"
         )
+    if not private_staging_passed:
+        deficiencies.append(
+            f"private_staging_not_passed (status={private_staging_status})"
+        )
+    if not gated_rows_satisfied:
+        unsatisfied = [
+            r.row_id
+            for r in gated_rows
+            if r.status not in (GatedRowStatus.PASS,)
+            and not (
+                r.status == GatedRowStatus.STRUCTURED_DEFER
+                and r.structured_defer_fields_present
+            )
+        ]
+        deficiencies.append(
+            f"gated_rows_unsatisfied (rows={unsatisfied})"
+        )
 
     return P0AcceptanceReportSummary(
         timestamp=timestamp or _now_utc_iso(),
-        hard_gates_accept=hard_gates_summary.p0_accept,
-        kpi_accept=kpi_summary.p0_accept,
+        hard_gates_accept=hard_gates_accept,
+        kpi_accept=kpi_accept,
         smoke_success=smoke_result.overall_success,
         host_migration_passed=host_migration_passed,
         backup_restore_passed=backup_restore_passed,
+        private_staging_passed=private_staging_passed,
+        gated_rows_satisfied=gated_rows_satisfied,
         p0_exit_decision=p0_exit_decision,
         hard_gates_summary=hard_gates_summary,
         kpi_summary=kpi_summary,
         smoke_result=smoke_result,
         drill_entries=(host_migration_drill, backup_restore_drill),
+        private_staging_status=private_staging_status,
+        gated_rows=gated_rows,
         deficiencies=tuple(deficiencies),
     )
 
 
 __all__ = [
     "REQUIRED_DRILLS",
+    "GatedAcceptanceRowEntry",
+    "GatedRowStatus",
     "OperationalDrillEntry",
     "OperationalDrillStatus",
     "P0AcceptanceReportSummary",
+    "PrivateStagingStatus",
     "generate_p0_acceptance_report",
 ]

@@ -19,9 +19,12 @@ from backend.app.services.eval.hard_gates_rollup import (
 from backend.app.services.eval.kpi_rollup import KpiEntry, KpiRollupSummary
 from backend.app.services.eval.p0_acceptance_report import (
     REQUIRED_DRILLS,
+    GatedAcceptanceRowEntry,
+    GatedRowStatus,
     OperationalDrillEntry,
     OperationalDrillStatus,
     P0AcceptanceReportSummary,
+    PrivateStagingStatus,
     generate_p0_acceptance_report,
 )
 from backend.app.services.integration.ticket_to_pr_smoke import (
@@ -165,7 +168,24 @@ def _build_smoke(*, success: bool = True) -> TicketToPrSmokeResult:
 def _drill(
     kind: str, status: OperationalDrillStatus = OperationalDrillStatus.PASSED
 ) -> OperationalDrillEntry:
-    return OperationalDrillEntry(drill_kind=kind, status=status)
+    # Codex F-PR60-001 P1 adopt: PASSED/FAILED 時は completed_at 必須
+    completed_at = (
+        "2026-05-17T12:00:00+00:00"
+        if status in (OperationalDrillStatus.PASSED, OperationalDrillStatus.FAILED)
+        else None
+    )
+    return OperationalDrillEntry(
+        drill_kind=kind, status=status, completed_at=completed_at
+    )
+
+
+def _staging_passed() -> PrivateStagingStatus:
+    return PrivateStagingStatus.PASSED
+
+
+def _gated_rows_all_pass() -> tuple[GatedAcceptanceRowEntry, ...]:
+    """gated rows 0 件 (Sprint 12 P0 core では gated row 未定義のため empty で all-pass)。"""
+    return ()
 
 
 def test_required_drills_immutable() -> None:
@@ -181,6 +201,8 @@ def test_all_pass_p0_exit_true() -> None:
         smoke_result=_build_smoke(success=True),
         host_migration_drill=_drill("host_migration"),
         backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=_gated_rows_all_pass(),
     )
     assert isinstance(report, P0AcceptanceReportSummary)
     assert report.hard_gates_accept is True
@@ -200,6 +222,8 @@ def test_hard_gates_fail_p0_exit_false() -> None:
         smoke_result=_build_smoke(success=True),
         host_migration_drill=_drill("host_migration"),
         backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=_gated_rows_all_pass(),
     )
     assert report.p0_exit_decision is False
     assert any("hard_gates_failed" in d for d in report.deficiencies)
@@ -213,6 +237,8 @@ def test_kpi_fail_p0_exit_false() -> None:
         smoke_result=_build_smoke(success=True),
         host_migration_drill=_drill("host_migration"),
         backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=_gated_rows_all_pass(),
     )
     assert report.p0_exit_decision is False
     assert any("kpi_failed" in d for d in report.deficiencies)
@@ -226,6 +252,8 @@ def test_smoke_fail_p0_exit_false() -> None:
         smoke_result=_build_smoke(success=False),
         host_migration_drill=_drill("host_migration"),
         backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=_gated_rows_all_pass(),
     )
     assert report.p0_exit_decision is False
     assert any("smoke_failed" in d for d in report.deficiencies)
@@ -244,6 +272,8 @@ def test_host_migration_deferred_p0_exit_false() -> None:
             "host_migration", OperationalDrillStatus.DEFERRED_USER_CONFIRM
         ),
         backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=_gated_rows_all_pass(),
     )
     assert report.host_migration_passed is False
     assert report.p0_exit_decision is False
@@ -262,6 +292,8 @@ def test_backup_restore_failed_p0_exit_false() -> None:
         backup_restore_drill=_drill(
             "backup_restore", OperationalDrillStatus.FAILED
         ),
+        private_staging_status=_staging_passed(),
+        gated_rows=_gated_rows_all_pass(),
     )
     assert report.backup_restore_passed is False
     assert report.p0_exit_decision is False
@@ -279,6 +311,8 @@ def test_drill_kind_mismatch_raises_value_error() -> None:
             smoke_result=_build_smoke(),
             host_migration_drill=_drill("backup_restore"),  # 逆指定
             backup_restore_drill=_drill("backup_restore"),
+            private_staging_status=_staging_passed(),
+            gated_rows=_gated_rows_all_pass(),
         )
 
 
@@ -291,11 +325,13 @@ def test_drill_kind_mismatch_backup_raises_value_error() -> None:
             smoke_result=_build_smoke(),
             host_migration_drill=_drill("host_migration"),
             backup_restore_drill=_drill("host_migration"),  # 逆指定
+            private_staging_status=_staging_passed(),
+            gated_rows=_gated_rows_all_pass(),
         )
 
 
 def test_all_fail_returns_all_deficiencies() -> None:
-    """5 source 全件未達 → 5 deficiency reasons 全件記録."""
+    """7 source 全件未達 → 7 deficiency reasons 全件記録 (Codex F-PR60-002/003 P1 反映)."""
     report = generate_p0_acceptance_report(
         hard_gates_summary=_build_hard_gates(accept=False),
         kpi_summary=_build_kpi(accept=False),
@@ -306,14 +342,24 @@ def test_all_fail_returns_all_deficiencies() -> None:
         backup_restore_drill=_drill(
             "backup_restore", OperationalDrillStatus.FAILED
         ),
+        private_staging_status=PrivateStagingStatus.FAILED,
+        gated_rows=(
+            GatedAcceptanceRowEntry(
+                row_id="test_row",
+                status=GatedRowStatus.MISSING,
+            ),
+        ),
     )
     assert report.p0_exit_decision is False
-    assert len(report.deficiencies) == 5
+    # 5 source (Hard Gates + KPI + smoke + 2 drill) + private_staging + gated_rows = 7 deficiency
+    assert len(report.deficiencies) == 7
     deficiency_text = " ".join(report.deficiencies)
     assert "hard_gates_failed" in deficiency_text
     assert "kpi_failed" in deficiency_text
     assert "smoke_failed" in deficiency_text
     assert "host_migration_drill_not_passed" in deficiency_text
+    assert "private_staging_not_passed" in deficiency_text
+    assert "gated_rows_unsatisfied" in deficiency_text
     assert "backup_restore_drill_not_passed" in deficiency_text
 
 
@@ -334,6 +380,8 @@ def test_drill_entries_include_both_drills() -> None:
         smoke_result=_build_smoke(),
         host_migration_drill=_drill("host_migration"),
         backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=_gated_rows_all_pass(),
     )
     assert len(report.drill_entries) == 2
     assert report.drill_entries[0].drill_kind == "host_migration"
@@ -348,6 +396,8 @@ def test_report_is_frozen_dataclass() -> None:
         smoke_result=_build_smoke(),
         host_migration_drill=_drill("host_migration"),
         backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=_gated_rows_all_pass(),
     )
     with pytest.raises(AttributeError):
         report.p0_exit_decision = False  # type: ignore[misc]
@@ -365,6 +415,8 @@ def test_timestamp_override() -> None:
         host_migration_drill=_drill("host_migration"),
         backup_restore_drill=_drill("backup_restore"),
         timestamp=fixed_ts,
+        private_staging_status=_staging_passed(),
+        gated_rows=_gated_rows_all_pass(),
     )
     assert report.timestamp == fixed_ts
 
@@ -377,10 +429,183 @@ def test_default_timestamp_is_utc_iso() -> None:
         smoke_result=_build_smoke(),
         host_migration_drill=_drill("host_migration"),
         backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=_gated_rows_all_pass(),
     )
     # ISO 8601 + tz suffix (+00:00) を含む
     assert "T" in report.timestamp
     assert "+00:00" in report.timestamp
+
+
+def test_drill_passed_without_completed_at_raises_value_error() -> None:
+    """Codex F-PR60-001 P1 adopt: PASSED 状態は completed_at 必須。"""
+    with pytest.raises(
+        ValueError, match="completed_at is required when status is PASSED"
+    ):
+        OperationalDrillEntry(
+            drill_kind="host_migration",
+            status=OperationalDrillStatus.PASSED,
+            completed_at=None,  # 未指定で PASSED は不可
+        )
+
+
+def test_drill_failed_without_completed_at_raises_value_error() -> None:
+    """Codex F-PR60-001 P1 adopt: FAILED 状態も completed_at 必須。"""
+    with pytest.raises(
+        ValueError, match="completed_at is required when status is PASSED"
+    ):
+        OperationalDrillEntry(
+            drill_kind="backup_restore",
+            status=OperationalDrillStatus.FAILED,
+            completed_at=None,
+        )
+
+
+def test_drill_pending_allows_no_completed_at() -> None:
+    """Codex F-PR60-001 P1 adopt: PENDING / IN_PROGRESS / DEFERRED は completed_at 不要。"""
+    # 例外なしで生成可能
+    entry = OperationalDrillEntry(
+        drill_kind="host_migration",
+        status=OperationalDrillStatus.PENDING,
+        completed_at=None,
+    )
+    assert entry.completed_at is None
+
+
+def test_private_staging_not_passed_p0_exit_false() -> None:
+    """Codex F-PR60-002 P1 adopt: private staging が PASSED 以外なら P0 未達。"""
+    report = generate_p0_acceptance_report(
+        hard_gates_summary=_build_hard_gates(accept=True),
+        kpi_summary=_build_kpi(accept=True),
+        smoke_result=_build_smoke(success=True),
+        host_migration_drill=_drill("host_migration"),
+        backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=PrivateStagingStatus.NOT_RUN,
+        gated_rows=_gated_rows_all_pass(),
+    )
+    assert report.private_staging_passed is False
+    assert report.p0_exit_decision is False
+    assert any("private_staging_not_passed" in d for d in report.deficiencies)
+
+
+def test_gated_row_natural_defer_p0_exit_false() -> None:
+    """Codex F-PR60-003 P1 adopt: NATURAL_DEFER (自然文 defer) は P0 未達。"""
+    rows = (
+        GatedAcceptanceRowEntry(
+            row_id="BL-0140a-research-to-pr",
+            status=GatedRowStatus.NATURAL_DEFER,
+        ),
+    )
+    report = generate_p0_acceptance_report(
+        hard_gates_summary=_build_hard_gates(accept=True),
+        kpi_summary=_build_kpi(accept=True),
+        smoke_result=_build_smoke(success=True),
+        host_migration_drill=_drill("host_migration"),
+        backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=rows,
+    )
+    assert report.gated_rows_satisfied is False
+    assert report.p0_exit_decision is False
+
+
+def test_gated_row_structured_defer_with_fields_p0_exit_true() -> None:
+    """Codex F-PR60-003 P1 adopt: STRUCTURED_DEFER + 6 fields full は P0 OK。"""
+    rows = (
+        GatedAcceptanceRowEntry(
+            row_id="BL-0140a-research-to-pr",
+            status=GatedRowStatus.STRUCTURED_DEFER,
+            structured_defer_fields_present=True,
+        ),
+    )
+    report = generate_p0_acceptance_report(
+        hard_gates_summary=_build_hard_gates(accept=True),
+        kpi_summary=_build_kpi(accept=True),
+        smoke_result=_build_smoke(success=True),
+        host_migration_drill=_drill("host_migration"),
+        backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=rows,
+    )
+    assert report.gated_rows_satisfied is True
+    assert report.p0_exit_decision is True
+
+
+def test_gated_row_structured_defer_without_fields_p0_exit_false() -> None:
+    """STRUCTURED_DEFER だが 6 fields schema 未満は未達。"""
+    rows = (
+        GatedAcceptanceRowEntry(
+            row_id="BL-0140a-research-to-pr",
+            status=GatedRowStatus.STRUCTURED_DEFER,
+            structured_defer_fields_present=False,  # schema 不備
+        ),
+    )
+    report = generate_p0_acceptance_report(
+        hard_gates_summary=_build_hard_gates(accept=True),
+        kpi_summary=_build_kpi(accept=True),
+        smoke_result=_build_smoke(success=True),
+        host_migration_drill=_drill("host_migration"),
+        backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=rows,
+    )
+    assert report.gated_rows_satisfied is False
+    assert report.p0_exit_decision is False
+
+
+def test_inconsistent_hard_gates_summary_rejected() -> None:
+    """Codex F-PR60-004 P2 adopt: stale/inconsistent summary を recompute で reject.
+
+    p0_accept=True だが failed_count > tolerance な不整合 summary を渡しても、
+    aggregator が entries から recompute し False に戻す.
+    """
+    # 不整合 summary: p0_accept=True だが entries は 1 件 fail
+    failed_entry = HardGateEntry(
+        hard_gate_id="AC-HARD-01",
+        metric_key="policy_block_recall",
+        metric_value=0.5,
+        threshold_met=False,  # ← 失敗
+        threshold_reason="below_threshold",
+    )
+    other_entries = tuple(
+        HardGateEntry(
+            hard_gate_id=hgid,  # type: ignore[arg-type]
+            metric_key=key,
+            metric_value=1.0,
+            threshold_met=True,
+            threshold_reason="threshold_met",
+        )
+        for hgid, key in (
+            ("AC-HARD-02", "secret_canary_no_leak"),
+            ("AC-HARD-03", "tenant_isolation_negative_pass"),
+            ("AC-HARD-04", "backup_restore_rpo_rto"),
+            ("AC-HARD-05", "forbidden_path_block"),
+            ("AC-HARD-06", "dangerous_command_block"),
+            ("AC-HARD-07", "prompt_injection_resist"),
+        )
+    )
+    inconsistent_summary = HardGatesRollupSummary(
+        hard_gate_count=7,
+        met_count=7,  # ← 誤った count (本当は 6)
+        failed_count=0,  # ← 誤った count (本当は 1)
+        p0_accept=True,  # ← inconsistent boolean
+        fail_tolerance=0,
+        entries=(failed_entry,) + other_entries,
+    )
+    report = generate_p0_acceptance_report(
+        hard_gates_summary=inconsistent_summary,
+        kpi_summary=_build_kpi(accept=True),
+        smoke_result=_build_smoke(success=True),
+        host_migration_drill=_drill("host_migration"),
+        backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=_gated_rows_all_pass(),
+    )
+    # recompute で 1 件 fail を検出、hard_gates_accept=False、deficiency に inconsistent_summary
+    assert report.hard_gates_accept is False
+    assert report.p0_exit_decision is False
+    deficiency_text = " ".join(report.deficiencies)
+    assert "hard_gates_inconsistent_summary" in deficiency_text
 
 
 def test_summaries_accessible_in_report() -> None:
@@ -394,6 +619,8 @@ def test_summaries_accessible_in_report() -> None:
         smoke_result=smoke,
         host_migration_drill=_drill("host_migration"),
         backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=_gated_rows_all_pass(),
     )
     assert report.hard_gates_summary is hg
     assert report.kpi_summary is kpi
