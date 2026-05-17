@@ -187,6 +187,12 @@ def _gated_rows_all_pass() -> tuple[GatedAcceptanceRowEntry, ...]:
     """gated rows 0 件 (Sprint 12 P0 core では gated row 未定義のため empty で all-pass)。"""
     return ()
 
+def _required_gated_row_ids_empty() -> frozenset[str]:
+    """required_gated_row_ids 空 (gated_rows も空で all-pass 経路、本 fixture
+    の Sprint 12 P0 core 想定: 必須 row なし)。"""
+    return frozenset()
+
+
 
 def test_required_drills_immutable() -> None:
     """REQUIRED_DRILLS は固定順序 (Anti-Gaming、reorder 禁止)."""
@@ -203,6 +209,7 @@ def test_all_pass_p0_exit_true() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=_staging_passed(),
         gated_rows=_gated_rows_all_pass(),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert isinstance(report, P0AcceptanceReportSummary)
     assert report.hard_gates_accept is True
@@ -224,6 +231,7 @@ def test_hard_gates_fail_p0_exit_false() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=_staging_passed(),
         gated_rows=_gated_rows_all_pass(),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert report.p0_exit_decision is False
     assert any("hard_gates_failed" in d for d in report.deficiencies)
@@ -239,6 +247,7 @@ def test_kpi_fail_p0_exit_false() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=_staging_passed(),
         gated_rows=_gated_rows_all_pass(),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert report.p0_exit_decision is False
     assert any("kpi_failed" in d for d in report.deficiencies)
@@ -254,6 +263,7 @@ def test_smoke_fail_p0_exit_false() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=_staging_passed(),
         gated_rows=_gated_rows_all_pass(),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert report.p0_exit_decision is False
     assert any("smoke_failed" in d for d in report.deficiencies)
@@ -274,6 +284,7 @@ def test_host_migration_deferred_p0_exit_false() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=_staging_passed(),
         gated_rows=_gated_rows_all_pass(),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert report.host_migration_passed is False
     assert report.p0_exit_decision is False
@@ -294,6 +305,7 @@ def test_backup_restore_failed_p0_exit_false() -> None:
         ),
         private_staging_status=_staging_passed(),
         gated_rows=_gated_rows_all_pass(),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert report.backup_restore_passed is False
     assert report.p0_exit_decision is False
@@ -313,6 +325,7 @@ def test_drill_kind_mismatch_raises_value_error() -> None:
             backup_restore_drill=_drill("backup_restore"),
             private_staging_status=_staging_passed(),
             gated_rows=_gated_rows_all_pass(),
+            required_gated_row_ids=_required_gated_row_ids_empty(),
         )
 
 
@@ -327,6 +340,7 @@ def test_drill_kind_mismatch_backup_raises_value_error() -> None:
             backup_restore_drill=_drill("host_migration"),  # 逆指定
             private_staging_status=_staging_passed(),
             gated_rows=_gated_rows_all_pass(),
+            required_gated_row_ids=_required_gated_row_ids_empty(),
         )
 
 
@@ -349,6 +363,7 @@ def test_all_fail_returns_all_deficiencies() -> None:
                 status=GatedRowStatus.MISSING,
             ),
         ),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert report.p0_exit_decision is False
     # 5 source (Hard Gates + KPI + smoke + 2 drill) + private_staging + gated_rows = 7 deficiency
@@ -382,6 +397,7 @@ def test_drill_entries_include_both_drills() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=_staging_passed(),
         gated_rows=_gated_rows_all_pass(),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert len(report.drill_entries) == 2
     assert report.drill_entries[0].drill_kind == "host_migration"
@@ -398,6 +414,7 @@ def test_report_is_frozen_dataclass() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=_staging_passed(),
         gated_rows=_gated_rows_all_pass(),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     with pytest.raises(AttributeError):
         report.p0_exit_decision = False  # type: ignore[misc]
@@ -417,6 +434,7 @@ def test_timestamp_override() -> None:
         timestamp=fixed_ts,
         private_staging_status=_staging_passed(),
         gated_rows=_gated_rows_all_pass(),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert report.timestamp == fixed_ts
 
@@ -431,6 +449,7 @@ def test_default_timestamp_is_utc_iso() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=_staging_passed(),
         gated_rows=_gated_rows_all_pass(),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     # ISO 8601 + tz suffix (+00:00) を含む
     assert "T" in report.timestamp
@@ -482,6 +501,7 @@ def test_private_staging_not_passed_p0_exit_false() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=PrivateStagingStatus.NOT_RUN,
         gated_rows=_gated_rows_all_pass(),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert report.private_staging_passed is False
     assert report.p0_exit_decision is False
@@ -504,6 +524,7 @@ def test_gated_row_natural_defer_p0_exit_false() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=_staging_passed(),
         gated_rows=rows,
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert report.gated_rows_satisfied is False
     assert report.p0_exit_decision is False
@@ -511,11 +532,22 @@ def test_gated_row_natural_defer_p0_exit_false() -> None:
 
 def test_gated_row_structured_defer_with_fields_p0_exit_true() -> None:
     """Codex F-PR60-003 P1 adopt: STRUCTURED_DEFER + 6 fields full は P0 OK。"""
+    from backend.app.services.eval.p0_acceptance_report import (
+        StructuredDeferFields,
+    )
+
     rows = (
         GatedAcceptanceRowEntry(
             row_id="BL-0140a-research-to-pr",
             status=GatedRowStatus.STRUCTURED_DEFER,
-            structured_defer_fields_present=True,
+            structured_defer_fields=StructuredDeferFields(
+                owner="actor:human-1",
+                impact="P0 core acceptance gated",
+                resume_condition="BL-0140a complete",
+                blocked_by=("BL-0140a",),
+                verification="pytest tests/integration/test_research_to_pr.py",
+                target_hash="abc123def456",
+            ),
         ),
     )
     report = generate_p0_acceptance_report(
@@ -526,6 +558,7 @@ def test_gated_row_structured_defer_with_fields_p0_exit_true() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=_staging_passed(),
         gated_rows=rows,
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert report.gated_rows_satisfied is True
     assert report.p0_exit_decision is True
@@ -533,11 +566,22 @@ def test_gated_row_structured_defer_with_fields_p0_exit_true() -> None:
 
 def test_gated_row_structured_defer_without_fields_p0_exit_false() -> None:
     """STRUCTURED_DEFER だが 6 fields schema 未満は未達。"""
+    from backend.app.services.eval.p0_acceptance_report import (
+        StructuredDeferFields,
+    )
+
     rows = (
         GatedAcceptanceRowEntry(
             row_id="BL-0140a-research-to-pr",
             status=GatedRowStatus.STRUCTURED_DEFER,
-            structured_defer_fields_present=False,  # schema 不備
+            structured_defer_fields=StructuredDeferFields(
+                owner="actor:human-1",
+                impact="P0 core acceptance gated",
+                resume_condition="",  # ← 空文字 = schema 不備
+                blocked_by=("BL-0140a",),
+                verification="pytest",
+                target_hash="abc123",
+            ),
         ),
     )
     report = generate_p0_acceptance_report(
@@ -548,6 +592,7 @@ def test_gated_row_structured_defer_without_fields_p0_exit_false() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=_staging_passed(),
         gated_rows=rows,
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert report.gated_rows_satisfied is False
     assert report.p0_exit_decision is False
@@ -600,12 +645,136 @@ def test_inconsistent_hard_gates_summary_rejected() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=_staging_passed(),
         gated_rows=_gated_rows_all_pass(),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     # recompute で 1 件 fail を検出、hard_gates_accept=False、deficiency に inconsistent_summary
     assert report.hard_gates_accept is False
     assert report.p0_exit_decision is False
     deficiency_text = " ".join(report.deficiencies)
     assert "hard_gates_inconsistent_summary" in deficiency_text
+
+
+def test_empty_gated_rows_with_required_ids_fails_closed() -> None:
+    """Codex 監査 F-AUDIT-001 P1 adopt: required_gated_row_ids が non-empty で
+    gated_rows=() (空) なら p0_exit_decision=False (Anti-Gaming 違反を物理削除)。
+
+    旧設計 (gated_rows=() で all() が True を返す) は SP-012 line 87-99 違反.
+    """
+    report = generate_p0_acceptance_report(
+        hard_gates_summary=_build_hard_gates(accept=True),
+        kpi_summary=_build_kpi(accept=True),
+        smoke_result=_build_smoke(success=True),
+        host_migration_drill=_drill("host_migration"),
+        backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=(),  # 空 (旧設計では all-pass 経路)
+        required_gated_row_ids=frozenset({"BL-0140a-research-to-pr"}),
+    )
+    assert report.gated_rows_satisfied is False
+    assert report.p0_exit_decision is False
+    deficiency_text = " ".join(report.deficiencies)
+    assert "gated_rows_missing_required" in deficiency_text
+    assert "BL-0140a-research-to-pr" in deficiency_text
+
+
+def test_partial_gated_rows_with_required_ids_fails_closed() -> None:
+    """required_gated_row_ids の一部しか提供されていない → fail-closed。"""
+    from backend.app.services.eval.p0_acceptance_report import (
+        StructuredDeferFields,
+    )
+
+    rows = (
+        GatedAcceptanceRowEntry(
+            row_id="BL-0140a-research-to-pr",
+            status=GatedRowStatus.STRUCTURED_DEFER,
+            structured_defer_fields=StructuredDeferFields(
+                owner="actor:human",
+                impact="impact",
+                resume_condition="cond",
+                blocked_by=("BL-X",),
+                verification="verify",
+                target_hash="hash",
+            ),
+        ),
+    )
+    report = generate_p0_acceptance_report(
+        hard_gates_summary=_build_hard_gates(accept=True),
+        kpi_summary=_build_kpi(accept=True),
+        smoke_result=_build_smoke(success=True),
+        host_migration_drill=_drill("host_migration"),
+        backup_restore_drill=_drill("backup_restore"),
+        private_staging_status=_staging_passed(),
+        gated_rows=rows,
+        required_gated_row_ids=frozenset(
+            {"BL-0140a-research-to-pr", "BL-OTHER-required"}
+        ),  # BL-OTHER-required が missing
+    )
+    assert report.gated_rows_satisfied is False
+    assert report.p0_exit_decision is False
+    deficiency_text = " ".join(report.deficiencies)
+    assert "BL-OTHER-required" in deficiency_text
+
+
+def test_structured_defer_fields_schema_invalid_raises_via_property() -> None:
+    """structured_defer_fields に空 field を渡すと is_schema_valid()=False、
+    GatedAcceptanceRowEntry.structured_defer_fields_present=False になる。"""
+    from backend.app.services.eval.p0_acceptance_report import (
+        StructuredDeferFields,
+    )
+
+    invalid_fields = StructuredDeferFields(
+        owner="actor:human",
+        impact="impact",
+        resume_condition="cond",
+        blocked_by=(),  # ← 空 list = schema-invalid
+        verification="verify",
+        target_hash="hash",
+    )
+    row = GatedAcceptanceRowEntry(
+        row_id="BL-x",
+        status=GatedRowStatus.STRUCTURED_DEFER,
+        structured_defer_fields=invalid_fields,
+    )
+    assert row.structured_defer_fields_present is False
+    assert "blocked_by" in invalid_fields.missing_fields()
+
+
+def test_structured_defer_status_without_fields_raises_value_error() -> None:
+    """status=STRUCTURED_DEFER で structured_defer_fields=None は contract 違反。"""
+    with pytest.raises(
+        ValueError, match="structured_defer_fields is required"
+    ):
+        GatedAcceptanceRowEntry(
+            row_id="BL-x",
+            status=GatedRowStatus.STRUCTURED_DEFER,
+            structured_defer_fields=None,
+        )
+
+
+def test_structured_defer_all_6_fields_full_passes() -> None:
+    """6 fields full + non-empty なら is_schema_valid()=True、
+    GatedAcceptanceRowEntry.structured_defer_fields_present=True。"""
+    from backend.app.services.eval.p0_acceptance_report import (
+        StructuredDeferFields,
+    )
+
+    valid_fields = StructuredDeferFields(
+        owner="actor:human-1",
+        impact="acceptance gated",
+        resume_condition="BL-Y complete",
+        blocked_by=("BL-Y", "ADR-00099"),
+        verification="pytest tests/foo",
+        target_hash="sha256:abc",
+    )
+    assert valid_fields.is_schema_valid() is True
+    assert valid_fields.missing_fields() == ()
+
+    row = GatedAcceptanceRowEntry(
+        row_id="BL-Y",
+        status=GatedRowStatus.STRUCTURED_DEFER,
+        structured_defer_fields=valid_fields,
+    )
+    assert row.structured_defer_fields_present is True
 
 
 def test_summaries_accessible_in_report() -> None:
@@ -621,6 +790,7 @@ def test_summaries_accessible_in_report() -> None:
         backup_restore_drill=_drill("backup_restore"),
         private_staging_status=_staging_passed(),
         gated_rows=_gated_rows_all_pass(),
+        required_gated_row_ids=_required_gated_row_ids_empty(),
     )
     assert report.hard_gates_summary is hg
     assert report.kpi_summary is kpi

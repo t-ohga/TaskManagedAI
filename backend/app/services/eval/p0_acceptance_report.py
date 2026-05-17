@@ -121,13 +121,102 @@ class OperationalDrillEntry:
             )
 
 
+# Codex 監査 (2026-05-18) F-AUDIT-002 P1 adopt: structured_defer 6 fields は
+# SP-012 line 218-247 で永続化 + schema 検査が必須。caller が bool flag を
+# 自由に渡せる経路を物理削除し、6 fields の実値から server-owned に判定.
+_STRUCTURED_DEFER_REQUIRED_FIELDS: Final[tuple[str, ...]] = (
+    "owner",
+    "impact",
+    "resume_condition",
+    "blocked_by",
+    "verification",
+    "target_hash",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredDeferFields:
+    """SP-012 line 218-247 structured_defer 6 fields schema (frozen).
+
+    Codex 監査 (2026-05-18) F-AUDIT-002 P1 adopt: 6 fields full + non-empty が
+    schema-valid invariant. 1 field でも欠落 / 空文字 / blocked_by 空 list なら
+    schema-invalid として fail-closed.
+    """
+
+    owner: str  # gated row owner actor_id
+    impact: str  # P0 acceptance への impact 説明
+    resume_condition: str  # 完了条件
+    blocked_by: tuple[str, ...]  # 阻害要因 (BL ID / external dep / ADR)
+    verification: str  # verify 方法
+    target_hash: str  # acceptance artifact hash (server-computed)
+
+    def is_schema_valid(self) -> bool:
+        """6 fields 全件 non-empty なら True (schema-valid)."""
+        return (
+            bool(self.owner.strip())
+            and bool(self.impact.strip())
+            and bool(self.resume_condition.strip())
+            and len(self.blocked_by) > 0
+            and bool(self.verification.strip())
+            and bool(self.target_hash.strip())
+        )
+
+    def missing_fields(self) -> tuple[str, ...]:
+        """schema-invalid な fields の名前 tuple (audit / deficiency 用)."""
+        missing: list[str] = []
+        if not self.owner.strip():
+            missing.append("owner")
+        if not self.impact.strip():
+            missing.append("impact")
+        if not self.resume_condition.strip():
+            missing.append("resume_condition")
+        if len(self.blocked_by) == 0:
+            missing.append("blocked_by")
+        if not self.verification.strip():
+            missing.append("verification")
+        if not self.target_hash.strip():
+            missing.append("target_hash")
+        return tuple(missing)
+
+
 @dataclass(frozen=True, slots=True)
 class GatedAcceptanceRowEntry:
-    """gated_acceptance_rows artifact の 1 row (frozen)."""
+    """gated_acceptance_rows artifact の 1 row (frozen).
+
+    Codex 監査 (2026-05-18) F-AUDIT-002 P1 adopt: status=STRUCTURED_DEFER 時は
+    `structured_defer_fields` 必須 + 6 fields schema-valid 必須.
+    `structured_defer_fields_present` boolean は server 側で
+    `structured_defer_fields.is_schema_valid()` から自動算出 (caller-supplied
+    bool 経路を物理削除).
+    """
 
     row_id: str  # SP-012 spec の "BL-0140a-research-to-pr" 等
     status: GatedRowStatus
-    structured_defer_fields_present: bool = False  # 6 fields schema-valid 時 True
+    structured_defer_fields: StructuredDeferFields | None = None  # STRUCTURED_DEFER 時必須
+
+    def __post_init__(self) -> None:
+        """contract: STRUCTURED_DEFER 状態は structured_defer_fields 必須."""
+        if (
+            self.status == GatedRowStatus.STRUCTURED_DEFER
+            and self.structured_defer_fields is None
+        ):
+            raise ValueError(
+                f"GatedAcceptanceRowEntry(row_id={self.row_id!r}, "
+                f"status=STRUCTURED_DEFER): structured_defer_fields is required "
+                f"(SP-012 line 218-247 invariant)"
+            )
+
+    @property
+    def structured_defer_fields_present(self) -> bool:
+        """structured_defer_fields が 6 fields schema-valid なら True.
+
+        SP-012 line 87-99 invariant: STRUCTURED_DEFER は 6 fields full でなければ
+        P0 Exit 未達.
+        """
+        return (
+            self.structured_defer_fields is not None
+            and self.structured_defer_fields.is_schema_valid()
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,12 +280,20 @@ def generate_p0_acceptance_report(
     backup_restore_drill: OperationalDrillEntry,
     private_staging_status: PrivateStagingStatus,
     gated_rows: tuple[GatedAcceptanceRowEntry, ...],
+    required_gated_row_ids: frozenset[str],
     timestamp: str | None = None,
 ) -> P0AcceptanceReportSummary:
     """7 source の P0 判定結果を集約し、最終 P0 Exit verdict を計算する pure function.
 
     Codex PR #60 R1 P1×3 + P2×1 adopt: 5 source → 7 source へ拡張、
     drill completion evidence 必須化、rollup recompute integrity check.
+
+    Codex 監査 (2026-05-18) F-AUDIT-001 P1 adopt: `required_gated_row_ids` を
+    必須引数化。SP-012 表 2 line 87-99 invariant「P0 Exit sign-off は各 gated
+    row が PASS or schema-valid STRUCTURED_DEFER でなければ BLOCK」を server
+    側で enforce。caller が `gated_rows=()` (空 tuple) を渡しても、
+    `required_gated_row_ids` が non-empty なら all-pass にならない (Anti-Gaming
+    defense-in-depth、empty=all-pass の経路を物理削除).
     """
 
     # drill kind 整合 verify
@@ -225,16 +322,29 @@ def generate_p0_acceptance_report(
     # Codex F-PR60-002 P1 adopt: private staging も P0 verdict に必須
     private_staging_passed = private_staging_status == PrivateStagingStatus.PASSED
 
-    # Codex F-PR60-003 P1 adopt: gated rows は PASS or STRUCTURED_DEFER のみ許容
-    # (NATURAL_DEFER / MISSING は P0 未達). row が 0 件の場合は許容 (caller
-    # が gated rows を採用しない場合の経路、SP-012 表 2 entry なしの worst case).
-    gated_rows_satisfied = all(
+    # Codex 監査 (2026-05-18) F-AUDIT-001 P1 adopt: gated rows fail-closed
+    # invariant の強化。次の 3 条件全て満たす場合のみ gated_rows_satisfied=True:
+    # (1) `required_gated_row_ids` 全件が gated_rows に含まれる (missing 排除)
+    # (2) gated_rows 内の各 row が PASS または schema-valid STRUCTURED_DEFER
+    # (3) extraneous row (required に無い id) は warning のみ (排除しない、
+    #     SP-012 表 2 拡張の経路を残す)
+    #
+    # 旧設計 (gated_rows=() で all() が True) は Anti-Gaming 違反のため
+    # 物理削除. `required_gated_row_ids` が non-empty なら、empty/incomplete
+    # gated_rows は確実に未達.
+    provided_row_ids = {row.row_id for row in gated_rows}
+    missing_required_row_ids = required_gated_row_ids - provided_row_ids
+    rows_satisfied_per_entry = [
         row.status == GatedRowStatus.PASS
         or (
             row.status == GatedRowStatus.STRUCTURED_DEFER
             and row.structured_defer_fields_present
         )
         for row in gated_rows
+    ]
+    gated_rows_satisfied = (
+        len(missing_required_row_ids) == 0
+        and all(rows_satisfied_per_entry)
     )
 
     # 7 source 全件 PASS で P0 Exit OK
@@ -292,6 +402,13 @@ def generate_p0_acceptance_report(
             f"private_staging_not_passed (status={private_staging_status})"
         )
     if not gated_rows_satisfied:
+        # Codex 監査 (2026-05-18) F-AUDIT-001 P1 adopt: missing required row と
+        # status-unsatisfied row を別々に deficiency 記録 (audit truth).
+        if missing_required_row_ids:
+            deficiencies.append(
+                f"gated_rows_missing_required "
+                f"(missing={sorted(missing_required_row_ids)})"
+            )
         unsatisfied = [
             r.row_id
             for r in gated_rows
@@ -301,9 +418,10 @@ def generate_p0_acceptance_report(
                 and r.structured_defer_fields_present
             )
         ]
-        deficiencies.append(
-            f"gated_rows_unsatisfied (rows={unsatisfied})"
-        )
+        if unsatisfied:
+            deficiencies.append(
+                f"gated_rows_unsatisfied (rows={unsatisfied})"
+            )
 
     return P0AcceptanceReportSummary(
         timestamp=timestamp or _now_utc_iso(),
@@ -327,11 +445,16 @@ def generate_p0_acceptance_report(
 
 __all__ = [
     "REQUIRED_DRILLS",
+    "STRUCTURED_DEFER_REQUIRED_FIELDS",
     "GatedAcceptanceRowEntry",
     "GatedRowStatus",
     "OperationalDrillEntry",
     "OperationalDrillStatus",
     "P0AcceptanceReportSummary",
     "PrivateStagingStatus",
+    "StructuredDeferFields",
     "generate_p0_acceptance_report",
 ]
+
+# 公開エイリアス: AcceptanceArtifactBuilder や caller test で参照する。
+STRUCTURED_DEFER_REQUIRED_FIELDS = _STRUCTURED_DEFER_REQUIRED_FIELDS
