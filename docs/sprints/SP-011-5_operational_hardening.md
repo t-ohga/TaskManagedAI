@@ -284,6 +284,41 @@ audit_events payload に必須 field: `tenant_id` / `actor_id` / `run_id?` / `se
 
 ## Review
 
+### batch 3c (BL-0139 audit export + BL-0156 data_class dimension / 2026-05-17 session)
+
+#### Changed
+- `backend/app/services/audit/__init__.py` 新規 (public re-exports)
+- `backend/app/services/audit/exporter.py` 新規 (~230 LOC、AuditExporter + JSON Lines export + atomic write + raw secret reject per row + 3 別 data class dimension top-level extraction)
+- `tests/audit/__init__.py` + `test_audit_export_redaction.py` 新規 (~250 LOC、9 件 mock-based tests)
+- `docs/sprints/SP-011-5_operational_hardening.md`: 本 ## Review batch 3c section
+
+#### Verified
+- BL-0139 acceptance: audit_events JSON Lines export + atomic write (tempfile + rename) + per-row raw secret reject + summary 統計 ✅
+- BL-0156 acceptance: payload に含まれる `payload_data_class` / `allowed_data_class` / `effective_allowed_data_class` を top-level field として **別 dimension 抽出** (合算 `data_class` 単一 field 禁止) ✅
+- AC-HARD-02 secret_canary_no_leak: export-time に `assert_no_raw_secret` 経由で raw secret pattern (sk-/ghp_/AGE-SECRET) + prohibited key (`api_key` 等) reject、reject 数を summary に記録 ✅
+- atomic write: failure 時に partial file を残さない (tempfile cleanup + simulated rename failure test 経由 verify) ✅
+- tenant context fail-closed: `_ensure_tenant_context` で None なら set、設定済 + mismatch は assert で ValueError raise ✅
+- AgentRun 16 状態 / ContextSnapshot 10 列 / approval 4 整合 / gateway 分離: 不変 (export service は read-only AuditEvent 経由) ✅
+- AI 出力境界: AuditExporter は admin / cron user 限定、AI / runner trigger 経路なし ✅
+- ADR Gate Criteria: ADR-00006 (Secrets) 既 accepted scope 内 (audit export は既存 audit trail の serialization のみ、policy 変更なし)
+- local verification: audit tests **9 passed** / full pytest **3054 passed + 348 skipped** (regression なし) / mypy 212 source files clean / ruff clean
+
+#### Deferred (Sprint 12 / SP-022 へ)
+- CLI wrapper script (`scripts/audit_export.py`) → Sprint 12 (本 batch は service layer のみ、actual cron 配備で必要時 wrapper 追加)
+- 大規模 export 時の streaming / pagination → SP-022 (現状は全 row in-memory load、tenant scope では十分)
+- compression (gzip) 経由 export → SP-022
+- Loki / S3 への direct shipping → SP-022 (現状は filesystem JSONL のみ)
+- `secret_capability_revoked` event の audit_events への自動 emit (現状は SecretBroker / RotationService 経由で個別 emit、未統一) → Sprint 12 BL-0145 で audit event taxonomy 整理
+
+#### Risks
+- **DB integration test 未実施**: 本 batch は mock-based unit test のみ、actual SELECT performance / order_by 動作は Sprint 12 で integration verify
+- **service layer のみ実装**: CLI wrapper は admin が手動 invoke する API として AuditExporter を直接 call、Sprint 12 で cron 配備
+
+#### SP-011-5 受け入れ条件 contribution
+- line 178 (14 BL すべて Codex multi-round clean): BL-0139 + BL-0156 はこの PR (累計 **11/14** with batch 3a/3b/3c)
+- line 183 (`audit export で raw secret pattern hit 時 export reject`): **達成** (per-row reject + summary 統計)
+- must_ship P0 blocker line 150 + 151: BL-0139 + BL-0156 **達成**
+
 ### batch 3b (BL-0138 secret rotation drill / 2026-05-17 session)
 
 #### Changed
