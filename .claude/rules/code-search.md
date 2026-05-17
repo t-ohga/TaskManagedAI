@@ -1,3 +1,22 @@
+---
+paths:
+  - "**/*.py"
+  - "**/*.ts"
+  - "**/*.tsx"
+  - "**/*.js"
+  - "**/*.jsx"
+  - "**/*.go"
+  - "**/*.rs"
+  - "**/*.sh"
+  - "**/*.md"
+  - "**/*.json"
+  - "**/*.yml"
+  - "**/*.yaml"
+  - "**/*.toml"
+  - "Dockerfile*"
+  - "Makefile"
+---
+
 # Code Search Rules
 
 調査・実装・レビュー時の検索ルール。  

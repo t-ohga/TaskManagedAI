@@ -1,3 +1,25 @@
+---
+paths:
+  - "backend/**"
+  - "frontend/**"
+  - "migrations/**"
+  - "eval/**"
+  - "**/tests/**"
+  - "**/test_*.py"
+  - "**/*.spec.ts"
+  - "**/*.test.ts"
+  - "package.json"
+  - "pnpm-lock.yaml"
+  - "pyproject.toml"
+  - "uv.lock"
+  - "Dockerfile*"
+  - "docker-compose*.yml"
+  - ".github/**"
+  - "scripts/**"
+  - "Makefile"
+  - "*.config.*"
+---
+
 # Testing Rules
 
 TaskManagedAI のテスト規律。  
