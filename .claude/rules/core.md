@@ -53,7 +53,9 @@ TaskManagedAI の実装・レビューで常時守る基本制約。
 - 必ず `artifact -> schema_validated -> policy_linted -> diff_ready -> approval_required -> waiting_approval` の段階を通す。
 - `approval_required` は pipeline stage であり、AgentRun status では `waiting_approval` に対応する。
 
-## 6. Deny By Default
+## 6. Deny By Default (= deny-by-default)
+
+**deny-by-default** = 明示許可がなければ拒否。Tailscale / Tool / Repo / Secret / merge / deploy / backup_restore_rpo_rto (Hard Gate AC-HARD-04 / RPO ≤ 24h / RTO ≤ 4h / PITR drill) すべてに適用。
 
 | 境界 | P0 default |
 |---|---|
