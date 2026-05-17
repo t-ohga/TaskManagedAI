@@ -219,7 +219,74 @@ def _base_template(
     }
 
 
+def _simple_success_case(
+    *,
+    case_id: str,
+    user_prompt: str,
+) -> GoldTaskCase:
+    """Factory: build a SUCCESS gold task using the simple answer schema.
+
+    BL-0163 batch 5h expansion. The task expects strict JSON with a
+    single ``answer`` field, exercising the basic provider contract
+    (structured_output_schema_hash + Anti-Gaming determinism). Used
+    across diverse domains (code review, debug, classify, plan,
+    extract, summarize, etc.) to cover the Gold Task Seed v0 must_ship
+    30-case minimum from SP-011 line 171.
+    """
+
+    return GoldTaskCase(
+        case_id=case_id,
+        request_template=_base_template(
+            case_id=case_id,
+            messages=[
+                {"role": "system", "content": "Return strict JSON only."},
+                {"role": "user", "content": user_prompt},
+            ],
+            structured_output_schema=_SIMPLE_OUTPUT_SCHEMA,
+        ),
+        expected_status="success",
+        expected_artifact_shape=_artifact_shape(_SIMPLE_OUTPUT_SCHEMA),
+        expected_redacted_summary_shape=_success_redacted_summary_shape(
+            _SIMPLE_OUTPUT_SCHEMA,
+            ("answer",),
+        ),
+    )
+
+
+def _structured_success_case(
+    *,
+    case_id: str,
+    user_prompt: str,
+) -> GoldTaskCase:
+    """Factory: build a SUCCESS gold task using the structured output
+    schema (summary + risk_score + next_actions).
+
+    BL-0163 batch 5h expansion. Used for cases that need to exercise
+    the multi-field structured output contract (top-level keys
+    enumeration + array-of-objects shape).
+    """
+
+    return GoldTaskCase(
+        case_id=case_id,
+        request_template=_base_template(
+            case_id=case_id,
+            messages=[
+                {"role": "system", "content": "Return strict JSON only."},
+                {"role": "user", "content": user_prompt},
+            ],
+            structured_output_schema=_STRUCTURED_OUTPUT_SCHEMA,
+        ),
+        expected_status="success",
+        expected_artifact_shape=_artifact_shape(_STRUCTURED_OUTPUT_SCHEMA),
+        expected_redacted_summary_shape=_success_redacted_summary_shape(
+            _STRUCTURED_OUTPUT_SCHEMA,
+            ("summary", "risk_score", "next_actions"),
+        ),
+    )
+
+
 GOLD_TASK_V0_CASES: tuple[GoldTaskCase, ...] = (
+    # Sprint 5 era cases (3 original)
     GoldTaskCase(
         case_id="simple_request",
         request_template=_base_template(
@@ -276,6 +343,128 @@ GOLD_TASK_V0_CASES: tuple[GoldTaskCase, ...] = (
         expected_status="safety_refusal",
         expected_artifact_shape=_artifact_shape(_SIMPLE_OUTPUT_SCHEMA),
         expected_redacted_summary_shape=_SAFETY_REFUSAL_RESULT_SHAPE,
+    ),
+    # BL-0163 batch 5h expansion: simple-schema diverse success cases (15)
+    _simple_success_case(
+        case_id="explain_dataclass_purpose",
+        user_prompt="Explain in one sentence why we use Pydantic models for fixture validation.",
+    ),
+    _simple_success_case(
+        case_id="classify_log_severity",
+        user_prompt="Classify the severity of this log line as info, warning, error, or critical.",
+    ),
+    _simple_success_case(
+        case_id="extract_function_name",
+        user_prompt="Extract the function name from the python signature def evaluate_kpi(corpus):",
+    ),
+    _simple_success_case(
+        case_id="summarize_pull_request",
+        user_prompt="Summarize the pull request changes in one sentence.",
+    ),
+    _simple_success_case(
+        case_id="translate_error_message",
+        user_prompt="Translate the Japanese error message into a one-sentence English summary.",
+    ),
+    _simple_success_case(
+        case_id="answer_yes_no_question",
+        user_prompt="Answer yes or no: does PostgreSQL 16 support partial unique indexes?",
+    ),
+    _simple_success_case(
+        case_id="identify_test_failure_cause",
+        user_prompt="Given a failing pytest output, identify the most likely root cause in one phrase.",
+    ),
+    _simple_success_case(
+        case_id="paraphrase_commit_message",
+        user_prompt="Paraphrase the commit message in one sentence preserving the semantic intent.",
+    ),
+    _simple_success_case(
+        case_id="suggest_variable_name",
+        user_prompt="Suggest a descriptive variable name for the loop counter that iterates pull requests.",
+    ),
+    _simple_success_case(
+        case_id="explain_sql_intent",
+        user_prompt="Explain the intent of SELECT COUNT(*) FROM tickets WHERE status='open' in one sentence.",
+    ),
+    _simple_success_case(
+        case_id="describe_unit_test_assertion",
+        user_prompt="Describe in one sentence what assert result.threshold_met is True verifies.",
+    ),
+    _simple_success_case(
+        case_id="characterize_log_pattern",
+        user_prompt="Characterize the log pattern Connection refused: localhost:5432 in one sentence.",
+    ),
+    _simple_success_case(
+        case_id="identify_design_principle",
+        user_prompt="Identify the design principle behind separating spec_violation_reason from sut_failure_reason.",
+    ),
+    _simple_success_case(
+        case_id="recommend_logging_level",
+        user_prompt="Recommend the appropriate logging level for a deferred ratio sanity warning.",
+    ),
+    _simple_success_case(
+        case_id="describe_anti_gaming_invariant",
+        user_prompt="Describe in one sentence why expected_aggregate must be used only as a drift oracle.",
+    ),
+    # BL-0163 batch 5h expansion: structured-schema diverse success cases (12)
+    _structured_success_case(
+        case_id="risk_assessment_for_database_migration",
+        user_prompt=(
+            "Summarize the risks of a Postgres NOT NULL column addition "
+            "with backfill and list at least one mitigation action."
+        ),
+    ),
+    _structured_success_case(
+        case_id="incident_postmortem_outline",
+        user_prompt="Summarize the incident root cause and list at least one follow-up action priority.",
+    ),
+    _structured_success_case(
+        case_id="api_contract_change_review",
+        user_prompt="Summarize the breaking change in the API contract and list at least one client-side update task.",
+    ),
+    _structured_success_case(
+        case_id="dependency_upgrade_evaluation",
+        user_prompt=(
+            "Summarize the impact of upgrading the SQLAlchemy major version "
+            "and list at least one regression test action."
+        ),
+    ),
+    _structured_success_case(
+        case_id="performance_regression_triage",
+        user_prompt="Summarize the performance regression hypothesis and list at least one profiling action.",
+    ),
+    _structured_success_case(
+        case_id="security_advisory_response",
+        user_prompt="Summarize the security advisory impact and list at least one patch deployment action.",
+    ),
+    _structured_success_case(
+        case_id="provider_outage_handling_plan",
+        user_prompt="Summarize the provider outage handling approach and list at least one fallback action.",
+    ),
+    _structured_success_case(
+        case_id="rate_limit_handling_strategy",
+        user_prompt="Summarize the rate limit handling strategy and list at least one queue management action.",
+    ),
+    _structured_success_case(
+        case_id="data_migration_rollback_plan",
+        user_prompt="Summarize the data migration rollback plan and list at least one verification action.",
+    ),
+    _structured_success_case(
+        case_id="feature_flag_rollout_plan",
+        user_prompt="Summarize the feature flag rollout plan and list at least one canary verification action.",
+    ),
+    _structured_success_case(
+        case_id="approval_workflow_redesign",
+        user_prompt=(
+            "Summarize the approval workflow redesign impact "
+            "and list at least one stakeholder communication action."
+        ),
+    ),
+    _structured_success_case(
+        case_id="audit_log_retention_policy",
+        user_prompt=(
+            "Summarize the audit log retention policy change "
+            "and list at least one compliance verification action."
+        ),
     ),
 )
 

@@ -525,6 +525,34 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 
 frontmatter `status: draft` 維持。
 
+### Sprint 11 batch 5h 実装進捗 (PR #?? merge 後に commit hash 追記)
+
+- **batch_5h_implementation_pr**: 本 PR (BL-0163 Gold Task Seed v0 → 30 cases expansion)
+- **実装 BL**: BL-0163 (private gold task 30-50 件への拡張、`must_ship` 30 件達成、50 件は SP-022 へ defer)
+- **変更 file**:
+  - `eval/provider/gold_task_v0/dataset.py` (3 cases → **30 cases**: 3 original + 15 simple-schema success variants + 12 structured-schema success variants)
+  - `tests/runtime/test_gold_task_v0_contract.py` (`_structured_output_for` を schema-aware に refactor、case_id 別 dispatch を廃止)
+  - 既存 `eval/provider/gold_task_v0/runner.py` 不変
+- **実装手法**: Claude direct (data extension only、no plan-reviewer round needed per CLAUDE.md §6.5.0 簡単な pattern-follow)
+- **Anti-Gaming considerations**:
+  - 全 case は existing `GoldTaskCase` Pydantic contract に準拠 (request_template + expected_status + expected_artifact_shape + expected_redacted_summary_shape)
+  - `payload_data_class_by_provider` 各 case に必須 (Sprint Pack BL-0163 line 147 「payload_data_class 付与」充足)
+  - `_simple_success_case` / `_structured_success_case` factory で boilerplate を一元化、case_id 衝突防止
+  - test helper `_structured_output_for` を schema-aware (required-keys signature lookup) にして case_id 別 dispatch 不要、将来の case 追加時に test 側変更不要
+- **diverse domain coverage**: code review / debug / classify / extract / summarize / plan / risk assessment / postmortem / API contract / dependency upgrade / performance / security / outage / rate limit / migration rollback / feature flag / approval workflow / audit log — 18+ diverse domains
+- **5+ source enum integrity 維持**: ProviderResultKind enum + GoldTaskCase Pydantic + Sprint 5 existing dataset.py contract、新規 case はそれらの集合に閉じる
+- **server-owned boundary §1+§3**: data only、no new function signature、aggregator pure function 不変
+- **Verification**:
+  - ruff clean (本 batch 新規 file)、mypy clean (200 source files)
+  - pytest tests/runtime/test_gold_task_v0_contract.py: 122 passed (30 cases × 4 providers + 2 contract trace tests)
+  - 残 23 件 `ANN401` warning は Sprint 3/5 era 既存 file (runner.py / loader.py)、本 batch scope 外
+
+### Sprint 11 batch 5h SP-011 受け入れ条件 contribution
+
+- line 181 (26 BL Codex multi-round verdict=clean): BL-0163 はこの PR
+- line 186 (AC-HARD 7 + AC-KPI 5 aggregator): N/A (BL-0163 は Gold Task Seed expansion、AC-KPI/AC-HARD aggregator 直接 contribute なし)
+- must_ship 表 line 171 (private gold task 30-50 件): **30 件達成**、50 件は SP-022
+
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
 
 本 Pack の acceptance spec として、QL-B Quality Loop run で記録された future implementation gate を以下の通り cross-reference する:

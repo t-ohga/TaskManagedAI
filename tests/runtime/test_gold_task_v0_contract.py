@@ -78,15 +78,39 @@ def _adapter_and_http_response(
 
 
 def _structured_output_for(case: GoldTaskCase) -> dict[str, Any]:
-    if case.case_id == "simple_request":
-        return {"answer": "Gold Task v0 simple answer"}
-    if case.case_id == "structured_output":
+    """Build a generic conforming structured output for the case's
+    ``structured_output_schema``.
+
+    BL-0163 batch 5h expansion: the dataset now has 30 cases sharing
+    two underlying schemas (``_SIMPLE_OUTPUT_SCHEMA`` with single
+    ``answer`` field, and ``_STRUCTURED_OUTPUT_SCHEMA`` with summary +
+    risk_score + next_actions). Detect the schema's top-level
+    required-keys signature instead of per-case dispatch, so adding new
+    cases does not require modifying this helper.
+    """
+
+    schema = case.request_template.get("structured_output_schema")
+    if not isinstance(schema, dict):
+        raise AssertionError(
+            f"case {case.case_id!r} has no structured_output_schema"
+        )
+    required = tuple(sorted(schema.get("required", [])))
+    if required == ("answer",):
+        return {"answer": f"Gold Task v0 generic answer for {case.case_id}"}
+    if required == ("next_actions", "risk_score", "summary"):
         return {
-            "summary": "Gold Task v0 structured summary",
+            "summary": f"Gold Task v0 generic summary for {case.case_id}",
             "risk_score": 0.2,
-            "next_actions": [{"title": "Review deterministic contract", "priority": "medium"}],
+            "next_actions": [
+                {
+                    "title": f"Generic next action for {case.case_id}",
+                    "priority": "medium",
+                }
+            ],
         }
-    raise AssertionError(f"case {case.case_id!r} has no structured output")
+    raise AssertionError(
+        f"case {case.case_id!r} has unsupported schema signature {required!r}"
+    )
 
 
 def _openai_response(case: GoldTaskCase) -> dict[str, Any]:
