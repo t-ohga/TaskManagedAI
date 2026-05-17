@@ -1,0 +1,14 @@
+# Sprint 11.5 batch 1 (BL-0134): Prometheus datasource provisioning.
+# Codex F-PR41-004 P2 adopt: `uid: Prometheus` 明示 (dashboard JSON が UID hard-code).
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false  # UI 編集禁止 (Pack §設計判断 line 78、IaC pattern)
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST

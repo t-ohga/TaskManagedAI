@@ -28,9 +28,9 @@ from starlette.types import ASGIApp
 
 from backend.app.domain.artifact.data_class import DATA_CLASS_ORDINAL
 from backend.app.observability.config import (
-    ALLOWED_METRICS_BIND_NETWORKS,
     ObservabilitySettings,
     get_observability_settings,
+    resolve_metrics_allowed_networks,
 )
 from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 
@@ -349,7 +349,10 @@ class PrometheusMetricsAccessGuard(BaseHTTPMiddleware):
 
 
 def _is_allowed(host: IPv4Address | IPv6Address) -> bool:
-    for network in ALLOWED_METRICS_BIND_NETWORKS:
+    # Codex F-PR41-003 P1 adopt: default allowlist + env additional networks を merge.
+    # observability profile 起動時に Docker bridge subnet を追加可能.
+    networks = resolve_metrics_allowed_networks()
+    for network in networks:
         if host.version != network.version:
             continue
         if host in network:

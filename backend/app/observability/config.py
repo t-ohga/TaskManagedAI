@@ -3,6 +3,8 @@
 Sprint 11.5 batch 0 plan v2 §M-2 adopt: dependency pin policy は pyproject.toml で固定.
 Sprint 11.5 batch 0 plan v2 §H-1 adopt: `/metrics` endpoint IP allowlist は
 `ALLOWED_METRICS_BIND_NETWORKS` で enforce (127.0.0.1 + Tailscale CGNAT 100.64/10).
+Sprint 11.5 batch 1 Codex F-PR41-003 P1 adopt: Docker bridge subnet を env 経由で
+`additional_metrics_allowed_networks` で extend 可能 (observability profile 起動時).
 """
 
 from __future__ import annotations
@@ -30,11 +32,25 @@ def _build_allowed_networks() -> frozenset[IPv4Network | IPv6Network]:
 ALLOWED_METRICS_BIND_NETWORKS: Final[frozenset[IPv4Network | IPv6Network]] = (
     _build_allowed_networks()
 )
-"""`/metrics` endpoint への access を許可する IP 範囲 (immutable).
+"""`/metrics` endpoint への access を許可する **default** IP 範囲 (immutable).
 
-production 環境で 0.0.0.0 bind が誤って導入されても、middleware で本 set 以外を
-403 でブロックする (Sprint 11.5 batch 0 plan v2 §H-1)。
+`ObservabilitySettings.additional_metrics_allowed_networks` で env 経由
+extension 可能 (Sprint 11.5 batch 1 Codex F-PR41-003 P1 adopt).
 """
+
+
+def _parse_additional_networks(value: str) -> frozenset[IPv4Network | IPv6Network]:
+    """カンマ区切り CIDR 文字列を network set に変換 (env 入力用)."""
+
+    if not value.strip():
+        return frozenset()
+    networks: list[IPv4Network | IPv6Network] = []
+    for raw in value.split(","):
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        networks.append(ip_network(stripped, strict=False))
+    return frozenset(networks)
 
 
 class ObservabilitySettings(BaseSettings):
@@ -59,6 +75,12 @@ class ObservabilitySettings(BaseSettings):
     otel_service_name: str = Field(default="taskmanagedai")
     otel_service_role: str = Field(default="api", pattern=r"^(api|worker|runner)$")
 
+    # Codex F-PR41-003 P1 adopt: Docker bridge subnet (172.16.0.0/12 / 192.168.0.0/16)
+    # から Prometheus scrape する場合の allowlist 拡張. production VPS の Tailscale 内
+    # 運用では空文字列 (default、127.0.0.0/8 + ::1/128 + 100.64.0.0/10 のみ).
+    # 例: `TASKMANAGEDAI_ADDITIONAL_METRICS_ALLOWED_NETWORKS="172.16.0.0/12,192.168.0.0/16"`
+    additional_metrics_allowed_networks: str = Field(default="")
+
 
 @lru_cache(maxsize=1)
 def get_observability_settings() -> ObservabilitySettings:
@@ -71,8 +93,23 @@ def get_observability_settings() -> ObservabilitySettings:
     return ObservabilitySettings()
 
 
+def resolve_metrics_allowed_networks(
+    settings: ObservabilitySettings | None = None,
+) -> frozenset[IPv4Network | IPv6Network]:
+    """`/metrics` allowlist を default + additional (env) で merge.
+
+    Codex F-PR41-003 P1 adopt: observability profile 起動時に Docker bridge subnet
+    を env 経由で追加可能 (production VPS 運用では空文字列 default 維持).
+    """
+
+    cfg = settings or get_observability_settings()
+    additional = _parse_additional_networks(cfg.additional_metrics_allowed_networks)
+    return ALLOWED_METRICS_BIND_NETWORKS | additional
+
+
 __all__ = [
     "ALLOWED_METRICS_BIND_NETWORKS",
     "ObservabilitySettings",
     "get_observability_settings",
+    "resolve_metrics_allowed_networks",
 ]

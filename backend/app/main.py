@@ -20,6 +20,7 @@ from backend.app.middleware.dev_actor import (
 from backend.app.observability import (
     PrometheusMetricsAccessGuard,
     create_metrics_router,
+    setup_logging,
     setup_otel,
     setup_prometheus,
 )
@@ -72,6 +73,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=["*"],
         )
+
+    # Sprint 11.5 batch 1 BL-0133: structured logging (JSON Lines) for Loki shipping.
+    # observability_enabled=False で NoOp. setup_otel より先に call (logger 経由 init log を JSON 化).
+    setup_logging(role="api")
 
     # Sprint 11.5 batch 0 BL-0131: OTel TracerProvider + auto-instrument
     # (FastAPI / httpx / SQLAlchemy / Redis). observability_enabled=False で NoOp.
