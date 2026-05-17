@@ -30,7 +30,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.db.app_role import assert_tenant_context, set_tenant_context
+from backend.app.db.app_role import (
+    assert_tenant_context,
+    get_tenant_context,
+    set_tenant_context,
+)
 from backend.app.db.models.notification_event import NotificationEvent
 from backend.app.repositories.notification_event import NotificationEventRepository
 from backend.app.services.alerting.kinds import (
@@ -124,8 +128,22 @@ class AlertEvaluator:
         tenant_id: int,
         recipient_actor_id: UUID,
         context: ApprovalPendingAlertContext,
+        threshold: timedelta = DEFAULT_APPROVAL_PENDING_THRESHOLD,
     ) -> AlertEmittedSummary:
-        """Approval pending が threshold 超過した場合 emit."""
+        """Approval pending が threshold 超過した場合 emit.
+
+        Codex F-PR43-006 P2 adopt: emit method 内で threshold 自動 enforce
+        (caller が threshold 未満で context を渡しても誤 emit しない).
+        """
+
+        # threshold check: context.age_seconds が threshold 未満なら skip.
+        if context.age_seconds < threshold.total_seconds():
+            return AlertEmittedSummary(
+                kind="approval_pending_overdue",
+                emitted=False,
+                dedup_hit=False,
+                skip_reason="below_threshold",
+            )
 
         dedup_key = f"approval:{context.approval_id}"
         payload = self._build_payload("approval_pending_overdue", dedup_key, context)
@@ -144,7 +162,20 @@ class AlertEvaluator:
         recipient_actor_id: UUID,
         context: BudgetExceededAlertContext,
     ) -> AlertEmittedSummary:
-        """Budget hard limit hit → emit."""
+        """Budget hard limit hit → emit.
+
+        Codex F-PR43-006 P2 adopt: budget が limit 内 (overflow_usd == 0 / spent < limit)
+        の場合は skip (誤 emit 防止).
+        """
+
+        # threshold check: limit 内なら skip.
+        if context.overflow_usd <= 0.0 or context.spent_usd <= context.limit_usd:
+            return AlertEmittedSummary(
+                kind="budget_exceeded",
+                emitted=False,
+                dedup_hit=False,
+                skip_reason="below_threshold",
+            )
 
         dedup_key = f"budget:{context.budget_scope}"
         payload = self._build_payload("budget_exceeded", dedup_key, context)
@@ -162,8 +193,21 @@ class AlertEvaluator:
         tenant_id: int,
         recipient_actor_id: UUID,
         context: RunFailedSpikeAlertContext,
+        threshold_count: int = DEFAULT_RUN_FAILED_SPIKE_THRESHOLD,
     ) -> AlertEmittedSummary:
-        """N min window で M+ failed → emit."""
+        """N min window で M+ failed → emit.
+
+        Codex F-PR43-006 P2 adopt: failed_count >= threshold_count を check.
+        """
+
+        # threshold check: failed_count が threshold 未満なら skip.
+        if context.failed_count < threshold_count:
+            return AlertEmittedSummary(
+                kind="run_failed_spike",
+                emitted=False,
+                dedup_hit=False,
+                skip_reason="below_threshold",
+            )
 
         # dedup_key: project スコープ別 (None なら tenant スコープ).
         project_scope = str(context.project_id) if context.project_id else "tenant_all"
@@ -183,11 +227,22 @@ class AlertEvaluator:
         tenant_id: int,
         recipient_actor_id: UUID,
         context: SecretRotationDeferredAlertContext,
+        threshold: timedelta = DEFAULT_SECRET_ROTATION_DEFERRED_THRESHOLD,
     ) -> AlertEmittedSummary:
         """Secret rotation deprecated が threshold 超過 → emit.
 
         SecretBroker boundary 整合: secret_ref のみ参照、raw secret 値含めず.
+        Codex F-PR43-006 P2 adopt: age_seconds >= threshold を check.
         """
+
+        # threshold check: rotation age が threshold 未満なら skip.
+        if context.age_seconds < threshold.total_seconds():
+            return AlertEmittedSummary(
+                kind="secret_rotation_deferred",
+                emitted=False,
+                dedup_hit=False,
+                skip_reason="below_threshold",
+            )
 
         dedup_key = f"secret_rotation:{context.secret_ref_id}"
         payload = self._build_payload("secret_rotation_deferred", dedup_key, context)
@@ -237,7 +292,9 @@ class AlertEvaluator:
         now = datetime.now(tz=UTC)
         window_start = now - self._dedup_window
 
-        # dedup check: 24h within で同 event_type + dedup_key の Notification があるか
+        # dedup check: 24h within で同 event_type + dedup_key + recipient の Notification があるか
+        # Codex F-PR43-004 P2 adopt: recipient_actor_id を dedup query に含める
+        # (multi-recipient fan-out で 2 番目以降の actor が 24h dedup されない).
         # payload->>'dedup_key' JSONB probe (full table scan 許容、alert 件数少ない前提).
         existing = await self.session.scalar(
             select(func.count(NotificationEvent.id))
@@ -245,6 +302,7 @@ class AlertEvaluator:
                 NotificationEvent.tenant_id == tenant_id,
                 NotificationEvent.event_type == event_type,
                 NotificationEvent.created_at >= window_start,
+                NotificationEvent.recipient_actor_id == recipient_actor_id,
                 NotificationEvent.payload["dedup_key"].astext == dedup_key,
             )
         )
@@ -285,12 +343,23 @@ class AlertEvaluator:
         )
 
     async def _ensure_tenant_context(self, tenant_id: int) -> None:
-        """Repository pattern と同様の tenant context guard."""
+        """Repository pattern と同様の tenant context guard (fail closed).
 
-        try:
-            await assert_tenant_context(self.session, tenant_id)
-        except Exception:  # noqa: BLE001 (boot/missing context は set で recover)
+        Codex F-PR43-002 P1 adopt: tenant context mismatch は **fail closed**
+        (broad except 削除、既存 repository pattern と整合).
+
+        Behavior:
+        - context 未設定 (None) → `set_tenant_context` で set (boot path)
+        - context 設定済 + match → no-op
+        - context 設定済 + mismatch → `assert_tenant_context` が ValueError raise (fail closed)
+        """
+
+        current = await get_tenant_context(self.session)
+        if current is None:
             await set_tenant_context(self.session, tenant_id)
+            return
+        # 設定済 path: mismatch は ValueError raise (fail closed、broad except なし)
+        await assert_tenant_context(self.session, tenant_id)
 
 
 def is_overdue(

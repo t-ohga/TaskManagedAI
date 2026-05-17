@@ -55,12 +55,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Tailscale connect (ephemeral auth key, tag:taskhub-ci)
-        uses: tailscale/github-action@v2
+        # Codex F-PR43-001 P1 adopt: v2 は OAuth client サポートなし、v4 で
+        # OAuth client → ephemeral auth key 自動 mint path を使用.
+        uses: tailscale/github-action@v4
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:taskhub-ci
-          # auth key は ephemeral (job 終了後 auto-revoke)
+          # auth key は ephemeral (job 終了後 auto-revoke、v4 default 動作)
           version: latest
           use-cache: 'true'
 
@@ -75,26 +77,29 @@ jobs:
         env:
           STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
         run: |
-          # actionlint warning 回避: secrets を env 経由で参照、`if:` 条件は env 経由
+          # Codex F-PR43-003 + F-PR43-005 P2 adopt:
+          # STAGING_API_URL unset → scaffold scope (admin setup pending、skip OK)
+          # STAGING_API_URL set → strict fail (HTTP status 200 必須、connection 失敗 / timeout は failure)
           if [ -z "${STAGING_API_URL:-}" ]; then
             echo "STAGING_API_URL not configured、scaffold verification skip (admin setup pending)"
             exit 0
           fi
-          # smoke: production VPS の /healthz への TCP/443 接続 (TLS は Sprint 12 で完成)
-          # 本 scaffold 段階では timeout を許容 (VPS 側 TLS 未配備のため connect refused expected)
+          # `--fail` で HTTP error (>= 400) を curl exit code に伝播.
+          # `--fail-with-body` で 4xx/5xx も body 取得 + exit 22 (curl docs).
           set +e
-          timeout 10 curl --silent --max-time 8 --connect-timeout 5 \
+          timeout 10 curl --silent --fail --max-time 8 --connect-timeout 5 \
             "${STAGING_API_URL}/healthz" \
             -o /tmp/healthz.txt -w "http_code=%{http_code}\n"
           EXIT_CODE=$?
           set -e
-          # exit code 7 (connection refused) / 28 (timeout) は VPS 側 TLS 未配備の予期動作
-          if [ "$EXIT_CODE" = "0" ] || [ "$EXIT_CODE" = "7" ] || [ "$EXIT_CODE" = "28" ]; then
-            echo "scaffold smoke complete (exit=$EXIT_CODE: Sprint 12 host migration drill で TLS listener 完成予定)"
+          if [ "$EXIT_CODE" = "0" ]; then
+            echo "private staging /healthz OK (HTTP 200)"
             exit 0
           fi
-          echo "unexpected exit code: $EXIT_CODE"
-          exit 1
+          # configured 状態で reachable ではない (connection refused / timeout / HTTP error)
+          # は staging を unhealthy として report (regression masking 回避、Codex F-PR43-003 P2)
+          echo "private staging /healthz failed: exit=$EXIT_CODE (configured but unreachable / error)"
+          exit "$EXIT_CODE"
 
       - name: Skip E2E (smoke_only mode)
         if: ${{ inputs.smoke_only == 'true' }}

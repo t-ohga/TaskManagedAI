@@ -355,6 +355,154 @@ def test_to_event_type_prefix_consistent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_approval_pending_below_threshold_skipped() -> None:
+    """Codex F-PR43-006 P2 adopt: threshold 未満は emit skip."""
+
+    evaluator, repo_mock, captured = _build_evaluator_with_mock()
+    context = ApprovalPendingAlertContext(
+        approval_id=uuid4(),
+        requester_actor_id=uuid4(),
+        action_class="repo_write",
+        requested_at=_now() - timedelta(hours=3),
+        age_seconds=3 * 3600.0,  # 3 hour < 4 hour threshold
+    )
+    with patch(
+        "backend.app.services.alerting.evaluator.NotificationEventRepository",
+        return_value=repo_mock,
+    ):
+        summary = await evaluator.emit_approval_pending_overdue(
+            tenant_id=_TENANT_ID,
+            recipient_actor_id=_RECIPIENT,
+            context=context,
+        )
+    assert summary.emitted is False
+    assert summary.skip_reason == "below_threshold"
+    assert len(captured) == 0
+
+
+@pytest.mark.asyncio
+async def test_budget_below_limit_skipped() -> None:
+    """Codex F-PR43-006 P2 adopt: budget overflow が 0 以下は skip."""
+
+    evaluator, repo_mock, captured = _build_evaluator_with_mock()
+    context = BudgetExceededAlertContext(
+        budget_scope="provider.openai",
+        spent_usd=8.0,
+        limit_usd=10.0,
+        overflow_usd=0.0,  # 限界内
+    )
+    with patch(
+        "backend.app.services.alerting.evaluator.NotificationEventRepository",
+        return_value=repo_mock,
+    ):
+        summary = await evaluator.emit_budget_exceeded(
+            tenant_id=_TENANT_ID,
+            recipient_actor_id=_RECIPIENT,
+            context=context,
+        )
+    assert summary.emitted is False
+    assert summary.skip_reason == "below_threshold"
+    assert len(captured) == 0
+
+
+@pytest.mark.asyncio
+async def test_run_failed_below_threshold_skipped() -> None:
+    """Codex F-PR43-006 P2 adopt: failed_count が threshold 未満は skip."""
+
+    evaluator, repo_mock, captured = _build_evaluator_with_mock()
+    context = RunFailedSpikeAlertContext(
+        failed_count=3,  # threshold 5 未満
+        window_seconds=300.0,
+        project_id=None,
+    )
+    with patch(
+        "backend.app.services.alerting.evaluator.NotificationEventRepository",
+        return_value=repo_mock,
+    ):
+        summary = await evaluator.emit_run_failed_spike(
+            tenant_id=_TENANT_ID,
+            recipient_actor_id=_RECIPIENT,
+            context=context,
+        )
+    assert summary.emitted is False
+    assert summary.skip_reason == "below_threshold"
+    assert len(captured) == 0
+
+
+@pytest.mark.asyncio
+async def test_secret_rotation_below_threshold_skipped() -> None:
+    """Codex F-PR43-006 P2 adopt: rotation age が 7 day 未満は skip."""
+
+    evaluator, repo_mock, captured = _build_evaluator_with_mock()
+    context = SecretRotationDeferredAlertContext(
+        secret_ref_id=uuid4(),
+        scope="project",
+        name="provider-openai",
+        deprecated_at=_now() - timedelta(days=3),
+        age_seconds=3 * 86400.0,  # 3 day < 7 day threshold
+    )
+    with patch(
+        "backend.app.services.alerting.evaluator.NotificationEventRepository",
+        return_value=repo_mock,
+    ):
+        summary = await evaluator.emit_secret_rotation_deferred(
+            tenant_id=_TENANT_ID,
+            recipient_actor_id=_RECIPIENT,
+            context=context,
+        )
+    assert summary.emitted is False
+    assert summary.skip_reason == "below_threshold"
+    assert len(captured) == 0
+
+
+@pytest.mark.asyncio
+async def test_dedup_per_recipient_isolated() -> None:
+    """Codex F-PR43-004 P2 adopt: 同 dedup_key でも別 recipient は dedup されない."""
+
+    recipient_a = UUID("00000000-0000-4000-8000-000000000001")
+    recipient_b = UUID("00000000-0000-4000-8000-000000000002")
+    approval_id = uuid4()
+    context = ApprovalPendingAlertContext(
+        approval_id=approval_id,
+        requester_actor_id=uuid4(),
+        action_class="repo_write",
+        requested_at=_now() - timedelta(hours=5),
+        age_seconds=18000.0,
+    )
+
+    # recipient_a で emit (dedup_existing_count=0 だが、その後の query で
+    # recipient_actor_id filter が effective かを mock で再現するため別 evaluator).
+    evaluator, repo_mock, captured = _build_evaluator_with_mock(dedup_existing_count=0)
+    with patch(
+        "backend.app.services.alerting.evaluator.NotificationEventRepository",
+        return_value=repo_mock,
+    ):
+        s_a = await evaluator.emit_approval_pending_overdue(
+            tenant_id=_TENANT_ID,
+            recipient_actor_id=recipient_a,
+            context=context,
+        )
+    assert s_a.emitted is True
+    assert captured[0]["recipient_actor_id"] == recipient_a
+
+    # recipient_b で別 evaluator (dedup_existing_count=0 = 別 recipient の query で 0)
+    evaluator_b, repo_mock_b, captured_b = _build_evaluator_with_mock(dedup_existing_count=0)
+    with patch(
+        "backend.app.services.alerting.evaluator.NotificationEventRepository",
+        return_value=repo_mock_b,
+    ):
+        s_b = await evaluator_b.emit_approval_pending_overdue(
+            tenant_id=_TENANT_ID,
+            recipient_actor_id=recipient_b,
+            context=context,
+        )
+    # 同 dedup_key + 別 recipient → emit 成功 (recipient 単位 dedup)
+    assert s_b.emitted is True
+    assert s_b.dedup_hit is False
+    assert captured_b[0]["recipient_actor_id"] == recipient_b
+
+
+@pytest.mark.asyncio
 async def test_invalid_alert_kind_rejected_at_validate() -> None:
     """`_emit_with_dedup` が internal で kind validate (defensive、外部 caller は型で防げない経路)."""
 

@@ -17,8 +17,9 @@
 1. Tailscale admin console (`https://login.tailscale.com/admin/settings/oauth`) を開く
 2. "Generate OAuth client..." を click
 3. **Description**: `taskmanagedai-github-actions`
-4. **Scopes**:
-   - `Devices` → `Write` (auth key 発行のため、これ以外不要)
+4. **Scopes** (Codex PR #43 F-PR43-007 P2 adopt):
+   - `auth_keys` → `Write` (ephemeral auth key の mint に必要、公式 docs 準拠)
+   - 他 scope は不要 (least privilege)
 5. **Tags**: `tag:taskhub-ci` を assign (next step で ACL に登録予定)
 6. 生成された `Client ID` + `Client Secret` を **secure 場所に一時保存** (再表示不可)
 
