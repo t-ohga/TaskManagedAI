@@ -498,6 +498,31 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 - **Anti-Gaming defense matrix (HIGH-005 + batch 5e/5f 教訓 carry-over)**: 13 defense (cross-fixture duplicate `(ticket_id, repository_id)` late-commit / negative declared reject / null vs 0.0 sentinel / overflow guard / closure invariant / partition invariant + **timestamp causality (新規 #12)** + **mock-only contract (新規 #13)**)
 - **既存 batch 1-10 + batch 5a〜5f invariant 維持**: ContextSnapshot 10 列 / AgentRun 16 状態 / SecretBroker / Approval 4 整合 / RFC 8785 / batch 5a loader / batch 5b tenant_isolation / batch 5c generic loader / batch 5d citation_coverage / batch 5e cost_per_completed_task R6 lessons / batch 5f acceptance_pass_rate F-PR33-001 closure defense-in-depth comment pattern carry-over
 
+### Sprint 11 batch 5h-pre 実装進捗 (PR #?? merge 後に commit hash 追記)
+
+- **batch_5h_pre_implementation_pr**: 本 PR (AC-KPI-03 approval_wait_ms aggregator)
+- **実装 BL**: AC-KPI-03 approval_wait_ms aggregator → **5/5 件目達成、SP-011 受け入れ条件 line 186 「AC-KPI 5 件すべて aggregator 経由」 100% 充足**
+- **新規 file**: `backend/app/services/eval/kpis/approval_wait_ms.py` (~700 LOC) + `tests/eval/test_kpis_approval_wait_ms.py` (~900 LOC、61 test)。既存 Sprint 3 fixture corpus 改変なしで利用
+- **plan-reviewer R1 → R2**: 11 finding adopt (HIGH×4 + MEDIUM×4 + LOW×3) → READY
+- **5+ source enum integrity FULL (HIGH-H3)**: DB CHECK `approval_requests_ck_status` + ORM Literal `ApprovalStatus` + aggregator frozenset + pytest EXPECTED + fixture schema enum の 5 source exact set 比較
+- **causality semantic alignment (HIGH-H4)**: 既存 loader silent-skip + aggregator reject の two-layer defense-in-depth
+- **per-fixture all-pending by-construction (HIGH-H2)**: schema 上 `median_ms: number minimum 0` required ⇒ decided_count==0 per-fixture は内部矛盾、`expected_aggregate_median_drift` で reject
+- **per-fixture threshold scope (HIGH-H1)**: 既存 schema は `additionalProperties: false` で reject 済だが、persisted corpus path 防御として aggregator side で reject (`spec_violation:threshold_unexpected`)
+- **Anti-Gaming defense matrix**: 15 defense (batch 5e/5f/5g 13 defense carry-over + #14 decided_at required/null per status + #15 per-fixture threshold reject)
+- **既存 batch 1-10 + batch 5a〜5g invariant 維持**: ContextSnapshot 10 列 / AgentRun 16 状態 / SecretBroker / Approval 4 整合 / RFC 8785 / 全 KPI aggregator pattern carry-over
+
+### Sprint 11 AC-KPI 5 件 aggregator 達成サマリ (line 186 100% 充足)
+
+| KPI | aggregator file | merged PR |
+|---|---|---|
+| AC-KPI-01 acceptance_pass_rate | `backend/app/services/eval/kpis/acceptance_pass_rate.py` | #33 (batch 5f) |
+| AC-KPI-02 time_to_merge | `backend/app/services/eval/kpis/time_to_merge.py` | #34 (batch 5g) |
+| AC-KPI-03 approval_wait_ms | `backend/app/services/eval/kpis/approval_wait_ms.py` | this PR (batch 5h-pre) |
+| AC-KPI-04 citation_coverage | `backend/app/services/eval/kpis/citation_coverage.py` | #31 (batch 5d) |
+| AC-KPI-05 cost_per_completed_task | `backend/app/services/eval/kpis/cost_per_completed_task.py` | #32 (batch 5e) |
+
+**Sprint 11 受け入れ条件 line 186 「AC-HARD 7 件 + AC-KPI 5 件 fixture registry / aggregator 経由」**: AC-KPI 5/5 達成。残 AC-HARD 7 件は SP-012 で個別計測。
+
 frontmatter `status: draft` 維持。
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
