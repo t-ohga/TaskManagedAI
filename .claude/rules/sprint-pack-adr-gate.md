@@ -190,42 +190,5 @@ ADR Gate Criteria 11 種**すべて**が対象外。緊急時でも break-glass 
 
 事故時は **rollback を優先**、ADR は通常レビューで作成する。これらは P0 全体の安全性・データ整合性に直結する。
 
-## 11. 完了条件
 
-- [ ] Pack の区分が light / heavy として妥当。
-- [ ] heavy で `adr_refs` が空ではない。
-- [ ] Criteria 11 種の該当有無を明記した。
-- [ ] rollback / audit / verification が揃う。
-- [ ] P0 Hard Gates / KPIs と trace できる。
-- [ ] 実装後 Review 欄を更新する。
-
-## 12. ADR accepted 化 normal-flow 必須要件 (Codex F-PR44-004 fix、CLAUDE.md §6.5.6 圧縮で消失リスク指摘の正本化)
-
-Sprint Pack の `adr_refs` または `planned_adr_refs` に列挙された ADR は、**実装着手の直前** に proposed → accepted 昇格させること。**proposed のまま実装着手は禁止** (drift 防止)。
-
-### 12.1 promotion 手順
-
-1. ADR file の frontmatter を edit:
-   - `status: "proposed"` → `status: "accepted"`
-   - `updated_at: "<implementation start date>"`
-2. Sprint Pack の `adr_refs` に該当 ADR を移動 (`planned_adr_refs` から `adr_refs` へ、Sprint heavy Pack の場合)
-3. Sprint Pack `## Review` (実装後追記) で「ADR-NNNNN accepted_at: <date>」記録
-
-### 12.2 promotion 条件 (失敗 = fail-fast、proposed のまま継続不可)
-
-- [ ] Sprint Pack の `must_ship` 受け入れ条件と矛盾しない (ADR 採用案が must_ship 達成を妨げない)
-- [ ] 関連 rules (`.claude/rules/*.md`) と整合する (新 ADR 採用案が L1 invariant rule を破壊しない)
-- [ ] 関連 reference (`.claude/reference/*.md`) と整合する (運用手順への影響を反映)
-- [ ] 関連 DD (`docs/基本設計/*.md`) と整合する (設計正本との同期)
-- [ ] `planned_adr_refs` から `adr_refs` へ移動済
-
-### 12.3 failed-fast / drift 検出
-
-- ADR の採用案と実装が drift した場合: ADR を **update してから実装を再開**、proposed への戻しは不可
-- 1 ADR が 1 Sprint 内で proposed → accepted を跨ぐ場合: Sprint Pack `## Review` 章に **accepted 化日時を記録**
-- 緊急修正で実装先行した場合: 24h 以内に retro Pack / ADR を作成、`proposed` で開始 → 通常レビューを経て `accepted` 化 (§10 break-glass 例外運用準拠)
-
-### 12.4 promotion 必須 trigger (codex-usage-policy.md §14 hard gate と連動)
-
-ADR proposed → accepted 昇格は **codex-plan-review R1 minimum + 採否判定** 経由必須 (CRITICAL invariant 直結変更に該当するため、Codex review hard gate と二重防御)。
-
+<!-- Phase E 圧縮 (2026-05-17 PR #?): 末尾 verify checklist 削除、plan §3.1.1 invariant trace matrix で自動 verify -->
