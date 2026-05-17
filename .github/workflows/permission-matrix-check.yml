@@ -1,0 +1,68 @@
+name: Permission Matrix Check
+
+# Sprint 11.5 batch 5 (BL-Permission-CLI): GitHub App Permission Matrix CLI
+# differential check. ADR-00011 accepted gate (8/8 unblock 完成条件、本 workflow
+# が ADR-00011 acceptance の最終 blocker)。
+#
+# 役割:
+# - `uv run python -m backend.app.services.repoproxy.permission_matrix --check`
+#   で config/github_app_permissions.toml の整合性を verify
+# - ADR-00011 §採用案: minimum perms (contents:write + pull_requests:write +
+#   metadata:read) + 6 must-deny perms (actions / workflows / packages /
+#   administration / issues / checks) + merge/deploy p0_deny
+# - drift 検出時は exit 1 -> CI fail -> merge block -> ADR-00011 update +
+#   Criteria #11 (GitHub App permission 変更) 経由を要求
+#
+# Trigger:
+# - pull_request: PR 単位で latest commit のみ実行 (cancel-in-progress=true)
+# - push to main: commit SHA 単位で独立 group (last-write-wins ではない)
+#
+# Boundary (本 workflow の責務):
+# - Static check のみ (TOML vs ADR-00011 §採用案)
+# - Real installation diff (`gh api /app/installations/{id}`) は
+#   SP-012 P0 Acceptance + private staging で配備 (SecretBroker 経由)
+# - private_holdout / adversarial_new fixture は scope 外
+
+"on":
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('push-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  permission-matrix:
+    name: Permission Matrix Static Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-3.12-permission-matrix-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-3.12-permission-matrix-
+            uv-${{ runner.os }}-3.12-
+
+      - name: Install backend dependencies (minimal)
+        run: uv sync --locked
+
+      # Sprint 11.5 BL-Permission-CLI: TOML vs ADR-00011 §採用案 整合性
+      # 不一致なら exit 1 で fail -> ADR-00011 update + Criteria #11 経由
+      - name: Permission Matrix static check
+        run: uv run python -m backend.app.services.repoproxy.permission_matrix --check
