@@ -31,7 +31,7 @@ color: cyan
 
 ## 必読正本
 
-- `.claude/rules/plan-review.md`
+- (本 agent body 内に内容統合済、Phase D 削除済の `.claude/rules/plan-review.md` の正本)
 - `.claude/rules/sprint-pack-adr-gate.md`
 - `.claude/rules/core.md`
 - `.claude/reference/hard-gates-and-kpis.md`
