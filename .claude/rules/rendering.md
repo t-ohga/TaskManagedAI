@@ -1,3 +1,11 @@
+---
+paths:
+  - "frontend/**"
+  - "docs/基本設計/UI*.md"
+  - "docs/sprints/SP-009_*.md"
+  - "docs/sprints/SP-010_*.md"
+---
+
 # Rendering Rules
 
 TaskManagedAI の frontend 実装ルール。  
