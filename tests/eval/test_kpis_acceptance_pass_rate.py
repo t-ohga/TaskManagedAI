@@ -1087,15 +1087,27 @@ def test_high_deferred_ratio_emits_warning_log(caplog: pytest.LogCaptureFixture)
     """Plan v2 §2.2.2 #3: > 50% deferred ratio emits an informational log
     warning. Does NOT affect passed / threshold_met (verified by no
     spec_violation).
+
+    Uses ``caplog.at_level`` and root-level set_level to guarantee
+    capture across CI environments where logger propagation defaults
+    differ from local dev (observed: CI failed with empty caplog.records
+    while local PASS).
     """
 
     rows = _sample_criteria(satisfied=1, deferred=2, prefix="high-defer")
     fixture = _synthetic_fixture(sample_criteria=rows)
-    caplog.set_level(logging.WARNING, logger=acceptance_pass_rate._LOGGER.name)
-    result = evaluate_acceptance_pass_rate(_synthetic_corpus([fixture]))
+    # Force propagation + caplog handler at root level so the named
+    # logger's WARNING records are reliably captured in CI.
+    acceptance_pass_rate._LOGGER.propagate = True
+    with caplog.at_level(logging.WARNING):
+        result = evaluate_acceptance_pass_rate(_synthetic_corpus([fixture]))
     assert result.per_fixture[0].spec_violation_reason is None
     # The fixture is otherwise valid; the warning is informational.
     matching = [
         r for r in caplog.records if "deferred_ratio" in r.getMessage()
     ]
-    assert matching, "Expected at least one deferred_ratio warning"
+    assert matching, (
+        f"Expected at least one deferred_ratio warning. "
+        f"Got {len(caplog.records)} total record(s): "
+        f"{[r.getMessage() for r in caplog.records]}"
+    )
