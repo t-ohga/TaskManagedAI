@@ -1289,6 +1289,80 @@ def test_high_closed_without_merge_ratio_emits_warning_log() -> None:
     )
 
 
+def test_sub_millisecond_timestamp_is_rejected() -> None:
+    """F-PR34-R2-001 P2 adopt: sub-millisecond precision (microseconds
+    not divisible by 1000) is rejected. Otherwise two timestamps that
+    differ in the microsecond range collapse to the same ms after
+    truncation, hiding a negative duration from the causality check.
+    """
+
+    rows: list[JsonDict] = [
+        {
+            "ticket_id": _uuid_for("submillisecond"),
+            "tenant_id": 1,
+            "project_id": _DEFAULT_PROJECT_ID,
+            "repository_id": _DEFAULT_REPOSITORY_ID,
+            "status": "merged",
+            # 999.9 microseconds < 1 ms — sub-millisecond precision.
+            "ticket_created_at": "2026-05-01T10:00:00.999999+00:00",
+            "merged_at": "2026-05-01T10:00:00.999900+00:00",
+        }
+    ]
+    fixture = _synthetic_fixture(sample_pulls=rows)
+    _, per = _result_for(fixture)
+    assert per.spec_violation_reason == "spec_violation:ticket_created_at"
+
+
+def test_fixture_threshold_relaxed_value_is_rejected() -> None:
+    """F-PR34-R2-002 P2 adopt: per-fixture threshold with a relaxed
+    ``value`` (e.g., 999.0 to silently mark "passed") is rejected as
+    ``spec_violation:threshold_value`` before any downstream validation.
+    """
+
+    rows = _sample_pulls(merged_durations_min=[60])
+    fixture = _synthetic_fixture(
+        sample_pulls=rows,
+        threshold={"operator": "<=", "value": 999.0, "unit": "hours"},
+    )
+    _, per = _result_for(fixture)
+    assert per.spec_violation_reason == "spec_violation:threshold_value"
+
+
+def test_fixture_threshold_wrong_unit_is_rejected() -> None:
+    """F-PR34-R2-002 P2 adopt: ``unit != "hours"`` rejected."""
+
+    rows = _sample_pulls(merged_durations_min=[60])
+    fixture = _synthetic_fixture(
+        sample_pulls=rows,
+        threshold={"operator": "<=", "value": 2.0, "unit": "minutes"},
+    )
+    _, per = _result_for(fixture)
+    assert per.spec_violation_reason == "spec_violation:threshold_unit"
+
+
+def test_fixture_threshold_wrong_operator_is_rejected() -> None:
+    """F-PR34-R2-002 P2 adopt: ``operator != "<="`` rejected."""
+
+    rows = _sample_pulls(merged_durations_min=[60])
+    fixture = _synthetic_fixture(
+        sample_pulls=rows,
+        threshold={"operator": ">=", "value": 2.0, "unit": "hours"},
+    )
+    _, per = _result_for(fixture)
+    assert per.spec_violation_reason == "spec_violation:threshold_operator"
+
+
+def test_fixture_threshold_null_is_accepted() -> None:
+    """F-PR34-R2-002 P2 adopt: a fixture with ``threshold: null`` falls
+    through to manifest-canonical threshold (no fixture-level violation).
+    """
+
+    rows = _sample_pulls(merged_durations_min=[60])
+    fixture = _synthetic_fixture(sample_pulls=rows, threshold=None)
+    _, per = _result_for(fixture)
+    assert per.spec_violation_reason is None
+
+
 def test_all_zero_duration_emits_warning_log_but_does_not_reject() -> None:
     """Plan v2 §2.2 + §7.10: 5+ merged PRs all with duration=0 → warn,
     boundary `merged_at == ticket_created_at` is valid per MED-003.

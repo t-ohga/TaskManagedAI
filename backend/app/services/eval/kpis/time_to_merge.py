@@ -271,8 +271,8 @@ def _parse_timestamp_ms(value: object) -> int | None:
     """Parse an ISO-8601 / RFC 3339 timestamp into epoch ms UTC.
 
     Returns ``None`` on any failure (not a string, not parseable, naive
-    datetime, etc.). Aggregator caller maps the ``None`` to the
-    appropriate ``spec_violation:*`` reason.
+    datetime, sub-millisecond precision, etc.). Aggregator caller maps
+    the ``None`` to the appropriate ``spec_violation:*`` reason.
 
     Plan v2 §2.3 MED-001 contract:
       * naive datetime (no tzinfo) is rejected
@@ -280,6 +280,15 @@ def _parse_timestamp_ms(value: object) -> int | None:
       * non-UTC offset is accepted then normalized to UTC
       * OverflowError on huge int / float fields is caught upstream by
         ``_is_finite_number``; this helper only sees strings.
+
+    F-PR34-R2-001 P2 adopt: reject sub-millisecond precision (any
+    ``microsecond`` value not exactly divisible by 1000). The aggregator
+    canonical representation is epoch ms; allowing sub-ms precision and
+    floor-truncating would let two distinct timestamps with sub-ms
+    deltas collapse to the same ms value, bypassing the causality check
+    in ``_collect_sample_pulls`` (e.g., created=":00.9999+00:00",
+    merged=":00.9991+00:00" both → :00.999, hiding a negative
+    duration).
     """
 
     if not isinstance(value, str):
@@ -296,6 +305,9 @@ def _parse_timestamp_ms(value: object) -> int | None:
         return None
     if dt.tzinfo is None:
         return None  # naive datetime reject (plan v2 §2.3)
+    # Reject sub-millisecond precision (F-PR34-R2-001 P2 adopt).
+    if dt.microsecond % 1000 != 0:
+        return None
     # Normalize to UTC and convert to epoch ms.
     dt_utc = dt.astimezone(_datetime.UTC)
     try:
@@ -434,6 +446,52 @@ def _collect_sample_pulls(
         )
 
     return pulls, None, frozenset(pending_keys)
+
+
+def _fixture_threshold(fixture: Fixture) -> object:
+    if "threshold" in fixture.expected_json:
+        return fixture.expected_json["threshold"]
+    if "threshold" in fixture.raw_json:
+        return fixture.raw_json["threshold"]
+    return _AGGREGATE_NOT_PROVIDED
+
+
+def _fixture_threshold_violation_reason(fixture: Fixture) -> str | None:
+    """Validate the fixture-declared ``threshold`` against AC-KPI-02
+    constants (F-PR34-R2-002 P2 adopt).
+
+    The per-fixture ``threshold`` field is optional (the manifest is the
+    canonical source); however when present and non-null it must match
+    the AC-KPI-02 contract exactly (``operator: "<="``, ``value: 2.0``,
+    ``unit: "hours"``) so a persisted corpus that bypasses the JSON
+    Schema layer cannot declare a relaxed fixture-level threshold
+    (e.g., ``value: 999`` to make ``threshold_passed`` look valid).
+
+    Mirrors the batch 5e ``cost_per_completed_task`` defense-in-depth
+    pattern.
+    """
+
+    threshold = _fixture_threshold(fixture)
+    if threshold is _AGGREGATE_NOT_PROVIDED or threshold is None:
+        # Fixture-level threshold is optional; the manifest is canonical.
+        return None
+    if not isinstance(threshold, dict):
+        return "spec_violation:threshold"
+    declared_op = threshold.get("operator")
+    if declared_op != AC_KPI_02_THRESHOLD_OPERATOR:
+        return "spec_violation:threshold_operator"
+    declared_value = threshold.get("value")
+    if not _is_finite_number(declared_value):
+        return "spec_violation:threshold_value"
+    if (
+        abs(float(declared_value) - AC_KPI_02_THRESHOLD_HOURS)  # type: ignore[arg-type]
+        > _THRESHOLD_HOURS_ABS_TOL
+    ):
+        return "spec_violation:threshold_value"
+    declared_unit = threshold.get("unit")
+    if declared_unit != "hours":
+        return "spec_violation:threshold_unit"
+    return None
 
 
 def _expected_aggregate_value(fixture: Fixture) -> object:
@@ -699,6 +757,10 @@ def evaluate_time_to_merge(
         )
 
         spec_reason: str | None = envelope_reason
+        # F-PR34-R2-002 P2 adopt: validate fixture-level threshold (if
+        # declared) before falling through to expected_aggregate.
+        if spec_reason is None:
+            spec_reason = _fixture_threshold_violation_reason(fixture)
         if spec_reason is None and parsing_violation is not None:
             spec_reason = parsing_violation
         if spec_reason is None:
