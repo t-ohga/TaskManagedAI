@@ -442,7 +442,7 @@ approval_request_revision:
     operation_context_fingerprint: string  # 修正後の OperationContext canonical schema から再計算 (SecretBroker fingerprint pattern と整合)、旧 fingerprint と異なることを DB CHECK で enforce
   
   invariants:
-    # decider human-only (`.claude/rules/multi-agent-orchestration.md §52-58` 維持)
+    # decider human-only (`.claude/reference/multi-agent-orchestration-draft.md §52-58` 維持)
     decider_human_only: true
     
     # 自己 approval 禁止 (`.claude/rules/server-owned-boundary.md §4` 維持)

@@ -223,7 +223,7 @@ eval/
 
 > 「急がなくていい。それぞれ品質重視で codex をしっかり使い完璧にお願いします。時間よりも品質です。」
 
-このプロジェクトの **絶対教訓**。Sprint 進行 / batch 完了 / review round 数において **速度を品質の上に置いてはならない**。具体運用は `.claude/rules/codex-usage-policy.md` + `.claude/rules/codex-multi-round-workflow.md` 参照。
+このプロジェクトの **絶対教訓**。Sprint 進行 / batch 完了 / review round 数において **速度を品質の上に置いてはならない**。具体運用は `.claude/rules/codex-usage-policy.md` + `.claude/reference/codex-multi-round-workflow.md` 参照。
 
 ### §6.5 各 subsection の正本 link
 

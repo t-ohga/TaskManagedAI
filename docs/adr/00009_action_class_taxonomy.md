@@ -269,7 +269,7 @@ ADR-00025 (proposed) で導入する autonomy_level は **caller-visible project
 
 ### auto-allow path は decider 委譲ではない (本 ADR §self-approval invariant の延長)
 
-ADR-00025 の L1-L3 で auto-allow される action でも、Policy Engine `effect=allow` は **「approval を skip」であって「agent / orchestrator / service / provider が decider に昇格」ではない** (本 ADR §採用案の self-approval 禁止 invariant の延長)。approval を要する action では decider は依然 **human only** (DB CHECK + service guard + Pydantic + pytest の 4 重防御、`.claude/rules/multi-agent-orchestration.md` §52-58 と整合)。
+ADR-00025 の L1-L3 で auto-allow される action でも、Policy Engine `effect=allow` は **「approval を skip」であって「agent / orchestrator / service / provider が decider に昇格」ではない** (本 ADR §採用案の self-approval 禁止 invariant の延長)。approval を要する action では decider は依然 **human only** (DB CHECK + service guard + Pydantic + pytest の 4 重防御、`.claude/reference/multi-agent-orchestration-draft.md` §52-58 と整合)。
 
 具体的には:
 
@@ -319,5 +319,5 @@ ADR-00025 の `autonomy_level` enum も同等の 5+ source 整合を P0.1 SP-017
 - `docs/adr/00025_autonomy_policy_profiles.md` (proposed)
 - `.claude/rules/server-owned-boundary.md` §1 (caller-not-allowed 経路)
 - `.claude/rules/cross-source-enum-integrity.md` §1 (5+ source 整合)
-- `.claude/rules/multi-agent-orchestration.md` (decider human-only、role ⊥ capability)
+- `.claude/reference/multi-agent-orchestration-draft.md` (decider human-only、role ⊥ capability)
 - `.claude/rules/sprint-pack-adr-gate.md` §11 (ADR Gate Criteria 11 種 break-glass 対象外、L upgrade は ADR retro 不可)

@@ -122,5 +122,5 @@ grep "^\[mcp_servers" ~/.codex/config.toml
 - `.mcp.json`: Phase 1 skeleton ポリシー (project-scoped MCP 空)
 - `.claude/CLAUDE.md` §2 deny-by-default + §5 重要パス参照
 - `.claude/rules/ai-output-boundary.md` §1: AI 出力 SQL を DB に直接適用しない invariant
-- `.claude/rules/codex-output-contract.md`: Codex 出力 truncation 防止
+- `.claude/reference/codex-output-contract.md`: Codex 出力 truncation 防止
 - ADR-00002 (DB schema foundation, accepted): SQLAlchemy + Alembic 採用、Prisma 不採用

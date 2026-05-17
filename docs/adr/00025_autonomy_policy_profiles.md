@@ -16,7 +16,7 @@ superseded_by: null
 
 ## 背景
 
-- 決定対象: `approval 不要で AI が自動実行できる範囲` を 4 段階 (L0/L1/L2/L3) で切替可能にする autonomy policy profiles を定義する。**human-only approval decider invariant (ADR-00009 §self-approval / `.claude/rules/multi-agent-orchestration.md`) は維持**したまま、Policy Engine `effect=allow` で `approval_requests` row を作らない auto-allow path を level ごとに調整する。
+- 決定対象: `approval 不要で AI が自動実行できる範囲` を 4 段階 (L0/L1/L2/L3) で切替可能にする autonomy policy profiles を定義する。**human-only approval decider invariant (ADR-00009 §self-approval / `.claude/reference/multi-agent-orchestration-draft.md`) は維持**したまま、Policy Engine `effect=allow` で `approval_requests` row を作らない auto-allow path を level ごとに調整する。
 - 関連 Sprint: 本 ADR は **proposed のみ**、accepted 化は P0.1 (新 Sprint Pack **SP-024 候補**、未使用番号)。**SP-017 は SP-016 `## P0.1 候補` で AI Society Visualization (board / role icon / dashboard) に予約済のため使用不可** (`docs/sprints/SP-016_ui_cli_parity.md:39+135` で予約)、R29 plan §10.4 「新 SP-017 候補」言及は本 PR commit 時点で SP-024 に override (R29 plan 側修正は QL-A 完遂後の別 run で forward fix)。P0 期間中は L0 default のみ実 enforce、L1-L3 auto-allow path は disable。
 - 前提 / 制約:
   - **不変条件 #2 維持**: approval を要する action では decider は依然 human only。auto-allow path は「approval を skip」であって「agent / orchestrator / service / provider が decider に昇格」ではない (ADR-00009 §Tier 2 準拠)。
@@ -147,6 +147,6 @@ superseded_by: null
 
 - `docs/設計検討/修正まとめ統合計画.md` §10 (R29 clean、本 ADR の source spec)
 - `.claude/rules/server-owned-boundary.md` §1 (caller-not-allowed 経路、`policy_profile` は server-owned)
-- `.claude/rules/multi-agent-orchestration.md` (decider human-only、role ⊥ capability、orchestrator は requester only)
+- `.claude/reference/multi-agent-orchestration-draft.md` (decider human-only、role ⊥ capability、orchestrator は requester only)
 - `.claude/rules/cross-source-enum-integrity.md` (5+ source 整合、`autonomy_level` enum drift 防止)
 - `.claude/rules/sprint-pack-adr-gate.md` §11 (ADR Gate Criteria 11 種 break-glass 対象外、L upgrade は ADR retro 不可)
