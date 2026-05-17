@@ -195,6 +195,10 @@ class AuditExporter:
         output_dir = output_path.parent
         output_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
 
+        # Codex F-PR51-001 P2 adopt: staged count + final 化 pattern.
+        # `staged_written` は file 書き込み中の count、`rows_exported` は atomic
+        # rename 成功後に move (failure 時は 0 のまま、cron false positive 防止).
+        staged_written = 0
         rows_exported = 0
         rows_rejected = 0
         error_message: str | None = None
@@ -227,20 +231,24 @@ class AuditExporter:
                         json.dumps(row, ensure_ascii=False, default=_serialize_uuid)
                     )
                     f.write("\n")
-                    rows_exported += 1
-            # atomic rename (admin cron 経路、blocking I/O 許容)
+                    staged_written += 1
+            # atomic rename (admin cron 経路、blocking I/O 許容).
+            # Codex F-PR51-001 P2: rename 成功後にのみ staged → rows_exported に move.
             tmp_path.replace(output_path)  # noqa: ASYNC240
+            rows_exported = staged_written
         except Exception as exc:  # noqa: BLE001 (export failure は summary で報告)
             error_message = type(exc).__name__
             # partial file cleanup (admin cron、blocking I/O 許容)
             if tmp_path.exists():  # noqa: ASYNC240
                 tmp_path.unlink(missing_ok=True)  # noqa: ASYNC240
+            # Codex F-PR51-001 P2: failure 時に rows_exported=0 維持 (cron false positive 防止).
+            # staged_written は別途 logging に出して debug 用に保持.
             logger.error(
                 "audit_export_failed",
                 extra={
                     "tenant_id": tenant_id,
                     "error": error_message,
-                    "rows_exported_before_failure": rows_exported,
+                    "staged_rows_before_failure": staged_written,
                 },
             )
 

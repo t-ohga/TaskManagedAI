@@ -212,6 +212,8 @@ async def test_export_jsonl_no_partial_file_on_failure(tmp_path: Path) -> None:
     # tmp dir に残骸 .audit-export-*.jsonl.tmp が存在しない
     tmp_files = list(tmp_path.glob(".audit-export-*.jsonl.tmp"))  # noqa: ASYNC240
     assert tmp_files == []
+    # Codex F-PR51-001 P2 adopt: failure 時に rows_exported=0 (cron false positive 防止).
+    assert summary.rows_exported == 0
 
 
 @pytest.mark.asyncio
