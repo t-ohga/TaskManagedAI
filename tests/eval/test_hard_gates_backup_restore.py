@@ -202,6 +202,9 @@ _VALID_MANIFEST: Final[JsonDict] = {
     "hard_gate_id": EXPECTED_AC_HARD_04_GATE_ID,
     "metric": EXPECTED_AC_HARD_04_METRIC_KEY,
     "dataset_version": "v2026.05.17-synthetic",
+    "splits": {
+        "public_regression": {"path": "public_regression/", "expected_count": 1},
+    },
 }
 
 
@@ -329,6 +332,8 @@ def test_skeleton_corpus_requires_only_dev_restore() -> None:
     [
         ("hard_gate_id", "AC-HARD-99", "manifest_violation:hard_gate_id"),
         ("metric", "something_else", "manifest_violation:metric"),
+        ("dataset_version", "", "manifest_violation:dataset_version"),
+        ("dataset_version", None, "manifest_violation:dataset_version"),
     ],
 )
 def test_manifest_violations_are_detected(
@@ -342,6 +347,57 @@ def test_manifest_violations_are_detected(
     )
     assert result.manifest_violation_reason == expected_reason
     assert result.threshold_reason == "manifest_violation"
+
+
+def test_manifest_expected_count_drift_is_detected() -> None:
+    """F-PR37-001 adopt: declared ``splits.public_regression.expected_count``
+    must match the actual public_regression fixture count.
+    """
+
+    # Build a manifest with `splits` that declares expected_count=99
+    # while only 1 public_regression fixture is loaded.
+    manifest = copy.deepcopy(_VALID_MANIFEST)
+    manifest["splits"] = {
+        "public_regression": {"path": "public_regression/", "expected_count": 99},
+    }
+    fixture = _synthetic_fixture()
+    result = evaluate_backup_restore_rpo_rto(
+        _synthetic_corpus([fixture], manifest=manifest)
+    )
+    assert (
+        result.manifest_violation_reason == "manifest_violation:expected_count"
+    )
+    assert result.threshold_reason == "manifest_violation"
+
+
+def test_manifest_expected_count_matches_actual_count_passes() -> None:
+    """F-PR37-001 adopt: when declared expected_count matches actual,
+    no manifest violation surfaces.
+    """
+
+    manifest = copy.deepcopy(_VALID_MANIFEST)
+    manifest["splits"] = {
+        "public_regression": {"path": "public_regression/", "expected_count": 1},
+    }
+    fixture = _synthetic_fixture()
+    result = evaluate_backup_restore_rpo_rto(
+        _synthetic_corpus([fixture], manifest=manifest)
+    )
+    assert result.manifest_violation_reason is None
+    assert result.threshold_met is True
+
+
+def test_manifest_splits_missing_is_rejected() -> None:
+    """F-PR37-001 adopt: malformed manifest without `splits` rejects."""
+
+    manifest = copy.deepcopy(_VALID_MANIFEST)
+    # _VALID_MANIFEST does not include splits; create a malformed one
+    manifest["splits"] = "not a dict"  # type: ignore[assignment]
+    fixture = _synthetic_fixture()
+    result = evaluate_backup_restore_rpo_rto(
+        _synthetic_corpus([fixture], manifest=manifest)
+    )
+    assert result.manifest_violation_reason == "manifest_violation:splits"
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +569,16 @@ def test_corpus_with_all_three_drill_kinds_satisfies_future_required() -> None:
         )
         for drill_kind in sorted(AC_HARD_04_FUTURE_REQUIRED_DRILL_KINDS)
     ]
-    result = evaluate_backup_restore_rpo_rto(_synthetic_corpus(fixtures))
+    # Multi-fixture corpus: manifest must declare expected_count == 3
+    # for the public_regression split (F-PR37-001 carry-over: manifest
+    # expected_count strict match).
+    manifest = copy.deepcopy(_VALID_MANIFEST)
+    manifest["splits"] = {
+        "public_regression": {"path": "public_regression/", "expected_count": 3},
+    }
+    result = evaluate_backup_restore_rpo_rto(
+        _synthetic_corpus(fixtures, manifest=manifest)
+    )
     assert result.missing_drill_kinds == ()
     assert result.threshold_met is True
 
@@ -562,8 +627,15 @@ def test_priority_spec_violation_wins_over_missing_drill_kinds() -> None:
         fixture_id="AC-HARD-04_v2026.05.17-synthetic_good_pss",
         drill_kind="private_staging_restore",
     )
+    # 2-fixture corpus → manifest expected_count == 2 (F-PR37-001)
+    manifest = copy.deepcopy(_VALID_MANIFEST)
+    manifest["splits"] = {
+        "public_regression": {"path": "public_regression/", "expected_count": 2},
+    }
     result = evaluate_backup_restore_rpo_rto(
-        _synthetic_corpus([fixture_bad, fixture_good_other_kind])
+        _synthetic_corpus(
+            [fixture_bad, fixture_good_other_kind], manifest=manifest
+        )
     )
     # Both conditions present: spec_violation AND missing_drill_kinds
     # Priority surfaces spec_violation.
@@ -600,6 +672,10 @@ def test_sut_results_all_true_passes() -> None:
 
 
 def test_sut_results_all_false_marks_failure() -> None:
+    """F-PR37-R1-001 adopt: sut_failure stored on sut_failure_reason
+    (not spec_violation_reason).
+    """
+
     fixture = _synthetic_fixture()
     result = evaluate_backup_restore_rpo_rto(
         _synthetic_corpus([fixture]),
@@ -607,29 +683,124 @@ def test_sut_results_all_false_marks_failure() -> None:
     )
     per = result.per_fixture[0]
     assert per.sut_result is False
-    assert per.spec_violation_reason == "sut_returned_false"
+    assert per.spec_violation_reason is None
+    assert per.sut_failure_reason == "sut_returned_false"
     assert per.passed is False
 
 
 def test_sut_result_missing_marks_failure() -> None:
+    """F-PR37-R1-001 adopt: sut_result_missing stored on
+    sut_failure_reason.
+    """
+
     fixture = _synthetic_fixture()
     result = evaluate_backup_restore_rpo_rto(
         _synthetic_corpus([fixture]),
         sut_results={"some_other_fixture_id": True},
     )
     per = result.per_fixture[0]
-    assert per.spec_violation_reason == "sut_result_missing"
+    assert per.spec_violation_reason is None
+    assert per.sut_failure_reason == "sut_result_missing"
 
 
 @pytest.mark.parametrize("raw", [None, "true", 1, []])
 def test_non_boolean_sut_result_is_rejected(raw: object) -> None:
+    """F-PR37-R1-001 adopt: invalid type stored on sut_failure_reason."""
+
     fixture = _synthetic_fixture()
     result = evaluate_backup_restore_rpo_rto(
         _synthetic_corpus([fixture]),
         sut_results={fixture.fixture_id: raw},  # type: ignore[dict-item]
     )
     per = result.per_fixture[0]
-    assert per.spec_violation_reason == "sut_result_invalid_type"
+    assert per.spec_violation_reason is None
+    assert per.sut_failure_reason == "sut_result_invalid_type"
+
+
+def test_spec_violation_and_sut_failure_are_mutually_exclusive() -> None:
+    """F-PR37-R1-001 adopt: spec_violation_reason and sut_failure_reason
+    cannot both be non-None for the same fixture (KPI aggregator
+    physical separation invariant).
+    """
+
+    # A spec-violating fixture with sut_results provided: SUT processing
+    # is skipped, so sut_failure_reason remains None.
+    fixture = _synthetic_fixture(expected_pitr_success=False)
+    result = evaluate_backup_restore_rpo_rto(
+        _synthetic_corpus([fixture]),
+        sut_results={fixture.fixture_id: False},
+    )
+    per = result.per_fixture[0]
+    assert per.spec_violation_reason is not None
+    assert per.sut_failure_reason is None
+
+
+def test_backup_age_exceeding_rpo_is_rejected() -> None:
+    """F-PR37-R1-002 adopt: backup older than declared RPO fails the
+    gate even if expected_rpo_hours_max is within bounds.
+    """
+
+    # Synthetic fixture: declared_rpo=24, backup_age=999 → violation.
+    raw_json = _synthetic_raw_json()
+    raw_json["input"]["backup_artifact"]["created_at_offset_hours"] = 999  # type: ignore[index]
+    expectation_keys = {
+        "expected_decision",
+        "expected_rpo_hours_max",
+        "expected_rto_hours_max",
+        "expected_pitr_success",
+        "expected_checksum_match",
+        "pattern_hit_kind",
+        "assertions",
+    }
+    expected_json = {k: raw_json[k] for k in expectation_keys if k in raw_json}
+    case_json = {k: v for k, v in raw_json.items() if k not in expectation_keys}
+    fixture = Fixture(
+        fixture_id=raw_json["fixture_id"],  # type: ignore[arg-type]
+        dataset_version_id="v2026.05.17-synthetic",
+        fixture_kind="public_regression",
+        gate_id="AC-HARD-04",
+        metric_key="backup_restore_rpo_rto",
+        case_key="synthetic_case",
+        case_json=case_json,
+        expected_json=expected_json,
+        metadata=raw_json["metadata"],  # type: ignore[arg-type]
+        anti_gaming=raw_json["anti_gaming"],  # type: ignore[arg-type]
+        source_path=Path("synthetic"),
+        raw_json=raw_json,
+        kpi_id=None,
+    )
+    _, per = _result_for(fixture)
+    assert per.spec_violation_reason == "spec_violation:backup_age_exceeds_rpo"
+
+
+def test_hard_reset_metric_when_mixed_corpus_has_spec_violation() -> None:
+    """F-PR37-R1-003 adopt: with 1 valid + 1 spec-violating fixture in
+    a mixed corpus, ``metric_value`` is hard-reset to 0.0 (not the
+    naive pass_count/fixture_count = 0.5). Hard-gate contract requires
+    100% spec compliance.
+    """
+
+    fixture_good = _synthetic_fixture(
+        fixture_id="AC-HARD-04_v2026.05.17-synthetic_good_hr",
+    )
+    fixture_bad = _synthetic_fixture(
+        fixture_id="AC-HARD-04_v2026.05.17-synthetic_bad_hr",
+        expected_pitr_success=False,
+    )
+    manifest = copy.deepcopy(_VALID_MANIFEST)
+    manifest["splits"] = {
+        "public_regression": {"path": "public_regression/", "expected_count": 2},
+    }
+    result = evaluate_backup_restore_rpo_rto(
+        _synthetic_corpus([fixture_good, fixture_bad], manifest=manifest)
+    )
+    # pass_count=1, fixture_count=2 — naive would give 0.5
+    assert result.pass_count == 1
+    assert result.fixture_count == 2
+    # Hard reset to 0.0
+    assert result.metric_value == pytest.approx(0.0)
+    assert result.threshold_met is False
+    assert result.threshold_reason == "spec_violation"
 
 
 # ---------------------------------------------------------------------------

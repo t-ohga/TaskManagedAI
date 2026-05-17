@@ -108,6 +108,14 @@ class BackupRestoreFixtureResult:
     parser from reading the value cleanly (e.g., unknown drill_kind
     enum). Otherwise it carries the validated drill_kind for
     corpus-wide coverage tracking.
+
+    F-PR37-R1-001 (Codex R1 P2) adopt: separate ``spec_violation_reason``
+    (fixture envelope defects) from ``sut_failure_reason`` (SUT runner
+    failures: missing / invalid_type / returned_false). The KPI
+    aggregator pattern (batch 5d/5e/5f/5g/5h-pre) physically separates
+    these two failure modes so downstream dashboards don't misclassify
+    SUT outages as fixture defects. ``at most one of these fields is
+    non-None per row``.
     """
 
     fixture_id: str
@@ -115,6 +123,7 @@ class BackupRestoreFixtureResult:
     drill_kind: str | None
     passed: bool
     spec_violation_reason: str | None
+    sut_failure_reason: str | None
     sut_result: bool | None
 
 
@@ -210,6 +219,25 @@ def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
     ):
         return "spec_violation:checksum_algorithm"
 
+    # F-PR37-R1-002 (Codex R1 P2) adopt: validate declared backup age
+    # against the declared RPO. Without this check, a fixture could
+    # declare ``expected_rpo_hours_max=24`` but supply
+    # ``backup_artifact.created_at_offset_hours=999`` and the gate would
+    # silently pass. The backup age is the actual evidence that the RPO
+    # contract is feasible — if the backup is older than the declared
+    # RPO window, the gate has already failed semantically.
+    backup_age_hours = _input_value(
+        fixture, "backup_artifact", "created_at_offset_hours"
+    )
+    if (
+        not isinstance(backup_age_hours, int | float)
+        or isinstance(backup_age_hours, bool)
+        or float(backup_age_hours) < 0.0
+    ):
+        return "spec_violation:backup_artifact_created_at_offset_hours"
+    if float(backup_age_hours) > float(rpo_max):
+        return "spec_violation:backup_age_exceeds_rpo"
+
     # Plan v2 §6 defense #14 / MED-1 adopt: fixture-level anti_gaming
     # envelope (append_only_refresh + separate_fixture_and_policy_commits).
     anti_gaming = fixture.raw_json.get("anti_gaming")
@@ -222,7 +250,10 @@ def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
 
     # Plan v2 §6 defense #15 / MED-2 adopt: payload_data_class boundary
     # (backup descriptors must not carry PII / confidential).
-    metadata = fixture.raw_json.get("metadata") or fixture.metadata
+    # F-PR37-004 (code-reviewer R1 LOW) adopt: use `get(..., default)` so
+    # an empty dict in raw_json does NOT silently fall back to
+    # ``fixture.metadata`` via `or` short-circuit (empty dict is falsy).
+    metadata = fixture.raw_json.get("metadata", fixture.metadata)
     if not isinstance(metadata, dict):
         return "spec_violation:metadata"
     payload_data_class = metadata.get("payload_data_class")
@@ -251,7 +282,14 @@ def _drill_kind_for_fixture(fixture: Fixture) -> str | None:
 def _manifest_violation_reason(corpus: LoadedCorpus) -> str | None:
     """Validate manifest top-level constants for AC-HARD-04.
 
-    Plan v2 §6 defense #9 (carry-over from batch 5b F-PR29-R1-001).
+    Plan v2 §6 defense #9 (carry-over from batch 5b F-PR29-R1-001) +
+    F-PR37-001 adopt (code-reviewer R1 MEDIUM): also enforce
+    ``dataset_version`` is a non-empty string and
+    ``splits.public_regression.expected_count`` is a non-negative int
+    matching the loaded ``public_regression`` fixture count. Otherwise a
+    corpus where ``dataset_version`` is bumped without realigning
+    ``expected_count`` passes silently, defeating the Anti-Gaming
+    dataset_version pin (`.claude/rules/testing.md §10`).
     """
 
     manifest = corpus.manifest
@@ -259,6 +297,37 @@ def _manifest_violation_reason(corpus: LoadedCorpus) -> str | None:
         return "manifest_violation:hard_gate_id"
     if manifest.get("metric") != AC_HARD_04_METRIC_KEY:
         return "manifest_violation:metric"
+
+    # F-PR37-001 adopt: dataset_version must be a non-empty string.
+    dataset_version = manifest.get("dataset_version")
+    if not isinstance(dataset_version, str) or not dataset_version:
+        return "manifest_violation:dataset_version"
+
+    # F-PR37-001 adopt: splits.public_regression.expected_count must
+    # match the count of public_regression fixtures actually loaded into
+    # the corpus. A drift here means the manifest's declared corpus
+    # shape diverges from reality.
+    splits = manifest.get("splits")
+    if not isinstance(splits, dict):
+        return "manifest_violation:splits"
+    public_split = splits.get("public_regression")
+    if not isinstance(public_split, dict):
+        return "manifest_violation:splits"
+    declared_expected_count = public_split.get("expected_count")
+    if (
+        not isinstance(declared_expected_count, int)
+        or isinstance(declared_expected_count, bool)
+        or declared_expected_count < 0
+    ):
+        return "manifest_violation:expected_count"
+    actual_public_count = sum(
+        1
+        for fixture in corpus.fixtures
+        if fixture.fixture_kind == "public_regression"
+    )
+    if declared_expected_count != actual_public_count:
+        return "manifest_violation:expected_count"
+
     return None
 
 
@@ -373,26 +442,29 @@ def evaluate_backup_restore_rpo_rto(
         if spec_reason is not None:
             spec_violation_present = True
 
-        failure_reason = spec_reason
+        # F-PR37-R1-001 (Codex R1 P2) adopt: separate spec_violation
+        # from sut_failure (KPI aggregator pattern, batch 5d/5e/5f/5g
+        # carry-over). At-most-one-non-None invariant.
+        sut_failure_reason: str | None = None
         sut_result: bool | None = None
         passed = spec_reason is None
 
         if sut_results is not None and spec_reason is None:
             if fixture.fixture_id not in sut_results:
                 passed = False
-                failure_reason = "sut_result_missing"
+                sut_failure_reason = "sut_result_missing"
             else:
                 raw_sut_value = sut_results[fixture.fixture_id]
                 # Plan v2 §6 defense #11 (batch 5b F-PR29-R1-002
                 # carry-over): non-boolean SUT results reject.
                 if not isinstance(raw_sut_value, bool):
                     passed = False
-                    failure_reason = "sut_result_invalid_type"
+                    sut_failure_reason = "sut_result_invalid_type"
                 else:
                     sut_result = raw_sut_value
                     if not sut_result:
                         passed = False
-                        failure_reason = "sut_returned_false"
+                        sut_failure_reason = "sut_returned_false"
 
         per_fixture.append(
             BackupRestoreFixtureResult(
@@ -400,7 +472,8 @@ def evaluate_backup_restore_rpo_rto(
                 case_key=fixture.case_key,
                 drill_kind=_drill_kind_for_fixture(fixture),
                 passed=passed,
-                spec_violation_reason=failure_reason,
+                spec_violation_reason=spec_reason,
+                sut_failure_reason=sut_failure_reason,
                 sut_result=sut_result,
             )
         )
@@ -411,10 +484,18 @@ def evaluate_backup_restore_rpo_rto(
     fixture_count = len(per_fixture)
     pass_count = sum(1 for result in per_fixture if result.passed)
     fail_count = fixture_count - pass_count
-    # Plan v2 §6 defense #10 (batch 5b pattern): spec_violation hard
-    # reset to 0.0 happens naturally since spec-violating fixtures have
-    # passed=False, so pass_count excludes them.
-    metric_value = pass_count / fixture_count if fixture_count else 0.0
+    # Plan v2 §6 defense #10 + F-PR37-R1-003 (Codex R1 P2) adopt:
+    # spec_violation hard-reset to 0.0. Without this, a mixed corpus
+    # (1 valid + 1 corrupt fixture) would report metric=0.5 even though
+    # **any** AC-HARD-04 spec violation is gate-breaking. The hard-gate
+    # contract requires 100% spec compliance, so we surface 0.0 to make
+    # the violation impossible to hide in pass-rate aggregation.
+    if fixture_count == 0:
+        metric_value = 0.0
+    elif spec_violation_present:
+        metric_value = 0.0
+    else:
+        metric_value = pass_count / fixture_count
     threshold_reason = _threshold_reason(
         fixture_count=fixture_count,
         metric_value=metric_value,
