@@ -250,7 +250,9 @@ def test_gold_task_v0_all_adapters_share_expected_status_contract() -> None:
 
 
 def test_gold_task_v0_dataset_version_is_traceable_for_context_snapshot() -> None:
-    assert DATASET_VERSION_ID == "gold-task-v0-2026-05-09"
+    # F-PR36-001 P1 adopt: bumped from gold-task-v0-2026-05-09 (3 cases,
+    # Sprint 5) to gold-task-v0-2026-05-17 (30 cases, Sprint 11 batch 5h).
+    assert DATASET_VERSION_ID == "gold-task-v0-2026-05-17"
     for case in GOLD_TASK_V0_CASES:
         trace = case.request_template["context_snapshot_trace"]
         assert trace == {
@@ -258,4 +260,65 @@ def test_gold_task_v0_dataset_version_is_traceable_for_context_snapshot() -> Non
             "fixture_id": case.case_id,
             "snapshot_kind": "input",
         }
+
+
+def test_gold_task_v0_corpus_has_minimum_thirty_cases() -> None:
+    """BL-0163 must_ship line 171: private gold task 30-50 件 (30 件で達成可)."""
+
+    assert len(GOLD_TASK_V0_CASES) >= 30, (
+        f"BL-0163 requires ≥30 cases; got {len(GOLD_TASK_V0_CASES)}"
+    )
+
+
+def test_gold_task_v0_corpus_case_ids_are_unique() -> None:
+    case_ids = [case.case_id for case in GOLD_TASK_V0_CASES]
+    assert len(case_ids) == len(set(case_ids)), (
+        f"duplicate case_ids found: {[c for c in case_ids if case_ids.count(c) > 1]}"
+    )
+
+
+def test_gold_task_v0_expansion_cases_carry_metadata() -> None:
+    """F-PR36-003 P2 adopt: BL-0163 batch 5h expansion cases must
+    carry GoldTaskMetadata (source / domain / payload_data_class /
+    sanitization_status). Sprint 5 originals are exempt (3 cases) for
+    backwards compatibility.
+    """
+
+    sprint5_originals = {"simple_request", "structured_output", "safety_refusal"}
+    for case in GOLD_TASK_V0_CASES:
+        if case.case_id in sprint5_originals:
+            continue
+        assert case.task_metadata is not None, (
+            f"case {case.case_id!r} from BL-0163 expansion missing task_metadata"
+        )
+        assert case.task_metadata.domain, (
+            f"case {case.case_id!r} task_metadata.domain is empty"
+        )
+        assert case.task_metadata.payload_data_class in {
+            "public",
+            "internal",
+            "confidential",
+            "pii",
+        }
+        assert case.task_metadata.sanitization_status in {
+            "clean",
+            "redacted",
+            "synthetic",
+        }
+
+
+def test_gold_task_v0_expansion_cases_have_oracle_keywords() -> None:
+    """F-PR36-002 P2 adopt: BL-0163 batch 5h expansion cases must
+    declare at least one oracle keyword for downstream SP-012
+    real-provider verification. Sprint 5 originals exempt.
+    """
+
+    sprint5_originals = {"simple_request", "structured_output", "safety_refusal"}
+    for case in GOLD_TASK_V0_CASES:
+        if case.case_id in sprint5_originals:
+            continue
+        assert case.task_oracle_keywords, (
+            f"case {case.case_id!r} from BL-0163 expansion missing "
+            "task_oracle_keywords"
+        )
 
