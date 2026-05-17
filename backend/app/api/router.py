@@ -9,6 +9,7 @@ from backend.app.api import (
     evidence_sources,
     health,
     kpi_rollup,
+    p0_acceptance_report,
     research_tasks,
 )
 
@@ -20,3 +21,4 @@ api_router.include_router(evidence_sources.router)
 api_router.include_router(claims.router)
 api_router.include_router(evidence_items.router)
 api_router.include_router(kpi_rollup.router)
+api_router.include_router(p0_acceptance_report.router)
