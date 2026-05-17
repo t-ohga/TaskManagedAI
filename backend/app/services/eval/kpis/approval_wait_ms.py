@@ -26,16 +26,23 @@ Causality semantic alignment (plan v2 §2.5 / HIGH-H4):
 * The existing ``eval/quality/approval_wait_ms/loader.py`` silently skips
   ``decided_at < requested_at`` rows when recomputing
   ``expected_aggregate.median_ms`` (line 340 ``if decided_at <
-  requested_at: continue``).
-* This new aggregator independently parses ``input.sample_approvals`` and
+  requested_at: continue``), then independently revalidates the declared
+  ``expected_aggregate.median_ms`` against the silently-recomputed median.
+  The loader rejects the fixture when those two disagree.
+* This aggregator independently parses ``input.sample_approvals`` and
   REJECTS the entire fixture as ``spec_violation:decided_at_causality``
-  when a decided row violates causality.
-* Both behaviors converge on causality-clean fixtures (same median); on
-  causality-violating fixtures the aggregator surfaces the spec violation
-  while the loader-recomputed median (excluding the bad row) would still
-  match the fixture's declared ``expected_aggregate.median_ms`` (since
-  the same fixture authoring tool was used). This is documented
-  two-layer defense-in-depth.
+  on the causality violation itself, regardless of whether the declared
+  median happens to match the silently-recomputed median.
+* On causality-clean fixtures both layers compute the same median
+  (convergence). On causality-violating fixtures both layers reject but
+  with different error codes (defense-in-depth, not convergence) —
+  loader's `_validate_aggregate_consistency` fires only if the declared
+  median diverges from the silently-recomputed median; this aggregator
+  fires on the row itself. F-PR35-001 (code-reviewer R1) corrects the
+  prior over-specific claim that loader-recomputed median "would still
+  match" the declared value under any authoring tool — an author can
+  manually edit ``expected_aggregate.median_ms`` independent of
+  regenerating from ``sample_approvals``.
 
 The function is pure (no DB / file system / network access). Optional
 ``sut_results`` is consumed read-only for forward-compatibility with the
