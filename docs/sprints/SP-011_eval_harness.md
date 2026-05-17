@@ -553,6 +553,30 @@ frontmatter `status: draft` 維持。
 - line 186 (AC-HARD 7 + AC-KPI 5 aggregator): N/A (BL-0163 は Gold Task Seed expansion、AC-KPI/AC-HARD aggregator 直接 contribute なし)
 - must_ship 表 line 171 (private gold task 30-50 件): **30 件達成**、50 件は SP-022
 
+### Sprint 11 batch 5j 実装進捗 (PR #?? merge 後に commit hash 追記)
+
+- **batch_5j_implementation_pr**: 本 PR (BL-0159 backup_restore_rpo_rto skeleton aggregator)
+- **実装 BL**: BL-0159 (AC-HARD-04 fixture contract skeleton、SUT execution + PITR activation は Sprint 11.5 BL-0159b へ defer per SP-011 must_ship table line 173)
+- **新規 file**:
+  - `backend/app/services/eval/hard_gates/backup_restore.py` (~430 LOC)
+  - `tests/eval/test_hard_gates_backup_restore.py` (~600 LOC、46 tests)
+- **既存 Sprint 0 fixture infrastructure 不変**: `eval/ops/backup_restore/{manifest.json, expected_schema.json, public_regression/sample.json}` を改変なしで利用
+- **plan-reviewer R1 → R2**: 9 finding adopt (HIGH×2 + MEDIUM×4 + LOW×3) → R2 READY (0 BLOCKER / 0 HIGH)
+- **PITR P0 vs Sprint 11.5 境界 (HIGH-1 adopt)**: PRD-01 §10.3 Phase H PH-F-010 fix 准拠で「P0 では PITR は要求しない」明示。既存 schema の `expected_pitr_success: const true` を **Sprint 11.5 BL-0159b 用 forward-looking declaration** として P0 では accept、aggregator は fixture envelope 申告のみ validate (実 PITR 実行なし)
+- **metric layer 分離 (HIGH-2 adopt)**: aggregator は **per-fixture pass-rate** (`backup_restore_rpo_rto`、threshold=1.0、batch 5b pattern)。`hard-gates-and-kpis.md` の 2 numeric metric (`backup_restore_rpo_hours` / `backup_restore_rto_hours`) は SP-022+ Grafana 別 layer (Sprint 11.5 BL-0159b SUT 実行 で `measured_*` 計測)
+- **ADR Gate Criteria #8 (backup/restore/PITR、MED-3 adopt)**: 本 batch は aggregator のみで対象外、Sprint 11.5 BL-0159b で **ADR-00022 候補 (PITR adoption)** を起票予定
+- **5+ source enum integrity**: 5 source (`_KNOWN_DRILL_KINDS` frozenset + `_REQUIRED_SKELETON` ({"dev_restore"}) + `_FUTURE_REQUIRED` (3 kinds) + pytest EXPECTED + fixture schema enum)、partition `_REQUIRED_SKELETON ⊆ _REQUIRED_FUTURE ⊆ _KNOWN` import-time runtime check (S101-safe RuntimeError raise)
+- **threshold_reason priority (MED-4 adopt)**: spec_violation > missing_drill_kinds (corruption is deeper root cause than coverage gap)
+- **Anti-Gaming defense matrix (15 defenses)**: batch 5b carry-over (envelope / RPO / RTO / PITR / checksum_match / drill_kind enum / encrypted / isolated / sha256 / required_drill_kinds / manifest drift / spec_violation hard reset / sut_results / late-commit gate / redacted splits skip) + 新 **#14 fixture-level anti_gaming envelope** (append_only_refresh + separate_fixture_and_policy_commits、MED-1) + **#15 payload_data_class ∈ {public, internal}** (no PII / confidential backup descriptors、MED-2)
+- **skeleton scope**: 1 fixture (`dev_db_restore_checksum`)、1 drill_kind ({"dev_restore"}) required。Sprint 11.5 BL-0159b で 3 fixtures / 3 drill_kinds (`dev_restore`, `private_staging_restore`, `pitr`) 拡張
+- **Verification**: ruff clean / mypy clean (201 source files) / pytest tests/eval/test_hard_gates_backup_restore.py: **46 passed** / pytest tests/eval/: **1093 passed, 4 skipped**
+
+### Sprint 11 batch 5j SP-011 受け入れ条件 contribution
+
+- line 181 (26 BL Codex multi-round verdict=clean): BL-0159 はこの PR
+- line 186 (AC-HARD 7 + AC-KPI 5 aggregator / fixture registry 経由で測定可能): **AC-HARD-04 fixture skeleton 達成** (SUT execution 経由は Sprint 11.5 BL-0159b)
+- must_ship 表 line 173 (`backup_restore_rpo_rto` fixture contract skeleton): **達成**、activation は Sprint 11.5 BL-0159b
+
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
 
 本 Pack の acceptance spec として、QL-B Quality Loop run で記録された future implementation gate を以下の通り cross-reference する:
