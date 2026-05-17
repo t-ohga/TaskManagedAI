@@ -276,7 +276,7 @@ CLI 経由: 複数 terminal で AI agent 起動 → 司令塔 CLI で統合 → 
 
 - `.claude/rules/agentrun-state-machine.md`: multi-agent run section
 - `.claude/rules/ai-output-boundary.md`: inter-agent communication boundary
-- 新規 `.claude/rules/multi-agent-orchestration.md`: orchestrator + 専門 agent + inter-run protocol
+- 新規 `.claude/reference/multi-agent-orchestration-draft.md`: orchestrator + 専門 agent + inter-run protocol
 
 ## 8. 次のアクション
 

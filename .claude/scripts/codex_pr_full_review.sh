@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # codex_pr_full_review.sh — Codex の全 finding を必ず取得する verify helper
 #
-# 使用必須タイミング (CLAUDE.md §6.5.9 + .claude/rules/codex-pr-review-checklist.md):
+# 使用必須タイミング (CLAUDE.md §6.5.9 + .claude/scripts/codex_pr_full_review.README.md):
 # - PR 起票直後 / push 後 / merge 直前 / `@codex review` trigger 後
 #
 # 内部実装 (Codex PR #7 R4 finding 反映):

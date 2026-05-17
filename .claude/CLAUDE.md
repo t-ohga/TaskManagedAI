@@ -223,7 +223,7 @@ eval/
 
 > 「急がなくていい。それぞれ品質重視で codex をしっかり使い完璧にお願いします。時間よりも品質です。」
 
-このプロジェクトの **絶対教訓**。Sprint 進行 / batch 完了 / review round 数において **速度を品質の上に置いてはならない**。具体運用は `.claude/rules/codex-usage-policy.md` + `.claude/rules/codex-multi-round-workflow.md` 参照。
+このプロジェクトの **絶対教訓**。Sprint 進行 / batch 完了 / review round 数において **速度を品質の上に置いてはならない**。具体運用は `.claude/rules/codex-usage-policy.md` + `.claude/reference/codex-multi-round-workflow.md` 参照。
 
 ### §6.5 各 subsection の正本 link
 
@@ -233,12 +233,12 @@ eval/
 | §6.5.1 役割分担 | Codex = 主実装、Claude = orchestration + 採否判定 + 品質 gate + Sprint Exit 判定 | → `.claude/rules/codex-usage-policy.md` §1 |
 | §6.5.2 Sprint 内標準 workflow (8 step) | Sprint Pack 確認 → 計画 review → 実装 batch 分割 → Codex 実装 → コード review → 品質チェック → セキュリティチェック → Sprint Exit 判定 | → `.claude/skills/dev-suite/SKILL.md` |
 | §6.5.3 Host-Portable deployment | Mac/Linux/VPS のいずれか 1 箇所をメイン基盤として選択可。Network boundary (Tailscale 閉域、host publish は 127.0.0.1 bind 固定)、deny-by-default Funnel/Cloudflare Tunnel、SOPS+age secrets、Docker Compose 4 service | → ADR-00021 + DD-05 + DD-06 |
-| §6.5.4 Codex multi-round review + codex-all-loops 3 phase pattern | review-loop → impl-loop → adversarial-loop の chain で R{N} clean 達成 (CRITICAL=0 / HIGH≤2)、CRITICAL invariant 直結 code は mode=code (3 phase)、heavy plan/ADR は mode=plan (2 phase)、doc-only future spec は PR Codex auto-review + 軽い polish | → `.claude/rules/codex-multi-round-workflow.md` (Phase C で `.claude/reference/codex-workflow-knowledge.md` 統合移送予定) + `.claude/rules/codex-usage-policy.md` |
+| §6.5.4 Codex multi-round review + codex-all-loops 3 phase pattern | review-loop → impl-loop → adversarial-loop の chain で R{N} clean 達成 (CRITICAL=0 / HIGH≤2)、CRITICAL invariant 直結 code は mode=code (3 phase)、heavy plan/ADR は mode=plan (2 phase)、doc-only future spec は PR Codex auto-review + 軽い polish | → `.claude/reference/codex-multi-round-workflow.md` (Phase C で rules → reference 移送済) + `.claude/reference/codex-output-contract.md` + `.claude/rules/codex-usage-policy.md` |
 | §6.5.5 Skill 起動 priority | dev-suite (Sprint pipeline) / quality-suite (品質) / review-suite (PR 前) / security-suite (Hard Gates) / release-suite (Sprint Exit) + codex-task / codex-plan-review / codex-adversarial-review / codex-rescue | → `.claude/rules/codex-usage-policy.md` §2 |
 | §6.5.6 ADR Gate accepted 化タイミング | 実装着手直前に proposed → accepted 昇格、retro Pack/ADR 24h 以内、break-glass 例外運用条件 | → `.claude/rules/sprint-pack-adr-gate.md` §6-10 |
 | §6.5.7 Worktree 利用 (TaskManagedAI 固有事情) | `bash scripts/worktree_setup.sh` で setup 自動化 (pnpm install + uv sync + SOPS 復号、約 10 分)、`.worktreeinclude` で gitignored 個人設定を worktree に copy。並列 bg job scope 分割 (backend / frontend / docs / read-only)、同 branch 2 worktree checkout 時の取り込み手順 | 判断フロー本体: → `~/.claude/CLAUDE.md` Git Worktree 利用判断ルール / 詳細: → `docs/設計検討/bg-job-worktree-workflow.md` |
 | §6.5.8 PR 起票・merge 責務分離 | Claude が PR 起票 + Codex review 採否判定 + fix push、user が PR merge 直接 (Claude classifier reject 経路)、user 手元作業の代理処理 path | → `.claude/rules/branch-and-pr-workflow.md` §1-§8 |
-| §6.5.9 Codex auto-review 確認義務 | `.claude/scripts/codex_pr_full_review.sh` で `pulls/N/comments` (inline) + `issues/N/comments` (conversation) + `reviews` (top-level) 3 endpoint × paginated × Codex bot filter 全件取得必須。**baseline 内容確認必須** (delta +0 を真の 0 件と誤判定しない、PR #42 で再発) | → `.claude/rules/codex-pr-review-checklist.md` + `.claude/scripts/codex_pr_full_review.sh` |
+| §6.5.9 Codex auto-review 確認義務 | `.claude/scripts/codex_pr_full_review.sh` で `pulls/N/comments` (inline) + `issues/N/comments` (conversation) + `reviews` (top-level) 3 endpoint × paginated × Codex bot filter 全件取得必須。**baseline 内容確認必須** (delta +0 を真の 0 件と誤判定しない、PR #42/#44 で再発) | → `.claude/scripts/codex_pr_full_review.README.md` (Phase C で rules → scripts/ 移送済) + `.claude/scripts/codex_pr_full_review.sh` |
 
 詳細は各正本を参照。本 § で重複を維持しない (drift 防止、F-CRA-NNN findings 由来)。
 

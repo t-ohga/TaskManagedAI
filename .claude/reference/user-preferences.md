@@ -1,6 +1,6 @@
 # User Preferences (TaskManagedAI、2026-05-15 確立)
 
-本 file は **ユーザーがこれまで明示・暗黙に求めてきた preference / workflow / 品質基準を集約** したもの。各 session 開始時に Claude が参照し、要望の繰り返し説明を不要にする。CLAUDE.md §6.5.9 + `.claude/rules/codex-pr-review-checklist.md` と相互参照。
+本 file は **ユーザーがこれまで明示・暗黙に求めてきた preference / workflow / 品質基準を集約** したもの。各 session 開始時に Claude が参照し、要望の繰り返し説明を不要にする。CLAUDE.md §6.5.9 + `.claude/scripts/codex_pr_full_review.README.md` と相互参照。
 
 ## 1. 品質 vs 速度: **品質優先 (絶対教訓)**
 
@@ -98,6 +98,6 @@
 
 - CLAUDE.md §6.5.0 - §6.5.9 全 section
 - `~/.claude/CLAUDE.md` (user-global、`codex-second-opinion` / Worktree 判定ルール)
-- `.claude/rules/codex-pr-review-checklist.md`
+- `.claude/scripts/codex_pr_full_review.README.md`
 - `.claude/rules/codex-usage-policy.md`
 - `.claude/rules/branch-and-pr-workflow.md`
