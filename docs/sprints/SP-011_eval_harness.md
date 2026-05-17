@@ -577,6 +577,44 @@ frontmatter `status: draft` 維持。
 - line 186 (AC-HARD 7 + AC-KPI 5 aggregator / fixture registry 経由で測定可能): **AC-HARD-04 fixture skeleton 達成** (SUT execution 経由は Sprint 11.5 BL-0159b)
 - must_ship 表 line 173 (`backup_restore_rpo_rto` fixture contract skeleton): **達成**、activation は Sprint 11.5 BL-0159b
 
+### batch 5i (BL-0130 / 2026-05-17 session)
+
+#### Changed
+- `.github/workflows/nightly-regression.yml` (新規、~110 LOC、`cron '0 3 * * *'` で public_regression + Gold Task v0 nightly run、main 限定 + concurrency `nightly-regression-${{ github.ref }}` / cancel-in-progress=false)
+- `.github/workflows/ci-smoke.yml` (`workflow-lint` job 新規追加、~14 LOC、`docker://rhysd/actionlint:1.7.7` で `.github/workflows/**` 全件を PR 時点で syntax check)
+- `docs/sprints/SP-011_eval_harness.md` (本 ## Review section)
+
+#### Verified
+- BL-0130 acceptance: nightly cron `0 3 * * *` + public_regression 自動実行 + Gold Task v0 contract 統合 ✅
+- Anti-Gaming boundary: 既存 loader sanitize (Sprint 11 batch 5b) + dataset_version pinning + sha256 anti-gaming guard + pytest `-q --tb=short` で集約出力 (個別 fixture 期待値の非 export 設計を継承) + `--strict-markers` で unknown marker reject (preventive guard) ✅
+- deny-by-default (`.claude/rules/core.md §6`): permissions `contents: read` only / main 限定 if / secrets 不要 ✅
+- concurrency: `nightly-regression-${{ github.ref }}` + `cancel-in-progress: false` (ci-smoke.yml の commit SHA 単位 push group とは別方針、nightly は last-write-wins ではなく全件 run) ✅
+- workflow YAML self-lint: ci-smoke.yml `workflow-lint` job (actionlint 1.7.7) が `.github/workflows/**` を PR 時点で validate ✅
+- Local actionlint validation: `docker run --rm -v $(pwd):/repo --workdir /repo rhysd/actionlint:1.7.7 -color` → exit=0 (両 workflow file syntax clean) ✅
+- main 限定二重保証: schedule trigger の GitHub Actions default branch 限定仕様 + job level `if: github.ref == 'refs/heads/main'` ✅
+- plan-reviewer R1 → R2 READY: HIGH×2 + MEDIUM×3 + LOW×2 全 7 件 adopt → R2 で BLOCKER=0 / HIGH=0、MEDIUM=1 (doc-only factual drift、本 ## Review で訂正済) ✅
+
+#### Deferred (Sprint 11.5 / SP-022)
+- `private_holdout` monthly decryption (age key + Tailscale GitHub Action、ADR Gate Criteria #6 secrets management)
+- Failure notification (Slack / Discord / MoltBot Webhook integration、ADR Gate Criteria #4/#5 external integration)
+- `pytest.mark.no_leak` marker (future batch で fixture 期待値 export test 導入時の preventive guard)
+- BL-0163 Gold Task 50 件拡張時の timeout 見直し (cron 頻度緩和 or split job 化、Sprint 11.5/12 で fixture サイズに応じ判断)
+- Grafana / Loki integration
+
+#### Risks
+- workflow_dispatch 経由で repository write 権限保持者が手動 trigger 可能 (mitigated: main 限定 if + permissions deny-by-default + secrets 不要)
+- BL-0163 Gold Task v0 が将来 50+ cases に拡張時 (Sprint 11.5/SP-022)、20 min timeout が不足する可能性 → Sprint 11.5/12 で再評価
+- GitHub Actions billing infrastructure issue (CI 失敗時の cascade、本 batch では code clean を local actionlint + pytest tests/eval/ で local 確認)
+
+#### Plan-reviewer R2 訂正 (M-NEW-1 adopt)
+- plan v2 §3 line 76 で "`test_anti_gaming_ci_gate.py` は public_regression のみに gate を限定" と記載したが、実際の `tests/eval/test_anti_gaming_ci_gate.py:33-41` は 3 splits (public_regression / private_holdout / adversarial_new) 全件を gate 対象にしている。ただし当該 gate は `TASKMANAGEDAI_RUN_ANTI_GAMING_GATE=1` opt-in (default skip) で、本 nightly では env 設定なし → run 動作には影響なし。Anti-Gaming defense の主体は loader sanitize + dataset_version pinning + pytest 集約出力 + `--strict-markers` の 4 layer。
+
+### Sprint 11 batch 5i SP-011 受け入れ条件 contribution
+
+- line 181 (26 BL Codex multi-round verdict=clean): BL-0130 はこの PR
+- line 188 (acceptance: nightly schedule で public_regression を自動実行): **達成** (cron + workflow_dispatch + main 限定 + concurrency / actionlint syntax guard)
+- must_ship 表 line 174 (BL-0130 nightly regression job): **達成**、private_holdout monthly は Sprint 11.5 / SP-022
+
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
 
 本 Pack の acceptance spec として、QL-B Quality Loop run で記録された future implementation gate を以下の通り cross-reference する:
