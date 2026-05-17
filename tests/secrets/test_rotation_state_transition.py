@@ -31,12 +31,17 @@ from backend.app.services.secrets.rotation import (
 _TENANT_ID = 1
 
 
-def _build_mock_session() -> tuple[MagicMock, AsyncMock]:
-    """mock AsyncSession + scalar / execute mocks."""
+def _build_mock_session(*, default_rowcount: int = 1) -> tuple[MagicMock, AsyncMock]:
+    """mock AsyncSession + scalar / execute mocks.
+
+    UPDATE statement の `.rowcount` を default 1 (atomic claim success) で mock.
+    """
 
     session = MagicMock()
     session.scalar = AsyncMock(return_value=None)
-    session.execute = AsyncMock(return_value=MagicMock())
+    execute_result = MagicMock()
+    execute_result.rowcount = default_rowcount
+    session.execute = AsyncMock(return_value=execute_result)
     return session, session.scalar
 
 
@@ -45,19 +50,32 @@ def _mock_secret_ref(
     secret_ref_id: UUID,
     status: str,
     tenant_id: int = _TENANT_ID,
+    scope: str = "project",
+    name: str = "provider-openai",
+    rotated_from_id: UUID | None = None,
+    metadata_: dict | None = None,
 ) -> MagicMock:
+    """Codex F-PR48-001/002 P1/P2 adopt: scope/name/rotated_from_id/metadata_ も mock 化."""
+
     ref = MagicMock()
     ref.id = secret_ref_id
     ref.status = status
     ref.tenant_id = tenant_id
+    ref.scope = scope
+    ref.name = name
+    ref.rotated_from_id = rotated_from_id
+    ref.metadata_ = metadata_ if metadata_ is not None else {}
     return ref
 
 
-def _build_evaluator() -> tuple[SecretRotationService, MagicMock]:
-    session, _scalar = _build_mock_session()
+def _build_evaluator(
+    *, default_rowcount: int = 1
+) -> tuple[SecretRotationService, MagicMock]:
+    session, _scalar = _build_mock_session(default_rowcount=default_rowcount)
     svc = SecretRotationService(session)
-    # tenant_context bypass for unit test
+    # tenant_context + audit_event bypass for unit test
     svc._ensure_tenant_context = AsyncMock(return_value=None)  # noqa: SLF001
+    svc._append_audit_event = AsyncMock(return_value=None)  # noqa: SLF001
     return svc, session
 
 
@@ -163,17 +181,31 @@ async def test_issue_new_with_canary_metadata_rejected() -> None:
 
 @pytest.mark.asyncio
 async def test_promote_old_active_to_deprecated_and_new_to_active() -> None:
-    """promote: old:active→deprecated + new:pending→active を 2 update call で実行."""
+    """promote: old:active→deprecated + new:pending→active を 2 update call で実行.
+
+    F-PR48-002 adopt: new.rotated_from_id = old.id で関係性 verify.
+    """
 
     svc, session = _build_evaluator()
     old_id = uuid4()
     new_id = uuid4()
 
-    # session.scalar が 2 回 call される (old + new).
+    # session.scalar が 2 回 call される (old + new). 同 scope/name + new.rotated_from_id=old.id.
     session.scalar = AsyncMock(
         side_effect=[
-            _mock_secret_ref(secret_ref_id=old_id, status="active"),
-            _mock_secret_ref(secret_ref_id=new_id, status="pending"),
+            _mock_secret_ref(
+                secret_ref_id=old_id,
+                status="active",
+                scope="project",
+                name="provider-openai",
+            ),
+            _mock_secret_ref(
+                secret_ref_id=new_id,
+                status="pending",
+                scope="project",
+                name="provider-openai",
+                rotated_from_id=old_id,  # 関係性
+            ),
         ]
     )
 
@@ -186,6 +218,86 @@ async def test_promote_old_active_to_deprecated_and_new_to_active() -> None:
     assert "new:pending→active" in result.transitions
     # execute が 2 回 (old update + new update) 呼ばれた
     assert session.execute.await_count == 2
+    # F-PR48-005 adopt: audit_event が persist された
+    assert svc._append_audit_event.await_count == 1  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_promote_scope_name_mismatch_rejected() -> None:
+    """Codex F-PR48-002 P2 adopt: 異 scope/name の secret_ref swap を防ぐ."""
+
+    svc, session = _build_evaluator()
+    old_id = uuid4()
+    new_id = uuid4()
+    session.scalar = AsyncMock(
+        side_effect=[
+            _mock_secret_ref(
+                secret_ref_id=old_id, status="active", scope="project", name="provider-openai"
+            ),
+            _mock_secret_ref(
+                secret_ref_id=new_id,
+                status="pending",
+                scope="project",
+                name="github-app",  # 異名
+                rotated_from_id=old_id,
+            ),
+        ]
+    )
+    result = await svc.promote(
+        tenant_id=_TENANT_ID, old_secret_ref_id=old_id, new_secret_ref_id=new_id
+    )
+    assert result.success is False
+    assert result.error_message == "scope_name_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_promote_rotated_from_id_mismatch_rejected() -> None:
+    """Codex F-PR48-002 P2: new.rotated_from_id が old を指さない場合 reject."""
+
+    svc, session = _build_evaluator()
+    old_id = uuid4()
+    new_id = uuid4()
+    unrelated_id = uuid4()
+    session.scalar = AsyncMock(
+        side_effect=[
+            _mock_secret_ref(secret_ref_id=old_id, status="active"),
+            _mock_secret_ref(
+                secret_ref_id=new_id,
+                status="pending",
+                rotated_from_id=unrelated_id,  # 別 secret を指す
+            ),
+        ]
+    )
+    result = await svc.promote(
+        tenant_id=_TENANT_ID, old_secret_ref_id=old_id, new_secret_ref_id=new_id
+    )
+    assert result.success is False
+    assert result.error_message == "rotated_from_id_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_promote_concurrent_old_status_change_rejected() -> None:
+    """Codex F-PR48-004 P1: 旧 active が concurrent 変更で rowcount=0 → atomic claim fail."""
+
+    # default_rowcount=0 で UPDATE が match しない (concurrent status change).
+    svc, session = _build_evaluator(default_rowcount=0)
+    old_id = uuid4()
+    new_id = uuid4()
+    session.scalar = AsyncMock(
+        side_effect=[
+            _mock_secret_ref(secret_ref_id=old_id, status="active"),
+            _mock_secret_ref(
+                secret_ref_id=new_id,
+                status="pending",
+                rotated_from_id=old_id,
+            ),
+        ]
+    )
+    result = await svc.promote(
+        tenant_id=_TENANT_ID, old_secret_ref_id=old_id, new_secret_ref_id=new_id
+    )
+    assert result.success is False
+    assert result.error_message == "concurrent_old_status_change"
 
 
 @pytest.mark.asyncio

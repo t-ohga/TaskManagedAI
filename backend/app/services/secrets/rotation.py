@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Final, Literal, cast
+from typing import Any, Final, Literal, cast
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -39,6 +39,7 @@ from backend.app.db.app_role import (
 )
 from backend.app.db.models.secret_ref import SecretRef
 from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
+from backend.app.repositories.audit_event import AuditEventRepository
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,27 @@ class SecretRotationService:
             return
         await assert_tenant_context(self.session, tenant_id)
 
+    async def _append_audit_event(
+        self,
+        *,
+        tenant_id: int,
+        event_type: str,
+        payload: dict[str, object],
+    ) -> None:
+        """Codex F-PR48-005 P2 adopt: rotation event を audit_events に persist (同 transaction).
+
+        durable security review/export trail に rotation 履歴を残す.
+        AuditEventRepository.append() が内部で `assert_no_raw_secret` を call するため、
+        payload に raw secret 値が含まれば即 reject (defense-in-depth).
+        """
+
+        repo = AuditEventRepository(self.session)
+        await repo.append(
+            tenant_id=tenant_id,
+            event_type=event_type,
+            payload=payload,
+        )
+
     async def _fetch_secret_ref(
         self, tenant_id: int, secret_ref_id: UUID
     ) -> SecretRef | None:
@@ -141,6 +163,10 @@ class SecretRotationService:
 
         本 method は **既存 pending secret_ref の検証のみ** (実際の row insert は
         admin SOPS rotation 経路で別途完了済前提). canary preflight を pass する.
+
+        Codex F-PR48-001 P1 adopt: caller-supplied metadata に加え、persisted
+        `existing.metadata_` も `assert_no_raw_secret` で scan (DB constraint は
+        prohibited key reject だが raw secret value pattern は reject しないため).
         """
 
         _canary_preflight(metadata)
@@ -172,6 +198,34 @@ class SecretRotationService:
                 error_message="invalid_status",
             )
 
+        # F-PR48-001 P1: persisted metadata canary scan (raw value pattern reject).
+        try:
+            assert_no_raw_secret(existing.metadata_)
+        except ValueError as exc:
+            return RotationDrillResult(
+                timestamp=_now_utc().isoformat(),
+                operation="issue_new",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=None,
+                new_secret_ref_id=str(new_secret_ref_id),
+                transitions=(),
+                plan_or_log=f"persisted metadata canary preflight rejected: {exc}",
+                error_message="persisted_metadata_canary_hit",
+            )
+
+        # F-PR48-005 P2: audit_events に persist (同 transaction).
+        await self._append_audit_event(
+            tenant_id=tenant_id,
+            event_type="secret_rotation_issue_new",
+            payload={
+                "secret_ref_id": str(new_secret_ref_id),
+                "scope": existing.scope,
+                "name": existing.name,
+                "status": "pending",
+            },
+        )
+
         return RotationDrillResult(
             timestamp=_now_utc().isoformat(),
             operation="issue_new",
@@ -196,6 +250,12 @@ class SecretRotationService:
         1. old (active) を deprecated に降格 + deprecated_at set
         2. new (pending) を active に promote
         全 update は同一 transaction、partial failure で全 rollback.
+
+        Codex F-PR48-002 P2 adopt: old/new の `scope`/`name` 一致 + `new.rotated_from_id`
+        が old を指すこと verify (無関係 secret_ref swap 防止).
+
+        Codex F-PR48-004 P1 adopt: UPDATE WHERE に expected status を含め、row count
+        check で concurrent stale status race を atomic claim pattern で防ぐ.
         """
 
         await self._ensure_tenant_context(tenant_id)
@@ -242,16 +302,104 @@ class SecretRotationService:
                 error_message="invalid_new_status",
             )
 
-        # Atomic transaction: 同一 commit で old→deprecated + new→active.
-        await self.session.execute(
+        # F-PR48-002 P2: same scope/name + rotated_from_id 一致 verify
+        # (operator が無関係 secret_ref を swap して不正 rotation するのを防ぐ).
+        if (
+            old_ref.scope != new_ref.scope
+            or old_ref.name != new_ref.name
+        ):
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="promote",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(old_secret_ref_id),
+                new_secret_ref_id=str(new_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    f"old/new scope/name mismatch: "
+                    f"old={old_ref.scope}/{old_ref.name} new={new_ref.scope}/{new_ref.name}"
+                ),
+                error_message="scope_name_mismatch",
+            )
+        if new_ref.rotated_from_id != old_secret_ref_id:
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="promote",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(old_secret_ref_id),
+                new_secret_ref_id=str(new_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    f"new.rotated_from_id must point to old: "
+                    f"got {new_ref.rotated_from_id}, expected {old_secret_ref_id}"
+                ),
+                error_message="rotated_from_id_mismatch",
+            )
+
+        # Atomic claim UPDATE (F-PR48-004 P1): expected status を WHERE に含める,
+        # row count を verify (concurrent transition で stale row update 防止).
+        old_result = await self.session.execute(
             update(SecretRef)
-            .where(SecretRef.tenant_id == tenant_id, SecretRef.id == old_secret_ref_id)
+            .where(
+                SecretRef.tenant_id == tenant_id,
+                SecretRef.id == old_secret_ref_id,
+                SecretRef.status == "active",  # expected status
+            )
             .values(status="deprecated", deprecated_at=timestamp, updated_at=timestamp)
         )
-        await self.session.execute(
+        if cast("Any", old_result).rowcount != 1:
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="promote",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(old_secret_ref_id),
+                new_secret_ref_id=str(new_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    "concurrent status change detected (old no longer active); "
+                    "atomic claim failed"
+                ),
+                error_message="concurrent_old_status_change",
+            )
+        new_result = await self.session.execute(
             update(SecretRef)
-            .where(SecretRef.tenant_id == tenant_id, SecretRef.id == new_secret_ref_id)
+            .where(
+                SecretRef.tenant_id == tenant_id,
+                SecretRef.id == new_secret_ref_id,
+                SecretRef.status == "pending",  # expected status
+            )
             .values(status="active", updated_at=timestamp)
+        )
+        if cast("Any", new_result).rowcount != 1:
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="promote",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(old_secret_ref_id),
+                new_secret_ref_id=str(new_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    "concurrent status change detected (new no longer pending); "
+                    "atomic claim failed"
+                ),
+                error_message="concurrent_new_status_change",
+            )
+
+        # F-PR48-005 P2: audit_events に persist.
+        await self._append_audit_event(
+            tenant_id=tenant_id,
+            event_type="secret_rotation_promote",
+            payload={
+                "old_secret_ref_id": str(old_secret_ref_id),
+                "new_secret_ref_id": str(new_secret_ref_id),
+                "scope": old_ref.scope,
+                "name": old_ref.name,
+                "transitions": ["old:active→deprecated", "new:pending→active"],
+            },
         )
 
         logger.info(
@@ -312,10 +460,39 @@ class SecretRotationService:
                 error_message="invalid_status",
             )
 
-        await self.session.execute(
+        # F-PR48-004 P1 pattern: expected status WHERE + row count.
+        revoke_result = await self.session.execute(
             update(SecretRef)
-            .where(SecretRef.tenant_id == tenant_id, SecretRef.id == secret_ref_id)
+            .where(
+                SecretRef.tenant_id == tenant_id,
+                SecretRef.id == secret_ref_id,
+                SecretRef.status == "deprecated",
+            )
             .values(status="revoked", revoked_at=timestamp, updated_at=timestamp)
+        )
+        if cast("Any", revoke_result).rowcount != 1:
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="revoke",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(secret_ref_id),
+                new_secret_ref_id=None,
+                transitions=(),
+                plan_or_log="concurrent status change detected; atomic claim failed",
+                error_message="concurrent_status_change",
+            )
+
+        # F-PR48-005 P2: audit_events persist.
+        await self._append_audit_event(
+            tenant_id=tenant_id,
+            event_type="secret_rotation_revoke",
+            payload={
+                "secret_ref_id": str(secret_ref_id),
+                "scope": ref.scope,
+                "name": ref.name,
+                "transitions": ["deprecated→revoked"],
+            },
         )
 
         logger.info(
@@ -393,22 +570,68 @@ class SecretRotationService:
                 error_message="invalid_current_status",
             )
 
-        # Atomic rollback: currently_active → deprecated、deprecated_secret_ref → active.
-        await self.session.execute(
+        # F-PR48-003 + F-PR48-004 P1 atomic claim: expected status WHERE + row count.
+        # 旧 active を deprecated に降格 (must currently be active)
+        active_demote = await self.session.execute(
             update(SecretRef)
             .where(
                 SecretRef.tenant_id == tenant_id,
                 SecretRef.id == currently_active_secret_ref_id,
+                SecretRef.status == "active",
             )
             .values(status="deprecated", deprecated_at=timestamp, updated_at=timestamp)
         )
-        await self.session.execute(
+        if cast("Any", active_demote).rowcount != 1:
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="rollback",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(currently_active_secret_ref_id),
+                new_secret_ref_id=str(deprecated_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    "concurrent status change on current_active; atomic claim failed"
+                ),
+                error_message="concurrent_active_status_change",
+            )
+        # deprecated → active 復元 (must currently be deprecated、revoked からは不可)
+        deprecated_restore = await self.session.execute(
             update(SecretRef)
             .where(
                 SecretRef.tenant_id == tenant_id,
                 SecretRef.id == deprecated_secret_ref_id,
+                SecretRef.status == "deprecated",  # revoked からの復元防止
             )
             .values(status="active", deprecated_at=None, updated_at=timestamp)
+        )
+        if cast("Any", deprecated_restore).rowcount != 1:
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="rollback",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(currently_active_secret_ref_id),
+                new_secret_ref_id=str(deprecated_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    "rollback target status changed concurrently (revoked or other); "
+                    "atomic claim failed"
+                ),
+                error_message="concurrent_rollback_target_change",
+            )
+
+        # F-PR48-005 P2: audit_events persist.
+        await self._append_audit_event(
+            tenant_id=tenant_id,
+            event_type="secret_rotation_rollback",
+            payload={
+                "restored_secret_ref_id": str(deprecated_secret_ref_id),
+                "demoted_secret_ref_id": str(currently_active_secret_ref_id),
+                "scope": deprecated_ref.scope,
+                "name": deprecated_ref.name,
+                "transitions": ["current_active→deprecated", "deprecated→active"],
+            },
         )
 
         logger.info(
