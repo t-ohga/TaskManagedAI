@@ -1,11 +1,11 @@
 ---
 id: "SP-008_github_app_repoproxy"
 type: "heavy"
-status: "partial_skeleton"
+status: "done"
 sprint_no: 8
 created_at: "2026-05-13"
-updated_at: "2026-05-13"
-review_summary: "skeleton + mock + ADR proposed のみ。BL-0094/0095/0097/0100/0102 (5/9 BL) は Sprint 11 で本実装。Codex audit 2026-05-13 で F-001/F-005 指摘 adopt 済。"
+updated_at: "2026-05-17"
+review_summary: "Sprint 11 carry-over 7 BL (BL-0094/0095/0096a/0097/0100/0101a/0102) 完遂 (2026-05-17 SP-011 Exit)。broker-mediated installation token + 4 整合 binding server-owned 再計算 + Webhook HMAC service layer + AC-KPI-02 time_to_merge 達成。Codex audit 2026-05-13 で F-001/F-005 指摘 adopt 済 + Sprint 11 multi-round で全 BL clean。"
 target_days: 5
 max_days: 7
 adr_refs:

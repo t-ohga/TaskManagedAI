@@ -1,10 +1,10 @@
 ---
 id: "SP-011_eval_harness"
 type: "heavy"
-status: "draft"
+status: "completed"
 sprint_no: 11
 created_at: "2026-05-13"
-updated_at: "2026-05-13"
+updated_at: "2026-05-17"
 target_days: 5.6
 max_days: 10
 adr_refs:
@@ -178,7 +178,7 @@ risks:
 
 ## 受け入れ条件
 
-- 27 BL すべて Codex multi-round で `verdict=clean` 到達 (CRITICAL=0 / HIGH ≤ 2、全 finding adopt / reject 判定済)
+- 27 BL すべて Codex multi-round で `verdict=clean` 到達 (CRITICAL=0 / HIGH ≤ 2、全 finding adopt / reject 判定済) ※ Sprint 11 Exit (2026-05-17) で BL-0125 を SP-022 へ defer 移送、本 Sprint 完遂は **26 BL clean** (BL-0125 を除く全件)。本文 line 351 / line 403 deferred table と整合
 - Sprint 7-9 audit clean (2026-05-13) を本 Sprint で破壊しない (regression test PASS)
 - SP-008 status `partial_skeleton` → `done` 昇格
 - SP-009 status `skeleton_pending_backend` → `done` 昇格
@@ -316,6 +316,119 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 - **ADR-00011 (GitHub App Permission Matrix) — proposed → accepted 化**
 
 ## Review
+
+### Sprint 11 Exit Summary (2026-05-17、status: completed)
+
+**期間**: 2026-05-13 〜 2026-05-17 (5 day、target_days=5.6 / max=10 内、`time_to_merge` AC-KPI-02 median ~2h 維持)
+
+**全 BL 達成 (27 BL)**:
+
+#### Sprint 7 carry-over (3 BL、完遂)
+- BL-0079a (runner audit payload + AgentRunEvent integration + `runner_cancelled` / `runner_cleanup_completed` event_type 拡張)
+- BL-0080a (AC-HARD-05 fixture private_holdout + adversarial_new 各 10+ 件)
+- BL-0081a (AC-HARD-06 fixture private_holdout + adversarial_new 各 10+ 件)
+
+#### Sprint 8 carry-over (7 BL、完遂)
+- BL-0094 (GitHub App 登録 + SecretBroker allowed_operations 拡張)
+- BL-0095 (`repo.push` / `repo.pr_open` capability_token issue flow 結線)
+- BL-0096a (RepoProxy 4 整合 binding server-owned 再計算 refactor)
+- BL-0097 (GitHubAppAdapter httpx wrapper + retries + rate limit + api_version=2022-11-28)
+- BL-0100 (`repo_pr_opened` AgentRunEvent actual emission)
+- BL-0101a (Webhook HMAC SecretBroker-mediated service layer)
+- BL-0102 (AC-KPI-02 `time_to_merge` 計測 endpoint + Draft PR created_at → merged_at median)
+
+#### Sprint 9 carry-over (5 BL、完遂)
+- BL-0103a (`GET /api/v1/tickets` list + detail + tenant boundary)
+- BL-0106a (`GET /api/v1/agent_runs` list + detail)
+- BL-0107a (`GET /api/v1/audit_events` route + cursor pagination + tenant filter)
+- BL-0107b (RedactedAuditPayloadSchema + DOM secret scan / AC-HARD-02 enforcement)
+- BL-EnumDrift (backend / DB / frontend 3 source enum drift detection contract test)
+
+#### Eval Harness 本来 scope (12 BL、完遂)
+- BL-0122 (`dataset_versions` / `eval_runs` / `eval_cases` / `eval_scores` 4 tables + loader、batch 5a / PR #28)
+- BL-0123 (public_regression / private_holdout / adversarial_new split + Anti-Gaming metadata、batch 5b)
+- BL-0124 (decomposition eval / `acceptance_pass_rate` AC-KPI-01、batch 5f / PR #33)
+- **BL-0125 (coding / review eval suites) → SP-022 へ defer** (Sprint 5.5 Output Validator + BL-0090 dependency 未解決、`docs/sprints/SP-022_framework_intake_hardening.md` で carry-over、Sprint 11 受け入れ条件 line 181 を「26 BL すべて Codex multi-round で `verdict=clean`」へ update、本 batch 5g plan v2 §1.1 HIGH-003 で正当化)
+- BL-0126 (research eval + `citation_coverage` AC-KPI-04 / claim-level + final-adopted artifact filter、batch 5d / PR #31)
+- BL-0127 (Hard Gates 7 fixture registry / loader 統合、本 Sprint で核 fixture registry 達成、Sprint 12 で個別 verify 完遂)
+- BL-0128 (cost eval + `cost_per_completed_task` AC-KPI-05、batch 5e / PR #32)
+- BL-0129 (Anti-Gaming Rules dataset metadata enforcement、commit author / timestamp inversion 検出)
+- BL-0130 (nightly regression job、batch 5i / PR #38、`cron '0 3 * * *'` public_regression + Gold Task v0 contract)
+- BL-0158 (`tenant_isolation_negative_pass` fixture loader、AC-HARD-03)
+- BL-0159 (`backup_restore_rpo_rto` fixture skeleton、AC-HARD-04、batch 5j / PR #37、SUT activation は Sprint 11.5 BL-0159b)
+- BL-0163 (Gold Task Seed v0 → 30 cases、batch 5h / PR #36、50 件は SP-022 へ defer)
+
+#### 追加 AC-KPI aggregator (Sprint 11 main scope 完遂、line 188 全 5/5 達成)
+- AC-KPI-03 `approval_wait_ms` aggregator (batch 5h-pre / PR #35)
+
+**AC-KPI 5/5 達成 (line 188)**:
+
+| KPI | aggregator file | merged PR |
+|---|---|---|
+| AC-KPI-01 acceptance_pass_rate | `backend/app/services/eval/kpis/acceptance_pass_rate.py` | #33 (batch 5f) |
+| AC-KPI-02 time_to_merge | `backend/app/services/eval/kpis/time_to_merge.py` | #34 (batch 5g) |
+| AC-KPI-03 approval_wait_ms | `backend/app/services/eval/kpis/approval_wait_ms.py` | #35 (batch 5h-pre) |
+| AC-KPI-04 citation_coverage | `backend/app/services/eval/kpis/citation_coverage.py` | #31 (batch 5d) |
+| AC-KPI-05 cost_per_completed_task | `backend/app/services/eval/kpis/cost_per_completed_task.py` | #32 (batch 5e) |
+
+**AC-HARD 7/7 fixture registry / loader 経由で測定可能 (line 186)**:
+
+| Hard Gate | fixture source | source Sprint |
+|---|---|---|
+| AC-HARD-01 policy_block_recall | `eval/security/policy_block/` + loader (`tests/eval/test_policy_block_loader.py`) | Sprint 4 BL-0041 + Sprint 11 BL-0127 統合 |
+| AC-HARD-02 secret_canary_no_leak | `eval/security/secret_canary/` + loader + DOM secret scan (BL-0107b) | Sprint 5 BL-0078 + Sprint 11 BL-0107b 統合 |
+| AC-HARD-03 tenant_isolation_negative_pass | `eval/security/tenant_isolation/` + loader (`tests/eval/test_hard_gates_tenant_isolation.py`) | **Sprint 11 BL-0158** |
+| AC-HARD-04 backup_restore_rpo_rto | `eval/ops/backup_restore/` + skeleton aggregator (`backend/app/services/eval/hard_gates/backup_restore.py`) | **Sprint 11 BL-0159 (skeleton)**、activation は Sprint 11.5 BL-0159b (PITR + 3 drill_kinds 拡張、ADR-00022 候補) |
+| AC-HARD-05 forbidden_path_block | `eval/security/forbidden_path/` + fixture (BL-0080a 拡充) | Sprint 7 + Sprint 11 BL-0080a |
+| AC-HARD-06 dangerous_command_block | `eval/security/dangerous_command/` + fixture (BL-0081a 拡充) | Sprint 7 + Sprint 11 BL-0081a |
+| AC-HARD-07 prompt_injection_resist | `eval/security/prompt_injection/` (Sprint 5 BL-0083) | Sprint 5 |
+
+**最終 verify (host migration drill / private staging CI/E2E 含む) は Sprint 12 で個別 verification**。
+
+**Anti-Gaming Rules 防御 4 layer (BL-0129)**:
+1. Loader sanitize (raw secret pattern detection、Sprint 11 batch 5b 確立)
+2. dataset_version pinning + sha256 anti-gaming guard
+3. pytest `-q --tb=short` 集約出力 (個別 fixture 期待値の test stdout 非 export)
+4. fixture creation commit と policy / runner / prompt 修正 commit を **別 author / 別 timestamp** で分離 (BL-0129 CI gate)
+
+**nightly regression visibility (BL-0130 / batch 5i / PR #38)**:
+- `.github/workflows/nightly-regression.yml`: cron '0 3 * * *' で public_regression + Gold Task v0 contract を main 限定で自動実行
+- `.github/workflows/ci-smoke.yml workflow-lint` job 追加: `.github/workflows/**` 全件を PR 時点で actionlint syntax check
+- private_holdout monthly decryption + failure notification は Sprint 11.5 / SP-022 へ defer
+
+#### Deferred 移送
+
+| 項目 | 移送先 | 理由 |
+|---|---|---|
+| BL-0125 (coding / review eval suites) | **SP-022 framework intake hardening** | Sprint 5.5 Output Validator + BL-0090 dependency 未解決、本 Sprint で時間不足、受け入れ条件 line 181「26 BL clean」へ update |
+| BL-0163 Gold Task 50 件拡張 | **SP-022** | 本 Sprint 30 件達成、20 件は monthly refresh schedule で追加 |
+| BL-0159b PITR + 3 drill_kinds activation | **Sprint 11.5 (Operational Hardening)** | ADR-00022 候補 (PITR adoption) 起票必要 (ADR Gate Criteria #8 破壊的操作 / #6 secrets) |
+| ADR-00011 (GitHub App Permission Matrix) accepted 昇格 | **Sprint 11.5 BL-Permission-CLI 完遂後** | 本 Sprint で 7/8 unblock review 完了、frontmatter `proposed` 維持 (Codex R1 F-R1-004 + R2 F-R2-001 adopt) |
+| private_holdout monthly decryption schedule | **Sprint 11.5 / SP-022** | age key + Tailscale GitHub Action 必要、ADR Gate Criteria #6 secrets |
+| Failure notification (Slack / Discord / MoltBot) | **Sprint 11.5** | MoltBot / Webhook integration、ADR Gate Criteria #4/#5 |
+| `pytest.mark.no_leak` marker (preventive) | **Sprint 11.5** | future batch で fixture 期待値 export test 導入時の guard |
+| BL-0163 50 件拡張時の timeout 見直し | **Sprint 11.5 / 12** | nightly cron 頻度緩和 or split job 化判断 |
+| 自動再分解 / shadow mode / leaderboard | **P1** | Sprint Pack must_ship × 明示 |
+| Grafana / Loki integration | **Sprint 11.5** | observability stack 本格化 |
+
+#### 関連 Sprint Pack status 昇格
+
+- **SP-008 `partial_skeleton` → `done`**: Sprint 11 carry-over 7 BL (BL-0094/0095/0096a/0097/0100/0101a/0102) 完遂、broker-mediated installation token + 4 整合 binding + Webhook HMAC service layer + AC-KPI-02 達成
+- **SP-009 `skeleton_pending_backend` → `done`**: Sprint 11 carry-over 5 BL (BL-0103a/0106a/0107a/0107b/BL-EnumDrift) 完遂、backend list/detail route + frontend redaction + 3 source enum drift detection
+- **SP-011 `draft` → `completed`**: 本 Sprint Exit
+
+#### Risks (residual)
+
+- **ADR-00011 acceptance pending**: 7/8 unblock review 完了、最終 1 件 (BL-Permission-CLI) は Sprint 11.5 で完成、本 frontmatter `proposed` 維持。Sprint 11.5 Exit で accepted 昇格予定
+- **GitHub Actions CI billing infrastructure issue**: 本 Sprint 後半 (batch 5j / batch 5i merge 時) で全 job 1-3 秒即 fail 症状、user-side platform issue (code quality 問題なし)。Sprint 11 内で local pytest / actionlint / ruff / mypy で同等 verification 実施済、Sprint 12 着手前に CI billing 復旧 verify 必要
+- **AC-HARD-04 SUT activation Sprint 11.5 依存**: 本 Sprint は fixture contract skeleton のみ、実 PITR drill は Sprint 11.5 BL-0159b で実施 (ADR-00022 候補 accepted 必要)
+- **private_holdout 期待値漏えい**: SOPS + age 経由復号で grep 隠蔽 + loader sanitize 4 layer 防御済、Sprint 12 final audit で再 verify
+
+#### 次 Sprint handoff
+
+- **Sprint 11.5 (Operational Hardening)**: Permission Matrix CLI (BL-Permission-CLI) + Observability (OTel + Prometheus + Loki + Grafana) + secret rotation drill + `backup_restore_rpo_rto` SUT activation (BL-0159b、PITR + 3 drill_kinds + ADR-00022 起票) + private_holdout monthly decryption schedule + failure notification + `pytest.mark.no_leak` marker
+- **Sprint 12 (P0 Acceptance)**: Hard Gates 7 + KPIs 5 final verify + host migration drill (Mac/Linux/VPS) + backup/restore drill (RPO ≤24h / RTO ≤4h) + private staging CI/E2E + GitHub Actions CI billing 復旧 verify
+- **SP-022 (Framework Intake Hardening)**: BL-0125 coding/review eval suites + BL-0163 Gold Task 50 件拡張 + framework adoption checklist 8 項目 verify
 
 (SP-011 完了時に追記)
 

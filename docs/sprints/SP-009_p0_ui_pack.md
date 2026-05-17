@@ -1,11 +1,11 @@
 ---
 id: "SP-009_p0_ui_pack"
 type: "heavy"
-status: "skeleton_pending_backend"
-review_summary: "5 page skeleton + 3 API client draft + Playwright spec のみ。実 backend route は未実装、API client は `_listXxxDraft` prefix で signal。Sprint 11 で backend route 実装 + integration test 結線。Codex audit 2026-05-13 で F-004/F-006/F-008 指摘 adopt 済。"
+status: "done"
+review_summary: "Sprint 11 carry-over 5 BL (BL-0103a/0106a/0107a/0107b/BL-EnumDrift) 完遂 (2026-05-17 SP-011 Exit)。backend list/detail route + frontend redaction schema + DOM secret scan + 3 source enum drift detection contract test 結線。Codex audit 2026-05-13 で F-004/F-006/F-008 指摘 adopt 済 + Sprint 11 multi-round で全 BL clean。"
 sprint_no: 9
 created_at: "2026-05-12"
-updated_at: "2026-05-14"
+updated_at: "2026-05-17"
 target_days: 6
 max_days: 9
 adr_refs:
