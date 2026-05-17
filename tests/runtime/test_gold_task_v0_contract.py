@@ -17,6 +17,13 @@ from eval.provider.gold_task_v0.runner import run_gold_task_against_adapter
 
 _SHA256_HEX_RE = re.compile(r"^[a-f0-9]{64}$")
 
+# F-PR36-R2-003 P2 (LOW) adopt / DRY: Sprint 5 era originals exempt
+# from BL-0163 batch 5h metadata + oracle keywords enforcement. Single
+# source of truth for both invariant tests.
+_SPRINT5_ORIGINAL_IDS: frozenset[str] = frozenset(
+    {"simple_request", "structured_output", "safety_refusal"}
+)
+
 
 class _Response:
     def __init__(self, status_code: int = 200, payload: dict[str, Any] | None = None) -> None:
@@ -284,9 +291,8 @@ def test_gold_task_v0_expansion_cases_carry_metadata() -> None:
     backwards compatibility.
     """
 
-    sprint5_originals = {"simple_request", "structured_output", "safety_refusal"}
     for case in GOLD_TASK_V0_CASES:
-        if case.case_id in sprint5_originals:
+        if case.case_id in _SPRINT5_ORIGINAL_IDS:
             continue
         assert case.task_metadata is not None, (
             f"case {case.case_id!r} from BL-0163 expansion missing task_metadata"
@@ -313,9 +319,8 @@ def test_gold_task_v0_expansion_cases_have_oracle_keywords() -> None:
     real-provider verification. Sprint 5 originals exempt.
     """
 
-    sprint5_originals = {"simple_request", "structured_output", "safety_refusal"}
     for case in GOLD_TASK_V0_CASES:
-        if case.case_id in sprint5_originals:
+        if case.case_id in _SPRINT5_ORIGINAL_IDS:
             continue
         assert case.task_oracle_keywords, (
             f"case {case.case_id!r} from BL-0163 expansion missing "

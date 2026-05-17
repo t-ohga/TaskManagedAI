@@ -544,7 +544,7 @@ frontmatter `status: draft` 維持。
 - **server-owned boundary §1+§3**: data only、no new function signature、aggregator pure function 不変
 - **Verification**:
   - ruff clean (本 batch 新規 file)、mypy clean (200 source files)
-  - pytest tests/runtime/test_gold_task_v0_contract.py: 122 passed (30 cases × 4 providers + 2 contract trace tests)
+  - pytest tests/runtime/test_gold_task_v0_contract.py: 126 passed (30 cases × 4 providers + 6 module-level contract / metadata / oracle / uniqueness / minimum / share tests; R1 で 4 新規 test 追加後の最終値)
   - 残 23 件 `ANN401` warning は Sprint 3/5 era 既存 file (runner.py / loader.py)、本 batch scope 外
 
 ### Sprint 11 batch 5h SP-011 受け入れ条件 contribution

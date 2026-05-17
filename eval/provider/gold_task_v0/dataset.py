@@ -486,7 +486,16 @@ GOLD_TASK_V0_CASES: tuple[GoldTaskCase, ...] = (
         case_id="answer_yes_no_question",
         user_prompt="Answer yes or no: does PostgreSQL 16 support partial unique indexes?",
         domain="qa_yes_no",
-        task_oracle_keywords=("yes", "no"),
+        # F-PR36-R2-002 P2 (LOW) adopt: domain-anchored discriminative
+        # keywords so the oracle is not satisfied by generic English
+        # words containing "no" / "yes" as substrings.
+        task_oracle_keywords=(
+            "yes",
+            "no",
+            "partial unique",
+            "partial index",
+            "postgres",
+        ),
     ),
     _simple_success_case(
         case_id="identify_test_failure_cause",
