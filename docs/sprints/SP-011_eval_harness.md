@@ -424,6 +424,26 @@ audit_events payload に必須 field (BL-0079a 完成後): `tenant_id` / `actor_
 - **threshold semantics**: AC_KPI_04_THRESHOLD=0.9、AC_KPI_04_THRESHOLD_OPERATOR=">="、threshold_met=True iff `metric_value >= 0.9 AND fixture_count > 0 AND spec_violation 0 AND manifest_violation None AND sut_failure_present=False`。F-PR31-R1-001 + R2-001 + R3-003 P2 adopt: SUT failure (`sut_result_missing` / `sut_result_invalid_type` / `sut_result_false`) を threshold_reason に反映、`threshold_reason ∈ {no_fixtures, manifest_violation, spec_violation, sut_failure, threshold_met, below_threshold}` 優先順序で priority enforcement。`CitationCoverageFixtureResult` には spec / SUT 失敗を physically 分離した **`spec_violation_reason` + `sut_failure_reason`** 2 field を持たせ、downstream consumer の dashboard が SUT 障害を fixture spec defect に誤分類する経路を遮断 (F-PR31-R3-001 P2 adopt)。
 - **既存 batch 1-10 + batch 5a/5b/5c invariant 維持**: ContextSnapshot 10 列 / AgentRun 16 状態 / SecretBroker / Approval 4 整合 / RFC 8785 / batch 5a loader / batch 5b tenant_isolation aggregator / batch 5c generic loader
 
+### Sprint 11 batch 5e 実装進捗 (PR #?? merge 後に commit hash 追記)
+
+- **batch_5e_implementation_pr**: 本 PR (BL-0128 AC-KPI-05 cost_per_completed_task aggregator)
+- **実装 BL**: BL-0128 (cost eval suite + cost_per_completed_task aggregator、batch 5d patterns 拡張)
+- **新規 file**:
+  - `backend/app/services/eval/kpis/cost_per_completed_task.py` (~480 LOC、AC_KPI_05_* constants + SampleRun + CostPerCompletedTaskFixtureResult + CostPerCompletedTaskMetricResult + evaluate_cost_per_completed_task)
+  - `tests/eval/test_kpis_cost_per_completed_task.py` (~720 LOC、64 test cases including 5+ source enum + happy path (live 5 runs / 3 completed / $0.6 / $0.2 per task) + Anti-Gaming completed-only filter × 1 + manifest drift × 7 + spec violations × 18 + edge cases × 4 + sut_results × 6 + raw content non-leakage)
+- **実装手法**: Claude が Write tool で直接実装 (新 workflow、Codex は plan-review / code-review に専念)
+- **Anti-Gaming invariants** (manifest kpi_specific):
+  1. `cost_per_completed_task is calculated from normalized provider usage after BudgetGuard accounting` — aggregator が canonical recomputed metric を生成、expected_aggregate.cost_per_completed_task_usd は drift-detection oracle のみ
+  2. `only AgentRun status=completed contributes to numerator and denominator` — failed / cancelled / refused / repair-exhausted / non-terminal runs を numerator + denominator から filter out。完全 AgentRun 16 状態 enum (_KNOWN_AGENT_RUN_STATUSES) で status validation、unknown status は spec_violation:status で fail-closed
+- **server-owned boundary §1+§3**: caller-supplied `list[Fixture]` 直接受け取り signature なし、sut_results は read-only Mapping、pure function (DB / file system / network access なし)
+- **5+ source enum integrity**: 4 AC_KPI_05_* constants (KPI_ID / METRIC_KEY / THRESHOLD_USD / CURRENCY) が Python Literal + Final + `__all__` export + pytest EXPECTED constants + 実 manifest values + 実 fixture envelope の 5 source で exact set 比較
+- **BL-0127b / SP-012 forward-compat**: optional `sut_results: Mapping[str, bool] | None` parameter、batch 5d patterns 継承 (sut_failure_reason 分離 / spec_violation skip SUT / non-boolean strict reject / stale fixture_id warn log)
+- **redacted splits skip**: `_SUPPORTED_FIXTURE_KINDS=("public_regression",)` 限定、private_holdout / adversarial_new は SP-022+ で encrypted-holdout decryption path 追加後に対応
+- **threshold semantics**: AC_KPI_05_THRESHOLD_USD=0.5、AC_KPI_05_CURRENCY="USD"、**LOWER is better** ("<=" operator)。threshold_met=True iff `metric_value <= 0.5 AND fixture_count > 0 AND total_completed_runs_across_corpus > 0 AND spec_violation 0 AND manifest_violation None AND sut_failure_present=False`。`threshold_reason ∈ {no_fixtures, manifest_violation, spec_violation, sut_failure, no_completed_runs, threshold_met, above_threshold}` 優先順序で priority enforcement。新 `no_completed_runs` reason は corpus に completed AgentRun が 1 件もない場合 (KPI 未定義) — failed / cancelled fixtures のみの corpus を threshold pass 扱いしない fail-closed
+- **per-run structural validation**: run_id (RFC 4122 lowercase UUID v1-5 + RFC variant nibble + UUID() parseability)、tenant_id (non-bool int >= 1)、project_id (non-bool int >= 1、F-PR32-R1-004 + R2-002 P3 adopt: schema minimum 1 と整合)、status (AgentRun 16 状態 enum)、cost_usd (non-bool finite float >= 0.0)、tokens_input + tokens_output (non-bool int >= 0、F-PR32-R2-001 P2 adopt) を strict 検査。`sample_runs` 自体は `minItems=1` を要求 (F-PR32-R2-003 P2 adopt)。
+- **expected_aggregate drift detection**: total_completed_runs / total_cost_usd / cost_per_completed_task_usd / threshold_usd / threshold_passed の 5 field 全てを recomputed と一致を要求 (5 reason_code: expected_aggregate_{completed_drift,total_cost_drift,ratio_drift,threshold_drift,passed_drift})
+- **既存 batch 1-10 + batch 5a〜5d invariant 維持**: ContextSnapshot 10 列 / AgentRun 16 状態 / SecretBroker / Approval 4 整合 / RFC 8785 / batch 5a loader / batch 5b tenant_isolation aggregator / batch 5c generic loader / batch 5d citation_coverage aggregator
+
 frontmatter `status: draft` 維持。
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
