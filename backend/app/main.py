@@ -17,6 +17,13 @@ from backend.app.middleware.dev_actor import (
     DevActorContextMiddleware,
     RequireAuthenticatedActorMiddleware,
 )
+from backend.app.observability import (
+    PrometheusMetricsAccessGuard,
+    create_metrics_router,
+    setup_logging,
+    setup_otel,
+    setup_prometheus,
+)
 
 _DEV_ACTOR_CONTEXT_ENVIRONMENTS = frozenset({"development", "test"})
 
@@ -53,6 +60,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(RequestIDMiddleware, header_name=resolved_settings.request_id_header)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=resolved_settings.allowed_hosts)
 
+    # Sprint 11.5 batch 0 (BL-0131 + BL-0132): /metrics endpoint への access を
+    # IP allowlist (127.0.0.0/8 + ::1/128 + 100.64.0.0/10) で防御.
+    # production で 0.0.0.0 bind が誤って導入されても 403 でブロック.
+    app.add_middleware(PrometheusMetricsAccessGuard)
+
     if resolved_settings.environment == "development":
         app.add_middleware(
             CORSMiddleware,
@@ -61,6 +73,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=["*"],
         )
+
+    # Sprint 11.5 batch 1 BL-0133: structured logging (JSON Lines) for Loki shipping.
+    # observability_enabled=False で NoOp. setup_otel より先に call (logger 経由 init log を JSON 化).
+    setup_logging(role="api")
+
+    # Sprint 11.5 batch 0 BL-0131: OTel TracerProvider + auto-instrument
+    # (FastAPI / httpx / SQLAlchemy / Redis). observability_enabled=False で NoOp.
+    # Codex F-PR40-001 P2 adopt: instance-bound `instrument_app(app)` のため app= で渡す.
+    setup_otel(role="api", app=app)
+
+    # Sprint 11.5 batch 0 BL-0132: Prometheus metrics + /metrics endpoint mount.
+    # prometheus_metrics_enabled=False で NoOp.
+    prometheus_registry = setup_prometheus()
+    if prometheus_registry is not None:
+        from backend.app.observability.prometheus import PrometheusRequestDurationMiddleware
+
+        app.add_middleware(PrometheusRequestDurationMiddleware, registry=prometheus_registry)
+        app.include_router(create_metrics_router(prometheus_registry))
 
     app.include_router(api_router)
     app.include_router(approval_inbox.router)

@@ -1,0 +1,13 @@
+# Sprint 11.5 batch 1 (BL-0134): Dashboard provisioning config.
+apiVersion: 1
+providers:
+  - name: "taskmanagedai"
+    orgId: 1
+    folder: "TaskManagedAI"
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: false  # UI 編集禁止 (file-based provisioning only)
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

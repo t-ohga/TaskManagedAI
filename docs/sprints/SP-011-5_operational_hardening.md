@@ -8,6 +8,7 @@ updated_at: "2026-05-13"
 target_days: 5.4
 max_days: 7
 adr_refs:
+  - "[ADR-00003](../adr/00003_api_contract.md) # accepted、Sprint 11.5 batch 0 で /metrics Prometheus exporter endpoint 追加 update note を append (2026-05-17)"
   - "[ADR-00006](../adr/00006_secrets_management.md) # accepted、rotation drill 完成で update"
   - "[ADR-00007](../adr/00007_external_exposure.md) # accepted、private staging Tailscale GitHub Action 確認"
   - "[ADR-00008](../adr/00008_destructive_operation.md) # accepted、rotation drill destructive operation invariant"
@@ -283,4 +284,97 @@ audit_events payload に必須 field: `tenant_id` / `actor_id` / `run_id?` / `se
 
 ## Review
 
-(SP-011-5 完了時に追記)
+### batch 1 (BL-0133 Loki + BL-0134 Grafana dashboard skeleton / 2026-05-17 session)
+
+#### Changed
+- `backend/app/observability/logging.py` 新規 (JsonLinesFormatter + setup_logging + LogRecordFactory injection + `_payload_secret_scan` 経由 raw secret reject)
+- `tests/observability/test_structured_logging.py` 新規 (14 件、JSON format / label injection / actor_id_hash / raw secret reject / idempotent setup)
+- `docker-compose.observability.yml` 新規 (profile `observability`、Loki + Grafana + promtail + Prometheus services、全 127.0.0.1 bind)
+- `config/observability/loki.yml` (retention 7 day、`LOKI_RETENTION_PERIOD` env で override)
+- `config/observability/promtail.yml` (Docker socket scrape + JSON parse + 5 label extract)
+- `config/observability/prometheus.yml` (api/worker/loki/self scrape)
+- `config/observability/grafana/grafana.ini` (anonymous Viewer、disable embedding/external snapshot/analytics)
+- `config/observability/grafana/datasources/{loki,prometheus}.yml` (provisioning、`editable: false`)
+- `config/observability/grafana/dashboards/provisioning.yml` (`allowUiUpdates: false`)
+- `config/observability/grafana/dashboards/taskmanagedai-overview.json` 新規 (6 row skeleton: Hard Gates 7 / Quality KPIs 5 / Provider Compliance 3 別 dimension / SecretBroker logs / Runner+RepoProxy gateway_kind 分離 / Approval+Audit)
+- `backend/app/main.py`: `setup_logging("api")` を `setup_otel` より先に call
+- `backend/app/workers/main.py`: `setup_logging("worker")` を `on_startup` 先頭で call
+- `backend/app/observability/__init__.py`: logging API re-export (setup_logging / JsonLinesFormatter / LOKI_LABEL_FIELDS / hash_actor_id / reset_logging_state)
+
+#### Verified
+- BL-0133 acceptance: JSON Lines log shipping + 5 label (tenant_id / actor_id_hash / run_id / trace_id / payload_data_class) + raw secret reject single source ✅
+- BL-0134 acceptance: Grafana dashboard skeleton 6 panel (Hard Gates / KPI / Provider Compliance / SecretBroker / Runner+RepoProxy / Approval+Audit)、生データ bind は Sprint 12 BL-0164/0165 ✅
+- deny-by-default: 全 service 127.0.0.1 bind / Tailscale 内のみ / Grafana anonymous Viewer ✅
+- SecretBroker boundary: `_payload_secret_scan` single source 継承 (batch 0 と同)、raw secret は emit 前 reject ✅
+- Provider Compliance 3 dimension: dashboard panel で `payload_data_class` / `allowed_data_class` / `effective_allowed_data_class` 別 dimension 明示、合算禁止 ✅
+- cardinality 制御: `actor_id` raw 不可、8-char hex hash prefix のみ (`actor_id_hash` field)、`hash_actor_id` helper ✅
+- plan-reviewer R1 → READY (0 BLOCKER / 0 HIGH / 3 MEDIUM cosmetic / 2 LOW、本 batch 内 inline 対応) ✅
+- local verification: pytest tests/observability/ → **55 passed** (前 41 + 新規 14) / pytest tests/ → **2960 passed + 348 skipped** (regression なし) / mypy 206 source files clean / ruff clean ✅
+
+#### Deferred (batch 2+ / Sprint 11.5 後続)
+- alerting routes (approval pending > 4h / budget exceeded / run_failed spike) → **batch 2 (BL-0135)**
+- private staging Tailscale GitHub Action → **batch 2 (BL-0136)**
+- WAL/PITR + secret rotation drill + audit export → **batch 3 (BL-0137/0138/0139/0156/0159b)**
+- a11y / responsive (Sprint 9 carry-over) → **batch 4 (BL-0109a/0110a)**
+- BL-Permission-CLI (ADR-00011 acceptance carry-over) → **batch 5**
+- KPI metric 生データ bind to dashboard panel → **Sprint 12 BL-0164/0165**
+- worker `/metrics` endpoint (本 batch では prometheus scrape skip、batch 2+ で追加可)
+- production-grade alerting (PagerDuty 等) → SP-022
+- Loki retention 7 day → 30 day 最適化 → SP-022
+
+#### Risks
+- **resource impact**: Loki + Grafana + Prometheus + promtail で +500MB-1GB RAM。`--profile observability` off で resource 不要。
+- **promtail Docker socket scrape**: rootless Docker / Podman で privilege 問題、Mac dev では `/var/run/docker.sock` perm 確認必須 (Sprint 12 host migration drill で final verify)。
+- **Grafana provisioning drift**: `editable: false` + `allowUiUpdates: false` で UI 編集を block、ファイル更新のみで dashboard 更新可能。
+- **runtime overhead measurement (batch 0 L-2)**: 引き続き batch 2 で perf measurement 必須 (本 batch では未測定)。
+
+#### SP-011-5 受け入れ条件 contribution
+- line 178 (14 BL すべて Codex multi-round clean): BL-0133 + BL-0134 はこの PR (累計 **4/14**)
+- line 180 (Grafana dashboard で AC-HARD/KPI visualisation): **dashboard skeleton 達成** (生データ bind は Sprint 12)
+- must_ship table P0 operational minimum line 160-161: BL-0133 + BL-0134 **達成** (skeleton)
+
+### batch 0 (BL-0131 OTel + BL-0132 Prometheus / 2026-05-17 session)
+
+#### Changed
+- `pyproject.toml`: opentelemetry-api/sdk/exporter-otlp-proto-grpc + opentelemetry-instrumentation-{fastapi,httpx,sqlalchemy,redis} (pin `<0.52`) + prometheus-client (`<1.0`) 追加
+- `backend/app/observability/__init__.py` 新規 (public re-exports)
+- `backend/app/observability/config.py` 新規 (`ObservabilitySettings` + `ALLOWED_METRICS_BIND_NETWORKS`)
+- `backend/app/observability/otel.py` 新規 (TracerProvider + auto-instrument 5 + custom span helpers + `_payload_secret_scan` import で redaction single source)
+- `backend/app/observability/prometheus.py` 新規 (`PrometheusRegistry` + `/metrics` route helper + `PrometheusMetricsAccessGuard` middleware + 3 別 data class dimension)
+- `backend/app/main.py`: `setup_otel("api")` + `setup_prometheus()` + `/metrics` mount + `PrometheusMetricsAccessGuard` middleware
+- `backend/app/workers/main.py`: `setup_otel("worker")` (FastAPI instrumentor skip)
+- `tests/observability/` 4 file 新規 (`test_otel_setup.py` 14 件 / `test_prometheus_metrics.py` 14 件 / `test_data_class_dimension.py` 9 件 + `__init__.py`、計 37 件 PASS)
+- `docs/adr/00003_api_contract.md`: `## Sprint 11.5 batch 0 update note` section append (`/metrics` endpoint contract、break-glass #3 対象外で実装着手前 accepted)
+- `docs/sprints/SP-011-5_operational_hardening.md`: adr_refs に ADR-00003 追加 + 本 ## Review batch 0 section
+
+#### Verified
+- BL-0131 acceptance: OTel TracerProvider + auto-instrument (FastAPI / httpx / SQLAlchemy / Redis) + 3 custom span helpers (cost / approval / runner) ✅
+- BL-0132 acceptance: Prometheus `/metrics` endpoint + 5 metric definitions + IP allowlist 2 layer 防御 (127.0.0.0/8 + ::1/128 + 100.64.0.0/10) ✅
+- deny-by-default (`core.md §6`): 127.0.0.1 bind + middleware IP allowlist で production 0.0.0.0 regression 防御 ✅
+- SecretBroker boundary: span attribute / metric label / description に raw secret 含めない、`_payload_secret_scan` single source (AC-HARD-02 整合) ✅
+- Provider Compliance 3 dimension: `payload_data_class` / `allowed_data_class` / `effective_allowed_data_class` を別 label (合算禁止)、`DATA_CLASS_ORDINAL` ordinal 順序 5+ source 整合 ✅
+- 5+ source enum integrity: `gateway_kind` (tool / runner) は `ai-output-boundary.md §9` source 整合 ✅
+- plan-reviewer R1 → R2 READY (R1 全 8 件 adopt: H-1 IP allowlist + H-2 ordinal 5+ source + H-3 redaction single source + M-1 ADR-00003 update note + M-2 dependency pin `<0.52` + M-3 gateway_kind 5+ source + L-1 tests/__init__.py + L-2 runtime overhead measurement defer) ✅
+- local verification: `uv run pytest tests/observability/ -q` → 37 passed / `uv run mypy backend` → 205 source files clean / `uv run ruff check backend tests` → All checks passed / `uv run pytest tests/ -q -x` → 2942 passed + 348 skipped (regression なし) ✅
+
+#### Deferred (batch 1+ / Sprint 11.5 後続)
+- `docker-compose.observability.yml` profile (Loki + Grafana skeleton 含む) → **batch 1 (BL-0133/0134)**
+- alerting routes (approval pending > 4h / budget exceeded / run_failed spike) → **batch 2 (BL-0135)**
+- private staging Tailscale GitHub Action 本運用化 → **batch 2 (BL-0136)**
+- WAL/PITR + secret rotation drill + audit export → **batch 3 (BL-0137/0138/0139/0156/0159b)**
+- a11y / responsive (Sprint 9 carry-over) → **batch 4 (BL-0109a/0110a)**
+- BL-Permission-CLI (ADR-00011 acceptance carry-over) → **batch 5**
+- **runtime overhead perf measurement** (5-10% production 実測例、本 batch では deferred、L-2 adopt) → **batch 1**
+- KPI metric の生データ取得は **Sprint 12 BL-0164/0165 (AC-KPI-01〜05 final verify)** で完成、本 batch は metric contract + emit foundation のみ
+
+#### Risks
+- **dependency pin `<0.52`**: opentelemetry-instrumentation-* は beta `0.51b0` のため、stable 1.x への upgrade 時に API 変更可能性 → batch 1 で re-evaluation
+- **runtime overhead (L-2)**: production 環境で 5-10% 実測の community report、本 batch では measurement deferred、batch 1 で perf measurement 必須
+- **GitHub Actions CI billing infrastructure issue**: 前 Sprint 11 session 後半で全 CI job 1-3 秒即 fail 症状、本 batch では local pytest / mypy / ruff で同等 verification 済、CI 復旧は user 側で確認必要
+
+#### SP-011-5 受け入れ条件 contribution
+- line 178 (14 BL すべて Codex multi-round clean): BL-0131 + BL-0132 はこの PR (累計 2/14)
+- line 180 (Grafana dashboard で AC-HARD/KPI visualisation): foundation 提供、dashboard 本実装は batch 1
+- must_ship table P0 blocker line 146-147: BL-0131 + BL-0132 **達成**
+
+(Sprint 11.5 全 batch 完遂時に親 summary を追記)
