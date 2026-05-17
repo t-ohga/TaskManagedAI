@@ -113,7 +113,7 @@
       "id": 201,
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 14 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "targets": [{ "expr": "rate(taskmanagedai_agent_run_total{status=\"completed\"}[5m]) / rate(taskmanagedai_agent_run_total[5m])", "refId": "A" }]
+      "targets": [{ "expr": "sum(rate(taskmanagedai_agent_run_total{status=\"completed\"}[5m])) / sum(rate(taskmanagedai_agent_run_total[5m]))", "refId": "A" }]
     },
     {
       "type": "timeseries",

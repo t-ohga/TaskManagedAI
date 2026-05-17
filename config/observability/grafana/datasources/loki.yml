@@ -1,7 +1,10 @@
 # Sprint 11.5 batch 1 (BL-0134): Loki datasource provisioning.
+# Codex F-PR41-004 P2 adopt: `uid: Loki` 明示 (dashboard JSON が UID hard-code するため、
+# fresh Grafana volume で auto-gen UID と mismatch しないように固定).
 apiVersion: 1
 datasources:
   - name: Loki
+    uid: Loki
     type: loki
     access: proxy
     url: http://loki:3100

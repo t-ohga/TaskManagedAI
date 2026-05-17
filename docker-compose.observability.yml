@@ -5,7 +5,7 @@
 #
 # CRITICAL invariant trace:
 # - deny-by-default (core.md §6): 全 service 127.0.0.1 bind、Tailscale 内のみ accessible
-# - Funnel/Cloudflare/public bind 使わない (ADR-00007 既 accepted、本 batch で変更なし)
+# - 外部 ingress (P0 deny-by-default、ADR-00007 既 accepted、本 batch で変更なし)
 # - Loki retention 7 day default (LOKI_RETENTION_PERIOD env で override 可)
 # - Grafana anonymous read-only (Tailscale 内のみ、UI 編集は disable)
 # - promtail Docker socket scrape (host bind なし、container 内のみ)
@@ -37,7 +37,9 @@ services:
     volumes:
       - ./config/observability/loki.yml:/etc/loki/local-config.yaml:ro
       - loki_data:/loki
-    command: -config.file=/etc/loki/local-config.yaml
+    # Codex F-PR41-005 P2 adopt: -config.expand-env=true で loki.yml 内 ${LOKI_RETENTION_PERIOD}
+    # ref を env から expand. Loki は default で env expand しない.
+    command: -config.file=/etc/loki/local-config.yaml -config.expand-env=true
     environment:
       LOKI_RETENTION_PERIOD: "${LOKI_RETENTION_PERIOD:-168h}"  # 7 day default
     networks:
@@ -91,6 +93,9 @@ volumes:
   grafana_data:
   promtail_positions:
 
+# Codex F-PR41-001 P1 adopt: external: true を削除、base docker-compose.yml の
+# taskmanagedai_internal network (project-scoped) を多重 file merge で継承.
+# `docker compose -f docker-compose.yml -f docker-compose.observability.yml ...`
+# 起動時、Compose は両 file の networks を merge し同 project network を共有.
 networks:
-  taskmanagedai_internal:
-    external: true
+  taskmanagedai_internal: {}

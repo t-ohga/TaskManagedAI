@@ -24,9 +24,15 @@ scrape_configs:
     docker_sd_configs:
       - host: unix:///var/run/docker.sock
         refresh_interval: 5s
+        # Codex F-PR41-002 P2 adopt: Docker Compose V2 は container_name 未設定時
+        # `<project>-<service>-<index>` 形式の名前を生成するため、`container_name`
+        # filter は match しない。Compose label `com.docker.compose.service` で
+        # filter (api / worker サービスのみ scrape).
         filters:
-          - name: name
-            values: ["taskmanagedai_api", "taskmanagedai_worker"]
+          - name: label
+            values:
+              - "com.docker.compose.service=api"
+              - "com.docker.compose.service=worker"
 
     relabel_configs:
       - source_labels: ["__meta_docker_container_name"]
