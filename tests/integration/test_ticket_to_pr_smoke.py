@@ -92,8 +92,11 @@ async def test_all_stages_succeed_overall_success_true() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stage_failure_skips_subsequent_stages() -> None:
-    """APPROVE stage 失敗 → REPO/EVAL/AUDIT は skipped (cascading)。"""
+async def test_stage_failure_skips_subsequent_except_audit() -> None:
+    """APPROVE stage 失敗 → REPO/EVAL は skipped、AUDIT は実行 (Codex F-PR58-002 P1)。
+
+    audit truth invariant: cascading failure を audit stage で正直に記録する.
+    """
     result = await run_ticket_to_pr_smoke(
         ticket_callable=_make_succeeding_stage("ticket"),
         run_callable=_make_succeeding_stage("run"),
@@ -102,10 +105,10 @@ async def test_stage_failure_skips_subsequent_stages() -> None:
         eval_callable=_make_succeeding_stage("eval"),
         audit_callable=_make_succeeding_stage("audit"),
     )
-    assert result.succeeded_count == 2  # ticket + run
+    assert result.succeeded_count == 3  # ticket + run + audit
     assert result.failed_count == 1  # approve
-    assert result.skipped_count == 3  # repo + eval + audit
-    assert result.overall_success is False
+    assert result.skipped_count == 2  # repo + eval (AUDIT は実行)
+    assert result.overall_success is False  # failure あり
 
     # 順序確認
     assert result.stages[0].status == "succeeded"  # TICKET
@@ -113,16 +116,16 @@ async def test_stage_failure_skips_subsequent_stages() -> None:
     assert result.stages[2].status == "failed"  # APPROVE
     assert result.stages[3].status == "skipped"  # REPO
     assert result.stages[4].status == "skipped"  # EVAL
-    assert result.stages[5].status == "skipped"  # AUDIT
+    assert result.stages[5].status == "succeeded"  # AUDIT (failure でも実行)
 
     # cascading skip の error_code 確認
-    for skipped_idx in (3, 4, 5):
+    for skipped_idx in (3, 4):
         assert result.stages[skipped_idx].error_code == "cascaded_skip"
 
 
 @pytest.mark.asyncio
-async def test_first_stage_failure_skips_all_subsequent() -> None:
-    """TICKET stage で即失敗 → 残 5 stage は全件 skipped。"""
+async def test_first_stage_failure_still_runs_audit() -> None:
+    """TICKET stage で即失敗 → 残 4 stage skip、AUDIT は実行 (Codex F-PR58-002 P1)。"""
     result = await run_ticket_to_pr_smoke(
         ticket_callable=_make_failing_stage("ticket"),
         run_callable=_make_succeeding_stage("run"),
@@ -131,18 +134,19 @@ async def test_first_stage_failure_skips_all_subsequent() -> None:
         eval_callable=_make_succeeding_stage("eval"),
         audit_callable=_make_succeeding_stage("audit"),
     )
-    assert result.succeeded_count == 0
+    assert result.succeeded_count == 1  # AUDIT のみ
     assert result.failed_count == 1
-    assert result.skipped_count == 5
+    assert result.skipped_count == 4  # RUN/APPROVE/REPO/EVAL
     assert result.overall_success is False
     assert result.stages[0].status == "failed"
-    for i in range(1, 6):
+    for i in range(1, 5):  # RUN..EVAL
         assert result.stages[i].status == "skipped"
+    assert result.stages[5].status == "succeeded"  # AUDIT
 
 
 @pytest.mark.asyncio
 async def test_unexpected_exception_treated_as_failure() -> None:
-    """TicketToPrSmokeError 以外の例外も failed として記録 + cascading skip。"""
+    """TicketToPrSmokeError 以外の例外も failed として記録 + cascading skip + AUDIT 実行。"""
     result = await run_ticket_to_pr_smoke(
         ticket_callable=_make_succeeding_stage("ticket"),
         run_callable=_make_unexpected_failing_stage(ValueError),
@@ -152,9 +156,11 @@ async def test_unexpected_exception_treated_as_failure() -> None:
         audit_callable=_make_succeeding_stage("audit"),
     )
     assert result.failed_count == 1
-    assert result.skipped_count == 4
+    # AUDIT は実行されるため、skipped は APPROVE/REPO/EVAL の 3 件
+    assert result.skipped_count == 3
     assert result.stages[1].status == "failed"
     assert result.stages[1].error_code == "ValueError"
+    assert result.stages[5].status == "succeeded"  # AUDIT 実行
 
 
 @pytest.mark.asyncio
@@ -246,6 +252,113 @@ async def test_result_is_frozen_dataclass() -> None:
         result.overall_success = False  # type: ignore[misc]
     with pytest.raises(AttributeError):
         result.stages[0].status = "failed"  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+async def test_metadata_is_immutable_mapping_proxy() -> None:
+    """Codex F-PR58-001 P2 adopt: stage metadata は MappingProxyType で
+    immutable、downstream mutation を物理削除。
+    """
+
+    async def ticket_fn(ctx: dict[str, Any]) -> dict[str, Any]:
+        return {"ticket_id": "tk-001"}
+
+    result = await run_ticket_to_pr_smoke(
+        ticket_callable=ticket_fn,
+        run_callable=_make_succeeding_stage("run"),
+        approve_callable=_make_succeeding_stage("approve"),
+        repo_callable=_make_succeeding_stage("repo"),
+        eval_callable=_make_succeeding_stage("eval"),
+        audit_callable=_make_succeeding_stage("audit"),
+    )
+    metadata = result.stages[0].metadata
+    assert metadata["ticket_id"] == "tk-001"
+    # MappingProxyType は dict mutation method を持たない
+    with pytest.raises(TypeError):
+        metadata["evil_mutation"] = "should_fail"  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_context_is_defensively_copied_per_stage() -> None:
+    """Codex F-PR58-003 P2 adopt: stage callable が ctx を in-place mutation
+    しても cumulative context は影響を受けない (metadata channel bypass を防止)。
+    """
+
+    async def evil_ticket(ctx: dict[str, Any]) -> dict[str, Any]:
+        # in-place mutation を試行
+        ctx["smuggled_value"] = "should_not_leak"
+        return {"ticket_id": "tk-001"}
+
+    async def assert_no_smuggle_run(ctx: dict[str, Any]) -> dict[str, Any]:
+        # 前 stage の in-place mutation は cumulative context に出ない
+        assert "smuggled_value" not in ctx, (
+            f"in-place mutation leaked: ctx={ctx}"
+        )
+        return {"run_id": "ar-001"}
+
+    result = await run_ticket_to_pr_smoke(
+        ticket_callable=evil_ticket,
+        run_callable=assert_no_smuggle_run,
+        approve_callable=_make_succeeding_stage("approve"),
+        repo_callable=_make_succeeding_stage("repo"),
+        eval_callable=_make_succeeding_stage("eval"),
+        audit_callable=_make_succeeding_stage("audit"),
+    )
+    assert result.overall_success is True
+
+
+@pytest.mark.asyncio
+async def test_error_summary_redacts_raw_secret_patterns() -> None:
+    """Codex F-PR58-004 P2 adopt: error_summary 内の raw secret pattern を
+    redact (AC-HARD-02 trace、provider/SecretBroker stage が canary を含む
+    exception を raise した場合の defense-in-depth)。
+    """
+
+    async def secret_leak_stage(ctx: dict[str, Any]) -> dict[str, Any]:
+        # 実 secret pattern を含む exception を raise
+        raise TicketToPrSmokeError(
+            "provider call failed: api_key=sk-fakeButLooksReal0123456789ABCDEF "
+            "ghp_AAAAAAAAAAAAAAAAAAAA20chars"
+        )
+
+    result = await run_ticket_to_pr_smoke(
+        ticket_callable=_make_succeeding_stage("ticket"),
+        run_callable=secret_leak_stage,
+        approve_callable=_make_succeeding_stage("approve"),
+        repo_callable=_make_succeeding_stage("repo"),
+        eval_callable=_make_succeeding_stage("eval"),
+        audit_callable=_make_succeeding_stage("audit"),
+    )
+    summary = result.stages[1].error_summary
+    assert summary is not None
+    # raw secret patterns が含まれない
+    assert "sk-fakeButLooksReal" not in summary
+    assert "ghp_AAAAAAAA" not in summary
+    # redaction placeholder が含まれる
+    assert "[REDACTED:" in summary
+
+
+@pytest.mark.asyncio
+async def test_audit_runs_on_unexpected_exception_too() -> None:
+    """unexpected exception でも AUDIT は実行される (audit truth invariant)。"""
+
+    audit_invoked = {"called": False}
+
+    async def audit_fn(ctx: dict[str, Any]) -> dict[str, Any]:
+        audit_invoked["called"] = True
+        return {"audit_emitted": True}
+
+    result = await run_ticket_to_pr_smoke(
+        ticket_callable=_make_unexpected_failing_stage(RuntimeError),
+        run_callable=_make_succeeding_stage("run"),
+        approve_callable=_make_succeeding_stage("approve"),
+        repo_callable=_make_succeeding_stage("repo"),
+        eval_callable=_make_succeeding_stage("eval"),
+        audit_callable=audit_fn,
+    )
+    assert audit_invoked["called"] is True
+    assert result.stages[5].status == "succeeded"
+    assert result.overall_success is False  # 全体は failure
 
 
 @pytest.mark.asyncio

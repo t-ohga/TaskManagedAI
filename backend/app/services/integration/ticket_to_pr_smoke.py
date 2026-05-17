@@ -25,12 +25,51 @@ Security boundary:
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+import re
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Codex F-PR58-004 P2 adopt: AC-HARD-02 trace で error_summary に raw secret
+# pattern が紛れ込む経路 (provider/SecretBroker/runner stage 失敗時の
+# exception text) を redact する。`_payload_secret_scan._RAW_SECRET_PATTERNS`
+# と同等の pattern を local 定義 (private import 回避 + 本 module で
+# self-contained に redaction を完結).
+_SECRET_REDACT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("openai_api_key", re.compile(r"sk-[A-Za-z0-9]{20,}")),
+    ("anthropic_api_key", re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}")),
+    ("github_installation_token", re.compile(r"ghs_[A-Za-z0-9]{20,}")),
+    ("github_oauth_token", re.compile(r"gho_[A-Za-z0-9]{20,}")),
+    ("github_personal_token", re.compile(r"ghp_[A-Za-z0-9]{20,}")),
+    ("tailscale_auth_key", re.compile(r"tskey-[a-z0-9]{16,}-[a-z0-9]{16,}")),
+    ("age_private_key", re.compile(r"AGE-SECRET-KEY-1[A-Z0-9]{50,}")),
+    ("pem_private_key", re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")),
+)
+
+
+def _redact_secret_summary(raw: str, *, max_len: int = 200) -> str:
+    """error_summary 文字列から raw secret pattern を `[REDACTED:<kind>]` に置換.
+
+    Codex F-PR58-004 P2 adopt: provider / SecretBroker / runner stage が
+    raw key を含む exception を raise した場合、redaction なしに
+    `error_summary` に格納すると AC-HARD-02 違反.
+
+    Args:
+        raw: 元の exception message
+        max_len: 最終 truncation 上限 (default 200 文字)
+
+    Returns:
+        redacted + truncated string (caller が SmokeStageResult.error_summary
+        に格納する想定)
+    """
+    redacted = raw
+    for hit_kind, pattern in _SECRET_REDACT_PATTERNS:
+        redacted = pattern.sub(f"[REDACTED:{hit_kind}]", redacted)
+    return redacted[:max_len]
 
 
 class SmokeStage(StrEnum):
@@ -61,14 +100,21 @@ class TicketToPrSmokeError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class SmokeStageResult:
-    """単一 stage の実行結果 (frozen、append-only)."""
+    """単一 stage の実行結果 (frozen、append-only)。
+
+    Codex F-PR58-001 P2 adopt: `metadata` は `MappingProxyType` (immutable
+    Mapping view) として保存し、downstream の audit/report caller による
+    in-place mutation を物理削除する.
+    """
 
     stage: SmokeStage
     status: str  # "succeeded" / "failed" / "skipped"
     duration_ms: int
     error_code: str | None = None
     error_summary: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +179,10 @@ async def run_ticket_to_pr_smoke(
     }
 
     for stage in SMOKE_STAGE_ORDER:
-        if first_failure_seen:
+        # Codex F-PR58-002 P1 adopt: AUDIT stage は failure 時でも実行する
+        # (audit truth invariant、cascading failure を audit emit で記録).
+        # それ以外の stage は cascading skip (false success を物理削除).
+        if first_failure_seen and stage is not SmokeStage.AUDIT:
             stages.append(
                 SmokeStageResult(
                     stage=stage,
@@ -141,7 +190,7 @@ async def run_ticket_to_pr_smoke(
                     duration_ms=0,
                     error_code="cascaded_skip",
                     error_summary="previous stage failed; skipping to preserve audit truth",
-                    metadata={},
+                    metadata=MappingProxyType({}),
                 )
             )
             continue
@@ -149,21 +198,26 @@ async def run_ticket_to_pr_smoke(
         callable_fn = callables[stage]
         start_ns = time.monotonic_ns()
         try:
-            stage_metadata = await callable_fn(context)
+            # Codex F-PR58-003 P2 adopt: defensive copy で in-place mutation
+            # を阻止 (stage callable が context を直接書き換えても、 cumulative
+            # context は orchestrator の管理下に残り、metadata channel を bypass
+            # した経路を物理削除).
+            stage_metadata = await callable_fn(dict(context))
         except TicketToPrSmokeError as exc:
             duration_ms = (time.monotonic_ns() - start_ns) // 1_000_000
             logger.warning(
                 "ticket_to_pr_smoke_stage_failed",
-                extra={"stage": stage.value, "error": str(exc)},
+                extra={"stage": stage.value, "error_type": "TicketToPrSmokeError"},
             )
+            # Codex F-PR58-004 P2 adopt: error_summary redaction (AC-HARD-02).
             stages.append(
                 SmokeStageResult(
                     stage=stage,
                     status="failed",
                     duration_ms=int(duration_ms),
                     error_code="stage_failed",
-                    error_summary=str(exc),
-                    metadata={},
+                    error_summary=_redact_secret_summary(str(exc)),
+                    metadata=MappingProxyType({}),
                 )
             )
             first_failure_seen = True
@@ -180,8 +234,8 @@ async def run_ticket_to_pr_smoke(
                     status="failed",
                     duration_ms=int(duration_ms),
                     error_code=type(exc).__name__,
-                    error_summary=str(exc)[:200],  # truncate long messages
-                    metadata={},
+                    error_summary=_redact_secret_summary(str(exc)),
+                    metadata=MappingProxyType({}),
                 )
             )
             first_failure_seen = True
@@ -195,6 +249,8 @@ async def run_ticket_to_pr_smoke(
                 f"{type(stage_metadata).__name__}"
             )
         context.update(stage_metadata)
+        # Codex F-PR58-001 P2 adopt: MappingProxyType で immutable view、
+        # downstream mutation を物理削除.
         stages.append(
             SmokeStageResult(
                 stage=stage,
@@ -202,7 +258,7 @@ async def run_ticket_to_pr_smoke(
                 duration_ms=int(duration_ms),
                 error_code=None,
                 error_summary=None,
-                metadata=dict(stage_metadata),
+                metadata=MappingProxyType(dict(stage_metadata)),
             )
         )
 
