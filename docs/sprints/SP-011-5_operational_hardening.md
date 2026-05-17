@@ -284,6 +284,48 @@ audit_events payload に必須 field: `tenant_id` / `actor_id` / `run_id?` / `se
 
 ## Review
 
+### batch 3a (BL-0137 WAL/PITR prep + BL-0159b PITR activation + ADR-00026 / 2026-05-17 session)
+
+#### Changed
+- `docs/adr/00026_pitr_wal_archiving.md` 新規 (PITR adoption ADR、accepted、ADR Gate #6 + #8)
+- `scripts/wal_archiving_check.py` 新規 (~155 LOC、WAL lsn + archive lag JSON report + DATABASE_URL password redact)
+- `scripts/pitr_drill.py` 新規 (~250 LOC、3 drill_kinds dry-run plan + dev_restore real-run + Sprint 12 defer)
+- `tests/scripts/{__init__,test_wal_archiving_check,test_pitr_drill}.py` 新規 (23 tests、subprocess mock)
+- `backend/app/services/eval/hard_gates/backup_restore.py` 修正 (`AC_HARD_04_ACTIVATED_REQUIRED_DRILL_KINDS` + `_resolve_required_drill_kinds()` 経由 env-flag gradual activation、skeleton default backward-compat)
+- `tests/eval/test_hard_gates_backup_restore.py` 修正 (activation mode 3 tests 追加 verify)
+- `docs/sprints/SP-011-5_operational_hardening.md`: 本 ## Review batch 3a section
+
+#### Verified
+- BL-0137 acceptance: WAL archiving health check + PITR drill scripts + 3 drill_kinds plan output ✅
+- BL-0159b acceptance: env-flag activation mode で 3 drill_kinds (`dev_restore` + `private_staging_restore` + `pitr`) 必須化、skeleton default backward-compat 維持 ✅
+- ADR-00026 acceptance: PITR adoption proposed → accepted、ADR Gate #6 (Secrets via SOPS age key) + #8 (破壊的操作 / data restore) 該当 ✅
+- ADR-00026 §テスト指針 (plan-reviewer WARN-2 adopt): P0 fixture envelope activation のみ、actual RPO/RTO measurement は Sprint 12 BL-0144 host migration drill ✅
+- pitr_runbook の代わりに ADR-00026 §設計判断で admin setup を網羅 (plan-reviewer WARN-3 adopt: raw secret 不記載 invariant) ✅
+- pitr_drill.py actor binding (plan-reviewer WARN-4 adopt): `postgres` / `root` user 限定、AI / runner / GH Actions runner 経路なし ✅
+- AC-HARD-04 backup_restore_rpo_rto: skeleton → activation mode で 3 drill_kinds 必須に gradual switch (env-flag based) ✅
+- SecretBroker boundary: scripts は DATABASE_URL password を `_redact_database_url` で mask、log 出力で raw 値含めず ✅
+- deny-by-default: WAL archive は local filesystem (127.0.0.1 同等)、Tailscale `tag:taskhub` 内のみ staging restore ✅
+- plan-reviewer R1 → READY (0 BLOCKER / 0 HIGH / 0 MEDIUM / 4 WARN P3/info、本 batch inline 反映) ✅
+- local verification: scripts tests **23 passed** / backup_restore tests **57 passed** (前 54 + 3 activation tests) / full pytest **3015 passed + 348 skipped** (regression なし) / mypy 209 source files clean / ruff clean ✅
+
+#### Deferred (batch 3b/c / Sprint 12 へ)
+- secret rotation drill (BL-0138、SOPS age key rotation + canary preflight 統合) → **batch 3b**
+- audit export JSON Lines daily job + `secret_capability_revoked` event (BL-0139) → **batch 3c**
+- audit / OTel / Loki data_class dimension (BL-0156) → **batch 3c**
+- actual `pg_basebackup` + WAL replay + 3 drill_kinds production deploy → **Sprint 12 BL-0144 host migration drill**
+- ADR-00026 §テスト指針 actual RPO/RTO measurement → Sprint 12
+- cloud off-site backup (S3 / Backblaze) → SP-022
+
+#### Risks
+- **ADR-00026 acceptance pending**: 本 batch 3a で accepted、Sprint 12 BL-0144 で activation mode env switch 完成
+- **PostgreSQL config 変更未配備**: 本 batch では `docker-compose.yml` / `postgresql.conf` に touch せず、scripts + aggregator + ADR のみ。Sprint 12 host migration drill で actual deploy
+- **rollback**: PR revert で全 file 削除 + ADR-00026 status `accepted` → `superseded` + `_REQUIRED_DRILL_KINDS` env unset で skeleton fallback
+
+#### SP-011-5 受け入れ条件 contribution
+- line 178 (14 BL すべて Codex multi-round clean): BL-0137 + BL-0159b はこの PR (累計 **8/14** with batch 3a)
+- line 181 (`backup_restore_rpo_rto` fixture activation): **達成** (skeleton → 3 drill_kinds activation mode env-flag)
+- must_ship P0 blocker line 148/152: BL-0137 + BL-0159b **達成** (Sprint 12 actual deploy 連携)
+
 ### batch 2 (BL-0135 Alerting + BL-0136 Tailscale GitHub Action private staging / 2026-05-17 session)
 
 #### Changed
