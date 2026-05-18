@@ -206,6 +206,46 @@ ADR-00021 §14 (Phase G adversarial Strengthening Catalog) を本 Sprint に反�
 
 ## Review
 
+### batch 8 (AC-HARD-01/02/05/06/07 個別 evaluator skeleton / 2026-05-18 session)
+
+#### Changed
+- `backend/app/services/eval/hard_gates/policy_block.py` 新規 (~210 LOC): AC-HARD-01 policy_block_recall evaluator skeleton
+- `backend/app/services/eval/hard_gates/secret_canary.py` 新規 (~210 LOC): AC-HARD-02 secret_canary_no_leak evaluator skeleton
+- `backend/app/services/eval/hard_gates/forbidden_path.py` 新規 (~210 LOC): AC-HARD-05 forbidden_path_block evaluator skeleton
+- `backend/app/services/eval/hard_gates/dangerous_command.py` 新規 (~210 LOC): AC-HARD-06 dangerous_command_block evaluator skeleton
+- `backend/app/services/eval/hard_gates/prompt_injection.py` 新規 (~210 LOC): AC-HARD-07 prompt_injection_resist evaluator skeleton
+- `tests/eval/test_hard_gates_policy_block.py` 新規 (~180 LOC、8 tests): constants integrity + 4 contract test + frozen + fixture_kind + __all__ export
+- `tests/eval/test_hard_gates_secret_canary.py` 新規 (~190 LOC、8 tests): 同上 + sut_results invalid type test
+- `tests/eval/test_hard_gates_forbidden_path.py` 新規 (~180 LOC、8 tests): 同上 + sut_results missing test
+- `tests/eval/test_hard_gates_dangerous_command.py` 新規 (~180 LOC、8 tests): 同上 + sut_result True passes test
+- `tests/eval/test_hard_gates_prompt_injection.py` 新規 (~210 LOC、8 tests): 同上 + 3 fixture_kind supported test
+
+#### Verified
+- `uv run ruff check` PASS (10 file + 5 hard_gates evaluator file)
+- `uv run mypy backend/app/services/eval/hard_gates/` PASS (8 source files clean、新規 5 file + 既存 3 file)
+- `uv run pytest tests/eval/test_hard_gates_*.py` **40 passed** (5 evaluator × 8 tests)
+- 全 evaluator pattern を `tenant_isolation.py` (AC-HARD-03) と統一: Final 定数 7 件 (GATE_ID / METRIC_KEY / PATTERN_HIT_KIND / EXPECTED_DECISION / EXPECTED_REASON_CODE / EXPECTED_FAILURE / THRESHOLD) + frozen dataclass 2 件 (FixtureResult / MetricResult) + pure evaluate function 1 件 + `__all__` export 10 シンボル
+- AgentRun 16 状態 / ContextSnapshot 10 列 / approval 4 整合 / gateway 分離: 不変
+- AI 出力境界: pure function (no DB / FS / network)、caller は `LoadedCorpus` typed args + optional `Mapping[str, bool]` SUT results のみ
+- ADR Gate Criteria 11 種: 該当なし (新規 service module + test 追加のみ、API/DB/Secret/Provider/Network 不変)
+- Hard Gates 7 trace: AC-HARD-01/02/05/06/07 の skeleton 経路が確立、real corpus + programmatic SUT 連結は別 batch
+- 各 evaluator の Final 定数は AC-HARD-NN ID と完全一致 (cross-source integrity)、manifest parity check + spec violation check + threshold reason + frozen dataclass invariant 全件 test
+
+#### Deferred (real corpus + SUT 連結 / Sprint 12 後続 batch)
+- **AC-HARD-01/02/05/06/07 real fixture corpus**: `eval/security/policy_block/` 等の fixture file + manifest.json を batch 9+ で配備、本 batch は pure evaluator のみ
+- **programmatic SUT 連結**: Policy Engine / SecretBroker / Input Trust Layer / runner_mutation_gateway の出力を `Mapping[str, bool]` に変換する adapter 層、batch 10+ で配備
+- **hard_gates_rollup.py 拡張**: 既存 rollup (AC-HARD-03/04) に新 5 evaluator を統合、`p0_acceptance_report` から 7 gate 全件参照可能化、batch 10+ で配備
+- **frontend P0 Exit Dashboard 表示**: batch 9 で実装、5 gate 個別 metric_value + threshold_met + per_fixture breakdown
+- batch 6.1: P0 Acceptance Report input JSON Pydantic schema
+
+#### Risks
+- 本 batch は subcommand structure と同じ「contract + pure function skeleton」のみ、real corpus + SUT 連結 + rollup 統合は別 batch
+- AC-HARD-07 (prompt_injection_resist) の expected_failure は Input Trust Layer の `trust_promotion_violation` event と紐づく予定、real Trust Layer 出力 schema との整合は別 batch で確定
+
+#### SP-012 受け入れ条件 contribution
+- **SP012-T06 (AC-HARD-01〜07 fixture を全件 PASS verify)**: 7 gate のうち AC-HARD-01/02/05/06/07 の **pure evaluator** が確立、AC-HARD-03/04 と同 pattern で 7 gate 統一 contract 達成
+- BL-0149 evidence chain への入口: P0 Acceptance Report が 7 gate 全件の pure evaluator 出力を集約できる前提が整う (rollup 統合は別 batch)
+
 ### batch 7 (taskhub admin CLI skeleton: 10 subcommands + ADR-00021 §11/§14 hardening / 2026-05-18 session、R1-R5 polish 完遂)
 
 #### Changed (最終状態、R1-R5 polish 反映後)
