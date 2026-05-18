@@ -93,46 +93,53 @@ const HARD_GATES_7 = [
 
 // Quality KPIs 5 (AC-KPI-01〜05). P0 Exit allows 1 unmet KPI; 2+ adds a
 // quality improvement sprint per CLAUDE.md §2.
+// F-PR65-002 P1 adopt: thresholds 値は canonical evaluator constants と整合
+// (backend/app/services/eval/kpis/*.py):
+//   - AC_KPI_01_THRESHOLD = 0.6 (acceptance_pass_rate.py)
+//   - AC_KPI_02_THRESHOLD_HOURS = 2.0 (time_to_merge.py)
+//   - AC_KPI_03_THRESHOLD_MS = 14_400_000 (= 4h、approval_wait_ms.py)
+//   - AC_KPI_04_THRESHOLD = 0.9 (citation_coverage.py)
+//   - AC_KPI_05_THRESHOLD_USD = 0.5 (cost_per_completed_task.py)
 const QUALITY_KPIS_5 = [
   {
     kpi_id: "AC-KPI-01",
     metric_key: "acceptance_pass_rate",
-    threshold: 0.8,
+    threshold: 0.6,
     metric_value: 0.92,
     threshold_met: true,
-    description: "受け入れ条件 pass 率 ≥ 80%",
+    description: "受け入れ条件 pass 率 ≥ 60%",
   },
   {
     kpi_id: "AC-KPI-02",
     metric_key: "time_to_merge",
-    threshold: 24,
-    metric_value: 14,
+    threshold: 2.0,
+    metric_value: 1.4,
     threshold_met: true,
-    description: "ticket → merge median ≤ 24h",
+    description: "ticket → merge median ≤ 2.0h",
   },
   {
     kpi_id: "AC-KPI-03",
     metric_key: "approval_wait_ms",
-    threshold: 3600000,
-    metric_value: 1234567,
+    threshold: 14_400_000,
+    metric_value: 1_234_567,
     threshold_met: true,
-    description: "approval request → decision p95 ≤ 1h",
+    description: "approval request → decision p95 ≤ 4h (14,400,000ms)",
   },
   {
     kpi_id: "AC-KPI-04",
     metric_key: "citation_coverage",
-    threshold: 0.7,
-    metric_value: 0.81,
+    threshold: 0.9,
+    metric_value: 0.95,
     threshold_met: true,
-    description: "claim 当たり citation_count ≥ 1 比率 ≥ 70%",
+    description: "claim 当たり citation_count ≥ 1 比率 ≥ 90%",
   },
   {
     kpi_id: "AC-KPI-05",
     metric_key: "cost_per_completed_task",
-    threshold: 5.0,
-    metric_value: 2.34,
+    threshold: 0.5,
+    metric_value: 0.23,
     threshold_met: true,
-    description: "completed task 当たり provider cost ≤ $5",
+    description: "completed task 当たり provider cost ≤ $0.50",
   },
 ] as const;
 
@@ -162,11 +169,73 @@ const OPERATIONAL_DRILLS: readonly OperationalDrillRow[] = [
   },
 ];
 
+// F-PR65-001 P1 adopt: backend P0 acceptance contract は 7 sources を要求
+// (backend/app/services/eval/p0_acceptance_report.py):
+//   1. hard_gates_all_pass (AC-HARD-01〜07)
+//   2. kpis_pass (AC-KPI-01〜05、未達 ≤ 1)
+//   3. smoke.overall_success (ticket-to-PR gold flow)
+//   4. host_migration drill passed
+//   5. backup_restore drill passed
+//   6. private_staging_status == PASSED
+//   7. gated_acceptance_rows 全件 PASS or schema-valid STRUCTURED_DEFER
+// 1-7 全 source pass で p0_exit_decision=true (skeleton で 7 sources 全件表示).
+type PrivateStagingStatus = "passed" | "in_progress" | "not_run" | "failed";
+
+const SMOKE_RESULT = {
+  overall_success: true,
+  passed_count: 12,
+  failed_count: 0,
+  skipped_count: 0,
+  description: "Ticket → PR gold flow smoke (12 steps)",
+} as const;
+
+const PRIVATE_STAGING = {
+  status: "passed" as PrivateStagingStatus,
+  description: "Tailscale 閉域 private staging CI/E2E",
+};
+
+type GatedAcceptanceRowEntry = {
+  readonly row_id: string;
+  readonly status: "PASS" | "STRUCTURED_DEFER" | "FAIL";
+  readonly description: string;
+};
+
+const GATED_ACCEPTANCE_ROWS: readonly GatedAcceptanceRowEntry[] = [
+  {
+    row_id: "BL-0140a-research-to-pr",
+    status: "PASS",
+    description: "Research → Ticket → PR end-to-end traceability",
+  },
+  {
+    row_id: "BL-0140b-host-migration-smoke",
+    status: "PASS",
+    description: "Host migration smoke (Mac ↔ VPS)",
+  },
+  {
+    row_id: "BL-0145-kpi-rollup",
+    status: "PASS",
+    description: "AC-KPI rollup aggregator end-to-end",
+  },
+  {
+    row_id: "BL-0149-p0-acceptance-report",
+    status: "PASS",
+    description: "P0 Acceptance Report sign-off generator",
+  },
+  {
+    row_id: "BL-0150-audit-events-signed-journal",
+    status: "STRUCTURED_DEFER",
+    description: "Audit signed journal (batch 10 で配備、structured defer)",
+  },
+];
+
 const P0_EXIT_VERDICT = {
   p0_exit_decision: true,
   hard_gates_pass_count: 7,
   kpis_pass_count: 5,
   drills_pass_count: 2,
+  smoke_success: true,
+  private_staging_passed: true,
+  gated_rows_satisfied: true,
   deficiency_reasons: [] as readonly string[],
 } as const;
 
@@ -203,6 +272,24 @@ export default function EvalDashboardPage() {
           <div className="flex justify-between gap-4 border-t border-line pt-3">
             <dt className="text-muted">operational_drills_pass</dt>
             <dd className="font-mono">{P0_EXIT_VERDICT.drills_pass_count} / 2</dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">smoke.overall_success</dt>
+            <dd className="font-mono">
+              {P0_EXIT_VERDICT.smoke_success ? "true" : "false"}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">private_staging_passed</dt>
+            <dd className="font-mono">
+              {P0_EXIT_VERDICT.private_staging_passed ? "true" : "false"}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">gated_acceptance_rows_satisfied</dt>
+            <dd className="font-mono">
+              {P0_EXIT_VERDICT.gated_rows_satisfied ? "true" : "false"}
+            </dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-line pt-3">
             <dt className="text-muted">deficiency_reasons</dt>
@@ -340,6 +427,118 @@ export default function EvalDashboardPage() {
                       </span>
                     )}
                   </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <Panel
+        description="Ticket → PR gold flow smoke (BL-0140a). P0 Exit requires overall_success=true."
+        title="Ticket-to-PR smoke"
+        titleId="ticket-to-pr-smoke"
+      >
+        <dl className="grid gap-3 text-sm">
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">overall_success</dt>
+            <dd>
+              {SMOKE_RESULT.overall_success ? (
+                <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                  PASS
+                </span>
+              ) : (
+                <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                  FAIL
+                </span>
+              )}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">passed_count</dt>
+            <dd className="font-mono">{SMOKE_RESULT.passed_count}</dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">failed_count</dt>
+            <dd className="font-mono">{SMOKE_RESULT.failed_count}</dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">skipped_count</dt>
+            <dd className="font-mono">{SMOKE_RESULT.skipped_count}</dd>
+          </div>
+        </dl>
+      </Panel>
+
+      <Panel
+        description="Private staging CI/E2E (Tailscale 閉域). P0 Exit requires status=passed."
+        title="Private staging"
+        titleId="private-staging"
+      >
+        <dl className="grid gap-3 text-sm">
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">status</dt>
+            <dd>
+              {PRIVATE_STAGING.status === "passed" ? (
+                <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                  PASSED
+                </span>
+              ) : (
+                <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                  {PRIVATE_STAGING.status.toUpperCase()}
+                </span>
+              )}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">description</dt>
+            <dd className="text-right">{PRIVATE_STAGING.description}</dd>
+          </div>
+        </dl>
+      </Panel>
+
+      <Panel
+        description="SP-012 表 2: gated acceptance rows (BL-NNN). PASS or schema-valid STRUCTURED_DEFER 必須."
+        title="Gated acceptance rows"
+        titleId="gated-acceptance-rows"
+      >
+        <div className="overflow-x-auto rounded-md border border-line">
+          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
+            <caption className="sr-only">
+              Gated acceptance rows with row_id, status, description.
+            </caption>
+            <thead className="bg-panel-soft">
+              <tr>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  row_id
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  status
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  description
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {GATED_ACCEPTANCE_ROWS.map((row) => (
+                <tr key={row.row_id}>
+                  <td className="border-b border-line px-3 py-2 font-mono">{row.row_id}</td>
+                  <td className="border-b border-line px-3 py-2">
+                    {row.status === "PASS" ? (
+                      <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                        PASS
+                      </span>
+                    ) : row.status === "STRUCTURED_DEFER" ? (
+                      <span className="rounded-md bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-700">
+                        STRUCTURED_DEFER
+                      </span>
+                    ) : (
+                      <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                        FAIL
+                      </span>
+                    )}
+                  </td>
+                  <td className="border-b border-line px-3 py-2 text-xs">{row.description}</td>
                 </tr>
               ))}
             </tbody>
