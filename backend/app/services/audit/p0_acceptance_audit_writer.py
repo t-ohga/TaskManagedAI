@@ -1,0 +1,121 @@
+"""Sprint 12 batch 10 (BL-0149 evidence chain): P0 acceptance audit DB write skeleton.
+
+`P0AcceptanceAuditPayload` (batch 6) → `audit_events` ORM model 構築の pure
+function. 実 DB write 経路は caller (BL-0149 sign-off endpoint / CLI) が
+session.add + commit を実行する.
+
+invariants (.claude/rules/secretbroker-boundary.md §11 + DD-04):
+- raw secret / capability token 生値は event_payload に含めない (caller が事前 redact 済)
+- tenant_id / actor_id / principal_id は caller が解決した値を渡す (signature レベル)
+- correlation_id / trace_id は optional metadata (P0 では active observability)
+- event_type は `AUDIT_EVENT_TYPE_P0_ACCEPTANCE_REPORT_GENERATED` 固定
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Final
+from uuid import UUID, uuid4
+
+from backend.app.db.models.audit_event import AuditEvent
+from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
+from backend.app.services.eval.p0_acceptance_audit_emit import (
+    AUDIT_EVENT_TYPE_P0_ACCEPTANCE_REPORT_GENERATED,
+    P0AcceptanceAuditPayload,
+)
+
+# F-PR66-007 P2 adopt: BL-0149 writer boundary 局所 reject pattern.
+# shared `assert_no_raw_secret` の regex set に未登録の token pattern を
+# writer boundary で追加 fail-closed (Slack bot / Slack user / Slack app
+# / xapp-/ xoxa- 系等の token).
+_LOCAL_REJECT_TOKEN_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
+    re.compile(r"\bxox[abprso]-[A-Za-z0-9-]{10,}"),  # Slack token family
+    re.compile(r"\bxapp-[A-Za-z0-9-]{10,}"),  # Slack app token
+)
+
+# Sprint 12 batch 10 fixed contract: BL-0149 audit emit は principal_id を null
+# として記録する (sign-off は principal-bound でない system-level emit). DB
+# CHECK constraint `(principal_id is null) or (actor_id is not null)` 整合.
+_EXPECTED_PRINCIPAL_ID: Final[None] = None
+
+
+def _reject_local_token_patterns(value: object, *, path: str = "$") -> None:
+    """F-PR66-007 P2 adopt: 共有 scan に未登録の Slack token 系 (xoxb-/xapp-) を fail-closed reject.
+
+    recursive scan、string 内に Slack token pattern が見つかれば ValueError raise.
+    SP-012 batch notes / tests で audit payload の forbidden pattern として明示.
+    """
+    if isinstance(value, str):
+        for pattern in _LOCAL_REJECT_TOKEN_PATTERNS:
+            if pattern.search(value):
+                msg = (
+                    f"raw Slack-style token pattern detected in audit payload "
+                    f"({path}): refusing to construct audit_event"
+                )
+                raise ValueError(msg)
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            _reject_local_token_patterns(v, path=f"{path}.{k}")
+    elif isinstance(value, (list, tuple)):
+        for i, v in enumerate(value):
+            _reject_local_token_patterns(v, path=f"{path}[{i}]")
+
+
+@dataclass(frozen=True, slots=True)
+class P0AcceptanceAuditWriteContext:
+    """Caller が解決した tenant / actor / observability context.
+
+    DB write 自体は caller が `session.add(audit_event)` + commit で実行する.
+    """
+
+    tenant_id: int
+    actor_id: UUID  # human sign-off actor (self-approval 禁止 verify は caller 責務)
+    correlation_id: str | None = None
+    trace_id: str | None = None
+    explicit_id: UUID | None = None  # test fixture 用 (None なら uuid4 で生成)
+
+
+def build_p0_acceptance_audit_event(
+    *,
+    payload: P0AcceptanceAuditPayload,
+    context: P0AcceptanceAuditWriteContext,
+) -> AuditEvent:
+    """`P0AcceptanceAuditPayload` + caller context から `AuditEvent` ORM 構築.
+
+    pure function. 実 DB write は caller が `session.add(audit_event)` 後に
+    commit する責務. ORM hook (CreatedAtMixin.created_at) は DB default で
+    server side timestamp が割り当てられる.
+
+    invariant:
+    - event_type は AUDIT_EVENT_TYPE_P0_ACCEPTANCE_REPORT_GENERATED 固定
+    - event_payload は payload.to_dict() を **assert_no_raw_secret で fail-closed
+      scan** してから ORM に渡す (F-PR66-003 P2 adopt、AuditEventRepository.append
+      の boundary を bypass しないよう writer 側で同 invariant を担保)
+    - principal_id=null (BL-0149 sign-off は principal-bound でない system emit)
+    """
+    event_payload = payload.to_dict()
+    # F-PR66-003 P2 adopt: writer 内で raw secret pattern + prohibited key scan.
+    # caller が直接 P0AcceptanceAuditPayload を構築するケース、または
+    # _extract_deficiency_codes regression で secret-like 文字列が残るケースの
+    # fail-closed guard.
+    assert_no_raw_secret(event_payload, path="$p0_acceptance_audit_payload")
+    # F-PR66-007 P2 adopt: 共有 secret scan に未登録の Slack token 系を局所 reject.
+    _reject_local_token_patterns(event_payload)
+    audit_event = AuditEvent(
+        id=context.explicit_id if context.explicit_id is not None else uuid4(),
+        tenant_id=context.tenant_id,
+        event_type=AUDIT_EVENT_TYPE_P0_ACCEPTANCE_REPORT_GENERATED,
+        event_payload=event_payload,
+        actor_id=context.actor_id,
+        principal_id=_EXPECTED_PRINCIPAL_ID,
+        correlation_id=context.correlation_id,
+        trace_id=context.trace_id,
+    )
+    return audit_event
+
+
+__all__ = [
+    "P0AcceptanceAuditWriteContext",
+    "build_p0_acceptance_audit_event",
+]
