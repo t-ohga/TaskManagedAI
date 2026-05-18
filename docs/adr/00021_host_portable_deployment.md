@@ -27,7 +27,7 @@ superseded_by: null
 # drill PASS 後.
 acceptance_blocked_by:
   - "host migration drill (Mac→VPS) RTO≤4h PASS (SP-022 scope、`docs/設計検討/2026-05-13_p0_exit_master_plan.md:106` 明示)"
-  - "SP012-T01〜T10 完了 (SP-012 partial_completed_with_carry_over、P0.1 で残 carry-over 完了)"
+  - "SP012-T01〜T10 carry-over 完了 (SP-022 / pre-P0.1 で残作業完了、F-PR67-024 P2 adopt: P0.1 ではなく SP-022 が responsible)"
   - "ADR-00007 同期 accepted 化条件 (本 ADR の accepted 化と同時、host 中立 invariant)"
 acceptance_target_sprint: "SP-022 で host migration drill 自動化完成 + 実機 drill PASS 後"
 acceptance_history:

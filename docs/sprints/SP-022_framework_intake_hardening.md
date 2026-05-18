@@ -29,7 +29,9 @@ risks:
 
 ## 目的
 
-P2 段階で TaskManagedAI を **公開準備可能な品質** に仕上げる Sprint。具体的には (1) ADR-00020 framework intake checklist accepted + CI 機械検査完成、(2) Phase E (codex-adversarial-review) 16 finding の closure、(3) **host migration drill 自動化** (`taskhub migrate` one-shot で 90 分目標、ADR-00021 §8)、(4) 半年に 1 回の drill scheduling SOP、(5) AC-HARD 7 全件を multi-agent 文脈で再 verify、(6) Hard Gate / KPI の運用上 baseline (host 別) 確定.
+**F-PR67-022 P2 adopt (PR #67 R4/R6)**: 本 SP-022 は **pre-P0.1 unblock sprint** に位置 (旧「P2 段階」記述は撤回). SP-012 で skeleton 実装着手済の P0 core gates (taskhub real I/O / 実 DB write integration / signed journal CLI / private staging E2E 等) を完成 + 実機 host migration drill PASS + ADR-00021/00007 accepted 化を SP-022 で達成し、その後 P0.1 (TASKHUB_P0_1_OPENED=1 + sealed guard 解除 + SP-013 着手) が unblock.
+
+具体的には (1) **SP-012 carry-over P0 core gates 完了** (taskhub real I/O / 実 DB write integration / signed journal CLI / private staging CI/E2E、F-PR67-027 P2 adopt)、(2) **実機 host migration drill (Mac→VPS) RTO≤4h PASS**、(3) **ADR-00021 + ADR-00007 accepted 化** (F-PR67-025 P2 adopt、master plan line 106/107、本 Sprint は accepting sprint)、(4) ADR-00020 framework intake checklist accepted + CI 機械検査完成、(5) Phase E (codex-adversarial-review) 16 finding の closure、(6) `taskhub migrate` 自動化 (one-shot で 90 分目標)、(7) 半年に 1 回の drill scheduling SOP、(8) AC-HARD 7 全件を multi-agent 文脈で再 verify、(9) Hard Gate / KPI の運用上 baseline (host 別) 確定.
 
 ## 背景
 
@@ -58,20 +60,28 @@ P2 段階で TaskManagedAI を **公開準備可能な品質** に仕上げる S
 - SP022-T05: AC-HARD-01〜07 fixture を multi-agent 文脈で再 verify (P0.1 SP-013 で skeleton、本 Sprint で完成形)
 - SP022-T06: KPI baseline 設定 (host 別: Mac / Linux / VPS で acceptance_pass_rate 等の median を取得、運用 baseline 確定)
 - SP022-T07: production 公開準備チェックリスト draft (P3+ 着手時の前提整理)
+- SP022-T08: **SP-012 carry-over 完了** (F-PR67-025/027 P2 adopt): taskhub real I/O (10 subcommands all) + 実 DB write integration (BL-0149 sign-off endpoint + AuditEventRepository.append 経由 P0AcceptanceAudit write) + signed journal verification CLI (audit_events 全件 fetch + recompute + final_hash verify) + private staging CI/E2E 完成 + frontend dashboard backend API wiring
+- SP022-T09: **実機 host migration drill (Mac→VPS) PASS** (RTO≤4h、F-PR67-022 P2 adopt: P0.1 unblock 必須 gate)
+- SP022-T10: **ADR-00021 + ADR-00007 update accepted 化** (F-PR67-025 P2 adopt: 本 SP-022 が accepting sprint、master plan line 106/107 整合、SP022-T08+T09 完了後に proposed → accepted 昇格、`.claude/rules/sprint-pack-adr-gate.md §12` invariant 遵守)
 
 ## タスク一覧
 
-- [ ] SP022-T01〜T07 を順次実装
+- [ ] SP022-T01〜T10 を順次実装
 - [ ] ADR-00020 を proposed → accepted
+- [ ] **ADR-00021 + ADR-00007 を proposed → accepted** (SP022-T10、SP-012 carry-over + 実機 drill PASS 後)
 - [ ] `taskhub migrate` end-to-end を 3 host pair (Mac↔VPS、Linux↔VPS、VPS↔VPS) で drill 実施
 - [ ] Phase E 16 finding が全件 closed (adopt 済 + test fixture 化済)
 - [ ] AC-HARD multi-agent fixture 全件 PASS
+- [ ] **SP-012 carry-over 全件完了** (taskhub real I/O / 実 DB write integration / signed journal CLI / private staging E2E / frontend backend wiring)
 
 ## must_ship / defer_if_over_budget 対応表
 
 | 項目 | must_ship | defer_if_over_budget |
 |---|---|---|
 | ADR-00020 accepted + CI 機械検査 | ○ | - |
+| **ADR-00021 + ADR-00007 accepted** (P0.1 unblock 前提) | ○ | - |
+| **SP-012 carry-over (taskhub real I/O / 実 DB write / signed journal CLI / private staging E2E)** | ○ | - |
+| **実機 host migration drill (Mac→VPS) RTO≤4h PASS** | ○ | - |
 | `taskhub migrate` 自動化 | ○ | rollback 自動化は phase 分割可 |
 | 半年 drill scheduling SOP | ○ | - |
 | Phase E 16 finding closure | ○ | LOW 残存は P3+ で対応可 |

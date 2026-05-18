@@ -97,9 +97,9 @@ CT log や screenshot / docs / CI log に非中立 machine 名 / tailnet DNS が
 
 ---
 
-## Host-Portable Deployment update (2026-05-10、ADR-00021 連動)
+## Host-Portable Deployment update (2026-05-10、ADR-00021 連動、F-PR67-023 P2 adopt で proposed sync)
 
-ADR-00021 (Host-Portable Deployment + Data Migration) accepted 化に伴い、本 ADR の **Tailscale 閉域維持 invariant が host を変えても不変** であることを明示化:
+F-PR67-023 P2 adopt: ADR-00007 + ADR-00021 はともに `proposed` 状態 (acceptance は SP-022 で実機 host migration drill PASS 後、master plan line 106/107)、本 update は **staged for synchronized acceptance** = SP-022 で同時 accepted 化される invariant 確定の draft. 本 ADR の **Tailscale 閉域維持 invariant が host を変えても不変** であることを明示化:
 
 ### host 中立 invariant (ADR-00021 §6 と同期)
 
