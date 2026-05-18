@@ -14,15 +14,15 @@ related_research:
   - "ADR-00007 (External exposure、Tailscale-only invariant 不変前提)"
 supersedes: null
 superseded_by: null
-acceptance_blocked_by:
-  - "Phase G Codex plan-review + adversarial-review clean"
-  - "Phase H Codex second-opinion で 94 finding closure verify"
-  - "ADR-00007 update accepted (host-portable 明示化、Phase H で同期確認)"
-  - "SP-001.5 (host-portable amendment) が proposed で起票済"
-acceptance_target_sprint: "SP-001 着手直前 (Phase F-0 完了 + SP-001.5 着手と同時に proposed → accepted)"
+accepted_at: "2026-05-18T09:10:00Z"
+acceptance_blocked_by: []
+acceptance_target_sprint: null
+acceptance_history:
+  - "2026-05-10: proposed (Phase G plan-review + adversarial-review clean + Phase H second-opinion で 94 finding closure verify 完了)"
+  - "2026-05-18: accepted (SP-012 batch 7 = taskhub admin CLI 10 subcommands + batch 10 = audit_events + signed journal 実装着手契機、Codex PR #67 F-PR67-002 P1 adopt + .claude/rules/sprint-pack-adr-gate.md §12 invariant 整合、ADR-00007 同時 accepted)"
 ---
 
-最終更新: 2026-05-10 (proposed 起票 + Phase G plan/adversarial + Phase H second-opinion 反映、§11/§12/§14 が **正本**、§2/§3/§5/§7 は早期 sample で **§11/§12/§14 が後勝ち**)
+最終更新: 2026-05-18 (Sprint 12 で proposed → accepted 昇格、§11/§12/§14 が **正本**、§2/§3/§5/§7 は早期 sample で **§11/§12/§14 が後勝ち**)
 
 ## 仕様 normative source 序列 (PH-F-004 fix)
 

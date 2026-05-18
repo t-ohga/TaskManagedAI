@@ -7,11 +7,16 @@ authors:
   - "t-ohga"
 related_sprints:
   - "SP-000_bootstrap"
+  - "SP-012_p0_acceptance"
 supersedes: null
 superseded_by: null
+accepted_at: "2026-05-18T09:10:00Z"
+acceptance_history:
+  - "2026-05-07: proposed (SP-000_bootstrap で起票)"
+  - "2026-05-18: accepted (SP-012 で host-portable invariant 整合 + Tailscale Serve / Funnel 不使用 / tag:taskhub-ci grants 最小化を Sprint 12 batch 7 taskhub admin CLI で参照、Codex PR #67 F-PR67-002 P1 adopt + .claude/rules/sprint-pack-adr-gate.md §12 invariant 整合、ADR-00021 同時 accepted)"
 ---
 
-最終更新: 2026-05-07
+最終更新: 2026-05-18 (Sprint 12 で proposed → accepted 昇格)
 
 ## 背景
 

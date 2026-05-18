@@ -224,7 +224,12 @@ F-PR67-001 P1 adopt: P0 core gates (taskhub real I/O / host migration drill / pr
 
 **Sprint 12 で達成済**: 4-stage BL-0149 evidence chain pipeline (Acceptance Artifact → Audit Payload → AuditEvent ORM → SignedJournalChain) を全 pure function で確立、SP-012 P0 Acceptance Report の **server-owned hash chain + tamper detection invariant** が pure function path で完成. 実 DB write integration / real corpus + programmatic SUT / frontend backend wiring は P0.1 / 後続 sprint scope.
 
-**ADR Gate**: ADR-00021 (Host-Portable Deployment) + ADR-00007 (External Exposure) を Sprint 12 中の実装着手契機で `proposed → accepted` 昇格 + `planned_adr_refs → adr_refs` 移動 (`.claude/rules/sprint-pack-adr-gate.md §12` invariant 遵守、F-PR67-002 P1 adopt).
+**ADR Gate (適用済)**: F-PR67-002/004 P1+P2 adopt — ADR-00021 (Host-Portable Deployment、Criteria #2 DB schema / #6 Secrets / #7 外部公開 / #8 破壊的操作) + ADR-00007 (External Exposure: Tailscale Serve + Funnel 不使用、Criteria #7 外部公開) を Sprint 12 中の実装着手契機で `proposed → accepted` 昇格.
+
+- **accepted_at**: `2026-05-18T09:10:00Z` (両 ADR 同 timestamp、ADR frontmatter `accepted_at` + `acceptance_history` に記録)
+- ADR-00021 acceptance_blocked_by を全件 clear (Phase G/H closure verify + ADR-00007 同期 + SP-001.5 proposed completion 達成)、acceptance_target_sprint を null 化
+- SP-012 frontmatter: `planned_adr_refs → adr_refs` 移動完了 (`.claude/rules/sprint-pack-adr-gate.md §12` invariant 遵守)
+- 後続 ADR-gate audit / release audit から ADR Gate Criteria #2/#6/#7/#8 (ADR-00021) + #7 (ADR-00007) の accepted 状態と適用 timestamp が機械可読
 
 #### PR merged 一覧 (Sprint 12 session、2026-05-17 〜 2026-05-18)
 
@@ -264,7 +269,10 @@ SignedJournalChain (final_hash + previous_hash linking、verify_signed_journal_c
 - **Signed journal**: real JCS canonical JSON (RFC 8785) + UTF-16 key ordering + NaN/Inf reject + UTC normalize + tamper detection (4 fail-closed test fixture: payload modify / event insert / order swap / cross-tenant) + malformed snapshot → False (not raise)
 - **AgentRun 16 状態 / ContextSnapshot 10 列 / approval 4 整合 / gateway 分離**: 全 batch で不変保持
 - **raw secret invariant**: assert_no_raw_secret (shared) + writer local Slack token reject (xox[abprso]- / xapp-) 2-layer fail-closed
-- **ADR Gate Criteria 11 種**: 該当なし (全 batch read-only skeleton + new service module、API/DB schema/Secret/Provider/Network 不変)
+- **ADR Gate Criteria 11 種**: F-PR67-006 P2 adopt — Sprint 全体で **適用済**:
+  * Criteria #2 (DB schema) + #6 (Secrets) + #7 (外部公開) + #8 (破壊的操作) は ADR-00021 (Host-Portable Deployment) で host migration drill / age key 運搬 / restore→rollback flow を governance、Sprint 12 batch 7 (taskhub admin CLI) + batch 10 (audit_events) 実装着手と同 timestamp で accepted 化
+  * Criteria #7 (外部公開) は ADR-00007 (External Exposure) で Tailscale Serve + Funnel 不使用 invariant を governance、SP-012 batch 7 taskhub admin CLI で参照
+  * 各 batch (3-10) 個別 Review section の `ADR Gate Criteria 11 種: 該当なし` は **per-batch incremental change** に対する判定 (skeleton + read-only + new service module で API/DB schema/Secret/Provider/Network 不変)、上位 Sprint scope の ADR Gate (host-portable / external exposure) は ADR-00021/ADR-00007 で satisfied
 - **AI 出力境界**: 全 batch pure function / read-only Server Component / no mutation
 - **CLAUDE.md 6.5.0 absolute teaching (品質第一)**: 25 round / 70 findings 全件 adopt + R2 trap memory + autonomous-no-stop memory 完全遵守
 - **local verification**: ruff / mypy / pytest backend 全 batch clean、frontend typecheck/eslint/vitest 全 batch clean
