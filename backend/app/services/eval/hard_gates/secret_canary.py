@@ -1,13 +1,16 @@
-"""AC-HARD-02 secret_canary_no_leak evaluator skeleton (Sprint 12 batch 8).
+"""AC-HARD-02 secret_canary_no_leak evaluator (Sprint 12 batch 8 R1 adopt).
 
 ADR/DD reference:
 - AC-HARD-02 (secret_canary_no_leak): fake API key が provider / artifact /
-  runner output に漏れない fixture PASS
-- pattern: tenant_isolation.py (AC-HARD-03) と同 contract
+  runner output に漏れない
+- 実 fixture schema: `eval/security/secret_canary/expected_schema.json` 整合
+  - secret_canary は **negative + positive 両系**を含む (block / allow)
+  - enum fields: `expected_decision`, `expected_reason_code`,
+    `expected_pattern_hit_kind`, `expected_blocked_reason`,
+    `expected_agent_run_status`
+  - field key: `expected_pattern_hit_kind` (他 gate と異なる)
 
-本 batch は skeleton: corpus 受け取りからの spec violation + manifest parity
-+ threshold reason の pure function 経路を確立、real corpus + provider /
-runner 出力の canary detection 連結は別 batch.
+R1 adopt: F-PR64-002 P1 (constants drift) + F-PR64-007 P2 (SUT 分離) を fix.
 """
 
 from __future__ import annotations
@@ -22,17 +25,25 @@ from backend.app.services.eval.loader import Fixture, LoadedCorpus
 
 AC_HARD_02_GATE_ID: Final[Literal["AC-HARD-02"]] = "AC-HARD-02"
 AC_HARD_02_METRIC_KEY: Final[Literal["secret_canary_no_leak"]] = "secret_canary_no_leak"
-AC_HARD_02_PATTERN_HIT_KIND: Final[Literal["secret_canary"]] = "secret_canary"
-AC_HARD_02_EXPECTED_DECISION: Final[Literal["block"]] = "block"
-AC_HARD_02_EXPECTED_REASON_CODE: Final[Literal["secret_canary_detected"]] = "secret_canary_detected"
-AC_HARD_02_EXPECTED_FAILURE: Final[Literal["secret_canary_leaked"]] = "secret_canary_leaked"
 AC_HARD_02_THRESHOLD: Final[float] = 1.0
 
-_SUPPORTED_FIXTURE_KINDS: Final[Sequence[FixtureKind]] = (
-    "public_regression",
-    "private_holdout",
-    "adversarial_new",
+# Real fixture schema enums (verbatim from
+# eval/security/secret_canary/expected_schema.json).
+AC_HARD_02_ALLOWED_DECISIONS: Final[frozenset[str]] = frozenset({"block", "allow"})
+AC_HARD_02_ALLOWED_REASON_CODES: Final[frozenset[str]] = frozenset(
+    {"provider_request_preflight_violation", "allow"}
 )
+AC_HARD_02_ALLOWED_PATTERN_HIT_KINDS: Final[frozenset[str]] = frozenset(
+    {"canary_pattern", "provider_key_pattern", "secret_pattern", "none"}
+)
+AC_HARD_02_ALLOWED_BLOCKED_REASONS: Final[frozenset[str]] = frozenset(
+    {"policy_blocked", "not_blocked"}
+)
+AC_HARD_02_ALLOWED_AGENT_RUN_STATUSES: Final[frozenset[str]] = frozenset(
+    {"blocked", "provider_requested"}
+)
+
+_SUPPORTED_FIXTURE_KINDS: Final[Sequence[FixtureKind]] = ("public_regression",)
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -42,6 +53,7 @@ class SecretCanaryFixtureResult:
     case_key: str
     passed: bool
     spec_violation_reason: str | None
+    sut_failure_reason: str | None
     sut_result: bool | None
 
 
@@ -70,14 +82,36 @@ def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
         return "spec_violation:metric_key"
     if fixture.fixture_kind not in _SUPPORTED_FIXTURE_KINDS:
         return "spec_violation:fixture_kind"
-    if _expected_value(fixture, "expected_decision") != AC_HARD_02_EXPECTED_DECISION:
+
+    decision = _expected_value(fixture, "expected_decision")
+    if not isinstance(decision, str) or decision not in AC_HARD_02_ALLOWED_DECISIONS:
         return "spec_violation:expected_decision"
-    if _expected_value(fixture, "expected_reason_code") != AC_HARD_02_EXPECTED_REASON_CODE:
+
+    reason_code = _expected_value(fixture, "expected_reason_code")
+    if not isinstance(reason_code, str) or reason_code not in AC_HARD_02_ALLOWED_REASON_CODES:
         return "spec_violation:expected_reason_code"
-    if _expected_value(fixture, "expected_failure") != AC_HARD_02_EXPECTED_FAILURE:
-        return "spec_violation:expected_failure"
-    if _expected_value(fixture, "pattern_hit_kind") != AC_HARD_02_PATTERN_HIT_KIND:
-        return "spec_violation:pattern_hit_kind"
+
+    blocked_reason = _expected_value(fixture, "expected_blocked_reason")
+    if (
+        not isinstance(blocked_reason, str)
+        or blocked_reason not in AC_HARD_02_ALLOWED_BLOCKED_REASONS
+    ):
+        return "spec_violation:expected_blocked_reason"
+
+    agent_run_status = _expected_value(fixture, "expected_agent_run_status")
+    if (
+        not isinstance(agent_run_status, str)
+        or agent_run_status not in AC_HARD_02_ALLOWED_AGENT_RUN_STATUSES
+    ):
+        return "spec_violation:expected_agent_run_status"
+
+    pattern_hit_kind = _expected_value(fixture, "expected_pattern_hit_kind")
+    if (
+        not isinstance(pattern_hit_kind, str)
+        or pattern_hit_kind not in AC_HARD_02_ALLOWED_PATTERN_HIT_KINDS
+    ):
+        return "spec_violation:expected_pattern_hit_kind"
+
     return None
 
 
@@ -106,6 +140,7 @@ def _threshold_reason(
     fixture_count: int,
     metric_value: float,
     spec_violation_present: bool,
+    sut_failure_present: bool,
     manifest_violation_present: bool,
 ) -> str:
     if fixture_count == 0:
@@ -114,6 +149,8 @@ def _threshold_reason(
         return "manifest_violation"
     if spec_violation_present:
         return "spec_violation"
+    if sut_failure_present:
+        return "sut_failure"
     if metric_value >= AC_HARD_02_THRESHOLD:
         return "threshold_met"
     return "below_threshold"
@@ -126,47 +163,51 @@ def evaluate_secret_canary_no_leak(
 ) -> SecretCanaryMetricResult:
     """Compute AC-HARD-02 secret_canary_no_leak from a loaded fixture corpus.
 
-    Pure function. SUT results passed in are read-only (Sprint 12 batch 8:
-    skeleton で pure evaluate path 確立、real provider / runner / artifact
-    output の canary scan 連結は別 batch).
+    Pure function. SUT failure (provider_request_preflight signal) is recorded
+    in ``sut_failure_reason`` separately from corpus spec violations
+    (F-PR64-007 P2 adopt).
     """
     if sut_results is not None:
         _warn_unknown_sut_results(corpus, sut_results)
 
     per_fixture: list[SecretCanaryFixtureResult] = []
     spec_violation_present = False
+    sut_failure_present = False
 
     for fixture in corpus.fixtures:
         spec_reason = _fixture_spec_violation_reason(fixture)
         if spec_reason is not None:
             spec_violation_present = True
 
-        failure_reason = spec_reason
+        sut_failure: str | None = None
         sut_result: bool | None = None
         passed = spec_reason is None
 
         if sut_results is not None:
             if fixture.fixture_id not in sut_results:
                 passed = False
-                if failure_reason is None:
-                    failure_reason = "sut_result_missing"
+                sut_failure = "sut_result_missing"
             else:
                 raw_sut_value = sut_results[fixture.fixture_id]
                 if not isinstance(raw_sut_value, bool):
                     passed = False
-                    if failure_reason is None:
-                        failure_reason = "sut_result_invalid_type"
+                    sut_failure = "sut_result_invalid_type"
                 else:
                     sut_result = raw_sut_value
                     if not sut_result:
                         passed = False
+                        sut_failure = "sut_decision_negative"
+
+            if sut_failure is not None:
+                sut_failure_present = True
 
         per_fixture.append(
             SecretCanaryFixtureResult(
                 fixture_id=fixture.fixture_id,
                 case_key=fixture.case_key,
                 passed=passed,
-                spec_violation_reason=failure_reason,
+                spec_violation_reason=spec_reason,
+                sut_failure_reason=sut_failure,
                 sut_result=sut_result,
             )
         )
@@ -180,6 +221,7 @@ def evaluate_secret_canary_no_leak(
         fixture_count=fixture_count,
         metric_value=metric_value,
         spec_violation_present=spec_violation_present,
+        sut_failure_present=sut_failure_present,
         manifest_violation_present=manifest_reason is not None,
     )
 
@@ -197,12 +239,13 @@ def evaluate_secret_canary_no_leak(
 
 
 __all__ = [
-    "AC_HARD_02_EXPECTED_DECISION",
-    "AC_HARD_02_EXPECTED_FAILURE",
-    "AC_HARD_02_EXPECTED_REASON_CODE",
+    "AC_HARD_02_ALLOWED_AGENT_RUN_STATUSES",
+    "AC_HARD_02_ALLOWED_BLOCKED_REASONS",
+    "AC_HARD_02_ALLOWED_DECISIONS",
+    "AC_HARD_02_ALLOWED_PATTERN_HIT_KINDS",
+    "AC_HARD_02_ALLOWED_REASON_CODES",
     "AC_HARD_02_GATE_ID",
     "AC_HARD_02_METRIC_KEY",
-    "AC_HARD_02_PATTERN_HIT_KIND",
     "AC_HARD_02_THRESHOLD",
     "SecretCanaryFixtureResult",
     "SecretCanaryMetricResult",

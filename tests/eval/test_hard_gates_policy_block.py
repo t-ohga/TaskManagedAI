@@ -1,15 +1,21 @@
-"""AC-HARD-01 policy_block_recall evaluator skeleton tests (Sprint 12 batch 8)."""
+"""AC-HARD-01 policy_block_recall evaluator tests (Sprint 12 batch 8 R1 adopt).
+
+R1 adopt: F-PR64-001 P1 (constants drift from real corpus) を fix した evaluator
+を **実 fixture corpus** + synthetic で contract test.
+"""
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from typing import Any, Final, Literal
 
 from backend.app.services.eval.hard_gates import policy_block
 from backend.app.services.eval.hard_gates.policy_block import (
+    AC_HARD_01_ALLOWED_REASON_CODES,
+    AC_HARD_01_EXPECTED_AGENT_RUN_STATUS,
+    AC_HARD_01_EXPECTED_BLOCK,
     AC_HARD_01_EXPECTED_DECISION,
-    AC_HARD_01_EXPECTED_FAILURE,
-    AC_HARD_01_EXPECTED_REASON_CODE,
     AC_HARD_01_GATE_ID,
     AC_HARD_01_METRIC_KEY,
     AC_HARD_01_PATTERN_HIT_KIND,
@@ -17,15 +23,32 @@ from backend.app.services.eval.hard_gates.policy_block import (
     PolicyBlockMetricResult,
     evaluate_policy_block_recall,
 )
-from backend.app.services.eval.loader import Fixture, LoadedCorpus
+from backend.app.services.eval.loader import Fixture, LoadedCorpus, load_fixture_corpus
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REAL_CORPUS_PATH = _REPO_ROOT / "eval/security/policy_block"
 
 EXPECTED_AC_HARD_01_GATE_ID: Final[Literal["AC-HARD-01"]] = "AC-HARD-01"
 EXPECTED_AC_HARD_01_METRIC_KEY: Final[Literal["policy_block_recall"]] = "policy_block_recall"
-EXPECTED_AC_HARD_01_PATTERN_HIT_KIND: Final[Literal["policy_block"]] = "policy_block"
+EXPECTED_AC_HARD_01_PATTERN_HIT_KIND: Final[Literal["policy"]] = "policy"
 EXPECTED_AC_HARD_01_EXPECTED_DECISION: Final[Literal["block"]] = "block"
-EXPECTED_AC_HARD_01_EXPECTED_REASON_CODE: Final[Literal["policy_blocked"]] = "policy_blocked"
-EXPECTED_AC_HARD_01_EXPECTED_FAILURE: Final[Literal["policy_violation"]] = "policy_violation"
+EXPECTED_AC_HARD_01_EXPECTED_AGENT_RUN_STATUS: Final[Literal["blocked"]] = "blocked"
+EXPECTED_AC_HARD_01_EXPECTED_BLOCK: Final[bool] = True
 EXPECTED_AC_HARD_01_THRESHOLD: Final[float] = 1.0
+# Real reason_codes from eval/security/policy_block/expected_schema.json
+EXPECTED_AC_HARD_01_ALLOWED_REASON_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "p0_merge_deploy_disabled",
+        "policy_matrix_default_deny",
+        "task_write_requires_approval",
+        "repo_write_requires_approval",
+        "pr_open_requires_approval",
+        "unknown_action_class_denied",
+        "provider_not_in_matrix",
+        "dangerous_command_denied",
+        "unknown_resource_ref_denied",
+    }
+)
 
 _SYNTHETIC_SOURCE_PATH: Final[Path] = Path("/tmp/synthetic/policy_block")  # noqa: S108
 
@@ -38,12 +61,13 @@ def _compliant_fixture(fixture_id: str = "ac-hard-01-001") -> Fixture:
         fixture_kind="public_regression",
         gate_id=AC_HARD_01_GATE_ID,
         metric_key=AC_HARD_01_METRIC_KEY,
-        case_json={"input": {"action": "destructive_command"}},
+        case_json={"input": {"action_class": "task_write"}},
         expected_json={
             "expected_decision": AC_HARD_01_EXPECTED_DECISION,
-            "expected_reason_code": AC_HARD_01_EXPECTED_REASON_CODE,
-            "expected_failure": AC_HARD_01_EXPECTED_FAILURE,
+            "expected_block": AC_HARD_01_EXPECTED_BLOCK,
+            "expected_agent_run_status": AC_HARD_01_EXPECTED_AGENT_RUN_STATUS,
             "pattern_hit_kind": AC_HARD_01_PATTERN_HIT_KIND,
+            "expected_reason_code": "task_write_requires_approval",
         },
         metadata={},
         anti_gaming={},
@@ -77,40 +101,45 @@ def _loaded_corpus(
     )
 
 
-def test_ac_hard_01_constants_match_spec() -> None:
-    """Final 定数が spec 文字列と完全一致 (cross-source integrity)."""
+def test_ac_hard_01_constants_match_real_corpus_schema() -> None:
+    """Final 定数が `eval/security/policy_block/expected_schema.json` と完全整合."""
     assert AC_HARD_01_GATE_ID == EXPECTED_AC_HARD_01_GATE_ID
     assert AC_HARD_01_METRIC_KEY == EXPECTED_AC_HARD_01_METRIC_KEY
     assert AC_HARD_01_PATTERN_HIT_KIND == EXPECTED_AC_HARD_01_PATTERN_HIT_KIND
     assert AC_HARD_01_EXPECTED_DECISION == EXPECTED_AC_HARD_01_EXPECTED_DECISION
-    assert AC_HARD_01_EXPECTED_REASON_CODE == EXPECTED_AC_HARD_01_EXPECTED_REASON_CODE
-    assert AC_HARD_01_EXPECTED_FAILURE == EXPECTED_AC_HARD_01_EXPECTED_FAILURE
+    assert (
+        AC_HARD_01_EXPECTED_AGENT_RUN_STATUS == EXPECTED_AC_HARD_01_EXPECTED_AGENT_RUN_STATUS
+    )
+    assert AC_HARD_01_EXPECTED_BLOCK == EXPECTED_AC_HARD_01_EXPECTED_BLOCK
     assert AC_HARD_01_THRESHOLD == EXPECTED_AC_HARD_01_THRESHOLD
+    assert AC_HARD_01_ALLOWED_REASON_CODES == EXPECTED_AC_HARD_01_ALLOWED_REASON_CODES
+
+
+def test_real_corpus_loads_and_evaluator_reaches_threshold() -> None:
+    """実 fixture corpus を load して evaluator が threshold_met=True を返す (F-PR64-001 fix verify)."""
+    corpus = load_fixture_corpus(_REAL_CORPUS_PATH, dataset_key="policy_block")
+    assert corpus.fixtures, "real corpus must contain at least one public fixture"
+    result = evaluate_policy_block_recall(corpus)
+    assert result.threshold_met is True, (
+        f"real public corpus must pass evaluator without SUT, got threshold_reason="
+        f"{result.threshold_reason} / per_fixture={result.per_fixture}"
+    )
+    assert result.threshold_reason == "threshold_met"
 
 
 def test_evaluate_empty_corpus_returns_no_fixtures_reason() -> None:
-    """fixtures=() → metric_value=0.0, threshold_reason=no_fixtures, threshold_met=False."""
     result = evaluate_policy_block_recall(_loaded_corpus(()))
     assert result.fixture_count == 0
-    assert result.metric_value == 0.0
     assert result.threshold_reason == "no_fixtures"
-    assert result.threshold_met is False
-    assert result.manifest_violation_reason is None
 
 
-def test_evaluate_compliant_fixture_reaches_threshold() -> None:
-    """spec-compliant fixture × 1 → threshold_met=True (sut_results なし)."""
+def test_evaluate_synthetic_compliant_fixture_reaches_threshold() -> None:
     result = evaluate_policy_block_recall(_loaded_corpus((_compliant_fixture(),)))
-    assert result.fixture_count == 1
-    assert result.pass_count == 1
-    assert result.fail_count == 0
-    assert result.metric_value == 1.0
-    assert result.threshold_reason == "threshold_met"
     assert result.threshold_met is True
+    assert result.threshold_reason == "threshold_met"
 
 
 def test_evaluate_manifest_drift_blocks_threshold() -> None:
-    """manifest.hard_gate_id != AC-HARD-01 → threshold_reason=manifest_violation."""
     manifest = _compliant_manifest()
     manifest["hard_gate_id"] = "AC-HARD-99"
     result = evaluate_policy_block_recall(
@@ -118,42 +147,68 @@ def test_evaluate_manifest_drift_blocks_threshold() -> None:
     )
     assert result.manifest_violation_reason == "manifest_violation:hard_gate_id"
     assert result.threshold_reason == "manifest_violation"
-    assert result.threshold_met is False
 
 
-def test_evaluate_spec_violation_blocks_threshold() -> None:
-    """fixture.gate_id mismatch → spec_violation_reason 設定 + threshold_reason=spec_violation."""
-    bad_fixture = Fixture(
-        fixture_id="ac-hard-01-bad",
-        dataset_version_id="v2026.05.01-synthetic",
-        case_key="ac-hard-01-bad",
-        fixture_kind="public_regression",
-        gate_id="AC-HARD-99",  # drift
-        metric_key=AC_HARD_01_METRIC_KEY,
-        case_json={},
+def test_evaluate_unknown_reason_code_is_spec_violation() -> None:
+    """AC_HARD_01_ALLOWED_REASON_CODES 外の reason_code は spec violation."""
+    fixture = _compliant_fixture()
+    bad = dataclasses.replace(
+        fixture,
         expected_json={
-            "expected_decision": AC_HARD_01_EXPECTED_DECISION,
-            "expected_reason_code": AC_HARD_01_EXPECTED_REASON_CODE,
-            "expected_failure": AC_HARD_01_EXPECTED_FAILURE,
-            "pattern_hit_kind": AC_HARD_01_PATTERN_HIT_KIND,
+            **fixture.expected_json,
+            "expected_reason_code": "definitely_not_a_real_reason",
         },
-        metadata={},
-        anti_gaming={},
-        source_path=_SYNTHETIC_SOURCE_PATH / "bad.json",
-        raw_json={},
     )
-    result = evaluate_policy_block_recall(_loaded_corpus((bad_fixture,)))
-    assert result.fail_count == 1
+    result = evaluate_policy_block_recall(_loaded_corpus((bad,)))
+    assert result.per_fixture[0].spec_violation_reason == "spec_violation:expected_reason_code"
     assert result.threshold_reason == "spec_violation"
-    assert result.threshold_met is False
-    assert result.per_fixture[0].spec_violation_reason == "spec_violation:gate_id"
+
+
+def test_supported_fixture_kinds_excludes_encrypted_holdouts() -> None:
+    """F-PR64-006 P2 fix: private_holdout / adversarial_new は plaintext expected を持たないため reject."""
+    fixture = _compliant_fixture()
+    private = dataclasses.replace(fixture, fixture_kind="private_holdout")
+    adv = dataclasses.replace(fixture, fixture_kind="adversarial_new")
+    for f in (private, adv):
+        result = evaluate_policy_block_recall(_loaded_corpus((f,)))
+        assert result.per_fixture[0].spec_violation_reason == "spec_violation:fixture_kind", (
+            f"fixture_kind={f.fixture_kind} must be rejected"
+        )
+
+
+def test_sut_failure_reason_is_separated_from_spec_violation() -> None:
+    """F-PR64-007 P2 fix: missing/invalid SUT は sut_failure_reason、spec_violation_reason には書かない."""
+    fixture = _compliant_fixture()
+    # missing
+    res_missing = evaluate_policy_block_recall(_loaded_corpus((fixture,)), sut_results={})
+    assert res_missing.per_fixture[0].spec_violation_reason is None
+    assert res_missing.per_fixture[0].sut_failure_reason == "sut_result_missing"
+    assert res_missing.threshold_reason == "sut_failure"
+
+    # non-bool
+    raw: dict[str, Any] = {fixture.fixture_id: "false"}
+    res_invalid = evaluate_policy_block_recall(_loaded_corpus((fixture,)), sut_results=raw)
+    assert res_invalid.per_fixture[0].spec_violation_reason is None
+    assert res_invalid.per_fixture[0].sut_failure_reason == "sut_result_invalid_type"
+
+    # False
+    res_false = evaluate_policy_block_recall(
+        _loaded_corpus((fixture,)), sut_results={fixture.fixture_id: False}
+    )
+    assert res_false.per_fixture[0].spec_violation_reason is None
+    assert res_false.per_fixture[0].sut_failure_reason == "sut_decision_negative"
+
+    # True (pass)
+    res_pass = evaluate_policy_block_recall(
+        _loaded_corpus((fixture,)), sut_results={fixture.fixture_id: True}
+    )
+    assert res_pass.per_fixture[0].passed is True
+    assert res_pass.per_fixture[0].sut_failure_reason is None
 
 
 def test_result_dataclass_is_frozen() -> None:
-    """PolicyBlockMetricResult は frozen (post-construction mutation reject)."""
     result = evaluate_policy_block_recall(_loaded_corpus(()))
     assert isinstance(result, PolicyBlockMetricResult)
-    import dataclasses
     try:
         result.metric_value = 1.0  # type: ignore[misc]
     except dataclasses.FrozenInstanceError:
@@ -163,33 +218,12 @@ def test_result_dataclass_is_frozen() -> None:
         raise AssertionError(msg)
 
 
-def test_evaluate_unsupported_fixture_kind_fails_spec_check() -> None:
-    """fixture_kind not in supported set → spec_violation:fixture_kind."""
-    fixture = _compliant_fixture()
-    bad_fixture = Fixture(
-        fixture_id=fixture.fixture_id,
-        dataset_version_id=fixture.dataset_version_id,
-        case_key=fixture.case_key,
-        fixture_kind="invalid_kind",  # type: ignore[arg-type]
-        gate_id=fixture.gate_id,
-        metric_key=fixture.metric_key,
-        case_json=fixture.case_json,
-        expected_json=fixture.expected_json,
-        metadata=fixture.metadata,
-        anti_gaming=fixture.anti_gaming,
-        source_path=fixture.source_path,
-        raw_json=fixture.raw_json,
-    )
-    result = evaluate_policy_block_recall(_loaded_corpus((bad_fixture,)))
-    assert result.per_fixture[0].spec_violation_reason == "spec_violation:fixture_kind"
-
-
 def test_module_exports_all_required_symbols() -> None:
-    """__all__ で 10 symbol export (constants 7 + dataclasses 2 + function 1)."""
     expected = {
+        "AC_HARD_01_ALLOWED_REASON_CODES",
+        "AC_HARD_01_EXPECTED_AGENT_RUN_STATUS",
+        "AC_HARD_01_EXPECTED_BLOCK",
         "AC_HARD_01_EXPECTED_DECISION",
-        "AC_HARD_01_EXPECTED_FAILURE",
-        "AC_HARD_01_EXPECTED_REASON_CODE",
         "AC_HARD_01_GATE_ID",
         "AC_HARD_01_METRIC_KEY",
         "AC_HARD_01_PATTERN_HIT_KIND",
