@@ -226,8 +226,10 @@ F-PR67-001 P1 adopt: P0 core gates (taskhub real I/O / host migration drill / pr
 
 **ADR Gate (適用済)**: F-PR67-002/004 P1+P2 adopt — ADR-00021 (Host-Portable Deployment、Criteria #2 DB schema / #6 Secrets / #7 外部公開 / #8 破壊的操作) + ADR-00007 (External Exposure: Tailscale Serve + Funnel 不使用、Criteria #7 外部公開) を Sprint 12 中の実装着手契機で `proposed → accepted` 昇格.
 
-- **accepted_at**: `2026-05-18T09:10:00Z` (両 ADR 同 timestamp、ADR frontmatter `accepted_at` + `acceptance_history` に記録)
+- **accepted_at**: `2026-05-18T00:30:00Z` (F-PR67-009 P2 adopt: SP-012 batch 7 実装着手 commit b86de20 より前に back-date、`.claude/rules/sprint-pack-adr-gate.md §12` 「実装着手直前」invariant 整合、両 ADR 同 timestamp)
+- **acceptance_scope**: `design_accepted_implementation_skeleton_done` (F-PR67-010 P2 partial adopt: ADR-00021 は design ADR、本 accepted 化は host-portable deployment design 確定 + skeleton 実装着手直前の意味、実機 host migration drill 自動化 + drill 半年 1 回 SOP は SP-022 scope = 別 acceptance criteria)
 - ADR-00021 acceptance_blocked_by を全件 clear (Phase G/H closure verify + ADR-00007 同期 + SP-001.5 proposed completion 達成)、acceptance_target_sprint を null 化
+- **SP-001.5 同期** (F-PR67-008 P2 adopt): SP-001.5 frontmatter の `planned_adr_refs → adr_refs` を SP-012 と同タイミングで更新、ADR が repo 内の別 Sprint Pack で planned/accepted 状態 drift しない invariant 整合
 - SP-012 frontmatter: `planned_adr_refs → adr_refs` 移動完了 (`.claude/rules/sprint-pack-adr-gate.md §12` invariant 遵守)
 - 後続 ADR-gate audit / release audit から ADR Gate Criteria #2/#6/#7/#8 (ADR-00021) + #7 (ADR-00007) の accepted 状態と適用 timestamp が機械可読
 

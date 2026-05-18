@@ -14,12 +14,25 @@ related_research:
   - "ADR-00007 (External exposure、Tailscale-only invariant 不変前提)"
 supersedes: null
 superseded_by: null
-accepted_at: "2026-05-18T09:10:00Z"
+# F-PR67-009 P2 adopt (Codex PR #67 R3): accepted_at は SP-012 batch 7 (taskhub
+# admin CLI 最初 commit b86de20 = 2026-05-18T01:00:00Z 直前) より前に back-date.
+# .claude/rules/sprint-pack-adr-gate.md §12 「実装着手直前」invariant 整合の
+# ため、Sprint 12 session 開始時刻 (2026-05-18T00:30:00Z) を採用.
+accepted_at: "2026-05-18T00:30:00Z"
 acceptance_blocked_by: []
 acceptance_target_sprint: null
+# F-PR67-010 P2 adopt: ADR-00021 は **design ADR** であり、本 accepted 化は
+# host-portable deployment design 確定 を意味する. host migration drill 実機
+# 実施 + drill 自動化は **SP-022 scope** (`docs/sprints/SP-022_framework_intake_hardening.md
+# §13`)、本 ADR §8 drill schedule では実機 drill を user 物理 phase に明示.
+# したがって accepted 化は (a) design 確定、(b) Phase G/H closure verify
+# (94 findings)、(c) ADR-00007 同期 accepted、(d) SP-001.5 host-portable
+# amendment との整合 を意味し、実機 drill PASS は別 acceptance criteria.
+acceptance_scope: "design_accepted_implementation_skeleton_done"
 acceptance_history:
   - "2026-05-10: proposed (Phase G plan-review + adversarial-review clean + Phase H second-opinion で 94 finding closure verify 完了)"
-  - "2026-05-18: accepted (SP-012 batch 7 = taskhub admin CLI 10 subcommands + batch 10 = audit_events + signed journal 実装着手契機、Codex PR #67 F-PR67-002 P1 adopt + .claude/rules/sprint-pack-adr-gate.md §12 invariant 整合、ADR-00007 同時 accepted)"
+  - "2026-05-18T00:30:00Z: accepted (design accepted、SP-012 batch 7 = taskhub admin CLI 10 subcommands skeleton + batch 10 = audit_events + signed journal pure function 実装着手直前、Codex PR #67 F-PR67-002 P1 + F-PR67-009 P2 adopt + .claude/rules/sprint-pack-adr-gate.md §12 invariant 整合、ADR-00007 同時 accepted、SP-001.5 host-portable amendment との整合)"
+  - "future: 実機 host migration drill 自動化完成 + drill 半年 1 回スケジューリング SOP 確立 = SP-022 framework intake hardening scope、別 acceptance criteria"
 ---
 
 最終更新: 2026-05-18 (Sprint 12 で proposed → accepted 昇格、§11/§12/§14 が **正本**、§2/§3/§5/§7 は早期 sample で **§11/§12/§14 が後勝ち**)
