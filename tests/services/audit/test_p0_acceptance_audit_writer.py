@@ -126,6 +126,36 @@ def test_build_audit_event_generates_uuid_when_explicit_id_is_none() -> None:
     assert audit_event.id.version == 4
 
 
+def test_build_audit_event_rejects_raw_secret_pattern_in_payload() -> None:
+    """F-PR66-003 P2 fix: assert_no_raw_secret で raw secret pattern reject.
+
+    deficiency_codes に sk-..., ghp_..., AGE-SECRET-..., 等の pattern が混入
+    した場合、fail-closed で ValueError raise (audit boundary invariant).
+    """
+    import pytest
+
+    payload_with_secret = P0AcceptanceAuditPayload(
+        schema_version="1.0.0",
+        timestamp="2026-05-18T00:00:00Z",
+        p0_exit_decision=False,
+        deficiency_count=1,
+        # `sk-` で始まる raw OpenAI key pattern を deficiency_codes に混入させる.
+        deficiency_codes=("sk-test1234567890abcdefghij1234567890abcdefghij1234",),
+        final_chain_sha256="0" * 64,
+        gated_rows_sha256="0" * 64,
+        hard_gates_sha256="0" * 64,
+        kpi_sha256="0" * 64,
+        smoke_sha256="0" * 64,
+        drill_entries_sha256="0" * 64,
+        private_staging_sha256="0" * 64,
+    )
+    with pytest.raises(ValueError):
+        build_p0_acceptance_audit_event(
+            payload=payload_with_secret,
+            context=_make_context(),
+        )
+
+
 def test_build_audit_event_no_raw_secret_in_payload_after_redaction() -> None:
     """deficiency_codes redaction を経た payload に raw secret pattern が無い."""
     payload = P0AcceptanceAuditPayload(

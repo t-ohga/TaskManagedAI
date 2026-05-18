@@ -250,6 +250,94 @@ def test_chain_includes_tenant_id_in_hash_computation() -> None:
     assert chain1.final_hash != chain2.final_hash
 
 
+def test_build_chain_rejects_unflushed_audit_event() -> None:
+    """F-PR66-002 P2 fix: created_at=None (unflushed row) は ValueError reject."""
+    import pytest
+
+    event = _make_event(
+        event_type="evt",
+        event_payload={"data": "x"},
+        audit_event_id=UUID("11111111-1111-4111-8111-111111111111"),
+    )
+    event.created_at = None  # type: ignore[assignment]  # simulate unflushed row
+    with pytest.raises(ValueError, match="signed journal requires"):
+        build_signed_journal_chain([event])
+
+
+def test_build_chain_normalizes_created_at_to_utc() -> None:
+    """F-PR66-004 P2 fix: 異 TimeZone offset の同 instant は同 hash."""
+    from datetime import timedelta, timezone
+
+    # 2026-05-18T12:00:00+00:00 (UTC) と同 instant な 2026-05-18T17:00:00+05:00 (IST).
+    utc_event = _make_event(
+        event_type="evt",
+        event_payload={"data": "tz"},
+        audit_event_id=UUID("22222222-2222-4222-8222-222222222222"),
+        created_at=datetime(2026, 5, 18, 12, 0, 0, tzinfo=UTC),
+    )
+    ist_offset = timezone(timedelta(hours=5))
+    ist_event = _make_event(
+        event_type="evt",
+        event_payload={"data": "tz"},
+        audit_event_id=UUID("22222222-2222-4222-8222-222222222222"),
+        created_at=datetime(2026, 5, 18, 17, 0, 0, tzinfo=ist_offset),
+    )
+    chain_utc = build_signed_journal_chain([utc_event])
+    chain_ist = build_signed_journal_chain([ist_event])
+    assert chain_utc.final_hash == chain_ist.final_hash, (
+        "UTC normalize: 同 instant の異 offset は hash 不変"
+    )
+
+
+def test_build_chain_rejects_nan_in_event_payload() -> None:
+    """F-PR66-005 P2 fix: NaN float は ValueError reject (JCS spec invariant)."""
+    import pytest
+
+    event = _make_event(
+        event_type="evt",
+        event_payload={"metric": float("nan")},
+        audit_event_id=UUID("33333333-3333-4333-8333-333333333333"),
+    )
+    with pytest.raises(ValueError, match="non-finite float"):
+        build_signed_journal_chain([event])
+
+
+def test_build_chain_rejects_infinity_in_event_payload() -> None:
+    """F-PR66-005 P2 fix: Infinity float は ValueError reject."""
+    import pytest
+
+    event = _make_event(
+        event_type="evt",
+        event_payload={"duration": float("inf")},
+        audit_event_id=UUID("44444444-4444-4444-8444-444444444444"),
+    )
+    with pytest.raises(ValueError, match="non-finite float"):
+        build_signed_journal_chain([event])
+
+
+def test_verify_returns_false_for_malformed_chain_with_truncated_entries() -> None:
+    """F-PR66-001 P2 fix: malformed chain (entry_count vs len(entries) 不一致) は False、ValueError raise しない."""
+    e1 = _make_event(
+        event_type="evt1",
+        event_payload={"data": "a"},
+        audit_event_id=UUID("11111111-1111-4111-8111-111111111111"),
+    )
+    e2 = _make_event(
+        event_type="evt2",
+        event_payload={"data": "b"},
+        audit_event_id=UUID("22222222-2222-4222-8222-222222222222"),
+    )
+    # build via 2 events ですが、entries だけ truncate した malformed snapshot.
+    chain = build_signed_journal_chain([e1, e2])
+    malformed = SignedJournalChain(
+        entry_count=chain.entry_count,  # 2 のまま
+        final_hash=chain.final_hash,
+        entries=(chain.entries[0],),  # 1 entry に truncate
+    )
+    # 旧コードでは zip(strict=True) で ValueError raise していたが、新版は False 返す.
+    assert verify_signed_journal_chain(malformed, [e1, e2]) is False
+
+
 def test_chain_entry_count_matches_len_entries() -> None:
     """invariant: entry_count == len(entries)."""
     events = [

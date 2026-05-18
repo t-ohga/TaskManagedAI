@@ -18,6 +18,7 @@ from typing import Final
 from uuid import UUID, uuid4
 
 from backend.app.db.models.audit_event import AuditEvent
+from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 from backend.app.services.eval.p0_acceptance_audit_emit import (
     AUDIT_EVENT_TYPE_P0_ACCEPTANCE_REPORT_GENERATED,
     P0AcceptanceAuditPayload,
@@ -56,14 +57,22 @@ def build_p0_acceptance_audit_event(
 
     invariant:
     - event_type は AUDIT_EVENT_TYPE_P0_ACCEPTANCE_REPORT_GENERATED 固定
-    - event_payload は payload.to_dict() (raw secret 排除済)
+    - event_payload は payload.to_dict() を **assert_no_raw_secret で fail-closed
+      scan** してから ORM に渡す (F-PR66-003 P2 adopt、AuditEventRepository.append
+      の boundary を bypass しないよう writer 側で同 invariant を担保)
     - principal_id=null (BL-0149 sign-off は principal-bound でない system emit)
     """
+    event_payload = payload.to_dict()
+    # F-PR66-003 P2 adopt: writer 内で raw secret pattern + prohibited key scan.
+    # caller が直接 P0AcceptanceAuditPayload を構築するケース、または
+    # _extract_deficiency_codes regression で secret-like 文字列が残るケースの
+    # fail-closed guard.
+    assert_no_raw_secret(event_payload, path="$p0_acceptance_audit_payload")
     audit_event = AuditEvent(
         id=context.explicit_id if context.explicit_id is not None else uuid4(),
         tenant_id=context.tenant_id,
         event_type=AUDIT_EVENT_TYPE_P0_ACCEPTANCE_REPORT_GENERATED,
-        event_payload=payload.to_dict(),
+        event_payload=event_payload,
         actor_id=context.actor_id,
         principal_id=_EXPECTED_PRINCIPAL_ID,
         correlation_id=context.correlation_id,
