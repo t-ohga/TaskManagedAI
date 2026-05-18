@@ -198,9 +198,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sub_migrate.add_argument(
         "--via",
         type=str,
-        default="closed-network",
-        choices=["closed-network", "scp"],
-        help="transport (default: closed-network)",
+        default="tailscale",
+        choices=["tailscale", "scp"],
+        help="transport (default: tailscale); see ADR-00021 §3 + SP-012 drill section",
     )
     sub_migrate.set_defaults(func=_cmd_migrate)
 

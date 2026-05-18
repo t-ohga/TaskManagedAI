@@ -69,17 +69,25 @@ def test_cli_migrate_requires_target() -> None:
 
 
 def test_cli_migrate_skeleton_mode_returns_exit_1() -> None:
-    """`migrate --target <host>` → skeleton + exit 1."""
+    """`migrate --target <host>` → skeleton + exit 1 (default transport = tailscale per ADR-00021 §3 + SP-012 drill)."""
     result = _run_cli("migrate", "--target", "example-host")
     assert result.returncode == 1
     assert "[SKELETON] taskhub migrate" in result.stdout
     assert "example-host" in result.stdout
-    # default transport is "closed-network"
-    assert "via closed-network" in result.stdout
+    # ADR-00021 §3 と SP-012 §128 host migration drill command と整合: `--via tailscale` が default
+    assert "via tailscale" in result.stdout
+
+
+def test_cli_migrate_via_tailscale_option_matches_adr_drill() -> None:
+    """ADR-00021 §3 と SP-012 §128 host migration drill command `--via tailscale` を accepting する (Codex R1 adopt)."""
+    result = _run_cli("migrate", "--target", "t-ohga-vps", "--via", "tailscale")
+    assert result.returncode == 1
+    assert "via tailscale" in result.stdout
+    assert "t-ohga-vps" in result.stdout
 
 
 def test_cli_migrate_via_scp_option() -> None:
-    """`migrate --target <host> --via scp` を accepting する."""
+    """`migrate --target <host> --via scp` を accepting する (代替 transport)."""
     result = _run_cli("migrate", "--target", "example-host", "--via", "scp")
     assert result.returncode == 1
     assert "via scp" in result.stdout
