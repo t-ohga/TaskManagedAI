@@ -5,12 +5,14 @@ Sprint 12 batch 7 では **subcommand structure + exit code contract** のみ
 確立。real backup / restore / migrate / age-rotate / verify の I/O 実装は
 user 物理 drill phase で配備.
 
-Subcommands (ADR-00021 §3 table):
+Subcommands (ADR-00021 §3 table + §11.5 multi-agent fixture):
+- `taskhub backup --output <path> [--include-secrets]`: skeleton (drill 起点)
 - `taskhub restore --input <path>`: skeleton
 - `taskhub migrate --target <hostname>`: skeleton (one-shot host migration)
 - `taskhub status`: skeleton (host status / service health / data size)
 - `taskhub age-rotate`: skeleton (key rotation + SOPS re-encrypt)
-- `taskhub verify`: skeleton (integrity / network invariant verify)
+- `taskhub verify [--integrity] [--network-invariant] [--multi-agent]`: skeleton
+  (--multi-agent は ADR-00021 §11.5 multi-agent table restore 整合性 fixture)
 
 CRITICAL invariants (本 batch では skeleton message のみで verify):
 - closed-network invariant (ADR-00007 参照)
@@ -51,6 +53,26 @@ def _skeleton_message(subcommand: str, details: str = "") -> str:
     lines.append("  - docs/adr/00021_host_portable_deployment.md §5 (age key SOP)")
     lines.append("  - docs/adr/00021_host_portable_deployment.md §8 (drill schedule)")
     return "\n".join(lines)
+
+
+def _cmd_backup(args: argparse.Namespace) -> int:
+    """`taskhub backup --output <path> [--include-secrets]` skeleton (drill 起点)."""
+    if not args.output:
+        print("ERROR: --output <path> is required", file=sys.stderr)  # noqa: T201
+        return 2
+    suffix = " (with .env.encrypted)" if args.include_secrets else ""
+    print(  # noqa: T201
+        _skeleton_message(
+            "backup",
+            details=(
+                f"Would create age-encrypted backup at {args.output}{suffix}. "
+                "Real flow: graceful service stop -> pg_dump + Redis BGSAVE + "
+                "artifacts tar (+ optional .env.encrypted) -> age 公開鍵で暗号化 "
+                "-> .tar.age 出力."
+            ),
+        )
+    )
+    return 1  # skeleton mode
 
 
 def _cmd_restore(args: argparse.Namespace) -> int:
@@ -137,7 +159,7 @@ def _cmd_age_rotate(args: argparse.Namespace) -> int:
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
-    """`taskhub verify --integrity [--network-invariant]` skeleton."""
+    """`taskhub verify [--integrity] [--network-invariant] [--multi-agent]` skeleton."""
     checks: list[str] = []
     if args.integrity:
         checks.append("--integrity (row count / checksum / Redis count / alembic check)")
@@ -146,9 +168,16 @@ def _cmd_verify(args: argparse.Namespace) -> int:
             "--network-invariant (closed-network serve / host-internal bind / "
             "no external ingress per ADR-00007)"
         )
+    if args.multi_agent:
+        checks.append(
+            "--multi-agent (ADR-00021 §11.5 multi-agent table restore 整合性: "
+            "inter_agent_messages / memory_retrieval_artifacts / "
+            "project_agent_roles / review_artifacts / agent_runs)"
+        )
     if not checks:
         print(  # noqa: T201
-            "ERROR: at least one of --integrity / --network-invariant required",
+            "ERROR: at least one of --integrity / --network-invariant / "
+            "--multi-agent required",
             file=sys.stderr,
         )
         return 2
@@ -175,6 +204,23 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         title="subcommands",
     )
+
+    sub_backup = subparsers.add_parser(
+        "backup",
+        help="create age-encrypted backup tar (drill 起点、ADR-00021 §3)",
+    )
+    sub_backup.add_argument(
+        "--output",
+        type=str,
+        required=True,
+        help="output path for .tar.age backup file",
+    )
+    sub_backup.add_argument(
+        "--include-secrets",
+        action="store_true",
+        help="include .env.encrypted in backup (default: false)",
+    )
+    sub_backup.set_defaults(func=_cmd_backup)
 
     sub_restore = subparsers.add_parser(
         "restore",
@@ -229,6 +275,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--network-invariant",
         action="store_true",
         help="verify closed-network serve, host-internal bind, no external ingress",
+    )
+    sub_verify.add_argument(
+        "--multi-agent",
+        action="store_true",
+        help=(
+            "verify multi-agent table restore integrity per ADR-00021 §11.5 "
+            "(inter_agent_messages / memory_retrieval_artifacts / "
+            "project_agent_roles / review_artifacts / agent_runs)"
+        ),
     )
     sub_verify.set_defaults(func=_cmd_verify)
 

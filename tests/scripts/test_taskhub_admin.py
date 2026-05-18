@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +37,31 @@ def test_cli_no_subcommand_returns_exit_2() -> None:
     result = _run_cli()
     assert result.returncode == 2
     assert "required" in result.stderr.lower() or "usage" in result.stderr.lower()
+
+
+def test_cli_backup_requires_output() -> None:
+    """`backup` は --output 必須 (argparse required=True で exit 2、Codex R2 F-PR63-004 adopt)."""
+    result = _run_cli("backup")
+    assert result.returncode == 2
+
+
+def test_cli_backup_skeleton_mode_returns_exit_1(tmp_path: Path) -> None:
+    """`backup --output <path>` → skeleton + exit 1 (drill 起点、ADR-00021 §3)."""
+    target = tmp_path / "sp012-backup.tar.age"
+    result = _run_cli("backup", "--output", str(target))
+    assert result.returncode == 1
+    assert "[SKELETON] taskhub backup" in result.stdout
+    assert str(target) in result.stdout
+    # default は include-secrets なし
+    assert "(with .env.encrypted)" not in result.stdout
+
+
+def test_cli_backup_include_secrets_option() -> None:
+    """`backup --output <path> --include-secrets` → skeleton message に secrets flag を含む."""
+    result = _run_cli("backup", "--output", "/tmp/secrets-backup.tar.age", "--include-secrets")  # noqa: S108
+    assert result.returncode == 1
+    assert "[SKELETON] taskhub backup" in result.stdout
+    assert "(with .env.encrypted)" in result.stdout
 
 
 def test_cli_restore_requires_input() -> None:
@@ -110,12 +136,23 @@ def test_cli_age_rotate_skeleton_mode_returns_exit_1() -> None:
 
 
 def test_cli_verify_requires_flag() -> None:
-    """`verify` は --integrity / --network-invariant の少なくとも 1 つ必須."""
+    """`verify` は --integrity / --network-invariant / --multi-agent の少なくとも 1 つ必須."""
     result = _run_cli("verify")
     assert result.returncode == 2
     assert (
-        "--integrity / --network-invariant required" in result.stderr
+        "--integrity / --network-invariant / --multi-agent required"
+        in result.stderr
     )
+
+
+def test_cli_verify_multi_agent_matches_adr_multi_agent_fixture() -> None:
+    """`verify --multi-agent` → ADR-00021 §11.5 multi-agent table restore fixture (Codex R2 F-PR63-002 adopt)."""
+    result = _run_cli("verify", "--multi-agent")
+    assert result.returncode == 1
+    assert "[SKELETON] taskhub verify" in result.stdout
+    assert "--multi-agent" in result.stdout
+    # ADR-00021 §11.5 で列挙された 5 table のうち少なくとも 1 つを参照
+    assert "inter_agent_messages" in result.stdout
 
 
 def test_cli_verify_integrity_skeleton_mode_returns_exit_1() -> None:
@@ -141,3 +178,37 @@ def test_cli_verify_both_flags_skeleton_mode_returns_exit_1() -> None:
     assert "[SKELETON] taskhub verify" in result.stdout
     assert "--integrity" in result.stdout
     assert "--network-invariant" in result.stdout
+
+
+def test_cli_verify_integrity_with_multi_agent_matches_drill_command() -> None:
+    """SP-012 §131 drill command `taskhub verify --integrity --multi-agent` を accepting する."""
+    result = _run_cli("verify", "--integrity", "--multi-agent")
+    assert result.returncode == 1
+    assert "--integrity" in result.stdout
+    assert "--multi-agent" in result.stdout
+
+
+def test_taskhub_console_script_entry_point_installed() -> None:
+    """ADR-00021 §3 + SP-012 §128 で `taskhub` executable で起動できる (Codex R2 F-PR63-003 adopt)."""
+    taskhub_path = shutil.which("taskhub")
+    assert taskhub_path is not None, (
+        "`taskhub` console_script entry point not on PATH; "
+        "ensure `uv sync` ran with pyproject.toml [project.scripts] entry"
+    )
+
+
+def test_taskhub_console_script_help_includes_subcommands() -> None:
+    """`taskhub --help` で 6 subcommand 全件 (backup/restore/migrate/status/age-rotate/verify) を表示する."""
+    taskhub_path = shutil.which("taskhub")
+    if taskhub_path is None:
+        # 上 test で fail 済、本 test は noop fallback
+        return
+    result = subprocess.run(  # noqa: S603
+        [taskhub_path, "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    for cmd in ("backup", "restore", "migrate", "status", "age-rotate", "verify"):
+        assert cmd in result.stdout, f"missing subcommand `{cmd}` in taskhub --help"
