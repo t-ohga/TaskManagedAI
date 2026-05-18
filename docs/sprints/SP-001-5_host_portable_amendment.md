@@ -7,16 +7,16 @@ created_at: "2026-05-10"
 updated_at: "2026-05-18"
 target_days: 2
 max_days: 3
-# F-PR67-008 P2 adopt (Codex PR #67 R3): ADR-00021 + ADR-00007 は SP-012 で
-# 既に accepted 化 (2026-05-18T09:10:00Z、SP-012 batch 7 taskhub admin CLI 実装
-# 着手契機). 旧 planned_adr_refs (SP-001.5 着手時 acceptance gate) を adr_refs
-# に移動し、SP-001.5 acceptance gate は SP-012 で先行満たした履歴とする.
-# .claude/rules/sprint-pack-adr-gate.md §12 invariant: 同 ADR が repo 内の
-# 別 Sprint Pack で planned/accepted 状態 drift しないよう同期.
-adr_refs:
-  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-012 batch 7/10 で accepted 化済 (2026-05-18)、本 SP-001.5 は host-portable amendment 実装 sprint"
-  - "[ADR-00007](../adr/00007_external_exposure.md) # SP-012 で accepted 化済 (2026-05-18)、host-portable invariant 整合"
-planned_adr_refs: []
+# F-PR67-010/011/013 P2 adopt (PR #67 R4): ADR-00021 acceptance 条件
+# (host migration drill PASS) が master plan で明示、SP-012 では実機 drill
+# 未達のため accepted 化不可. R3 で adopt した「SP-012 で accepted 化済 + 
+# adr_refs 移動」を撤回、planned_adr_refs に restore. accepted 化 timestamp
+# (旧 09:10:00Z は誤、両 ADR 側 00:30:00Z に back-date 後さらに撤回) は ADR
+# 側 acceptance_history で記録.
+adr_refs: []
+planned_adr_refs:
+  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-012 で skeleton 実装着手済だが accepted 化は SP-022 で実機 host migration drill PASS 後 (Criteria #2/#6/#7/#8)"
+  - "[ADR-00007](../adr/00007_external_exposure.md) # host-portable invariant、ADR-00021 同期 accepted (SP-022 scope)"
 related_sprints:
   - "SP-001_project_foundation (既完了、本 SP は amendment)"
   - "SP-012_p0_acceptance"

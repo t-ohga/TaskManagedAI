@@ -13,13 +13,14 @@ created_at: "2026-05-10"
 updated_at: "2026-05-18"
 target_days: 5
 max_days: 7
-# F-PR67-002 P1 adopt: ADR-00021 + ADR-00007 を Sprint 12 中の実装着手契機で
-# accepted 化済 (sprint-pack-adr-gate.md §12 invariant 整合). planned_adr_refs
-# → adr_refs に移動.
-adr_refs:
-  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # Host-Portable Deployment、SP-012 batch 7/10 で accepted 化"
-  - "[ADR-00007](../adr/00007_external_exposure.md) # External Exposure (Tailscale Serve + Funnel 不使用)、SP-012 で accepted 化"
-planned_adr_refs: []
+# F-PR67-010/013 P2 adopt (PR #67 R4、R3 partial reject を撤回): ADR-00021
+# acceptance 条件 (host migration drill PASS) が master plan で明示、SP-012
+# では実機 drill 未達のため accepted 化不可. R1 で adopt した F-PR67-002 の
+# planned → adr_refs 移動を撤回、planned_adr_refs に restore.
+adr_refs: []
+planned_adr_refs:
+  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-012 batch 7/10 で skeleton 実装着手済、accepted 化は SP-022 で実機 host migration drill PASS 後"
+  - "[ADR-00007](../adr/00007_external_exposure.md) # ADR-00021 同期 acceptance、SP-022 で同時 accepted"
 related_sprints:
   - "SP-001_project_foundation"
   - "SP-011_eval_harness"
@@ -224,14 +225,14 @@ F-PR67-001 P1 adopt: P0 core gates (taskhub real I/O / host migration drill / pr
 
 **Sprint 12 で達成済**: 4-stage BL-0149 evidence chain pipeline (Acceptance Artifact → Audit Payload → AuditEvent ORM → SignedJournalChain) を全 pure function で確立、SP-012 P0 Acceptance Report の **server-owned hash chain + tamper detection invariant** が pure function path で完成. 実 DB write integration / real corpus + programmatic SUT / frontend backend wiring は P0.1 / 後続 sprint scope.
 
-**ADR Gate (適用済)**: F-PR67-002/004 P1+P2 adopt — ADR-00021 (Host-Portable Deployment、Criteria #2 DB schema / #6 Secrets / #7 外部公開 / #8 破壊的操作) + ADR-00007 (External Exposure: Tailscale Serve + Funnel 不使用、Criteria #7 外部公開) を Sprint 12 中の実装着手契機で `proposed → accepted` 昇格.
+**ADR Gate (未達、SP-022 carry over)**: F-PR67-010/013 P2 adopt (R3 で私が partial reject した判定を R4 で撤回) — `docs/設計検討/2026-05-13_p0_exit_master_plan.md:106` で「ADR-00021 acceptance = Sprint 12 で host migration drill PASS 後」明示、PRD-01 §523 も host migration drill 必須化. SP-012 では skeleton 実装着手済だが **実機 drill PASS 未達**のため accepted 化不可.
 
-- **accepted_at**: `2026-05-18T00:30:00Z` (F-PR67-009 P2 adopt: SP-012 batch 7 実装着手 commit b86de20 より前に back-date、`.claude/rules/sprint-pack-adr-gate.md §12` 「実装着手直前」invariant 整合、両 ADR 同 timestamp)
-- **acceptance_scope**: `design_accepted_implementation_skeleton_done` (F-PR67-010 P2 partial adopt: ADR-00021 は design ADR、本 accepted 化は host-portable deployment design 確定 + skeleton 実装着手直前の意味、実機 host migration drill 自動化 + drill 半年 1 回 SOP は SP-022 scope = 別 acceptance criteria)
-- ADR-00021 acceptance_blocked_by を全件 clear (Phase G/H closure verify + ADR-00007 同期 + SP-001.5 proposed completion 達成)、acceptance_target_sprint を null 化
-- **SP-001.5 同期** (F-PR67-008 P2 adopt): SP-001.5 frontmatter の `planned_adr_refs → adr_refs` を SP-012 と同タイミングで更新、ADR が repo 内の別 Sprint Pack で planned/accepted 状態 drift しない invariant 整合
-- SP-012 frontmatter: `planned_adr_refs → adr_refs` 移動完了 (`.claude/rules/sprint-pack-adr-gate.md §12` invariant 遵守)
-- 後続 ADR-gate audit / release audit から ADR Gate Criteria #2/#6/#7/#8 (ADR-00021) + #7 (ADR-00007) の accepted 状態と適用 timestamp が機械可読
+- **ADR-00021 status**: `proposed` (acceptance 条件 = SP-022 で host migration drill (Mac→VPS) RTO≤4h PASS、`docs/sprints/SP-022_framework_intake_hardening.md` host-migration automation lines 40-95 + Phase G additions 138-160、F-PR67-014 P3 anchor fix)
+- **ADR-00007 status**: `proposed` (ADR-00021 同期 acceptance、master plan line 107、ADR-00021 が proposed のため同期 proposed 維持)
+- **SP-012 frontmatter**: `adr_refs → planned_adr_refs` に restore (R1 F-PR67-002 / R3 F-PR67-008 で adopt した移動を R4 で撤回)
+- **SP-001.5 frontmatter**: 同様に `adr_refs → planned_adr_refs` restore
+- **acceptance_history**: 両 ADR で「2026-05-18T00:30:00Z tentative accepted」+「2026-05-18T09:40:06Z tentative acceptance 撤回 (Codex R4 F-PR67-010/013 P2 adopt)」を機械可読 history に記録
+- R1 で adopt した F-PR67-002 P1 (planned → adr_refs 移動) は **acceptance 条件 unmet 状況での適用誤り** だった。R4 で正しい path (proposed 維持) に restore. CLAUDE.md 6.5.0 品質第一 + R2 trap memory 教訓 (false positive 短絡判定なし) を私自身が violate した反省として記録
 
 #### PR merged 一覧 (Sprint 12 session、2026-05-17 〜 2026-05-18)
 
@@ -271,10 +272,11 @@ SignedJournalChain (final_hash + previous_hash linking、verify_signed_journal_c
 - **Signed journal**: real JCS canonical JSON (RFC 8785) + UTF-16 key ordering + NaN/Inf reject + UTC normalize + tamper detection (4 fail-closed test fixture: payload modify / event insert / order swap / cross-tenant) + malformed snapshot → False (not raise)
 - **AgentRun 16 状態 / ContextSnapshot 10 列 / approval 4 整合 / gateway 分離**: 全 batch で不変保持
 - **raw secret invariant**: assert_no_raw_secret (shared) + writer local Slack token reject (xox[abprso]- / xapp-) 2-layer fail-closed
-- **ADR Gate Criteria 11 種**: F-PR67-006 P2 adopt — Sprint 全体で **適用済**:
-  * Criteria #2 (DB schema) + #6 (Secrets) + #7 (外部公開) + #8 (破壊的操作) は ADR-00021 (Host-Portable Deployment) で host migration drill / age key 運搬 / restore→rollback flow を governance、Sprint 12 batch 7 (taskhub admin CLI) + batch 10 (audit_events) 実装着手と同 timestamp で accepted 化
-  * Criteria #7 (外部公開) は ADR-00007 (External Exposure) で Tailscale Serve + Funnel 不使用 invariant を governance、SP-012 batch 7 taskhub admin CLI で参照
-  * 各 batch (3-10) 個別 Review section の `ADR Gate Criteria 11 種: 該当なし` は **per-batch incremental change** に対する判定 (skeleton + read-only + new service module で API/DB schema/Secret/Provider/Network 不変)、上位 Sprint scope の ADR Gate (host-portable / external exposure) は ADR-00021/ADR-00007 で satisfied
+- **ADR Gate Criteria 11 種**: F-PR67-010/013 P2 adopt (R3 partial reject 撤回) — Sprint 全体で **設計確定済だが accepted 化未達 (SP-022 carry over)**:
+  * Criteria #2 (DB schema) + #6 (Secrets) + #7 (外部公開) + #8 (破壊的操作): ADR-00021 (Host-Portable Deployment) で governance、SP-012 で skeleton 実装着手済だが **実機 host migration drill PASS 未達** のため status: proposed 維持、accepted 化は SP-022 scope (master plan line 106 明示)
+  * Criteria #7 (外部公開): ADR-00007 は ADR-00021 同期 acceptance、proposed 維持
+  * 各 batch (3-10) 個別 Review section の `ADR Gate Criteria 11 種: 該当なし` は **per-batch incremental change** に対する判定 (skeleton + read-only + new service module で API/DB schema/Secret/Provider/Network 不変)
+  * 上位 Sprint scope の ADR Gate (host-portable / external exposure) は SP-022 で実機 drill PASS 後 accepted 化、それまで proposed 状態で SP-012 skeleton 実装は ADR-00021 design draft を参照
 - **AI 出力境界**: 全 batch pure function / read-only Server Component / no mutation
 - **CLAUDE.md 6.5.0 absolute teaching (品質第一)**: 25 round / 70 findings 全件 adopt + R2 trap memory + autonomous-no-stop memory 完全遵守
 - **local verification**: ruff / mypy / pytest backend 全 batch clean、frontend typecheck/eslint/vitest 全 batch clean

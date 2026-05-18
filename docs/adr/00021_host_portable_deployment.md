@@ -1,7 +1,14 @@
 ---
 id: "ADR-00021"
 title: "Host-Portable Deployment + Data Migration: Mac / Linux / VPS どれでも 1 箇所選択 + taskhub admin CLI (init/backup/restore/migrate) + age key 手動運搬 + Tailscale 閉域維持 + RTO ≤ 4h host migration drill"
-status: "accepted"
+# F-PR67-010 + F-PR67-013 P2 adopt (R3 で私が partial reject した判断を撤回、
+# R4 で master plan grep 詳細により valid と確認):
+#   `docs/設計検討/2026-05-13_p0_exit_master_plan.md:106` で「ADR-00021
+#   acceptance | Sprint 12 で host migration drill PASS 後」明示、PRD-01 §523
+#   で host migration drill 必須化. SP-012 では skeleton 実装着手済だが実機
+#   drill PASS は SP-022 scope なので、acceptance 条件 unmet. accepted 化を
+#   撤回し proposed に戻す.
+status: "proposed"
 date: "2026-05-10"
 authors:
   - "t-ohga"
@@ -14,25 +21,20 @@ related_research:
   - "ADR-00007 (External exposure、Tailscale-only invariant 不変前提)"
 supersedes: null
 superseded_by: null
-# F-PR67-009 P2 adopt (Codex PR #67 R3): accepted_at は SP-012 batch 7 (taskhub
-# admin CLI 最初 commit b86de20 = 2026-05-18T01:00:00Z 直前) より前に back-date.
-# .claude/rules/sprint-pack-adr-gate.md §12 「実装着手直前」invariant 整合の
-# ため、Sprint 12 session 開始時刻 (2026-05-18T00:30:00Z) を採用.
-accepted_at: "2026-05-18T00:30:00Z"
-acceptance_blocked_by: []
-acceptance_target_sprint: null
-# F-PR67-010 P2 adopt: ADR-00021 は **design ADR** であり、本 accepted 化は
-# host-portable deployment design 確定 を意味する. host migration drill 実機
-# 実施 + drill 自動化は **SP-022 scope** (`docs/sprints/SP-022_framework_intake_hardening.md
-# §13`)、本 ADR §8 drill schedule では実機 drill を user 物理 phase に明示.
-# したがって accepted 化は (a) design 確定、(b) Phase G/H closure verify
-# (94 findings)、(c) ADR-00007 同期 accepted、(d) SP-001.5 host-portable
-# amendment との整合 を意味し、実機 drill PASS は別 acceptance criteria.
-acceptance_scope: "design_accepted_implementation_skeleton_done"
+# F-PR67-010/013 P2 adopt: master plan で明示された acceptance 条件
+# (host migration drill PASS、SP012-T01〜T10 完了) が unmet のため proposed
+# 維持. SP-012 で skeleton 実装着手は進めたが、accepted 化は SP-022 で実機
+# drill PASS 後.
+acceptance_blocked_by:
+  - "host migration drill (Mac→VPS) RTO≤4h PASS (SP-022 scope、`docs/設計検討/2026-05-13_p0_exit_master_plan.md:106` 明示)"
+  - "SP012-T01〜T10 完了 (SP-012 partial_completed_with_carry_over、P0.1 で残 carry-over 完了)"
+  - "ADR-00007 同期 accepted 化条件 (本 ADR の accepted 化と同時、host 中立 invariant)"
+acceptance_target_sprint: "SP-022 で host migration drill 自動化完成 + 実機 drill PASS 後"
 acceptance_history:
   - "2026-05-10: proposed (Phase G plan-review + adversarial-review clean + Phase H second-opinion で 94 finding closure verify 完了)"
-  - "2026-05-18T00:30:00Z: accepted (design accepted、SP-012 batch 7 = taskhub admin CLI 10 subcommands skeleton + batch 10 = audit_events + signed journal pure function 実装着手直前、Codex PR #67 F-PR67-002 P1 + F-PR67-009 P2 adopt + .claude/rules/sprint-pack-adr-gate.md §12 invariant 整合、ADR-00007 同時 accepted、SP-001.5 host-portable amendment との整合)"
-  - "future: 実機 host migration drill 自動化完成 + drill 半年 1 回スケジューリング SOP 確立 = SP-022 framework intake hardening scope、別 acceptance criteria"
+  - "2026-05-18T00:30:00Z: tentative accepted (PR #67 F-PR67-002 P1 adopt として SP-012 で accepted 化試行、SP-012 batch 7 taskhub admin CLI + batch 10 audit_events 実装着手直前 timestamp)"
+  - "2026-05-18T09:40:06Z: tentative acceptance 撤回 (Codex PR #67 R4 F-PR67-010/013 P2 valid 確認: master plan + PRD-01 で『Sprint 12 で host migration drill PASS 後』明示、acceptance 条件 unmet のため proposed に restore、`.claude/rules/sprint-pack-adr-gate.md §12` invariant 遵守)"
+  - "future: 実機 host migration drill PASS 後 SP-022 scope で再 accepted 化"
 ---
 
 最終更新: 2026-05-18 (Sprint 12 で proposed → accepted 昇格、§11/§12/§14 が **正本**、§2/§3/§5/§7 は早期 sample で **§11/§12/§14 が後勝ち**)

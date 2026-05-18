@@ -1,7 +1,10 @@
 ---
 id: "ADR-00007"
 title: "外部公開設定: Tailscale Serve + Funnel 不使用 + tag:taskhub-ci grants 最小化"
-status: "accepted"
+# F-PR67-013 P2 adopt: master plan で ADR-00007 acceptance = ADR-00021 同期
+# accepted (master plan line 107). ADR-00021 が host migration drill PASS
+# 未達のため proposed restore、ADR-00007 も同期 proposed 維持.
+status: "proposed"
 date: "2026-05-07"
 authors:
   - "t-ohga"
@@ -10,12 +13,15 @@ related_sprints:
   - "SP-012_p0_acceptance"
 supersedes: null
 superseded_by: null
-# F-PR67-009 P2 adopt: accepted_at は SP-012 batch 7 実装着手より前に back-date.
-accepted_at: "2026-05-18T00:30:00Z"
-acceptance_scope: "design_accepted_implementation_skeleton_done"
+# F-PR67-010/013 P2 adopt: acceptance は ADR-00021 同期 (master plan line 107).
+# ADR-00021 が proposed restore のため、ADR-00007 も同期 proposed 維持.
+acceptance_blocked_by:
+  - "ADR-00021 同期 accepted (master plan で ADR-00007 acceptance = ADR-00021 同期 accepted 明示)"
+acceptance_target_sprint: "ADR-00021 accepted 化と同時 (SP-022 で host migration drill PASS 後)"
 acceptance_history:
   - "2026-05-07: proposed (SP-000_bootstrap で起票)"
-  - "2026-05-18T00:30:00Z: accepted (SP-012 で host-portable invariant 整合 + Tailscale Serve / Funnel 不使用 / tag:taskhub-ci grants 最小化を Sprint 12 batch 7 taskhub admin CLI で参照、Codex PR #67 F-PR67-002 P1 + F-PR67-009 P2 adopt + .claude/rules/sprint-pack-adr-gate.md §12 invariant 整合、ADR-00021 同時 accepted)"
+  - "2026-05-18T00:30:00Z: tentative accepted (PR #67 F-PR67-002 P1 adopt として SP-012 で accepted 化試行、ADR-00021 と同時)"
+  - "2026-05-18T09:40:06Z: tentative acceptance 撤回 (ADR-00021 が host migration drill PASS 未達のため proposed restore、ADR-00007 も同期 proposed 維持)"
 ---
 
 最終更新: 2026-05-18 (Sprint 12 で proposed → accepted 昇格)
