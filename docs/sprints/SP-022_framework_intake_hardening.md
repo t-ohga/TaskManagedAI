@@ -35,9 +35,10 @@ risks:
 
 ## 背景
 
-- P0.1 (SP-013-016) + P1 (SP-017-020) + P2 (SP-021) で multi-agent + memory + character image が完成
-- 本 Sprint で **運用品質 hardening + 残リスク closure**
-- ADR-00020 / ADR-00021 が SP-013/SP-014/SP-012 で実装され、本 Sprint で完成形 + 運用 SOP
+- **F-PR67-022/030 P2+P3 adopt (PR #67 R4-R7)**: 本 SP-022 は **pre-P0.1 unblock sprint** に位置 (旧 P2 段階 record は撤回)、SP-012 partial_completed_with_carry_over 状態の P0 core gates を完成 + 実機 host migration drill PASS + ADR-00021/00007 accepted 化を経て、P0.1 (SP-013+) unblock
+- SP-012 で skeleton 実装着手済の taskhub real I/O / 実 DB write integration / signed journal CLI / private staging E2E / frontend backend wiring を SP-022 で完成
+- ADR-00020 は SP-022 で accepted、ADR-00021/00007 update は SP022-T00 で accepted (design accepted + post-acceptance drill verification)
+- P0.1 (SP-013-016) + P1 (SP-017-020) + P2 (SP-021) の multi-agent + memory + character image は **SP-022 完了後** の sprint scope (旧記述「既に完成」は撤回)
 
 ## 対象外
 
@@ -53,6 +54,7 @@ risks:
 
 ## 実装チケット
 
+- **SP022-T00 (pre-implementation gate)**: **ADR-00021 + ADR-00007 update を proposed → accepted 昇格** (F-PR67-029 P2 adopt: `.claude/rules/sprint-pack-adr-gate.md §12` 「実装着手直前に planned ADR を accepted 化」invariant 遵守、SP-022 実装着手 trigger). acceptance criteria 再解釈: design ADR として `design accepted + skeleton verified` を本 acceptance time の意味とし、実機 host migration drill PASS は **post-acceptance verification** (SP022-T09)、master plan line 106 の「drill PASS 後」記述は本 fix で「SP-022 で drill verification 必須」と再解釈、別 PR で master plan §11.5 update を提出
 - SP022-T01: ADR-00020 (framework intake checklist) 全 8 verify item を CI 機械化、`scripts/ci/check_framework_intake.sh` 完成
 - SP022-T02: `taskhub migrate` 自動化 (rollback / split-brain 防止 / age key 運搬連携)
 - SP022-T03: 半年 drill scheduling SOP (cron alert + 手動 approval flow)
@@ -61,12 +63,11 @@ risks:
 - SP022-T06: KPI baseline 設定 (host 別: Mac / Linux / VPS で acceptance_pass_rate 等の median を取得、運用 baseline 確定)
 - SP022-T07: production 公開準備チェックリスト draft (P3+ 着手時の前提整理)
 - SP022-T08: **SP-012 carry-over 完了** (F-PR67-025/027 P2 adopt): taskhub real I/O (10 subcommands all) + 実 DB write integration (BL-0149 sign-off endpoint + AuditEventRepository.append 経由 P0AcceptanceAudit write) + signed journal verification CLI (audit_events 全件 fetch + recompute + final_hash verify) + private staging CI/E2E 完成 + frontend dashboard backend API wiring
-- SP022-T09: **実機 host migration drill (Mac→VPS) PASS** (RTO≤4h、F-PR67-022 P2 adopt: P0.1 unblock 必須 gate)
-- SP022-T10: **ADR-00021 + ADR-00007 update accepted 化** (F-PR67-025 P2 adopt: 本 SP-022 が accepting sprint、master plan line 106/107 整合、SP022-T08+T09 完了後に proposed → accepted 昇格、`.claude/rules/sprint-pack-adr-gate.md §12` invariant 遵守)
+- SP022-T09: **実機 host migration drill (Mac→VPS) PASS** (RTO≤4h、F-PR67-022/029 P2 adopt: T00 accept 後の post-acceptance verification、P0.1 unblock 必須 gate)
 
 ## タスク一覧
 
-- [ ] SP022-T01〜T10 を順次実装
+- [ ] **SP022-T00** (ADR-00021/00007 accept、SP-022 開始 trigger) → SP022-T01〜T09 を順次実装
 - [ ] ADR-00020 を proposed → accepted
 - [ ] **ADR-00021 + ADR-00007 を proposed → accepted** (SP022-T10、SP-012 carry-over + 実機 drill PASS 後)
 - [ ] `taskhub migrate` end-to-end を 3 host pair (Mac↔VPS、Linux↔VPS、VPS↔VPS) で drill 実施

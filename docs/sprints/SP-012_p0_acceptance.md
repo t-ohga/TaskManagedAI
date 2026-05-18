@@ -297,10 +297,12 @@ SignedJournalChain (final_hash + previous_hash linking、verify_signed_journal_c
 - **`taskhub` admin CLI real I/O**: ADR-00021 §3 + §11/§14 全 10 subcommands、user 物理 drill phase で配備
 - **frontend i18n constants + Playwright E2E**: Sprint 11.5 BL-0109a/0110a responsive + a11y と統合
 - **audit_events 内 previous_event_hash column + DB trigger**: signed journal の DB-side enforcement (Sprint 12 では pure function only)
+- **master plan update** (F-PR67-032 P2 adopt): `docs/設計検討/2026-05-13_p0_exit_master_plan.md` で「Sprint 12 完了で P0 Exit 宣言 + P0.1 open」記述が本 SP-012 partial status + SP-022 carry-over routing と矛盾、SP-022 開始時に別 PR で master plan §10-§11 update 提出 (本 PR scope は Sprint Exit Review のため scope 外、それまで Sprint Pack ## Review § Sprint 12 Exit が正本)
+- **ADR-00021 body update** (F-PR67-031 P2 adopt): ADR-00021 §8 / §11 normative section 内 SP-012/SP-022 timing 記述は SP022-T00 ADR accepted 化と同時に update、frontmatter (`status: proposed` + acceptance_blocked_by + acceptance_history) が現時点正本
 
 #### Risks (Sprint Exit 時点)
 
-- 実 DB write integration が未配備のため、4-stage pipeline は pure function path のみで P0 Exit の signed proof は **artifact-level に留まる** (実 audit_events row 永続化は P0.1 / 別 sprint)
+- 実 DB write integration が未配備のため、4-stage pipeline は pure function path のみで P0 Exit の signed proof は **artifact-level に留まる** (実 audit_events row 永続化 + BL-0149 sign-off endpoint + AuditEventRepository.append 経由 audit chain は **SP-022 / pre-P0.1** で完成、F-PR67-028 P2 adopt: SP022-T08 carry-over の一部、P0.1 routing は誤り)
 - AC-HARD-01/02/05/06/07 evaluator は **pure path のみ**、real corpus + programmatic SUT 連結が無いと P0 Exit 判定の auto-evaluator は未稼働 (人手判定継続)
 - CI billing infrastructure failure が continuous、admin merge bypass は user 物理 approval を要する運用 (Sprint 12 は session で全 PR 単一 admin merge で対処)
 

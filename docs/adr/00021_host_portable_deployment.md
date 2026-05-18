@@ -37,7 +37,11 @@ acceptance_history:
   - "future: 実機 host migration drill PASS 後 SP-022 scope で再 accepted 化"
 ---
 
-最終更新: 2026-05-18 (Sprint 12 で skeleton 実装着手、`proposed → accepted` tentative 試行後 PR #67 R4 F-PR67-010/013 P2 adopt で **proposed restore** = acceptance 条件 = SP-022 で host migration drill PASS 後. §11/§12/§14 が **正本**、§2/§3/§5/§7 は早期 sample で **§11/§12/§14 が後勝ち**)
+最終更新: 2026-05-18 (Sprint 12 で skeleton 実装着手、`proposed → accepted` tentative 試行後 PR #67 R4 F-PR67-010/013 P2 adopt で **proposed restore** = acceptance 条件 = SP-022 で skeleton 実装完成 + 実機 host migration drill verification + ADR-00021 design accept (SP022-T00). §11/§12/§14 が **正本**、§2/§3/§5/§7 は早期 sample で **§11/§12/§14 が後勝ち**.
+
+**F-PR67-031 P2 adopt (R7)**: §8 / §11 normative section 内の SP-012 / SP-022 timing 記述 (SP-012 が P0 completion / SP-022 が happy-path 改善) は本 acceptance restore に伴い update が必要だが、本 PR scope は Sprint Exit Review のため、ADR body update は SP-022 開始時 (SP022-T00 ADR accepted 化) に同時実施する。**§11/§12/§14 が後勝ち** invariant により、frontmatter (`status: proposed` + acceptance_blocked_by + acceptance_history) が現時点での正本.
+
+**F-PR67-032 P2 adopt (R7)**: `docs/設計検討/2026-05-13_p0_exit_master_plan.md` の「Sprint 12 完了で P0 Exit 宣言 + P0.1 open」記述は本 partial_completed_with_carry_over status と矛盾、master plan update は本 PR scope 外 (Sprint Exit Review)、SP-022 開始時に別 PR で master plan §10-§11 update を提出予定. それまで master plan より frontmatter status + Sprint Pack ## Review § Sprint 12 Exit が正本)
 
 ## 仕様 normative source 序列 (PH-F-004 fix)
 
