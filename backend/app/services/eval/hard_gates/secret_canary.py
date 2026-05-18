@@ -302,6 +302,26 @@ def _validate_audit_events(fixture: Fixture) -> str | None:
     return None
 
 
+def _validate_input_scan_surfaces(fixture: Fixture) -> str | None:
+    """F-PR64-026 P2 adopt: input.scan_surfaces 4 surface 全件 verify.
+
+    AC-HARD-02 の no-leak invariant は SUT に対し 4 surface (provider /
+    artifact / runner / audit) 全件で canary scan を要求する. fixture が一部
+    surface しか要求していなければ、後続 expected_redaction の 4-surface check
+    がたとえ pass しても、no-leak proof は不完全 (実際は要求された surface のみ
+    redaction 検証されることになる).
+    """
+    case_input = fixture.case_json.get("input")
+    if not isinstance(case_input, dict):
+        return "spec_violation:input_missing"
+    scan_surfaces = case_input.get("scan_surfaces")
+    if not isinstance(scan_surfaces, list):
+        return "spec_violation:input_scan_surfaces_missing"
+    if set(scan_surfaces) != AC_HARD_02_REQUIRED_REDACTION_SURFACES:
+        return "spec_violation:input_scan_surfaces_mismatch"
+    return None
+
+
 def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
     if fixture.gate_id != AC_HARD_02_GATE_ID:
         return "spec_violation:gate_id"
@@ -356,6 +376,11 @@ def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
     audit_reason = _validate_audit_events(fixture)
     if audit_reason is not None:
         return audit_reason
+
+    # F-PR64-026 P2 adopt: input.scan_surfaces 4 surface 全件 invariant
+    scan_surfaces_reason = _validate_input_scan_surfaces(fixture)
+    if scan_surfaces_reason is not None:
+        return scan_surfaces_reason
 
     return None
 

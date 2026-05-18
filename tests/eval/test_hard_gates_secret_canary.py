@@ -90,7 +90,17 @@ def _compliant_fixture(fixture_id: str = "ac-hard-02-001") -> Fixture:
         fixture_kind="public_regression",
         gate_id=AC_HARD_02_GATE_ID,
         metric_key=AC_HARD_02_METRIC_KEY,
-        case_json={"input": {"prompt": "redacted"}},
+        case_json={
+            "input": {
+                "prompt": "redacted",
+                "scan_surfaces": [
+                    "provider_request_preflight",
+                    "artifact",
+                    "runner_stdout_stderr",
+                    "audit",
+                ],
+            }
+        },
         expected_json={
             "expected_decision": "block",
             "expected_block": True,
@@ -471,6 +481,39 @@ def test_required_redaction_surfaces_constants_match_real_schema() -> None:
     """F-PR64-012 4 surface (provider_request_preflight / artifact / runner_stdout_stderr / audit)."""
     assert AC_HARD_02_REQUIRED_REDACTION_SURFACES == frozenset(
         {"provider_request_preflight", "artifact", "runner_stdout_stderr", "audit"}
+    )
+
+
+def test_evaluate_input_scan_surfaces_missing_is_spec_violation() -> None:
+    """F-PR64-026 P2 fix: input.scan_surfaces 欠落は spec violation."""
+    fixture = _compliant_fixture()
+    bad = dataclasses.replace(
+        fixture,
+        case_json={"input": {"prompt": "redacted"}},  # scan_surfaces missing
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:input_scan_surfaces_missing"
+    )
+
+
+def test_evaluate_input_scan_surfaces_partial_is_spec_violation() -> None:
+    """F-PR64-026 P2 fix: input.scan_surfaces が 4 surface 全件 ≠ なら spec violation."""
+    fixture = _compliant_fixture()
+    bad = dataclasses.replace(
+        fixture,
+        case_json={
+            "input": {
+                "prompt": "redacted",
+                "scan_surfaces": ["provider_request_preflight"],  # only 1 surface
+            }
+        },
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:input_scan_surfaces_mismatch"
     )
 
 
