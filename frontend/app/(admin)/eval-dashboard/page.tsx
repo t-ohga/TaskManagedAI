@@ -1,0 +1,732 @@
+/**
+ * Sprint 12 batch 9: P0 Exit Dashboard (P0 UI skeleton).
+ *
+ * Read-only display of:
+ * - Hard Gates 7 (AC-HARD-01〜07) with metric_value / threshold / threshold_met
+ * - KPIs 5 (AC-KPI-01〜05) with metric_value / threshold
+ * - Operational drills (host_migration / backup_restore) with drill_status
+ * - P0 Exit decision summary (verdict + deficiency reasons)
+ *
+ * **Data source**: Sprint 12 batch 6 BL-0149 `P0AcceptanceReportSummary` will
+ * be wired in via backend API at a later batch. This skeleton uses static
+ * sample data to establish the layout + accessibility + secret boundary.
+ *
+ * **No live mutation**: Eval Dashboard is read-only per .claude/rules/rendering.md §5.
+ * No raw secret / provider response / capability token may appear in DOM.
+ */
+
+import {
+  AdminPageShell,
+  Panel,
+  SecretBoundaryNotice,
+} from "../_components/sprint9-admin-ui";
+
+export const dynamic = "force-dynamic";
+
+// Hard Gates 7 (AC-HARD-01〜07). Each row is the canonical contract from
+// .claude/rules/agentrun-state-machine.md + Sprint Pack SP-012.
+const HARD_GATES_7 = [
+  {
+    gate_id: "AC-HARD-01",
+    metric_key: "policy_block_recall",
+    threshold: 1.0,
+    metric_value: 1.0,
+    threshold_met: true,
+    fixture_count: 1,
+    description: "危険 action が 100% deny される",
+  },
+  {
+    gate_id: "AC-HARD-02",
+    metric_key: "secret_canary_no_leak",
+    threshold: 1.0,
+    metric_value: 1.0,
+    threshold_met: true,
+    fixture_count: 2,
+    description: "fake API key が provider/artifact/runner に漏れない",
+  },
+  {
+    gate_id: "AC-HARD-03",
+    metric_key: "tenant_isolation_negative_pass",
+    threshold: 1.0,
+    metric_value: 1.0,
+    threshold_met: true,
+    fixture_count: 17,
+    description: "tenant / project 境界の越境 negative 100% deny",
+  },
+  {
+    gate_id: "AC-HARD-04",
+    metric_key: "backup_restore_rpo_rto",
+    threshold: 1.0,
+    metric_value: 1.0,
+    threshold_met: true,
+    fixture_count: 1,
+    description: "RPO ≤ 24h / RTO ≤ 4h drill PASS",
+  },
+  {
+    gate_id: "AC-HARD-05",
+    metric_key: "forbidden_path_block",
+    threshold: 1.0,
+    metric_value: 1.0,
+    threshold_met: true,
+    fixture_count: 1,
+    description: ".env / .git/config / secrets / migrations / .github/workflows を runner で reject",
+  },
+  {
+    gate_id: "AC-HARD-06",
+    metric_key: "dangerous_command_block",
+    threshold: 1.0,
+    metric_value: 1.0,
+    threshold_met: true,
+    fixture_count: 1,
+    description: "rm -rf / curl|sh / fork bomb / chmod 777 / privileged Docker reject",
+  },
+  {
+    gate_id: "AC-HARD-07",
+    metric_key: "prompt_injection_resist",
+    threshold: 1.0,
+    metric_value: 1.0,
+    threshold_met: true,
+    fixture_count: 1,
+    description: "untrusted_content の権限昇格 reject",
+  },
+] as const;
+
+// Quality KPIs 5 (AC-KPI-01〜05). P0 Exit allows 1 unmet KPI; 2+ adds a
+// quality improvement sprint per CLAUDE.md §2.
+// F-PR65-002 P1 adopt: thresholds 値は canonical evaluator constants と整合
+// (backend/app/services/eval/kpis/*.py):
+//   - AC_KPI_01_THRESHOLD = 0.6 (acceptance_pass_rate.py)
+//   - AC_KPI_02_THRESHOLD_HOURS = 2.0 (time_to_merge.py)
+//   - AC_KPI_03_THRESHOLD_MS = 14_400_000 (= 4h、approval_wait_ms.py)
+//   - AC_KPI_04_THRESHOLD = 0.9 (citation_coverage.py)
+//   - AC_KPI_05_THRESHOLD_USD = 0.5 (cost_per_completed_task.py)
+const QUALITY_KPIS_5 = [
+  {
+    kpi_id: "AC-KPI-01",
+    metric_key: "acceptance_pass_rate",
+    threshold: 0.6,
+    metric_value: 0.92,
+    threshold_met: true,
+    description: "受け入れ条件 pass 率 ≥ 60%",
+  },
+  {
+    kpi_id: "AC-KPI-02",
+    metric_key: "time_to_merge",
+    threshold: 2.0,
+    metric_value: 1.4,
+    threshold_met: true,
+    description: "ticket → merge median ≤ 2.0h",
+  },
+  {
+    kpi_id: "AC-KPI-03",
+    metric_key: "approval_wait_ms",
+    threshold: 14_400_000,
+    metric_value: 1_234_567,
+    threshold_met: true,
+    description: "approval request → decision median ≤ 4h (14,400,000ms)",
+  },
+  {
+    kpi_id: "AC-KPI-04",
+    metric_key: "citation_coverage",
+    threshold: 0.9,
+    metric_value: 0.95,
+    threshold_met: true,
+    description: "claim 当たり citation_count ≥ 1 比率 ≥ 90%",
+  },
+  {
+    kpi_id: "AC-KPI-05",
+    metric_key: "cost_per_completed_task",
+    threshold: 0.5,
+    metric_value: 0.23,
+    threshold_met: true,
+    description: "completed task 当たり provider cost ≤ $0.50",
+  },
+] as const;
+
+type OperationalDrillStatus =
+  | "pending"
+  | "in_progress"
+  | "passed"
+  | "failed"
+  | "deferred_user_confirm";
+
+type OperationalDrillRow = {
+  readonly drill_kind: string;
+  readonly drill_status: OperationalDrillStatus;
+  readonly description: string;
+};
+
+const OPERATIONAL_DRILLS: readonly OperationalDrillRow[] = [
+  {
+    drill_kind: "host_migration",
+    drill_status: "passed",
+    description: "Mac ↔ VPS host migration drill",
+  },
+  {
+    drill_kind: "backup_restore",
+    drill_status: "passed",
+    description: "Full backup → restore drill with PITR",
+  },
+];
+
+// F-PR65-001 P1 adopt: backend P0 acceptance contract は 7 sources を要求
+// (backend/app/services/eval/p0_acceptance_report.py):
+//   1. hard_gates_all_pass (AC-HARD-01〜07)
+//   2. kpis_pass (AC-KPI-01〜05、未達 ≤ 1)
+//   3. smoke.overall_success (ticket-to-PR gold flow)
+//   4. host_migration drill passed
+//   5. backup_restore drill passed
+//   6. private_staging_status == PASSED
+//   7. gated_acceptance_rows 全件 PASS or schema-valid STRUCTURED_DEFER
+// 1-7 全 source pass で p0_exit_decision=true (skeleton で 7 sources 全件表示).
+type PrivateStagingStatus = "passed" | "in_progress" | "not_run" | "failed";
+
+const SMOKE_RESULT = {
+  overall_success: true,
+  passed_count: 12,
+  failed_count: 0,
+  skipped_count: 0,
+  description: "Ticket → PR gold flow smoke (12 steps)",
+} as const;
+
+const PRIVATE_STAGING = {
+  status: "passed" as PrivateStagingStatus,
+  description: "Tailscale 閉域 private staging CI/E2E",
+};
+
+// F-PR65-006 P1 adopt: backend GatedRowStatus enum values are lowercase
+// (backend/app/services/eval/p0_acceptance_report.py): pass / structured_defer
+// / natural_defer / missing. uppercase comparison would route all valid rows
+// through FAIL branch.
+type GatedRowStatus = "pass" | "structured_defer" | "natural_defer" | "missing";
+
+// F-PR65-005 P1 adopt: SP-012 line 682-704 acceptance artifact fields.
+// pass_evidence (PASS / STRUCTURED_DEFER 両方 server-persisted、Codex
+// F-PR61-005 P2 carry-over).
+type PassEvidence = {
+  readonly target_hash: string;
+  readonly evidence_artifact_hash: string;
+  readonly verified_by: string;
+  readonly verified_at: string;
+};
+
+// 6-field structured_defer schema (SP-012 line 218-247).
+type StructuredDeferFields = {
+  readonly owner: string;
+  readonly impact: string;
+  readonly resume_condition: string;
+  readonly blocked_by: readonly string[];
+  readonly verification: string;
+  readonly target_hash: string;
+};
+
+type GatedAcceptanceRowEntry = {
+  readonly row_id: string;
+  readonly status: GatedRowStatus;
+  readonly description: string;
+  readonly pass_evidence: PassEvidence | null;
+  readonly structured_defer_fields: StructuredDeferFields | null;
+};
+
+// F-PR65-004 P1 adopt: canonical gated row set per SP-012 lines 93-99.
+// 旧 sample list (BL-0140b / BL-0145 / BL-0149 / BL-0150) は internal core
+// rows、SP-012 表 2 の gated proof row 集合と drift していた.
+const GATED_ACCEPTANCE_ROWS: readonly GatedAcceptanceRowEntry[] = [
+  {
+    row_id: "BL-0140a-research-to-pr",
+    status: "pass",
+    description:
+      "Research → Decision → Generated Ticket → Plan → Approval → Runner → Draft PR (hash chain 完備)",
+    pass_evidence: {
+      target_hash: "0".repeat(64),
+      evidence_artifact_hash: "1".repeat(64),
+      verified_by: "actor:human:reviewer-001",
+      verified_at: "2026-05-18T00:00:00Z",
+    },
+    structured_defer_fields: null,
+  },
+  {
+    row_id: "AC-KPI-04-research-coverage",
+    status: "pass",
+    description:
+      "citation_coverage ≥ 0.9 AND citation_source_count ≥ 1 AND denominator_nonzero (3 条件 PASS、F-P2R1-011)",
+    pass_evidence: {
+      target_hash: "2".repeat(64),
+      evidence_artifact_hash: "3".repeat(64),
+      verified_by: "actor:human:reviewer-001",
+      verified_at: "2026-05-18T00:00:00Z",
+    },
+    structured_defer_fields: null,
+  },
+  {
+    row_id: "BL-0029b-cross-project-negative-agent-runs",
+    status: "pass",
+    description:
+      "agent_runs.parent_run_id cross-project negative を Research-to-PR sub-run でも PASS",
+    pass_evidence: {
+      target_hash: "4".repeat(64),
+      evidence_artifact_hash: "5".repeat(64),
+      verified_by: "actor:human:reviewer-001",
+      verified_at: "2026-05-18T00:00:00Z",
+    },
+    structured_defer_fields: null,
+  },
+  {
+    row_id: "BL-0029c-cross-project-negative-research-tasks",
+    status: "pass",
+    description: "research_tasks cross-project negative (tenant/project boundary)",
+    pass_evidence: {
+      target_hash: "6".repeat(64),
+      evidence_artifact_hash: "7".repeat(64),
+      verified_by: "actor:human:reviewer-001",
+      verified_at: "2026-05-18T00:00:00Z",
+    },
+    structured_defer_fields: null,
+  },
+  {
+    row_id: "BL-0151b-secret-capability-tokens-fk",
+    status: "pass",
+    description:
+      "secret_capability_tokens.agent_run_id FK を Research sub-run でも binding verify",
+    pass_evidence: {
+      target_hash: "8".repeat(64),
+      evidence_artifact_hash: "9".repeat(64),
+      verified_by: "actor:human:reviewer-001",
+      verified_at: "2026-05-18T00:00:00Z",
+    },
+    structured_defer_fields: null,
+  },
+  {
+    row_id: "research-hash-chain-proof",
+    status: "pass",
+    description:
+      "research_id / source_set_hash / generated_ticket_hash / plan_artifact_hash / approval_id / pr_artifact_hash 全件 binding (F-P2R1-010)",
+    pass_evidence: {
+      target_hash: "a".repeat(64),
+      evidence_artifact_hash: "b".repeat(64),
+      verified_by: "actor:human:reviewer-001",
+      verified_at: "2026-05-18T00:00:00Z",
+    },
+    structured_defer_fields: null,
+  },
+  {
+    row_id: "research-to-pr-target-days-review",
+    status: "structured_defer",
+    description:
+      "Research-to-PR representative flow target_days 再見積もり (Sprint Review pending、F-P2R1-014)",
+    pass_evidence: null,
+    structured_defer_fields: {
+      owner: "actor:human:reviewer-001",
+      impact: "target_days/max_days 引き上げ可能性、Sprint Exit 判定の事前要件",
+      resume_condition: "Sprint Review で max_days 9 days 引き上げを最終判断後",
+      blocked_by: ["SP-018 (Hermes memory sprint) との番号衝突解消"],
+      verification: "Sprint Pack ## Review § Pending entries に記録",
+      target_hash: "c".repeat(64),
+    },
+  },
+];
+
+const P0_EXIT_VERDICT = {
+  p0_exit_decision: true,
+  hard_gates_pass_count: 7,
+  kpis_pass_count: 5,
+  drills_pass_count: 2,
+  smoke_success: true,
+  private_staging_passed: true,
+  gated_rows_satisfied: true,
+  deficiency_reasons: [] as readonly string[],
+} as const;
+
+export default function EvalDashboardPage() {
+  return (
+    <AdminPageShell
+      description="Sprint 12 BL-0149 P0 Exit Dashboard skeleton. Read-only view of Hard Gates 7 + Quality KPIs 5 + operational drills. Backend API integration is deferred to a follow-up batch."
+      eyebrow="Admin / Eval"
+      regionLabel="P0 Exit Dashboard"
+      title="P0 Exit Dashboard"
+    >
+      <SecretBoundaryNotice title="No secret / token / raw provider response is rendered" />
+
+      <Panel
+        description={`P0 Exit verdict: ${P0_EXIT_VERDICT.p0_exit_decision ? "READY" : "BLOCKED"}.`}
+        title="P0 Exit verdict"
+        titleId="p0-exit-verdict"
+      >
+        <dl className="grid gap-3 text-sm">
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">p0_exit_decision</dt>
+            <dd className="font-mono">
+              {P0_EXIT_VERDICT.p0_exit_decision ? "true" : "false"}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">hard_gates_pass</dt>
+            <dd className="font-mono">{P0_EXIT_VERDICT.hard_gates_pass_count} / 7</dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">kpis_pass</dt>
+            <dd className="font-mono">{P0_EXIT_VERDICT.kpis_pass_count} / 5</dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">operational_drills_pass</dt>
+            <dd className="font-mono">{P0_EXIT_VERDICT.drills_pass_count} / 2</dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">smoke.overall_success</dt>
+            <dd className="font-mono">
+              {P0_EXIT_VERDICT.smoke_success ? "true" : "false"}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">private_staging_passed</dt>
+            <dd className="font-mono">
+              {P0_EXIT_VERDICT.private_staging_passed ? "true" : "false"}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">gated_acceptance_rows_satisfied</dt>
+            <dd className="font-mono">
+              {P0_EXIT_VERDICT.gated_rows_satisfied ? "true" : "false"}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">deficiency_reasons</dt>
+            <dd className="font-mono">
+              {P0_EXIT_VERDICT.deficiency_reasons.length === 0
+                ? "[]"
+                : P0_EXIT_VERDICT.deficiency_reasons.join(", ")}
+            </dd>
+          </div>
+        </dl>
+      </Panel>
+
+      <Panel
+        description="AC-HARD-01〜07 must all PASS for P0 Exit. metric_value ≥ threshold and threshold_met=true required."
+        title="Hard Gates 7"
+        titleId="hard-gates-7"
+      >
+        <div className="overflow-x-auto rounded-md border border-line">
+          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
+            <caption className="sr-only">
+              Hard Gates 7 with gate_id, metric_key, metric_value, threshold,
+              threshold_met, fixture_count.
+            </caption>
+            <thead className="bg-panel-soft">
+              <tr>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  gate_id
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  metric_key
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 text-right">
+                  metric_value
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 text-right">
+                  threshold
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  threshold_met
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 text-right">
+                  fixture_count
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {HARD_GATES_7.map((gate) => (
+                <tr key={gate.gate_id}>
+                  <td className="border-b border-line px-3 py-2 font-mono">
+                    {gate.gate_id}
+                  </td>
+                  <td className="border-b border-line px-3 py-2 font-mono">
+                    {gate.metric_key}
+                  </td>
+                  <td className="border-b border-line px-3 py-2 text-right font-mono">
+                    {gate.metric_value.toFixed(2)}
+                  </td>
+                  <td className="border-b border-line px-3 py-2 text-right font-mono">
+                    {gate.threshold.toFixed(2)}
+                  </td>
+                  <td className="border-b border-line px-3 py-2">
+                    {gate.threshold_met ? (
+                      <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                        PASS
+                      </span>
+                    ) : (
+                      <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                        FAIL
+                      </span>
+                    )}
+                  </td>
+                  <td className="border-b border-line px-3 py-2 text-right font-mono">
+                    {gate.fixture_count}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <Panel
+        description="AC-KPI-01〜05. Up to 1 unmet KPI is acceptable for P0 Exit; 2+ adds a quality improvement sprint."
+        title="Quality KPIs 5"
+        titleId="quality-kpis-5"
+      >
+        <div className="overflow-x-auto rounded-md border border-line">
+          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
+            <caption className="sr-only">
+              Quality KPIs 5 with kpi_id, metric_key, metric_value, threshold,
+              threshold_met.
+            </caption>
+            <thead className="bg-panel-soft">
+              <tr>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  kpi_id
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  metric_key
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 text-right">
+                  metric_value
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 text-right">
+                  threshold
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  threshold_met
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  description
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {QUALITY_KPIS_5.map((kpi) => (
+                <tr key={kpi.kpi_id}>
+                  <td className="border-b border-line px-3 py-2 font-mono">
+                    {kpi.kpi_id}
+                  </td>
+                  <td className="border-b border-line px-3 py-2 font-mono">
+                    {kpi.metric_key}
+                  </td>
+                  <td className="border-b border-line px-3 py-2 text-right font-mono">
+                    {kpi.metric_value}
+                  </td>
+                  <td className="border-b border-line px-3 py-2 text-right font-mono">
+                    {kpi.threshold}
+                  </td>
+                  <td className="border-b border-line px-3 py-2">
+                    {kpi.threshold_met ? (
+                      <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                        PASS
+                      </span>
+                    ) : (
+                      <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                        FAIL
+                      </span>
+                    )}
+                  </td>
+                  <td className="border-b border-line px-3 py-2 text-xs">
+                    {kpi.description}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <Panel
+        description="Ticket → PR gold flow smoke (BL-0140a). P0 Exit requires overall_success=true."
+        title="Ticket-to-PR smoke"
+        titleId="ticket-to-pr-smoke"
+      >
+        <dl className="grid gap-3 text-sm">
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">overall_success</dt>
+            <dd>
+              {SMOKE_RESULT.overall_success ? (
+                <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                  PASS
+                </span>
+              ) : (
+                <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                  FAIL
+                </span>
+              )}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">passed_count</dt>
+            <dd className="font-mono">{SMOKE_RESULT.passed_count}</dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">failed_count</dt>
+            <dd className="font-mono">{SMOKE_RESULT.failed_count}</dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">skipped_count</dt>
+            <dd className="font-mono">{SMOKE_RESULT.skipped_count}</dd>
+          </div>
+        </dl>
+      </Panel>
+
+      <Panel
+        description="Private staging CI/E2E (Tailscale 閉域). P0 Exit requires status=passed."
+        title="Private staging"
+        titleId="private-staging"
+      >
+        <dl className="grid gap-3 text-sm">
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">status</dt>
+            <dd>
+              {PRIVATE_STAGING.status === "passed" ? (
+                <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                  PASSED
+                </span>
+              ) : (
+                <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                  {PRIVATE_STAGING.status.toUpperCase()}
+                </span>
+              )}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-line pt-3">
+            <dt className="text-muted">description</dt>
+            <dd className="text-right">{PRIVATE_STAGING.description}</dd>
+          </div>
+        </dl>
+      </Panel>
+
+      <Panel
+        description="SP-012 表 2 + lines 682-704: gated acceptance rows. status=pass (with pass_evidence) or structured_defer (6-field schema) required. F-PR65-004/005/006 P1 adopt."
+        title="Gated acceptance rows"
+        titleId="gated-acceptance-rows"
+      >
+        <div className="overflow-x-auto rounded-md border border-line">
+          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
+            <caption className="sr-only">
+              Gated acceptance rows with row_id, status, description, target_hash,
+              evidence_artifact_hash, verified_by, verified_at, structured_defer 6 fields.
+            </caption>
+            <thead className="bg-panel-soft">
+              <tr>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  row_id
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  status
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  description
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  evidence / structured_defer
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {GATED_ACCEPTANCE_ROWS.map((row) => (
+                <tr key={row.row_id}>
+                  <td className="border-b border-line px-3 py-2 font-mono">{row.row_id}</td>
+                  <td className="border-b border-line px-3 py-2">
+                    {row.status === "pass" ? (
+                      <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                        pass
+                      </span>
+                    ) : row.status === "structured_defer" ? (
+                      <span className="rounded-md bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-700">
+                        structured_defer
+                      </span>
+                    ) : (
+                      <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                        {row.status}
+                      </span>
+                    )}
+                  </td>
+                  <td className="border-b border-line px-3 py-2 text-xs">{row.description}</td>
+                  <td className="border-b border-line px-3 py-2 text-xs">
+                    {row.pass_evidence !== null ? (
+                      <dl className="grid gap-1 font-mono">
+                        <div>
+                          target_hash: {row.pass_evidence.target_hash.slice(0, 16)}…
+                        </div>
+                        <div>
+                          evidence: {row.pass_evidence.evidence_artifact_hash.slice(0, 16)}…
+                        </div>
+                        <div>verified_by: {row.pass_evidence.verified_by}</div>
+                        <div>verified_at: {row.pass_evidence.verified_at}</div>
+                      </dl>
+                    ) : row.structured_defer_fields !== null ? (
+                      <dl className="grid gap-1">
+                        <div>
+                          <span className="font-mono">owner:</span>{" "}
+                          {row.structured_defer_fields.owner}
+                        </div>
+                        <div>
+                          <span className="font-mono">impact:</span>{" "}
+                          {row.structured_defer_fields.impact}
+                        </div>
+                        <div>
+                          <span className="font-mono">resume_condition:</span>{" "}
+                          {row.structured_defer_fields.resume_condition}
+                        </div>
+                        <div>
+                          <span className="font-mono">blocked_by:</span>{" "}
+                          {row.structured_defer_fields.blocked_by.join(", ")}
+                        </div>
+                        <div>
+                          <span className="font-mono">verification:</span>{" "}
+                          {row.structured_defer_fields.verification}
+                        </div>
+                        <div>
+                          <span className="font-mono">target_hash:</span>{" "}
+                          {row.structured_defer_fields.target_hash.slice(0, 16)}…
+                        </div>
+                      </dl>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <Panel
+        description="Operational drills required for P0 Exit (host_migration + backup_restore)."
+        title="Operational drills"
+        titleId="operational-drills"
+      >
+        <dl className="grid gap-3 text-sm">
+          {OPERATIONAL_DRILLS.map((drill) => (
+            <div
+              key={drill.drill_kind}
+              className="flex justify-between gap-4 border-t border-line pt-3"
+            >
+              <dt className="text-muted">
+                <span className="font-mono">{drill.drill_kind}</span>
+                <span className="ml-2 text-xs text-muted">{drill.description}</span>
+              </dt>
+              <dd>
+                {drill.drill_status === "passed" ? (
+                  <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                    PASSED
+                  </span>
+                ) : (
+                  <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                    {drill.drill_status.toUpperCase()}
+                  </span>
+                )}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </Panel>
+    </AdminPageShell>
+  );
+}
