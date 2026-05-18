@@ -156,6 +156,57 @@ def test_build_audit_event_rejects_raw_secret_pattern_in_payload() -> None:
         )
 
 
+def test_build_audit_event_rejects_xoxb_slack_token_at_writer_boundary() -> None:
+    """F-PR66-007 P2 fix: 共有 scan に未登録の Slack token 系を writer 局所 reject."""
+    import pytest
+
+    payload_with_xoxb = P0AcceptanceAuditPayload(
+        schema_version="1.0.0",
+        timestamp="2026-05-18T00:00:00Z",
+        p0_exit_decision=False,
+        deficiency_count=1,
+        # Slack bot token raw pattern
+        deficiency_codes=("xoxb-1234567890-abcdefghij1234567890ABCDEF",),
+        final_chain_sha256="0" * 64,
+        gated_rows_sha256="0" * 64,
+        hard_gates_sha256="0" * 64,
+        kpi_sha256="0" * 64,
+        smoke_sha256="0" * 64,
+        drill_entries_sha256="0" * 64,
+        private_staging_sha256="0" * 64,
+    )
+    with pytest.raises(ValueError, match="Slack-style token pattern"):
+        build_p0_acceptance_audit_event(
+            payload=payload_with_xoxb,
+            context=_make_context(),
+        )
+
+
+def test_build_audit_event_rejects_xapp_slack_app_token_at_writer_boundary() -> None:
+    """F-PR66-007 P2 fix: Slack app token (xapp-) も reject."""
+    import pytest
+
+    payload_with_xapp = P0AcceptanceAuditPayload(
+        schema_version="1.0.0",
+        timestamp="2026-05-18T00:00:00Z",
+        p0_exit_decision=False,
+        deficiency_count=1,
+        deficiency_codes=("xapp-1234567890-abcdefghij1234567890ABCDEF",),
+        final_chain_sha256="0" * 64,
+        gated_rows_sha256="0" * 64,
+        hard_gates_sha256="0" * 64,
+        kpi_sha256="0" * 64,
+        smoke_sha256="0" * 64,
+        drill_entries_sha256="0" * 64,
+        private_staging_sha256="0" * 64,
+    )
+    with pytest.raises(ValueError, match="Slack-style token pattern"):
+        build_p0_acceptance_audit_event(
+            payload=payload_with_xapp,
+            context=_make_context(),
+        )
+
+
 def test_build_audit_event_no_raw_secret_in_payload_after_redaction() -> None:
     """deficiency_codes redaction を経た payload に raw secret pattern が無い."""
     payload = P0AcceptanceAuditPayload(

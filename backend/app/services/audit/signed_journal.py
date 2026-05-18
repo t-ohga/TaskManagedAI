@@ -19,7 +19,6 @@ invariants:
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import unicodedata
 from collections.abc import Iterable
@@ -28,16 +27,13 @@ from datetime import UTC
 from typing import Any, Final
 
 from backend.app.db.models.audit_event import AuditEvent
+from backend.app.services.research.evidence_set_hash import _jcs_canonical_json
 
 # Genesis convention: empty chain hash (SHA-256 hex 64 chars of nothing).
 # all-zero literal は test fixtures / placeholder と一致しないよう、SHA-256
 # canonical empty input (`SHA-256("")`) ではなく、明示的な genesis sentinel
 # を使う (空 chain と "1 entry whose previous_hash is something" が区別可能).
 SIGNED_JOURNAL_INITIAL_HASH: Final[str] = "0" * 64
-
-# JSON encoding: sorted keys + minimal separators + non-ASCII preserved (NFC
-# applied separately for stability across encoding implementations).
-_JSON_SEPARATORS: Final[tuple[str, str]] = (",", ":")
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,17 +104,14 @@ def _canonical_json_sha256(payload: dict[str, Any]) -> str:
     """RFC 8785 canonical JSON + NFC UTF-8 normalize → SHA-256 hex.
 
     F-PR66-005 P2 adopt: non-finite float (NaN / Infinity) は hash 前に reject.
-    `allow_nan=False` で `json.dumps` 側でも raise させ、JCS spec 違反 payload
-    が hash されない invariant を 2 重に担保.
+    F-PR66-006 P2 adopt: **real JCS serializer** (evidence_set_hash._jcs_canonical_json)
+    を使用. Python `json.dumps(sort_keys=True)` は RFC 8785 と byte-stream
+    一致しないケースあり (`1.0` / `-0.0` / `1e-6` 等の number canonicalization、
+    object key の UTF-16 code unit ordering)、JCS-compliant verifier との
+    portability を担保するため existing JCS impl を再利用.
     """
     _reject_nan_inf(payload)
-    canonical = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=_JSON_SEPARATORS,
-        ensure_ascii=False,
-        allow_nan=False,
-    )
+    canonical = _jcs_canonical_json(payload)
     normalized = unicodedata.normalize("NFC", canonical)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 

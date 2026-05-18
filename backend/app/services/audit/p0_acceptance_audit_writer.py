@@ -13,6 +13,7 @@ invariants (.claude/rules/secretbroker-boundary.md §11 + DD-04):
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Final
 from uuid import UUID, uuid4
@@ -24,10 +25,41 @@ from backend.app.services.eval.p0_acceptance_audit_emit import (
     P0AcceptanceAuditPayload,
 )
 
+# F-PR66-007 P2 adopt: BL-0149 writer boundary 局所 reject pattern.
+# shared `assert_no_raw_secret` の regex set に未登録の token pattern を
+# writer boundary で追加 fail-closed (Slack bot / Slack user / Slack app
+# / xapp-/ xoxa- 系等の token).
+_LOCAL_REJECT_TOKEN_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
+    re.compile(r"\bxox[abprso]-[A-Za-z0-9-]{10,}"),  # Slack token family
+    re.compile(r"\bxapp-[A-Za-z0-9-]{10,}"),  # Slack app token
+)
+
 # Sprint 12 batch 10 fixed contract: BL-0149 audit emit は principal_id を null
 # として記録する (sign-off は principal-bound でない system-level emit). DB
 # CHECK constraint `(principal_id is null) or (actor_id is not null)` 整合.
 _EXPECTED_PRINCIPAL_ID: Final[None] = None
+
+
+def _reject_local_token_patterns(value: object, *, path: str = "$") -> None:
+    """F-PR66-007 P2 adopt: 共有 scan に未登録の Slack token 系 (xoxb-/xapp-) を fail-closed reject.
+
+    recursive scan、string 内に Slack token pattern が見つかれば ValueError raise.
+    SP-012 batch notes / tests で audit payload の forbidden pattern として明示.
+    """
+    if isinstance(value, str):
+        for pattern in _LOCAL_REJECT_TOKEN_PATTERNS:
+            if pattern.search(value):
+                msg = (
+                    f"raw Slack-style token pattern detected in audit payload "
+                    f"({path}): refusing to construct audit_event"
+                )
+                raise ValueError(msg)
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            _reject_local_token_patterns(v, path=f"{path}.{k}")
+    elif isinstance(value, (list, tuple)):
+        for i, v in enumerate(value):
+            _reject_local_token_patterns(v, path=f"{path}[{i}]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +100,8 @@ def build_p0_acceptance_audit_event(
     # _extract_deficiency_codes regression で secret-like 文字列が残るケースの
     # fail-closed guard.
     assert_no_raw_secret(event_payload, path="$p0_acceptance_audit_payload")
+    # F-PR66-007 P2 adopt: 共有 secret scan に未登録の Slack token 系を局所 reject.
+    _reject_local_token_patterns(event_payload)
     audit_event = AuditEvent(
         id=context.explicit_id if context.explicit_id is not None else uuid4(),
         tenant_id=context.tenant_id,
