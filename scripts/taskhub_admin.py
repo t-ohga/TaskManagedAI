@@ -5,13 +5,20 @@ Sprint 12 batch 7 では **subcommand structure + exit code contract** のみ
 確立。real backup / restore / migrate / age-rotate / verify の I/O 実装は
 user 物理 drill phase で配備.
 
-Subcommands (ADR-00021 §3 table + §11.1 hardening + §11.5 multi-agent fixture):
+Subcommands (ADR-00021 §3 table + §11/§14 hardening + §11.5 multi-agent fixture):
 - `taskhub init --host <name> --tailnet <ts.net>`: skeleton (target host bootstrap、§3 line 151)
 - `taskhub backup --output <path> [--include-sops-env]`: skeleton (drill 起点、§11.1 PG-F-015
   hardening: SOPS-encrypted env のみ、age private key は絶対含まない、旧 --include-secrets 名は fail)
-- `taskhub restore --input <path>`: skeleton
+- `taskhub freeze --reason <text>`: skeleton (split-brain prevention、§11.2 / §14.1、source host
+  を signed freeze marker で down、thaw 明示まで再活性化禁止)
+- `taskhub thaw [--decommission-target]`: skeleton (2-party-control + active-registry verify、§670)
+- `taskhub active-registry`: skeleton (signed local ledger or closed-network shared 状態、
+  source/target 同時 active reject contract、§670 PGA-F-003)
+- `taskhub restore --input <path> | --rollback <pre-restore-ts>`: skeleton (restore + rollback
+  両モード、§290 / §299 rollback 経路)
 - `taskhub migrate --target <hostname>`: skeleton (one-shot host migration)
-- `taskhub status`: skeleton (host status / service health / data size)
+- `taskhub status [--age-safety] [--mac-preflight] [--remote <host>]`: skeleton (host status
+  + §14.1 age-safety drill + §14.2 mac-preflight + split-brain remote check)
 - `taskhub age-rotate`: skeleton (key rotation + SOPS re-encrypt)
 - `taskhub verify [--integrity] [--network-invariant] [--multi-agent]`: skeleton
   (--multi-agent は ADR-00021 §11.5 multi-agent table restore 整合性 fixture)
@@ -109,10 +116,40 @@ def _cmd_backup(args: argparse.Namespace) -> int:
 
 
 def _cmd_restore(args: argparse.Namespace) -> int:
-    """`taskhub restore --input <path>.tar.age` skeleton."""
-    if not args.input:
-        print("ERROR: --input <path>.tar.age is required", file=sys.stderr)  # noqa: T201
+    """`taskhub restore --input <path>.tar.age | --rollback <pre-restore-ts>` skeleton.
+
+    ADR-00021 §290 / §299: restore 失敗時に `data/_pre-restore-<ts>/` から旧 volume を
+    復旧する rollback mode (`--rollback <pre-restore-ts>`) を併設 (Codex R4 F-PR63-011 adopt).
+    `--input` と `--rollback` は排他.
+    """
+    if args.input and args.rollback:
+        print(  # noqa: T201
+            "ERROR: --input と --rollback は排他 (同時指定不可)",
+            file=sys.stderr,
+        )
         return 2
+    if not args.input and not args.rollback:
+        print(  # noqa: T201
+            "ERROR: --input <path>.tar.age または --rollback <pre-restore-ts> "
+            "のいずれかが必須",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.rollback:
+        print(  # noqa: T201
+            _skeleton_message(
+                "restore --rollback",
+                details=(
+                    f"Would rollback to pre-restore snapshot at "
+                    f"data/_pre-restore-{args.rollback}/. "
+                    "Real flow: service stop -> 旧 volume を data/_pre-restore-<ts>/ "
+                    "から現役 path に戻す -> service up + healthcheck."
+                ),
+            )
+        )
+        return 1  # skeleton mode
+
     input_path = Path(args.input)
     if not input_path.exists():
         print(  # noqa: T201
@@ -154,19 +191,99 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
-    """`taskhub status` skeleton."""
-    del args
+    """`taskhub status [--age-safety] [--mac-preflight] [--remote <host>]` skeleton.
+
+    ADR-00021 §14.1 PGA-F-001 (age key 安全運搬 drill: `--age-safety`) + §14.2
+    PGA-F-006 (Mac runtime preflight: `--mac-preflight`) + §285 split-brain
+    prevention (`--remote <old-host>` で旧 host service down 確認) を追加
+    (Codex R4 F-PR63-008 adopt).
+    """
+    extras: list[str] = []
+    if args.age_safety:
+        extras.append(
+            "--age-safety (§14.1 PGA-F-001: FileVault / cloud-sync exclusion / "
+            "permission 600 verify)"
+        )
+    if args.mac_preflight:
+        extras.append(
+            "--mac-preflight (§14.2 PGA-F-006: pmset -g から sleep / powernap / "
+            "wakeonlan setting を hard fail check)"
+        )
+    if args.remote:
+        extras.append(
+            f"--remote {args.remote} (§285 split-brain check: 旧 host service down 確認)"
+        )
+
+    base_detail = (
+        "Would display: host name / Docker service health / data size "
+        "(PostgreSQL / Redis / artifacts) / last backup timestamp / "
+        "age key fingerprint / SOPS validity / closed-network serve URL."
+    )
+    detail = base_detail
+    if extras:
+        detail = f"{base_detail} Additional checks: {', '.join(extras)}"
+
+    print(  # noqa: T201
+        _skeleton_message("status", details=detail)
+    )
+    return 1
+
+
+def _cmd_freeze(args: argparse.Namespace) -> int:
+    """`taskhub freeze --reason <text>` skeleton (split-brain prevention、§11.2)."""
+    if not args.reason:
+        print("ERROR: --reason <text> is required", file=sys.stderr)  # noqa: T201
+        return 2
     print(  # noqa: T201
         _skeleton_message(
-            "status",
+            "freeze",
             details=(
-                "Would display: host name / Docker service health / data size "
-                "(PostgreSQL / Redis / artifacts) / last backup timestamp / "
-                "age key fingerprint / SOPS validity / closed-network serve URL."
+                f"Would create signed freeze marker (reason: {args.reason!r}). "
+                "Real flow: service stop + signed freeze marker file 生成 -> "
+                "再活性化は明示の `taskhub thaw` のみ (auto thaw なし、§11.2)."
             ),
         )
     )
-    return 1
+    return 1  # skeleton mode
+
+
+def _cmd_thaw(args: argparse.Namespace) -> int:
+    """`taskhub thaw [--decommission-target]` skeleton (§670 2-party-control)."""
+    flag = (
+        " (--decommission-target に伴う target active marker 削除)"
+        if args.decommission_target
+        else ""
+    )
+    print(  # noqa: T201
+        _skeleton_message(
+            "thaw",
+            details=(
+                f"Would verify thaw preflight{flag}. "
+                "Real flow: target active.signed marker + migration_epoch + "
+                "source_host_id + decommission marker verify -> 同時 active なら "
+                "default deny (再活性化は --decommission-target + 別 actor approval 必要)、"
+                "OK なら freeze marker 解除 + service up."
+            ),
+        )
+    )
+    return 1  # skeleton mode
+
+
+def _cmd_active_registry(args: argparse.Namespace) -> int:
+    """`taskhub active-registry` skeleton (signed local ledger、§670 PGA-F-003)."""
+    del args
+    print(  # noqa: T201
+        _skeleton_message(
+            "active-registry",
+            details=(
+                "Would print signed active ledger entries "
+                "(host_id / migration_epoch / active.signed marker mtime / "
+                "decommission marker). "
+                "Contract: source/target 同時 active は reject (split-brain 防止)."
+            ),
+        )
+    )
+    return 1  # skeleton mode
 
 
 def _cmd_age_rotate(args: argparse.Namespace) -> int:
@@ -282,15 +399,57 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub_restore = subparsers.add_parser(
         "restore",
-        help="restore from backup file (age-encrypted tar)",
+        help="restore from backup file (age-encrypted tar) or rollback pre-restore snapshot",
     )
+    # ADR-00021 §290 / §299: --rollback <pre-restore-ts> mode を併設 (--input と排他)
     sub_restore.add_argument(
         "--input",
         type=str,
-        required=True,
-        help="path to .tar.age backup file",
+        default=None,
+        help="path to .tar.age backup file (排他: --rollback)",
+    )
+    sub_restore.add_argument(
+        "--rollback",
+        type=str,
+        default=None,
+        help=(
+            "rollback to pre-restore snapshot timestamp "
+            "(data/_pre-restore-<ts>/ 経路、排他: --input)"
+        ),
     )
     sub_restore.set_defaults(func=_cmd_restore)
+
+    sub_freeze = subparsers.add_parser(
+        "freeze",
+        help="create signed freeze marker (split-brain prevention、ADR-00021 §11.2)",
+    )
+    sub_freeze.add_argument(
+        "--reason",
+        type=str,
+        required=True,
+        help="reason text for signed freeze marker (audit trail)",
+    )
+    sub_freeze.set_defaults(func=_cmd_freeze)
+
+    sub_thaw = subparsers.add_parser(
+        "thaw",
+        help="release freeze with 2-party-control + active-registry verify (ADR-00021 §670)",
+    )
+    sub_thaw.add_argument(
+        "--decommission-target",
+        action="store_true",
+        help=(
+            "remove target active marker before thaw "
+            "(2-party-control + 別 actor approval が必要)"
+        ),
+    )
+    sub_thaw.set_defaults(func=_cmd_thaw)
+
+    sub_active_registry = subparsers.add_parser(
+        "active-registry",
+        help="print signed active ledger (source/target 同時 active reject contract、§670)",
+    )
+    sub_active_registry.set_defaults(func=_cmd_active_registry)
 
     sub_migrate = subparsers.add_parser(
         "migrate",
@@ -311,6 +470,31 @@ def _build_parser() -> argparse.ArgumentParser:
     sub_status = subparsers.add_parser(
         "status",
         help="show host status + service health + data size + last backup",
+    )
+    sub_status.add_argument(
+        "--age-safety",
+        action="store_true",
+        help=(
+            "verify age key safety (FileVault / cloud-sync exclusion / "
+            "permission 600) per ADR-00021 §14.1 PGA-F-001"
+        ),
+    )
+    sub_status.add_argument(
+        "--mac-preflight",
+        action="store_true",
+        help=(
+            "verify Mac runtime preflight (sleep / powernap / wakeonlan) "
+            "per ADR-00021 §14.2 PGA-F-006"
+        ),
+    )
+    sub_status.add_argument(
+        "--remote",
+        type=str,
+        default=None,
+        help=(
+            "verify remote host service down (split-brain check) "
+            "per ADR-00021 §285"
+        ),
     )
     sub_status.set_defaults(func=_cmd_status)
 

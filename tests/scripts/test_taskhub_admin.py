@@ -96,10 +96,35 @@ def test_cli_backup_old_include_secrets_flag_is_rejected(tmp_path: Path) -> None
     assert "include-secrets" in result.stderr
 
 
-def test_cli_restore_requires_input() -> None:
-    """`restore` は --input 必須 (argparse required=True で exit 2)."""
+def test_cli_restore_requires_input_or_rollback() -> None:
+    """`restore` は --input または --rollback のいずれかが必須."""
     result = _run_cli("restore")
     assert result.returncode == 2
+    assert "--rollback" in result.stderr or "必須" in result.stderr
+
+
+def test_cli_restore_input_and_rollback_are_mutually_exclusive(tmp_path: Path) -> None:
+    """`restore --input ... --rollback ...` は exit 2 (排他)."""
+    backup = tmp_path / "fake-backup.tar.age"
+    backup.write_bytes(b"fake")
+    result = _run_cli(
+        "restore",
+        "--input",
+        str(backup),
+        "--rollback",
+        "2026-05-18T10-00-00",
+    )
+    assert result.returncode == 2
+    assert "排他" in result.stderr or "mutually" in result.stderr.lower()
+
+
+def test_cli_restore_rollback_skeleton_mode_returns_exit_1() -> None:
+    """`restore --rollback <pre-restore-ts>` → skeleton + exit 1 (ADR-00021 §290 / §299)."""
+    result = _run_cli("restore", "--rollback", "2026-05-18T10-00-00")
+    assert result.returncode == 1
+    assert "[SKELETON] taskhub restore --rollback" in result.stdout
+    assert "2026-05-18T10-00-00" in result.stdout
+    assert "data/_pre-restore-" in result.stdout
 
 
 def test_cli_restore_missing_input_path_returns_exit_2(tmp_path: Path) -> None:
@@ -152,11 +177,83 @@ def test_cli_migrate_via_scp_option() -> None:
 
 
 def test_cli_status_skeleton_mode_returns_exit_1() -> None:
-    """`status` → skeleton + exit 1."""
+    """`status` (flag なし) → skeleton + exit 1."""
     result = _run_cli("status")
     assert result.returncode == 1
     assert "[SKELETON] taskhub status" in result.stdout
     assert "Docker service health" in result.stdout
+
+
+def test_cli_status_age_safety_flag_matches_pga_f_001(tmp_path: Path) -> None:
+    """`status --age-safety` (ADR-00021 §14.1 PGA-F-001、Codex R4 F-PR63-008 adopt)."""
+    del tmp_path
+    result = _run_cli("status", "--age-safety")
+    assert result.returncode == 1
+    assert "[SKELETON] taskhub status" in result.stdout
+    assert "--age-safety" in result.stdout
+    assert "FileVault" in result.stdout
+
+
+def test_cli_status_mac_preflight_flag_matches_pga_f_006() -> None:
+    """`status --mac-preflight` (ADR-00021 §14.2 PGA-F-006)."""
+    result = _run_cli("status", "--mac-preflight")
+    assert result.returncode == 1
+    assert "--mac-preflight" in result.stdout
+    assert "pmset" in result.stdout or "sleep" in result.stdout
+
+
+def test_cli_status_remote_split_brain_check() -> None:
+    """`status --remote <host>` (ADR-00021 §285 split-brain prevention)."""
+    result = _run_cli("status", "--remote", "old-host.example")
+    assert result.returncode == 1
+    assert "--remote" in result.stdout
+    assert "old-host.example" in result.stdout
+    assert "split-brain" in result.stdout
+
+
+def test_cli_freeze_requires_reason() -> None:
+    """`freeze` は --reason 必須 (Codex R4 F-PR63-012 adopt、ADR-00021 §11.2 split-brain prevention)."""
+    result = _run_cli("freeze")
+    assert result.returncode == 2
+
+
+def test_cli_freeze_skeleton_mode_returns_exit_1() -> None:
+    """`freeze --reason <text>` → skeleton + exit 1."""
+    result = _run_cli("freeze", "--reason", "migration to t-ohga-vps at 2026-05-18T10:00Z")
+    assert result.returncode == 1
+    assert "[SKELETON] taskhub freeze" in result.stdout
+    assert "signed freeze marker" in result.stdout
+    assert "thaw" in result.stdout
+
+
+def test_cli_thaw_skeleton_mode_returns_exit_1() -> None:
+    """`thaw` (flag なし) → skeleton + exit 1 (Codex R4 F-PR63-009 adopt、ADR-00021 §670)."""
+    result = _run_cli("thaw")
+    assert result.returncode == 1
+    assert "[SKELETON] taskhub thaw" in result.stdout
+    assert "preflight" in result.stdout
+    # default 時は target active marker 削除に伴う説明が含まれない
+    # (flag mode との差別化: 説明文の prefix `--decommission-target に伴う` で判定)
+    assert "--decommission-target に伴う" not in result.stdout
+
+
+def test_cli_thaw_decommission_target_flag() -> None:
+    """`thaw --decommission-target` → 2-party-control + 別 actor approval invariant 言及あり."""
+    result = _run_cli("thaw", "--decommission-target")
+    assert result.returncode == 1
+    assert "[SKELETON] taskhub thaw" in result.stdout
+    # flag 有効時は default にない説明 prefix が含まれる
+    assert "--decommission-target に伴う" in result.stdout
+    assert "別 actor approval" in result.stdout
+
+
+def test_cli_active_registry_skeleton_mode_returns_exit_1() -> None:
+    """`active-registry` → skeleton + exit 1 (Codex R4 F-PR63-010 adopt、ADR-00021 §670)."""
+    result = _run_cli("active-registry")
+    assert result.returncode == 1
+    assert "[SKELETON] taskhub active-registry" in result.stdout
+    assert "signed active ledger" in result.stdout
+    assert "split-brain" in result.stdout
 
 
 def test_cli_age_rotate_skeleton_mode_returns_exit_1() -> None:
@@ -230,7 +327,11 @@ def test_taskhub_console_script_entry_point_installed() -> None:
 
 
 def test_taskhub_console_script_help_includes_subcommands() -> None:
-    """`taskhub --help` で 7 subcommand 全件 (init/backup/restore/migrate/status/age-rotate/verify) を表示する."""
+    """`taskhub --help` で 10 subcommand 全件を表示する.
+
+    expected subcommands: init / backup / restore / freeze / thaw /
+    active-registry / migrate / status / age-rotate / verify
+    """
     taskhub_path = shutil.which("taskhub")
     if taskhub_path is None:
         # 上 test で fail 済、本 test は noop fallback
@@ -246,6 +347,9 @@ def test_taskhub_console_script_help_includes_subcommands() -> None:
         "init",
         "backup",
         "restore",
+        "freeze",
+        "thaw",
+        "active-registry",
         "migrate",
         "status",
         "age-rotate",
