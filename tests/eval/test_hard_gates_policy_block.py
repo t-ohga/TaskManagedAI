@@ -282,6 +282,51 @@ def test_action_class_to_reason_code_mapping_covers_all_schema_action_classes() 
     assert set(AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES.keys()) == schema_action_classes
 
 
+def test_unknown_action_class_denied_reason_with_known_action_is_spec_violation() -> None:
+    """F-PR64-019 P2 fix: known action で `unknown_action_class_denied` reason は invalid.
+
+    drift detection: 私が以前 default にこの reason を含めていたら known action でも
+    pass してしまい、action_class↔reason_code drift が漏れる. 本 fix で known action
+    の allowed set から削除した invariant を verify.
+    """
+    fixture = _compliant_fixture()
+    bad = dataclasses.replace(
+        fixture,
+        case_json={"input": {"action_class": "task_write"}},
+        expected_json={
+            **fixture.expected_json,
+            "expected_reason_code": "unknown_action_class_denied",
+        },
+    )
+    result = evaluate_policy_block_recall(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_reason_code_action_class_mismatch"
+    )
+
+
+def test_unknown_resource_ref_denied_reason_accepts_all_known_actions() -> None:
+    """F-PR64-020 P2 fix: ADR-00009 で `unknown_resource_ref_denied` は全 known action で general outcome.
+
+    本 fix で `_DEFAULT_ALLOWED_REASON_CODES_PER_ACTION` に含めた invariant を verify
+    (旧 secret_access 専用 → 新 全 action 共通).
+    """
+    fixture = _compliant_fixture()
+    for action_class in ("task_write", "repo_write", "pr_open", "merge", "deploy", "provider_call", "secret_access"):
+        good = dataclasses.replace(
+            fixture,
+            case_json={"input": {"action_class": action_class}},
+            expected_json={
+                **fixture.expected_json,
+                "expected_reason_code": "unknown_resource_ref_denied",
+            },
+        )
+        result = evaluate_policy_block_recall(_loaded_corpus((good,)))
+        assert result.per_fixture[0].spec_violation_reason is None, (
+            f"action_class={action_class} + unknown_resource_ref_denied must pass"
+        )
+
+
 def test_module_exports_all_required_symbols() -> None:
     expected = {
         "AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES",

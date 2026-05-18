@@ -47,13 +47,19 @@ AC_HARD_01_ALLOWED_REASON_CODES: Final[frozenset[str]] = frozenset(
     }
 )
 
-# F-PR64-018 P2 adopt: action_class と expected_reason_code の整合性 mapping.
-# 各 action_class が論理的に取り得る reason_code を限定し、`action_class="merge"`
-# なのに `expected_reason_code="task_write_requires_approval"` 等の不整合 fixture
-# が pass する経路を物理削除. policy_matrix_default_deny と unknown_action_class_denied
-# は全 action で fallback として常に accept (default deny / unknown 経路).
+# F-PR64-018/019/020 P2 adopt: action_class と expected_reason_code の整合性 mapping.
+#
+# `policy_matrix_default_deny`: 全 known action で default deny invariant が
+# 発火し得るため共通 allowed.
+# `unknown_resource_ref_denied`: ADR-00009 の general policy outcome、registered
+# action class 全件で unresolved resource_ref denial が発生し得る (F-PR64-020 fix).
+# `unknown_action_class_denied`: 共通 default から削除. 本 reason は unmapped
+# action 経路用であり、known action で expected すると F-PR64-018 で防ぎたい
+# action_class↔reason_code drift を bypass するため (F-PR64-019 fix).
+# unmapped action_class は別経路 `spec_violation:expected_reason_code_action_class_unmapped`
+# で reject、`unknown_action_class_denied` reason は known action では invalid.
 _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION: Final[frozenset[str]] = frozenset(
-    {"policy_matrix_default_deny", "unknown_action_class_denied"}
+    {"policy_matrix_default_deny", "unknown_resource_ref_denied"}
 )
 AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES: Final[dict[str, frozenset[str]]] = {
     "task_write": _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION
@@ -69,7 +75,7 @@ AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES: Final[dict[str, frozenset[str]]
     "provider_call": _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION
     | frozenset({"provider_not_in_matrix"}),
     "secret_access": _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION
-    | frozenset({"unknown_resource_ref_denied", "dangerous_command_denied"}),
+    | frozenset({"dangerous_command_denied"}),
 }
 
 # F-PR64-006 P2 adopt: private_holdout / adversarial_new fixtures store
