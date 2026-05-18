@@ -4,13 +4,19 @@ type: "heavy"
 status: "proposed"
 sprint_no: 1.5
 created_at: "2026-05-10"
-updated_at: "2026-05-10"
+updated_at: "2026-05-18"
 target_days: 2
 max_days: 3
+# F-PR67-010/011/013 P2 adopt (PR #67 R4): ADR-00021 acceptance 条件
+# (host migration drill PASS) が master plan で明示、SP-012 では実機 drill
+# 未達のため accepted 化不可. R3 で adopt した「SP-012 で accepted 化済 + 
+# adr_refs 移動」を撤回、planned_adr_refs に restore. accepted 化 timestamp
+# (旧 09:10:00Z は誤、両 ADR 側 00:30:00Z に back-date 後さらに撤回) は ADR
+# 側 acceptance_history で記録.
 adr_refs: []
 planned_adr_refs:
-  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-001.5 着手時に proposed → accepted (Criteria #2/#6/#7/#8)"
-  - "[ADR-00007 update](../adr/00007_external_exposure.md) # host-portable invariant、同期 accepted"
+  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-012 で skeleton 実装着手済、accepted at SP022-T00 (pre-implementation gate、Criteria #2/#6/#7/#8、F-PR67-046 P2 adopt)"
+  - "[ADR-00007](../adr/00007_external_exposure.md) # host-portable invariant、ADR-00021 同期 accepted at SP022-T00 (R8/R10 timing 整合)"
 related_sprints:
   - "SP-001_project_foundation (既完了、本 SP は amendment)"
   - "SP-012_p0_acceptance"
@@ -29,7 +35,7 @@ risks:
 ## 背景
 
 - SP-001 は SUCCESS_WITH_FOLLOW_UP として既完了 (frontmatter status / Review 既存)
-- ADR-00021 (host-portable) は本 amendment Sprint と同時に proposed → accepted
+- ADR-00021 (host-portable) acceptance は SP-022 で実機 host migration drill PASS 後 (PR #67 R4 F-PR67-010/013/017 P2 adopt、本 SP-001.5 では skeleton 実装の参照 ADR として draft 状態で進行)
 - `taskhub` admin CLI 最小実装 (init / backup / status) は既存 SP-001 の must_ship に **後付けで追加するのではなく**、本 SP-001.5 で独立に提供
 - 既存 SP-001 完了時の docker-compose / FastAPI / migration / dev login flow はそのまま、host-portable 化のみ amendment
 
@@ -63,7 +69,7 @@ risks:
 - SP015-T04: `.env.example` 整理 (env var で host 吸収)
 - SP015-T05: `docs/deploy/host-setup.md` 雛形作成 (Mac / Linux / VPS の各 host SOP の構造化、本文の詳細は SP-012 で完成)
 - SP015-T06: SP-001.5 smoke test (Mac 起動 verify、`tm` を使わない smoke、PH-F-003 fix)
-- SP015-T07: ADR-00021 + ADR-00007 update を proposed → accepted
+- SP015-T07: ADR-00021 + ADR-00007 update accepted 化は **SP-022 carry over** (F-PR67-010/013/017 P2 adopt、acceptance 条件 = 実機 host migration drill PASS が SP-022 scope のため、SP-001.5 では skeleton 実装着手のみ進める)
 
 ## タスク一覧
 
@@ -83,12 +89,12 @@ risks:
 | DB/Redis internal-only expose | ○ | - |
 | docs/deploy/host-setup.md 雛形 | ○ | 本文詳細は SP-012 で完成 |
 | `tm` を使わない smoke (PH-F-003) | ○ | - |
-| ADR-00021 + ADR-00007 update accepted | ○ | - |
+| ADR-00021 + ADR-00007 update accepted | ✗ (SP-022 carry over) | F-PR67-010/013/017 P2 adopt: acceptance 条件 = 実機 host migration drill PASS が SP-022 scope、本 SP-001.5 は skeleton 実装着手のみ |
 | SP-001 既完了内容変更 | × | (絶対変更しない) |
 
 ## 受け入れ条件
 
-- ADR-00021 / ADR-00007 update が proposed → accepted (本 SP-001.5 着手時 gate)
+- ADR-00021 / ADR-00007 update は **proposed のまま** (SP-001.5 着手時 gate ではなく、acceptance は SP-022 で実機 drill PASS 後、F-PR67-017 P2 adopt)
 - Mac で `taskhub init` → `docker compose up -d` → `taskhub status` の smoke が `tm` を使わずに成功
 - image digest pinning が docker-compose.yml で固定、`postgres:16-alpine@sha256:<digest>`
 - DB (`5432`) / Redis (`6379`) が host port で listen していない (Docker internal のみ)
@@ -121,7 +127,7 @@ $ git log --oneline docs/sprints/SP-001_project_foundation.md
 ## レビュー観点
 
 - SP-001 既完了の Review section / frontmatter status が変更されていない (audit clean)
-- ADR-00021 lifecycle (proposed → SP-001.5 着手で accepted) が ADR Gate Criteria に沿う
+- ADR-00021 lifecycle (proposed → **SP-022 で実機 drill PASS 後 accepted**) が ADR Gate Criteria に沿う (F-PR67-010/017 P2 adopt、master plan line 106 整合)
 - `tm` 言及が SP-001.5 smoke から完全削除 (PH-F-003 fix)
 - image digest pinning が CI で verify 可能
 - DB/Redis internal-only expose が DD-05 と整合 (PH-F-007/§12.2 fix)
@@ -139,8 +145,8 @@ $ git log --oneline docs/sprints/SP-001_project_foundation.md
 
 ## 関連 ADR
 
-- ADR-00021 (Host-Portable Deployment + Data Migration、SP-001.5 着手時 proposed → accepted)
-- ADR-00007 update (host-portable invariant、同期 accepted)
+- ADR-00021 (Host-Portable Deployment + Data Migration、SP-022 で実機 drill PASS 後 accepted、本 SP-001.5 は skeleton 実装着手の参照 ADR)
+- ADR-00007 update (host-portable invariant、ADR-00021 同期 acceptance = SP-022 scope)
 
 ## Review
 
