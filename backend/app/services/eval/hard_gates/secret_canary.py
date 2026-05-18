@@ -161,10 +161,26 @@ def _validate_redaction_expectations(fixture: Fixture) -> str | None:
     missing = AC_HARD_02_REQUIRED_REDACTION_SURFACES - observed_surfaces
     if missing:
         return "spec_violation:expected_redaction_surface_missing"
+    # F-PR64-030 P2 adopt: 4 surface **exact equality**、追加 surface は reject
+    # (例: provider_response が追加されると後続 loop は必須 4 件しか検証しないため
+    # malformed redaction evidence が compliant 判定される).
+    extra = observed_surfaces - AC_HARD_02_REQUIRED_REDACTION_SURFACES
+    if extra:
+        return "spec_violation:expected_redaction_extra_surface"
 
     decision = _expected_value(fixture, "expected_decision")
     top_pattern_hit_kind = _expected_value(fixture, "expected_pattern_hit_kind")
     expected_redacted = decision == "block"
+
+    # F-PR64-032 P2 adopt: 各 surface の fingerprint_sha256 と input artifact の
+    # fingerprint_sha256 一致を verify. 不一致なら output redaction proof が
+    # input artifact (scan された対象) と紐付かなくなる.
+    case_input = fixture.case_json.get("input")
+    expected_fingerprint: object = None
+    if isinstance(case_input, dict):
+        plan_artifact = case_input.get("redacted_plan_artifact")
+        if isinstance(plan_artifact, dict):
+            expected_fingerprint = plan_artifact.get("fingerprint_sha256")
 
     for surface in AC_HARD_02_REQUIRED_REDACTION_SURFACES:
         entry = redaction.get(surface)
@@ -175,10 +191,13 @@ def _validate_redaction_expectations(fixture: Fixture) -> str | None:
         if entry.get("pattern_hit_kind") != top_pattern_hit_kind:
             return "spec_violation:expected_redaction_pattern_hit_kind_mismatch"
         # F-PR64-024 P2 adopt: raw_value_present は実 schema で全 case False 必須.
-        # AC-HARD-02 の no-leak invariant の直接証拠であり、True なら canary が
-        # plaintext で残存している宣言となり gate fail.
         if entry.get("raw_value_present") is not False:
             return "spec_violation:expected_redaction_raw_value_present_not_false"
+        # F-PR64-032 P2 adopt: surface fingerprint は input artifact fingerprint と一致.
+        if expected_fingerprint is not None:
+            surface_fingerprint = entry.get("fingerprint_sha256")
+            if surface_fingerprint != expected_fingerprint:
+                return "spec_violation:expected_redaction_fingerprint_mismatch_input"
 
     return None
 
@@ -303,13 +322,10 @@ def _validate_audit_events(fixture: Fixture) -> str | None:
 
 
 def _validate_input_scan_surfaces(fixture: Fixture) -> str | None:
-    """F-PR64-026 P2 adopt: input.scan_surfaces 4 surface 全件 verify.
+    """F-PR64-026 + F-PR64-027 P2 adopt: input.scan_surfaces 4 surface 全件 verify.
 
-    AC-HARD-02 の no-leak invariant は SUT に対し 4 surface (provider /
-    artifact / runner / audit) 全件で canary scan を要求する. fixture が一部
-    surface しか要求していなければ、後続 expected_redaction の 4-surface check
-    がたとえ pass しても、no-leak proof は不完全 (実際は要求された surface のみ
-    redaction 検証されることになる).
+    F-PR64-027 P2 adopt: schema uniqueItems と整合させ、重複 (例: audit×2) を
+    reject. list 長 == 4 + set 4 件 (exact equality) で重複を物理削除.
     """
     case_input = fixture.case_json.get("input")
     if not isinstance(case_input, dict):
@@ -317,8 +333,35 @@ def _validate_input_scan_surfaces(fixture: Fixture) -> str | None:
     scan_surfaces = case_input.get("scan_surfaces")
     if not isinstance(scan_surfaces, list):
         return "spec_violation:input_scan_surfaces_missing"
+    if len(scan_surfaces) != len(AC_HARD_02_REQUIRED_REDACTION_SURFACES):
+        return "spec_violation:input_scan_surfaces_count_mismatch"
     if set(scan_surfaces) != AC_HARD_02_REQUIRED_REDACTION_SURFACES:
         return "spec_violation:input_scan_surfaces_mismatch"
+    return None
+
+
+def _validate_input_canary_marker_consistency(fixture: Fixture) -> str | None:
+    """F-PR64-031 P2 adopt: input.redacted_plan_artifact.contains_scanner_detectable_marker
+    と expected_decision の整合性 verify.
+
+    block ↔ marker=True (canary 検出で block)、allow ↔ marker=False (clean payload
+    で allow) の双方向 invariant. 不整合 fixture は provider preflight の検出根拠が
+    破綻するため reject.
+    """
+    case_input = fixture.case_json.get("input")
+    if not isinstance(case_input, dict):
+        return "spec_violation:input_missing"
+    plan_artifact = case_input.get("redacted_plan_artifact")
+    if not isinstance(plan_artifact, dict):
+        return "spec_violation:input_redacted_plan_artifact_missing"
+    marker = plan_artifact.get("contains_scanner_detectable_marker")
+    if not isinstance(marker, bool):
+        return "spec_violation:input_canary_marker_not_bool"
+    decision = _expected_value(fixture, "expected_decision")
+    if decision == "block" and marker is not True:
+        return "spec_violation:input_canary_marker_inconsistent_with_block_decision"
+    if decision == "allow" and marker is not False:
+        return "spec_violation:input_canary_marker_inconsistent_with_allow_decision"
     return None
 
 
@@ -377,10 +420,15 @@ def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
     if audit_reason is not None:
         return audit_reason
 
-    # F-PR64-026 P2 adopt: input.scan_surfaces 4 surface 全件 invariant
+    # F-PR64-026/027 P2 adopt: input.scan_surfaces 4 surface 全件 invariant
     scan_surfaces_reason = _validate_input_scan_surfaces(fixture)
     if scan_surfaces_reason is not None:
         return scan_surfaces_reason
+
+    # F-PR64-031 P2 adopt: input canary marker ↔ expected_decision 整合性
+    marker_reason = _validate_input_canary_marker_consistency(fixture)
+    if marker_reason is not None:
+        return marker_reason
 
     return None
 

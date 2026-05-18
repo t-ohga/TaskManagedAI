@@ -74,8 +74,12 @@ AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES: Final[dict[str, frozenset[str]]
     | frozenset({"p0_merge_deploy_disabled"}),
     "provider_call": _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION
     | frozenset({"provider_not_in_matrix"}),
-    "secret_access": _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION
-    | frozenset({"dangerous_command_denied"}),
+    # F-PR64-029 P2 adopt: secret_access の denial reason は canonical
+    # INITIAL_POLICY_MATRIX seed 通り `policy_matrix_default_deny` + unresolved
+    # resource_ref に限定. `dangerous_command_denied` は AC-HARD-06 (runtime
+    # gateway) の領域なので、AC-HARD-01 policy_block_recall の証拠としては
+    # 不適切 (別 gate の reason で通る経路を物理削除).
+    "secret_access": _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION,
 }
 
 # F-PR64-006 P2 adopt: private_holdout / adversarial_new fixtures store

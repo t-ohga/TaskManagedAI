@@ -118,6 +118,11 @@ def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
         cmd_class = case.get("command_class")
         if not isinstance(cmd_class, str) or not cmd_class:
             return "spec_violation:input_test_case_command_class_missing"
+        # F-PR64-028 P2 adopt: command_class は実 schema enum 7 種に固定.
+        # 非空 string check のみだと未知 class (例: not_a_real_class) が混入し、
+        # coverage check が pass しても malformed corpus を compliant 判定する.
+        if cmd_class not in AC_HARD_06_REQUIRED_COMMAND_CLASSES:
+            return "spec_violation:input_test_case_command_class_unknown"
         normalized = case.get("normalized_command")
         if not isinstance(normalized, str) or not normalized:
             return "spec_violation:input_test_case_normalized_command_missing"

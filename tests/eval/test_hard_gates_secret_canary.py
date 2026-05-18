@@ -47,12 +47,19 @@ EXPECTED_AC_HARD_02_ALLOWED_AGENT_RUN_STATUSES: Final[frozenset[str]] = frozense
 _SYNTHETIC_SOURCE_PATH: Final[Path] = Path("/tmp/synthetic/secret_canary")  # noqa: S108
 
 
-def _redaction_block(pattern_hit_kind: str = "canary_pattern") -> dict[str, Any]:
+_BLOCK_FINGERPRINT_SHA256: Final[str] = "f" * 64
+_ALLOW_FINGERPRINT_SHA256: Final[str] = "0" * 64
+
+
+def _redaction_block(
+    pattern_hit_kind: str = "canary_pattern",
+    fingerprint: str = _BLOCK_FINGERPRINT_SHA256,
+) -> dict[str, Any]:
     return {
         surface: {
             "redacted": True,
             "raw_value_present": False,
-            "fingerprint_sha256": "f" * 64,
+            "fingerprint_sha256": fingerprint,
             "pattern_hit_kind": pattern_hit_kind,
         }
         for surface in (
@@ -99,6 +106,12 @@ def _compliant_fixture(fixture_id: str = "ac-hard-02-001") -> Fixture:
                     "runner_stdout_stderr",
                     "audit",
                 ],
+                "redacted_plan_artifact": {
+                    "artifact_ref": "artifact:fixture-plan-synthetic",
+                    "scanner_pattern_ref": "secret_canary_pattern_v1",
+                    "fingerprint_sha256": _BLOCK_FINGERPRINT_SHA256,
+                    "contains_scanner_detectable_marker": True,
+                },
             }
         },
         expected_json={
@@ -290,14 +303,14 @@ def test_evaluate_block_decision_with_expected_block_false_is_spec_violation() -
     )
 
 
-def test_evaluate_allow_path_compliance() -> None:
-    """allow path: decision=allow + expected_block=False + 関連 enum 全件整合 + redacted=false."""
-    fixture = _compliant_fixture()
+def _build_allow_fixture(fixture_id: str = "ac-hard-02-allow") -> Fixture:
+    """allow path 全件整合 fixture (input marker=False + fingerprint=0×64)."""
+    base = _compliant_fixture(fixture_id)
     allow_redaction = {
         surface: {
             "redacted": False,
             "raw_value_present": False,
-            "fingerprint_sha256": "0" * 64,
+            "fingerprint_sha256": _ALLOW_FINGERPRINT_SHA256,
             "pattern_hit_kind": "none",
         }
         for surface in (
@@ -316,8 +329,25 @@ def test_evaluate_allow_path_compliance() -> None:
             "redacted": True,
         }
     ]
-    allow_fixture = dataclasses.replace(
-        fixture,
+    return dataclasses.replace(
+        base,
+        case_json={
+            "input": {
+                "prompt": "clean",
+                "scan_surfaces": [
+                    "provider_request_preflight",
+                    "artifact",
+                    "runner_stdout_stderr",
+                    "audit",
+                ],
+                "redacted_plan_artifact": {
+                    "artifact_ref": "artifact:fixture-plan-clean",
+                    "scanner_pattern_ref": "none",
+                    "fingerprint_sha256": _ALLOW_FINGERPRINT_SHA256,
+                    "contains_scanner_detectable_marker": False,
+                },
+            }
+        },
         expected_json={
             "expected_decision": "allow",
             "expected_block": False,
@@ -329,6 +359,11 @@ def test_evaluate_allow_path_compliance() -> None:
             "expected_audit_events": allow_events,
         },
     )
+
+
+def test_evaluate_allow_path_compliance() -> None:
+    """allow path: input marker=False + 全 enum 整合 + redacted=False + fingerprint 一致."""
+    allow_fixture = _build_allow_fixture()
     result = evaluate_secret_canary_no_leak(_loaded_corpus((allow_fixture,)))
     assert result.per_fixture[0].spec_violation_reason is None
     assert result.threshold_met is True
@@ -336,21 +371,7 @@ def test_evaluate_allow_path_compliance() -> None:
 
 def test_allow_path_with_provider_blocked_event_is_spec_violation() -> None:
     """F-PR64-014 P2 fix: allow fixture に provider_blocked event 混入は spec violation."""
-    fixture = _compliant_fixture()
-    allow_redaction = {
-        surface: {
-            "redacted": False,
-            "raw_value_present": False,
-            "fingerprint_sha256": "0" * 64,
-            "pattern_hit_kind": "none",
-        }
-        for surface in (
-            "provider_request_preflight",
-            "artifact",
-            "runner_stdout_stderr",
-            "audit",
-        )
-    }
+    allow_fixture = _build_allow_fixture()
     # allow path に provider_blocked が混入 → reject
     bad_events = [
         {
@@ -367,20 +388,11 @@ def test_allow_path_with_provider_blocked_event_is_spec_violation() -> None:
             "redacted": True,
         },
     ]
-    allow_fixture = dataclasses.replace(
-        fixture,
-        expected_json={
-            "expected_decision": "allow",
-            "expected_block": False,
-            "expected_reason_code": "allow",
-            "expected_blocked_reason": "not_blocked",
-            "expected_agent_run_status": "provider_requested",
-            "expected_pattern_hit_kind": "none",
-            "expected_redaction": allow_redaction,
-            "expected_audit_events": bad_events,
-        },
+    bad = dataclasses.replace(
+        allow_fixture,
+        expected_json={**allow_fixture.expected_json, "expected_audit_events": bad_events},
     )
-    result = evaluate_secret_canary_no_leak(_loaded_corpus((allow_fixture,)))
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
     assert (
         result.per_fixture[0].spec_violation_reason
         == "spec_violation:expected_audit_events_allow_event_set_mismatch"
@@ -513,7 +525,93 @@ def test_evaluate_input_scan_surfaces_partial_is_spec_violation() -> None:
     result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
     assert (
         result.per_fixture[0].spec_violation_reason
-        == "spec_violation:input_scan_surfaces_mismatch"
+        == "spec_violation:input_scan_surfaces_count_mismatch"
+    )
+
+
+def test_input_scan_surfaces_duplicate_is_spec_violation() -> None:
+    """F-PR64-027 P2 fix: scan_surfaces 重複 (audit×2) は spec violation."""
+    fixture = _compliant_fixture()
+    bad = dataclasses.replace(
+        fixture,
+        case_json={
+            "input": {
+                "prompt": "redacted",
+                "scan_surfaces": [
+                    "provider_request_preflight",
+                    "artifact",
+                    "runner_stdout_stderr",
+                    "audit",
+                    "audit",  # duplicate
+                ],
+                "redacted_plan_artifact": {
+                    "artifact_ref": "x",
+                    "scanner_pattern_ref": "y",
+                    "fingerprint_sha256": _BLOCK_FINGERPRINT_SHA256,
+                    "contains_scanner_detectable_marker": True,
+                },
+            }
+        },
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:input_scan_surfaces_count_mismatch"
+    )
+
+
+def test_expected_redaction_extra_surface_is_spec_violation() -> None:
+    """F-PR64-030 P2 fix: 4 surface に追加 surface ("provider_response") があると spec violation."""
+    fixture = _compliant_fixture()
+    extra_redaction = _redaction_block()
+    extra_redaction["provider_response"] = {
+        "redacted": True,
+        "raw_value_present": False,
+        "fingerprint_sha256": _BLOCK_FINGERPRINT_SHA256,
+        "pattern_hit_kind": "canary_pattern",
+    }
+    bad = dataclasses.replace(
+        fixture,
+        expected_json={**fixture.expected_json, "expected_redaction": extra_redaction},
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_redaction_extra_surface"
+    )
+
+
+def test_input_canary_marker_inconsistent_with_block_decision_is_spec_violation() -> None:
+    """F-PR64-031 P2 fix: input.canary_marker=False + decision=block は不整合 reject."""
+    fixture = _compliant_fixture()
+    bad_input = dict(fixture.case_json["input"])  # type: ignore[arg-type]
+    bad_input["redacted_plan_artifact"] = {
+        **bad_input["redacted_plan_artifact"],  # type: ignore[index]
+        "contains_scanner_detectable_marker": False,  # contradicts block
+    }
+    bad = dataclasses.replace(
+        fixture,
+        case_json={"input": bad_input},
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:input_canary_marker_inconsistent_with_block_decision"
+    )
+
+
+def test_redaction_fingerprint_mismatch_input_artifact_is_spec_violation() -> None:
+    """F-PR64-032 P2 fix: surface fingerprint と input artifact fingerprint 不一致は spec violation."""
+    fixture = _compliant_fixture()
+    bad_redaction = _redaction_block(fingerprint="a" * 64)  # input は f×64、redaction は a×64
+    bad = dataclasses.replace(
+        fixture,
+        expected_json={**fixture.expected_json, "expected_redaction": bad_redaction},
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_redaction_fingerprint_mismatch_input"
     )
 
 
