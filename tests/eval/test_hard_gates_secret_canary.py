@@ -324,6 +324,149 @@ def test_evaluate_allow_path_compliance() -> None:
     assert result.threshold_met is True
 
 
+def test_allow_path_with_provider_blocked_event_is_spec_violation() -> None:
+    """F-PR64-014 P2 fix: allow fixture に provider_blocked event 混入は spec violation."""
+    fixture = _compliant_fixture()
+    allow_redaction = {
+        surface: {
+            "redacted": False,
+            "raw_value_present": False,
+            "fingerprint_sha256": "0" * 64,
+            "pattern_hit_kind": "none",
+        }
+        for surface in (
+            "provider_request_preflight",
+            "artifact",
+            "runner_stdout_stderr",
+            "audit",
+        )
+    }
+    # allow path に provider_blocked が混入 → reject
+    bad_events = [
+        {
+            "event_type": "policy_decision_created",
+            "decision": "allow",
+            "reason_code": "allow",
+            "pattern_hit_kind": "none",
+            "redacted": True,
+        },
+        {
+            "event_type": "provider_blocked",  # contradicts allow path
+            "reason_code": "provider_request_preflight_violation",
+            "pattern_hit_kind": "canary_pattern",
+            "redacted": True,
+        },
+    ]
+    allow_fixture = dataclasses.replace(
+        fixture,
+        expected_json={
+            "expected_decision": "allow",
+            "expected_block": False,
+            "expected_reason_code": "allow",
+            "expected_blocked_reason": "not_blocked",
+            "expected_agent_run_status": "provider_requested",
+            "expected_pattern_hit_kind": "none",
+            "expected_redaction": allow_redaction,
+            "expected_audit_events": bad_events,
+        },
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((allow_fixture,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_audit_events_allow_event_set_mismatch"
+    )
+
+
+def test_block_path_event_with_wrong_decision_is_spec_violation() -> None:
+    """F-PR64-015 P2 fix: block path で policy_decision_created の decision="allow" は spec violation."""
+    fixture = _compliant_fixture()
+    bad_events = [
+        {
+            "event_type": "policy_decision_created",
+            "decision": "allow",  # contradicts block path
+            "reason_code": "provider_request_preflight_violation",
+            "pattern_hit_kind": "canary_pattern",
+            "redacted": True,
+        },
+        {
+            "event_type": "provider_blocked",
+            "reason_code": "provider_request_preflight_violation",
+            "pattern_hit_kind": "canary_pattern",
+            "redacted": True,
+        },
+    ]
+    bad = dataclasses.replace(
+        fixture,
+        expected_json={**fixture.expected_json, "expected_audit_events": bad_events},
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_audit_events_block_decision_not_deny"
+    )
+
+
+def test_block_path_provider_blocked_with_wrong_reason_code_is_spec_violation() -> None:
+    """F-PR64-015 P2 fix: block path required event の reason_code drift は spec violation.
+
+    `provider_request_preflight_violation` 以外を reject.
+    """
+    fixture = _compliant_fixture()
+    bad_events = [
+        {
+            "event_type": "policy_decision_created",
+            "decision": "deny",
+            "reason_code": "provider_request_preflight_violation",
+            "pattern_hit_kind": "canary_pattern",
+            "redacted": True,
+        },
+        {
+            "event_type": "provider_blocked",
+            "reason_code": "allow",  # contradicts block semantic
+            "pattern_hit_kind": "canary_pattern",
+            "redacted": True,
+        },
+    ]
+    bad = dataclasses.replace(
+        fixture,
+        expected_json={**fixture.expected_json, "expected_audit_events": bad_events},
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_audit_events_block_reason_code_mismatch"
+    )
+
+
+def test_block_path_provider_blocked_with_pattern_hit_kind_none_is_spec_violation() -> None:
+    """F-PR64-015 P2 fix: block path required event の pattern_hit_kind="none" は invariant 違反."""
+    fixture = _compliant_fixture()
+    bad_events = [
+        {
+            "event_type": "policy_decision_created",
+            "decision": "deny",
+            "reason_code": "provider_request_preflight_violation",
+            "pattern_hit_kind": "canary_pattern",
+            "redacted": True,
+        },
+        {
+            "event_type": "provider_blocked",
+            "reason_code": "provider_request_preflight_violation",
+            "pattern_hit_kind": "none",  # contradicts block semantic
+            "redacted": True,
+        },
+    ]
+    bad = dataclasses.replace(
+        fixture,
+        expected_json={**fixture.expected_json, "expected_audit_events": bad_events},
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_audit_events_block_pattern_hit_kind_invalid"
+    )
+
+
 def test_required_redaction_surfaces_constants_match_real_schema() -> None:
     """F-PR64-012 4 surface (provider_request_preflight / artifact / runner_stdout_stderr / audit)."""
     assert AC_HARD_02_REQUIRED_REDACTION_SURFACES == frozenset(

@@ -178,23 +178,72 @@ def _validate_redaction_expectations(fixture: Fixture) -> str | None:
     return None
 
 
-def _validate_audit_events(fixture: Fixture) -> str | None:
-    """F-PR64-013 P2 adopt: `expected_audit_events` array verify.
+def _validate_audit_event_payload_for_block(event: Mapping[str, object]) -> str | None:
+    """F-PR64-015 P2 adopt: block path required event の payload field verify.
 
-    - block fixture: `policy_decision_created` + `provider_blocked` 必須
-    - allow fixture: `policy_decision_created` 必須
-    - 全 event の `redacted` field が True
+    block path で required event (policy_decision_created / provider_blocked) が
+    `reason_code="allow"` / `decision="allow"` / `pattern_hit_kind="none"` 等の
+    内部矛盾を持つと no-leak invariant の audit 証拠が崩れる. block path required
+    event は実 fixture と整合する block-side payload を持つ必要がある.
+    """
+    event_type = event.get("event_type")
+    if event_type not in AC_HARD_02_BLOCK_REQUIRED_AUDIT_EVENT_TYPES:
+        return None  # 必須でない event は payload check 対象外
+    reason_code = event.get("reason_code")
+    if reason_code != "provider_request_preflight_violation":
+        return "spec_violation:expected_audit_events_block_reason_code_mismatch"
+    pattern_hit_kind = event.get("pattern_hit_kind")
+    if pattern_hit_kind == "none" or not isinstance(pattern_hit_kind, str):
+        return "spec_violation:expected_audit_events_block_pattern_hit_kind_invalid"
+    # policy_decision_created の場合 `decision` は "deny" であることが実 fixture
+    # 整合 (provider_blocked event には `decision` field が無くてもよい).
+    if event_type == "policy_decision_created":
+        decision = event.get("decision")
+        if decision != "deny":
+            return "spec_violation:expected_audit_events_block_decision_not_deny"
+    return None
+
+
+def _validate_audit_event_payload_for_allow(event: Mapping[str, object]) -> str | None:
+    """allow path required event の payload field verify (F-PR64-015 sibling).
+
+    allow fixture の `policy_decision_created` event は `decision="allow"` +
+    `reason_code="allow"` + `pattern_hit_kind="none"` であることが実 fixture と
+    整合 (control_no_canary.json 参照).
+    """
+    event_type = event.get("event_type")
+    if event_type != "policy_decision_created":
+        return None
+    if event.get("decision") != "allow":
+        return "spec_violation:expected_audit_events_allow_decision_not_allow"
+    if event.get("reason_code") != "allow":
+        return "spec_violation:expected_audit_events_allow_reason_code_mismatch"
+    if event.get("pattern_hit_kind") != "none":
+        return "spec_violation:expected_audit_events_allow_pattern_hit_kind_not_none"
+    return None
+
+
+def _validate_audit_events(fixture: Fixture) -> str | None:
+    """F-PR64-013/014/015 P2 adopt: `expected_audit_events` array verify.
+
+    - block fixture: required event types = {policy_decision_created,
+      provider_blocked}、event_types **must contain at minimum** required set;
+      required event payload は block-side semantic (decision="deny" /
+      reason_code="provider_request_preflight_violation" /
+      pattern_hit_kind != "none").
+    - allow fixture: required event types は **exact set equality** で
+      {policy_decision_created} のみ (F-PR64-014 P2 adopt、blocking event を
+      allow fixture に混入させない); required event payload は allow-side
+      semantic (decision="allow" / reason_code="allow" /
+      pattern_hit_kind="none").
+    - 全 event の `redacted` field が True.
     """
     audit_events = _expected_value(fixture, "expected_audit_events")
     if not isinstance(audit_events, list):
         return "spec_violation:expected_audit_events_missing"
 
     decision = _expected_value(fixture, "expected_decision")
-    if decision == "block":
-        required = AC_HARD_02_BLOCK_REQUIRED_AUDIT_EVENT_TYPES
-    elif decision == "allow":
-        required = AC_HARD_02_ALLOW_REQUIRED_AUDIT_EVENT_TYPES
-    else:
+    if decision not in ("block", "allow"):
         return "spec_violation:expected_audit_events_unknown_decision"
 
     observed_types: set[str] = set()
@@ -206,9 +255,22 @@ def _validate_audit_events(fixture: Fixture) -> str | None:
         event_type = event.get("event_type")
         if isinstance(event_type, str):
             observed_types.add(event_type)
+        if decision == "block":
+            block_payload_reason = _validate_audit_event_payload_for_block(event)
+            if block_payload_reason is not None:
+                return block_payload_reason
+        else:
+            allow_payload_reason = _validate_audit_event_payload_for_allow(event)
+            if allow_payload_reason is not None:
+                return allow_payload_reason
 
-    if not required.issubset(observed_types):
-        return "spec_violation:expected_audit_events_required_event_type_missing"
+    if decision == "block":
+        if not AC_HARD_02_BLOCK_REQUIRED_AUDIT_EVENT_TYPES.issubset(observed_types):
+            return "spec_violation:expected_audit_events_required_event_type_missing"
+    else:
+        # F-PR64-014 P2 adopt: allow path は exact equality (blocking event 混入禁止)
+        if observed_types != AC_HARD_02_ALLOW_REQUIRED_AUDIT_EVENT_TYPES:
+            return "spec_violation:expected_audit_events_allow_event_set_mismatch"
 
     return None
 
