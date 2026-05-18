@@ -178,13 +178,24 @@ def _validate_redaction_expectations(fixture: Fixture) -> str | None:
     return None
 
 
-def _validate_audit_event_payload_for_block(event: Mapping[str, object]) -> str | None:
-    """F-PR64-015 P2 adopt: block path required event の payload field verify.
+def _validate_audit_event_payload_for_block(
+    event: Mapping[str, object],
+    *,
+    expected_pattern_hit_kind: object,
+) -> str | None:
+    """F-PR64-015 + F-PR64-016/017 P2 adopt: block path required event の payload field verify.
 
     block path で required event (policy_decision_created / provider_blocked) が
     `reason_code="allow"` / `decision="allow"` / `pattern_hit_kind="none"` 等の
-    内部矛盾を持つと no-leak invariant の audit 証拠が崩れる. block path required
-    event は実 fixture と整合する block-side payload を持つ必要がある.
+    内部矛盾を持つと no-leak invariant の audit 証拠が崩れる.
+
+    F-PR64-016: event の pattern_hit_kind は top-level `expected_pattern_hit_kind`
+    と **完全一致** 必須 (例えば canary_pattern → canary_pattern、別 class への
+    drift は audit 証拠の class 整合性を壊す).
+
+    F-PR64-017: `provider_blocked` event でも optional `decision` field 存在時に
+    "allow" 等の allow-side 値は reject (block path で blocking event の decision
+    field が allow を主張する矛盾を阻止).
     """
     event_type = event.get("event_type")
     if event_type not in AC_HARD_02_BLOCK_REQUIRED_AUDIT_EVENT_TYPES:
@@ -195,12 +206,19 @@ def _validate_audit_event_payload_for_block(event: Mapping[str, object]) -> str 
     pattern_hit_kind = event.get("pattern_hit_kind")
     if pattern_hit_kind == "none" or not isinstance(pattern_hit_kind, str):
         return "spec_violation:expected_audit_events_block_pattern_hit_kind_invalid"
-    # policy_decision_created の場合 `decision` は "deny" であることが実 fixture
-    # 整合 (provider_blocked event には `decision` field が無くてもよい).
+    # F-PR64-016 P2 adopt: event の pattern_hit_kind は top-level と完全一致
+    if pattern_hit_kind != expected_pattern_hit_kind:
+        return "spec_violation:expected_audit_events_block_pattern_hit_kind_mismatch_top_level"
+    # policy_decision_created event は `decision` field 必須 + "deny" のみ
     if event_type == "policy_decision_created":
         decision = event.get("decision")
         if decision != "deny":
             return "spec_violation:expected_audit_events_block_decision_not_deny"
+    # F-PR64-017 P2 adopt: provider_blocked event でも `decision` field 存在時は
+    # "allow" 等の allow-side 値を reject (optional field、欠落は許容)
+    elif event_type == "provider_blocked":
+        if "decision" in event and event.get("decision") != "deny":
+            return "spec_violation:expected_audit_events_block_provider_blocked_decision_not_deny"
     return None
 
 
@@ -245,6 +263,7 @@ def _validate_audit_events(fixture: Fixture) -> str | None:
     decision = _expected_value(fixture, "expected_decision")
     if decision not in ("block", "allow"):
         return "spec_violation:expected_audit_events_unknown_decision"
+    expected_pattern_hit_kind = _expected_value(fixture, "expected_pattern_hit_kind")
 
     observed_types: set[str] = set()
     for event in audit_events:
@@ -256,7 +275,10 @@ def _validate_audit_events(fixture: Fixture) -> str | None:
         if isinstance(event_type, str):
             observed_types.add(event_type)
         if decision == "block":
-            block_payload_reason = _validate_audit_event_payload_for_block(event)
+            block_payload_reason = _validate_audit_event_payload_for_block(
+                event,
+                expected_pattern_hit_kind=expected_pattern_hit_kind,
+            )
             if block_payload_reason is not None:
                 return block_payload_reason
         else:

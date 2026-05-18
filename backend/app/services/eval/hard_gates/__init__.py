@@ -61,6 +61,7 @@ from backend.app.services.eval.hard_gates.forbidden_path import (
     evaluate_forbidden_path_block,
 )
 from backend.app.services.eval.hard_gates.policy_block import (
+    AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES,
     AC_HARD_01_ALLOWED_REASON_CODES,
     AC_HARD_01_EXPECTED_AGENT_RUN_STATUS,
     AC_HARD_01_EXPECTED_BLOCK,
@@ -119,6 +120,7 @@ from backend.app.services.eval.hard_gates.tenant_isolation import (
 
 __all__ = [
     # AC-HARD-01 policy_block (batch 8)
+    "AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES",
     "AC_HARD_01_ALLOWED_REASON_CODES",
     "AC_HARD_01_EXPECTED_AGENT_RUN_STATUS",
     "AC_HARD_01_EXPECTED_BLOCK",

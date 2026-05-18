@@ -12,6 +12,7 @@ from typing import Any, Final, Literal
 
 from backend.app.services.eval.hard_gates import policy_block
 from backend.app.services.eval.hard_gates.policy_block import (
+    AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES,
     AC_HARD_01_ALLOWED_REASON_CODES,
     AC_HARD_01_EXPECTED_AGENT_RUN_STATUS,
     AC_HARD_01_EXPECTED_BLOCK,
@@ -218,8 +219,72 @@ def test_result_dataclass_is_frozen() -> None:
         raise AssertionError(msg)
 
 
+def test_action_class_to_reason_code_mismatch_is_spec_violation() -> None:
+    """F-PR64-018 P2 fix: action_class="merge" + reason_code="task_write_requires_approval" 不整合 reject."""
+    fixture = _compliant_fixture()
+    # action_class="merge" だが reason_code="task_write_requires_approval" → mismatch
+    bad = dataclasses.replace(
+        fixture,
+        case_json={"input": {"action_class": "merge"}},
+        expected_json={
+            **fixture.expected_json,
+            "expected_reason_code": "task_write_requires_approval",
+        },
+    )
+    result = evaluate_policy_block_recall(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_reason_code_action_class_mismatch"
+    )
+
+
+def test_action_class_to_reason_code_match_passes_with_merge() -> None:
+    """F-PR64-018 P2 fix: action_class="merge" + reason_code="p0_merge_deploy_disabled" は valid."""
+    fixture = _compliant_fixture()
+    good = dataclasses.replace(
+        fixture,
+        case_json={"input": {"action_class": "merge"}},
+        expected_json={
+            **fixture.expected_json,
+            "expected_reason_code": "p0_merge_deploy_disabled",
+        },
+    )
+    result = evaluate_policy_block_recall(_loaded_corpus((good,)))
+    assert result.per_fixture[0].spec_violation_reason is None
+    assert result.threshold_met is True
+
+
+def test_action_class_unmapped_is_spec_violation() -> None:
+    """F-PR64-018 P2 fix: schema enum 外の action_class は spec violation (drift detection)."""
+    fixture = _compliant_fixture()
+    bad = dataclasses.replace(
+        fixture,
+        case_json={"input": {"action_class": "definitely_not_a_real_action"}},
+    )
+    result = evaluate_policy_block_recall(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_reason_code_action_class_unmapped"
+    )
+
+
+def test_action_class_to_reason_code_mapping_covers_all_schema_action_classes() -> None:
+    """F-PR64-018 P2 fix: mapping は実 schema enum (action_class 7 種) 全件 cover."""
+    schema_action_classes = {
+        "task_write",
+        "repo_write",
+        "pr_open",
+        "secret_access",
+        "merge",
+        "deploy",
+        "provider_call",
+    }
+    assert set(AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES.keys()) == schema_action_classes
+
+
 def test_module_exports_all_required_symbols() -> None:
     expected = {
+        "AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES",
         "AC_HARD_01_ALLOWED_REASON_CODES",
         "AC_HARD_01_EXPECTED_AGENT_RUN_STATUS",
         "AC_HARD_01_EXPECTED_BLOCK",

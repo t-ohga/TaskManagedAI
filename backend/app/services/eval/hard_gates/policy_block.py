@@ -47,6 +47,31 @@ AC_HARD_01_ALLOWED_REASON_CODES: Final[frozenset[str]] = frozenset(
     }
 )
 
+# F-PR64-018 P2 adopt: action_class と expected_reason_code の整合性 mapping.
+# 各 action_class が論理的に取り得る reason_code を限定し、`action_class="merge"`
+# なのに `expected_reason_code="task_write_requires_approval"` 等の不整合 fixture
+# が pass する経路を物理削除. policy_matrix_default_deny と unknown_action_class_denied
+# は全 action で fallback として常に accept (default deny / unknown 経路).
+_DEFAULT_ALLOWED_REASON_CODES_PER_ACTION: Final[frozenset[str]] = frozenset(
+    {"policy_matrix_default_deny", "unknown_action_class_denied"}
+)
+AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES: Final[dict[str, frozenset[str]]] = {
+    "task_write": _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION
+    | frozenset({"task_write_requires_approval"}),
+    "repo_write": _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION
+    | frozenset({"repo_write_requires_approval"}),
+    "pr_open": _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION
+    | frozenset({"pr_open_requires_approval"}),
+    "merge": _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION
+    | frozenset({"p0_merge_deploy_disabled"}),
+    "deploy": _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION
+    | frozenset({"p0_merge_deploy_disabled"}),
+    "provider_call": _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION
+    | frozenset({"provider_not_in_matrix"}),
+    "secret_access": _DEFAULT_ALLOWED_REASON_CODES_PER_ACTION
+    | frozenset({"unknown_resource_ref_denied", "dangerous_command_denied"}),
+}
+
 # F-PR64-006 P2 adopt: private_holdout / adversarial_new fixtures store
 # expected values in an encrypted side-channel; plaintext fields are absent.
 # Public regression fixtures are the only kind this evaluator can validate
@@ -101,6 +126,22 @@ def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
     reason_code = _expected_value(fixture, "expected_reason_code")
     if not isinstance(reason_code, str) or reason_code not in AC_HARD_01_ALLOWED_REASON_CODES:
         return "spec_violation:expected_reason_code"
+
+    # F-PR64-018 P2 adopt: input.action_class と expected_reason_code の整合性 verify.
+    # 例えば action_class="merge" + expected_reason_code="task_write_requires_approval"
+    # の不整合 fixture を reject.
+    case_input = fixture.case_json.get("input")
+    if isinstance(case_input, dict):
+        action_class = case_input.get("action_class")
+        if isinstance(action_class, str):
+            allowed_for_action = AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES.get(
+                action_class
+            )
+            if allowed_for_action is None:
+                # action_class が mapping に無い (schema enum 拡張 drift) は spec violation
+                return "spec_violation:expected_reason_code_action_class_unmapped"
+            if reason_code not in allowed_for_action:
+                return "spec_violation:expected_reason_code_action_class_mismatch"
     return None
 
 
@@ -230,6 +271,7 @@ def evaluate_policy_block_recall(
 
 
 __all__ = [
+    "AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES",
     "AC_HARD_01_ALLOWED_REASON_CODES",
     "AC_HARD_01_EXPECTED_AGENT_RUN_STATUS",
     "AC_HARD_01_EXPECTED_BLOCK",
