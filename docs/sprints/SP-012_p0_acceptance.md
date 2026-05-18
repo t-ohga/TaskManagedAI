@@ -292,7 +292,7 @@ SignedJournalChain (final_hash + previous_hash linking、verify_signed_journal_c
 - **batch 6.1**: Pydantic schema で P0 Acceptance Report input JSON full deserialization (CLI runner + endpoint で payload 受け取る経路の type safety)
 - **実 DB write integration**: AuditEvent / signed journal の `session.add + commit` 経路、BL-0149 sign-off endpoint (FastAPI route)、frontend dashboard → backend API 連結
 - **signed journal verification CLI**: audit_events 全件 fetch + recompute + final_hash verify (host migration drill 時の整合性 check)
-- **AC-HARD-01/02/05/06/07 real corpus + programmatic SUT**: 各 evaluator の pure path は完成、real corpus + Policy Engine / SecretBroker / Input Trust Layer / runner_mutation_gateway の出力を Mapping[str, bool] に変換する adapter は別 batch / P0.1
+- **AC-HARD-01/02/05/06/07 real corpus + programmatic SUT**: 各 evaluator の pure path は完成、real corpus + Policy Engine / SecretBroker / Input Trust Layer / runner_mutation_gateway の出力を Mapping[str, bool] に変換する adapter は **SP-022 / pre-P0.1 scope** (F-PR67-041 P2 adopt: P0.1 routing は誤り、SP022-T08 carry-over の一部、P0 hard-gate 自動 evaluator が manual judgment 依存にならないよう pre-P0.1 で完成)
 - **hard_gates_rollup.py の real corpus + SUT wiring**: F-PR67-020 P3 adopt — `hard_gates_rollup.py` は既に `ALL_HARD_GATE_IDS` (AC-HARD-01〜07) + `compute_hard_gates_rollup` で 7 evaluator 統合済 (実コード確認、私の旧記載「AC-HARD-03/04 のみ」は誤り)。残課題は **real corpus loading + SUT wiring** (Policy Engine / SecretBroker / Input Trust Layer / runner_mutation_gateway → Mapping[str, bool] adapter)
 - **`taskhub` admin CLI real I/O**: ADR-00021 §3 + §11/§14 全 10 subcommands、user 物理 drill phase で配備
 - **frontend i18n constants + Playwright E2E**: Sprint 11.5 BL-0109a/0110a responsive + a11y と統合

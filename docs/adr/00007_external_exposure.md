@@ -13,11 +13,14 @@ related_sprints:
   - "SP-012_p0_acceptance"
 supersedes: null
 superseded_by: null
-# F-PR67-010/013 P2 adopt: acceptance は ADR-00021 同期 (master plan line 107).
-# ADR-00021 が proposed restore のため、ADR-00007 も同期 proposed 維持.
+# F-PR67-042 P2 adopt (PR #67 R9): R8 T00 reinterpretation で本 ADR は
+# SP022-T00 (pre-implementation gate) で ADR-00021 と同時 accepted.
+# SP022-T09 (実機 drill verification) は post-acceptance.
 acceptance_blocked_by:
-  - "ADR-00021 同期 accepted (master plan で ADR-00007 acceptance = ADR-00021 同期 accepted 明示)"
-acceptance_target_sprint: "ADR-00021 accepted 化と同時 (SP-022 で host migration drill PASS 後)"
+  - "ADR-00021 同期 accepted (master plan で ADR-00007 acceptance = ADR-00021 同期 accepted 明示、両方 SP022-T00 で同時 accept)"
+acceptance_target_sprint: "SP022-T00 (pre-implementation gate、ADR-00021 と同時、F-PR67-042 P2 adopt)"
+post_acceptance_verification:
+  - "SP022-T09 実機 host migration drill (Mac→VPS) で Tailscale 閉域維持 invariant verify"
 acceptance_history:
   - "2026-05-07: proposed (SP-000_bootstrap で起票)"
   - "2026-05-18T00:30:00Z: tentative accepted (PR #67 F-PR67-002 P1 adopt として SP-012 で accepted 化試行、ADR-00021 と同時)"

@@ -25,10 +25,16 @@ superseded_by: null
 # (host migration drill PASS、SP012-T01〜T10 完了) が unmet のため proposed
 # 維持. SP-012 で skeleton 実装着手は進めたが、accepted 化は SP-022 で実機
 # drill PASS 後.
+# F-PR67-040 P2 adopt (PR #67 R9): R8 T00 reinterpretation (design accepted +
+# post-acceptance drill verification) で drill PASS は acceptance_blocked_by
+# から削除. SP022-T00 acceptance trigger は (a) ADR-00007 同期 + (b) SP-022
+# 開始時 pre-implementation gate. SP022-T09 (drill verification) + T08
+# (carry-over 完了) は **post-acceptance verification**.
 acceptance_blocked_by:
-  - "host migration drill (Mac→VPS) RTO≤4h PASS (SP-022 scope、`docs/設計検討/2026-05-13_p0_exit_master_plan.md:106` 明示)"
-  - "SP012-T01〜T10 carry-over 完了 (SP-022 / pre-P0.1 で残作業完了、F-PR67-024 P2 adopt: P0.1 ではなく SP-022 が responsible)"
   - "ADR-00007 同期 accepted 化条件 (本 ADR の accepted 化と同時、host 中立 invariant)"
+post_acceptance_verification:
+  - "SP022-T09 実機 host migration drill (Mac→VPS) RTO≤4h PASS"
+  - "SP022-T08 SP012-T01〜T10 carry-over 完了 (taskhub real I/O / 実 DB write integration / signed journal CLI / private staging E2E)"
 acceptance_target_sprint: "SP-022 で host migration drill 自動化完成 + 実機 drill PASS 後"
 acceptance_history:
   - "2026-05-10: proposed (Phase G plan-review + adversarial-review clean + Phase H second-opinion で 94 finding closure verify 完了)"

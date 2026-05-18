@@ -13,9 +13,9 @@ max_days: 5
 # ADR-00007 update も同期 acceptance (master plan line 107).
 adr_refs: []
 planned_adr_refs:
-  - "[ADR-00020](../adr/00020_framework_intake_checklist.md) # SP-022 で accepted (Criteria #4 + #5)"
-  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-022 で実機 host migration drill PASS 後 accepted (master plan line 106、F-PR67-019 P2 adopt)"
-  - "[ADR-00007](../adr/00007_external_exposure.md) # ADR-00021 同期 acceptance、SP-022 で同時 accepted (master plan line 107)"
+  - "[ADR-00020](../adr/00020_framework_intake_checklist.md) # SP-022 で accepted at SP022-T00 (pre-implementation gate、§12 invariant、F-PR67-036/038 P2 adopt)"
+  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-022 で accepted at SP022-T00 (design accepted、実機 host migration drill PASS は SP022-T09 post-acceptance verification、F-PR67-029/038 P2 adopt、master plan line 106 別 PR で update)"
+  - "[ADR-00007](../adr/00007_external_exposure.md) # ADR-00021 同期 acceptance at SP022-T00、SP022-T09 で drill verification (F-PR67-038/042 P2 adopt、master plan line 107 別 PR で update)"
 related_sprints:
   - "SP-012_p0_acceptance"
   - "SP-013_multi_agent_orchestration"
@@ -72,7 +72,7 @@ risks:
 - [ ] **ADR-00020 + ADR-00021 + ADR-00007 を proposed → accepted** (SP022-T00 pre-implementation gate、F-PR67-033/036 P2 adopt: T10 stale 撤回 + ADR-00020 を T00 に含める、§12 invariant 整合)
 - [ ] `taskhub migrate` end-to-end を 3 host pair (Mac↔VPS、Linux↔VPS、VPS↔VPS) で drill 実施
 - [ ] Phase E 16 finding が全件 closed (adopt 済 + test fixture 化済)
-- [ ] AC-HARD multi-agent fixture 全件 PASS
+- [ ] AC-HARD multi-agent fixture 全件 PASS (**F-PR67-039 P2 adopt**: 本項目は SP-013 multi-agent skeleton 依存、SP-022 が pre-P0.1 reframe 後は SP-013 完了前に着手不可. SP-022 exit gate から除外、post-P0.1 carry-over として SP-022.1 / SP-023 等で実施)
 - [ ] **SP-012 carry-over 全件完了** (taskhub real I/O / 実 DB write integration / signed journal CLI / private staging E2E / frontend backend wiring)
 
 ## must_ship / defer_if_over_budget 対応表
@@ -86,7 +86,7 @@ risks:
 | `taskhub migrate` 自動化 | ○ | rollback 自動化は phase 分割可 |
 | 半年 drill scheduling SOP | ○ | - |
 | Phase E 16 finding closure | ○ | LOW 残存は P3+ で対応可 |
-| AC-HARD multi-agent fixture | ○ | - |
+| AC-HARD multi-agent fixture | ✗ (post-P0.1 carry-over) | F-PR67-039 P2 adopt: SP-013 multi-agent skeleton 依存、SP-022.1 / SP-023 等の post-P0.1 sprint で実施 |
 | KPI baseline (host 別) | ○ | Mac / Linux / VPS の 3 host で baseline 取得、特定 host のみは defer 可 |
 | production 公開準備 checklist draft | ○ | 詳細実装は P3+ |
 
