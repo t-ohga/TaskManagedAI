@@ -123,7 +123,7 @@ const QUALITY_KPIS_5 = [
     threshold: 14_400_000,
     metric_value: 1_234_567,
     threshold_met: true,
-    description: "approval request → decision p95 ≤ 4h (14,400,000ms)",
+    description: "approval request → decision median ≤ 4h (14,400,000ms)",
   },
   {
     kpi_id: "AC-KPI-04",
@@ -194,37 +194,135 @@ const PRIVATE_STAGING = {
   description: "Tailscale 閉域 private staging CI/E2E",
 };
 
-type GatedAcceptanceRowEntry = {
-  readonly row_id: string;
-  readonly status: "PASS" | "STRUCTURED_DEFER" | "FAIL";
-  readonly description: string;
+// F-PR65-006 P1 adopt: backend GatedRowStatus enum values are lowercase
+// (backend/app/services/eval/p0_acceptance_report.py): pass / structured_defer
+// / natural_defer / missing. uppercase comparison would route all valid rows
+// through FAIL branch.
+type GatedRowStatus = "pass" | "structured_defer" | "natural_defer" | "missing";
+
+// F-PR65-005 P1 adopt: SP-012 line 682-704 acceptance artifact fields.
+// pass_evidence (PASS / STRUCTURED_DEFER 両方 server-persisted、Codex
+// F-PR61-005 P2 carry-over).
+type PassEvidence = {
+  readonly target_hash: string;
+  readonly evidence_artifact_hash: string;
+  readonly verified_by: string;
+  readonly verified_at: string;
 };
 
+// 6-field structured_defer schema (SP-012 line 218-247).
+type StructuredDeferFields = {
+  readonly owner: string;
+  readonly impact: string;
+  readonly resume_condition: string;
+  readonly blocked_by: readonly string[];
+  readonly verification: string;
+  readonly target_hash: string;
+};
+
+type GatedAcceptanceRowEntry = {
+  readonly row_id: string;
+  readonly status: GatedRowStatus;
+  readonly description: string;
+  readonly pass_evidence: PassEvidence | null;
+  readonly structured_defer_fields: StructuredDeferFields | null;
+};
+
+// F-PR65-004 P1 adopt: canonical gated row set per SP-012 lines 93-99.
+// 旧 sample list (BL-0140b / BL-0145 / BL-0149 / BL-0150) は internal core
+// rows、SP-012 表 2 の gated proof row 集合と drift していた.
 const GATED_ACCEPTANCE_ROWS: readonly GatedAcceptanceRowEntry[] = [
   {
     row_id: "BL-0140a-research-to-pr",
-    status: "PASS",
-    description: "Research → Ticket → PR end-to-end traceability",
+    status: "pass",
+    description:
+      "Research → Decision → Generated Ticket → Plan → Approval → Runner → Draft PR (hash chain 完備)",
+    pass_evidence: {
+      target_hash: "0".repeat(64),
+      evidence_artifact_hash: "1".repeat(64),
+      verified_by: "actor:human:reviewer-001",
+      verified_at: "2026-05-18T00:00:00Z",
+    },
+    structured_defer_fields: null,
   },
   {
-    row_id: "BL-0140b-host-migration-smoke",
-    status: "PASS",
-    description: "Host migration smoke (Mac ↔ VPS)",
+    row_id: "AC-KPI-04-research-coverage",
+    status: "pass",
+    description:
+      "citation_coverage ≥ 0.9 AND citation_source_count ≥ 1 AND denominator_nonzero (3 条件 PASS、F-P2R1-011)",
+    pass_evidence: {
+      target_hash: "2".repeat(64),
+      evidence_artifact_hash: "3".repeat(64),
+      verified_by: "actor:human:reviewer-001",
+      verified_at: "2026-05-18T00:00:00Z",
+    },
+    structured_defer_fields: null,
   },
   {
-    row_id: "BL-0145-kpi-rollup",
-    status: "PASS",
-    description: "AC-KPI rollup aggregator end-to-end",
+    row_id: "BL-0029b-cross-project-negative-agent-runs",
+    status: "pass",
+    description:
+      "agent_runs.parent_run_id cross-project negative を Research-to-PR sub-run でも PASS",
+    pass_evidence: {
+      target_hash: "4".repeat(64),
+      evidence_artifact_hash: "5".repeat(64),
+      verified_by: "actor:human:reviewer-001",
+      verified_at: "2026-05-18T00:00:00Z",
+    },
+    structured_defer_fields: null,
   },
   {
-    row_id: "BL-0149-p0-acceptance-report",
-    status: "PASS",
-    description: "P0 Acceptance Report sign-off generator",
+    row_id: "BL-0029c-cross-project-negative-research-tasks",
+    status: "pass",
+    description: "research_tasks cross-project negative (tenant/project boundary)",
+    pass_evidence: {
+      target_hash: "6".repeat(64),
+      evidence_artifact_hash: "7".repeat(64),
+      verified_by: "actor:human:reviewer-001",
+      verified_at: "2026-05-18T00:00:00Z",
+    },
+    structured_defer_fields: null,
   },
   {
-    row_id: "BL-0150-audit-events-signed-journal",
-    status: "STRUCTURED_DEFER",
-    description: "Audit signed journal (batch 10 で配備、structured defer)",
+    row_id: "BL-0151b-secret-capability-tokens-fk",
+    status: "pass",
+    description:
+      "secret_capability_tokens.agent_run_id FK を Research sub-run でも binding verify",
+    pass_evidence: {
+      target_hash: "8".repeat(64),
+      evidence_artifact_hash: "9".repeat(64),
+      verified_by: "actor:human:reviewer-001",
+      verified_at: "2026-05-18T00:00:00Z",
+    },
+    structured_defer_fields: null,
+  },
+  {
+    row_id: "research-hash-chain-proof",
+    status: "pass",
+    description:
+      "research_id / source_set_hash / generated_ticket_hash / plan_artifact_hash / approval_id / pr_artifact_hash 全件 binding (F-P2R1-010)",
+    pass_evidence: {
+      target_hash: "a".repeat(64),
+      evidence_artifact_hash: "b".repeat(64),
+      verified_by: "actor:human:reviewer-001",
+      verified_at: "2026-05-18T00:00:00Z",
+    },
+    structured_defer_fields: null,
+  },
+  {
+    row_id: "research-to-pr-target-days-review",
+    status: "structured_defer",
+    description:
+      "Research-to-PR representative flow target_days 再見積もり (Sprint Review pending、F-P2R1-014)",
+    pass_evidence: null,
+    structured_defer_fields: {
+      owner: "actor:human:reviewer-001",
+      impact: "target_days/max_days 引き上げ可能性、Sprint Exit 判定の事前要件",
+      resume_condition: "Sprint Review で max_days 9 days 引き上げを最終判断後",
+      blocked_by: ["SP-018 (Hermes memory sprint) との番号衝突解消"],
+      verification: "Sprint Pack ## Review § Pending entries に記録",
+      target_hash: "c".repeat(64),
+    },
   },
 ];
 
@@ -399,6 +497,9 @@ export default function EvalDashboardPage() {
                 <th scope="col" className="border-b border-line px-3 py-2">
                   threshold_met
                 </th>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  description
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -426,6 +527,9 @@ export default function EvalDashboardPage() {
                         FAIL
                       </span>
                     )}
+                  </td>
+                  <td className="border-b border-line px-3 py-2 text-xs">
+                    {kpi.description}
                   </td>
                 </tr>
               ))}
@@ -497,14 +601,15 @@ export default function EvalDashboardPage() {
       </Panel>
 
       <Panel
-        description="SP-012 表 2: gated acceptance rows (BL-NNN). PASS or schema-valid STRUCTURED_DEFER 必須."
+        description="SP-012 表 2 + lines 682-704: gated acceptance rows. status=pass (with pass_evidence) or structured_defer (6-field schema) required. F-PR65-004/005/006 P1 adopt."
         title="Gated acceptance rows"
         titleId="gated-acceptance-rows"
       >
         <div className="overflow-x-auto rounded-md border border-line">
           <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
             <caption className="sr-only">
-              Gated acceptance rows with row_id, status, description.
+              Gated acceptance rows with row_id, status, description, target_hash,
+              evidence_artifact_hash, verified_by, verified_at, structured_defer 6 fields.
             </caption>
             <thead className="bg-panel-soft">
               <tr>
@@ -517,6 +622,9 @@ export default function EvalDashboardPage() {
                 <th scope="col" className="border-b border-line px-3 py-2">
                   description
                 </th>
+                <th scope="col" className="border-b border-line px-3 py-2">
+                  evidence / structured_defer
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -524,21 +632,64 @@ export default function EvalDashboardPage() {
                 <tr key={row.row_id}>
                   <td className="border-b border-line px-3 py-2 font-mono">{row.row_id}</td>
                   <td className="border-b border-line px-3 py-2">
-                    {row.status === "PASS" ? (
+                    {row.status === "pass" ? (
                       <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
-                        PASS
+                        pass
                       </span>
-                    ) : row.status === "STRUCTURED_DEFER" ? (
+                    ) : row.status === "structured_defer" ? (
                       <span className="rounded-md bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-700">
-                        STRUCTURED_DEFER
+                        structured_defer
                       </span>
                     ) : (
                       <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
-                        FAIL
+                        {row.status}
                       </span>
                     )}
                   </td>
                   <td className="border-b border-line px-3 py-2 text-xs">{row.description}</td>
+                  <td className="border-b border-line px-3 py-2 text-xs">
+                    {row.pass_evidence !== null ? (
+                      <dl className="grid gap-1 font-mono">
+                        <div>
+                          target_hash: {row.pass_evidence.target_hash.slice(0, 16)}…
+                        </div>
+                        <div>
+                          evidence: {row.pass_evidence.evidence_artifact_hash.slice(0, 16)}…
+                        </div>
+                        <div>verified_by: {row.pass_evidence.verified_by}</div>
+                        <div>verified_at: {row.pass_evidence.verified_at}</div>
+                      </dl>
+                    ) : row.structured_defer_fields !== null ? (
+                      <dl className="grid gap-1">
+                        <div>
+                          <span className="font-mono">owner:</span>{" "}
+                          {row.structured_defer_fields.owner}
+                        </div>
+                        <div>
+                          <span className="font-mono">impact:</span>{" "}
+                          {row.structured_defer_fields.impact}
+                        </div>
+                        <div>
+                          <span className="font-mono">resume_condition:</span>{" "}
+                          {row.structured_defer_fields.resume_condition}
+                        </div>
+                        <div>
+                          <span className="font-mono">blocked_by:</span>{" "}
+                          {row.structured_defer_fields.blocked_by.join(", ")}
+                        </div>
+                        <div>
+                          <span className="font-mono">verification:</span>{" "}
+                          {row.structured_defer_fields.verification}
+                        </div>
+                        <div>
+                          <span className="font-mono">target_hash:</span>{" "}
+                          {row.structured_defer_fields.target_hash.slice(0, 16)}…
+                        </div>
+                      </dl>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

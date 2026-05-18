@@ -142,8 +142,53 @@ describe("EvalDashboardPage (Sprint 12 batch 9 skeleton)", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders STRUCTURED_DEFER status for partially-deferred gated rows", () => {
+  it("renders structured_defer lowercase status (F-PR65-006 P1 adopt: backend enum lowercase)", () => {
     render(<EvalDashboardPage />);
-    expect(screen.getByText("STRUCTURED_DEFER")).toBeInTheDocument();
+    // backend GatedRowStatus enum: pass / structured_defer / natural_defer /
+    // missing (all lowercase).
+    expect(screen.getByText("structured_defer")).toBeInTheDocument();
+  });
+
+  it("renders canonical SP-012 gated row IDs (F-PR65-004 P1 adopt)", () => {
+    render(<EvalDashboardPage />);
+    // SP-012 lines 93-99 canonical gated proof set.
+    for (const rowId of [
+      "BL-0140a-research-to-pr",
+      "AC-KPI-04-research-coverage",
+      "BL-0029b-cross-project-negative-agent-runs",
+      "BL-0029c-cross-project-negative-research-tasks",
+      "BL-0151b-secret-capability-tokens-fk",
+      "research-hash-chain-proof",
+      "research-to-pr-target-days-review",
+    ]) {
+      expect(screen.getByText(rowId)).toBeInTheDocument();
+    }
+  });
+
+  it("renders gated row proof fields (F-PR65-005 P1 adopt: target_hash + evidence_artifact_hash + verified_by + verified_at)", () => {
+    render(<EvalDashboardPage />);
+    // pass_evidence fields are rendered for PASS rows.
+    expect(screen.getAllByText(/^target_hash:/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/^evidence:/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/^verified_by:/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/^verified_at:/).length).toBeGreaterThan(0);
+  });
+
+  it("renders structured_defer 6 fields (F-PR65-005 P1 adopt: SP-012 §218-247)", () => {
+    render(<EvalDashboardPage />);
+    // SP-012 line 218-247 structured_defer 6 fields schema.
+    expect(screen.getByText("owner:")).toBeInTheDocument();
+    expect(screen.getByText("impact:")).toBeInTheDocument();
+    expect(screen.getByText("resume_condition:")).toBeInTheDocument();
+    expect(screen.getByText("blocked_by:")).toBeInTheDocument();
+    expect(screen.getByText("verification:")).toBeInTheDocument();
+  });
+
+  it("AC-KPI-03 description uses 'median' not 'p95' (F-PR65-003 P2 adopt)", () => {
+    const { container } = render(<EvalDashboardPage />);
+    // textContent-based assertion: DOM 全体に "decision median" が含まれることを確認、
+    // "decision p95" は含まれないことを確認.
+    expect(container.textContent).toMatch(/decision median/);
+    expect(container.textContent).not.toMatch(/decision p95/);
   });
 });
