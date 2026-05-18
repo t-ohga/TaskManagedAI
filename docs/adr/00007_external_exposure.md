@@ -24,7 +24,7 @@ acceptance_history:
   - "2026-05-18T09:40:06Z: tentative acceptance 撤回 (ADR-00021 が host migration drill PASS 未達のため proposed restore、ADR-00007 も同期 proposed 維持)"
 ---
 
-最終更新: 2026-05-18 (Sprint 12 で proposed → accepted 昇格)
+最終更新: 2026-05-18 (Sprint 12 で `proposed → accepted` tentative 試行後 PR #67 R4 F-PR67-010/013 P2 adopt で **proposed restore** = ADR-00021 同期 acceptance、SP-022 で同時 accepted 化)
 
 ## 背景
 

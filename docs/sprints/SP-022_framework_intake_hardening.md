@@ -4,13 +4,18 @@ type: "heavy"
 status: "draft"
 sprint_no: 22
 created_at: "2026-05-10"
-updated_at: "2026-05-10"
+updated_at: "2026-05-18"
 target_days: 3
 max_days: 5
+# F-PR67-019 P2 adopt (PR #67 R4): ADR-00021 acceptance は SP-022 で実機 host
+# migration drill PASS 後 (master plan line 106). 旧 frontmatter「SP-012 で
+# accepted」記述を更新、SP-022 が **accepting sprint** であることを明示.
+# ADR-00007 update も同期 acceptance (master plan line 107).
 adr_refs: []
 planned_adr_refs:
   - "[ADR-00020](../adr/00020_framework_intake_checklist.md) # SP-022 で accepted (Criteria #4 + #5)"
-  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-012 で accepted、本 Sprint で運用 SOP 完成"
+  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-022 で実機 host migration drill PASS 後 accepted (master plan line 106、F-PR67-019 P2 adopt)"
+  - "[ADR-00007](../adr/00007_external_exposure.md) # ADR-00021 同期 acceptance、SP-022 で同時 accepted (master plan line 107)"
 related_sprints:
   - "SP-012_p0_acceptance"
   - "SP-013_multi_agent_orchestration"

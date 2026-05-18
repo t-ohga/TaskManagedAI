@@ -40,7 +40,7 @@ P0 Acceptance を達成する。具体的には (1) Hard Gates 7 全件 PASS、(
 ## 背景
 
 - SP-001 〜 SP-011 で P0 backend / frontend / 基盤が完成、本 Sprint で **P0 Exit gate** を機械検証
-- ADR-00021 (Host-Portable Deployment) を SP-001 で proposed 起票済、本 Sprint で accepted 化 + restore / migrate 完成
+- ADR-00021 (Host-Portable Deployment) を SP-001 で proposed 起票済、本 Sprint で skeleton 実装着手 + restore / migrate skeleton 完成 (accepted 化は SP-022 で実機 host migration drill PASS 後、F-PR67-010/013 P2 adopt)
 - P0 Sealed CI guard は本 Sprint 完了で解除可 (P0.1 着手準備)
 
 ## 対象外
@@ -67,7 +67,7 @@ P0 Acceptance を達成する。具体的には (1) Hard Gates 7 全件 PASS、(
 - SP012-T07: AC-KPI-01〜05 計測値が閾値以内であること verify
 - SP012-T08: private staging CI/E2E 完成 (Tailscale GitHub Action + frontend E2E full suite)
 - SP012-T09: `docs/deploy/host-migration.md` 運用手順書整備
-- SP012-T10: ADR-00021 を accepted 化 + ADR-00007 update を accepted
+- SP012-T10: ADR-00021 + ADR-00007 を SP-012 で acceptance 試行 → R4 F-PR67-010/013 P2 adopt で **proposed restore** (acceptance 条件 = host migration drill PASS が SP-022 scope のため)、SP-022 carry over
 
 ## タスク一覧
 
@@ -163,13 +163,13 @@ gh run watch
 
 ## 次スプリント候補
 
-- P0.1 開始 (TASKHUB_P0_1_OPENED=1 + sealed guard 解除 + SP-013 着手)
-- SP-022 (framework intake hardening、host migration 自動化)
+- **SP-022 (framework intake hardening、host migration drill 自動化) — P0.1 着手前の必須前提**: 実機 host migration drill (Mac→VPS) RTO≤4h PASS + ADR-00021/ADR-00007 accepted 化 + SP012-T01〜T10 carry-over 完了 (taskhub real I/O / 実 DB write integration / signed journal CLI 等)
+- P0.1 開始 (`TASKHUB_P0_1_OPENED=1` + sealed guard 解除 + SP-013 着手) は **SP-022 完了後** に行う. F-PR67-018 P2 adopt: 本 Sprint 12 (status: partial_completed_with_carry_over) で P0.1 unblock しない、host migration drill 未完で sealed guard 解除すると破壊的 host migration governance が回避される
 
 ## 関連 ADR
 
-- ADR-00021 (Host-Portable Deployment + Data Migration、本 Sprint で accepted)
-- ADR-00007 update (host 中立 invariant、本 Sprint で同期 accepted)
+- ADR-00021 (Host-Portable Deployment + Data Migration、本 Sprint で skeleton 実装着手、accepted 化は SP-022 で実機 drill PASS 後)
+- ADR-00007 update (host 中立 invariant、ADR-00021 同期 acceptance = SP-022 で accepted)
 - AC-HARD-04 (backup/restore drill 拡張)
 
 ## Phase G adversarial strengthening (2026-05-10、14 finding 全件 adopt)

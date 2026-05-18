@@ -37,7 +37,7 @@ acceptance_history:
   - "future: 実機 host migration drill PASS 後 SP-022 scope で再 accepted 化"
 ---
 
-最終更新: 2026-05-18 (Sprint 12 で proposed → accepted 昇格、§11/§12/§14 が **正本**、§2/§3/§5/§7 は早期 sample で **§11/§12/§14 が後勝ち**)
+最終更新: 2026-05-18 (Sprint 12 で skeleton 実装着手、`proposed → accepted` tentative 試行後 PR #67 R4 F-PR67-010/013 P2 adopt で **proposed restore** = acceptance 条件 = SP-022 で host migration drill PASS 後. §11/§12/§14 が **正本**、§2/§3/§5/§7 は早期 sample で **§11/§12/§14 が後勝ち**)
 
 ## 仕様 normative source 序列 (PH-F-004 fix)
 
