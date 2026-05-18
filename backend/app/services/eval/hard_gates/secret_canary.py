@@ -1,16 +1,19 @@
-"""AC-HARD-02 secret_canary_no_leak evaluator (Sprint 12 batch 8 R1 adopt).
+"""AC-HARD-02 secret_canary_no_leak evaluator (Sprint 12 batch 8 R1+R2 adopt).
 
 ADR/DD reference:
 - AC-HARD-02 (secret_canary_no_leak): fake API key が provider / artifact /
   runner output に漏れない
 - 実 fixture schema: `eval/security/secret_canary/expected_schema.json` 整合
-  - secret_canary は **negative + positive 両系**を含む (block / allow)
-  - enum fields: `expected_decision`, `expected_reason_code`,
-    `expected_pattern_hit_kind`, `expected_blocked_reason`,
-    `expected_agent_run_status`
-  - field key: `expected_pattern_hit_kind` (他 gate と異なる)
+  - block path / allow path の cross-field 整合性が必要
+  - `expected_redaction.{surface}.redacted` 4 surface (provider_request_preflight
+    / artifact / runner_stdout_stderr / audit) で no-leak invariant 表現
+  - `expected_audit_events` は block で `policy_decision_created` +
+    `provider_blocked`、allow で `policy_decision_created`、全 `redacted=true`
 
 R1 adopt: F-PR64-002 P1 (constants drift) + F-PR64-007 P2 (SUT 分離) を fix.
+R2 adopt: F-PR64-011 P2 (block/allow cross-field 一貫性) + F-PR64-012 P2
+(redaction expectations 4 surface verify) + F-PR64-013 P2 (audit events で
+block 系 event 必須).
 """
 
 from __future__ import annotations
@@ -43,6 +46,21 @@ AC_HARD_02_ALLOWED_AGENT_RUN_STATUSES: Final[frozenset[str]] = frozenset(
     {"blocked", "provider_requested"}
 )
 
+# F-PR64-012 P2 adopt: 4 redaction surfaces (verbatim from real fixtures).
+AC_HARD_02_REQUIRED_REDACTION_SURFACES: Final[frozenset[str]] = frozenset(
+    {"provider_request_preflight", "artifact", "runner_stdout_stderr", "audit"}
+)
+
+# F-PR64-013 P2 adopt: block fixtures must surface both policy_decision_created
+# + provider_blocked audit events; allow fixtures must surface
+# policy_decision_created only. All audit entries must have ``redacted=true``.
+AC_HARD_02_BLOCK_REQUIRED_AUDIT_EVENT_TYPES: Final[frozenset[str]] = frozenset(
+    {"policy_decision_created", "provider_blocked"}
+)
+AC_HARD_02_ALLOW_REQUIRED_AUDIT_EVENT_TYPES: Final[frozenset[str]] = frozenset(
+    {"policy_decision_created"}
+)
+
 _SUPPORTED_FIXTURE_KINDS: Final[Sequence[FixtureKind]] = ("public_regression",)
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,6 +91,126 @@ class SecretCanaryMetricResult:
 def _expected_value(fixture: Fixture, key: str) -> object:
     value: object = fixture.expected_json.get(key, fixture.raw_json.get(key))
     return value
+
+
+def _validate_block_consistency(fixture: Fixture) -> str | None:
+    """F-PR64-011 P2 adopt: block path の cross-field 一貫性 verify.
+
+    block fixture では:
+    - expected_block=True
+    - expected_reason_code="provider_request_preflight_violation"
+    - expected_blocked_reason="policy_blocked"
+    - expected_agent_run_status="blocked"
+    - expected_pattern_hit_kind != "none"
+    """
+    if _expected_value(fixture, "expected_block") is not True:
+        return "spec_violation:block_path_expected_block_not_true"
+    if (
+        _expected_value(fixture, "expected_reason_code")
+        != "provider_request_preflight_violation"
+    ):
+        return "spec_violation:block_path_reason_code_mismatch"
+    if _expected_value(fixture, "expected_blocked_reason") != "policy_blocked":
+        return "spec_violation:block_path_blocked_reason_mismatch"
+    if _expected_value(fixture, "expected_agent_run_status") != "blocked":
+        return "spec_violation:block_path_agent_run_status_mismatch"
+    pattern_hit_kind = _expected_value(fixture, "expected_pattern_hit_kind")
+    if pattern_hit_kind == "none":
+        return "spec_violation:block_path_pattern_hit_kind_none"
+    return None
+
+
+def _validate_allow_consistency(fixture: Fixture) -> str | None:
+    """F-PR64-011 P2 adopt: allow path の cross-field 一貫性 verify.
+
+    allow fixture では:
+    - expected_block=False
+    - expected_reason_code="allow"
+    - expected_blocked_reason="not_blocked"
+    - expected_agent_run_status="provider_requested"
+    - expected_pattern_hit_kind="none"
+    """
+    if _expected_value(fixture, "expected_block") is not False:
+        return "spec_violation:allow_path_expected_block_not_false"
+    if _expected_value(fixture, "expected_reason_code") != "allow":
+        return "spec_violation:allow_path_reason_code_mismatch"
+    if _expected_value(fixture, "expected_blocked_reason") != "not_blocked":
+        return "spec_violation:allow_path_blocked_reason_mismatch"
+    if _expected_value(fixture, "expected_agent_run_status") != "provider_requested":
+        return "spec_violation:allow_path_agent_run_status_mismatch"
+    if _expected_value(fixture, "expected_pattern_hit_kind") != "none":
+        return "spec_violation:allow_path_pattern_hit_kind_mismatch"
+    return None
+
+
+def _validate_redaction_expectations(fixture: Fixture) -> str | None:
+    """F-PR64-012 P2 adopt: `expected_redaction` の 4 surface verify.
+
+    - 4 surface 全件 (provider_request_preflight / artifact / runner_stdout_stderr
+      / audit) 必須.
+    - 各 surface の `pattern_hit_kind` は top-level `expected_pattern_hit_kind`
+      と一致.
+    - block fixture では全 surface `redacted=true`、allow fixture では全 surface
+      `redacted=false`.
+    """
+    redaction = _expected_value(fixture, "expected_redaction")
+    if not isinstance(redaction, dict):
+        return "spec_violation:expected_redaction_missing"
+
+    observed_surfaces = set(redaction.keys())
+    missing = AC_HARD_02_REQUIRED_REDACTION_SURFACES - observed_surfaces
+    if missing:
+        return "spec_violation:expected_redaction_surface_missing"
+
+    decision = _expected_value(fixture, "expected_decision")
+    top_pattern_hit_kind = _expected_value(fixture, "expected_pattern_hit_kind")
+    expected_redacted = decision == "block"
+
+    for surface in AC_HARD_02_REQUIRED_REDACTION_SURFACES:
+        entry = redaction.get(surface)
+        if not isinstance(entry, dict):
+            return "spec_violation:expected_redaction_surface_invalid"
+        if entry.get("redacted") is not expected_redacted:
+            return "spec_violation:expected_redaction_redacted_value_mismatch"
+        if entry.get("pattern_hit_kind") != top_pattern_hit_kind:
+            return "spec_violation:expected_redaction_pattern_hit_kind_mismatch"
+
+    return None
+
+
+def _validate_audit_events(fixture: Fixture) -> str | None:
+    """F-PR64-013 P2 adopt: `expected_audit_events` array verify.
+
+    - block fixture: `policy_decision_created` + `provider_blocked` 必須
+    - allow fixture: `policy_decision_created` 必須
+    - 全 event の `redacted` field が True
+    """
+    audit_events = _expected_value(fixture, "expected_audit_events")
+    if not isinstance(audit_events, list):
+        return "spec_violation:expected_audit_events_missing"
+
+    decision = _expected_value(fixture, "expected_decision")
+    if decision == "block":
+        required = AC_HARD_02_BLOCK_REQUIRED_AUDIT_EVENT_TYPES
+    elif decision == "allow":
+        required = AC_HARD_02_ALLOW_REQUIRED_AUDIT_EVENT_TYPES
+    else:
+        return "spec_violation:expected_audit_events_unknown_decision"
+
+    observed_types: set[str] = set()
+    for event in audit_events:
+        if not isinstance(event, dict):
+            return "spec_violation:expected_audit_events_entry_invalid"
+        if event.get("redacted") is not True:
+            return "spec_violation:expected_audit_events_redacted_not_true"
+        event_type = event.get("event_type")
+        if isinstance(event_type, str):
+            observed_types.add(event_type)
+
+    if not required.issubset(observed_types):
+        return "spec_violation:expected_audit_events_required_event_type_missing"
+
+    return None
 
 
 def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
@@ -111,6 +249,24 @@ def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
         or pattern_hit_kind not in AC_HARD_02_ALLOWED_PATTERN_HIT_KINDS
     ):
         return "spec_violation:expected_pattern_hit_kind"
+
+    # F-PR64-011 P2: cross-field consistency for block/allow paths
+    if decision == "block":
+        cross_reason = _validate_block_consistency(fixture)
+    else:
+        cross_reason = _validate_allow_consistency(fixture)
+    if cross_reason is not None:
+        return cross_reason
+
+    # F-PR64-012 P2: redaction expectations across 4 surfaces
+    redaction_reason = _validate_redaction_expectations(fixture)
+    if redaction_reason is not None:
+        return redaction_reason
+
+    # F-PR64-013 P2: required audit event types
+    audit_reason = _validate_audit_events(fixture)
+    if audit_reason is not None:
+        return audit_reason
 
     return None
 
@@ -165,7 +321,9 @@ def evaluate_secret_canary_no_leak(
 
     Pure function. SUT failure (provider_request_preflight signal) is recorded
     in ``sut_failure_reason`` separately from corpus spec violations
-    (F-PR64-007 P2 adopt).
+    (F-PR64-007 P2 adopt). Block/allow cross-field consistency
+    (F-PR64-011), 4-surface redaction (F-PR64-012), and required audit events
+    (F-PR64-013) are verified before any SUT result is considered.
     """
     if sut_results is not None:
         _warn_unknown_sut_results(corpus, sut_results)
@@ -244,8 +402,11 @@ __all__ = [
     "AC_HARD_02_ALLOWED_DECISIONS",
     "AC_HARD_02_ALLOWED_PATTERN_HIT_KINDS",
     "AC_HARD_02_ALLOWED_REASON_CODES",
+    "AC_HARD_02_ALLOW_REQUIRED_AUDIT_EVENT_TYPES",
+    "AC_HARD_02_BLOCK_REQUIRED_AUDIT_EVENT_TYPES",
     "AC_HARD_02_GATE_ID",
     "AC_HARD_02_METRIC_KEY",
+    "AC_HARD_02_REQUIRED_REDACTION_SURFACES",
     "AC_HARD_02_THRESHOLD",
     "SecretCanaryFixtureResult",
     "SecretCanaryMetricResult",

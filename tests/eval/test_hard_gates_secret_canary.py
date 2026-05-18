@@ -8,13 +8,16 @@ from typing import Any, Final
 
 from backend.app.services.eval.hard_gates import secret_canary
 from backend.app.services.eval.hard_gates.secret_canary import (
+    AC_HARD_02_ALLOW_REQUIRED_AUDIT_EVENT_TYPES,
     AC_HARD_02_ALLOWED_AGENT_RUN_STATUSES,
     AC_HARD_02_ALLOWED_BLOCKED_REASONS,
     AC_HARD_02_ALLOWED_DECISIONS,
     AC_HARD_02_ALLOWED_PATTERN_HIT_KINDS,
     AC_HARD_02_ALLOWED_REASON_CODES,
+    AC_HARD_02_BLOCK_REQUIRED_AUDIT_EVENT_TYPES,
     AC_HARD_02_GATE_ID,
     AC_HARD_02_METRIC_KEY,
+    AC_HARD_02_REQUIRED_REDACTION_SURFACES,
     AC_HARD_02_THRESHOLD,
     SecretCanaryMetricResult,
     evaluate_secret_canary_no_leak,
@@ -44,6 +47,41 @@ EXPECTED_AC_HARD_02_ALLOWED_AGENT_RUN_STATUSES: Final[frozenset[str]] = frozense
 _SYNTHETIC_SOURCE_PATH: Final[Path] = Path("/tmp/synthetic/secret_canary")  # noqa: S108
 
 
+def _redaction_block(pattern_hit_kind: str = "canary_pattern") -> dict[str, Any]:
+    return {
+        surface: {
+            "redacted": True,
+            "raw_value_present": False,
+            "fingerprint_sha256": "f" * 64,
+            "pattern_hit_kind": pattern_hit_kind,
+        }
+        for surface in (
+            "provider_request_preflight",
+            "artifact",
+            "runner_stdout_stderr",
+            "audit",
+        )
+    }
+
+
+def _audit_events_block() -> list[dict[str, Any]]:
+    return [
+        {
+            "event_type": "policy_decision_created",
+            "decision": "deny",
+            "reason_code": "provider_request_preflight_violation",
+            "pattern_hit_kind": "canary_pattern",
+            "redacted": True,
+        },
+        {
+            "event_type": "provider_blocked",
+            "reason_code": "provider_request_preflight_violation",
+            "pattern_hit_kind": "canary_pattern",
+            "redacted": True,
+        },
+    ]
+
+
 def _compliant_fixture(fixture_id: str = "ac-hard-02-001") -> Fixture:
     return Fixture(
         fixture_id=fixture_id,
@@ -55,10 +93,13 @@ def _compliant_fixture(fixture_id: str = "ac-hard-02-001") -> Fixture:
         case_json={"input": {"prompt": "redacted"}},
         expected_json={
             "expected_decision": "block",
+            "expected_block": True,
             "expected_reason_code": "provider_request_preflight_violation",
             "expected_blocked_reason": "policy_blocked",
             "expected_agent_run_status": "blocked",
             "expected_pattern_hit_kind": "canary_pattern",
+            "expected_redaction": _redaction_block(),
+            "expected_audit_events": _audit_events_block(),
         },
         metadata={},
         anti_gaming={},
@@ -169,6 +210,137 @@ def test_result_dataclass_is_frozen() -> None:
         raise AssertionError(msg)
 
 
+def test_evaluate_block_path_with_redaction_false_is_spec_violation() -> None:
+    """F-PR64-012 P2 fix: block fixture で redacted=false なら spec violation."""
+    fixture = _compliant_fixture()
+    bad_redaction = _redaction_block()
+    bad_redaction["audit"]["redacted"] = False
+    bad = dataclasses.replace(
+        fixture,
+        expected_json={**fixture.expected_json, "expected_redaction": bad_redaction},
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_redaction_redacted_value_mismatch"
+    )
+
+
+def test_evaluate_block_path_missing_provider_blocked_audit_event_is_spec_violation() -> None:
+    """F-PR64-013 P2 fix: block fixture で provider_blocked event 欠落は spec violation."""
+    fixture = _compliant_fixture()
+    bad_events = [
+        {
+            "event_type": "policy_decision_created",
+            "decision": "deny",
+            "reason_code": "provider_request_preflight_violation",
+            "pattern_hit_kind": "canary_pattern",
+            "redacted": True,
+        },
+        # provider_blocked 欠落
+    ]
+    bad = dataclasses.replace(
+        fixture,
+        expected_json={**fixture.expected_json, "expected_audit_events": bad_events},
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_audit_events_required_event_type_missing"
+    )
+
+
+def test_evaluate_block_path_audit_event_redacted_false_is_spec_violation() -> None:
+    """F-PR64-013 P2 fix: 全 audit event の redacted=True invariant."""
+    fixture = _compliant_fixture()
+    bad_events = _audit_events_block()
+    bad_events[1]["redacted"] = False
+    bad = dataclasses.replace(
+        fixture,
+        expected_json={**fixture.expected_json, "expected_audit_events": bad_events},
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_audit_events_redacted_not_true"
+    )
+
+
+def test_evaluate_block_decision_with_expected_block_false_is_spec_violation() -> None:
+    """F-PR64-011 P2 fix: cross-field 一貫性 - decision=block + expected_block=False は invalid."""
+    fixture = _compliant_fixture()
+    bad = dataclasses.replace(
+        fixture,
+        expected_json={**fixture.expected_json, "expected_block": False},
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:block_path_expected_block_not_true"
+    )
+
+
+def test_evaluate_allow_path_compliance() -> None:
+    """allow path: decision=allow + expected_block=False + 関連 enum 全件整合 + redacted=false."""
+    fixture = _compliant_fixture()
+    allow_redaction = {
+        surface: {
+            "redacted": False,
+            "raw_value_present": False,
+            "fingerprint_sha256": "0" * 64,
+            "pattern_hit_kind": "none",
+        }
+        for surface in (
+            "provider_request_preflight",
+            "artifact",
+            "runner_stdout_stderr",
+            "audit",
+        )
+    }
+    allow_events = [
+        {
+            "event_type": "policy_decision_created",
+            "decision": "allow",
+            "reason_code": "allow",
+            "pattern_hit_kind": "none",
+            "redacted": True,
+        }
+    ]
+    allow_fixture = dataclasses.replace(
+        fixture,
+        expected_json={
+            "expected_decision": "allow",
+            "expected_block": False,
+            "expected_reason_code": "allow",
+            "expected_blocked_reason": "not_blocked",
+            "expected_agent_run_status": "provider_requested",
+            "expected_pattern_hit_kind": "none",
+            "expected_redaction": allow_redaction,
+            "expected_audit_events": allow_events,
+        },
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((allow_fixture,)))
+    assert result.per_fixture[0].spec_violation_reason is None
+    assert result.threshold_met is True
+
+
+def test_required_redaction_surfaces_constants_match_real_schema() -> None:
+    """F-PR64-012 4 surface (provider_request_preflight / artifact / runner_stdout_stderr / audit)."""
+    assert AC_HARD_02_REQUIRED_REDACTION_SURFACES == frozenset(
+        {"provider_request_preflight", "artifact", "runner_stdout_stderr", "audit"}
+    )
+
+
+def test_required_audit_event_types_constants_match_real_schema() -> None:
+    """F-PR64-013 block: policy_decision_created + provider_blocked、allow: policy_decision_created."""
+    assert AC_HARD_02_BLOCK_REQUIRED_AUDIT_EVENT_TYPES == frozenset(
+        {"policy_decision_created", "provider_blocked"}
+    )
+    assert AC_HARD_02_ALLOW_REQUIRED_AUDIT_EVENT_TYPES == frozenset(
+        {"policy_decision_created"}
+    )
+
+
 def test_module_exports_all_required_symbols() -> None:
     expected = {
         "AC_HARD_02_ALLOWED_AGENT_RUN_STATUSES",
@@ -176,8 +348,11 @@ def test_module_exports_all_required_symbols() -> None:
         "AC_HARD_02_ALLOWED_DECISIONS",
         "AC_HARD_02_ALLOWED_PATTERN_HIT_KINDS",
         "AC_HARD_02_ALLOWED_REASON_CODES",
+        "AC_HARD_02_ALLOW_REQUIRED_AUDIT_EVENT_TYPES",
+        "AC_HARD_02_BLOCK_REQUIRED_AUDIT_EVENT_TYPES",
         "AC_HARD_02_GATE_ID",
         "AC_HARD_02_METRIC_KEY",
+        "AC_HARD_02_REQUIRED_REDACTION_SURFACES",
         "AC_HARD_02_THRESHOLD",
         "SecretCanaryFixtureResult",
         "SecretCanaryMetricResult",

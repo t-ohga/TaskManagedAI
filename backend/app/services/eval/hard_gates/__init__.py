@@ -7,6 +7,10 @@ DB / file system / network access).
 
 F-PR37-002 adopt (code-reviewer R1 LOW): actual re-export per plan
 batch 5j §4.1 (previously this module was empty).
+
+Sprint 12 batch 8 / R2 F-PR64-010 adopt: AC-HARD-01/02/05/06/07 evaluators
+を package surface に追加 (7 gate 統一 contract を `from
+backend.app.services.eval.hard_gates import ...` で取得可能化).
 """
 
 from backend.app.services.eval.hard_gates.backup_restore import (
@@ -24,6 +28,81 @@ from backend.app.services.eval.hard_gates.backup_restore import (
     BackupRestoreMetricResult,
     evaluate_backup_restore_rpo_rto,
 )
+from backend.app.services.eval.hard_gates.dangerous_command import (
+    AC_HARD_06_EXPECTED_AGENT_RUN_STATUS,
+    AC_HARD_06_EXPECTED_BLOCK,
+    AC_HARD_06_EXPECTED_BLOCKED_REASON,
+    AC_HARD_06_EXPECTED_DECISION,
+    AC_HARD_06_EXPECTED_GATEWAY,
+    AC_HARD_06_EXPECTED_RUNTIME_BLOCKED,
+    AC_HARD_06_GATE_ID,
+    AC_HARD_06_METRIC_KEY,
+    AC_HARD_06_PATTERN_HIT_KIND,
+    AC_HARD_06_REQUIRED_COMMAND_CLASSES,
+    AC_HARD_06_THRESHOLD,
+    DangerousCommandFixtureResult,
+    DangerousCommandMetricResult,
+    evaluate_dangerous_command_block,
+)
+from backend.app.services.eval.hard_gates.forbidden_path import (
+    AC_HARD_05_EXPECTED_AGENT_RUN_STATUS,
+    AC_HARD_05_EXPECTED_BLOCK,
+    AC_HARD_05_EXPECTED_BLOCKED_REASON,
+    AC_HARD_05_EXPECTED_DECISION,
+    AC_HARD_05_EXPECTED_GATEWAY,
+    AC_HARD_05_EXPECTED_RUNTIME_BLOCKED,
+    AC_HARD_05_GATE_ID,
+    AC_HARD_05_METRIC_KEY,
+    AC_HARD_05_PATTERN_HIT_KIND,
+    AC_HARD_05_REQUIRED_PATH_PATTERNS,
+    AC_HARD_05_THRESHOLD,
+    ForbiddenPathFixtureResult,
+    ForbiddenPathMetricResult,
+    evaluate_forbidden_path_block,
+)
+from backend.app.services.eval.hard_gates.policy_block import (
+    AC_HARD_01_ALLOWED_REASON_CODES,
+    AC_HARD_01_EXPECTED_AGENT_RUN_STATUS,
+    AC_HARD_01_EXPECTED_BLOCK,
+    AC_HARD_01_EXPECTED_DECISION,
+    AC_HARD_01_GATE_ID,
+    AC_HARD_01_METRIC_KEY,
+    AC_HARD_01_PATTERN_HIT_KIND,
+    AC_HARD_01_THRESHOLD,
+    PolicyBlockFixtureResult,
+    PolicyBlockMetricResult,
+    evaluate_policy_block_recall,
+)
+from backend.app.services.eval.hard_gates.prompt_injection import (
+    AC_HARD_07_EXPECTED_AGENT_RUN_STATUS,
+    AC_HARD_07_EXPECTED_BLOCKED_REASON,
+    AC_HARD_07_EXPECTED_DECISION,
+    AC_HARD_07_EXPECTED_REASON_CODE,
+    AC_HARD_07_EXPECTED_UNTRUSTED_CONTENT,
+    AC_HARD_07_GATE_ID,
+    AC_HARD_07_METRIC_KEY,
+    AC_HARD_07_PATTERN_HIT_KIND,
+    AC_HARD_07_THRESHOLD,
+    PromptInjectionFixtureResult,
+    PromptInjectionMetricResult,
+    evaluate_prompt_injection_resist,
+)
+from backend.app.services.eval.hard_gates.secret_canary import (
+    AC_HARD_02_ALLOW_REQUIRED_AUDIT_EVENT_TYPES,
+    AC_HARD_02_ALLOWED_AGENT_RUN_STATUSES,
+    AC_HARD_02_ALLOWED_BLOCKED_REASONS,
+    AC_HARD_02_ALLOWED_DECISIONS,
+    AC_HARD_02_ALLOWED_PATTERN_HIT_KINDS,
+    AC_HARD_02_ALLOWED_REASON_CODES,
+    AC_HARD_02_BLOCK_REQUIRED_AUDIT_EVENT_TYPES,
+    AC_HARD_02_GATE_ID,
+    AC_HARD_02_METRIC_KEY,
+    AC_HARD_02_REQUIRED_REDACTION_SURFACES,
+    AC_HARD_02_THRESHOLD,
+    SecretCanaryFixtureResult,
+    SecretCanaryMetricResult,
+    evaluate_secret_canary_no_leak,
+)
 from backend.app.services.eval.hard_gates.tenant_isolation import (
     AC_HARD_03_EXPECTED_DECISION,
     AC_HARD_03_EXPECTED_FAILURE,
@@ -39,6 +118,33 @@ from backend.app.services.eval.hard_gates.tenant_isolation import (
 )
 
 __all__ = [
+    # AC-HARD-01 policy_block (batch 8)
+    "AC_HARD_01_ALLOWED_REASON_CODES",
+    "AC_HARD_01_EXPECTED_AGENT_RUN_STATUS",
+    "AC_HARD_01_EXPECTED_BLOCK",
+    "AC_HARD_01_EXPECTED_DECISION",
+    "AC_HARD_01_GATE_ID",
+    "AC_HARD_01_METRIC_KEY",
+    "AC_HARD_01_PATTERN_HIT_KIND",
+    "AC_HARD_01_THRESHOLD",
+    "PolicyBlockFixtureResult",
+    "PolicyBlockMetricResult",
+    "evaluate_policy_block_recall",
+    # AC-HARD-02 secret_canary (batch 8)
+    "AC_HARD_02_ALLOWED_AGENT_RUN_STATUSES",
+    "AC_HARD_02_ALLOWED_BLOCKED_REASONS",
+    "AC_HARD_02_ALLOWED_DECISIONS",
+    "AC_HARD_02_ALLOWED_PATTERN_HIT_KINDS",
+    "AC_HARD_02_ALLOWED_REASON_CODES",
+    "AC_HARD_02_ALLOW_REQUIRED_AUDIT_EVENT_TYPES",
+    "AC_HARD_02_BLOCK_REQUIRED_AUDIT_EVENT_TYPES",
+    "AC_HARD_02_GATE_ID",
+    "AC_HARD_02_METRIC_KEY",
+    "AC_HARD_02_REQUIRED_REDACTION_SURFACES",
+    "AC_HARD_02_THRESHOLD",
+    "SecretCanaryFixtureResult",
+    "SecretCanaryMetricResult",
+    "evaluate_secret_canary_no_leak",
     # AC-HARD-03 tenant_isolation (batch 5b)
     "AC_HARD_03_EXPECTED_DECISION",
     "AC_HARD_03_EXPECTED_FAILURE",
@@ -65,4 +171,47 @@ __all__ = [
     "BackupRestoreFixtureResult",
     "BackupRestoreMetricResult",
     "evaluate_backup_restore_rpo_rto",
+    # AC-HARD-05 forbidden_path (batch 8)
+    "AC_HARD_05_EXPECTED_AGENT_RUN_STATUS",
+    "AC_HARD_05_EXPECTED_BLOCK",
+    "AC_HARD_05_EXPECTED_BLOCKED_REASON",
+    "AC_HARD_05_EXPECTED_DECISION",
+    "AC_HARD_05_EXPECTED_GATEWAY",
+    "AC_HARD_05_EXPECTED_RUNTIME_BLOCKED",
+    "AC_HARD_05_GATE_ID",
+    "AC_HARD_05_METRIC_KEY",
+    "AC_HARD_05_PATTERN_HIT_KIND",
+    "AC_HARD_05_REQUIRED_PATH_PATTERNS",
+    "AC_HARD_05_THRESHOLD",
+    "ForbiddenPathFixtureResult",
+    "ForbiddenPathMetricResult",
+    "evaluate_forbidden_path_block",
+    # AC-HARD-06 dangerous_command (batch 8)
+    "AC_HARD_06_EXPECTED_AGENT_RUN_STATUS",
+    "AC_HARD_06_EXPECTED_BLOCK",
+    "AC_HARD_06_EXPECTED_BLOCKED_REASON",
+    "AC_HARD_06_EXPECTED_DECISION",
+    "AC_HARD_06_EXPECTED_GATEWAY",
+    "AC_HARD_06_EXPECTED_RUNTIME_BLOCKED",
+    "AC_HARD_06_GATE_ID",
+    "AC_HARD_06_METRIC_KEY",
+    "AC_HARD_06_PATTERN_HIT_KIND",
+    "AC_HARD_06_REQUIRED_COMMAND_CLASSES",
+    "AC_HARD_06_THRESHOLD",
+    "DangerousCommandFixtureResult",
+    "DangerousCommandMetricResult",
+    "evaluate_dangerous_command_block",
+    # AC-HARD-07 prompt_injection (batch 8)
+    "AC_HARD_07_EXPECTED_AGENT_RUN_STATUS",
+    "AC_HARD_07_EXPECTED_BLOCKED_REASON",
+    "AC_HARD_07_EXPECTED_DECISION",
+    "AC_HARD_07_EXPECTED_REASON_CODE",
+    "AC_HARD_07_EXPECTED_UNTRUSTED_CONTENT",
+    "AC_HARD_07_GATE_ID",
+    "AC_HARD_07_METRIC_KEY",
+    "AC_HARD_07_PATTERN_HIT_KIND",
+    "AC_HARD_07_THRESHOLD",
+    "PromptInjectionFixtureResult",
+    "PromptInjectionMetricResult",
+    "evaluate_prompt_injection_resist",
 ]
