@@ -32,6 +32,12 @@ dependencies = [
   "uvicorn[standard]>=0.30,<1.0",
 ]
 
+[project.scripts]
+# ADR-00021 §3 host-portable admin CLI entry point (Codex R2 F-PR63-003 adopt)
+# `uv sync` 後に `taskhub <subcommand>` で起動可能、SP-012 §128 host migration drill
+# command (`taskhub backup --output ...`, `taskhub migrate --via tailscale`, 等) と整合
+taskhub = "scripts.taskhub_admin:main"
+
 [dependency-groups]
 dev = [
   "mypy>=1.10,<2.0",
@@ -42,7 +48,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["backend*"]
+include = ["backend*", "scripts*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

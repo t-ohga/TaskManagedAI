@@ -206,6 +206,122 @@ ADR-00021 §14 (Phase G adversarial Strengthening Catalog) を本 Sprint に反�
 
 ## Review
 
+### batch 7 (taskhub admin CLI skeleton: 10 subcommands + ADR-00021 §11/§14 hardening / 2026-05-18 session、R1-R5 polish 完遂)
+
+#### Changed (最終状態、R1-R5 polish 反映後)
+- `scripts/taskhub_admin.py` 新規 (~470 LOC): ADR-00021 §3 + §11.1/§11.2/§14 hardening 反映の **10 subcommand admin CLI skeleton**
+  - subcommands: `init --host <name> --tailnet <ts.net>` / `backup --output <path> [--include-sops-env]` / `restore (--input <path> | --rollback <pre-restore-ts>)` / `freeze --reason <text>` / `thaw [--decommission-target]` / `active-registry` / `migrate --target <host> [--via tailscale|scp]` / `status [--age-safety] [--mac-preflight] [--remote <host>]` / `age-rotate` / `verify [--integrity] [--network-invariant] [--multi-agent]`
+  - prog 名 `taskhub` 固定 (entry point 整合、R3 F-PR63-005 adopt)
+  - exit code contract: 0=clean / 1=skeleton mode (real I/O not implemented) / 2=CLI usage error (argparse error / missing required option / nonexistent input path / 排他 flag 違反)
+  - real I/O (age decrypt / pg_restore / Redis import / SOPS re-encrypt / row count / checksum / alembic check / freeze marker 生成 / thaw preflight / multi-agent integrity / age-safety / mac-preflight / split-brain check) は user 物理 drill phase (ADR-00021 §8) に defer
+- `scripts/__init__.py` 新規: scripts/ を package 化 (R2 F-PR63-003 adopt の前提)
+- `pyproject.toml`: `[project.scripts] taskhub = "scripts.taskhub_admin:main"` + `[tool.setuptools.packages.find]` include に `scripts*` 追加 → `uv sync` 後 `taskhub <subcommand>` で起動可能
+- `tests/scripts/test_taskhub_admin.py` 新規 (~440 LOC、**37 tests**): subcommand routing / required option / 排他 flag / nonexistent input / skeleton message / exit code 0/1/2 / entry point exists / 旧 flag reject / drill command 整合を contract test
+
+#### Verified (最終 37 tests PASS、R1-R5 polish 反映後)
+- `uv run ruff check` PASS / `uv run mypy scripts/taskhub_admin.py` PASS / `uv run pytest tests/scripts/test_taskhub_admin.py -v` **37 passed**
+- `uv run taskhub --help` で 10 subcommands 表示 (`init/backup/restore/freeze/thaw/active-registry/migrate/status/age-rotate/verify`)
+- `uv run taskhub backup --output /tmp/test.tar.age` で skeleton message + exit 1 verify
+- ADR Gate Criteria 11 種: 該当なし (skeleton CLI、DB/Secret/Provider/Network/API 不変)
+- AgentRun 16 状態 / ContextSnapshot 10 列 / approval 4 整合 / gateway 分離: 不変
+- AI 出力境界: pure CLI skeleton、info message + exit code のみ。real I/O は drill phase で配備
+- 閉域ネットワーク不変: hook `check-tailscale-grants.sh` で全 edit PASS (BLOCK trigger は `Funnel|public ingress|cloudflared|Cloudflare Tunnel|0\.0\.0\.0|port mapping` のみ、`tailscale` 単独 literal は WARN 止まり)
+
+#### Deferred (user 物理 drill phase / Sprint 12 後続 batch)
+- batch 6.1: Pydantic schema で P0 Acceptance Report input JSON full deserialization
+- batch 8: AC-HARD-01/02/05/06/07 個別 evaluator skeleton
+- batch 9: frontend P0 Exit Dashboard panel skeleton
+- batch 10: audit_events 実 DB write + signed journal
+- real I/O 実装 (全 10 subcommands、user 物理 drill phase で実装):
+  - `init` real bootstrap (Docker volume / age key / serve config / .env.encrypted 雛形生成)
+  - `backup` real flow (graceful service stop + pg_dump + Redis BGSAVE + artifacts tar + 任意 SOPS-encrypted env + age 公開鍵暗号化)
+  - `restore` real flow (age 復号 + service stop + volume move + pg_restore + Redis import + alembic check + healthcheck + 失敗時 rollback)
+  - `restore --rollback` real flow (data/_pre-restore-<ts>/ から復元 + service up + healthcheck)
+  - `migrate` real flow (backup + closed-network transfer + target host taskhub restore + 旧 host backup 保管)
+  - `freeze` real flow (service stop + signed freeze marker file 生成 + auto thaw なし invariant 強制)
+  - `thaw` real flow (target active.signed marker + migration_epoch + decommission marker verify + 2-party-control)
+  - `active-registry` real flow (signed local ledger or closed-network shared ledger 状態列挙 + source/target 同時 active reject contract)
+  - `status` real flow (host name / Docker service health / data size / last backup / age key fingerprint / SOPS validity / closed-network serve URL + age-safety / mac-preflight / split-brain check)
+  - `age-rotate` real flow (deprecated 化 + 新 key 生成 + SOPS re-encrypt + 旧 key 保管 + 物理運搬 SOP enforcement)
+  - `verify` real flow (row count / checksum / Redis count / alembic check / closed-network invariant + multi-agent table integrity)
+- ADR-00021 §3 CLI usage doc 更新 (skeleton 段階の help text を user docs に反映)
+
+#### Risks
+- 本 batch は subcommand structure + exit code contract のみ、real I/O は drill phase まで未実装
+- `--via` の transport 選択肢は ADR-00021 §3 + SP-012 §128 drill command と整合 (`tailscale` default / `scp` alt)、real transport adapter は drill 設計時に確定
+
+#### Codex R1 adopt (PR #63)
+- **F-PR63-001 P2** (`scripts/taskhub_admin.py:202`): `--via` choices に `tailscale` を含めるべき (ADR-00021 §3 + SP-012 §128 で `taskhub migrate --target t-ohga-vps --via tailscale` が公式 drill command として明示、私の literal 削除は drift)
+  - **判定**: adopt — docs/ADR の正本 spec が `tailscale` default、CLI を整合させる
+  - **fix**: choices を `["tailscale", "scp"]` に戻す、default を `tailscale`、help text に ADR-00021 §3 reference を追加
+  - **test**: `test_cli_migrate_via_tailscale_option_matches_adr_drill` を新規追加 (16 tests PASS)
+  - **hook PASS verify**: hook の BLOCK trigger は `Funnel|public ingress|cloudflared|Cloudflare Tunnel|0\.0\.0\.0|port mapping`、`tailscale` 単独 literal は WARN 止まり (許可)
+
+#### Codex R2 adopt (PR #63、3 findings 全件 adopt)
+- **F-PR63-002 P2** (`scripts/taskhub_admin.py:232` verify subcommand): SP-012 §131 + ADR-00021 §11.5 で `taskhub verify --integrity --multi-agent` が multi-agent table restore 整合性 fixture として明示、現状 argparse が reject する
+  - **判定**: adopt — verify subparser に `--multi-agent` flag 追加、ADR-00021 §11.5 multi-agent table (inter_agent_messages / memory_retrieval_artifacts / project_agent_roles / review_artifacts / agent_runs) 5 件を skeleton message + help text で参照
+  - **test**: `test_cli_verify_multi_agent_matches_adr_multi_agent_fixture` + `test_cli_verify_integrity_with_multi_agent_matches_drill_command` 新規追加
+- **F-PR63-003 P2** (`scripts/taskhub_admin.py:22` docstring): CLI が `uv run python scripts/taskhub_admin.py` でのみ document/test、SP-012 §128 + ADR-00021 §3 は `taskhub` executable 名で起動する drill command (`taskhub backup`, `ssh vps 'taskhub status'`, 等)、`taskhub` wrapper / console-script entry point が pyproject.toml に存在しないため `command not found`
+  - **判定**: adopt — `[project.scripts] taskhub = "scripts.taskhub_admin:main"` を pyproject.toml に追加、`scripts/__init__.py` 新規で package 化、`[tool.setuptools.packages.find] include` に `scripts*` 追加
+  - **verify**: `uv sync` 後に `taskhub --help` で 6 subcommand 一覧表示、`taskhub backup --output ...` で skeleton message 表示 + exit 1
+  - **test**: `test_taskhub_console_script_entry_point_installed` + `test_taskhub_console_script_help_includes_subcommands` 新規追加
+- **F-PR63-004 P2** (`scripts/taskhub_admin.py:182` parser): SP-012 §128 host migration drill の起点 command `taskhub backup --output /tmp/sp012-backup.tar.age` + ADR-00021 §3 CLI table 1 行目 `taskhub backup --output <path> [--include-secrets]` を parser が登録していないため argparse error
+  - **判定**: adopt — `backup` subcommand 新規 (`--output <path>` 必須 + `--include-secrets` flag)、skeleton message + exit 1
+  - **test**: `test_cli_backup_requires_output` + `test_cli_backup_skeleton_mode_returns_exit_1` + `test_cli_backup_include_secrets_option` 新規追加 (23 tests PASS)
+- **R2 trap memory 適用**: 同 finding 再 emit を「false positive」と短絡判定せず、code grep + 実 docs/ADR spec で contract drift を実体検証して全 3 件 adopt 確定 (`feedback_codex_r2_reemission_reject_trap.md` 教訓遵守)
+
+#### Codex R3 adopt (PR #63、3 findings 全件 adopt)
+- **F-PR63-005 P3** (`scripts/taskhub_admin.py:196` parser prog): `prog="taskhub_admin"` ハード固定、`taskhub` entry point 経由でも `usage: taskhub_admin ...` 表示で drill command と drift
+  - **判定**: adopt — `prog="taskhub"` に固定 (entry point 名と一致、ADR-00021 §3 + SP-012 §128 drill command と整合)
+  - **test**: `test_taskhub_console_script_help_shows_taskhub_prog_name` 新規追加 (usage 行は `taskhub`、旧 `taskhub_admin` ではないことを verify)
+- **F-PR63-006 P2** (`scripts/taskhub_admin.py:219` backup flag name): ADR-00021 §11.1 PG-F-015 hardening で `--include-secrets` → `--include-sops-env` rename、SOPS-encrypted env のみ含め age private key は絶対含めない (ADR line 348-353 明示、line 583 で旧 flag 残存 → fail)
+  - **判定**: adopt — `--include-sops-env` に rename (後方互換 alias は不要、line 583 で旧 flag fail 明記)、help text + skeleton message に「age private key は絶対含まない」invariant 明示
+  - **test**: `test_cli_backup_include_sops_env_option` + `test_cli_backup_old_include_secrets_flag_is_rejected` (argparse reject verify)
+- **F-PR63-007 P2** (`scripts/taskhub_admin.py:210` init subcommand): ADR-00021 §3 line 151 + §3 line 235 (host migration drill step 4) で `taskhub init --host <name> --tailnet <ts.net>` が target host 初回 setup の起点 CLI として明示、parser に存在しない
+  - **判定**: adopt — `init` subcommand 新規 (`--host` + `--tailnet` 必須)、Docker volume / age key / serve config / .env.encrypted 雛形生成の skeleton message
+  - **test**: `test_cli_init_requires_host_and_tailnet` + `test_cli_init_skeleton_mode_matches_adr_drill_step4` 新規追加 (27 tests PASS)
+- **R2/R3 trap memory 継続適用**: 新 finding (R2 fix への新 review) を実 spec grep で verify、ADR line 番号と完全一致を確認した上で全 3 件 adopt 確定 (false positive 短絡判定なし)
+
+#### Codex R4 adopt (PR #63、5 findings 全件 adopt、ADR-00021 §11/§14 hardening 拡張)
+- **F-PR63-008 P2** (status flags): SP-012 §170 + ADR-00021 §14.1 PGA-F-001 `--age-safety` (FileVault / cloud-sync exclusion / permission 600) + §14.2 PGA-F-006 `--mac-preflight` (pmset sleep / powernap / wakeonlan) + §285 `--remote <host>` (split-brain check)
+  - **判定**: adopt — `status` parser に 3 flag 追加、skeleton message で各 hardening drill を spec reference 付きで言及
+  - **test**: `test_cli_status_age_safety_flag_matches_pga_f_001` + `test_cli_status_mac_preflight_flag_matches_pga_f_006` + `test_cli_status_remote_split_brain_check` 新規追加
+- **F-PR63-009 P2** (`thaw` subcommand): ADR-00021 §372 / §395 / §670 で `taskhub thaw` が split-brain control の必須 cutover step、target active.signed marker + migration_epoch + decommission marker verify、2-party-control + 別 actor approval (default deny)
+  - **判定**: adopt — `thaw [--decommission-target]` subcommand 新規、preflight verify skeleton + 別 actor approval invariant 明示
+  - **test**: `test_cli_thaw_skeleton_mode_returns_exit_1` + `test_cli_thaw_decommission_target_flag` 新規追加
+- **F-PR63-010 P2** (`active-registry` subcommand): ADR-00021 §670 PGA-F-003 で signed local ledger or closed-network shared 状態、source/target 同時 active を contract test で reject
+  - **判定**: adopt — `active-registry` subcommand 新規、host_id / migration_epoch / active.signed marker mtime / decommission marker 列挙 skeleton
+  - **test**: `test_cli_active_registry_skeleton_mode_returns_exit_1` 新規追加
+- **F-PR63-011 P2** (`restore --rollback`): ADR-00021 §290 / §299 で restore 失敗時の data loss 復旧経路として `taskhub restore --rollback <pre-restore-ts>` 明示
+  - **判定**: adopt — `restore` parser に `--rollback <pre-restore-ts>` mode 追加 (`--input` と排他)、`data/_pre-restore-<ts>/` から復元する skeleton
+  - **test**: `test_cli_restore_requires_input_or_rollback` + `test_cli_restore_input_and_rollback_are_mutually_exclusive` + `test_cli_restore_rollback_skeleton_mode_returns_exit_1` 新規追加 (旧 `test_cli_restore_requires_input` は rename)
+- **F-PR63-012 P2** (`freeze` subcommand): ADR-00021 §11.2 / §368 で `taskhub freeze --reason ...` が migration 起点 split-brain prevention の signed freeze marker 生成 command、thaw 明示まで再活性化禁止 (auto thaw なし)
+  - **判定**: adopt — `freeze --reason <text>` subcommand 新規、signed freeze marker 生成 + auto thaw なし invariant 明示
+  - **test**: `test_cli_freeze_requires_reason` + `test_cli_freeze_skeleton_mode_returns_exit_1` 新規追加
+- **R{N} clean signal 進捗**: 累計 4 round / 11 findings 全件 adopt (CRITICAL=0、HIGH=0、P2/P3 のみ)、37 tests PASS (R4 で +10 件: status flags×3, freeze×2, thaw×2, active-registry×1, restore --rollback×3)、subcommands 7 → 10 件、CLAUDE.md 6.5.0 absolute teaching (品質第一) 遵守
+
+#### Codex R5 adopt (PR #63、3 findings 全件 adopt、docs alignment polish)
+- **F-PR63-013 P3** (`docs/sprints/SP-012_p0_acceptance.md:213` batch 7 Summary): summary が `--via closed-network|scp` を documentation していたが parser は R1 fix で `tailscale|scp` に rename 済 (drift)
+  - **判定**: adopt — batch 7 § Changed の subcommands 行を最新 contract (`--via tailscale|scp`) に更新
+- **F-PR63-014 P3** (`docs/sprints/SP-012_p0_acceptance.md:219` Verified 行): test 数 15 のまま stale (R4 で 37 達成済)
+  - **判定**: adopt — Verified 行を「37 passed」に更新
+- **F-PR63-015 P3** (`docs/sprints/SP-012_p0_acceptance.md:230` Deferred): R4 で追加した init/freeze/thaw/active-registry の real I/O 配備が deferred 欄に未記載
+  - **判定**: adopt — Deferred 欄を 10 subcommands 全件の real I/O 配備 list に拡張、user 物理 drill phase で実装する全 real flow を明示
+- **旧 12 findings (F-PR63-001〜012) は line 番号 shift で表示残存しているのみ、実コードでは全 fix 済**:
+  - R1 F-PR63-001 (--via tailscale): commit 9611835 で choices に "tailscale" 復活済
+  - R2 F-PR63-002 (--multi-agent): commit e8abde6 で verify subparser に追加済
+  - R2 F-PR63-003 (taskhub entry point): commit e8abde6 で pyproject.toml [project.scripts] 追加済
+  - R2 F-PR63-004 (backup subcommand): commit e8abde6 で parser に登録済
+  - R3 F-PR63-005 (prog name): commit c51cc2d で prog="taskhub" 固定済
+  - R3 F-PR63-006 (--include-sops-env rename): commit c51cc2d で rename + 旧 flag reject 済
+  - R3 F-PR63-007 (init subcommand): commit c51cc2d で parser に登録済
+  - R4 F-PR63-008/009/010/011/012 (status flags / thaw / active-registry / restore --rollback / freeze): commit bc2f1eb で全件配備済
+- **累計 R{N} clean signal 進捗**: 5 round / 14 findings 全件 adopt (CRITICAL=0、HIGH=0、P2×9 + P3×5)、新 finding は R6 以降 0 件期待
+
+#### SP-012 受け入れ条件 contribution
+- ADR-00021 §3 host-portable admin CLI skeleton: **達成** (subcommand + exit code contract、real I/O は drill 配備時に同 contract で実装)
+- BL-0140b smoke / host migration drill の CLI 入口 skeleton 完成、real drill 実行は user 物理 confirm phase で連結
+
 ### batch 6 (BL-0149 runner + audit emit + endpoint skeleton + CLI skeleton / 2026-05-18 session)
 
 #### Changed
