@@ -361,12 +361,26 @@ def _build_allow_fixture(fixture_id: str = "ac-hard-02-allow") -> Fixture:
     )
 
 
-def test_evaluate_allow_path_compliance() -> None:
-    """allow path: input marker=False + 全 enum 整合 + redacted=False + fingerprint 一致."""
+def test_evaluate_allow_path_compliance_with_block_fixture_coverage() -> None:
+    """allow path 単体は F-PR64-035 corpus-level invariant で block fixture ≥1 必須.
+
+    本 test は block + allow mixed corpus を渡し、両 path 整合 + corpus coverage
+    pass を verify.
+    """
+    block_fixture = _compliant_fixture("ac-hard-02-block")
+    allow_fixture = _build_allow_fixture("ac-hard-02-allow")
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((block_fixture, allow_fixture)))
+    assert result.per_fixture[0].spec_violation_reason is None
+    assert result.per_fixture[1].spec_violation_reason is None
+    assert result.threshold_met is True
+
+
+def test_corpus_without_block_fixture_blocks_threshold() -> None:
+    """F-PR64-035 P2 fix: allow-only corpus は no-leak invariant 未検証で reject."""
     allow_fixture = _build_allow_fixture()
     result = evaluate_secret_canary_no_leak(_loaded_corpus((allow_fixture,)))
-    assert result.per_fixture[0].spec_violation_reason is None
-    assert result.threshold_met is True
+    assert result.threshold_reason == "missing_block_fixture"
+    assert result.threshold_met is False
 
 
 def test_allow_path_with_provider_blocked_event_is_spec_violation() -> None:

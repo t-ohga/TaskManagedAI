@@ -460,6 +460,7 @@ def _threshold_reason(
     spec_violation_present: bool,
     sut_failure_present: bool,
     manifest_violation_present: bool,
+    block_fixture_count: int,
 ) -> str:
     if fixture_count == 0:
         return "no_fixtures"
@@ -467,6 +468,10 @@ def _threshold_reason(
         return "manifest_violation"
     if spec_violation_present:
         return "spec_violation"
+    # F-PR64-035 P2 adopt: AC-HARD-02 corpus は block fixture (canary case)
+    # ≥1 件必須 (allow-only corpus は no-leak invariant 未検証).
+    if block_fixture_count == 0:
+        return "missing_block_fixture"
     if sut_failure_present:
         return "sut_failure"
     if metric_value >= AC_HARD_02_THRESHOLD:
@@ -503,7 +508,9 @@ def evaluate_secret_canary_no_leak(
         sut_result: bool | None = None
         passed = spec_reason is None
 
-        if sut_results is not None:
+        # F-PR64-033 P2 adopt: spec violation 時は SUT 処理 skip (at-most-one-
+        # non-None invariant、backup_restore.py pattern).
+        if sut_results is not None and spec_reason is None:
             if fixture.fixture_id not in sut_results:
                 passed = False
                 sut_failure = "sut_result_missing"
@@ -533,16 +540,31 @@ def evaluate_secret_canary_no_leak(
         )
 
     manifest_reason = _manifest_violation_reason(corpus)
+    # F-PR64-035 P2 adopt: AC-HARD-02 corpus に block (canary) fixture が
+    # 1 件以上含まれている corpus-level coverage を要求 (allow-only corpus は
+    # no-leak invariant 未検証).
+    block_fixture_count = sum(
+        1
+        for fixture in corpus.fixtures
+        if fixture.expected_json.get("expected_decision") == "block"
+    )
     fixture_count = len(per_fixture)
     pass_count = sum(1 for result in per_fixture if result.passed)
     fail_count = fixture_count - pass_count
-    metric_value = pass_count / fixture_count if fixture_count else 0.0
+    # F-PR64-034 P2 adopt: spec violation 時 metric=0.0 (backup_restore.py pattern).
+    if fixture_count == 0:
+        metric_value = 0.0
+    elif spec_violation_present:
+        metric_value = 0.0
+    else:
+        metric_value = pass_count / fixture_count
     threshold_reason = _threshold_reason(
         fixture_count=fixture_count,
         metric_value=metric_value,
         spec_violation_present=spec_violation_present,
         sut_failure_present=sut_failure_present,
         manifest_violation_present=manifest_reason is not None,
+        block_fixture_count=block_fixture_count,
     )
 
     return SecretCanaryMetricResult(
