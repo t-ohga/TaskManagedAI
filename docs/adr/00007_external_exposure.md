@@ -1,7 +1,7 @@
 ---
 id: "ADR-00007"
 title: "外部公開設定: Tailscale Serve + Funnel 不使用 + tag:taskhub-ci grants 最小化"
-status: "proposed"
+status: "accepted"
 date: "2026-05-07"
 authors:
   - "t-ohga"

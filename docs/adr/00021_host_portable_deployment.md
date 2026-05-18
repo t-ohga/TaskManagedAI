@@ -1,7 +1,7 @@
 ---
 id: "ADR-00021"
 title: "Host-Portable Deployment + Data Migration: Mac / Linux / VPS どれでも 1 箇所選択 + taskhub admin CLI (init/backup/restore/migrate) + age key 手動運搬 + Tailscale 閉域維持 + RTO ≤ 4h host migration drill"
-status: "proposed"
+status: "accepted"
 date: "2026-05-10"
 authors:
   - "t-ohga"
