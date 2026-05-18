@@ -19,8 +19,8 @@ max_days: 7
 # planned → adr_refs 移動を撤回、planned_adr_refs に restore.
 adr_refs: []
 planned_adr_refs:
-  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-012 batch 7/10 で skeleton 実装着手済、accepted 化は SP-022 で実機 host migration drill PASS 後"
-  - "[ADR-00007](../adr/00007_external_exposure.md) # ADR-00021 同期 acceptance、SP-022 で同時 accepted"
+  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-012 batch 7/10 で skeleton 実装着手済、accepted at SP022-T00 (pre-implementation gate、実機 drill verification は SP022-T09 post-acceptance、F-PR67-046 P2 adopt)"
+  - "[ADR-00007](../adr/00007_external_exposure.md) # ADR-00021 同期 acceptance at SP022-T00 (R8/R10 T00 reinterpretation 整合)"
 related_sprints:
   - "SP-001_project_foundation"
   - "SP-011_eval_harness"

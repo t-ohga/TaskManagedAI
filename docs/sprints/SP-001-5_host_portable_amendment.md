@@ -15,8 +15,8 @@ max_days: 3
 # 側 acceptance_history で記録.
 adr_refs: []
 planned_adr_refs:
-  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-012 で skeleton 実装着手済だが accepted 化は SP-022 で実機 host migration drill PASS 後 (Criteria #2/#6/#7/#8)"
-  - "[ADR-00007](../adr/00007_external_exposure.md) # host-portable invariant、ADR-00021 同期 accepted (SP-022 scope)"
+  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-012 で skeleton 実装着手済、accepted at SP022-T00 (pre-implementation gate、Criteria #2/#6/#7/#8、F-PR67-046 P2 adopt)"
+  - "[ADR-00007](../adr/00007_external_exposure.md) # host-portable invariant、ADR-00021 同期 accepted at SP022-T00 (R8/R10 timing 整合)"
 related_sprints:
   - "SP-001_project_foundation (既完了、本 SP は amendment)"
   - "SP-012_p0_acceptance"

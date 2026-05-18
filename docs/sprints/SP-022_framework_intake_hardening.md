@@ -72,7 +72,13 @@ risks:
 - [ ] **ADR-00020 + ADR-00021 + ADR-00007 を proposed → accepted** (SP022-T00 pre-implementation gate、F-PR67-033/036 P2 adopt: T10 stale 撤回 + ADR-00020 を T00 に含める、§12 invariant 整合)
 - [ ] `taskhub migrate` end-to-end を 3 host pair (Mac↔VPS、Linux↔VPS、VPS↔VPS) で drill 実施
 - [ ] Phase E 16 finding が全件 closed (adopt 済 + test fixture 化済)
-- [ ] AC-HARD multi-agent fixture 全件 PASS (**F-PR67-039 P2 adopt**: 本項目は SP-013 multi-agent skeleton 依存、SP-022 が pre-P0.1 reframe 後は SP-013 完了前に着手不可. SP-022 exit gate から除外、post-P0.1 carry-over として SP-022.1 / SP-023 等で実施)
+<!-- F-PR67-044 P2 adopt (PR #67 R10): 旧 unchecked task「AC-HARD multi-agent
+fixture 全件 PASS」を本 task list から **完全削除**. checklist tooling が SP-022
+を incomplete 判定する経路を物理削除. 同 task は本 Sprint Pack 下部の §残リスク /
+§次スプリント候補 に carry-over deferred として記載、SP-022.1 / SP-023 等の
+post-P0.1 sprint で扱う. -->
+<!-- 旧 entry 跡地、削除済 (F-PR67-044 P2 adopt) -->
+- [ ] (削除済) AC-HARD multi-agent fixture → SP-022.1 / SP-023 carry-over (本 SP-022 exit gate から除外、§残リスク 参照)
 - [ ] **SP-012 carry-over 全件完了** (taskhub real I/O / 実 DB write integration / signed journal CLI / private staging E2E / frontend backend wiring)
 
 ## must_ship / defer_if_over_budget 対応表
@@ -96,7 +102,12 @@ risks:
 - `taskhub migrate --target <host>` が source backup → 転送 → target restore → smoke を 90 分以内に完了
 - migration 中の rollback (age key 失敗 / pg_restore 失敗 / network 切断) が自動で source host 復旧
 - Phase E 16 finding (PE-F-001〜PE-F-016) すべての closure evidence (各 finding に対応する test fixture / contract test PASS)
-- AC-HARD-01〜07 fixture が multi-agent 文脈 (orchestrator / inter_agent_messages / memory_records / role authorization / policy_profile) で全件 PASS
+<!-- F-PR67-045 P2 adopt (R10): AC-HARD multi-agent fixture 受け入れ条件は本
+SP-022 exit から除外 (SP-013 multi-agent skeleton 依存、SP-022.1 / SP-023
+carry-over). 旧 entry「AC-HARD-01〜07 fixture が multi-agent 文脈で全件 PASS」
+は削除. -->
+<!-- (削除済) AC-HARD multi-agent fixture exit → SP-022.1 / SP-023 carry-over -->
+- AC-HARD-01〜07 fixture (single-agent 文脈) は SP-022 で **regression-only verify** (multi-agent 文脈は post-P0.1 carry-over)
 - KPI baseline が host 別に確定、運用 SOP 化
 
 ## 検証手順
@@ -114,9 +125,9 @@ $ uv run pytest tests/deploy/test_host_migration_automation.py tests/deploy/test
 $ uv run pytest eval/multi_agent/role_authorization_negative/ eval/multi_agent/inter_agent_replay_attack/ \
                 eval/multi_agent/memory_secret_canary/ eval/multi_agent/framework_intake_violation/ -q
 
-# AC-HARD multi-agent fixture
-$ uv run pytest eval/security/policy_block/multi_agent/ eval/security/tenant_isolation/multi_agent/ \
-                eval/security/secret_canary/multi_agent/ -q
+# F-PR67-045 P2 adopt (R10): AC-HARD multi-agent fixture verification は本 SP-022
+# exit から除外 (SP-013 multi-agent skeleton 依存、SP-022.1 / SP-023 carry-over).
+# 旧コマンド (`pytest eval/security/*/multi_agent/`) は SP-022.1 で実施.
 
 # KPI baseline (host 別)
 $ taskhub kpi-baseline --host t-ohga-mac --output baselines/mac.json

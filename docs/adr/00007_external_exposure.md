@@ -13,11 +13,13 @@ related_sprints:
   - "SP-012_p0_acceptance"
 supersedes: null
 superseded_by: null
-# F-PR67-042 P2 adopt (PR #67 R9): R8 T00 reinterpretation で本 ADR は
-# SP022-T00 (pre-implementation gate) で ADR-00021 と同時 accepted.
-# SP022-T09 (実機 drill verification) は post-acceptance.
+# F-PR67-042/047 P2 adopt (PR #67 R9/R10): R8 T00 reinterpretation で本 ADR
+# は SP022-T00 (pre-implementation gate) で ADR-00021 と同時 accepted.
+# F-PR67-047 P2 fix: 旧 blocker "ADR-00021 同期 accepted" は ADR-00021 が同様に
+# "ADR-00007 同期 accepted" を要求しており mutual deadlock になっていた.
+# common SP022-T00 simultaneous acceptance gate を blocker に変更し cycle 解消.
 acceptance_blocked_by:
-  - "ADR-00021 同期 accepted (master plan で ADR-00007 acceptance = ADR-00021 同期 accepted 明示、両方 SP022-T00 で同時 accept)"
+  - "SP022-T00 pre-implementation gate trigger (ADR-00021 と同時 accepted、F-PR67-047 P2 adopt: 旧 mutual blocking cycle 解消)"
 acceptance_target_sprint: "SP022-T00 (pre-implementation gate、ADR-00021 と同時、F-PR67-042 P2 adopt)"
 post_acceptance_verification:
   - "SP022-T09 実機 host migration drill (Mac→VPS) で Tailscale 閉域維持 invariant verify"
