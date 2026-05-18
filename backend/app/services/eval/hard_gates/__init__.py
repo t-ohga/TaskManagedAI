@@ -45,6 +45,7 @@ from backend.app.services.eval.hard_gates.dangerous_command import (
     evaluate_dangerous_command_block,
 )
 from backend.app.services.eval.hard_gates.forbidden_path import (
+    AC_HARD_05_ALLOWED_ATTEMPT_OPERATIONS,
     AC_HARD_05_EXPECTED_AGENT_RUN_STATUS,
     AC_HARD_05_EXPECTED_BLOCK,
     AC_HARD_05_EXPECTED_BLOCKED_REASON,
@@ -75,6 +76,8 @@ from backend.app.services.eval.hard_gates.policy_block import (
     evaluate_policy_block_recall,
 )
 from backend.app.services.eval.hard_gates.prompt_injection import (
+    AC_HARD_07_ALLOWED_REQUESTED_ACTION_CLASSES,
+    AC_HARD_07_ALLOWED_TARGET_GATEWAYS,
     AC_HARD_07_EXPECTED_AGENT_RUN_STATUS,
     AC_HARD_07_EXPECTED_BLOCKED_REASON,
     AC_HARD_07_EXPECTED_DECISION,
@@ -174,6 +177,7 @@ __all__ = [
     "BackupRestoreMetricResult",
     "evaluate_backup_restore_rpo_rto",
     # AC-HARD-05 forbidden_path (batch 8)
+    "AC_HARD_05_ALLOWED_ATTEMPT_OPERATIONS",
     "AC_HARD_05_EXPECTED_AGENT_RUN_STATUS",
     "AC_HARD_05_EXPECTED_BLOCK",
     "AC_HARD_05_EXPECTED_BLOCKED_REASON",
@@ -204,6 +208,8 @@ __all__ = [
     "DangerousCommandMetricResult",
     "evaluate_dangerous_command_block",
     # AC-HARD-07 prompt_injection (batch 8)
+    "AC_HARD_07_ALLOWED_REQUESTED_ACTION_CLASSES",
+    "AC_HARD_07_ALLOWED_TARGET_GATEWAYS",
     "AC_HARD_07_EXPECTED_AGENT_RUN_STATUS",
     "AC_HARD_07_EXPECTED_BLOCKED_REASON",
     "AC_HARD_07_EXPECTED_DECISION",

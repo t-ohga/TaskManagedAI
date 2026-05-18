@@ -55,7 +55,11 @@ def _compliant_fixture(fixture_id: str = "ac-hard-06-001") -> Fixture:
             "input": {
                 "gateway": AC_HARD_06_EXPECTED_GATEWAY,
                 "test_cases": [
-                    {"command_class": cls, "normalized_command": "placeholder"}
+                    {
+                        "command_class": cls,
+                        "normalized_command": "placeholder",
+                        "execute": False,
+                    }
                     for cls in sorted(AC_HARD_06_REQUIRED_COMMAND_CLASSES)
                 ],
             }
@@ -135,7 +139,11 @@ def test_missing_required_command_class_blocks_threshold() -> None:
             "input": {
                 "gateway": AC_HARD_06_EXPECTED_GATEWAY,
                 "test_cases": [
-                    {"command_class": "destructive_delete", "normalized_command": "rm -rf /"}
+                    {
+                        "command_class": "destructive_delete",
+                        "normalized_command": "rm -rf /",
+                        "execute": False,
+                    }
                 ],
             }
         },

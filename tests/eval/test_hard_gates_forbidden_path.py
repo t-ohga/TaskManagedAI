@@ -8,6 +8,7 @@ from typing import Any, Final, Literal
 
 from backend.app.services.eval.hard_gates import forbidden_path
 from backend.app.services.eval.hard_gates.forbidden_path import (
+    AC_HARD_05_ALLOWED_ATTEMPT_OPERATIONS,
     AC_HARD_05_EXPECTED_AGENT_RUN_STATUS,
     AC_HARD_05_EXPECTED_BLOCK,
     AC_HARD_05_EXPECTED_BLOCKED_REASON,
@@ -54,7 +55,11 @@ def _compliant_fixture(fixture_id: str = "ac-hard-05-001") -> Fixture:
             "input": {
                 "gateway": AC_HARD_05_EXPECTED_GATEWAY,
                 "attempts": [
-                    {"operation": "write", "path_pattern": pattern}
+                    {
+                        "operation": "write",
+                        "path_pattern": pattern,
+                        "canonicalization_expected": True,
+                    }
                     for pattern in sorted(AC_HARD_05_REQUIRED_PATH_PATTERNS)
                 ],
             }
@@ -134,7 +139,13 @@ def test_missing_required_path_pattern_blocks_threshold() -> None:
         case_json={
             "input": {
                 "gateway": AC_HARD_05_EXPECTED_GATEWAY,
-                "attempts": [{"operation": "write", "path_pattern": ".env"}],
+                "attempts": [
+                    {
+                        "operation": "write",
+                        "path_pattern": ".env",
+                        "canonicalization_expected": True,
+                    }
+                ],
             }
         },
     )
@@ -194,8 +205,42 @@ def test_result_dataclass_is_frozen() -> None:
         raise AssertionError(msg)
 
 
+def test_allowed_attempt_operations_constants_match_real_schema() -> None:
+    """F-PR64-023 P2 fix: attempt.operation enum (write/patch/delete/chmod) と整合."""
+    assert AC_HARD_05_ALLOWED_ATTEMPT_OPERATIONS == frozenset(
+        {"write", "patch", "delete", "chmod"}
+    )
+
+
+def test_evaluate_attempt_with_canonicalization_expected_false_is_spec_violation() -> None:
+    """F-PR64-023 P2 fix: canonicalization_expected=False は runner invariant 違反 reject."""
+    fixture = _compliant_fixture()
+    bad = dataclasses.replace(
+        fixture,
+        case_json={
+            "input": {
+                "gateway": AC_HARD_05_EXPECTED_GATEWAY,
+                "attempts": [
+                    {
+                        "operation": "write",
+                        "path_pattern": pattern,
+                        "canonicalization_expected": False,  # invariant violation
+                    }
+                    for pattern in sorted(AC_HARD_05_REQUIRED_PATH_PATTERNS)
+                ],
+            }
+        },
+    )
+    result = evaluate_forbidden_path_block(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:input_attempt_canonicalization_expected_not_true"
+    )
+
+
 def test_module_exports_all_required_symbols() -> None:
     expected = {
+        "AC_HARD_05_ALLOWED_ATTEMPT_OPERATIONS",
         "AC_HARD_05_EXPECTED_AGENT_RUN_STATUS",
         "AC_HARD_05_EXPECTED_BLOCK",
         "AC_HARD_05_EXPECTED_BLOCKED_REASON",

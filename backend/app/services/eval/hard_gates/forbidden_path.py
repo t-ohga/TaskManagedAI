@@ -36,6 +36,11 @@ AC_HARD_05_EXPECTED_AGENT_RUN_STATUS: Final[Literal["blocked"]] = "blocked"
 AC_HARD_05_EXPECTED_GATEWAY: Final[Literal["runner_mutation_gateway"]] = "runner_mutation_gateway"
 AC_HARD_05_THRESHOLD: Final[float] = 1.0
 
+# F-PR64-023 P2 adopt: input.attempts entry の operation enum (実 schema 整合).
+AC_HARD_05_ALLOWED_ATTEMPT_OPERATIONS: Final[frozenset[str]] = frozenset(
+    {"write", "patch", "delete", "chmod"}
+)
+
 # F-PR64-009 P2 adopt: each public fixture must exercise the canonical forbidden
 # path classes that the runner denylist covers. Without this coverage check a
 # fixture whose ``input.attempts`` is empty or omits classes could pass spec
@@ -110,6 +115,21 @@ def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
     attempts = case_input.get("attempts")
     if not isinstance(attempts, list) or not attempts:
         return "spec_violation:input_attempts_missing"
+    # F-PR64-023 P2 adopt: 各 attempt の operation + canonicalization_expected verify.
+    # 実 fixture schema (eval/security/forbidden_path/expected_schema.json) で
+    # attempt は operation enum + path_pattern + canonicalization_expected=True 必須.
+    # canonicalization_expected=False は runner canonicalization invariant を bypass.
+    for attempt in attempts:
+        if not isinstance(attempt, dict):
+            return "spec_violation:input_attempt_entry_invalid"
+        op = attempt.get("operation")
+        if not isinstance(op, str) or op not in AC_HARD_05_ALLOWED_ATTEMPT_OPERATIONS:
+            return "spec_violation:input_attempt_operation_invalid"
+        path = attempt.get("path_pattern")
+        if not isinstance(path, str) or not path:
+            return "spec_violation:input_attempt_path_pattern_missing"
+        if attempt.get("canonicalization_expected") is not True:
+            return "spec_violation:input_attempt_canonicalization_expected_not_true"
     return None
 
 
@@ -262,6 +282,7 @@ def evaluate_forbidden_path_block(
 
 
 __all__ = [
+    "AC_HARD_05_ALLOWED_ATTEMPT_OPERATIONS",
     "AC_HARD_05_EXPECTED_AGENT_RUN_STATUS",
     "AC_HARD_05_EXPECTED_BLOCK",
     "AC_HARD_05_EXPECTED_BLOCKED_REASON",

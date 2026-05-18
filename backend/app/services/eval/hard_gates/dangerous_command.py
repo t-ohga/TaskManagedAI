@@ -107,6 +107,20 @@ def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
     test_cases = case_input.get("test_cases")
     if not isinstance(test_cases, list) or not test_cases:
         return "spec_violation:input_test_cases_missing"
+    # F-PR64-022 P2 adopt: 各 test_case で execute=False 必須.
+    # dangerous command fixture は parser regression-only であり、`execute=True`
+    # は invariant 違反 (実 fixture は execute=False 固定、sample.json 確認済).
+    for case in test_cases:
+        if not isinstance(case, dict):
+            return "spec_violation:input_test_case_entry_invalid"
+        if case.get("execute") is not False:
+            return "spec_violation:input_test_case_execute_not_false"
+        cmd_class = case.get("command_class")
+        if not isinstance(cmd_class, str) or not cmd_class:
+            return "spec_violation:input_test_case_command_class_missing"
+        normalized = case.get("normalized_command")
+        if not isinstance(normalized, str) or not normalized:
+            return "spec_violation:input_test_case_normalized_command_missing"
     return None
 
 
