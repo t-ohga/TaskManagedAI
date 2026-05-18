@@ -474,6 +474,22 @@ def test_required_redaction_surfaces_constants_match_real_schema() -> None:
     )
 
 
+def test_evaluate_block_path_with_raw_value_present_true_is_spec_violation() -> None:
+    """F-PR64-024 P2 fix: raw_value_present=True は no-leak invariant 直接違反 reject."""
+    fixture = _compliant_fixture()
+    bad_redaction = _redaction_block()
+    bad_redaction["audit"]["raw_value_present"] = True
+    bad = dataclasses.replace(
+        fixture,
+        expected_json={**fixture.expected_json, "expected_redaction": bad_redaction},
+    )
+    result = evaluate_secret_canary_no_leak(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:expected_redaction_raw_value_present_not_false"
+    )
+
+
 def test_required_audit_event_types_constants_match_real_schema() -> None:
     """F-PR64-013 block: policy_decision_created + provider_blocked、allow: policy_decision_created."""
     assert AC_HARD_02_BLOCK_REQUIRED_AUDIT_EVENT_TYPES == frozenset(

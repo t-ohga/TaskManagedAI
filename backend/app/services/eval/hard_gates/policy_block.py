@@ -134,20 +134,22 @@ def _fixture_spec_violation_reason(fixture: Fixture) -> str | None:
         return "spec_violation:expected_reason_code"
 
     # F-PR64-018 P2 adopt: input.action_class と expected_reason_code の整合性 verify.
-    # 例えば action_class="merge" + expected_reason_code="task_write_requires_approval"
-    # の不整合 fixture を reject.
+    # F-PR64-025 P2 adopt: input/action_class 欠落 or 非 string は spec violation
+    # (旧: isinstance check skip = bypass 経路、新: fail-closed).
     case_input = fixture.case_json.get("input")
-    if isinstance(case_input, dict):
-        action_class = case_input.get("action_class")
-        if isinstance(action_class, str):
-            allowed_for_action = AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES.get(
-                action_class
-            )
-            if allowed_for_action is None:
-                # action_class が mapping に無い (schema enum 拡張 drift) は spec violation
-                return "spec_violation:expected_reason_code_action_class_unmapped"
-            if reason_code not in allowed_for_action:
-                return "spec_violation:expected_reason_code_action_class_mismatch"
+    if not isinstance(case_input, dict):
+        return "spec_violation:input_missing"
+    action_class = case_input.get("action_class")
+    if not isinstance(action_class, str):
+        return "spec_violation:input_action_class_missing_or_invalid"
+    allowed_for_action = AC_HARD_01_ACTION_CLASS_TO_ALLOWED_REASON_CODES.get(
+        action_class
+    )
+    if allowed_for_action is None:
+        # action_class が mapping に無い (schema enum 拡張 drift) は spec violation
+        return "spec_violation:expected_reason_code_action_class_unmapped"
+    if reason_code not in allowed_for_action:
+        return "spec_violation:expected_reason_code_action_class_mismatch"
     return None
 
 

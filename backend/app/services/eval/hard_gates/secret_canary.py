@@ -174,6 +174,11 @@ def _validate_redaction_expectations(fixture: Fixture) -> str | None:
             return "spec_violation:expected_redaction_redacted_value_mismatch"
         if entry.get("pattern_hit_kind") != top_pattern_hit_kind:
             return "spec_violation:expected_redaction_pattern_hit_kind_mismatch"
+        # F-PR64-024 P2 adopt: raw_value_present は実 schema で全 case False 必須.
+        # AC-HARD-02 の no-leak invariant の直接証拠であり、True なら canary が
+        # plaintext で残存している宣言となり gate fail.
+        if entry.get("raw_value_present") is not False:
+            return "spec_violation:expected_redaction_raw_value_present_not_false"
 
     return None
 

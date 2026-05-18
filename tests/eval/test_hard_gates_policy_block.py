@@ -305,6 +305,42 @@ def test_unknown_action_class_denied_reason_with_known_action_is_spec_violation(
     )
 
 
+def test_input_missing_action_class_is_spec_violation() -> None:
+    """F-PR64-025 P2 fix: input.action_class 欠落は fail-closed reject (旧 bypass 経路)."""
+    fixture = _compliant_fixture()
+    bad = dataclasses.replace(
+        fixture,
+        case_json={"input": {}},  # action_class missing
+    )
+    result = evaluate_policy_block_recall(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:input_action_class_missing_or_invalid"
+    )
+
+
+def test_input_action_class_non_string_is_spec_violation() -> None:
+    """F-PR64-025 P2 fix: action_class が非 string (None / int / list) は fail-closed reject."""
+    fixture = _compliant_fixture()
+    bad = dataclasses.replace(
+        fixture,
+        case_json={"input": {"action_class": 42}},
+    )
+    result = evaluate_policy_block_recall(_loaded_corpus((bad,)))
+    assert (
+        result.per_fixture[0].spec_violation_reason
+        == "spec_violation:input_action_class_missing_or_invalid"
+    )
+
+
+def test_input_section_missing_is_spec_violation() -> None:
+    """F-PR64-025 P2 fix: input section 欠落 / 非 dict は fail-closed reject."""
+    fixture = _compliant_fixture()
+    bad = dataclasses.replace(fixture, case_json={})  # input missing
+    result = evaluate_policy_block_recall(_loaded_corpus((bad,)))
+    assert result.per_fixture[0].spec_violation_reason == "spec_violation:input_missing"
+
+
 def test_unknown_resource_ref_denied_reason_accepts_all_known_actions() -> None:
     """F-PR64-020 P2 fix: ADR-00009 で `unknown_resource_ref_denied` は全 known action で general outcome.
 
