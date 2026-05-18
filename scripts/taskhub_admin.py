@@ -5,8 +5,10 @@ Sprint 12 batch 7 では **subcommand structure + exit code contract** のみ
 確立。real backup / restore / migrate / age-rotate / verify の I/O 実装は
 user 物理 drill phase で配備.
 
-Subcommands (ADR-00021 §3 table + §11.5 multi-agent fixture):
-- `taskhub backup --output <path> [--include-secrets]`: skeleton (drill 起点)
+Subcommands (ADR-00021 §3 table + §11.1 hardening + §11.5 multi-agent fixture):
+- `taskhub init --host <name> --tailnet <ts.net>`: skeleton (target host bootstrap、§3 line 151)
+- `taskhub backup --output <path> [--include-sops-env]`: skeleton (drill 起点、§11.1 PG-F-015
+  hardening: SOPS-encrypted env のみ、age private key は絶対含まない、旧 --include-secrets 名は fail)
 - `taskhub restore --input <path>`: skeleton
 - `taskhub migrate --target <hostname>`: skeleton (one-shot host migration)
 - `taskhub status`: skeleton (host status / service health / data size)
@@ -55,20 +57,51 @@ def _skeleton_message(subcommand: str, details: str = "") -> str:
     return "\n".join(lines)
 
 
+def _cmd_init(args: argparse.Namespace) -> int:
+    """`taskhub init --host <name> --tailnet <ts.net>` skeleton (target host bootstrap).
+
+    ADR-00021 §3 line 151 で host migration drill の step 4 (target host で
+    `taskhub init`) として明示、新 host 初回 setup の起点 CLI.
+    """
+    if not args.host:
+        print("ERROR: --host <name> is required", file=sys.stderr)  # noqa: T201
+        return 2
+    if not args.tailnet:
+        print("ERROR: --tailnet <ts.net> is required", file=sys.stderr)  # noqa: T201
+        return 2
+    print(  # noqa: T201
+        _skeleton_message(
+            "init",
+            details=(
+                f"Would bootstrap target host {args.host} (tailnet {args.tailnet}). "
+                "Real flow: Docker volume 作成 -> age key 生成 (existing なら skip) "
+                "-> closed-network serve config 設定 -> .env.example から "
+                ".env.encrypted 雛形生成."
+            ),
+        )
+    )
+    return 1  # skeleton mode
+
+
 def _cmd_backup(args: argparse.Namespace) -> int:
-    """`taskhub backup --output <path> [--include-secrets]` skeleton (drill 起点)."""
+    """`taskhub backup --output <path> [--include-sops-env]` skeleton (drill 起点).
+
+    ADR-00021 §11.1 PG-F-015 hardening: 旧 `--include-secrets` を
+    `--include-sops-env` に rename. SOPS-encrypted .env のみを含め、age private
+    key は絶対含めない (CI test で verify 予定).
+    """
     if not args.output:
         print("ERROR: --output <path> is required", file=sys.stderr)  # noqa: T201
         return 2
-    suffix = " (with .env.encrypted)" if args.include_secrets else ""
+    suffix = " (with SOPS-encrypted .env)" if args.include_sops_env else ""
     print(  # noqa: T201
         _skeleton_message(
             "backup",
             details=(
                 f"Would create age-encrypted backup at {args.output}{suffix}. "
                 "Real flow: graceful service stop -> pg_dump + Redis BGSAVE + "
-                "artifacts tar (+ optional .env.encrypted) -> age 公開鍵で暗号化 "
-                "-> .tar.age 出力."
+                "artifacts tar (+ optional SOPS-encrypted .env、age private key は "
+                "絶対含まない) -> age 公開鍵で暗号化 -> .tar.age 出力."
             ),
         )
     )
@@ -192,8 +225,11 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    # ADR-00021 §3 + SP-012 §128 drill command (`taskhub backup`, `taskhub migrate`,
+    # 等) と整合させるため、parser prog 名は console_script entry point の
+    # `taskhub` に固定 (Codex R3 F-PR63-005 P3 adopt).
     parser = argparse.ArgumentParser(
-        prog="taskhub_admin",
+        prog="taskhub",
         description=(
             "taskhub admin CLI (Sprint 12 batch 7 skeleton、ADR-00021 §3). "
             "Real I/O is deferred to user physical drill phase."
@@ -204,6 +240,24 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         title="subcommands",
     )
+
+    sub_init = subparsers.add_parser(
+        "init",
+        help="bootstrap target host (Docker volume + age key + serve config)",
+    )
+    sub_init.add_argument(
+        "--host",
+        type=str,
+        required=True,
+        help="host name to bootstrap",
+    )
+    sub_init.add_argument(
+        "--tailnet",
+        type=str,
+        required=True,
+        help="closed-network tailnet domain (e.g. tail-xxxxx.ts.net)",
+    )
+    sub_init.set_defaults(func=_cmd_init)
 
     sub_backup = subparsers.add_parser(
         "backup",
@@ -216,9 +270,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="output path for .tar.age backup file",
     )
     sub_backup.add_argument(
-        "--include-secrets",
+        "--include-sops-env",
         action="store_true",
-        help="include .env.encrypted in backup (default: false)",
+        help=(
+            "include SOPS-encrypted .env only (default: false). "
+            "ADR-00021 §11.1 PG-F-015: age private key は絶対含めない、"
+            "旧 --include-secrets 名は廃止 (fail に分類)"
+        ),
     )
     sub_backup.set_defaults(func=_cmd_backup)
 

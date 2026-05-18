@@ -39,6 +39,26 @@ def test_cli_no_subcommand_returns_exit_2() -> None:
     assert "required" in result.stderr.lower() or "usage" in result.stderr.lower()
 
 
+def test_cli_init_requires_host_and_tailnet() -> None:
+    """`init` は --host + --tailnet 必須 (Codex R3 F-PR63-007 adopt、ADR-00021 §3 line 151)."""
+    result = _run_cli("init")
+    assert result.returncode == 2
+    # --host だけでは不足 (--tailnet も必須)
+    result_host_only = _run_cli("init", "--host", "t-ohga-vps")
+    assert result_host_only.returncode == 2
+
+
+def test_cli_init_skeleton_mode_matches_adr_drill_step4() -> None:
+    """`init --host <name> --tailnet <ts.net>` → skeleton + exit 1 (host migration drill step 4)."""
+    result = _run_cli(
+        "init", "--host", "t-ohga-vps", "--tailnet", "tail-xxxxx.ts.net"
+    )
+    assert result.returncode == 1
+    assert "[SKELETON] taskhub init" in result.stdout
+    assert "t-ohga-vps" in result.stdout
+    assert "tail-xxxxx.ts.net" in result.stdout
+
+
 def test_cli_backup_requires_output() -> None:
     """`backup` は --output 必須 (argparse required=True で exit 2、Codex R2 F-PR63-004 adopt)."""
     result = _run_cli("backup")
@@ -52,16 +72,28 @@ def test_cli_backup_skeleton_mode_returns_exit_1(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "[SKELETON] taskhub backup" in result.stdout
     assert str(target) in result.stdout
-    # default は include-secrets なし
-    assert "(with .env.encrypted)" not in result.stdout
+    # default は SOPS-encrypted env 含めない
+    assert "(with SOPS-encrypted .env)" not in result.stdout
 
 
-def test_cli_backup_include_secrets_option() -> None:
-    """`backup --output <path> --include-secrets` → skeleton message に secrets flag を含む."""
-    result = _run_cli("backup", "--output", "/tmp/secrets-backup.tar.age", "--include-secrets")  # noqa: S108
+def test_cli_backup_include_sops_env_option(tmp_path: Path) -> None:
+    """`backup --include-sops-env` (PG-F-015 hardening rename、Codex R3 F-PR63-006 adopt)."""
+    target = tmp_path / "secrets-backup.tar.age"
+    result = _run_cli("backup", "--output", str(target), "--include-sops-env")
     assert result.returncode == 1
     assert "[SKELETON] taskhub backup" in result.stdout
-    assert "(with .env.encrypted)" in result.stdout
+    assert "(with SOPS-encrypted .env)" in result.stdout
+    # age private key は絶対含めない invariant が message に明示される
+    assert "age private key は" in result.stdout and "絶対含まない" in result.stdout
+
+
+def test_cli_backup_old_include_secrets_flag_is_rejected(tmp_path: Path) -> None:
+    """旧 --include-secrets flag は ADR-00021 §11.1 PG-F-015 fix で廃止、argparse reject."""
+    target = tmp_path / "old-flag-backup.tar.age"
+    result = _run_cli("backup", "--output", str(target), "--include-secrets")
+    # argparse は未登録 flag に対して exit 2 + stderr に error
+    assert result.returncode == 2
+    assert "include-secrets" in result.stderr
 
 
 def test_cli_restore_requires_input() -> None:
@@ -198,7 +230,7 @@ def test_taskhub_console_script_entry_point_installed() -> None:
 
 
 def test_taskhub_console_script_help_includes_subcommands() -> None:
-    """`taskhub --help` で 6 subcommand 全件 (backup/restore/migrate/status/age-rotate/verify) を表示する."""
+    """`taskhub --help` で 7 subcommand 全件 (init/backup/restore/migrate/status/age-rotate/verify) を表示する."""
     taskhub_path = shutil.which("taskhub")
     if taskhub_path is None:
         # 上 test で fail 済、本 test は noop fallback
@@ -210,5 +242,30 @@ def test_taskhub_console_script_help_includes_subcommands() -> None:
         check=False,
     )
     assert result.returncode == 0
-    for cmd in ("backup", "restore", "migrate", "status", "age-rotate", "verify"):
+    for cmd in (
+        "init",
+        "backup",
+        "restore",
+        "migrate",
+        "status",
+        "age-rotate",
+        "verify",
+    ):
         assert cmd in result.stdout, f"missing subcommand `{cmd}` in taskhub --help"
+
+
+def test_taskhub_console_script_help_shows_taskhub_prog_name() -> None:
+    """`taskhub --help` の usage 行は `taskhub` を表示する (Codex R3 F-PR63-005 adopt、prog 名固定)."""
+    taskhub_path = shutil.which("taskhub")
+    if taskhub_path is None:
+        return
+    result = subprocess.run(  # noqa: S603
+        [taskhub_path, "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    # usage 行は `usage: taskhub ...` (旧 prog 名 `taskhub_admin` ではない)
+    assert "usage: taskhub " in result.stdout
+    assert "usage: taskhub_admin " not in result.stdout
