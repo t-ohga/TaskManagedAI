@@ -590,6 +590,54 @@ def test_inherited_dropin_directory_scanned(tmp_path: Path) -> None:
     assert "taskhub_destructive_subcommand" in output
 
 
+# ---- PR71 R7-002: ExecStart= regex newline consumption ----
+def test_exec_reset_followed_by_replacement_passes(tmp_path: Path) -> None:
+    """`ExecStart=\\nExecStart=/usr/bin/notify-send drill` (override pattern) must work."""
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir(parents=True)
+    (deploy_dir / "taskhub-drill-alert.timer").write_text(
+        "[Unit]\nDescription=drill\n\n[Timer]\nOnCalendar=*-01,07-01 09:00:00\n"
+        "Unit=taskhub-drill-alert.service\n",
+        encoding="utf-8",
+    )
+    (deploy_dir / "taskhub-drill-alert.service").write_text(
+        "[Service]\nType=oneshot\nExecStart=\nExecStart=/usr/bin/notify-send drill\n",
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 0, f"expected pass, got exit={exit_code} output={output}"
+
+
+# ---- PR71 R7-006: shell metacharacter quote-aware ----
+def test_quoted_metacharacters_pass(tmp_path: Path) -> None:
+    """`notify-send "Run drill?"` and `mail -s "R&D drill" ...` should NOT false-positive."""
+    _write_drill_timer_and_service(
+        tmp_path, '/usr/bin/notify-send "Run drill?" "Half-yearly"'
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 0, f"quoted ? must pass, got exit={exit_code} output={output}"
+
+
+# ---- PR71 R7-007 (P1): RootDirectory / RootImage remap ----
+def test_root_directory_remap_rejected(tmp_path: Path) -> None:
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir(parents=True)
+    (deploy_dir / "taskhub-drill-alert.timer").write_text(
+        "[Unit]\nDescription=drill\n\n[Timer]\nOnCalendar=*-01,07-01 09:00:00\n"
+        "Unit=taskhub-drill-alert.service\n",
+        encoding="utf-8",
+    )
+    (deploy_dir / "taskhub-drill-alert.service").write_text(
+        "[Service]\nType=oneshot\n"
+        "RootDirectory=/tmp/attacker\n"  # noqa: S108
+        "ExecStart=/usr/bin/notify-send drill\n",
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "root_remap" in output
+
+
 # ---- 11. cron env MAILTO (allowed env line) ----
 def test_cron_mailto_env_line_passes(tmp_path: Path) -> None:
     """`MAILTO=ops@example.com` does not trigger path-spoofing (only PATH/SHELL/BASH_ENV do)."""

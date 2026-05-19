@@ -58,13 +58,15 @@ DENYLIST_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\b(shutdown|reboot|poweroff|halt)\b", "host_power_destructive"),
 )
 
-# R1 F-005 + R2 F-PR70-T03-R2-002 + PR71 R2-003 + PR71 R3-003 (P1) adopt: shell composition.
-# Includes `~` / `*` / `?` shell expansion metacharacters because crontab(5) runs commands
-# via /bin/sh. PR71 R3-003 P1 adopt: `&` is a /bin/sh control operator even when adjacent to
-# words (no surrounding spaces) — `echo drill&/tmp/payload` runs `/tmp/payload` as a second
-# command, so any unquoted `&` (not part of `&&`) must be rejected.
-SHELL_COMPOSITION_RE = re.compile(
-    r"(\$\(|`|;|&&|\|\||\||>>?|<+|&|\s~/|\s~\s|\s~$|^\s*~|\*|\?)"
+# PR71 R7-006 adopt: split shell composition checks into two layers.
+# - SHELL_EVAL_IN_QUOTES_RE: metacharacters that POSIX shell evaluates even inside double
+#   quotes (`$(...)`, backtick, newline). Check on RAW command line (no quote stripping).
+# - SHELL_COMPOSITION_OUTSIDE_QUOTES_RE: metacharacters that are shell operators outside
+#   quotes but literal inside (`;`, `&&`, `||`, `|`, redirects, `&`, glob `*`/`?`/`~`).
+#   Check on QUOTE-STRIPPED text so `notify-send "Run drill?"` doesn't false-positive.
+SHELL_EVAL_IN_QUOTES_RE = re.compile(r"(\$\(|`)")
+SHELL_COMPOSITION_OUTSIDE_QUOTES_RE = re.compile(
+    r"(;|&&|\|\||\||>>?|<+|&|\s~/|\s~\s|\s~$|^\s*~|\*|\?)"
 )
 SHELL_NEWLINE_RE = re.compile(r"\n")
 
@@ -104,8 +106,12 @@ SYSTEMD_EXEC_DIRECTIVES: tuple[str, ...] = (
     "ExecStopPost",
     "ExecCondition",
 )
+# PR71 R7-002 adopt: restrict whitespace before/after `=` to horizontal whitespace only
+# so the regex never consumes a newline. The empty-reset directive form `ExecStart=`
+# (followed by another `ExecStart=...` on next line for systemd override) used to make
+# `\s*` swallow the newline and capture the next directive as the command body.
 SYSTEMD_EXEC_RE = re.compile(
-    r"^\s*(" + "|".join(SYSTEMD_EXEC_DIRECTIVES) + r")\s*=\s*(.+)$",
+    r"^[ \t]*(" + "|".join(SYSTEMD_EXEC_DIRECTIVES) + r")[ \t]*=[ \t]*(.+)$",
     re.MULTILINE,
 )
 
@@ -118,16 +124,24 @@ SYSTEMD_UNIT_RE = re.compile(r"^\s*Unit\s*=\s*(\S+)\s*$", re.MULTILINE)
 SYSTEMD_EXEC_SEARCH_PATH_RE = re.compile(
     r"^\s*ExecSearchPath\s*=", re.MULTILINE
 )
-# PR71 R5-003 + R6-002 adopt: cover unquoted, quoted (`Environment="PATH=..."`),
-# and multiple-assignment forms (`Environment=FOO=bar PATH=/tmp`).
+# PR71 R5-003 + R6-002 + R7-004 (P1) adopt: cover unquoted, quoted, multi-assignment forms.
+# R7-004 adopt: `Environment="FOO=bar" "PATH=/tmp/evil"` — multiple quoted assignments,
+# any of which can set PATH. Anchor at start of line, then match any occurrence of PATH=
+# in subsequent quoted/unquoted assignments.
 SYSTEMD_PATH_OVERRIDE_RE = re.compile(
-    r"""^\s*(
-        Environment\s*=\s*["']?\s*PATH\s*=
-        | Environment\s*=\s*["']?[^"'\n]*?\bPATH\s*=
-        | EnvironmentFile\s*=
-        | PassEnvironment\s*=\s*[^\n]*\bPATH\b
+    r"""^[ \t]*(
+        Environment[ \t]*=[ \t]*[^\n]*?\bPATH[ \t]*=
+        | EnvironmentFile[ \t]*=
+        | PassEnvironment[ \t]*=[ \t]*[^\n]*\bPATH\b
     )""",
     re.MULTILINE | re.VERBOSE,
+)
+# PR71 R7-007 (P1) adopt: RootDirectory / RootImage / RootEphemeral / BindPaths-style
+# directives can chroot the service to attacker-controlled filesystem, so even trusted
+# absolute paths like `/usr/bin/notify-send` resolve to attacker binaries.
+SYSTEMD_ROOT_REMAP_RE = re.compile(
+    r"^[ \t]*(RootDirectory|RootImage|RootImageOptions|RootEphemeral|BindPaths|BindReadOnlyPaths)[ \t]*=",
+    re.MULTILINE,
 )
 # PR71 R2-005 + R4-001 adopt: systemd Exec*= value can carry leading prefix characters
 # `-` ignore-failure, `+` privileged, `:` no env expansion, `!` user override, `!!` legacy,
@@ -215,9 +229,37 @@ def _read_text_or_none(path: Path) -> str | None:
         return None
 
 
+def _strip_quoted_text(cmd_line: str) -> str:
+    """PR71 R7-006 adopt: strip single/double-quoted text from the command line before
+    metacharacter check, so `notify-send "Run drill?"` does not flag the `?` inside the
+    user-facing message. Replaces quoted runs with a single space placeholder.
+
+    Note: This is intentionally conservative — quoted text can still contain real shell
+    composition (e.g., `"$(...)"`), so denylist + path-spoofing checks still run on the
+    full command line. Only the shell-composition regex sees a stripped view to reduce
+    false positives on legitimate quoted notification text.
+    """
+    # remove matched single-quoted strings
+    stripped = re.sub(r"'(?:[^'\\]|\\.)*'", " ", cmd_line)
+    # remove matched double-quoted strings
+    stripped = re.sub(r'"(?:[^"\\]|\\.)*"', " ", stripped)
+    return stripped
+
+
 def _check_shell_composition(cmd_line: str) -> tuple[str | None, str | None]:
-    """Return (reason_suffix, label) if shell composition detected, else (None, None)."""
-    if SHELL_COMPOSITION_RE.search(cmd_line) or SHELL_NEWLINE_RE.search(cmd_line):
+    """Return (reason_suffix, label) if shell composition detected, else (None, None).
+
+    PR71 R7-006 adopt: two-layer check.
+    - RAW check: `$(...)`, backtick, newline (POSIX shell evaluates these even inside `"..."`).
+    - QUOTE-STRIPPED check: `;`, `&&`, `||`, `|`, redirects, `&`, glob `*`/`?`/`~`
+      (literal inside quotes).
+    """
+    # 1. raw: shell expansions that are evaluated inside double quotes too
+    if SHELL_EVAL_IN_QUOTES_RE.search(cmd_line) or SHELL_NEWLINE_RE.search(cmd_line):
+        return ("shell_composition", "metacharacter_or_composition")
+    # 2. quote-stripped: operators that are literal inside quotes
+    stripped = _strip_quoted_text(cmd_line)
+    if SHELL_COMPOSITION_OUTSIDE_QUOTES_RE.search(stripped):
         return ("shell_composition", "metacharacter_or_composition")
     return (None, None)
 
@@ -408,19 +450,31 @@ def check_systemd_files(scan_files: list[Path] | None, root: Path) -> list[str]:
                             service_files.append(conf)
     else:
         timer_files = [p for p in scan_files if p.suffix == ".timer" and p.exists()]
-        # PR71 R2-001 adopt: diff-gate でも `*drill*.service` のみ standalone scan。
-        # PR71 R3-002 (P1) adopt: 加えて non-drill 名の changed `.service` で repo 内 timer
-        # から reference があるもの (`[Timer] Unit=<changed_service>`) は drill-paired として
-        # scan に追加 (drill-name filter で drop されないように)。
-        # PR71 R4-002 (P1) adopt: include drop-in override `.conf` files (`*.service.d/<x>.conf`)
-        # in scope; drill-named drop-ins are scanned same way as `.service`.
-        changed_services = [p for p in scan_files if p.suffix == ".service" and p.exists()]
-        changed_dropins = [
+        # PR71 R7-005 (P1) adopt: `.timer.d/*.conf` drop-in も timer として load し
+        # `[Timer] Unit=<X>` override を考慮 (timer drop-in が destructive service へ
+        # redirect する bypass を防ぐ)
+        timer_dropins = [
             p
             for p in scan_files
-            if p.suffix == ".conf" and ".service.d" in str(p) and p.exists() and "drill" in str(p)
+            if p.suffix == ".conf" and ".timer.d" in str(p) and p.exists() and "drill" in str(p)
         ]
+        # PR71 R2-001 + R3-002 + R4-002 adopt + R7-001/003 (P1):
+        # - drill-named `.service` standalone scan
+        # - non-drill paired service が drill timer referenced なら追加
+        # - drill-named drop-in `.conf` scan
+        # - PR71 R7-003 (P1) adopt: non-drill paired service の drop-in が changed なら、
+        #   timer から reference を resolve して scan に追加
+        changed_services = [p for p in scan_files if p.suffix == ".service" and p.exists()]
+        changed_dropins_all = [
+            p
+            for p in scan_files
+            if p.suffix == ".conf" and ".service.d" in str(p) and p.exists()
+        ]
+        changed_dropins = [p for p in changed_dropins_all if "drill" in str(p)]
+        non_drill_dropins = [p for p in changed_dropins_all if "drill" not in str(p)]
         service_files = [p for p in changed_services if "drill" in p.name] + changed_dropins
+        # add timer drop-ins to timer_files (R7-005)
+        timer_files.extend(timer_dropins)
         # discover existing timers that reference changed non-drill services
         non_drill_changed_services = [p for p in changed_services if "drill" not in p.name]
         if non_drill_changed_services:
@@ -441,13 +495,37 @@ def check_systemd_files(scan_files: list[Path] | None, root: Path) -> list[str]:
                         if changed_svc not in service_files:
                             service_files.append(changed_svc)
                         # PR71 R5-001 (P1) adopt: scan paired non-drill service の drop-in
-                        # `<service>.service.d/*.conf` も含める (changed_dropins から拾えない場合
-                        # でも repo 全 drop-in scan で発見できるよう、baseline glob で resolve)。
+                        # `<service>.service.d/*.conf` も含める
                         dropin_dir = changed_svc.parent / f"{changed_svc.name}.d"
                         if dropin_dir.exists():
                             for conf in dropin_dir.glob("*.conf"):
                                 if conf not in service_files:
                                     service_files.append(conf)
+        # PR71 R7-003 (P1) adopt: changed non-drill `.service.d/*.conf` for paired non-drill
+        # service referenced by ANY drill timer must be scanned (diff-gate)
+        if non_drill_dropins:
+            for timer_path in _iter_glob(root, SCAN_TIMER_GLOBS):
+                if timer_path in timer_files:
+                    continue
+                content = _read_text_or_none(timer_path)
+                if content is None:
+                    continue
+                unit_match = SYSTEMD_UNIT_RE.search(content)
+                if not unit_match:
+                    continue
+                referenced_unit = unit_match.group(1)
+                # check if any non_drill_dropin belongs to referenced service
+                # path: `.../send-alert.service.d/override.conf`、parent dir basename
+                # `send-alert.service.d` から service name 取り出し
+                for dropin_conf in non_drill_dropins:
+                    parent_name = dropin_conf.parent.name
+                    if not parent_name.endswith(".service.d"):
+                        continue
+                    referred_service_name = parent_name[:-len(".d")]  # `send-alert.service`
+                    if referred_service_name == referenced_unit:
+                        timer_files.append(timer_path)
+                        if dropin_conf not in service_files:
+                            service_files.append(dropin_conf)
         # PR71 R1-005 adopt: diff-gate で deleted `.service` の paired-missing check
         # changed list 内に deleted `.service` (exists() false) があれば、同名 / 関連 `.timer`
         # を repo baseline から探して `timer_files` に load し、paired-service-missing で
@@ -512,6 +590,15 @@ def check_systemd_files(scan_files: list[Path] | None, root: Path) -> list[str]:
                 f"VIOLATION reason_code=framework_intake_violation_drill_timer_alert_only_path_override_env "
                 f"evidence={spath}:{line_num} directive=Environment/EnvironmentFile/PassEnvironment "
                 f"label=path_spoofing_via_systemd_env"
+            )
+        # PR71 R7-007 (P1) adopt: RootDirectory= / RootImage= / RootEphemeral= / BindPaths
+        # remap the service filesystem; trusted absolute paths resolve to attacker binaries.
+        for rr_match in SYSTEMD_ROOT_REMAP_RE.finditer(content):
+            line_num = content[: rr_match.start()].count("\n") + 1
+            directive = rr_match.group(1)
+            violations.append(
+                f"VIOLATION reason_code=framework_intake_violation_drill_timer_alert_only_root_remap "
+                f"evidence={spath}:{line_num} directive={directive} label=root_filesystem_remap"
             )
         for match in SYSTEMD_EXEC_RE.finditer(content):
             directive = match.group(1)

@@ -696,4 +696,31 @@ R6 regression fixture 4 件追加: `test_quoted_path_override_rejected` (R6-002)
 
 累計 fixture: **45 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 3 + R2 5 + R3 3 + R4 3 + R5 4 + R6 4)。
 
+#### PR #71 Codex auto-review R7 — 20 inline findings (P1×8 + P2×12) (7 adopt + 13 reject stale)
+
+R7 で 20 件 emit、真に新 7 件 (P1×5 + P2×2)、stale 13 件 (R1-R6 既 adopt)。
+
+| ID | priority | symptom (要約) | 判定 |
+|---|---|---|---|
+| R7-001 NEW | **P1** | diff-gate で timer changed PR、paired service の drop-in scan 漏れ | adopt |
+| R7-002 NEW | P2 | `ExecStart=` regex `\s*` で newline consume、override pattern (`ExecStart=` + 次行 `ExecStart=...`) で誤動作 | adopt |
+| R7-003 NEW | **P1** | non-drill paired service の changed `.service.d/*.conf` drop-in 漏れ (drill name filter で drop) | adopt |
+| R7-004 NEW | **P1** | quoted multi-Environment 後の `"PATH=..."` 検出漏れ | adopt |
+| R7-005 NEW | **P1** | timer drop-in `.timer.d/*.conf` で `[Timer] Unit=` override scan 漏れ | adopt |
+| R7-006 NEW | P2 | shell metacharacter regex が quoted text 内も誤検出 (`Run drill?` `R&D drill` 等) | adopt (2-layer check: `$()`/backtick は raw、`;\|&&\|\|\|\|\|>><<&*?~` は quote-stripped) |
+| R7-007 NEW | **P1** | `RootDirectory=` / `RootImage=` で trusted absolute path を attacker root に remap 可能 | adopt |
+| R7-008 to R7-020 (13 件 stale) | - | R1-R6 既 adopt re-emission | reject |
+
+実装:
+- `_drill_timer_scanner.py`:
+  - `SYSTEMD_EXEC_RE` の `\s*` を `[ \t]*` に変更、newline consumption 防止 (R7-002)
+  - `SYSTEMD_PATH_OVERRIDE_RE` を multi-assignment 対応 (R7-004 P1)
+  - `SYSTEMD_ROOT_REMAP_RE` 追加: `RootDirectory` / `RootImage` / `RootEphemeral` / `BindPaths*` 検出 (R7-007 P1)
+  - shell composition を 2-layer に分離 (R7-006): raw で `$()`/backtick/newline、quote-stripped で `;|&&|||||>><<&*?~`
+  - diff-gate scan_files で timer dropins `.timer.d/*.conf` + non-drill paired service drop-in 探索追加 (R7-001 P1 + R7-003 P1 + R7-005 P1)
+
+R7 regression fixture 3 件追加: `test_exec_reset_followed_by_replacement_passes` (R7-002) / `test_quoted_metacharacters_pass` (R7-006) / `test_root_directory_remap_rejected` (R7-007 P1)。
+
+累計 fixture: **48 pytest fixture 全 PASS** (failed: 0、plan 23 + R1 3 + R2 5 + R3 3 + R4 3 + R5 4 + R6 4 + R7 3)。
+
 (後続: SP-022 完了時に T02 / T04-T09 全体 Review を追記)
