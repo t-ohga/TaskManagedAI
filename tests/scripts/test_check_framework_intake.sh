@@ -566,6 +566,85 @@ test_persistence_in_domain_or_middleware() {
     cd "$REPO_ROOT"
 }
 
+# ---- 26. test: PR70 R4 F-PR70-R4-002 - dependency-groups license check ----
+# R3-001 で core filter を [project.dependencies] のみに絞ったのが副作用、
+# `[dependency-groups].dev` も uv sync default で install されるので license check すべき
+test_dependency_groups_license_checked() {
+    local d="$TMPDIR_BASE/dep_groups_license_$$"
+    setup_fake_repo "$d"
+    # [dependency-groups].dev に未インストール pkg 追加 (license check で empty → violation 期待)
+    cat > pyproject.toml <<'PY'
+[project]
+name = "taskmanagedai-test-fixture"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = ["unknown-dev-group-pkg"]
+
+[tool.setuptools.packages.find]
+include = ["backend*", "scripts*"]
+PY
+    git add -A; git commit -q -m "add dep-groups dev pkg"
+    run_script_pr
+    # license check は core (deps + dep-groups) を対象、未インストール pkg は license empty で violation
+    assert_exit_code "$LAST_EXIT" 1 "dep_groups_license_violation_exit1"
+    assert_stdout_contains "framework_intake_violation_license" "dep_groups_license_reason"
+    cd "$REPO_ROOT"
+}
+
+# ---- 27. test: PR70 R4 F-PR70-R4-003 - Python dynamic import detection ----
+test_python_dynamic_import_detection() {
+    local d="$TMPDIR_BASE/dynamic_import_$$"
+    setup_fake_repo "$d"
+    cat > backend/app/services/research/dynamic_loader.py <<'PY'
+import importlib
+mod = importlib.import_module("langgraph")
+other = __import__("crewai")
+PY
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "dynamic imports"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "dynamic_import_violation_exit1"
+    assert_stdout_contains "python_dynamic_import" "dynamic_import_detail"
+    cd "$REPO_ROOT"
+}
+
+# ---- 28. test: PR70 R4 F-PR70-R4-004 - semantic_kernel denylist ----
+test_semantic_kernel_denylist() {
+    local d="$TMPDIR_BASE/semantic_kernel_$$"
+    setup_fake_repo "$d"
+    echo "import semantic_kernel" > backend/app/services/research/sk.py
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "semantic_kernel import"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "semantic_kernel_violation_exit1"
+    assert_stdout_contains "framework_intake_violation_code_embed" "semantic_kernel_reason"
+    cd "$REPO_ROOT"
+}
+
+# ---- 29. test: PR70 R4 F-PR70-R4-005 - psycopg class-level connect ----
+test_psycopg_class_level_connect() {
+    local d="$TMPDIR_BASE/psycopg_class_$$"
+    setup_fake_repo "$d"
+    cat > backend/app/services/research/db.py <<'PY'
+import psycopg
+async def get():
+    conn = await psycopg.AsyncConnection.connect("postgres://...")
+    return conn
+PY
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "psycopg class-level connect"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "psycopg_class_violation_exit1"
+    assert_stdout_contains "class_level_connect" "psycopg_class_detail"
+    cd "$REPO_ROOT"
+}
+
 # ---- run all ----
 TMPDIR_BASE=$(mktemp -d -t sp022_t01_fixture.XXXXXX)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
@@ -598,6 +677,10 @@ test_persistence_in_api_or_workers
 test_docker_compose_external_network
 test_optional_extras_skipped_for_license
 test_persistence_in_domain_or_middleware
+test_dependency_groups_license_checked
+test_python_dynamic_import_detection
+test_semantic_kernel_denylist
+test_psycopg_class_level_connect
 
 echo ""
 echo "== Summary =="

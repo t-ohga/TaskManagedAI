@@ -37,6 +37,8 @@ PY_DENYLIST_FRAMEWORKS: tuple[str, ...] = (
     "dify_client",
     "openhands",
     "taskingai",
+    # PR70 R4 F-PR70-R4-004 adopt: Semantic Kernel (10-framework candidate ledger entry)
+    "semantic_kernel",
 )
 NPM_DENYLIST_FRAMEWORKS: tuple[str, ...] = (
     "langgraph",
@@ -145,6 +147,12 @@ def check_no_code_embed() -> list[str]:
         + r")(\s|,|\.|$)",
         re.MULTILINE,
     )
+    # PR70 R4 F-PR70-R4-003 adopt: detect Python dynamic imports
+    # `importlib.import_module("langgraph")` / `__import__("crewai")`
+    py_alts = "|".join(re.escape(n) for n in PY_DENYLIST_FRAMEWORKS)
+    py_dynamic_pattern = re.compile(
+        r"""(?:importlib\.import_module|__import__)\s*\(\s*['"](""" + py_alts + r""")['"]"""
+    )
     for path in _iter_python_files(BACKEND_SCAN_ROOTS):
         content = _read_text_or_none(path)
         if content is None:
@@ -154,6 +162,12 @@ def check_no_code_embed() -> list[str]:
             violations.append(
                 f"VIOLATION reason_code=framework_intake_violation_code_embed "
                 f"evidence={path}:{line_num} framework={match.group(2)} detail=python_import"
+            )
+        for match in py_dynamic_pattern.finditer(content):
+            line_num = content[: match.start()].count("\n") + 1
+            violations.append(
+                f"VIOLATION reason_code=framework_intake_violation_code_embed "
+                f"evidence={path}:{line_num} framework={match.group(1)} detail=python_dynamic_import"
             )
 
     # PR70 F-PR70-005 adopt: include side-effect import `import "@scope/name";`
@@ -179,9 +193,12 @@ def check_no_code_embed() -> list[str]:
 def check_persistence() -> list[str]:
     violations: list[str] = []
     sqlite_pattern = re.compile(r"^\s*(import\s+sqlite3|from\s+sqlite3\s+import)", re.MULTILINE)
-    # PR70 R2 F-PR70-R2-003 adopt: also detect `from psycopg import connect` alias usage
-    # by flagging both the import-from-form AND the bare `psycopg.connect(` / `psycopg2.connect(`.
+    # PR70 R2 F-PR70-R2-003 + R4 F-PR70-R4-005 adopt:
+    # - module-qualified `psycopg.connect(` / `psycopg2.connect(`
+    # - `from psycopg import connect` alias
+    # - class-level `psycopg.AsyncConnection.connect(` / `psycopg.Connection.connect(`
     psycopg_pattern = re.compile(r"psycopg2?\.connect\(")
+    psycopg_class_connect = re.compile(r"psycopg2?\.(?:Async)?Connection\.connect\(")
     psycopg_import_connect = re.compile(
         r"^\s*from\s+psycopg2?\s+import\s+(?:[^#\n]*?\b)?connect\b", re.MULTILINE
     )
@@ -200,6 +217,12 @@ def check_persistence() -> list[str]:
             violations.append(
                 f"VIOLATION reason_code=framework_intake_violation_persistence "
                 f"evidence={path}:{line_num} framework=psycopg detail=direct_connect"
+            )
+        for match in psycopg_class_connect.finditer(content):
+            line_num = content[: match.start()].count("\n") + 1
+            violations.append(
+                f"VIOLATION reason_code=framework_intake_violation_persistence "
+                f"evidence={path}:{line_num} framework=psycopg detail=class_level_connect"
             )
         for match in psycopg_import_connect.finditer(content):
             line_num = content[: match.start()].count("\n") + 1

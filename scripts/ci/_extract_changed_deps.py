@@ -40,11 +40,13 @@ def _parse_dep_name(spec: str) -> str | None:
 def load_pyproject_at(ref: str | None, scope: str = "all") -> set[str]:
     """Load direct dependency names from pyproject.toml at given git ref (or working tree).
 
-    PR70 R3 F-PR70-R3-001 adopt: scope filter
-    - "core": [project.dependencies] only — used by check_license (only deps installed by
-      default `uv sync --locked`, which does not install optional-dependencies extras).
-    - "extras": [project.optional-dependencies.*] + [dependency-groups].* only.
-    - "all": all of the above (used by check_attribution).
+    PR70 R3 F-PR70-R3-001 + R4 F-PR70-R4-002 adopt: scope filter
+    - "core": [project.dependencies] + [dependency-groups].* — used by check_license.
+      Both are installed by default `uv sync --locked` (dev groups install unless `--no-dev`),
+      so license verification must cover them. `[project.optional-dependencies.*]` is excluded
+      because uv extras are only installed when `--extra <name>` / `--all-extras` is passed.
+    - "extras": [project.optional-dependencies.*] only (citation-only, not license-checked).
+    - "all": core + extras (used by check_attribution; citation needed regardless of install).
     """
     if ref is None:
         path = Path("pyproject.toml")
@@ -78,20 +80,21 @@ def load_pyproject_at(ref: str | None, scope: str = "all") -> set[str]:
             if name:
                 deps.add(name)
 
-    if scope in ("extras", "all"):
-        # [project.optional-dependencies.*]
-        for _, items in (project.get("optional-dependencies") or {}).items():
-            for dep_spec in items:
-                name = _parse_dep_name(dep_spec)
-                if name:
-                    deps.add(name)
-
-        # [dependency-groups].* (R2 F-003 adopt: uv direct dev/group dependency)
+        # [dependency-groups].* (R2 F-003 + R4 F-PR70-R4-002 adopt: uv direct dev/group
+        # dependency, installed by `uv sync --locked` default unless `--no-dev` is passed)
         for _, items in (data.get("dependency-groups") or {}).items():
             for dep_spec in items:
                 if not isinstance(dep_spec, str):
                     # `{include-group = "..."}` 形式は対象外 (include-group 名のみ参照)
                     continue
+                name = _parse_dep_name(dep_spec)
+                if name:
+                    deps.add(name)
+
+    if scope in ("extras", "all"):
+        # [project.optional-dependencies.*] (uv extras: only installed when --extra is passed)
+        for _, items in (project.get("optional-dependencies") or {}).items():
+            for dep_spec in items:
                 name = _parse_dep_name(dep_spec)
                 if name:
                     deps.add(name)

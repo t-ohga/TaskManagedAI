@@ -355,6 +355,32 @@ R3 regression fixture 2 件 (`test_optional_extras_skipped_for_license` + `test_
 
 R1+R2+R3 累計: **25 fixture × 51 assertion 全 PASS** (failed: 0)。**15 adopt findings** (R1=7 + R2=5 + R3=2 + 1 fixture 仕様変更を含む 18 total impact 1 仕様変更 = 18-15 fix 単位 = 計画通り) + 2 defer (R2-002 / R3-002、frontend license + adoption.md 個別 verify は SP-022.X post-T01) + 6 reject (R3 stale re-emission)。
 
+#### PR #70 Codex auto-review R4 — 10 inline findings (4 adopt + 1 defer + 5 reject as stale re-emission)
+
+`@codex review` mention 経由で 0c07fff (R3 fix commit) 再 review、R4 で 10 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R4-001 (npm license) | P2 | npm 追加 PR で license check が `extract_changed_deps_pypi_core` のみ実行、frontend license verify されない | **defer** | R2-002 / R3-010 と同 finding、SP-022.X (post-T01) で実施 |
+| R4-002 (NEW、R3-001 副作用) | P2 | `[dependency-groups].dev` も `uv sync --locked` default で install されるのに R3-001 で `core` scope から除外 → dev framework license bypass | **adopt** | `_extract_changed_deps.py` scope=core を `[project.dependencies] + [dependency-groups].*` に再定義、optional-dependencies のみ extras (license 対象外、`--extra` flag なしで未 install のため) |
+| R4-003 (NEW) | P2 | Python dynamic import `importlib.import_module("langgraph")` / `__import__("crewai")` を no-code-embed rule が検出しない | **adopt** | `_intake_scanner.py::check_no_code_embed` に `py_dynamic_pattern` 追加 |
+| R4-004 (NEW) | P2 | 10 framework 候補のうち Semantic Kernel (Python module `semantic_kernel`) が `PY_DENYLIST_FRAMEWORKS` に抜け | **adopt** | `PY_DENYLIST_FRAMEWORKS` に `semantic_kernel` 追加 |
+| R4-005 (NEW) | P2 | `psycopg.AsyncConnection.connect(...)` / `psycopg.Connection.connect(...)` class-level connect が `psycopg2?\.connect\(` regex で検出されない (中間 Connection class) | **adopt** | `psycopg_class_connect = re.compile(r"psycopg2?\.(?:Async)?Connection\.connect\(")` 追加 |
+| R4-006 to R4-010 (5 件) | P2 | "Scan Next.js root instrumentation" / "Catch imported psycopg connect aliases" / "Include optional frontend dependencies" / "Include deployment YAML" / "Enforce citation artifact" | **reject as stale re-emission** | R2/R3 で既 adopt 実装済 (code grep verify)、R3-002 defer は SP-022.X 維持 |
+
+**Stale re-emission rationale**: 5 件 R4 re-emission は code grep + R2/R3 commit comment ('PR70 R2 F-PR70-R2-XXX adopt' marker) で verify (R2 commit 44c18fe / R3 commit 0c07fff で全件 fix 済)。`feedback_codex_r2_reemission_reject_trap.md` 教訓: code grep + R2/R3 regression fixture PASS で実体検証してから reject 確定。
+
+実装:
+- `_extract_changed_deps.py`: `load_pyproject_at` scope=core を `[project.dependencies] + [dependency-groups].*` に再定義 (R4-002)
+- `_intake_scanner.py`:
+  - `PY_DENYLIST_FRAMEWORKS` に `semantic_kernel` 追加 (R4-004)
+  - `check_no_code_embed` に `py_dynamic_pattern` (importlib.import_module / __import__) 追加 (R4-003)
+  - `check_persistence` に `psycopg_class_connect` regex 追加 (R4-005)
+
+R4 regression fixture 4 件追加: `test_dependency_groups_license_checked` (R4-002) / `test_python_dynamic_import_detection` (R4-003) / `test_semantic_kernel_denylist` (R4-004) / `test_psycopg_class_level_connect` (R4-005)。
+
+R1+R2+R3+R4 累計: **29 fixture × 59 assertion 全 PASS** (failed: 0)。**19 adopt findings** (R1=7 + R2=5 + R3=2 + R4=4 + 1 fixture 仕様変更) + 2 defer (R2-002 / R3-002 / R4-001 / R4-010 = 同 root issue SP-022.X) + 11 reject (R3 stale 6 + R4 stale 5)。
+
 #### Emergency disable audit format
 
 CI gate を緊急 disable する場合、admin が GitHub Settings → Variables で `FRAMEWORK_INTAKE_CHECK_DISABLED=1` を設定。本 sprint pack の `## Review` 内に以下を 24h 以内に記録 (R1 F-013 adopt):
