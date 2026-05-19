@@ -511,4 +511,42 @@ CI gate を緊急 disable する場合、admin が GitHub Settings → Variables
 
 将来の hook polish 候補: `target=yes` 判定で `.github/workflows/` を `.github/` 全体除外、または regex を refine。本 task の scope 外、SP-022 別 task or post-P0.1 で対応判断。
 
-(後続: SP-022 完了時に T02-T09 全体 Review を追記)
+### SP022-T03 半年 drill scheduling SOP completion (2026-05-19)
+
+#### 実装ファイル
+
+- `scripts/ci/check_drill_timer_alert_only.sh` (新規、CI entry point、diff-gate / baseline-scan 2 mode + emergency disable repository variable + R2 F-PR70-T03-R2-001 NUL byte temp file 経由)
+- `scripts/ci/_drill_timer_scanner.py` (新規、Python scanner、systemd `Exec*=` 全 directive + cron 5/6-field + `@daily` macro + cron env line PATH/SHELL/BASH_ENV fail-closed + TRUSTED_PATH_PREFIXES 検証 + shell composition 検出)
+- `tests/deploy/__init__.py` + `tests/deploy/test_drill_timer_alert_only.py` (新規、**23 pytest fixture 全 PASS**: positive deny 13 + positive pass 5 + edge / negative 5)
+- `docs/deploy/half-yearly-drill-sop.md` (新規、半年 drill SOP: CI 機械検査 explainer + systemd / cron 構成例 + 手動 approval flow + 異常時 escalation + T02 planned contract + emergency disable + retro Pack 義務)
+- `.github/workflows/ci-smoke.yml` (modify、`backend-quality` job に "Drill timer alert-only check" step 追加、`vars.DRILL_TIMER_ALERT_ONLY_CHECK_DISABLED` repository variable 経由 + workflow step `if:` 条件 + shell defense-in-depth 二重 check)
+- `.claude/plans/sp022-t03-drill-scheduling-sop.md` (本計画、19 findings adopt ledger 含む)
+
+#### codex-plan-review R1-R3 完了記録
+
+- codex-plan-review-round: R3 (round_max reached、R1=Phase A / R2=Phase B / R3=CRITICAL final)
+- codex-plan-review-findings: 19 (R1=16 [HIGH=5 / MEDIUM=8 / LOW=3] + R2=3 [HIGH=3] + R3=0 [CRITICAL=0、clean])
+- codex-plan-review-adopt: 19 / reject: 0 / defer: 0 (全件 adopt 反映)
+- codex-plan-review-readiness-gate: READY (R3 round_max reached + CRITICAL clean、致命的論点なし)
+- codex-plan-review-evidence-path: `~/.claude/local/codex-reviews/2026-05-19/sprint-SP-012-batch-7-taskhub-admin-cli/codex-plan-review-2026051921*.raw.jsonl`
+
+#### Phase G PGA-F-013 trace marker
+
+ADR-00021 §14.2 #4 (PGA-F-013) drill timer alert-only enforcement 完了:
+- `scripts/ci/check_drill_timer_alert_only.sh` 完成 (CI gate 機械検査)
+- `tests/deploy/test_drill_timer_alert_only.py` 23 fixture 全 PASS
+- `docs/deploy/half-yearly-drill-sop.md` 半年 drill SOP 完備
+- `taskhub migrate --approval-id` 実装は SP022-T02 (planned contract、本 T03 で仕様明文化のみ)
+- 実機 host migration drill execution は SP022-T09 (本 SOP を drill 実施時に使用)
+
+#### Local verification 実行記録
+
+- `bash scripts/ci/check_drill_timer_alert_only.sh` (baseline-scan mode、現 worktree) → `PASS (mode=baseline-scan)` exit 0
+- `uv run pytest tests/deploy/test_drill_timer_alert_only.py -v` → **23 passed** (failed: 0)
+- ruff + mypy regression (post-implementation で確認、SP022-T01 既存 47 fixture × 95 assertion 全 PASS 維持)
+
+#### tailscale-public-exposure hook false positive note (2026-05-19、SP022-T01 と同 pattern)
+
+`.claude/hooks/tailscale/check-tailscale-grants.sh` が `.github/workflows/ci-smoke.yml` Edit 時に BLOCK (regex `^\s*-\s*"?[0-9]+:[0-9]+` が既存 GitHub Actions services の internal port mapping `"5432:5432"` / `"6379:6379"` に hit)。本 PR で新規追加した literal は "Drill timer alert-only check" step のみ、`Funnel` / `public ingress` / `Cloudflare Tunnel` / `0.0.0.0` / `public bind` は一切追加なし。SP022-T01 PR #70 と同様の false positive。
+
+(後続: SP-022 完了時に T02 / T04-T09 全体 Review を追記)

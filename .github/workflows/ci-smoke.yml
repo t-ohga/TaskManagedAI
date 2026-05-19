@@ -106,6 +106,12 @@ jobs:
       - name: Framework intake fixture tests
         run: bash tests/scripts/test_check_framework_intake.sh
 
+      - name: Drill timer alert-only check (ADR-00021 §14.2 #4 PGA-F-013, SP022-T03)
+        if: vars.DRILL_TIMER_ALERT_ONLY_CHECK_DISABLED != '1'
+        env:
+          DRILL_TIMER_ALERT_ONLY_CHECK_DISABLED: ${{ vars.DRILL_TIMER_ALERT_ONLY_CHECK_DISABLED }}
+        run: bash scripts/ci/check_drill_timer_alert_only.sh
+
       - name: Ruff
         run: uv run ruff check backend tests
 
