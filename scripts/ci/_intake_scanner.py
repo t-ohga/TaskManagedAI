@@ -220,10 +220,14 @@ def check_persistence() -> list[str]:
     # - R7-006: multiline `from psycopg import (connect,)` parenthesized import
     psycopg_pattern = re.compile(r"psycopg2?\.connect\(")
     psycopg_class_connect = re.compile(r"psycopg2?\.(?:Async)?Connection\.connect\(")
-    # `from psycopg import ... connect ...` (parenthesized multiline 含む)
-    psycopg_import_connect = re.compile(
-        r"^\s*from\s+psycopg2?\s+import\s+(?:\(\s*)?(?:[^#)]*?\b)?connect\b",
-        re.MULTILINE | re.DOTALL,
+    # `from psycopg import ... connect ...` PR70 R8 F-PR70-R8-003 adopt:
+    # parenthesized multiline と single-line を別 regex で扱い、DOTALL の over-match
+    # (`from psycopg import errors\n...\ndef connect(...)` 誤検出) を防ぐ。
+    psycopg_import_connect_single = re.compile(
+        r"^\s*from\s+psycopg2?\s+import\s+(?:[^#\n(]*?\b)?connect\b", re.MULTILINE
+    )
+    psycopg_import_connect_paren = re.compile(
+        r"^\s*from\s+psycopg2?\s+import\s+\(([^)]*?)\)", re.MULTILINE | re.DOTALL
     )
     # R7-006: module alias `import psycopg as pg` 検出 (alias 名取得)
     psycopg_module_alias_re = re.compile(
@@ -257,12 +261,23 @@ def check_persistence() -> list[str]:
                 f"VIOLATION reason_code=framework_intake_violation_persistence "
                 f"evidence={path}:{line_num} framework=psycopg detail=class_level_connect"
             )
-        for match in psycopg_import_connect.finditer(content):
+        # single-line import (parenthesis なし)
+        for match in psycopg_import_connect_single.finditer(content):
             line_num = content[: match.start()].count("\n") + 1
             violations.append(
                 f"VIOLATION reason_code=framework_intake_violation_persistence "
                 f"evidence={path}:{line_num} framework=psycopg detail=from_import_connect_alias"
             )
+        # parenthesized multiline import: `from psycopg import (connect, ...)`
+        for match in psycopg_import_connect_paren.finditer(content):
+            inner = match.group(1)
+            # parenthesized body 内に literal `connect` token を search (boundary check)
+            if re.search(r"\bconnect\b", inner):
+                line_num = content[: match.start()].count("\n") + 1
+                violations.append(
+                    f"VIOLATION reason_code=framework_intake_violation_persistence "
+                    f"evidence={path}:{line_num} framework=psycopg detail=from_import_connect_alias"
+                )
         # R7-006: detect `import psycopg as <alias>; <alias>.connect(` module alias
         for mod_alias_match in psycopg_module_alias_re.finditer(content):
             mod_alias = mod_alias_match.group(1)

@@ -1000,6 +1000,34 @@ PY
     cd "$REPO_ROOT"
 }
 
+# ---- 47. test: PR70 R8 F-PR70-R8-003 - psycopg DOTALL over-match negative ----
+# `from psycopg import errors` + 別行 `def connect(...)` を false-positive で検出しないことを verify
+test_psycopg_import_errors_no_false_positive() {
+    local d="$TMPDIR_BASE/psycopg_errors_$$"
+    setup_fake_repo "$d"
+    cat > backend/app/services/research/no_false_pos.py <<'PY'
+from psycopg import errors
+
+def connect(arg):
+    """Local helper named `connect` — should NOT match psycopg gate."""
+    return None
+PY
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "psycopg import errors + local connect fn"
+    run_script_pr
+    # psycopg gate should NOT fire (no real connect import or call)
+    # license_only violation expected from "langgraph" not installed → exit 1 by license check
+    if echo "${LAST_OUTPUT:-}" | grep -q "framework_intake_violation_persistence"; then
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo "FAIL: psycopg_import_errors_no_false_positive (persistence gate fired incorrectly)"
+    else
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo "PASS: psycopg_import_errors_no_false_positive (persistence gate correctly skipped)"
+    fi
+    cd "$REPO_ROOT"
+}
+
 # ---- run all ----
 TMPDIR_BASE=$(mktemp -d -t sp022_t01_fixture.XXXXXX)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
@@ -1053,6 +1081,7 @@ test_letta_client_npm_sdk
 test_license_unknown_placeholder
 test_psycopg_module_alias_connect
 test_psycopg_multiline_import
+test_psycopg_import_errors_no_false_positive
 
 echo ""
 echo "== Summary =="

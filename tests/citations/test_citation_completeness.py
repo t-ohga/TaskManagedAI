@@ -21,6 +21,24 @@ MAP_FILE = REPO_ROOT / "docs/citations/dependency_to_framework_map.json"
 CANDIDATES_FILE = REPO_ROOT / "docs/citations/framework_pattern_candidates.md"
 
 
+def _origin_main_resolvable() -> bool:
+    """PR70 R8 F-PR70-R8-001 adopt: verify origin/main ref is resolvable.
+
+    In local checkouts without `origin/main` (e.g., detached worktrees, fresh clones
+    without `--unshallow`), `_extract_changed_deps.py` treats the missing base as an
+    empty set and reports every existing dependency as added. This pytest then fails on
+    unrelated citation map entries instead of skipping.
+    """
+    cmd = ["git", "rev-parse", "--verify", "origin/main"]  # noqa: S607 (git is PATH-resolved, repo-internal call)
+    try:
+        result = subprocess.run(  # noqa: S603
+            cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0
+
+
 def _run_extract(ecosystem: str) -> set[str]:
     """Invoke scripts/ci/_extract_changed_deps.py and return parsed set of added deps."""
     script_path = REPO_ROOT / "scripts/ci/_extract_changed_deps.py"
@@ -80,7 +98,11 @@ def test_changed_deps_have_citation() -> None:
     """Each newly added direct dependency in PR must have a citation entry.
 
     R1 F-011 adopt: When no dependency changes, skip (CI treats skip as success).
+    R8 F-PR70-R8-001 adopt: When origin/main is not resolvable (e.g., local clone without
+    remote-tracking branch), skip — otherwise all existing deps look added.
     """
+    if not _origin_main_resolvable():
+        pytest.skip("origin/main not resolvable; cannot compute dep diff")
     changed_pypi = _run_extract("pypi")
     changed_npm = _run_extract("npm")
     if not changed_pypi and not changed_npm:

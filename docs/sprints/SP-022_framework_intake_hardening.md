@@ -468,6 +468,28 @@ R7 regression fixture 7 件追加: `test_autogen_v04_modules` (R7-001) / `test_d
 
 R1+R2+R3+R4+R5+R6+R7 累計: **46 fixture × 94 assertion 全 PASS** (failed: 0)。**35 adopt findings** + 2 unique defer + 48 reject (R3-R7 stale)。
 
+#### PR #70 Codex auto-review R8 — 22 inline findings (3 adopt + 19 reject as stale re-emission)
+
+`@codex review` mention 経由で 72e501f (R7 fix commit) 再 review、R8 で 22 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R8-001 (NEW) | P2 | `tests/citations/test_citation_completeness.py` pytest が origin/main 不在 local clone で fail (existing deps を全て added 扱い) | **adopt** | `_origin_main_resolvable()` helper 追加、origin/main 不在 → pytest.skip |
+| R8-002 (NEW) | P2 | `_run_extract` で stderr を stdout に merge → `uv run` non-fatal diagnostic (`Creating virtual environment at: .venv`) が dependency name に混入、`check_license` で偽 `license_field_empty_or_unresolved` emit | **adopt** | stderr を `mktemp` で separate capture、success 時 replay 抑制、failure 時のみ stderr replay |
+| R8-003 (NEW) | P2 | `psycopg_import_connect` の `re.DOTALL` over-match: `from psycopg import errors\n...\ndef connect(...)` を connect alias と誤検出 | **adopt** | `psycopg_import_connect` を `_single` (parenthesis なし、line-bound) + `_paren` (parenthesized only DOTALL) の 2 regex に分離 |
+| R8-004 to R8-022 (19 件 stale) | P2 (+1 P1) | R2-R7 既 adopt re-emission (Next.js / psycopg / optional frontend / deployment YAML / citation / npm license [P1] / dep-groups / dynamic imports / Semantic Kernel Python+npm / class-level connects / dynamic telemetry / legacy tool.uv dev / whitespace dynamic import / AutoGen v0.4 / Dapr Agents / Letta Python+npm SDK / psycopg aliased connects) | **reject as stale re-emission** | R2-R7 既 adopt 実装済、code grep + commit comment marker で verify |
+
+**Stale re-emission rationale**: 19 件 R8 re-emission は code grep + R2-R7 commit comment marker で verify。累計 stale = R3:6 + R4:5 + R5:9 + R6:14 + R7:14 + R8:19 = **67 件**、いずれも code 実装済 (Codex multi-round 既知の stale re-emission pattern)。`feedback_codex_pr_review_baseline_check.md` 教訓: code grep + R2-R7 regression fixture PASS で実体検証してから reject 確定。
+
+実装:
+- `tests/citations/test_citation_completeness.py`: `_origin_main_resolvable()` helper + `test_changed_deps_have_citation` で origin/main 不在時に pytest.skip (R8-001)
+- `scripts/ci/check_framework_intake.sh::_run_extract`: stderr を `mktemp` 一時 file に分離、success 時は replay せず、failure 時のみ stderr replay (R8-002)
+- `scripts/ci/_intake_scanner.py::check_persistence`: `psycopg_import_connect_single` (line-bound、non-parenthesized) + `psycopg_import_connect_paren` (parenthesized only DOTALL with bounded `[^)]*?` 内 inspection) の 2 regex で over-match 防止 (R8-003)
+
+R8 regression fixture 1 件追加: `test_psycopg_import_errors_no_false_positive` (R8-003、`from psycopg import errors` + 別行 `def connect()` で persistence gate が false-positive せずに skip することを verify)。
+
+R1+R2+R3+R4+R5+R6+R7+R8 累計: **47 fixture × 95 assertion 全 PASS** (failed: 0)。**38 adopt findings** + 2 unique defer + 67 reject (R3-R8 stale)。
+
 #### Emergency disable audit format
 
 CI gate を緊急 disable する場合、admin が GitHub Settings → Variables で `FRAMEWORK_INTAKE_CHECK_DISABLED=1` を設定。本 sprint pack の `## Review` 内に以下を 24h 以内に記録 (R1 F-013 adopt):

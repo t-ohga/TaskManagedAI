@@ -90,16 +90,24 @@ declare -a VIOLATIONS=()
 # flag), check_attribution uses scope=all (all citation entries needed regardless of install).
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 _run_extract() {
+    # PR70 R8 F-PR70-R8-002 adopt: separate stderr from stdout so `uv run` diagnostics
+    # (e.g., "Creating virtual environment at: .venv") are not leaked into the dependency
+    # name stream where check_license would misread them as packages with empty license.
     local ecosystem="$1"
     local scope="${2:-all}"
-    local output extract_exit
+    local extract_exit=0
+    local stderr_file
+    stderr_file=$(mktemp -t intake_extract_stderr.XXXXXX)
+    local output
     output=$(uv run --no-sync python "$SCRIPT_DIR/_extract_changed_deps.py" \
-        --ecosystem="$ecosystem" --scope="$scope" 2>&1) && extract_exit=0 || extract_exit=$?
+        --ecosystem="$ecosystem" --scope="$scope" 2>"$stderr_file") || extract_exit=$?
     if [ "$extract_exit" -ne 0 ]; then
         echo "framework_intake_check: ERROR _extract_changed_deps.py failed (ecosystem=$ecosystem scope=$scope exit=$extract_exit)" >&2
-        echo "$output" >&2
+        cat "$stderr_file" >&2
+        rm -f "$stderr_file"
         exit 2
     fi
+    rm -f "$stderr_file"
     printf '%s\n' "$output"
 }
 extract_changed_deps_pypi_core() { _run_extract pypi core; }
