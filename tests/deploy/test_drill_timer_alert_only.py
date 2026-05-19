@@ -464,6 +464,65 @@ def test_cron_d_5_field_without_user_rejected(tmp_path: Path) -> None:
     )
 
 
+# ---- PR71 R5-002 (P1): osascript embedded `do shell script` ----
+def test_osascript_embedded_shell_script_rejected(tmp_path: Path) -> None:
+    """`osascript -e 'display notification (do shell script "curl ...")'` rejected."""
+    _write_drill_timer_and_service(
+        tmp_path,
+        '/usr/bin/osascript -e "display notification (do shell script \\"echo evil\\")"',
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "osascript_payload_unsafe" in output
+
+
+# ---- PR71 R5-003 (P1): Environment=PATH override ----
+def test_environment_path_override_rejected(tmp_path: Path) -> None:
+    """`Environment=PATH=/tmp/evil` enables PATH spoofing for bare commands → reject."""
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir(parents=True)
+    (deploy_dir / "taskhub-drill-alert.timer").write_text(
+        "[Unit]\nDescription=drill\n\n[Timer]\nOnCalendar=*-01,07-01 09:00:00\n"
+        "Unit=taskhub-drill-alert.service\n",
+        encoding="utf-8",
+    )
+    (deploy_dir / "taskhub-drill-alert.service").write_text(
+        "[Service]\nType=oneshot\n"
+        "Environment=PATH=/tmp/evil\n"  # noqa: S108
+        "ExecStart=/usr/bin/notify-send drill\n",
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "path_override_env" in output
+
+
+# ---- PR71 R5-004: cron.d 6-field with missing command ----
+def test_cron_d_user_field_only_rejected(tmp_path: Path) -> None:
+    """cron.d entry `0 9 1 1,7 * /usr/bin/notify-send` (no command after user) rejected."""
+    cron_d = tmp_path / "etc" / "cron.d"
+    cron_d.mkdir(parents=True)
+    (cron_d / "drill-cron").write_text(
+        "0 9 1 1,7 * /usr/bin/notify-send\n",  # 6 fields, no command after user
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "cron_parse_failed" in output
+
+
+# ---- PR71 R5-005: mail -A attachment exfiltration ----
+def test_mail_attach_flag_rejected(tmp_path: Path) -> None:
+    """`mail -A /home/user/.taskhub/approvals/id.signed ops@example.com` reject."""
+    _write_drill_timer_and_service(
+        tmp_path,
+        "/usr/bin/mail -A /home/user/.taskhub/approvals/id.signed -s drill ops@example.com",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "mail_attachment_forbidden" in output
+
+
 # ---- 11. cron env MAILTO (allowed env line) ----
 def test_cron_mailto_env_line_passes(tmp_path: Path) -> None:
     """`MAILTO=ops@example.com` does not trigger path-spoofing (only PATH/SHELL/BASH_ENV do)."""

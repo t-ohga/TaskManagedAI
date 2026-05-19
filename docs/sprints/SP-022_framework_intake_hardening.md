@@ -648,4 +648,29 @@ R4 regression fixture 3 件追加 + 既存 1 件 update: `test_osascript_do_shel
 
 累計 fixture: **37 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 3 + R2 5 + R3 3 + R4 3)。
 
+#### PR #71 Codex auto-review R5 — 11 inline findings (P1×4 + P2×7) (5 adopt + 6 reject stale)
+
+R5 で 11 件 emit、真に新 5 件 (P1×3 + P2×2) adopt、stale 6 件 reject。
+
+| ID | priority | symptom (要約) | 判定 |
+|---|---|---|---|
+| R5-001 NEW | **P1** | paired non-drill service の drop-in `<service>.service.d/*.conf` 漏れ | adopt |
+| R5-002 NEW | **P1** | osascript `display notification (do shell script "...")` で AppleScript 内 shell exec bypass | adopt |
+| R5-003 NEW | **P1** | systemd `Environment=PATH=/tmp/evil` で bare command PATH spoofing | adopt |
+| R5-004 NEW | P2 | cron.d 6-field で user field のみ command 不在で誤 pass | adopt |
+| R5-005 NEW | P2 | `mail -A <secret_file>` attachment flag で exfiltration | adopt |
+| R5-006 to R5-011 (6 件 stale) | - | R1-R4 既 adopt re-emission | reject |
+
+実装:
+- `_drill_timer_scanner.py`:
+  - `SYSTEMD_PATH_OVERRIDE_RE` 追加: `Environment=PATH=` / `EnvironmentFile=` / `PassEnvironment=PATH` を検出 (R5-003 P1)
+  - `_check_osascript_payload` で AppleScript 内 `do shell script` / `system attribute` / System Events tell を regex reject (R5-002 P1)
+  - `_check_mail_attachment` 追加: `mail -A` / `mail --attach` を reject (R5-005)
+  - paired non-drill service の drop-in dir (`<service>.service.d/*.conf`) を baseline 探索 (R5-001 P1)
+  - cron.d 6-field で 7 token 未満は `cron_d_user_or_command_missing` violation (R5-004)
+
+R5 regression fixture 4 件追加: `test_osascript_embedded_shell_script_rejected` (R5-002 P1) / `test_environment_path_override_rejected` (R5-003 P1) / `test_cron_d_user_field_only_rejected` (R5-004) / `test_mail_attach_flag_rejected` (R5-005)。
+
+累計 fixture: **41 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 3 + R2 5 + R3 3 + R4 3 + R5 4)。
+
 (後続: SP-022 完了時に T02 / T04-T09 全体 Review を追記)

