@@ -259,6 +259,34 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 
 - `tailscale-public-exposure` hook (`.claude/hooks/tailscale/check-tailscale-grants.sh`) が `.github/workflows/ci-smoke.yml` 編集時に BLOCK を返した。本 T04 で追加した step (`Phase E trace audit check (SP022-T04)`) には Funnel / Cloudflare / public bind / 0.0.0.0 等のキーワードは含まれず、既存 file 内の他 keyword (例: `5432:5432` Postgres mapping 等) が file 全体 re-scan で trigger された。 ADR-00007 (external exposure) は不変、SP022-T03 PR #71 と同 false positive pattern (Review に既知記録あり)。
 
+### SP022-T07 production checklist skeleton completion (2026-05-20)
+
+#### codex-plan-review R1-R3 completion record
+
+- codex-plan-review-round: R3 (round_max reached、R1 Phase A 構造 / R2 Phase B 実装可能性 / R3 CRITICAL final)
+- codex-plan-review-findings: 10 (R1=10 [HIGH×2 / MEDIUM×5 / LOW×3] + R2=0 + R3=0)
+- codex-plan-review-adopt: 10 / reject: 0 / defer: 0 (全 finding adopt 反映、累計 100% adoption)
+- codex-plan-review-readiness-gate: READY (R3 round_max reached、CRITICAL=0 残存、HIGH ≤ 2 satisfied)
+- codex-plan-review-evidence-path: `~/.claude/local/codex-reviews/2026-05-20/sprint-SP-012-batch-7-taskhub-admin-cli/codex-plan-review-*.raw.jsonl` (R1/R2/R3)
+
+#### Production readiness checklist skeleton implementation
+
+- `docs/release/production_readiness_checklist.md` (NEW): 12 sections (§1 / §2 / §3 / §4 Private networking / §4-public Public exposure / §5 / §5-external External publication / §6 / §7 / §8 / §9 / §10) docs-only skeleton 1 file
+- 全 § は `[ ]` checklist + 概要 + P3+ 移送先 reference のみ、live release/build/deploy command なし (R1-F-002 adopt)
+- 具体 tool 名 / 戦略名は本 file に記載なし、P3+ ADR で判断 (R1-F-003 adopt)
+- §4 Private networking (Tailscale 閉域維持 ADR-00007 invariant) と §4-public Public exposure (ADR-00007 update + ADR Gate Criteria #7 経由必須) を分離 (R1-F-004 adopt)
+- §5-external External publication を独立 § として追加 (P3+ separate approval、R1-F-005 adopt)
+- §6 LICENSE / NOTICE / SECURITY / public README は **本 T07 では作成・編集しない**、P3+ placeholder のみ列挙 (R1-F-008 adopt)
+- §1 / §2 で「P0.1 unblock 判定は file existence のみ、checkbox 状態は evaluated しない」明記 (R1-F-006 adopt)
+- §7 / §8 は SP022-T06 / SP022-T09 link のみ、正本は SP-022 Pack 該当 section (R1-F-009 adopt)
+
+#### Audit-only / docs-only gate boundary (不変条件、SP-022 受け入れ条件 line 116-117 通り)
+
+- 本 T07 では **docs-only checklist skeleton 1 file** のみ作成
+- P3+ 本実装は本 T07 内で禁止: (a) Container image build pipeline、(b) DNS 本実装、(c) public ingress 有効化、(d) external publication 有効化、(e) release deploy config 本実装、(f) LICENSE / NOTICE / SECURITY / README 本実装
+- P0.1 unblock 判定は **file existence のみ**、checklist の checked/unchecked 状態は evaluated **されない** (F-ADV-R1-007 + F-R2-005 adopt)
+- T07 成果物カウントは `docs/release/production_readiness_checklist.md` の 1 file、SP-022 Pack `## Review` update は acceptance metadata (R1-F-001 adopt)
+
 ## Phase E adversarial closure trace (PE-F-001〜PE-F-016、F-R2-003 + SP022-T04 R1-R3 adopt: SP-022 内 audit-only trace matrix で local closure、symptom column 追加 + PE-F-010 closure marker + PE-F-010 owner SP-016→SP-022 正規化)
 
 | Finding ID | Owning Sprint | trace status | post-P0.1 contract test PASS gate | symptom |
