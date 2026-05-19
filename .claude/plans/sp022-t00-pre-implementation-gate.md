@@ -9,6 +9,7 @@ review_history:
   - "R1 (codex-plan-review / Phase A 構造レビュー): 15 findings (HIGH 3 / MEDIUM 7 / LOW 5、CRITICAL=0)、全件 adopt — F-001 file 数不一致 + F-002 ADR body 境界曖昧 + F-003 HARD GATE evidence 機械検査不在 + F-004 yq toolchain + F-005 accepted 後 acceptance_blocked_by 残存 + F-006 SP022_T00_DATE 日跨ぎ + F-007 adr_refs exact set 不厳 + F-008 SP-001-5 grep pattern 曖昧 + F-009 L92 ✗ 表記 + F-010 rollback merge strategy + F-011 allowlist + F-012 polling spec + F-013 regex プレースホルダ + F-014 line number drift + F-015 design accepted vs post-acceptance gate scope"
   - "R2 (codex-plan-review / Phase B 実装可能性、HIGH+ 限定): 5 findings (HIGH 5、CRITICAL=0、critical_zero criteria HIGH=5 で未達)、全件 adopt — F-R2-001 HIGH ADR-00020 verification 削除後 key 参照で必ず fail (has() check に変更 + acceptance_history で marker 検証) + F-R2-002 HIGH invariant ADR-00021/00007 も acceptance_blocked_by 削除必須 (metadata 二重真実化回避) + F-R2-003 HIGH SP-018/SP-020 Sprint Pack 不在 + Phase E trace 矛盾 (SP-022 内 trace matrix で local closure) + F-R2-004 HIGH PGA-F-009 SP-015 未 trace + allowlist 外で false-positive (SP-022 内 local closure + SP-015 trace は future) + F-R2-005 HIGH master plan §10.C-1 要求の SP022-T07 production boundary 未移植"
   - "R3 (codex-plan-review / CRITICAL のみ最終 verify): 1 finding (CRITICAL 1)、全件 adopt — F-R3-001 CRITICAL impossibility SP022-T00 verification self-fail: check (5) の SP-022 全体 negative grep が Review 追記の historical quote を hit + check (9) の `\\|` escape で alternation 不機能、check (5) を `## 関連 ADR` section 限定 awk extract に + check (9) を rg -qP + 真 alternation + Review 追記 quote を「旧文言例示」表現に変更"
+  - "PR #69 Codex auto-review R1 (post-commit): 4 inline P2 (HIGH 相当)、全件 adopt — F-CODEX-PR69-001 SP022_T00_DATE bind to HEAD vs first PR commit (merge-base + reverse log で first commit date 取得) + F-CODEX-PR69-002 rollback range A..B は A 不含 (A^..B inclusive) + F-CODEX-PR69-003 origin/main..HEAD two-dot は main advance で false-positive (origin/main...HEAD three-dot merge base 比較) + F-CODEX-PR69-004 gh api --paginate は page 毎 jq で multi-line (--slurp + `.[] | .[]` flatten)"
 related_documents:
   - "../../docs/設計検討/2026-05-13_p0_exit_master_plan.md"
   - "../../docs/sprints/SP-022_framework_intake_hardening.md"
@@ -581,11 +582,13 @@ git revert <squash-commit-sha>
 # 3. revert commit を別 branch + PR で merge
 ```
 
-### 5.2 Rebase merge / merge commit 後の rollback (本プロジェクトでは非標準、例外時)
+### 5.2 Rebase merge / merge commit 後の rollback (本プロジェクトでは非標準、例外時、F-CODEX-PR69-002 adopt: inclusive range)
 
 ```bash
-# 複数 commit の場合は commit range 全体を revert
-git revert <oldest-commit-sha>..<newest-commit-sha>
+# 複数 commit の場合は commit range 全体を revert (inclusive、F-CODEX-PR69-002 adopt: A..B は A 不含、A^..B で A を inclusive に)
+git revert <oldest-commit-sha>^..<newest-commit-sha>
+# または explicit commit list で revert (確実性優先):
+git revert <commit1-sha> <commit2-sha> <commit3-sha> ...
 ```
 
 ### 5.3 未 merge branch 上での rollback (PR 取り下げ)
@@ -613,7 +616,11 @@ gh pr close <PR-NUMBER>
 
 ```bash
 set -euo pipefail
-SP022_T00_DATE=$(git show -s --format=%cd --date=format-local:%Y-%m-%d HEAD)  # F-006 adopt: 本 PR first commit date を正本
+# F-006 + F-CODEX-PR69-001 adopt: SP022_T00_DATE = 本 PR の first commit date (HEAD ではない)
+# HEAD は pre-commit 時 base commit、review fixup 後 latest commit になり、updated_at/accepted_at equality check が誤 fail する
+MERGE_BASE=$(git merge-base origin/main HEAD)
+FIRST_PR_COMMIT=$(git log --reverse --format=%H "$MERGE_BASE..HEAD" | head -1)
+SP022_T00_DATE=$(git show -s --format=%cd --date=format-local:%Y-%m-%d "$FIRST_PR_COMMIT")
 
 # F-004 adopt: yq toolchain チェック (mikefarah yq v4+ 前提、kislyuk yq との互換性問題回避)
 if ! command -v yq >/dev/null 2>&1; then
@@ -799,27 +806,32 @@ echo "✅ All 15 fail-closed verifications PASS"
 PR_NUMBER=<本 PR 番号>
 LATEST_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid -q .headRefOid)
 
-# initial polling (10 min)
-PRE_INLINE=$(gh api "repos/t-ohga/TaskManagedAI/pulls/$PR_NUMBER/comments" --paginate \
-  | jq "[.[] | select(.commit_id == \"$LATEST_SHA\") | select(.user.login | test(\"codex\"; \"i\"))] | length")
-PRE_TOP=$(gh api "repos/t-ohga/TaskManagedAI/pulls/$PR_NUMBER/reviews" --paginate \
-  | jq "[.[] | select(.commit_id == \"$LATEST_SHA\") | select(.user.login | test(\"codex\"; \"i\"))] | length")
+# initial polling (10 min、F-CODEX-PR69-004 adopt: --paginate --slurp で全 page を 1 array にする、
+#                                                 page 毎に jq が呼ばれて multi-line value になる bug 回避)
+PRE_INLINE=$(gh api "repos/t-ohga/TaskManagedAI/pulls/$PR_NUMBER/comments" --paginate --slurp \
+  | jq "[.[] | .[] | select(.commit_id == \"$LATEST_SHA\") | select(.user.login | test(\"codex\"; \"i\"))] | length")
+PRE_TOP=$(gh api "repos/t-ohga/TaskManagedAI/pulls/$PR_NUMBER/reviews" --paginate --slurp \
+  | jq "[.[] | .[] | select(.commit_id == \"$LATEST_SHA\") | select(.user.login | test(\"codex\"; \"i\"))] | length")
 echo "PRE inline=$PRE_INLINE, top=$PRE_TOP"
 
 sleep 600  # 1st polling (10 min)
 .claude/scripts/codex_pr_full_review.sh "$PR_NUMBER" | head -200  # baseline 内容確認必須
 
-# CUR check
-CUR_INLINE=$(gh api ... | jq "[.[] | select(.commit_id == \"$LATEST_SHA\") ...] | length")
-CUR_TOP=$(gh api ... | jq ...)
+# CUR check (--paginate --slurp で page を 1 array、jq filter は `.[] | .[]` で flatten)
+CUR_INLINE=$(gh api "repos/t-ohga/TaskManagedAI/pulls/$PR_NUMBER/comments" --paginate --slurp \
+  | jq "[.[] | .[] | select(.commit_id == \"$LATEST_SHA\") | select(.user.login | test(\"codex\"; \"i\"))] | length")
+CUR_TOP=$(gh api "repos/t-ohga/TaskManagedAI/pulls/$PR_NUMBER/reviews" --paginate --slurp \
+  | jq "[.[] | .[] | select(.commit_id == \"$LATEST_SHA\") | select(.user.login | test(\"codex\"; \"i\"))] | length")
 
 # 0 件継続なら再 polling (最大 2 回)
 if [ "$CUR_INLINE" -eq 0 ] && [ "$CUR_TOP" -eq 0 ]; then
   for retry in 1 2; do
     echo "Retry $retry/2: no Codex review for HEAD yet, additional 10 min polling"
     sleep 600
-    CUR_INLINE=$(gh api ... | jq ...)
-    CUR_TOP=$(gh api ... | jq ...)
+    CUR_INLINE=$(gh api "repos/t-ohga/TaskManagedAI/pulls/$PR_NUMBER/comments" --paginate --slurp \
+      | jq "[.[] | .[] | select(.commit_id == \"$LATEST_SHA\") | select(.user.login | test(\"codex\"; \"i\"))] | length")
+    CUR_TOP=$(gh api "repos/t-ohga/TaskManagedAI/pulls/$PR_NUMBER/reviews" --paginate --slurp \
+      | jq "[.[] | .[] | select(.commit_id == \"$LATEST_SHA\") | select(.user.login | test(\"codex\"; \"i\"))] | length")
     if [ "$CUR_INLINE" -gt 0 ] || [ "$CUR_TOP" -gt 0 ]; then break; fi
   done
 fi
@@ -840,10 +852,12 @@ fi
 - 累計 30 min polling 後 0 件 → reaction-only clean 判断は user に委ね、PR description / comment thread に明示確認 record
 - delta +0 を「真の 0 件」と即断定禁止 (`feedback_codex_pr_review_baseline_check.md` 教訓): 必ず full output の content を head -200 で確認
 
-### 6.3 No code change + PR workflow invariant verify (F-001 + F-011 adopt: allowlist 6 files 厳密 verify)
+### 6.3 No code change + PR workflow invariant verify (F-001 + F-011 + F-CODEX-PR69-003 adopt: allowlist 6 files 厳密 verify、three-dot merge base 比較で main advance false-positive 回避)
 
 ```bash
 # (a) §0 allowlist 6 files のみ変更されていること fail-closed assert
+# F-CODEX-PR69-003 adopt: origin/main..HEAD (two-dot) は main advance で false-positive、
+#                        origin/main...HEAD (three-dot = merge base 比較) で PR 自体の変更のみ取得
 EXPECTED_FILES=$(printf '%s\n' \
   '.claude/plans/sp022-t00-pre-implementation-gate.md' \
   'docs/adr/00007_external_exposure.md' \
@@ -851,15 +865,15 @@ EXPECTED_FILES=$(printf '%s\n' \
   'docs/adr/00021_host_portable_deployment.md' \
   'docs/sprints/SP-001-5_host_portable_amendment.md' \
   'docs/sprints/SP-022_framework_intake_hardening.md' | sort -u)
-ACTUAL_FILES=$(git diff --name-only origin/main..HEAD | sort -u)
+ACTUAL_FILES=$(git diff --name-only origin/main...HEAD | sort -u)
 if ! diff -u <(echo "$EXPECTED_FILES") <(echo "$ACTUAL_FILES") >/dev/null 2>&1; then
   echo "FAIL: PR file set mismatch (allowlist violation):" >&2
   diff -u <(echo "$EXPECTED_FILES") <(echo "$ACTUAL_FILES") >&2 || true
   exit 1
 fi
 
-# (b) code change 不在 verify (補助確認)
-if git diff --stat origin/main..HEAD --  ':!docs/' ':!.claude/plans/' | grep -q .; then
+# (b) code change 不在 verify (補助確認、F-CODEX-PR69-003 adopt: three-dot)
+if git diff --stat origin/main...HEAD --  ':!docs/' ':!.claude/plans/' | grep -q .; then
   echo "FAIL: PR contains code change outside docs/ / .claude/plans/" >&2; exit 1
 fi
 ```
