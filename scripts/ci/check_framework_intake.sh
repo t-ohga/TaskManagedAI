@@ -79,25 +79,32 @@ fi
 # ---- 4. violation collector ----
 declare -a VIOLATIONS=()
 
-# ---- 5. helper: changed direct deps (PR70 F-PR70-004 adopt: propagate extractor failure) ----
+# ---- 5. helper: changed direct deps (PR70 F-PR70-004 + R3 F-PR70-R3-001 adopt) ----
 # _extract_changed_deps.py exits 2 on parse failure (TOMLDecodeError / JSONDecodeError).
 # Previously `|| true` swallowed this into an empty dep list, causing license/attribution
 # checks to silently skip. Now any non-zero exit terminates the script with exit 2 so
 # the documented internal-error contract is honored.
+#
+# PR70 R3 F-PR70-R3-001 adopt: --scope filter (core/extras/all). check_license uses
+# scope=core (only deps installed by `uv sync --locked` default; extras require --extra
+# flag), check_attribution uses scope=all (all citation entries needed regardless of install).
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 _run_extract() {
     local ecosystem="$1"
+    local scope="${2:-all}"
     local output extract_exit
-    output=$(uv run --no-sync python "$SCRIPT_DIR/_extract_changed_deps.py" --ecosystem="$ecosystem" 2>&1) && extract_exit=0 || extract_exit=$?
+    output=$(uv run --no-sync python "$SCRIPT_DIR/_extract_changed_deps.py" \
+        --ecosystem="$ecosystem" --scope="$scope" 2>&1) && extract_exit=0 || extract_exit=$?
     if [ "$extract_exit" -ne 0 ]; then
-        echo "framework_intake_check: ERROR _extract_changed_deps.py failed (ecosystem=$ecosystem exit=$extract_exit)" >&2
+        echo "framework_intake_check: ERROR _extract_changed_deps.py failed (ecosystem=$ecosystem scope=$scope exit=$extract_exit)" >&2
         echo "$output" >&2
         exit 2
     fi
     printf '%s\n' "$output"
 }
-extract_changed_deps_pypi() { _run_extract pypi; }
-extract_changed_deps_npm() { _run_extract npm; }
+extract_changed_deps_pypi_core() { _run_extract pypi core; }
+extract_changed_deps_pypi() { _run_extract pypi all; }
+extract_changed_deps_npm() { _run_extract npm all; }
 
 # ---- 6. verify item #1: License (diff-gate mode + new deps only, R2 F-002 + R3 F-001 adopt) ----
 # `|| true` keeps script alive under `set -euo pipefail` when pip show / metadata fails;
@@ -131,7 +138,7 @@ except Exception:
                 VIOLATIONS+=("VIOLATION reason_code=framework_intake_violation_license evidence=$pkg framework=$pkg detail=$denied")
             fi
         done
-    done < <(extract_changed_deps_pypi)
+    done < <(extract_changed_deps_pypi_core)
 }
 
 # ---- 7. verify item #2: Attribution (diff-gate mode + new deps only) ----

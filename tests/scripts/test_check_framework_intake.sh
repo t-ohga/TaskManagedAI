@@ -511,6 +511,61 @@ YML
     cd "$REPO_ROOT"
 }
 
+# ---- 24. test: PR70 R3 F-PR70-R3-001 - optional extras skipped for license check ----
+test_optional_extras_skipped_for_license() {
+    local d="$TMPDIR_BASE/optional_extras_$$"
+    setup_fake_repo "$d"
+    # add unknown pkg to optional-dependencies (NOT install by `uv sync --locked` default).
+    # license check should skip it (no license_field_empty_or_unresolved violation),
+    # but attribution check should still fire (no map entry → attribution violation).
+    cat > pyproject.toml <<'PY'
+[project]
+name = "taskmanagedai-test-fixture"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[project.optional-dependencies]
+extras = ["unknown-optional-extras-pkg"]
+
+[dependency-groups]
+dev = []
+
+[tool.setuptools.packages.find]
+include = ["backend*", "scripts*"]
+PY
+    git add -A; git commit -q -m "add optional extras"
+    run_script_pr
+    # expect attribution violation (no map entry), but NOT license violation
+    assert_exit_code "$LAST_EXIT" 1 "optional_extras_violation_exit1"
+    assert_stdout_contains "framework_intake_violation_attribution" "optional_extras_attribution_reason"
+    # license violation must NOT be emitted for optional extras (R3-001 fix)
+    if echo "${LAST_OUTPUT:-}" | grep -q "unknown-optional-extras-pkg framework=unknown-optional-extras-pkg detail=license_field"; then
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo "FAIL: optional_extras_no_license_violation (license violation emitted for non-installed extras)"
+    else
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo "PASS: optional_extras_no_license_violation (license check correctly skipped extras)"
+    fi
+    cd "$REPO_ROOT"
+}
+
+# ---- 25. test: PR70 R3 F-PR70-R3-003 - persistence in backend/app/domain or middleware ----
+test_persistence_in_domain_or_middleware() {
+    local d="$TMPDIR_BASE/persistence_domain_$$"
+    setup_fake_repo "$d"
+    mkdir -p backend/app/domain backend/app/middleware backend/app/observability
+    # domain layer に sqlite3 import を入れる (R3-003 で新たに scan 対象)
+    echo "import sqlite3" > backend/app/domain/internal_store.py
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "persistence in domain"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "persistence_domain_violation_exit1"
+    assert_stdout_contains "framework_intake_violation_persistence" "persistence_domain_reason"
+    cd "$REPO_ROOT"
+}
+
 # ---- run all ----
 TMPDIR_BASE=$(mktemp -d -t sp022_t01_fixture.XXXXXX)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
@@ -541,6 +596,8 @@ test_psycopg_import_connect_alias
 test_optional_dependencies_extracted
 test_persistence_in_api_or_workers
 test_docker_compose_external_network
+test_optional_extras_skipped_for_license
+test_persistence_in_domain_or_middleware
 
 echo ""
 echo "== Summary =="

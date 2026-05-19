@@ -37,8 +37,15 @@ def _parse_dep_name(spec: str) -> str | None:
     return _normalize_pypi(m.group(1)) if m else None
 
 
-def load_pyproject_at(ref: str | None) -> set[str]:
-    """Load direct dependency names from pyproject.toml at given git ref (or working tree)."""
+def load_pyproject_at(ref: str | None, scope: str = "all") -> set[str]:
+    """Load direct dependency names from pyproject.toml at given git ref (or working tree).
+
+    PR70 R3 F-PR70-R3-001 adopt: scope filter
+    - "core": [project.dependencies] only — used by check_license (only deps installed by
+      default `uv sync --locked`, which does not install optional-dependencies extras).
+    - "extras": [project.optional-dependencies.*] + [dependency-groups].* only.
+    - "all": all of the above (used by check_attribution).
+    """
     if ref is None:
         path = Path("pyproject.toml")
         if not path.exists():
@@ -64,28 +71,30 @@ def load_pyproject_at(ref: str | None) -> set[str]:
     deps: set[str] = set()
     project = data.get("project", {})
 
-    # [project.dependencies]
-    for dep_spec in project.get("dependencies", []):
-        name = _parse_dep_name(dep_spec)
-        if name:
-            deps.add(name)
-
-    # [project.optional-dependencies.*]
-    for _, items in (project.get("optional-dependencies") or {}).items():
-        for dep_spec in items:
+    if scope in ("core", "all"):
+        # [project.dependencies]
+        for dep_spec in project.get("dependencies", []):
             name = _parse_dep_name(dep_spec)
             if name:
                 deps.add(name)
 
-    # [dependency-groups].* (R2 F-003 adopt: uv direct dev/group dependency)
-    for _, items in (data.get("dependency-groups") or {}).items():
-        for dep_spec in items:
-            if not isinstance(dep_spec, str):
-                # `{include-group = "..."}` 形式は対象外 (include-group 名のみ参照)
-                continue
-            name = _parse_dep_name(dep_spec)
-            if name:
-                deps.add(name)
+    if scope in ("extras", "all"):
+        # [project.optional-dependencies.*]
+        for _, items in (project.get("optional-dependencies") or {}).items():
+            for dep_spec in items:
+                name = _parse_dep_name(dep_spec)
+                if name:
+                    deps.add(name)
+
+        # [dependency-groups].* (R2 F-003 adopt: uv direct dev/group dependency)
+        for _, items in (data.get("dependency-groups") or {}).items():
+            for dep_spec in items:
+                if not isinstance(dep_spec, str):
+                    # `{include-group = "..."}` 形式は対象外 (include-group 名のみ参照)
+                    continue
+                name = _parse_dep_name(dep_spec)
+                if name:
+                    deps.add(name)
 
     return deps
 
@@ -141,11 +150,25 @@ def main() -> int:
         default="origin/main",
         help="base git ref for diff (default: origin/main)",
     )
+    p.add_argument(
+        "--scope",
+        choices=["core", "extras", "all"],
+        default="all",
+        help=(
+            "PR70 R3 F-PR70-R3-001: dependency scope filter. "
+            "core=[project.dependencies] only (installed by default uv sync), "
+            "extras=[project.optional-dependencies.*] + [dependency-groups].*, "
+            "all=core+extras (default). npm ecosystem ignores this flag."
+        ),
+    )
     args = p.parse_args()
 
-    loader = load_pyproject_at if args.ecosystem == "pypi" else load_package_json_at
-    base_deps = loader(args.base)
-    head_deps = loader(None)  # working tree
+    if args.ecosystem == "pypi":
+        base_deps = load_pyproject_at(args.base, scope=args.scope)
+        head_deps = load_pyproject_at(None, scope=args.scope)
+    else:
+        base_deps = load_package_json_at(args.base)
+        head_deps = load_package_json_at(None)
 
     added = sorted(head_deps - base_deps)
     for dep in added:

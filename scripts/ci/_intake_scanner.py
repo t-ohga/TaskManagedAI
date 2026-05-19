@@ -86,14 +86,10 @@ BACKEND_EXCLUDE_PARTS: frozenset[str] = frozenset({"migrations"})
 # PR70 F-PR70-006 adopt: include backend/app/repositories (SQLAlchemy session boundary).
 # PR70 R2 F-PR70-R2-005 adopt: include backend/app/api + backend/app/workers (route handlers /
 # arq workers can call DB connect directly, must be scanned).
-PERSISTENCE_ROOTS: tuple[Path, ...] = (
-    Path("backend/app/services"),
-    Path("backend/app/adapters"),
-    Path("backend/app/db"),
-    Path("backend/app/repositories"),
-    Path("backend/app/api"),
-    Path("backend/app/workers"),
-)
+# PR70 R3 F-PR70-R3-003 adopt: scope expanded to entire backend/app to cover product paths
+# (domain / middleware / observability / seeds / schemas). BACKEND_EXCLUDE_PARTS still excludes
+# `migrations` to avoid Alembic migration files matching.
+PERSISTENCE_ROOTS: tuple[Path, ...] = (Path("backend/app"),)
 
 FRONTEND_EXTS: frozenset[str] = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"})
 CONFIG_EXTS: frozenset[str] = frozenset({".toml", ".yaml", ".yml", ".json", ".py"})

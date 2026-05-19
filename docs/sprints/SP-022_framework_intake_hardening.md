@@ -162,7 +162,7 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 
 - P3+ (production 公開準備、ADR-00017 P2 character image final + 公開 docker image build pipeline + license / docs 整備)
 - (継続的) Wave 23 cron + Routines 実装
-- **post-SP022-T01 hardening (SP-022.X) — frontend npm license verify**: PR #70 R2 F-PR70-R2-002 defer 対応、`node_modules/<pkg>/package.json` の `license` field + LICENSE_DENYLIST scan、SPDX expression 解釈、`pnpm install` 前提条件、ADR-00020 §1 #1 scope 明確化 update を含む (本 SP022-T01 は PyPI 限定で skeleton 完成、frontend は post-task)
+- **post-SP022-T01 hardening (SP-022.X) — frontend npm license verify + per-framework adoption.md AND verify**: PR #70 R2 F-PR70-R2-002 + R3 F-PR70-R3-002 defer 対応、`node_modules/<pkg>/package.json` の `license` field + LICENSE_DENYLIST scan、SPDX expression 解釈、`pnpm install` 前提条件、ADR-00020 §1 #1 scope 明確化 update、ADR-00020 §1 #2 strict AND 解釈 (個別 `docs/citations/<framework>_adoption.md` artifact verify) も含む (本 SP022-T01 は PyPI 限定 + OR 設計で skeleton 完成、frontend / strict AND は post-task)
 
 ## 関連 ADR
 
@@ -326,6 +326,34 @@ defer 理由詳細 (R2-002): ADR-00020 §1 #1 の License 機械検査は PyPI t
 R2 regression fixture 5 件 (`test_diff_gate_runs_scanners_without_dep_change` / `test_psycopg_import_connect_alias` / `test_optional_dependencies_extracted` / `test_persistence_in_api_or_workers` / `test_docker_compose_external_network`) + 1 fixture 仕様変更 (`test_skip_no_deps_change` → `test_clean_pr_no_dep_change_runs_scanners` で PASS expected msg、R2-001 の挙動変更を test 側にも反映) で regression coverage 確保。
 
 R1+R2 累計: **23 fixture × 46 assertion 全 PASS** (failed: 0)。13 adopt findings (R1=7 + R2=5 adopt) + 1 defer (R2-002 post-T01)。
+
+#### PR #70 Codex auto-review R3 — 10 inline findings (2 adopt + 2 defer + 6 reject as stale re-emission)
+
+`@codex review` mention 経由で 44c18fe (R2 fix commit) 再 review、R3 で 10 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R3-001 (NEW) | P2 | `_extract_changed_deps.py` が optional-dependencies を license check に渡すが `uv sync --locked` default では extras install されず `pip show` empty で `license_field_empty_or_unresolved` 誤 violation | **adopt** | `_extract_changed_deps.py` に `--scope={core,extras,all}` flag 追加、check_license は core 限定 (installed deps のみ)、check_attribution は all (citation 必要) |
+| R3-002 (NEW) | P2 | Attribution check は map + candidates.md row のみ verify、ADR-00020 §1 #2 が要求する `docs/citations/<framework>_adoption.md` 個別 citation artifact 不検査 | **defer** | ADR-00020 §1 #2 plan で「OR」設計 (本 task では candidates.md 内 entry で十分)、ADR 文書を strict AND 解釈する変更は SP-022.X (R2-002 と同 hardening) で実施 |
+| R3-003 (NEW) | P2 | PERSISTENCE_ROOTS allowlist が `backend/app/domain` / `middleware` / `observability` / `seeds` / `schemas` を含まない、production product paths bypass | **adopt** | PERSISTENCE_ROOTS を `Path("backend/app")` 単一に拡大、BACKEND_EXCLUDE_PARTS={migrations} で db/migrations 除外維持 |
+| R3-004 | P2 | "Include repositories in persistence scan" | **reject as stale re-emission** | R2 で既 adopt、scripts/ci/_intake_scanner.py に `Path("backend/app/repositories")` 既存 (line 93、PR70 F-PR70-006 comment 付き) |
+| R3-005 | P2 | "Scan Next.js root instrumentation files" | **reject as stale re-emission** | R2 で既 adopt、FRONTEND_SCAN_ROOTS に `frontend/instrumentation.ts` + `instrumentation-client.ts` 既存 (line 80-81) |
+| R3-006 | P2 | "Catch imported psycopg connect aliases" | **reject as stale re-emission** | R2 で既 adopt、`psycopg_import_connect` regex 既存 (line 189-191) |
+| R3-007 | P2 | "Include optional frontend dependencies" | **reject as stale re-emission** | R2 で既 adopt、`load_package_json_at` で `optionalDependencies` 取り込み既存 (line 125) |
+| R3-008 | P2 | "Scan backend API files for direct persistence" | **reject as stale re-emission** | R2 で既 adopt、PERSISTENCE_ROOTS に `backend/app/api` + `backend/app/workers` 既存。R3-003 で `backend/app` 全体に拡大して更に強化 |
+| R3-009 | P2 | "Include deployment YAML in endpoint scans" | **reject as stale re-emission** | R2 で既 adopt、`check_external_network` に `docker-compose*.yml` glob 既存 (line 233) |
+| R3-010 | P2 | "Check npm dependency licenses too" | **defer (continue from R2-002)** | R2-002 と同 finding 再 emit、SP-022.X (post-T01 frontend license + ADR-00020 §1 #1 scope 明確化) で実施 |
+
+**Stale re-emission rationale**: `feedback_codex_r2_reemission_reject_trap.md` (project memory) 教訓に従い、6 件 R3 re-emission は **code grep + implementation verify** で reject 確定 (R2 commit 44c18fe で全件 fix 実装 + R2 regression fixture 5 件で PASS verify 済)。Codex multi-round の既知の "stale finding re-emission" pattern。
+
+実装:
+- `_extract_changed_deps.py`: `load_pyproject_at(ref, scope=...)` に `scope={core,extras,all}` filter、`main()` で `--scope` flag 追加 (R3-001)
+- `check_framework_intake.sh`: `_run_extract` に scope 引数追加、`extract_changed_deps_pypi_core()` 関数追加、`check_license` で `extract_changed_deps_pypi_core` 使用 (R3-001)
+- `_intake_scanner.py`: `PERSISTENCE_ROOTS = (Path("backend/app"),)` 単一化、`BACKEND_EXCLUDE_PARTS={migrations}` で migrations 除外維持 (R3-003)
+
+R3 regression fixture 2 件 (`test_optional_extras_skipped_for_license` + `test_persistence_in_domain_or_middleware`) 追加。
+
+R1+R2+R3 累計: **25 fixture × 51 assertion 全 PASS** (failed: 0)。**15 adopt findings** (R1=7 + R2=5 + R3=2 + 1 fixture 仕様変更を含む 18 total impact 1 仕様変更 = 18-15 fix 単位 = 計画通り) + 2 defer (R2-002 / R3-002、frontend license + adoption.md 個別 verify は SP-022.X post-T01) + 6 reject (R3 stale re-emission)。
 
 #### Emergency disable audit format
 
