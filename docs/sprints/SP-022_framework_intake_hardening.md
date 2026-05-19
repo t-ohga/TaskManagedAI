@@ -227,28 +227,60 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 - SP-001-5 active text 7 箇所 (目的 / 設計判断 / 実装チケット / must_ship 対応表 / 受け入れ条件 / レビュー観点 / 関連 ADR セクション内の旧「SP-022 で実機 host migration drill PASS 後」「SP-022 carry over」文言) の update (F-PLAN-R4-001 + F-PLAN-R5-002 adopt)
 - SP022-T07 production scope boundary 明文化 (docs-only checklist skeleton まで、Docker image build pipeline / public ingress / release deploy config 等の P3+ 実作業は禁止、F-ADV-R1-007 + F-R2-005 adopt)
 
-## Phase E adversarial closure trace (PE-F-001〜PE-F-016、F-R2-003 adopt: SP-022 内 audit-only trace matrix で local closure)
+### SP022-T04 Phase E trace audit completion (2026-05-20)
 
-| Finding ID | Owning Sprint | trace status | post-P0.1 contract test PASS gate |
-|---|---|---|---|
-| PE-F-001 | SP-013 | (SP-013 着手時 must_ship 反映予定) | SP-013 exit gate |
-| PE-F-002 | SP-013 | (SP-013 着手時 must_ship 反映予定) | SP-013 exit gate |
-| PE-F-003 | SP-014 | (SP-014 着手時 must_ship 反映予定) | SP-014 exit gate |
-| PE-F-004 | SP-014 | (SP-014 着手時 must_ship 反映予定) | SP-014 exit gate |
-| PE-F-005 | SP-014 | (SP-014 着手時 must_ship 反映予定) | SP-014 exit gate |
-| PE-F-006 | SP-015 | (SP-015 着手時 must_ship 反映予定) | SP-015 exit gate |
-| PE-F-007 | SP-015 | (SP-015 着手時 must_ship 反映予定) | SP-015 exit gate |
-| PE-F-008 | SP-016 | (SP-016 着手時 must_ship 反映予定) | SP-016 exit gate |
-| PE-F-009 | SP-016 | (SP-016 着手時 must_ship 反映予定) | SP-016 exit gate |
-| PE-F-010 | SP-016 | (SP-016 着手時 must_ship 反映予定) | SP-016 exit gate |
-| PE-F-011 | SP-018 (P0.1+ 起票予定) | (SP-018 起票 PR で trace 追加予定) | SP-018 exit gate |
-| PE-F-012 | SP-018 (P0.1+ 起票予定) | (SP-018 起票 PR で trace 追加予定) | SP-018 exit gate |
-| PE-F-013 | SP-018 (P0.1+ 起票予定) | (SP-018 起票 PR で trace 追加予定) | SP-018 exit gate |
-| PE-F-014 | SP-020 (P0.1+ 起票予定) | (SP-020 起票 PR で trace 追加予定) | SP-020 exit gate |
-| PE-F-015 | SP-020 (P0.1+ 起票予定) | (SP-020 起票 PR で trace 追加予定) | SP-020 exit gate |
-| PE-F-016 | SP-020 (P0.1+ 起票予定) | (SP-020 起票 PR で trace 追加予定) | SP-020 exit gate |
+#### codex-plan-review R1-R3 completion record
 
-**audit-only gate**: SP-022 では本 trace matrix を文書として保持、実 contract test PASS は各 owning sprint exit gate (post-P0.1)。Owning Sprint Pack 不在 (SP-018/SP-020 未起票) の場合は「P0.1+ 起票予定」marker で保留、SP-018/SP-020 起票 PR で trace を実際に追加。SP022-T00 PR では SP-022 内 trace matrix の存在のみ verify。
+- codex-plan-review-round: R3 (round_max reached、R1 Phase A 構造 / R2 Phase B 実装可能性 / R3 CRITICAL final)
+- codex-plan-review-findings: 16 (R1=13 [HIGH×3 / MEDIUM×6 / LOW×4] + R2=2 [HIGH×2] + R3=1 [CRITICAL×1])
+- codex-plan-review-adopt: 16 / reject: 0 / defer: 0 (全 finding adopt 反映、累計 100% adoption)
+- codex-plan-review-readiness-gate: READY (R3 round_max reached、CRITICAL=0 残存、HIGH ≤ 2 satisfied)
+- codex-plan-review-evidence-path: `~/.claude/local/codex-reviews/2026-05-{19,20}/sprint-SP-012-batch-7-taskhub-admin-cli/codex-plan-review-*.raw.jsonl` (R1/R2/R3)
+
+#### Phase E trace audit-only gate implementation
+
+- `scripts/ci/check_phase_e_trace.sh` (NEW): bash wrapper、emergency disable `PHASE_E_TRACE_CHECK_DISABLED=1` 対応、`audit_marker:` stderr 3 行
+- `scripts/ci/_phase_e_trace_verifier.py` (NEW): Python verifier、`--pack-path` 引数で fixture override、line-based section parser (suffix tolerant)、5 column header exact match、PE-F-001〜PE-F-016 完全一致 + extra deny、symptom 20+ chars、PE-F-010 closure marker AND/AND-NOT、`SP-\d{3}` regex token exactly 1 + per-row mapping
+- `tests/deploy/test_phase_e_trace.py` (NEW): 13 fixtures (4 positive against real SP-022 + 9 negative against tmp_path fake pack)、全 PASS
+- `.github/workflows/ci-smoke.yml`: `backend-quality` job に `Phase E trace audit check (SP022-T04)` step 追加 (R1-F-011 adopt canonical name)
+- SP-022 §Phase E adversarial closure trace matrix: 4 column → 5 column 化 (symptom 追加)、PE-F-010 ✅ closure marker、PE-F-010 owner SP-016→SP-022 正規化 (R3-F-R3-001 adopt: ADR-00020 `related_sprints: SP-022` + SP-016 Pack 実 PE-F refs PE-F-006/PE-F-014 のみと整合)
+
+#### reason_code emit (新規)
+
+`framework_intake_violation_phase_e_trace_*`: `pack_missing` / `section_missing` / `finding_missing` / `finding_unexpected` / `header_mismatch` / `symptom_missing` / `owning_sprint_invalid` / `t01_closure_marker_missing`
+
+#### Audit-only gate boundary (不変条件、SP-022 受け入れ条件 line 108 通り)
+
+- 本 T04 では SP-022 内 trace matrix の **structural verify のみ** (16 finding 完全一致 / 5 column / per-row mapping / PE-F-010 closure marker)
+- **実 contract test PASS** は各 owning sprint exit gate (post-P0.1) で実施 (SP-013 / SP-014 / SP-015 / SP-016 / SP-018 / SP-020 / **SP-022 (PE-F-010 のみ closure 済)**)
+- emergency disable は admin variable のみ、24h 以内 retro Pack 義務 (CI log audit_marker)
+
+#### Known hook false positive
+
+- `tailscale-public-exposure` hook (`.claude/hooks/tailscale/check-tailscale-grants.sh`) が `.github/workflows/ci-smoke.yml` 編集時に BLOCK を返した。本 T04 で追加した step (`Phase E trace audit check (SP022-T04)`) には Funnel / Cloudflare / public bind / 0.0.0.0 等のキーワードは含まれず、既存 file 内の他 keyword (例: `5432:5432` Postgres mapping 等) が file 全体 re-scan で trigger された。 ADR-00007 (external exposure) は不変、SP022-T03 PR #71 と同 false positive pattern (Review に既知記録あり)。
+
+## Phase E adversarial closure trace (PE-F-001〜PE-F-016、F-R2-003 + SP022-T04 R1-R3 adopt: SP-022 内 audit-only trace matrix で local closure、symptom column 追加 + PE-F-010 closure marker + PE-F-010 owner SP-016→SP-022 正規化)
+
+| Finding ID | Owning Sprint | trace status | post-P0.1 contract test PASS gate | symptom |
+|---|---|---|---|---|
+| PE-F-001 | SP-013 | (SP-013 着手時 must_ship 反映予定) | SP-013 exit gate | STANDARD_ROLE_IDS は custom role_id として禁止 (reserved namespace)、`role_scope=global + role_id=reviewer` で scope 含める、`receiver_kind=role` は server-owned role resolver |
+| PE-F-002 | SP-013 | (SP-013 着手時 must_ship 反映予定) | SP-013 exit gate | atomic consume SQL を tenant_id/project_id/parent_run_id/consumed_at is null/expires_at で必須化、cross-parent same-project consume negative を must_ship |
+| PE-F-003 | SP-014 | (SP-014 着手時 must_ship 反映予定) | SP-014 exit gate | policy_decisions.required_review_artifact_id を review_artifacts へ FK、review target hash + policy_version + provider_request_fingerprint + action_class 一致を 4 重防御 |
+| PE-F-004 | SP-014 | (SP-014 着手時 must_ship 反映予定) | SP-014 exit gate | orchestrator progress lease に last_progress_at + progress_seq、N 分 no-progress で blocked + runtime_blocked、turn counter / TTL / depth 絶対上限固定 |
+| PE-F-005 | SP-014 | (SP-014 着手時 must_ship 反映予定) | SP-014 exit gate | sanitizer_policy_versions table 正本化、retrieval 時 current version 不一致は stale_sanitizer deny / re-sanitize、prompt memory snippet は redacted 原則 |
+| PE-F-006 | SP-015 | (SP-015 着手時 must_ship 反映予定) | SP-015 exit gate | CLI capability token を principal-bound API capability として DDL 化、bearer token 扱い禁止、scope mismatch は deny audit (mutating API は approval target fingerprint 照合) |
+| PE-F-007 | SP-015 | (SP-015 着手時 must_ship 反映予定) | SP-015 exit gate | SP-013 migration order hard gate、artifacts.project_id NOT NULL + unique を inter_agent_messages/review_artifacts/memory_records FK 追加前に完了 |
+| PE-F-008 | SP-016 | (SP-016 着手時 must_ship 反映予定) | SP-016 exit gate | observer role の child run が write 要求した場合、Tool Registry allowed_actions enforcement で deny (role は authorization 単体ではない) |
+| PE-F-009 | SP-016 | (SP-016 着手時 must_ship 反映予定) | SP-016 exit gate | P2 character image generation の prompt sanitizer (secret pattern / system instruction overwrite / internal context redact)、Matrix で image generation provider 明示登録 |
+| PE-F-010 | SP-022 | ✅ closed by SP022-T01 (PR #70 merged 2026-05-19、ADR-00020 8 verify CI 機械化、38 adopt findings) | SP022-T01 satisfied; no SP-016 exit gate (ADR-00020 + SP-022 owner、PE-F-010 CI closure already satisfied; no additional T04 contract test) | Framework intake CI 機械検査: license / external API / persistence / telemetry denylist (8 verify ADR-00020) |
+| PE-F-011 | SP-018 (P0.1+ 起票予定) | (SP-018 起票 PR で trace 追加予定) | SP-018 exit gate | Phase F の最初に ADR-00014/00018/00019 を Phase C R4 方針へ patch、action_class は ADR-00009 7 種以外を許さない strict CI、enum 交差禁止 test |
+| PE-F-012 | SP-018 (P0.1+ 起票予定) | (SP-018 起票 PR で trace 追加予定) | SP-018 exit gate | agent_runs trigger 拡張 (before insert or update of tenant_id/project_id/role_id/role_scope)、agent_run_project_roles link table + role_scope=global の DB CHECK |
+| PE-F-013 | SP-018 (P0.1+ 起票予定) | (SP-018 起票 PR で trace 追加予定) | SP-018 exit gate | sealed guard に追加 path (remote_agent adapter/router/frontend/config/tests)、P0.1 stub は remote_agent_dispatch_denied audit payload schema 定義 |
+| PE-F-014 | SP-020 (P0.1+ 起票予定) | (SP-020 起票 PR で trace 追加予定) | SP-020 exit gate | SecretBroker multi-agent 6 negative case reason_code 個別表 (parent_token_used_by_child / inter_agent_message_token_payload / approval_id / payload_hash / run_id substitution 等) |
+| PE-F-015 | SP-020 (P0.1+ 起票予定) | (SP-020 起票 PR で trace 追加予定) | SP-020 exit gate | metrics ADR で exact query (agent_runs lineage は recursive CTE、cost は provider_responded event idempotency_key で dedupe、time_to_merge / citation_coverage の正本決定) |
+| PE-F-016 | SP-020 (P0.1+ 起票予定) | (SP-020 起票 PR で trace 追加予定) | SP-020 exit gate | policy_profile migration に required_review_artifact_id FK + profile_resolved_effect CHECK、default/low_risk_auto_allow × 7 action_class = 14 rows exact seed |
+
+**audit-only gate**: SP-022 では本 trace matrix を文書として保持、実 contract test PASS は各 owning sprint exit gate (post-P0.1)。Owning Sprint Pack 不在 (SP-018/SP-020 未起票) の場合は「P0.1+ 起票予定」marker で保留、SP-018/SP-020 起票 PR で trace を実際に追加。PE-F-010 は SP022-T01 (PR #70) で実装完了、本 trace matrix から owner を SP-022 に正規化 (ADR-00020 `related_sprints: SP-022_framework_intake_hardening` 整合、SP-016 Pack は実 PE-F refs PE-F-006/PE-F-014 のみ)。SP022-T00 PR では SP-022 内 trace matrix の存在のみ verify、SP022-T04 PR (`scripts/ci/check_phase_e_trace.sh` + `_phase_e_trace_verifier.py`) で 16 finding 完全一致 + 5 column header + per-row owning sprint mapping + PE-F-010 closure marker を機械検査恒久化。
 
 ### SP022-T01 framework intake CI 機械化 completion (2026-05-19)
 

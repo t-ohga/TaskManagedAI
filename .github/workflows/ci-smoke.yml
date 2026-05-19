@@ -115,6 +115,16 @@ jobs:
           DRILL_TIMER_ALERT_ONLY_CHECK_DISABLED: ${{ vars.DRILL_TIMER_ALERT_ONLY_CHECK_DISABLED }}
         run: bash scripts/ci/check_drill_timer_alert_only.sh
 
+      - name: Phase E trace audit check (SP022-T04)
+        # SP022-T04 R1-F-011 adopt: canonical step name `Phase E trace audit check (SP022-T04)`.
+        # Verifies SP-022 §Phase E adversarial closure trace matrix (16 findings,
+        # 5-column header, per-row owning sprint mapping, PE-F-010 closure marker).
+        # Emergency disable: PHASE_E_TRACE_CHECK_DISABLED=1 repository variable
+        # (admin only, PR author cannot override from diff).
+        env:
+          PHASE_E_TRACE_CHECK_DISABLED: ${{ vars.PHASE_E_TRACE_CHECK_DISABLED }}
+        run: bash scripts/ci/check_phase_e_trace.sh
+
       - name: Ruff
         run: uv run ruff check backend tests
 
