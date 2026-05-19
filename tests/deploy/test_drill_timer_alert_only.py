@@ -523,6 +523,73 @@ def test_mail_attach_flag_rejected(tmp_path: Path) -> None:
     assert "mail_attachment_forbidden" in output
 
 
+# ---- PR71 R6-002: quoted Environment="PATH=..." override ----
+def test_quoted_path_override_rejected(tmp_path: Path) -> None:
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir(parents=True)
+    (deploy_dir / "taskhub-drill-alert.timer").write_text(
+        "[Unit]\nDescription=drill\n\n[Timer]\nOnCalendar=*-01,07-01 09:00:00\n"
+        "Unit=taskhub-drill-alert.service\n",
+        encoding="utf-8",
+    )
+    (deploy_dir / "taskhub-drill-alert.service").write_text(
+        '[Service]\nType=oneshot\nEnvironment="PATH=/tmp/evil:/usr/bin"\n'  # noqa: S108
+        "ExecStart=/usr/bin/notify-send drill\n",
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "path_override_env" in output
+
+
+# ---- PR71 R6-003: mail -a (Heirloom) ----
+def test_mail_lowercase_a_rejected(tmp_path: Path) -> None:
+    _write_drill_timer_and_service(
+        tmp_path,
+        "/usr/bin/mail -a /home/user/.taskhub/approvals/id.signed -s drill ops@example.com",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "mail_attachment_forbidden" in output
+
+
+# ---- PR71 R6-004: logger -f file read ----
+def test_logger_file_flag_rejected(tmp_path: Path) -> None:
+    _write_drill_timer_and_service(
+        tmp_path,
+        "/usr/bin/logger -t drill -f /home/user/.taskhub/approvals/id.signed",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "logger_file_read_forbidden" in output
+
+
+# ---- PR71 R6-005 (P1): inherited drop-in directory ----
+def test_inherited_dropin_directory_scanned(tmp_path: Path) -> None:
+    """`taskhub-drill-alert.service` inherits drop-ins from `taskhub-.service.d/`."""
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir(parents=True)
+    (deploy_dir / "taskhub-drill-alert.timer").write_text(
+        "[Unit]\nDescription=drill\n\n[Timer]\nOnCalendar=*-01,07-01 09:00:00\n"
+        "Unit=taskhub-drill-alert.service\n",
+        encoding="utf-8",
+    )
+    (deploy_dir / "taskhub-drill-alert.service").write_text(
+        "[Service]\nType=oneshot\nExecStart=/usr/bin/notify-send drill\n",
+        encoding="utf-8",
+    )
+    # inherited drop-in: `taskhub-.service.d/override.conf`
+    inherited_dir = deploy_dir / "taskhub-.service.d"
+    inherited_dir.mkdir()
+    (inherited_dir / "override.conf").write_text(
+        "[Service]\nExecStart=\nExecStart=/usr/local/bin/taskhub migrate --target vps\n",
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "taskhub_destructive_subcommand" in output
+
+
 # ---- 11. cron env MAILTO (allowed env line) ----
 def test_cron_mailto_env_line_passes(tmp_path: Path) -> None:
     """`MAILTO=ops@example.com` does not trigger path-spoofing (only PATH/SHELL/BASH_ENV do)."""

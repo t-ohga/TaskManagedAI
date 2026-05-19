@@ -673,4 +673,27 @@ R5 regression fixture 4 件追加: `test_osascript_embedded_shell_script_rejecte
 
 累計 fixture: **41 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 3 + R2 5 + R3 3 + R4 3 + R5 4)。
 
+#### PR #71 Codex auto-review R6 — 16 inline findings (P1×6 + P2×10) (5 adopt + 11 reject stale)
+
+R6 で 16 件 emit、真に新 5 件 (P1×2 + P2×3)、stale 11 件 (R1-R5 既 adopt)。
+
+| ID | priority | symptom (要約) | 判定 |
+|---|---|---|---|
+| R6-001 NEW | **P1** | paired non-drill service の drop-in dir scan は diff-gate 限定、baseline で漏れ | adopt |
+| R6-002 NEW | P2 | quoted `Environment="PATH=..."` で `SYSTEMD_PATH_OVERRIDE_RE` bypass | adopt |
+| R6-003 NEW | P2 | `mail -a` (Heirloom / s-nail) attach 漏れ、`-A` `--attach` のみ対応 | adopt |
+| R6-004 NEW | P2 | `logger -f <secret_file>` syslog 流出 | adopt |
+| R6-005 NEW | **P1** | systemd inherited drop-in dirs (`<prefix>-.service.d/`) scan 漏れ | adopt |
+
+実装:
+- `_drill_timer_scanner.py`:
+  - `SYSTEMD_PATH_OVERRIDE_RE` を `re.VERBOSE` で quoted / multiple-assignment 両対応 (R6-002)
+  - `_check_mail_attachment` に `-a` 追加 + `mailx` / `s-nail` head allowlist 追加 (R6-003)
+  - `_check_logger_file_read` 新規追加: `logger -f` / `--file` reject (R6-004)
+  - baseline scan で各 drill timer から referenced paired service の `<service>.service.d/*.conf` + inherited dropin dirs `<prefix>-.service.d/` を scan に追加 (R6-001 P1 + R6-005 P1)
+
+R6 regression fixture 4 件追加: `test_quoted_path_override_rejected` (R6-002) / `test_mail_lowercase_a_rejected` (R6-003) / `test_logger_file_flag_rejected` (R6-004) / `test_inherited_dropin_directory_scanned` (R6-005 P1)。
+
+累計 fixture: **45 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 3 + R2 5 + R3 3 + R4 3 + R5 4 + R6 4)。
+
 (後続: SP-022 完了時に T02 / T04-T09 全体 Review を追記)

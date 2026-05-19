@@ -118,9 +118,16 @@ SYSTEMD_UNIT_RE = re.compile(r"^\s*Unit\s*=\s*(\S+)\s*$", re.MULTILINE)
 SYSTEMD_EXEC_SEARCH_PATH_RE = re.compile(
     r"^\s*ExecSearchPath\s*=", re.MULTILINE
 )
+# PR71 R5-003 + R6-002 adopt: cover unquoted, quoted (`Environment="PATH=..."`),
+# and multiple-assignment forms (`Environment=FOO=bar PATH=/tmp`).
 SYSTEMD_PATH_OVERRIDE_RE = re.compile(
-    r"^\s*(Environment\s*=\s*PATH\s*=|EnvironmentFile\s*=|PassEnvironment\s*=\s*[^\n]*\bPATH\b)",
-    re.MULTILINE,
+    r"""^\s*(
+        Environment\s*=\s*["']?\s*PATH\s*=
+        | Environment\s*=\s*["']?[^"'\n]*?\bPATH\s*=
+        | EnvironmentFile\s*=
+        | PassEnvironment\s*=\s*[^\n]*\bPATH\b
+    )""",
+    re.MULTILINE | re.VERBOSE,
 )
 # PR71 R2-005 + R4-001 adopt: systemd Exec*= value can carry leading prefix characters
 # `-` ignore-failure, `+` privileged, `:` no env expansion, `!` user override, `!!` legacy,
@@ -281,17 +288,31 @@ def _check_osascript_payload(tokens: list[str]) -> tuple[str | None, str | None]
 
 
 def _check_mail_attachment(tokens: list[str]) -> tuple[str | None, str | None]:
-    """PR71 R5-005 adopt: `mail -A <secret_file>` attachment flag exfiltrates secrets without
-    shell `<` redirect. Reject any allowlisted mail/sendmail invocation with -A/--attach.
+    """PR71 R5-005 + R6-003 adopt: `mail -A` / `mail -a` (Heirloom/s-nail) / `mail --attach`
+    attachment flags exfiltrate secrets without shell metacharacters. Reject all variants.
     """
     if not tokens:
         return (None, None)
     head = tokens[0].rsplit("/", 1)[-1]
-    if head not in ("mail", "sendmail"):
+    if head not in ("mail", "sendmail", "mailx", "s-nail"):
         return (None, None)
     for tok in tokens[1:]:
-        if tok in ("-A", "--attach") or tok.startswith("--attach="):
+        if tok in ("-A", "-a", "--attach") or tok.startswith("--attach="):
             return ("mail_attachment_forbidden", f"mail_attachment_flag={tok[:40]}")
+    return (None, None)
+
+
+def _check_logger_file_read(tokens: list[str]) -> tuple[str | None, str | None]:
+    """PR71 R6-004 adopt: `logger -f <secret_file>` logs the file contents to syslog;
+    reject any logger invocation with file-reading flags."""
+    if not tokens:
+        return (None, None)
+    head = tokens[0].rsplit("/", 1)[-1]
+    if head != "logger":
+        return (None, None)
+    for tok in tokens[1:]:
+        if tok in ("-f", "--file") or tok.startswith("--file="):
+            return ("logger_file_read_forbidden", f"logger_file_flag={tok[:40]}")
     return (None, None)
 
 
@@ -331,8 +352,12 @@ def _check_command(cmd_line: str) -> tuple[str | None, str | None]:
     reason, label = _check_osascript_payload(tokens)
     if reason is not None:
         return (reason, label)
-    # 7. PR71 R5-005 adopt: mail/sendmail attachment flag check (secret exfiltration)
+    # 7. PR71 R5-005 + R6-003 adopt: mail/sendmail attachment flag check (secret exfiltration)
     reason, label = _check_mail_attachment(tokens)
+    if reason is not None:
+        return (reason, label)
+    # 8. PR71 R6-004 adopt: logger -f <file> file-read flag check
+    reason, label = _check_logger_file_read(tokens)
     if reason is not None:
         return (reason, label)
     return (None, None)
@@ -348,6 +373,39 @@ def check_systemd_files(scan_files: list[Path] | None, root: Path) -> list[str]:
         service_files = _iter_glob(root, SCAN_SERVICE_GLOBS)
         # PR71 R4-002 (P1) adopt: include drop-in override .conf files alongside .service files
         service_files.extend(_iter_glob(root, SCAN_SERVICE_DROPIN_GLOBS))
+        # PR71 R6-001 (P1) adopt: include paired non-drill service の drop-in dir も baseline scan。
+        # 各 drill timer から referenced service の `<service>.service.d/*.conf` を resolve。
+        # PR71 R6-005 (P1) adopt: systemd inherited drop-in directories (`<prefix>-.service.d/`)
+        # は dashed unit name (e.g., `taskhub-drill-alert.service` は `taskhub-.service.d/` を継承)。
+        # 既存 SCAN_SERVICE_DROPIN_GLOBS は `*drill*` のみ filter、inherited prefix dropin が
+        # filter で drop されるので、drill timer の base unit name から inherited prefix path を
+        # 計算して scan に追加。
+        for tpath in timer_files:
+            content = _read_text_or_none(tpath)
+            if content is None:
+                continue
+            unit_match = SYSTEMD_UNIT_RE.search(content)
+            if unit_match:
+                unit_name = unit_match.group(1)
+            else:
+                unit_name = tpath.with_suffix(".service").name
+            # paired service の drop-in dir
+            dropin_dir = tpath.parent / f"{unit_name}.d"
+            if dropin_dir.exists() and dropin_dir.is_dir():
+                for conf in dropin_dir.glob("*.conf"):
+                    if conf not in service_files:
+                        service_files.append(conf)
+            # inherited drop-in dirs: `taskhub-drill-alert.service` → `taskhub-.service.d/`,
+            # `taskhub-drill-.service.d/` 等 (PR71 R6-005)
+            base_stem = unit_name.rsplit(".service", 1)[0]  # `taskhub-drill-alert`
+            parts = base_stem.split("-")
+            for prefix_len in range(1, len(parts) + 1):
+                inherited_name = "-".join(parts[:prefix_len]) + "-.service.d"
+                inherited_dir = tpath.parent / inherited_name
+                if inherited_dir.exists() and inherited_dir.is_dir():
+                    for conf in inherited_dir.glob("*.conf"):
+                        if conf not in service_files:
+                            service_files.append(conf)
     else:
         timer_files = [p for p in scan_files if p.suffix == ".timer" and p.exists()]
         # PR71 R2-001 adopt: diff-gate でも `*drill*.service` のみ standalone scan。
