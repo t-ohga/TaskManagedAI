@@ -177,8 +177,10 @@ def check_no_code_embed() -> list[str]:
 
     # PR70 F-PR70-005 adopt: include side-effect import `import "@scope/name";`
     npm_alts = "|".join(re.escape(n) for n in NPM_DENYLIST_FRAMEWORKS)
+    # PR70 R6 F-PR70-R6-005 adopt: allow whitespace in `require ( ` / `import ( ` for valid
+    # dynamic import variants like `await import ("@langchain/core")`.
     npm_pattern = re.compile(
-        r"""(?:from\s+['"]|require\(['"]|import\(['"]|import\s+['"])("""
+        r"""(?:from\s+['"]|require\s*\(\s*['"]|import\s*\(\s*['"]|import\s+['"])("""
         + npm_alts
         + r""")(?:/[^'"]*)?['"]"""
     )
@@ -208,11 +210,12 @@ def check_persistence() -> list[str]:
     psycopg_import_connect = re.compile(
         r"^\s*from\s+psycopg2?\s+import\s+(?:[^#\n]*?\b)?connect\b", re.MULTILINE
     )
-    # R5-005: `from psycopg import AsyncConnection` 等の import-class-then-call chain
-    psycopg_import_class = re.compile(
-        r"^\s*from\s+psycopg2?\s+import\s+(?:[^#\n]*?\b)?(?:Async)?Connection\b", re.MULTILINE
+    # R5-005 + R6 F-PR70-R6-004 adopt: `from psycopg import [Async]Connection [as <alias>]`
+    # の import-class-then-call chain。R6 で `as <alias>` 別名取得を追加、`<alias>.connect(`
+    # も検出 (alias は per-file 集合として下記 loop 内で動的 regex 構築)。
+    psycopg_import_class_re = re.compile(
+        r"^\s*from\s+psycopg2?\s+import\s+([^#\n]+)$", re.MULTILINE
     )
-    class_connect_call = re.compile(r"\b(?:Async)?Connection\.connect\(")
     for path in _iter_python_files(PERSISTENCE_ROOTS):
         content = _read_text_or_none(path)
         if content is None:
@@ -241,10 +244,26 @@ def check_persistence() -> list[str]:
                 f"VIOLATION reason_code=framework_intake_violation_persistence "
                 f"evidence={path}:{line_num} framework=psycopg detail=from_import_connect_alias"
             )
-        # R5-005: file imports Connection/AsyncConnection from psycopg AND calls
-        # `Connection.connect(` or `AsyncConnection.connect(` → flag both as alias-chain bypass
-        if psycopg_import_class.search(content):
-            for match in class_connect_call.finditer(content):
+        # R5-005 + R6 F-PR70-R6-004 adopt: file imports Connection/AsyncConnection from psycopg
+        # (possibly with `as <alias>`) AND calls `<alias>.connect(` or `[Async]Connection.connect(`
+        # → flag both as alias-chain bypass.
+        imported_aliases: set[str] = set()
+        for imp_match in psycopg_import_class_re.finditer(content):
+            # parse `Connection, AsyncConnection as PG, errors` into class names + aliases
+            spec = imp_match.group(1)
+            for item in spec.split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                parts = item.split(" as ")
+                base = parts[0].strip()
+                alias = parts[-1].strip() if len(parts) > 1 else base
+                if base in ("Connection", "AsyncConnection"):
+                    imported_aliases.add(alias)
+        for alias in imported_aliases:
+            # `alias.connect(` literal pattern per alias
+            alias_call = re.compile(re.escape(alias) + r"\.connect\(")
+            for match in alias_call.finditer(content):
                 line_num = content[: match.start()].count("\n") + 1
                 violations.append(
                     f"VIOLATION reason_code=framework_intake_violation_persistence "
@@ -323,8 +342,10 @@ def check_telemetry() -> list[str]:
 
     # PR70 F-PR70-003 adopt: include side-effect import `import "@sentry/nextjs";`
     npm_alts = "|".join(re.escape(n) for n in TELEMETRY_NPM)
+    # PR70 R6 F-PR70-R6-005 adopt: allow whitespace in `require ( ` / `import ( ` for valid
+    # dynamic import variants like `await import ("@langchain/core")`.
     npm_pattern = re.compile(
-        r"""(?:from\s+['"]|require\(['"]|import\(['"]|import\s+['"])("""
+        r"""(?:from\s+['"]|require\s*\(\s*['"]|import\s*\(\s*['"]|import\s+['"])("""
         + npm_alts
         + r""")(?:/[^'"]*)?['"]"""
     )

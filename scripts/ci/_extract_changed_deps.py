@@ -74,15 +74,39 @@ def load_pyproject_at(ref: str | None, scope: str = "all") -> set[str]:
     deps: set[str] = set()
     project = data.get("project", {})
 
-    # PR70 R5 F-PR70-R5-003 adopt: default-install groups (uv `dev` by default,
-    # or [tool.uv.default-groups] list if explicitly configured)
+    # PR70 R5 F-PR70-R5-003 + R6 F-PR70-R6-001 adopt: default-install groups
+    # uv `[tool.uv] default-groups` spec is `str | list[str]` (per uv docs):
+    # - list[str]: literal group names that auto-install (e.g., `["dev"]`, `["dev", "test"]`)
+    # - "all" literal string: install every defined group
+    # - omitted: defaults to `{"dev"}`
+    # R6-001: previous code accepted only list, missing the `"all"` literal case.
     tool_uv = data.get("tool", {}).get("uv", {}) if isinstance(data.get("tool"), dict) else {}
     default_groups_cfg = tool_uv.get("default-groups")
-    if isinstance(default_groups_cfg, list) and all(isinstance(g, str) for g in default_groups_cfg):
+    all_groups = set((data.get("dependency-groups") or {}).keys())
+    if default_groups_cfg == "all":
+        default_groups = all_groups
+    elif isinstance(default_groups_cfg, list) and all(isinstance(g, str) for g in default_groups_cfg):
         default_groups = set(default_groups_cfg)
     else:
         # uv default convention: `dev` group is auto-installed unless --no-dev is passed
         default_groups = {"dev"}
+
+    # PR70 R6 F-PR70-R6-003 adopt: resolve nested `{include-group = "<other>"}` directives.
+    # When a default group declares `{include-group = "lint"}`, packages in `lint` are
+    # transitively installed by `uv sync --locked`. We must recurse to flag those packages.
+    def _resolve_group(name: str, seen: set[str]) -> list[str]:
+        """Return string dep specs for `name` after expanding nested include-group entries."""
+        if name in seen:
+            return []
+        seen.add(name)
+        items = (data.get("dependency-groups") or {}).get(name) or []
+        result: list[str] = []
+        for entry in items:
+            if isinstance(entry, str):
+                result.append(entry)
+            elif isinstance(entry, dict) and isinstance(entry.get("include-group"), str):
+                result.extend(_resolve_group(entry["include-group"], seen))
+        return result
 
     if scope in ("core", "all"):
         # [project.dependencies]
@@ -91,15 +115,20 @@ def load_pyproject_at(ref: str | None, scope: str = "all") -> set[str]:
             if name:
                 deps.add(name)
 
-        # [dependency-groups].<default-group> only (R4 + R5 F-PR70-R5-003 adopt:
-        # non-default groups are NOT installed by `uv sync --locked` default and must be excluded
-        # from license check to avoid false license_field_empty_or_unresolved violations)
-        for group_name, items in (data.get("dependency-groups") or {}).items():
-            if group_name not in default_groups:
-                continue
-            for dep_spec in items:
+        # PR70 R6 F-PR70-R6-002 adopt: legacy `[tool.uv].dev-dependencies` is merged into the
+        # `dev` group by uv (per uv settings docs), so when the default groups include `dev`,
+        # these entries are direct dependencies that uv sync --locked installs.
+        if "dev" in default_groups:
+            for dep_spec in tool_uv.get("dev-dependencies", []) or []:
                 if not isinstance(dep_spec, str):
                     continue
+                name = _parse_dep_name(dep_spec)
+                if name:
+                    deps.add(name)
+
+        # [dependency-groups].<default-group> only with nested include-group resolution
+        for group_name in default_groups:
+            for dep_spec in _resolve_group(group_name, set()):
                 name = _parse_dep_name(dep_spec)
                 if name:
                     deps.add(name)
@@ -113,12 +142,8 @@ def load_pyproject_at(ref: str | None, scope: str = "all") -> set[str]:
                     deps.add(name)
 
         # [dependency-groups].<non-default-group> (citation only, not license-checked)
-        for group_name, items in (data.get("dependency-groups") or {}).items():
-            if group_name in default_groups:
-                continue
-            for dep_spec in items:
-                if not isinstance(dep_spec, str):
-                    continue
+        for group_name in all_groups - default_groups:
+            for dep_spec in _resolve_group(group_name, set()):
                 name = _parse_dep_name(dep_spec)
                 if name:
                     deps.add(name)

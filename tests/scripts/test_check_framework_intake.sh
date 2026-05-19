@@ -755,6 +755,130 @@ TS
     cd "$REPO_ROOT"
 }
 
+# ---- 35. test: PR70 R6 F-PR70-R6-001 - default-groups = "all" literal ----
+test_default_groups_all_literal() {
+    local d="$TMPDIR_BASE/default_groups_all_$$"
+    setup_fake_repo "$d"
+    # `[tool.uv] default-groups = "all"` literal — every dep-group is auto-installed
+    cat > pyproject.toml <<'PY'
+[project]
+name = "taskmanagedai-test-fixture"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[tool.uv]
+default-groups = "all"
+
+[dependency-groups]
+docs = ["unknown-docs-pkg-installed-via-all"]
+
+[tool.setuptools.packages.find]
+include = ["backend*", "scripts*"]
+PY
+    git add -A; git commit -q -m "default-groups all"
+    run_script_pr
+    # `unknown-docs-pkg-installed-via-all` は docs group、`default-groups = "all"` で install 対象、
+    # license check で empty → violation 期待
+    assert_exit_code "$LAST_EXIT" 1 "default_groups_all_violation_exit1"
+    assert_stdout_contains "framework_intake_violation_license" "default_groups_all_reason"
+    cd "$REPO_ROOT"
+}
+
+# ---- 36. test: PR70 R6 F-PR70-R6-002 - legacy [tool.uv].dev-dependencies ----
+test_legacy_tool_uv_dev_dependencies() {
+    local d="$TMPDIR_BASE/tool_uv_dev_$$"
+    setup_fake_repo "$d"
+    # `[tool.uv].dev-dependencies` legacy config — uv merges into `dev` group
+    cat > pyproject.toml <<'PY'
+[project]
+name = "taskmanagedai-test-fixture"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[tool.uv]
+dev-dependencies = ["unknown-legacy-dev-pkg"]
+
+[tool.setuptools.packages.find]
+include = ["backend*", "scripts*"]
+PY
+    git add -A; git commit -q -m "tool.uv.dev-dependencies legacy"
+    run_script_pr
+    # `unknown-legacy-dev-pkg` は legacy dev-deps、license check で empty → violation 期待
+    assert_exit_code "$LAST_EXIT" 1 "tool_uv_dev_violation_exit1"
+    assert_stdout_contains "framework_intake_violation_license" "tool_uv_dev_reason"
+    cd "$REPO_ROOT"
+}
+
+# ---- 37. test: PR70 R6 F-PR70-R6-003 - nested include-group resolution ----
+test_nested_include_group() {
+    local d="$TMPDIR_BASE/nested_include_$$"
+    setup_fake_repo "$d"
+    # default `dev` group includes `lint` group via `{include-group = "lint"}`
+    cat > pyproject.toml <<'PY'
+[project]
+name = "taskmanagedai-test-fixture"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [{include-group = "lint"}]
+lint = ["unknown-nested-lint-pkg"]
+
+[tool.setuptools.packages.find]
+include = ["backend*", "scripts*"]
+PY
+    git add -A; git commit -q -m "nested include-group"
+    run_script_pr
+    # `unknown-nested-lint-pkg` は `lint` group、`dev` 経由 nested で install、
+    # license check で empty → violation 期待
+    assert_exit_code "$LAST_EXIT" 1 "nested_include_violation_exit1"
+    assert_stdout_contains "framework_intake_violation_license" "nested_include_reason"
+    cd "$REPO_ROOT"
+}
+
+# ---- 38. test: PR70 R6 F-PR70-R6-004 - psycopg aliased Connection.connect ----
+test_psycopg_aliased_connect() {
+    local d="$TMPDIR_BASE/psycopg_aliased_$$"
+    setup_fake_repo "$d"
+    # `from psycopg import AsyncConnection as PG; PG.connect(...)`
+    cat > backend/app/services/research/db_aliased.py <<'PY'
+from psycopg import AsyncConnection as PG
+async def get():
+    conn = await PG.connect("postgres://...")
+    return conn
+PY
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "psycopg aliased connect"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "psycopg_aliased_violation_exit1"
+    assert_stdout_contains "from_import_class_connect_alias" "psycopg_aliased_detail"
+    cd "$REPO_ROOT"
+}
+
+# ---- 39. test: PR70 R6 F-PR70-R6-005 - dynamic import with whitespace ----
+test_dynamic_import_with_whitespace() {
+    local d="$TMPDIR_BASE/dynamic_import_ws_$$"
+    setup_fake_repo "$d"
+    # frontend dynamic import with whitespace `await import ("@langchain/core")`
+    cat > frontend/app/dyn.tsx <<'TS'
+export async function load() {
+    const mod = await import ("@langchain/core");
+    return mod;
+}
+TS
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "dynamic import whitespace"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "dynamic_import_ws_violation_exit1"
+    assert_stdout_contains "framework=@langchain/core" "dynamic_import_ws_detail"
+    cd "$REPO_ROOT"
+}
+
 # ---- run all ----
 TMPDIR_BASE=$(mktemp -d -t sp022_t01_fixture.XXXXXX)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
@@ -796,6 +920,11 @@ test_non_default_dep_group_skipped_for_license
 test_dynamic_telemetry_import
 test_psycopg_import_class_alias_chain
 test_semantic_kernel_npm
+test_default_groups_all_literal
+test_legacy_tool_uv_dev_dependencies
+test_nested_include_group
+test_psycopg_aliased_connect
+test_dynamic_import_with_whitespace
 
 echo ""
 echo "== Summary =="

@@ -409,6 +409,34 @@ R5 regression fixture 5 件追加: `test_dynamic_submodule_import` (R5-002) / `t
 
 R1+R2+R3+R4+R5 累計: **34 fixture × 70 assertion 全 PASS** (failed: 0)。**24 adopt findings** (R1=7 + R2=5 + R3=2 + R4=4 + R5=5 + 1 fixture 仕様変更) + 2 unique defer (frontend license + adoption.md AND、SP-022.X) + 20 reject (R3 stale 6 + R4 stale 5 + R5 stale 9)。
 
+#### PR #70 Codex auto-review R6 — 19 inline findings (5 adopt + 14 reject as stale re-emission)
+
+`@codex review` mention 経由で 44aba20 (R5 fix commit) 再 review、R6 で 19 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R6-001 (NEW) | P2 | `[tool.uv] default-groups = "all"` literal string で全 dep-group install されるが extractor は list のみ受付、他 default-installed group が extras 分類で license check skip | **adopt** | `default-groups == "all"` literal value 対応、`all_groups` 集合に置換 |
+| R6-002 (NEW) | P2 | legacy `[tool.uv].dev-dependencies` は uv で `dev` group merge されるが extractor 未対応、新 direct dep が intake gate bypass | **adopt** | scope=core で `tool.uv.dev-dependencies` も読み、`dev` が default に含まれる場合のみ含める |
+| R6-003 (NEW) | P2 | `[dependency-groups]` nested `{include-group = "lint"}` 配下の dep が license check で skip される | **adopt** | `_resolve_group` 再帰 helper で nested include-group 展開、循環参照防止 `seen` set |
+| R6-004 (NEW) | P2 | `from psycopg import AsyncConnection as PG; PG.connect(...)` alias 検出漏れ (class_connect_call は literal `AsyncConnection.connect` のみ match) | **adopt** | psycopg_import_class_re で `as <alias>` 含む import body を parse、imported_aliases set 構築 → alias.connect 動的 regex 生成 |
+| R6-005 (NEW) | P2 | frontend dynamic import `await import ("foo")` (whitespace) を `import\(['"]` regex が detect しない | **adopt** | npm_pattern で `import\s*\(\s*['"]` / `require\s*\(\s*['"]` に拡張、whitespace 許容 |
+| R6-006 to R6-019 (14 件 stale) | P2 (+1 P1) | 上記以外は R2-R5 既 adopt re-emission (Scan Next.js root / psycopg alias / optional frontend / deployment YAML / citation artifact / npm license [P1] / license-check dep-groups / dynamic framework imports / Semantic Kernel Python+npm / class-level connects / dynamic telemetry / imported Connection classes) | **reject as stale re-emission** | R2-R5 既 adopt 実装済、code grep + 各 fix commit comment marker で verify |
+
+**Stale re-emission rationale**: 14 件 R6 re-emission は code grep + R2/R3/R4/R5 commit comment ('PR70 RX F-PR70-RX-XXX adopt' marker) で verify。Codex multi-round の既知 stale re-emission pattern (`feedback_codex_pr_review_baseline_check.md` 教訓: 必ず code grep + R2-R5 regression fixture PASS で実体検証してから reject 確定)。
+
+実装:
+- `_extract_changed_deps.py`:
+  - `default-groups` `"all"` literal 対応 + 全 group set 置換 (R6-001)
+  - `[tool.uv].dev-dependencies` legacy 取り込み (R6-002)
+  - `_resolve_group` 再帰 helper で `{include-group = "..."}` nested 展開 + `seen` set 循環防止 (R6-003)
+- `_intake_scanner.py`:
+  - `psycopg_import_class_re` で `as <alias>` 含む import body parse、imported_aliases set 構築 → 動的 `<alias>.connect(` regex 生成 (R6-004)
+  - frontend `npm_pattern` で `import\s*\(\s*['"]` / `require\s*\(\s*['"]` whitespace 許容 (R6-005)
+
+R6 regression fixture 5 件追加: `test_default_groups_all_literal` (R6-001) / `test_legacy_tool_uv_dev_dependencies` (R6-002) / `test_nested_include_group` (R6-003) / `test_psycopg_aliased_connect` (R6-004) / `test_dynamic_import_with_whitespace` (R6-005)。
+
+R1+R2+R3+R4+R5+R6 累計: **39 fixture × 80 assertion 全 PASS** (failed: 0)。**29 adopt findings** + 2 unique defer + 34 reject (R3 stale 6 + R4 stale 5 + R5 stale 9 + R6 stale 14)。
+
 #### Emergency disable audit format
 
 CI gate を緊急 disable する場合、admin が GitHub Settings → Variables で `FRAMEWORK_INTAKE_CHECK_DISABLED=1` を設定。本 sprint pack の `## Review` 内に以下を 24h 以内に記録 (R1 F-013 adopt):
