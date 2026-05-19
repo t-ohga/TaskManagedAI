@@ -645,6 +645,116 @@ PY
     cd "$REPO_ROOT"
 }
 
+# ---- 30. test: PR70 R5 F-PR70-R5-002 - dynamic submodule import ----
+test_dynamic_submodule_import() {
+    local d="$TMPDIR_BASE/dynamic_submod_$$"
+    setup_fake_repo "$d"
+    cat > backend/app/services/research/dynamic_sub.py <<'PY'
+import importlib
+mod = importlib.import_module("langgraph.graph")
+other = __import__("crewai.tools")
+PY
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "dynamic submodule import"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "dynamic_submod_violation_exit1"
+    assert_stdout_contains "python_dynamic_import" "dynamic_submod_detail"
+    cd "$REPO_ROOT"
+}
+
+# ---- 31. test: PR70 R5 F-PR70-R5-003 - non-default dep-group skipped for license ----
+test_non_default_dep_group_skipped_for_license() {
+    local d="$TMPDIR_BASE/non_default_group_$$"
+    setup_fake_repo "$d"
+    # non-default group (e.g., `docs`): uv sync --locked default does NOT install
+    cat > pyproject.toml <<'PY'
+[project]
+name = "taskmanagedai-test-fixture"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+docs = ["unknown-docs-only-pkg"]
+
+[tool.setuptools.packages.find]
+include = ["backend*", "scripts*"]
+PY
+    git add -A; git commit -q -m "add non-default dep-group docs"
+    run_script_pr
+    # attribution violation should fire (no map entry), license should NOT (uninstalled extras)
+    assert_exit_code "$LAST_EXIT" 1 "non_default_group_attribution_exit1"
+    assert_stdout_contains "framework_intake_violation_attribution" "non_default_group_attribution_reason"
+    if echo "${LAST_OUTPUT:-}" | grep -q "unknown-docs-only-pkg framework=unknown-docs-only-pkg detail=license_field"; then
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo "FAIL: non_default_group_no_license_violation (license check fired for uninstalled docs group)"
+    else
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo "PASS: non_default_group_no_license_violation (license check correctly skipped non-default group)"
+    fi
+    cd "$REPO_ROOT"
+}
+
+# ---- 32. test: PR70 R5 F-PR70-R5-004 - dynamic telemetry import ----
+test_dynamic_telemetry_import() {
+    local d="$TMPDIR_BASE/dynamic_telemetry_$$"
+    setup_fake_repo "$d"
+    cat > backend/app/services/research/dynamic_tel.py <<'PY'
+import importlib
+mod = importlib.import_module("sentry_sdk")
+other = __import__("datadog")
+PY
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "dynamic telemetry import"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "dynamic_telemetry_violation_exit1"
+    # both sentry_sdk + datadog should fire as python_dynamic_import telemetry
+    if echo "${LAST_OUTPUT:-}" | grep -q "framework=sentry_sdk detail=python_dynamic_import"; then
+        TESTS_PASSED=$((TESTS_PASSED + 1)); echo "PASS: dynamic_telemetry_sentry_sdk"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1)); echo "FAIL: dynamic_telemetry_sentry_sdk"
+    fi
+    cd "$REPO_ROOT"
+}
+
+# ---- 33. test: PR70 R5 F-PR70-R5-005 - psycopg import class alias chain ----
+test_psycopg_import_class_alias_chain() {
+    local d="$TMPDIR_BASE/psycopg_class_alias_$$"
+    setup_fake_repo "$d"
+    cat > backend/app/services/research/db2.py <<'PY'
+from psycopg import AsyncConnection
+async def get():
+    conn = await AsyncConnection.connect("postgres://...")
+    return conn
+PY
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "psycopg import class alias chain"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "psycopg_class_alias_violation_exit1"
+    assert_stdout_contains "from_import_class_connect_alias" "psycopg_class_alias_detail"
+    cd "$REPO_ROOT"
+}
+
+# ---- 34. test: PR70 R5 F-PR70-R5-006 - semantic-kernel npm denylist ----
+test_semantic_kernel_npm() {
+    local d="$TMPDIR_BASE/semantic_kernel_npm_$$"
+    setup_fake_repo "$d"
+    cat > frontend/app/sk.tsx <<'TS'
+import { SemanticKernel } from "semantic-kernel";
+export default function P() { return null; }
+TS
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "semantic-kernel npm import"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "semantic_kernel_npm_violation_exit1"
+    assert_stdout_contains "framework=semantic-kernel" "semantic_kernel_npm_detail"
+    cd "$REPO_ROOT"
+}
+
 # ---- run all ----
 TMPDIR_BASE=$(mktemp -d -t sp022_t01_fixture.XXXXXX)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
@@ -681,6 +791,11 @@ test_dependency_groups_license_checked
 test_python_dynamic_import_detection
 test_semantic_kernel_denylist
 test_psycopg_class_level_connect
+test_dynamic_submodule_import
+test_non_default_dep_group_skipped_for_license
+test_dynamic_telemetry_import
+test_psycopg_import_class_alias_chain
+test_semantic_kernel_npm
 
 echo ""
 echo "== Summary =="

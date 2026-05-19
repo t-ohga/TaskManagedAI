@@ -40,12 +40,13 @@ def _parse_dep_name(spec: str) -> str | None:
 def load_pyproject_at(ref: str | None, scope: str = "all") -> set[str]:
     """Load direct dependency names from pyproject.toml at given git ref (or working tree).
 
-    PR70 R3 F-PR70-R3-001 + R4 F-PR70-R4-002 adopt: scope filter
-    - "core": [project.dependencies] + [dependency-groups].* — used by check_license.
-      Both are installed by default `uv sync --locked` (dev groups install unless `--no-dev`),
-      so license verification must cover them. `[project.optional-dependencies.*]` is excluded
-      because uv extras are only installed when `--extra <name>` / `--all-extras` is passed.
-    - "extras": [project.optional-dependencies.*] only (citation-only, not license-checked).
+    PR70 R3 F-PR70-R3-001 + R4 F-PR70-R4-002 + R5 F-PR70-R5-003 adopt: scope filter
+    - "core": [project.dependencies] + [dependency-groups] default-install groups (`dev` by
+      default per uv conv; honor [tool.uv.default-groups] if present). uv sync --locked installs
+      only the default group(s); non-default groups (e.g., [dependency-groups].docs) require
+      explicit --group flag and are excluded here to avoid false license violations.
+    - "extras": [project.optional-dependencies.*] + [dependency-groups] non-default groups
+      (citation-only, not license-checked since not installed by default).
     - "all": core + extras (used by check_attribution; citation needed regardless of install).
     """
     if ref is None:
@@ -73,6 +74,16 @@ def load_pyproject_at(ref: str | None, scope: str = "all") -> set[str]:
     deps: set[str] = set()
     project = data.get("project", {})
 
+    # PR70 R5 F-PR70-R5-003 adopt: default-install groups (uv `dev` by default,
+    # or [tool.uv.default-groups] list if explicitly configured)
+    tool_uv = data.get("tool", {}).get("uv", {}) if isinstance(data.get("tool"), dict) else {}
+    default_groups_cfg = tool_uv.get("default-groups")
+    if isinstance(default_groups_cfg, list) and all(isinstance(g, str) for g in default_groups_cfg):
+        default_groups = set(default_groups_cfg)
+    else:
+        # uv default convention: `dev` group is auto-installed unless --no-dev is passed
+        default_groups = {"dev"}
+
     if scope in ("core", "all"):
         # [project.dependencies]
         for dep_spec in project.get("dependencies", []):
@@ -80,12 +91,14 @@ def load_pyproject_at(ref: str | None, scope: str = "all") -> set[str]:
             if name:
                 deps.add(name)
 
-        # [dependency-groups].* (R2 F-003 + R4 F-PR70-R4-002 adopt: uv direct dev/group
-        # dependency, installed by `uv sync --locked` default unless `--no-dev` is passed)
-        for _, items in (data.get("dependency-groups") or {}).items():
+        # [dependency-groups].<default-group> only (R4 + R5 F-PR70-R5-003 adopt:
+        # non-default groups are NOT installed by `uv sync --locked` default and must be excluded
+        # from license check to avoid false license_field_empty_or_unresolved violations)
+        for group_name, items in (data.get("dependency-groups") or {}).items():
+            if group_name not in default_groups:
+                continue
             for dep_spec in items:
                 if not isinstance(dep_spec, str):
-                    # `{include-group = "..."}` 形式は対象外 (include-group 名のみ参照)
                     continue
                 name = _parse_dep_name(dep_spec)
                 if name:
@@ -95,6 +108,17 @@ def load_pyproject_at(ref: str | None, scope: str = "all") -> set[str]:
         # [project.optional-dependencies.*] (uv extras: only installed when --extra is passed)
         for _, items in (project.get("optional-dependencies") or {}).items():
             for dep_spec in items:
+                name = _parse_dep_name(dep_spec)
+                if name:
+                    deps.add(name)
+
+        # [dependency-groups].<non-default-group> (citation only, not license-checked)
+        for group_name, items in (data.get("dependency-groups") or {}).items():
+            if group_name in default_groups:
+                continue
+            for dep_spec in items:
+                if not isinstance(dep_spec, str):
+                    continue
                 name = _parse_dep_name(dep_spec)
                 if name:
                     deps.add(name)

@@ -53,6 +53,8 @@ NPM_DENYLIST_FRAMEWORKS: tuple[str, ...] = (
     "flowise",
     "openhands",
     "taskingai",
+    # PR70 R5 F-PR70-R5-006 adopt: Semantic Kernel npm canonical name
+    "semantic-kernel",
 )
 NETWORK_DENYLIST: tuple[str, ...] = (
     "api.honcho.dev",
@@ -147,11 +149,14 @@ def check_no_code_embed() -> list[str]:
         + r")(\s|,|\.|$)",
         re.MULTILINE,
     )
-    # PR70 R4 F-PR70-R4-003 adopt: detect Python dynamic imports
-    # `importlib.import_module("langgraph")` / `__import__("crewai")`
+    # PR70 R4 F-PR70-R4-003 + R5 F-PR70-R5-002 adopt: detect Python dynamic imports
+    # `importlib.import_module("langgraph")` / `__import__("crewai")` and submodule variants
+    # `importlib.import_module("langgraph.graph")` / `__import__("crewai.tools")`
     py_alts = "|".join(re.escape(n) for n in PY_DENYLIST_FRAMEWORKS)
     py_dynamic_pattern = re.compile(
-        r"""(?:importlib\.import_module|__import__)\s*\(\s*['"](""" + py_alts + r""")['"]"""
+        r"""(?:importlib\.import_module|__import__)\s*\(\s*['"]("""
+        + py_alts
+        + r""")(?:\.[A-Za-z_][A-Za-z0-9_.]*)?['"]"""
     )
     for path in _iter_python_files(BACKEND_SCAN_ROOTS):
         content = _read_text_or_none(path)
@@ -193,15 +198,21 @@ def check_no_code_embed() -> list[str]:
 def check_persistence() -> list[str]:
     violations: list[str] = []
     sqlite_pattern = re.compile(r"^\s*(import\s+sqlite3|from\s+sqlite3\s+import)", re.MULTILINE)
-    # PR70 R2 F-PR70-R2-003 + R4 F-PR70-R4-005 adopt:
+    # PR70 R2 F-PR70-R2-003 + R4 F-PR70-R4-005 + R5 F-PR70-R5-005 adopt:
     # - module-qualified `psycopg.connect(` / `psycopg2.connect(`
     # - `from psycopg import connect` alias
     # - class-level `psycopg.AsyncConnection.connect(` / `psycopg.Connection.connect(`
+    # - `from psycopg import AsyncConnection; AsyncConnection.connect(...)` import alias chain
     psycopg_pattern = re.compile(r"psycopg2?\.connect\(")
     psycopg_class_connect = re.compile(r"psycopg2?\.(?:Async)?Connection\.connect\(")
     psycopg_import_connect = re.compile(
         r"^\s*from\s+psycopg2?\s+import\s+(?:[^#\n]*?\b)?connect\b", re.MULTILINE
     )
+    # R5-005: `from psycopg import AsyncConnection` 等の import-class-then-call chain
+    psycopg_import_class = re.compile(
+        r"^\s*from\s+psycopg2?\s+import\s+(?:[^#\n]*?\b)?(?:Async)?Connection\b", re.MULTILINE
+    )
+    class_connect_call = re.compile(r"\b(?:Async)?Connection\.connect\(")
     for path in _iter_python_files(PERSISTENCE_ROOTS):
         content = _read_text_or_none(path)
         if content is None:
@@ -230,6 +241,15 @@ def check_persistence() -> list[str]:
                 f"VIOLATION reason_code=framework_intake_violation_persistence "
                 f"evidence={path}:{line_num} framework=psycopg detail=from_import_connect_alias"
             )
+        # R5-005: file imports Connection/AsyncConnection from psycopg AND calls
+        # `Connection.connect(` or `AsyncConnection.connect(` → flag both as alias-chain bypass
+        if psycopg_import_class.search(content):
+            for match in class_connect_call.finditer(content):
+                line_num = content[: match.start()].count("\n") + 1
+                violations.append(
+                    f"VIOLATION reason_code=framework_intake_violation_persistence "
+                    f"evidence={path}:{line_num} framework=psycopg detail=from_import_class_connect_alias"
+                )
     return violations
 
 
@@ -276,6 +296,14 @@ def check_telemetry() -> list[str]:
         + r")(\s|,|\.|$)",
         re.MULTILINE,
     )
+    # PR70 R5 F-PR70-R5-004 adopt: detect dynamic telemetry imports
+    # `importlib.import_module("sentry_sdk")` / `__import__("datadog")` + submodule variants
+    py_telemetry_alts = "|".join(re.escape(n) for n in TELEMETRY_PY)
+    py_telemetry_dynamic = re.compile(
+        r"""(?:importlib\.import_module|__import__)\s*\(\s*['"]("""
+        + py_telemetry_alts
+        + r""")(?:\.[A-Za-z_][A-Za-z0-9_.]*)?['"]"""
+    )
     for path in _iter_python_files(BACKEND_SCAN_ROOTS):
         content = _read_text_or_none(path)
         if content is None:
@@ -285,6 +313,12 @@ def check_telemetry() -> list[str]:
             violations.append(
                 f"VIOLATION reason_code=framework_intake_violation_telemetry "
                 f"evidence={path}:{line_num} framework={match.group(2)} detail=python_import"
+            )
+        for match in py_telemetry_dynamic.finditer(content):
+            line_num = content[: match.start()].count("\n") + 1
+            violations.append(
+                f"VIOLATION reason_code=framework_intake_violation_telemetry "
+                f"evidence={path}:{line_num} framework={match.group(1)} detail=python_dynamic_import"
             )
 
     # PR70 F-PR70-003 adopt: include side-effect import `import "@sentry/nextjs";`

@@ -381,6 +381,34 @@ R4 regression fixture 4 件追加: `test_dependency_groups_license_checked` (R4-
 
 R1+R2+R3+R4 累計: **29 fixture × 59 assertion 全 PASS** (failed: 0)。**19 adopt findings** (R1=7 + R2=5 + R3=2 + R4=4 + 1 fixture 仕様変更) + 2 defer (R2-002 / R3-002 / R4-001 / R4-010 = 同 root issue SP-022.X) + 11 reject (R3 stale 6 + R4 stale 5)。
 
+#### PR #70 Codex auto-review R5 — 15 inline findings (5 adopt + 1 defer (P1 escalated) + 9 reject as stale re-emission)
+
+`@codex review` mention 経由で add969a (R4 fix commit) 再 review、R5 で 15 件 emit (うち 1 件は P1 escalation):
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R5-001 (P1 escalated) | P1 | npm 追加 PR で license check が PyPI のみ、frontend license verify されない (R2-002/R3-010/R4-001 と同根、Codex が P1 に escalate) | **defer (continue R2-002)** | SP-022.X (frontend license verify) で実施、plan で明示 scope 外、本 PR 内では node_modules read + SPDX 解釈の実装重く別 PR で扱う |
+| R5-002 (NEW) | P2 | dynamic import submodule `importlib.import_module("langgraph.graph")` を regex が detect しない (quote 直後の literal name のみ) | **adopt** | py_dynamic_pattern を `(?:\.[A-Za-z_][A-Za-z0-9_.]*)?` 追加で submodule path 対応 |
+| R5-003 (NEW) | P2 | `[dependency-groups]` の non-default group (e.g., `docs`) は `uv sync --locked` default で install されないため license check は誤 violation を出す | **adopt** | `_extract_changed_deps.py` で `[tool.uv.default-groups]` を読み default-groups のみ scope=core、他は scope=extras (license 対象外) |
+| R5-004 (NEW) | P2 | telemetry も dynamic import (`importlib.import_module("sentry_sdk")`) を検出しない | **adopt** | check_telemetry に `py_telemetry_dynamic` regex 追加 |
+| R5-005 (NEW) | P2 | `from psycopg import AsyncConnection; AsyncConnection.connect(...)` import alias chain を class-level regex が検出しない | **adopt** | `psycopg_import_class` + `class_connect_call` の 2 段検出 (import-then-call chain) 追加、`from_import_class_connect_alias` detail |
+| R5-006 (NEW) | P2 | npm scoped name `semantic-kernel` (10 framework のうち Semantic Kernel) が NPM_DENYLIST に未追加 (R4-004 で Python だけ追加) | **adopt** | NPM_DENYLIST_FRAMEWORKS に `semantic-kernel` 追加 |
+| R5-007 to R5-015 (9 件 stale) | P2 | "Scan Next.js root instrumentation" / "Catch imported psycopg connect aliases" / "Include optional frontend dependencies" / "Include deployment YAML" / "Enforce citation artifact" / "License-check dependency groups" / "Detect Python dynamic framework imports" / "Add Semantic Kernel to the Python denylist" / "Catch psycopg class-level connects" | **reject as stale re-emission** | R2/R3/R4 で既 adopt 実装済、code grep + commit comment marker で verify (R2 44c18fe / R3 0c07fff / R4 add969a 各 fix commit) |
+
+**Stale re-emission rationale**: 9 件 R5 re-emission は code grep + R2/R3/R4 commit comment ('PR70 R2/R3/R4 F-PR70-RX-XXX adopt' marker) で verify。`feedback_codex_r2_reemission_reject_trap.md` 教訓: 必ず code grep + R2-R4 regression fixture PASS (29 fixture 既存) で実体検証してから reject 確定。
+
+実装:
+- `_extract_changed_deps.py`: scope=core を `default_groups` (uv `[tool.uv.default-groups]` または `{"dev"}` default) に限定、non-default group は scope=extras に移動 (R5-003)
+- `_intake_scanner.py`:
+  - `NPM_DENYLIST_FRAMEWORKS` に `semantic-kernel` 追加 (R5-006)
+  - `py_dynamic_pattern` に submodule path `(?:\.[...]+)?` 追加 (R5-002)
+  - `check_telemetry` に `py_telemetry_dynamic` 追加 + 既存 + 同 submodule path 対応 (R5-004)
+  - `check_persistence` に `psycopg_import_class` + `class_connect_call` 2 段検出追加 (R5-005)
+
+R5 regression fixture 5 件追加: `test_dynamic_submodule_import` (R5-002) / `test_non_default_dep_group_skipped_for_license` (R5-003) / `test_dynamic_telemetry_import` (R5-004) / `test_psycopg_import_class_alias_chain` (R5-005) / `test_semantic_kernel_npm` (R5-006)。
+
+R1+R2+R3+R4+R5 累計: **34 fixture × 70 assertion 全 PASS** (failed: 0)。**24 adopt findings** (R1=7 + R2=5 + R3=2 + R4=4 + R5=5 + 1 fixture 仕様変更) + 2 unique defer (frontend license + adoption.md AND、SP-022.X) + 20 reject (R3 stale 6 + R4 stale 5 + R5 stale 9)。
+
 #### Emergency disable audit format
 
 CI gate を緊急 disable する場合、admin が GitHub Settings → Variables で `FRAMEWORK_INTAKE_CHECK_DISABLED=1` を設定。本 sprint pack の `## Review` 内に以下を 24h 以内に記録 (R1 F-013 adopt):
