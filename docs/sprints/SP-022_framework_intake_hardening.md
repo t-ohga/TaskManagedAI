@@ -4,18 +4,21 @@ type: "heavy"
 status: "draft"
 sprint_no: 22
 created_at: "2026-05-10"
-updated_at: "2026-05-18"
+updated_at: "2026-05-19"
 target_days: 3
 max_days: 5
 # F-PR67-019 P2 adopt (PR #67 R4): ADR-00021 acceptance は SP-022 で実機 host
 # migration drill PASS 後 (master plan line 106). 旧 frontmatter「SP-012 で
 # accepted」記述を更新、SP-022 が **accepting sprint** であることを明示.
 # ADR-00007 update も同期 acceptance (master plan line 107).
-adr_refs: []
-planned_adr_refs:
-  - "[ADR-00020](../adr/00020_framework_intake_checklist.md) # SP-022 で accepted at SP022-T00 (pre-implementation gate、§12 invariant、F-PR67-036/038 P2 adopt)"
-  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-022 で accepted at SP022-T00 (design accepted、実機 host migration drill PASS は SP022-T09 post-acceptance verification、F-PR67-029/038 P2 adopt、master plan line 106 別 PR で update)"
-  - "[ADR-00007](../adr/00007_external_exposure.md) # ADR-00021 同期 acceptance at SP022-T00、SP022-T09 で drill verification (F-PR67-038/042 P2 adopt、master plan line 107 別 PR で update)"
+# SP022-T00 PR (本 PR、2026-05-19): planned_adr_refs → adr_refs 移動完了、3 ADR
+# (00020/00021/00007) を simultaneous accepted promotion。
+# `.claude/rules/sprint-pack-adr-gate.md §12.1` 12.2 promotion 完了 trigger 遵守、
+# planned_adr_refs key 自体を完全削除 (F-ADV-R5-001 + F-ADV-R3-001 adopt).
+adr_refs:
+  - "[ADR-00020](../adr/00020_framework_intake_checklist.md) # SP022-T00 で accepted (本 PR、2026-05-19、framework intake checklist は P0 全体方針として独立 acceptable、ADR-00014/00016 から独立 accept、acceptance_blocked_by key は accepted 後削除 = F-R2-002 adopt)"
+  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP022-T00 で design accepted (本 PR、2026-05-19、実機 host migration drill (Mac→VPS) RTO≤4h PASS は SP022-T09 post-acceptance verification 待ち、acceptance_blocked_by key は accepted 後削除 = F-R2-002 adopt)"
+  - "[ADR-00007](../adr/00007_external_exposure.md) # SP022-T00 で ADR-00021 と simultaneous accepted (本 PR、2026-05-19、SP022-T09 で実機 drill 時 Tailscale 閉域維持 invariant verify 待ち、acceptance_blocked_by key は accepted 後削除 = F-R2-002 adopt)"
 related_sprints:
   - "SP-012_p0_acceptance"
   - "SP-013_multi_agent_orchestration"
@@ -61,7 +64,7 @@ risks:
 - SP022-T04: Phase E 16 finding 個別 closure verify (各 ADR / Sprint Pack で adopted を contract test に落とし込み済か audit)
 - SP022-T05: AC-HARD-01〜07 fixture を multi-agent 文脈で再 verify (**F-PR67-037 P2 adopt**: 本 task は SP-013 multi-agent skeleton に依存、SP-022 が pre-P0.1 unblock sprint reframe 後は SP-013 完了前に着手不可. 本 task のみ **SP-013 完了後の post-P0.1 carry-over** として位置、SP-022 完了 + P0.1 SP-013 完了後に SP-022.1 / SP-023 等の post-P0.1 hardening sprint で実施。本 Sprint Exit Review PR では task list に残存 + dependency note のみで close、別 PR で sprint scope re-allocation 実施)
 - SP022-T06: KPI baseline 設定 (host 別: Mac / Linux / VPS で acceptance_pass_rate 等の median を取得、運用 baseline 確定)
-- SP022-T07: production 公開準備チェックリスト draft (P3+ 着手時の前提整理)
+- SP022-T07: production 公開準備チェックリスト draft (P3+ 着手時の前提整理、F-ADV-R1-007 + F-R2-005 adopt: **本 task は docs-only checklist skeleton まで**、以下の P3+ 実作業は本 task 内で禁止: (a) Docker image build pipeline、(b) DNS 設定、(c) public ingress (Funnel / Cloudflare Tunnel / public bind)、(d) external publication、(e) release deploy config、(f) license / docs 整備の本実装。これらは P3+ SP-023 以降の production release Sprint Pack で実施)
 - SP022-T08: **SP-012 carry-over 完了** (F-PR67-025/027 P2 adopt): taskhub real I/O (10 subcommands all) + 実 DB write integration (BL-0149 sign-off endpoint + AuditEventRepository.append 経由 P0AcceptanceAudit write) + signed journal verification CLI (audit_events 全件 fetch + recompute + final_hash verify) + private staging CI/E2E 完成 + frontend dashboard backend API wiring
 - SP022-T09: **実機 host migration drill (Mac→VPS) PASS** (RTO≤4h、F-PR67-022/029 P2 adopt: T00 accept 後の post-acceptance verification、P0.1 unblock 必須 gate)
 
@@ -71,7 +74,7 @@ risks:
 - [ ] ADR-00020 を proposed → accepted
 - [ ] **ADR-00020 + ADR-00021 + ADR-00007 を proposed → accepted** (SP022-T00 pre-implementation gate、F-PR67-033/036 P2 adopt: T10 stale 撤回 + ADR-00020 を T00 に含める、§12 invariant 整合)
 - [ ] `taskhub migrate` end-to-end を 3 host pair (Mac↔VPS、Linux↔VPS、VPS↔VPS) で drill 実施
-- [ ] Phase E 16 finding が全件 closed (adopt 済 + test fixture 化済)
+- [ ] Phase E 16 finding (PE-F-001〜PE-F-016) が owning ADR/Sprint Pack に割り当て済 + 受け入れ条件に trace されている (**audit-only gate**、F-PLAN-R3-001 + F-PLAN-R5-001 + F-ADV-R2-006 + F-R2-003 adopt: SP-022 内 `## Phase E adversarial closure trace` matrix で local closure、実 contract test PASS は post-P0.1 SP-013〜020 owning sprint exit gate carry-over)
 <!-- F-PR67-044 P2 adopt (PR #67 R10): 旧 unchecked task「AC-HARD multi-agent
 fixture 全件 PASS」を本 task list から **完全削除**. checklist tooling が SP-022
 を incomplete 判定する経路を物理削除. 同 task は本 Sprint Pack 下部の §残リスク /
@@ -91,17 +94,18 @@ post-P0.1 sprint で扱う. -->
 | **実機 host migration drill (Mac→VPS) RTO≤4h PASS** | ○ | - |
 | `taskhub migrate` 自動化 | ○ | rollback 自動化は phase 分割可 |
 | 半年 drill scheduling SOP | ○ | - |
-| Phase E 16 finding closure | ○ | LOW 残存は P3+ で対応可 |
+| Phase E 16 finding **audit-only trace gate** (PE-F が owning ADR/Sprint Pack に割り当て済 + 受け入れ条件 trace、SP-022 内 `## Phase E adversarial closure trace` matrix) | ○ | LOW 残存は P3+ で対応可 |
+| Phase E 16 finding **実 contract test PASS** | ✗ (post-P0.1 owning sprint exit gate carry-over) | F-PLAN-R3-001 + F-PLAN-R5-001 + F-ADV-R2-006 + F-R2-003 adopt: SP-013〜016/SP-018/SP-020 contract test 依存 = future-sprint 循環、SP-022 must_ship では audit-only gate のみ |
 | AC-HARD multi-agent fixture | ✗ (post-P0.1 carry-over) | F-PR67-039 P2 adopt: SP-013 multi-agent skeleton 依存、SP-022.1 / SP-023 等の post-P0.1 sprint で実施 |
 | KPI baseline (host 別) | ○ | Mac / Linux / VPS の 3 host で baseline 取得、特定 host のみは defer 可 |
-| production 公開準備 checklist draft | ○ | 詳細実装は P3+ |
+| production 公開準備 checklist draft (**docs-only skeleton まで、F-R2-005 adopt: Docker image build pipeline / DNS / public ingress / external publication / release deploy config / license 整備の本実装は禁止**) | ○ | 詳細実装は P3+ SP-023+ Sprint Pack で実施、本 T07 task では skeleton checklist 1 file (docs/release/production_readiness_checklist.md) のみ作成 |
 
 ## 受け入れ条件
 
 - ADR-00020 8 verify item が CI で機械検査されている (license / attribution / no embed / persistence / external network / telemetry / secret canary / tenant boundary 全て)
 - `taskhub migrate --target <host>` が source backup → 転送 → target restore → smoke を 90 分以内に完了
 - migration 中の rollback (age key 失敗 / pg_restore 失敗 / network 切断) が自動で source host 復旧
-- Phase E 16 finding (PE-F-001〜PE-F-016) すべての closure evidence (各 finding に対応する test fixture / contract test PASS)
+- Phase E 16 finding (PE-F-001〜PE-F-016) すべてが owning ADR/Sprint Pack に trace 済 (**audit-only gate**: 各 finding の owning sprint への割り当て + 受け入れ条件への trace を SP-022 内 `## Phase E adversarial closure trace` matrix で文書確認、F-PLAN-R3-001 + F-PLAN-R5-001 + F-ADV-R2-006 + F-R2-003 adopt: 実 contract test PASS は post-P0.1 owning sprint exit gate で実施)
 <!-- F-PR67-045 P2 adopt (R10): AC-HARD multi-agent fixture 受け入れ条件は本
 SP-022 exit から除外 (SP-013 multi-agent skeleton 依存、SP-022.1 / SP-023
 carry-over). 旧 entry「AC-HARD-01〜07 fixture が multi-agent 文脈で全件 PASS」
@@ -109,6 +113,8 @@ carry-over). 旧 entry「AC-HARD-01〜07 fixture が multi-agent 文脈で全件
 <!-- (削除済) AC-HARD multi-agent fixture exit → SP-022.1 / SP-023 carry-over -->
 - AC-HARD-01〜07 fixture (single-agent 文脈) は SP-022 で **regression-only verify** (multi-agent 文脈は post-P0.1 carry-over)
 - KPI baseline が host 別に確定、運用 SOP 化
+- SP022-T07 production checklist draft は **docs-only checklist skeleton 1 file** (`docs/release/production_readiness_checklist.md`、F-R2-005 adopt) のみ作成、Docker image build pipeline / DNS 設定 / public ingress (Funnel / Cloudflare Tunnel) / external publication / release deploy config / license 整備の本実装は **本 T07 内で禁止** (P3+ SP-023+ Sprint Pack で実施)
+- P0.1 unblock 判定では SP022-T07 = production 実装完了ではなく **checklist draft skeleton 存在確認のみ** (F-ADV-R1-007 + F-R2-005 adopt)
 
 ## 検証手順
 
@@ -121,9 +127,11 @@ $ uv run pytest tests/scripts/test_check_framework_intake.sh tests/citations/tes
 $ taskhub migrate --target t-ohga-linux --via tailscale --auto-rollback-on-failure
 $ uv run pytest tests/deploy/test_host_migration_automation.py tests/deploy/test_split_brain_prevention.py -q
 
-# Phase E 16 finding closure
-$ uv run pytest eval/multi_agent/role_authorization_negative/ eval/multi_agent/inter_agent_replay_attack/ \
-                eval/multi_agent/memory_secret_canary/ eval/multi_agent/framework_intake_violation/ -q
+# Phase E 16 finding audit-only trace verification (F-R2-003 adopt: SP-022 内 trace matrix で local closure)
+# SP-022 内では owning sprint への trace を文書確認のみ、pytest 実行は post-P0.1 owning sprint exit gate
+$ rg -nP 'PE-F-(00[1-9]|01[0-6])' docs/sprints/SP-022_framework_intake_hardening.md
+# expected: PE-F-001〜PE-F-016 全 16 finding が SP-022 内 `## Phase E adversarial closure trace` matrix で言及
+# (post-P0.1 owning sprint exit gate で実 pytest 実行) $ uv run pytest eval/multi_agent/... -q
 
 # F-PR67-045 P2 adopt (R10): AC-HARD multi-agent fixture verification は本 SP-022
 # exit から除外 (SP-013 multi-agent skeleton 依存、SP-022.1 / SP-023 carry-over).
@@ -159,7 +167,7 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 
 - ADR-00020 (Framework Intake Checklist、本 Sprint で accepted)
 - ADR-00021 (Host-Portable Deployment + Data Migration、運用 SOP 完成)
-- ADR-00014/15/16/17/18/19 (P0.1+ で accepted 済、本 Sprint で運用 hardening)
+- ADR-00014/15/16/17/18/19 (P0.1+ owning sprint で proposed→accepted 予定、本 Sprint では運用 hardening のみ、F-ADV-R1-006 adopt: 旧「accepted 済」は ADR-00014/00016 が実際 `status: proposed` のため stale text、SP022-T00 PR で reviewer が ADR-00020 blocker 解消済と誤読する acceptance lifecycle trap 回避のため update)
 - 全 Hard Gate AC-HARD-01〜07
 
 ## Phase G adversarial strengthening (2026-05-10)
@@ -169,7 +177,7 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 - **drill timer alert-only enforcement (PGA-F-013)**: `scripts/ci/check_drill_timer_alert_only.sh` 追加、systemd timer / cron entry の ExecStart が通知 command 以外 (例: `taskhub migrate ...`) なら CI fail
 - **`taskhub migrate --approval-id` 必須化**: cron / systemd 環境変数検出時に default deny、`--from-automation` flag + signed approval record 必須
 - **CI bypass scan 拡張 (PGA-F-014)**: `scripts/ci/check_host_portable_bypass.sh` を網羅化 (Funnel/0.0.0.0 publish/non-127 publish/age private key marker/raw key path/secret archive 検出)
-- **inter_agent_messages consumed invariant fixture (PGA-F-009)**: SP-015 で実装されたものを SP-022 で 追加 fixture (post-restore + post-migration 全 case) で再 verify
+- **inter_agent_messages consumed invariant fixture (PGA-F-009)**: SP-022 内で audit-only trace 宣言 (F-ADV-R1-001 + F-R2-004 adopt: PGA-F-009 trace status = `pending SP-015 起票 PR for owning sprint trace`、SP-015 着手 PR で owning sprint must_ship 反映、SP-022 では本宣言を audit marker として保持、SP-015 完了後 owning sprint exit gate で post-restore + post-migration 全 case の実 contract test PASS verify = future-sprint 循環防止)
 
 ### 追加実装ファイル
 
@@ -184,8 +192,61 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 - 半年 drill SOP の cron / systemd timer が auto migrate exec 不可 (CI で機械検査)
 - `taskhub migrate` が approval ID 無しで destructive operation を実行できない
 - CI bypass scan で全 invariant 違反 pattern を検出 (positive fixture で reject、negative で pass)
-- Phase G adversarial 14 finding (PGA-F-001〜PGA-F-014) すべての closure evidence (test fixture / contract test PASS) verify
+- Phase G adversarial 14 finding (PGA-F-001〜PGA-F-014) のうち PGA-F-009 (SP-015 依存) は **audit-only gate** (SP-015 完了後 owning sprint exit gate で実 contract test PASS、F-ADV-R1-001 + F-R2-004 adopt: SP-022 内 audit marker `pending SP-015 起票 PR` で trace 宣言)、残 13 finding (PGA-F-001〜008 + PGA-F-010〜014) は本 SP-022 内で closure evidence (test fixture / contract test PASS) verify
 
 ## Review
 
-(SP-022 完了時に追記)
+### SP022-T00 pre-implementation gate completion (2026-05-19)
+
+#### ADR accepted promotion completed
+
+- ADR-00020 accepted_at: 2026-05-19 (framework intake checklist、blocker 完全削除完了、SP022-T01 framework intake CI 機械化着手 trigger)
+- ADR-00021 accepted_at: 2026-05-19 (host-portable deployment design accepted、SP022-T09 実機 drill による post-acceptance verification 待ち)
+- ADR-00007 accepted_at: 2026-05-19 (external exposure host-portable update、ADR-00021 simultaneous、SP022-T09 で Tailscale 閉域維持 invariant verify 待ち)
+
+#### HARD GATE evidence (codex-plan-review R1-R3 completion record)
+
+- codex-plan-review-round: R3 (round_max reached、R1=Phase A / R2=Phase B / R3=CRITICAL final verify)
+- codex-plan-review-findings: 21 (CRITICAL: 1、HIGH: 8、MEDIUM: 7、LOW: 5、累計 R1=15 + R2=5 + R3=1)
+- codex-plan-review-adopt: 21 / reject: 0 / defer: 0 (全 finding adopt 反映)
+- codex-plan-review-readiness-gate: READY (R3 round_max reached + clean、R3 1 件 CRITICAL adopt 後 fix は verification 文字列処理の厳密化、新 regression リスク低)
+- codex-plan-review-evidence-path: ~/.claude/local/codex-reviews/2026-05-19/sprint-SP-012-batch-7-taskhub-admin-cli/codex-plan-review-20260519-144046.raw.jsonl (R1) + codex-plan-review-20260519-144956.raw.jsonl (R2) + codex-plan-review-20260519-150047.raw.jsonl (R3)
+
+#### Frontmatter promotion process
+
+- `planned_adr_refs` → `adr_refs` 移動 + `planned_adr_refs` key 完全削除 (`.claude/rules/sprint-pack-adr-gate.md §12.1` 12.2 promotion 完了 trigger)
+- 3 ADR 同一日付 (2026-05-19) で simultaneous accepted (F-PR67-047 mutual blocking cycle 解消、common SP022-T00 simultaneous acceptance gate に置換)
+- 3 ADR `acceptance_blocked_by` key 完全削除 (F-005 + F-R2-002 adopt: accepted 後の active blocker key 同居を回避、SP022-T00 gate 完了 rationale は acceptance_history に移送)
+
+#### Active text sync update completed
+
+- SP-022 `## 関連 ADR` セクション内 stale text 修正 (旧文言「P0.1+ で accepted 済」を「P0.1+ owning sprint で proposed→accepted 予定」に置換、F-ADV-R1-006 adopt)
+- SP-022 Phase E 16 finding closure audit-only gate split (タスク一覧 / must_ship 表 / 受け入れ条件 / 検証手順 セクション内の旧 Phase E active requirement 文言を audit-only trace gate に変更、実 contract test PASS は post-P0.1 SP-013〜020 owning sprint exit gate carry-over、F-PLAN-R3-001 + F-PLAN-R5-001 + F-R2-003 adopt)
+- SP-022 Phase G PGA-F-009 audit-only gate split (Phase G adversarial strengthening セクション内の旧 PGA-F-009 active requirement 文言を audit-only trace gate に変更、F-ADV-R1-001 + F-R2-004 adopt)
+- SP-001-5 active text 7 箇所 (目的 / 設計判断 / 実装チケット / must_ship 対応表 / 受け入れ条件 / レビュー観点 / 関連 ADR セクション内の旧「SP-022 で実機 host migration drill PASS 後」「SP-022 carry over」文言) の update (F-PLAN-R4-001 + F-PLAN-R5-002 adopt)
+- SP022-T07 production scope boundary 明文化 (docs-only checklist skeleton まで、Docker image build pipeline / public ingress / release deploy config 等の P3+ 実作業は禁止、F-ADV-R1-007 + F-R2-005 adopt)
+
+## Phase E adversarial closure trace (PE-F-001〜PE-F-016、F-R2-003 adopt: SP-022 内 audit-only trace matrix で local closure)
+
+| Finding ID | Owning Sprint | trace status | post-P0.1 contract test PASS gate |
+|---|---|---|---|
+| PE-F-001 | SP-013 | (SP-013 着手時 must_ship 反映予定) | SP-013 exit gate |
+| PE-F-002 | SP-013 | (SP-013 着手時 must_ship 反映予定) | SP-013 exit gate |
+| PE-F-003 | SP-014 | (SP-014 着手時 must_ship 反映予定) | SP-014 exit gate |
+| PE-F-004 | SP-014 | (SP-014 着手時 must_ship 反映予定) | SP-014 exit gate |
+| PE-F-005 | SP-014 | (SP-014 着手時 must_ship 反映予定) | SP-014 exit gate |
+| PE-F-006 | SP-015 | (SP-015 着手時 must_ship 反映予定) | SP-015 exit gate |
+| PE-F-007 | SP-015 | (SP-015 着手時 must_ship 反映予定) | SP-015 exit gate |
+| PE-F-008 | SP-016 | (SP-016 着手時 must_ship 反映予定) | SP-016 exit gate |
+| PE-F-009 | SP-016 | (SP-016 着手時 must_ship 反映予定) | SP-016 exit gate |
+| PE-F-010 | SP-016 | (SP-016 着手時 must_ship 反映予定) | SP-016 exit gate |
+| PE-F-011 | SP-018 (P0.1+ 起票予定) | (SP-018 起票 PR で trace 追加予定) | SP-018 exit gate |
+| PE-F-012 | SP-018 (P0.1+ 起票予定) | (SP-018 起票 PR で trace 追加予定) | SP-018 exit gate |
+| PE-F-013 | SP-018 (P0.1+ 起票予定) | (SP-018 起票 PR で trace 追加予定) | SP-018 exit gate |
+| PE-F-014 | SP-020 (P0.1+ 起票予定) | (SP-020 起票 PR で trace 追加予定) | SP-020 exit gate |
+| PE-F-015 | SP-020 (P0.1+ 起票予定) | (SP-020 起票 PR で trace 追加予定) | SP-020 exit gate |
+| PE-F-016 | SP-020 (P0.1+ 起票予定) | (SP-020 起票 PR で trace 追加予定) | SP-020 exit gate |
+
+**audit-only gate**: SP-022 では本 trace matrix を文書として保持、実 contract test PASS は各 owning sprint exit gate (post-P0.1)。Owning Sprint Pack 不在 (SP-018/SP-020 未起票) の場合は「P0.1+ 起票予定」marker で保留、SP-018/SP-020 起票 PR で trace を実際に追加。SP022-T00 PR では SP-022 内 trace matrix の存在のみ verify。
+
+(後続: SP-022 完了時に T01-T09 全体 Review を追記)
