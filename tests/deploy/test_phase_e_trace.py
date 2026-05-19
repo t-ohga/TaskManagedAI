@@ -403,3 +403,150 @@ def test_pack_path_missing_file_fails(tmp_path: Path) -> None:
     exit_code, output = _run_verifier(target)
     assert exit_code == 1
     assert "framework_intake_violation_phase_e_trace_pack_missing" in output
+
+
+def test_fake_pack_duplicate_pe_f_row_fails(tmp_path: Path) -> None:
+    """F-PR72-001 adopt: 同 PE-F-NNN を 2 行混入 → finding_duplicated violation."""
+
+    owners = {
+        "PE-F-001": "SP-013",
+        "PE-F-002": "SP-013",
+        "PE-F-003": "SP-014",
+        "PE-F-004": "SP-014",
+        "PE-F-005": "SP-014",
+        "PE-F-006": "SP-015",
+        "PE-F-007": "SP-015",
+        "PE-F-008": "SP-016",
+        "PE-F-009": "SP-016",
+        "PE-F-010": "SP-022",
+        "PE-F-011": "SP-018",
+        "PE-F-012": "SP-018",
+        "PE-F-013": "SP-018",
+        "PE-F-014": "SP-020",
+        "PE-F-015": "SP-020",
+        "PE-F-016": "SP-020",
+    }
+    rows = []
+    for finding_id, sprint in owners.items():
+        if finding_id == "PE-F-010":
+            rows.append(
+                f"| {finding_id} | {sprint} | ✅ closed by SP022-T01 (PR #70 merged) "
+                f"| SP022-T01 satisfied "
+                f"| Framework intake CI 機械検査 long enough symptom |"
+            )
+        else:
+            rows.append(
+                f"| {finding_id} | {sprint} | (parking) "
+                f"| {sprint} exit gate "
+                f"| Symptom long enough to clear twenty character bar |"
+            )
+    # Inject a duplicate PE-F-001 row.
+    rows.append(
+        "| PE-F-001 | SP-013 | (duplicate row) "
+        "| SP-013 exit gate "
+        "| Duplicate row injection for regression test purpose |"
+    )
+    fake = _build_pack(rows=rows)
+    target = tmp_path / "fake_sp022.md"
+    target.write_text(fake, encoding="utf-8")
+    exit_code, output = _run_verifier(target)
+    assert exit_code == 1
+    assert "framework_intake_violation_phase_e_trace_finding_duplicated" in output
+    assert "PE-F-001" in output
+
+
+def test_fake_pack_row_extra_cells_fails(tmp_path: Path) -> None:
+    """F-PR72-002 adopt: 6 cell の row (5 column 超過) → symptom_missing/row_column_count violation."""
+
+    owners = {
+        "PE-F-001": "SP-013",
+        "PE-F-002": "SP-013",
+        "PE-F-003": "SP-014",
+        "PE-F-004": "SP-014",
+        "PE-F-005": "SP-014",
+        "PE-F-006": "SP-015",
+        "PE-F-007": "SP-015",
+        "PE-F-008": "SP-016",
+        "PE-F-009": "SP-016",
+        "PE-F-010": "SP-022",
+        "PE-F-011": "SP-018",
+        "PE-F-012": "SP-018",
+        "PE-F-013": "SP-018",
+        "PE-F-014": "SP-020",
+        "PE-F-015": "SP-020",
+        "PE-F-016": "SP-020",
+    }
+    rows = []
+    for finding_id, sprint in owners.items():
+        if finding_id == "PE-F-001":
+            # 6 cells (extra trailing cell after symptom).
+            rows.append(
+                f"| {finding_id} | {sprint} | (parking) "
+                f"| {sprint} exit gate "
+                f"| Symptom long enough to clear twenty character bar "
+                f"| extra trailing cell that should fail |"
+            )
+        elif finding_id == "PE-F-010":
+            rows.append(
+                f"| {finding_id} | {sprint} | ✅ closed by SP022-T01 (PR #70 merged) "
+                f"| SP022-T01 satisfied "
+                f"| Framework intake CI 機械検査 long enough symptom |"
+            )
+        else:
+            rows.append(
+                f"| {finding_id} | {sprint} | (parking) "
+                f"| {sprint} exit gate "
+                f"| Symptom long enough to clear twenty character bar |"
+            )
+    fake = _build_pack(rows=rows)
+    target = tmp_path / "fake_sp022.md"
+    target.write_text(fake, encoding="utf-8")
+    exit_code, output = _run_verifier(target)
+    assert exit_code == 1
+    assert "framework_intake_violation_phase_e_trace_symptom_missing" in output
+    assert "row_column_count=6_expected_5" in output
+
+
+def test_fake_pack_pe_f_010_lowercase_negative_word_fails(tmp_path: Path) -> None:
+    """F-PR72-003 adopt: PE-F-010 row に `Pending` 等の大小揺れ negative word → t01_closure_marker_missing."""
+
+    owners = {
+        "PE-F-001": "SP-013",
+        "PE-F-002": "SP-013",
+        "PE-F-003": "SP-014",
+        "PE-F-004": "SP-014",
+        "PE-F-005": "SP-014",
+        "PE-F-006": "SP-015",
+        "PE-F-007": "SP-015",
+        "PE-F-008": "SP-016",
+        "PE-F-009": "SP-016",
+        "PE-F-010": "SP-022",
+        "PE-F-011": "SP-018",
+        "PE-F-012": "SP-018",
+        "PE-F-013": "SP-018",
+        "PE-F-014": "SP-020",
+        "PE-F-015": "SP-020",
+        "PE-F-016": "SP-020",
+    }
+    rows = []
+    for finding_id, sprint in owners.items():
+        if finding_id == "PE-F-010":
+            # Has SP022-T01 + closure word ("closed") but also mixed-case Pending.
+            rows.append(
+                f"| {finding_id} | {sprint} | ✅ closed by SP022-T01 Pending sign-off "
+                f"| SP022-T01 satisfied "
+                f"| Framework intake CI 機械検査 long enough symptom |"
+            )
+        else:
+            rows.append(
+                f"| {finding_id} | {sprint} | (parking) "
+                f"| {sprint} exit gate "
+                f"| Symptom long enough to clear twenty character bar |"
+            )
+    fake = _build_pack(rows=rows)
+    target = tmp_path / "fake_sp022.md"
+    target.write_text(fake, encoding="utf-8")
+    exit_code, output = _run_verifier(target)
+    assert exit_code == 1
+    assert "framework_intake_violation_phase_e_trace_t01_closure_marker_missing" in output
+    assert "negative=True" in output

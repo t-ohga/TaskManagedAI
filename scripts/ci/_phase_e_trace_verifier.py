@@ -174,8 +174,21 @@ def verify_rows(section_body: str, pack: Path) -> list[str]:
 
     violations: list[str] = []
     rows: dict[str, str] = {}
+    # F-PR72-001 adopt: detect duplicate PE-F-NNN rows (dict overwrite silently
+    # accepted a malformed matrix with 17+ rows whose IDs collide).
+    row_counts: dict[str, int] = {}
     for row_match in ROW_RE.finditer(section_body):
-        rows[row_match.group(1)] = row_match.group(0)
+        finding_id = row_match.group(1)
+        row_counts[finding_id] = row_counts.get(finding_id, 0) + 1
+        if finding_id not in rows:
+            rows[finding_id] = row_match.group(0)
+    for finding_id, count in sorted(row_counts.items()):
+        if count > 1:
+            violations.append(
+                "VIOLATION "
+                "reason_code=framework_intake_violation_phase_e_trace_finding_duplicated "
+                f"evidence={pack}:phase_e_section finding={finding_id} count={count}"
+            )
 
     # R1-F-013 adopt: all 16 findings present, no extra (PE-F-017+).
     missing = EXPECTED_FINDINGS - set(rows.keys())
@@ -196,7 +209,8 @@ def verify_rows(section_body: str, pack: Path) -> list[str]:
     for finding_id in sorted(rows):
         row = rows[finding_id]
         cells = _split_row_cells(row)
-        if len(cells) < 5:
+        # F-PR72-002 adopt: enforce exact 5 cells (extra cells were silently accepted).
+        if len(cells) != 5:
             violations.append(
                 "VIOLATION "
                 "reason_code=framework_intake_violation_phase_e_trace_symptom_missing "
@@ -231,11 +245,14 @@ def verify_rows(section_body: str, pack: Path) -> list[str]:
                 f"|tokens={sp_tokens}|expected={expected_sprint}"
             )
 
-        # R1-F-006 adopt: PE-F-010 closure marker AND/AND/NOT.
+        # R1-F-006 + F-PR72-003 adopt: PE-F-010 closure marker AND/AND/NOT.
+        # F-PR72-003: negative word check is case-insensitive so `Pending` / `todo`
+        # variants are caught alongside `pending` / `TODO`.
         if finding_id == "PE-F-010":
+            row_lower = row.lower()
             has_t01 = T01_AND_MARKER in row
             has_closure = any(w in row for w in T01_CLOSURE_WORDS)
-            has_negative = any(w in row for w in T01_NEGATIVE_WORDS)
+            has_negative = any(w.lower() in row_lower for w in T01_NEGATIVE_WORDS)
             if not (has_t01 and has_closure) or has_negative:
                 violations.append(
                     "VIOLATION "
