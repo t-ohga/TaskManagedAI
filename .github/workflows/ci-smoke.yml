@@ -106,6 +106,15 @@ jobs:
       - name: Framework intake fixture tests
         run: bash tests/scripts/test_check_framework_intake.sh
 
+      - name: Drill timer alert-only check (ADR-00021 §14.2 #4 PGA-F-013, SP022-T03)
+        # PR71 R1-004 adopt: `if:` を削除して script 内 emergency disable branch を実行、
+        # audit marker (timestamp + emergency_disable=true + retro pack 義務 + ADR PGA ref) を
+        # CI log に必ず残す。Disable 時も step 自体は実行 (script が即 exit 0)、admin が後で
+        # GitHub Actions log で disable trail を確認可能。
+        env:
+          DRILL_TIMER_ALERT_ONLY_CHECK_DISABLED: ${{ vars.DRILL_TIMER_ALERT_ONLY_CHECK_DISABLED }}
+        run: bash scripts/ci/check_drill_timer_alert_only.sh
+
       - name: Ruff
         run: uv run ruff check backend tests
 

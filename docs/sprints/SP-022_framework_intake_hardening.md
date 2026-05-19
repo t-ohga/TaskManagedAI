@@ -511,4 +511,216 @@ CI gate を緊急 disable する場合、admin が GitHub Settings → Variables
 
 将来の hook polish 候補: `target=yes` 判定で `.github/workflows/` を `.github/` 全体除外、または regex を refine。本 task の scope 外、SP-022 別 task or post-P0.1 で対応判断。
 
-(後続: SP-022 完了時に T02-T09 全体 Review を追記)
+### SP022-T03 半年 drill scheduling SOP completion (2026-05-19)
+
+#### 実装ファイル
+
+- `scripts/ci/check_drill_timer_alert_only.sh` (新規、CI entry point、diff-gate / baseline-scan 2 mode + emergency disable repository variable + R2 F-PR70-T03-R2-001 NUL byte temp file 経由)
+- `scripts/ci/_drill_timer_scanner.py` (新規、Python scanner、systemd `Exec*=` 全 directive + cron 5/6-field + `@daily` macro + cron env line PATH/SHELL/BASH_ENV fail-closed + TRUSTED_PATH_PREFIXES 検証 + shell composition 検出)
+- `tests/deploy/__init__.py` + `tests/deploy/test_drill_timer_alert_only.py` (新規、**23 pytest fixture 全 PASS**: positive deny 13 + positive pass 5 + edge / negative 5)
+- `docs/deploy/half-yearly-drill-sop.md` (新規、半年 drill SOP: CI 機械検査 explainer + systemd / cron 構成例 + 手動 approval flow + 異常時 escalation + T02 planned contract + emergency disable + retro Pack 義務)
+- `.github/workflows/ci-smoke.yml` (modify、`backend-quality` job に "Drill timer alert-only check" step 追加、`vars.DRILL_TIMER_ALERT_ONLY_CHECK_DISABLED` repository variable 経由 + workflow step `if:` 条件 + shell defense-in-depth 二重 check)
+- `.claude/plans/sp022-t03-drill-scheduling-sop.md` (本計画、19 findings adopt ledger 含む)
+
+#### codex-plan-review R1-R3 完了記録
+
+- codex-plan-review-round: R3 (round_max reached、R1=Phase A / R2=Phase B / R3=CRITICAL final)
+- codex-plan-review-findings: 19 (R1=16 [HIGH=5 / MEDIUM=8 / LOW=3] + R2=3 [HIGH=3] + R3=0 [CRITICAL=0、clean])
+- codex-plan-review-adopt: 19 / reject: 0 / defer: 0 (全件 adopt 反映)
+- codex-plan-review-readiness-gate: READY (R3 round_max reached + CRITICAL clean、致命的論点なし)
+- codex-plan-review-evidence-path: `~/.claude/local/codex-reviews/2026-05-19/sprint-SP-012-batch-7-taskhub-admin-cli/codex-plan-review-2026051921*.raw.jsonl`
+
+#### Phase G PGA-F-013 trace marker
+
+ADR-00021 §14.2 #4 (PGA-F-013) drill timer alert-only enforcement 完了:
+- `scripts/ci/check_drill_timer_alert_only.sh` 完成 (CI gate 機械検査)
+- `tests/deploy/test_drill_timer_alert_only.py` 23 fixture 全 PASS
+- `docs/deploy/half-yearly-drill-sop.md` 半年 drill SOP 完備
+- `taskhub migrate --approval-id` 実装は SP022-T02 (planned contract、本 T03 で仕様明文化のみ)
+- 実機 host migration drill execution は SP022-T09 (本 SOP を drill 実施時に使用)
+
+#### Local verification 実行記録
+
+- `bash scripts/ci/check_drill_timer_alert_only.sh` (baseline-scan mode、現 worktree) → `PASS (mode=baseline-scan)` exit 0
+- `uv run pytest tests/deploy/test_drill_timer_alert_only.py -v` → **23 passed** (failed: 0)
+- ruff + mypy regression (post-implementation で確認、SP022-T01 既存 47 fixture × 95 assertion 全 PASS 維持)
+
+#### tailscale-public-exposure hook false positive note (2026-05-19、SP022-T01 と同 pattern)
+
+`.claude/hooks/tailscale/check-tailscale-grants.sh` が `.github/workflows/ci-smoke.yml` Edit 時に BLOCK (regex `^\s*-\s*"?[0-9]+:[0-9]+` が既存 GitHub Actions services の internal port mapping `"5432:5432"` / `"6379:6379"` に hit)。本 PR で新規追加した literal は "Drill timer alert-only check" step のみ、`Funnel` / `public ingress` / `Cloudflare Tunnel` / `0.0.0.0` / `public bind` は一切追加なし。SP022-T01 PR #70 と同様の false positive。
+
+#### PR #71 Codex auto-review R1 — 7 inline findings (P1×1 + P2×6) 全件 adopt
+
+PR 起票後 約 7 分で landing、7 件全件 valid security gap / robustness 指摘:
+
+| ID | priority | symptom (要約) | adopt 反映先 |
+|---|---|---|---|
+| R1-001 | P2 | non-drill `deploy/` `ops/` 配下 `.service` を standalone scan で誤検出 | `SCAN_SERVICE_GLOBS` を `*drill*` 限定に変更 |
+| R1-002 | P2 | cron.d macro `@daily root /usr/bin/notify-send drill` で user field を command として誤渡し | `is_etc_crond` 判定で macro entry の user field を strip |
+| R1-003 | P2 | SOP example の `docs/deploy/taskhub-drill-cron.d/` path が scanner glob (`**/cron.d/**`) と不一致 | SOP example dir name を `cron.d` に修正 + Note 追加 |
+| R1-004 | P2 | workflow `if:` で step skip → script の emergency disable audit log が出ない | workflow `if:` を削除、script 内 `DRILL_TIMER_ALERT_ONLY_CHECK_DISABLED=1` check で audit marker 出力 |
+| R1-005 | P2 | diff-gate で deleted `.service` の paired-missing check 漏れ | `scan_files` 内 deleted `.service` (`exists()` false) を検出、対 `.timer` を baseline から探索して `timer_files` に load |
+| R1-006 | P2 | SOP `docs/deploy/host-migration.md` reference が repo に未配置 | ADR-00021 §3 / §11 reference に置換 |
+| **R1-007** | **P1** | `/usr/local/bin/../../tmp/slack-cli` 等 `..` path traversal で `startswith` trusted prefix check bypass | `os.path.normpath(cmd_head)` で normalize 後に prefix check |
+
+reject: 0 / defer: 0 / 全件 adopt。
+
+R1 regression fixture 3 件追加: `test_path_traversal_via_dotdot_rejected` (R1-007 P1) / `test_non_drill_service_under_deploy_excluded` (R1-001) / `test_cron_d_macro_user_field_stripped_pass` (R1-002)。
+
+R1+T03 R1 累計 fixture: **26 pytest fixture 全 PASS** (failed: 0、SP022-T03 plan stage 23 + PR71 R1 stage 3)。
+
+#### PR #71 Codex auto-review R2 — 9 inline findings (P1×1 + P2×8) (5 adopt + 4 reject stale)
+
+`@codex review` mention 経由で 1343845 (R1 fix commit) 再 review、R2 で 9 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R2-001 NEW | P2 | diff-gate でも `.service` 全 scan、drill filter 適用なし → non-drill app service 誤検出 | **adopt** | `scan_files` から `.service` filter で `"drill" in p.name` 追加 |
+| R2-002 NEW | **P1** | systemd `ExecSearchPath=/tmp/evil` で bare allowlist command spoofing | **adopt** | `SYSTEMD_EXEC_SEARCH_PATH_RE` 検出 + `drill_timer_alert_only_exec_search_path` violation |
+| R2-003 NEW | P2 | `~` / `*` / `?` shell expansion 検出漏れ (`mail -A ~/.taskhub/approvals/*.signed`) | **adopt** | `SHELL_COMPOSITION_RE` に `~/` `~ ` `^~` `*` `?` 追加 |
+| R2-004 NEW | P2 | `etc/crontab` (6-field system crontab) を 5-field 誤 parse → root user field を head と誤認識 | **adopt** | `is_etc_crond` 判定を `cron.d` OR `etc/crontab` basename match に拡張 |
+| R2-005 NEW | P2 | systemd Exec prefix `-` (ignore-failure) で `-/usr/bin/notify-send` path check fail | **adopt** | `SYSTEMD_EXEC_PREFIX_RE` で prefix `-`, `+`, `:`, `!`, `!!` strip 後に path check |
+| R2-006 to R2-009 (4 件 stale) | P2 | cron.d macro user strip / SOP path / audit log preserve / paired-service deletion | **reject as stale re-emission** | R1 で全件 adopt 実装済、code grep + commit marker で verify |
+
+**Stale re-emission rationale**: 4 件 R2 re-emission は R1 commit 1343845 で実装済 (cron.d macro user strip line 327 周辺、SOP path 修正、workflow `if:` 削除、deleted .service 対 timer baseline 探索)。`feedback_codex_r2_reemission_reject_trap.md` 教訓: code grep verify 後 reject。
+
+実装:
+- `_drill_timer_scanner.py`:
+  - `SHELL_COMPOSITION_RE` に `~` glob + `*` `?` 追加 (R2-003)
+  - `SYSTEMD_EXEC_SEARCH_PATH_RE` + `SYSTEMD_EXEC_PREFIX_RE` 追加 (R2-002 + R2-005)
+  - diff-gate `scan_files` の `.service` filter で `"drill" in p.name` (R2-001)
+  - `is_etc_crond` 判定で `etc/crontab` 6-field 認識 (R2-004)
+  - systemd `ExecStart=` parsing で prefix strip 後 path check (R2-005)
+
+R2 regression fixture 5 件追加: `test_exec_search_path_rejected` (R2-002 P1) / `test_exec_prefix_dash_pass` (R2-005) / `test_tilde_expansion_rejected` (R2-003) / `test_glob_expansion_rejected` (R2-003) / `test_diff_gate_non_drill_service_excluded` (R2-001)。
+
+累計 fixture: **31 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 stage 3 + R2 stage 5)。
+
+#### PR #71 Codex auto-review R3 — 8 inline findings (P1×2 + P2×6) (3 adopt + 5 reject stale)
+
+`@codex review` mention 経由で 5482587 (R2 fix commit) 再 review、R3 で 8 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R3-001 NEW | P2 | SOP `docs/deploy/cron.d/drill-alert` example が 5-field、cron.d 6-field 要求と不整合 → `six_field_parse_failed` | **adopt** | SOP example の cron 行に `root` user field 追加 |
+| R3-002 NEW | **P1** | diff-gate で drill 名でない paired `.service` (e.g., `send-alert.service` referenced from `drill-alert.timer`) が `*drill*` filter で drop | **adopt** | changed non-drill `.service` を repo 全 timer から探索、reference あれば scan 対象に追加 |
+| R3-003 NEW | **P1** | `echo drill&/tmp/payload` (空白なし `&`) で shell composition regex 検出漏れ、cron `/bin/sh` は `&` を control operator 扱い | **adopt** | `SHELL_COMPOSITION_RE` で `\s&\s` → `&` (空白前後不問) に強化 |
+| R3-004 to R3-008 (5 件 stale) | P2 / P1 | cron.d macro user strip / SOP path / audit log preserve / ExecSearchPath / Exec prefix | **reject as stale re-emission** | R1/R2 で全件 adopt 実装済、code grep verify |
+
+**Stale re-emission rationale**: 5 件 R3 re-emission は R1/R2 commit (1343845 / 5482587) で実装済 (cron.d macro user strip line 327+、SOP path 修正、workflow `if:` 削除、ExecSearchPath_RE 追加、Exec prefix strip)。`feedback_codex_r2_reemission_reject_trap.md` 教訓: code grep verify 後 reject。
+
+実装:
+- `_drill_timer_scanner.py`:
+  - `SHELL_COMPOSITION_RE` で `&` を空白前後不問に強化 (R3-003 P1)
+  - diff-gate `changed_services` で non-drill `.service` の対 timer 探索 + scan 追加 (R3-002 P1)
+- `docs/deploy/half-yearly-drill-sop.md`:
+  - cron.d example に `root` user field 追加 (R3-001)
+
+R3 regression fixture 3 件追加: `test_adjacent_ampersand_rejected` (R3-003 P1) / `test_diff_gate_paired_service_non_drill_name` (R3-002 P1) / `test_cron_d_5_field_without_user_rejected` (R3-001 boundary)。
+
+累計 fixture: **34 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 3 + R2 5 + R3 3)。
+
+#### PR #71 Codex auto-review R4 — 10 inline findings (P1×3 + P2×7) (5 adopt + 5 reject stale)
+
+R4 で 10 件 emit、真に新 5 件 (P1×3 + P2×2) adopt、stale 5 件 (R1-R3 既 adopt) reject。
+
+| ID | priority | symptom (要約) | 判定 |
+|---|---|---|---|
+| R4-001 NEW | P2 | systemd Exec prefix `@` strip 漏れ | adopt |
+| R4-002 NEW | **P1** | systemd drop-in override `*.service.d/*.conf` scan 漏れ → destructive ExecStart= override bypass | adopt |
+| R4-003 NEW | P2 | `git diff --name-only` で rename old path 不可視 → 削除側 service が見えず paired-missing 漏れ | adopt |
+| R4-004 NEW | P2 | SOP osascript example の AppleScript unquoted で shell が `display` 単独引数として渡す | adopt |
+| R4-005 NEW | **P1** | `osascript -e 'do shell script "..."'` で arbitrary cmd 実行可能 (curl と同 bypass) | adopt (osascript `-e` を `display notification` 限定) |
+| R4-006 to R4-010 (5 件 stale) | - | R1/R2/R3 既 adopt re-emission | reject |
+
+実装:
+- `_drill_timer_scanner.py`:
+  - `SYSTEMD_EXEC_PREFIX_RE` に `@` 追加 (R4-001)
+  - `SCAN_SERVICE_DROPIN_GLOBS` 追加 + diff-gate / baseline 両方で drop-in scan (R4-002 P1)
+  - `_check_osascript_payload` 追加、osascript `-e` を `display notification` regex 限定 (R4-005 P1)
+- `check_drill_timer_alert_only.sh`:
+  - `git diff --name-status -z` + Python NUL parse で rename old / new path 両方抽出 (R4-003)
+- `docs/deploy/half-yearly-drill-sop.md`:
+  - osascript example の AppleScript を quote (R4-004)
+  - service example の slack-cli msg も quote
+
+R4 regression fixture 3 件追加 + 既存 1 件 update: `test_osascript_do_shell_script_rejected` (R4-005 P1) / `test_exec_prefix_at_pass` (R4-001) / `test_dropin_override_destructive_rejected` (R4-002 P1) / `test_systemd_osascript_passes` update (R4-005 strict check で AppleScript quote 必須化)。
+
+累計 fixture: **37 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 3 + R2 5 + R3 3 + R4 3)。
+
+#### PR #71 Codex auto-review R5 — 11 inline findings (P1×4 + P2×7) (5 adopt + 6 reject stale)
+
+R5 で 11 件 emit、真に新 5 件 (P1×3 + P2×2) adopt、stale 6 件 reject。
+
+| ID | priority | symptom (要約) | 判定 |
+|---|---|---|---|
+| R5-001 NEW | **P1** | paired non-drill service の drop-in `<service>.service.d/*.conf` 漏れ | adopt |
+| R5-002 NEW | **P1** | osascript `display notification (do shell script "...")` で AppleScript 内 shell exec bypass | adopt |
+| R5-003 NEW | **P1** | systemd `Environment=PATH=/tmp/evil` で bare command PATH spoofing | adopt |
+| R5-004 NEW | P2 | cron.d 6-field で user field のみ command 不在で誤 pass | adopt |
+| R5-005 NEW | P2 | `mail -A <secret_file>` attachment flag で exfiltration | adopt |
+| R5-006 to R5-011 (6 件 stale) | - | R1-R4 既 adopt re-emission | reject |
+
+実装:
+- `_drill_timer_scanner.py`:
+  - `SYSTEMD_PATH_OVERRIDE_RE` 追加: `Environment=PATH=` / `EnvironmentFile=` / `PassEnvironment=PATH` を検出 (R5-003 P1)
+  - `_check_osascript_payload` で AppleScript 内 `do shell script` / `system attribute` / System Events tell を regex reject (R5-002 P1)
+  - `_check_mail_attachment` 追加: `mail -A` / `mail --attach` を reject (R5-005)
+  - paired non-drill service の drop-in dir (`<service>.service.d/*.conf`) を baseline 探索 (R5-001 P1)
+  - cron.d 6-field で 7 token 未満は `cron_d_user_or_command_missing` violation (R5-004)
+
+R5 regression fixture 4 件追加: `test_osascript_embedded_shell_script_rejected` (R5-002 P1) / `test_environment_path_override_rejected` (R5-003 P1) / `test_cron_d_user_field_only_rejected` (R5-004) / `test_mail_attach_flag_rejected` (R5-005)。
+
+累計 fixture: **41 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 3 + R2 5 + R3 3 + R4 3 + R5 4)。
+
+#### PR #71 Codex auto-review R6 — 16 inline findings (P1×6 + P2×10) (5 adopt + 11 reject stale)
+
+R6 で 16 件 emit、真に新 5 件 (P1×2 + P2×3)、stale 11 件 (R1-R5 既 adopt)。
+
+| ID | priority | symptom (要約) | 判定 |
+|---|---|---|---|
+| R6-001 NEW | **P1** | paired non-drill service の drop-in dir scan は diff-gate 限定、baseline で漏れ | adopt |
+| R6-002 NEW | P2 | quoted `Environment="PATH=..."` で `SYSTEMD_PATH_OVERRIDE_RE` bypass | adopt |
+| R6-003 NEW | P2 | `mail -a` (Heirloom / s-nail) attach 漏れ、`-A` `--attach` のみ対応 | adopt |
+| R6-004 NEW | P2 | `logger -f <secret_file>` syslog 流出 | adopt |
+| R6-005 NEW | **P1** | systemd inherited drop-in dirs (`<prefix>-.service.d/`) scan 漏れ | adopt |
+
+実装:
+- `_drill_timer_scanner.py`:
+  - `SYSTEMD_PATH_OVERRIDE_RE` を `re.VERBOSE` で quoted / multiple-assignment 両対応 (R6-002)
+  - `_check_mail_attachment` に `-a` 追加 + `mailx` / `s-nail` head allowlist 追加 (R6-003)
+  - `_check_logger_file_read` 新規追加: `logger -f` / `--file` reject (R6-004)
+  - baseline scan で各 drill timer から referenced paired service の `<service>.service.d/*.conf` + inherited dropin dirs `<prefix>-.service.d/` を scan に追加 (R6-001 P1 + R6-005 P1)
+
+R6 regression fixture 4 件追加: `test_quoted_path_override_rejected` (R6-002) / `test_mail_lowercase_a_rejected` (R6-003) / `test_logger_file_flag_rejected` (R6-004) / `test_inherited_dropin_directory_scanned` (R6-005 P1)。
+
+累計 fixture: **45 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 3 + R2 5 + R3 3 + R4 3 + R5 4 + R6 4)。
+
+#### PR #71 Codex auto-review R7 — 20 inline findings (P1×8 + P2×12) (7 adopt + 13 reject stale)
+
+R7 で 20 件 emit、真に新 7 件 (P1×5 + P2×2)、stale 13 件 (R1-R6 既 adopt)。
+
+| ID | priority | symptom (要約) | 判定 |
+|---|---|---|---|
+| R7-001 NEW | **P1** | diff-gate で timer changed PR、paired service の drop-in scan 漏れ | adopt |
+| R7-002 NEW | P2 | `ExecStart=` regex `\s*` で newline consume、override pattern (`ExecStart=` + 次行 `ExecStart=...`) で誤動作 | adopt |
+| R7-003 NEW | **P1** | non-drill paired service の changed `.service.d/*.conf` drop-in 漏れ (drill name filter で drop) | adopt |
+| R7-004 NEW | **P1** | quoted multi-Environment 後の `"PATH=..."` 検出漏れ | adopt |
+| R7-005 NEW | **P1** | timer drop-in `.timer.d/*.conf` で `[Timer] Unit=` override scan 漏れ | adopt |
+| R7-006 NEW | P2 | shell metacharacter regex が quoted text 内も誤検出 (`Run drill?` `R&D drill` 等) | adopt (2-layer check: `$()`/backtick は raw、`;\|&&\|\|\|\|\|>><<&*?~` は quote-stripped) |
+| R7-007 NEW | **P1** | `RootDirectory=` / `RootImage=` で trusted absolute path を attacker root に remap 可能 | adopt |
+| R7-008 to R7-020 (13 件 stale) | - | R1-R6 既 adopt re-emission | reject |
+
+実装:
+- `_drill_timer_scanner.py`:
+  - `SYSTEMD_EXEC_RE` の `\s*` を `[ \t]*` に変更、newline consumption 防止 (R7-002)
+  - `SYSTEMD_PATH_OVERRIDE_RE` を multi-assignment 対応 (R7-004 P1)
+  - `SYSTEMD_ROOT_REMAP_RE` 追加: `RootDirectory` / `RootImage` / `RootEphemeral` / `BindPaths*` 検出 (R7-007 P1)
+  - shell composition を 2-layer に分離 (R7-006): raw で `$()`/backtick/newline、quote-stripped で `;|&&|||||>><<&*?~`
+  - diff-gate scan_files で timer dropins `.timer.d/*.conf` + non-drill paired service drop-in 探索追加 (R7-001 P1 + R7-003 P1 + R7-005 P1)
+
+R7 regression fixture 3 件追加: `test_exec_reset_followed_by_replacement_passes` (R7-002) / `test_quoted_metacharacters_pass` (R7-006) / `test_root_directory_remap_rejected` (R7-007 P1)。
+
+累計 fixture: **48 pytest fixture 全 PASS** (failed: 0、plan 23 + R1 3 + R2 5 + R3 3 + R4 3 + R5 4 + R6 4 + R7 3)。
+
+(後続: SP-022 完了時に T02 / T04-T09 全体 Review を追記)
