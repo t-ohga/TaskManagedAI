@@ -249,4 +249,67 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 
 **audit-only gate**: SP-022 では本 trace matrix を文書として保持、実 contract test PASS は各 owning sprint exit gate (post-P0.1)。Owning Sprint Pack 不在 (SP-018/SP-020 未起票) の場合は「P0.1+ 起票予定」marker で保留、SP-018/SP-020 起票 PR で trace を実際に追加。SP022-T00 PR では SP-022 内 trace matrix の存在のみ verify。
 
-(後続: SP-022 完了時に T01-T09 全体 Review を追記)
+### SP022-T01 framework intake CI 機械化 completion (2026-05-19)
+
+#### 実装ファイル
+
+- `scripts/ci/check_framework_intake.sh` (新規、CI entry point、diff-gate / baseline-scan 2 mode + 8 verify item)
+- `scripts/ci/_extract_changed_deps.py` (新規、changed direct dependency 抽出 helper、[dependency-groups].* 含む)
+- `scripts/ci/_intake_scanner.py` (新規、verify item #3-#8 Python scanner、ripgrep 依存撤回)
+- `scripts/ci/__init__.py` (新規、package 化)
+- `tests/scripts/test_check_framework_intake.sh` (新規、12 fixture × 24 assertion 全 PASS)
+- `tests/citations/__init__.py` + `tests/citations/test_citation_completeness.py` (新規、map schema + canonical reference + changed dep citation assert)
+- `docs/citations/dependency_to_framework_map.json` (新規、10 framework × 11 entries: LangGraph / CrewAI / AutoGen / Letta / Dapr Agents / Dify / OpenHands / TaskingAI 初期登録)
+- `docs/citations/README.md` (新規、citation 構造の正本 index)
+- `.github/workflows/ci-smoke.yml` (modify、`actions/checkout@v4 fetch-depth: 0` + "Framework intake check" / "Framework intake fixture tests" step 追加、`env.FRAMEWORK_INTAKE_CHECK_DISABLED` repository variable 経由)
+- `.claude/plans/sp022-t01-framework-intake-ci.md` (本計画、22 findings adopt ledger 含む)
+
+#### codex-plan-review R1-R3 完了記録
+
+- codex-plan-review-round: R3 (round_max reached、R1=Phase A / R2=Phase B / R3=CRITICAL final)
+- codex-plan-review-findings: 22 (R1=14 [HIGH=4 / MEDIUM=8 / LOW=2] + R2=6 [HIGH=6] + R3=2 [CRITICAL=2])
+- codex-plan-review-adopt: 22 / reject: 0 / defer: 0 (全件 adopt 反映)
+- codex-plan-review-readiness-gate: READY (R3 round_max reached + clean、CRITICAL=0 / HIGH=0 残存)
+- codex-plan-review-evidence-path: `~/.claude/local/codex-reviews/2026-05-19/sprint-SP-012-batch-7-taskhub-admin-cli/codex-plan-review-20260519-173506.raw.jsonl` (R1) + `codex-plan-review-20260519-174422.raw.jsonl` (R2) + `codex-plan-review-20260519-175756.raw.jsonl` (R3)
+
+#### 8 verify trace matrix (ADR-00020 §1 mapping)
+
+| # | verify | 実装 module | reason_code | mode 別実行 |
+|---|---|---|---|---|
+| 1 | License | `check_license` (shell) + `uv run python -m pip show` | `framework_intake_violation_license` | diff-gate のみ |
+| 2 | Attribution | `check_attribution` (shell) + `dependency_to_framework_map.json` + `framework_pattern_candidates.md` | `framework_intake_violation_attribution` | diff-gate のみ |
+| 3 | No code embed | `_intake_scanner.py::check_no_code_embed` (Python + npm scoped + dynamic import) | `framework_intake_violation_code_embed` | 両 mode |
+| 4 | Persistence | `_intake_scanner.py::check_persistence` (sqlite3 / psycopg.connect) | `framework_intake_violation_persistence` | 両 mode |
+| 5 | External network | `_intake_scanner.py::check_external_network` (NETWORK_DENYLIST literal URL) | `framework_intake_violation_external_network` | 両 mode |
+| 6 | Telemetry off | `_intake_scanner.py::check_telemetry` (TELEMETRY_PY / TELEMETRY_NPM import) | `framework_intake_violation_telemetry` | 両 mode |
+| 7 | Secret canary | `_intake_scanner.py::check_secret_canary` (`backend/app/services/providers/preflight.py` + tests/security 2 fixture + eval/security/secret_canary) | `framework_intake_violation_secret_canary` | 両 mode |
+| 8 | Tenant/project boundary | `_intake_scanner.py::check_tenant_boundary` (AC-HARD-03 / tenant_isolation / cross_tenant marker existence) | `framework_intake_violation_tenant_boundary` | 両 mode |
+
+#### Local verification 実行記録
+
+- `bash scripts/ci/check_framework_intake.sh` (baseline-scan mode、現 worktree) → `PASS (mode=baseline-scan)` exit 0
+- `bash tests/scripts/test_check_framework_intake.sh` → 12 fixture × 24 assertion すべて PASS (failed: 0)
+- `uv run pytest tests/citations/ -q` → 1 passed (`test_map_schema_and_canonical_references`) + 1 skipped (`test_changed_deps_have_citation`、dependency 変更なし環境で R1 F-011 通り)
+
+#### Emergency disable audit format
+
+CI gate を緊急 disable する場合、admin が GitHub Settings → Variables で `FRAMEWORK_INTAKE_CHECK_DISABLED=1` を設定。本 sprint pack の `## Review` 内に以下を 24h 以内に記録 (R1 F-013 adopt):
+
+```
+- disable_at_utc: <YYYY-MM-DD HH:MM:SS UTC>
+- disabled_by: <admin actor>
+- reason: <critical incident rationale>
+- recovery_commit_sha: <commit SHA that re-enabled>
+- retro_pack_ref: <docs/sprints/... or ADR-NNNNN>
+```
+
+#### tailscale-public-exposure hook false positive note (2026-05-19)
+
+`.claude/hooks/tailscale/check-tailscale-grants.sh` が `.github/workflows/ci-smoke.yml` の Edit 時に BLOCK を出した (regex `^[[:space:]]*-[[:space:]]*"?[0-9]+:[0-9]+` が既存 GitHub Actions services の internal port mapping `"5432:5432"` / `"6379:6379"` 等に hit)。本 PR では:
+- 新規追加の literal は `fetch-depth: 0` + Framework intake check step のみ、`Funnel` / `public ingress` / `Cloudflare Tunnel` / `0.0.0.0` / `public bind` は一切追加なし
+- 既存 port mapping は GitHub Actions services の CI-internal port (test docker container 内で `localhost:5432` listen)、production deployment 設定ではない
+- hook 動作は valid だが本 Edit に対しては false positive、ADR-00007 update 不要
+
+将来の hook polish 候補: `target=yes` 判定で `.github/workflows/` を `.github/` 全体除外、または regex を refine。本 task の scope 外、SP-022 別 task or post-P0.1 で対応判断。
+
+(後続: SP-022 完了時に T02-T09 全体 Review を追記)
