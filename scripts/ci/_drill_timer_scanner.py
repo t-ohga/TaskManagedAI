@@ -136,11 +136,14 @@ SCAN_TIMER_GLOBS: tuple[str, ...] = (
     "deploy/**/*.timer",
     "ops/**/*.timer",
 )
+# PR71 R1-001 adopt: limit standalone service scanning to drill-named files only.
+# non-drill .service under deploy/ ops/ (e.g., production app service) はpaired timer 経由でのみ scan、
+# standalone での scan は drill-named のみ。
 SCAN_SERVICE_GLOBS: tuple[str, ...] = (
     "**/*drill*.service",
-    "docs/deploy/**/*.service",
-    "deploy/**/*.service",
-    "ops/**/*.service",
+    "docs/deploy/**/*drill*.service",
+    "deploy/**/*drill*.service",
+    "ops/**/*drill*.service",
 )
 SCAN_CRON_GLOBS: tuple[str, ...] = (
     "**/crontab",
@@ -192,10 +195,19 @@ def _check_denylist(cmd_line: str) -> tuple[str | None, str | None]:
 
 
 def _check_path_spoofing(cmd_head: str) -> tuple[str | None, str | None]:
-    """R2 F-PR70-T03-R2-003 adopt: if cmd_head contains `/`, must start with a trusted prefix."""
+    """If cmd_head contains `/`, must start with a trusted prefix after `..` normalization.
+
+    R2 F-PR70-T03-R2-003 + PR71 R1-007 (P1) adopt: bare `startswith` allowed
+    `/usr/local/bin/../../tmp/slack-cli` to pass trusted prefix check via `..` traversal.
+    Normalize with `os.path.normpath` before prefix match to reject traversal bypass.
+    """
     if "/" not in cmd_head:
         return (None, None)
-    if any(cmd_head.startswith(prefix) for prefix in TRUSTED_PATH_PREFIXES):
+    # Normalize `..` segments before prefix check (PR71 R1-007 P1 adopt).
+    import os.path
+
+    normalized = os.path.normpath(cmd_head)
+    if any(normalized.startswith(prefix) for prefix in TRUSTED_PATH_PREFIXES):
         return (None, None)
     return ("path_spoofing", f"untrusted_path={cmd_head[:80]}")
 
@@ -245,6 +257,27 @@ def check_systemd_files(scan_files: list[Path] | None, root: Path) -> list[str]:
     else:
         timer_files = [p for p in scan_files if p.suffix == ".timer" and p.exists()]
         service_files = [p for p in scan_files if p.suffix == ".service" and p.exists()]
+        # PR71 R1-005 adopt: diff-gate で deleted `.service` の paired-missing check
+        # changed list 内に deleted `.service` (exists() false) があれば、同名 / 関連 `.timer`
+        # を repo baseline から探して `timer_files` に load し、paired-service-missing で
+        # 必ず violation emit させる。
+        deleted_services = [
+            p for p in scan_files if p.suffix == ".service" and not p.exists()
+        ]
+        for deleted in deleted_services:
+            candidate_timer = deleted.with_suffix(".timer")
+            if candidate_timer.exists() and candidate_timer not in timer_files:
+                timer_files.append(candidate_timer)
+            # also discover timers referencing the deleted service via [Timer] Unit=
+            for timer_path in _iter_glob(root, SCAN_TIMER_GLOBS):
+                if timer_path in timer_files:
+                    continue
+                content = _read_text_or_none(timer_path)
+                if content is None:
+                    continue
+                unit_match = SYSTEMD_UNIT_RE.search(content)
+                if unit_match and unit_match.group(1) == deleted.name:
+                    timer_files.append(timer_path)
     # R1 F-003 adopt: resolve paired .service for each .timer
     paired_services: set[Path] = set(service_files)
     for tpath in timer_files:
@@ -323,7 +356,21 @@ def check_cron_files(scan_files: list[Path] | None, root: Path) -> list[str]:
             # macro entry (@daily / @hourly / ...)
             macro_match = CRON_MACRO_RE.match(raw_line)
             if macro_match:
-                cmd = macro_match.group(2).split("%", 1)[0].strip()
+                rest = macro_match.group(2).split("%", 1)[0].strip()
+                # PR71 R1-002 adopt: cron.d uses system-crontab form `@daily <user> <cmd>`,
+                # so strip the leading user field before _check_command.
+                if is_etc_crond:
+                    parts = rest.split(None, 1)
+                    if len(parts) == 2:
+                        cmd = parts[1].strip()
+                    else:
+                        violations.append(
+                            f"VIOLATION reason_code=framework_intake_violation_drill_timer_alert_only_cron_parse_failed "
+                            f"evidence={path}:{line_num} label=macro_user_field_missing line={raw_line[:80]}"
+                        )
+                        continue
+                else:
+                    cmd = rest
                 reason, label = _check_command(cmd)
                 if reason:
                     violations.append(

@@ -258,6 +258,44 @@ def test_cron_macro_taskhub_restore_rejected(tmp_path: Path) -> None:
     assert "taskhub_destructive_subcommand" in output
 
 
+# ---- new: PR71 R1-007 (P1) path traversal bypass ----
+def test_path_traversal_via_dotdot_rejected(tmp_path: Path) -> None:
+    """`/usr/local/bin/../../tmp/slack-cli` normalizes to `/tmp/slack-cli`, must reject."""
+    _write_drill_timer_and_service(
+        tmp_path,
+        "/usr/local/bin/../../tmp/slack-cli chat send drill",  # noqa: S108
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "framework_intake_violation_drill_timer_alert_only_path_spoofing" in output
+
+
+# ---- new: PR71 R1-001 non-drill service excluded from standalone scan ----
+def test_non_drill_service_under_deploy_excluded(tmp_path: Path) -> None:
+    """`deploy/production-app.service` (non-drill name) should NOT trigger scan."""
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir(parents=True)
+    (deploy_dir / "production-app.service").write_text(
+        "[Service]\nExecStart=/usr/bin/docker compose up -d\n",
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 0, f"expected pass (non-drill service excluded), got exit={exit_code} output={output}"
+
+
+# ---- new: PR71 R1-002 cron.d macro user field stripping ----
+def test_cron_d_macro_user_field_stripped_pass(tmp_path: Path) -> None:
+    """cron.d `@daily root /usr/bin/notify-send drill` should pass (user stripped, allowlist head match)."""
+    cron_d = tmp_path / "etc" / "cron.d"
+    cron_d.mkdir(parents=True)
+    (cron_d / "drill-cron").write_text(
+        "@daily root /usr/bin/notify-send drill\n",
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 0, f"expected pass, got exit={exit_code} output={output}"
+
+
 # ---- 11. cron env MAILTO (allowed env line) ----
 def test_cron_mailto_env_line_passes(tmp_path: Path) -> None:
     """`MAILTO=ops@example.com` does not trigger path-spoofing (only PATH/SHELL/BASH_ENV do)."""

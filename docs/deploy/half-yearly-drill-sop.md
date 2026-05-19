@@ -68,7 +68,9 @@ systemd-analyze calendar '*-01,07-01 09:00:00'
 
 ## 4. cron 構成例 (Mac / Linux)
 
-`docs/deploy/taskhub-drill-cron.d/drill-alert`:
+> **Note (PR #71 R1-003 adopt)**: 本 SOP 内の cron file example path は scanner の `SCAN_CRON_GLOBS` (`**/cron.d/**`) が match する命名規則と一致させる必要あり。dir name は必ず `cron.d` (e.g., `docs/deploy/cron.d/`)。`taskhub-drill-cron.d/` 等 prefix 付き dir は scanner glob で match しないため使用禁止。
+
+`docs/deploy/cron.d/drill-alert`:
 
 ```cron
 # 半年 drill alert (毎年 1/1 と 7/1 9:00)
@@ -83,7 +85,7 @@ MAILTO=ops@example.com
 ## 5. 手動 approval flow (drill 実行時)
 
 1. **通知受領** (Slack / osascript notification): scheduling timer が allowlist command で通知を発火
-2. **オペレータ作業開始**: `docs/deploy/half-yearly-drill-sop.md` (本 SOP) を再読、`docs/deploy/host-migration.md` も確認
+2. **オペレータ作業開始**: 本 SOP (`docs/deploy/half-yearly-drill-sop.md`) を再読、`docs/adr/00021_host_portable_deployment.md` §3 (admin CLI) / §8 (RTO≤4h drill table) / §11 (split-brain prevention) も確認 (PR71 R1-006 adopt: 旧 `docs/deploy/host-migration.md` reference は repo に未配置のため ADR-00021 と Sprint Pack に置換)
 3. **approval ID 生成**:
    ```bash
    taskhub approval issue --reason "half-yearly drill 2026-07-01" --decider <human-name>
@@ -102,7 +104,7 @@ MAILTO=ops@example.com
 
 ## 6. 異常時 escalation
 
-- **drill 完了せず** → オペレータが Slack channel `#taskhub-ops` で escalation 表明、`docs/deploy/host-migration.md` rollback 章を参照
+- **drill 完了せず** → オペレータが Slack channel `#taskhub-ops` で escalation 表明、ADR-00021 §3 / §11 rollback 経路 (`taskhub freeze` / `taskhub thaw` で split-brain prevention、source host service resume) を参照 (PR71 R1-006 adopt)
 - **rollback 必要** → `taskhub migrate --rollback --approval-id <id>` (SP022-T02 で実装、本 SOP は仕様明文化のみ)
 - **approval signature verification 失敗** → drill kick-off reject、SecretBroker audit event 発火 (raw secret なし、SP-004/006 SecretBroker boundary 経由)
 - **Tailscale connection lost** → drill abort、source host の service を resume (`taskhub thaw`、SP-012 batch 7 で skeleton)、24h 以内に retro 実施

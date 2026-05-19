@@ -549,4 +549,24 @@ ADR-00021 §14.2 #4 (PGA-F-013) drill timer alert-only enforcement 完了:
 
 `.claude/hooks/tailscale/check-tailscale-grants.sh` が `.github/workflows/ci-smoke.yml` Edit 時に BLOCK (regex `^\s*-\s*"?[0-9]+:[0-9]+` が既存 GitHub Actions services の internal port mapping `"5432:5432"` / `"6379:6379"` に hit)。本 PR で新規追加した literal は "Drill timer alert-only check" step のみ、`Funnel` / `public ingress` / `Cloudflare Tunnel` / `0.0.0.0` / `public bind` は一切追加なし。SP022-T01 PR #70 と同様の false positive。
 
+#### PR #71 Codex auto-review R1 — 7 inline findings (P1×1 + P2×6) 全件 adopt
+
+PR 起票後 約 7 分で landing、7 件全件 valid security gap / robustness 指摘:
+
+| ID | priority | symptom (要約) | adopt 反映先 |
+|---|---|---|---|
+| R1-001 | P2 | non-drill `deploy/` `ops/` 配下 `.service` を standalone scan で誤検出 | `SCAN_SERVICE_GLOBS` を `*drill*` 限定に変更 |
+| R1-002 | P2 | cron.d macro `@daily root /usr/bin/notify-send drill` で user field を command として誤渡し | `is_etc_crond` 判定で macro entry の user field を strip |
+| R1-003 | P2 | SOP example の `docs/deploy/taskhub-drill-cron.d/` path が scanner glob (`**/cron.d/**`) と不一致 | SOP example dir name を `cron.d` に修正 + Note 追加 |
+| R1-004 | P2 | workflow `if:` で step skip → script の emergency disable audit log が出ない | workflow `if:` を削除、script 内 `DRILL_TIMER_ALERT_ONLY_CHECK_DISABLED=1` check で audit marker 出力 |
+| R1-005 | P2 | diff-gate で deleted `.service` の paired-missing check 漏れ | `scan_files` 内 deleted `.service` (`exists()` false) を検出、対 `.timer` を baseline から探索して `timer_files` に load |
+| R1-006 | P2 | SOP `docs/deploy/host-migration.md` reference が repo に未配置 | ADR-00021 §3 / §11 reference に置換 |
+| **R1-007** | **P1** | `/usr/local/bin/../../tmp/slack-cli` 等 `..` path traversal で `startswith` trusted prefix check bypass | `os.path.normpath(cmd_head)` で normalize 後に prefix check |
+
+reject: 0 / defer: 0 / 全件 adopt。
+
+R1 regression fixture 3 件追加: `test_path_traversal_via_dotdot_rejected` (R1-007 P1) / `test_non_drill_service_under_deploy_excluded` (R1-001) / `test_cron_d_macro_user_field_stripped_pass` (R1-002)。
+
+R1+T03 R1 累計 fixture: **26 pytest fixture 全 PASS** (failed: 0、SP022-T03 plan stage 23 + PR71 R1 stage 3)。
+
 (後続: SP-022 完了時に T02 / T04-T09 全体 Review を追記)
