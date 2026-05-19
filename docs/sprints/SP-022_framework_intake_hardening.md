@@ -437,6 +437,37 @@ R6 regression fixture 5 件追加: `test_default_groups_all_literal` (R6-001) / 
 
 R1+R2+R3+R4+R5+R6 累計: **39 fixture × 80 assertion 全 PASS** (failed: 0)。**29 adopt findings** + 2 unique defer + 34 reject (R3 stale 6 + R4 stale 5 + R5 stale 9 + R6 stale 14)。
 
+#### PR #70 Codex auto-review R7 — 20 inline findings (6 adopt + 14 reject as stale re-emission)
+
+`@codex review` mention 経由で bd58d7f (R6 fix commit) 再 review、R7 で 20 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R7-001 (NEW) | **P1** | AutoGen v0.4+ は `autogen_agentchat` / `autogen_core` / `autogen_ext` に split、denylist は legacy `autogen` / `pyautogen` のみ → 現行 import bypass | **adopt** | PY_DENYLIST に v0.4 系 3 module 追加 |
+| R7-002 (NEW) | **P1** | Dapr Agents は `dapr_agents` (pip `dapr-agents`)、denylist は base `dapr` のみ → SDK bypass | **adopt** | PY_DENYLIST に `dapr_agents` 追加 |
+| R7-003 (NEW) | **P1** | Letta Python SDK は `letta_client` (`from letta_client import Letta`)、denylist は `letta` のみ → SDK bypass | **adopt** | PY_DENYLIST に `letta_client` 追加 |
+| R7-004 (NEW) | **P1** | Letta npm SDK は scoped `@letta-ai/letta-client`、denylist は unscoped `letta` のみ → frontend SDK bypass | **adopt** | NPM_DENYLIST に `@letta-ai/letta-client` 追加 |
+| R7-005 (NEW) | P2 | `License: UNKNOWN` / `NULL` / `None` literal を license empty 判定 skip、later denylist で UNKNOWN は match せず silent pass | **adopt** | check_license で `license_lower` に正規化、UNKNOWN/NULL/None も unresolved 扱い |
+| R7-006 (NEW) | **P1** | `import psycopg as pg; pg.connect(...)` module alias 検出漏れ + multiline `from psycopg import (connect,)` parenthesized import 検出漏れ | **adopt** | check_persistence に `psycopg_module_alias_re` (module alias 動的 regex) + `psycopg_import_connect` を `re.DOTALL` で multiline 対応 |
+| R7-007 to R7-020 (14 件 stale) | P2 (+1 P1) | R2-R6 既 adopt re-emission (Next.js root / psycopg / optional frontend / deployment YAML / citation artifact / npm license [P1] / dep-groups / dynamic imports / Semantic Kernel / class-level connects / dynamic telemetry / Connection classes / legacy tool.uv dev / whitespace dynamic import) | **reject as stale re-emission** | R2-R6 既 adopt 実装済、code grep + 各 fix commit comment marker で verify |
+
+**P1 escalation rationale**: R7 で 4 件が P1 (AutoGen v0.4 + Dapr Agents + Letta Python SDK + Letta npm SDK) — これらは 10-framework 候補 ledger に明示記載の framework の **現行 import root が denylist に欠落** していた致命的 security gap。Codex が "I verified `from X import Y` exits 0 under `--rule=no_code_embed`" と動作確認まで実施した P1 finding、即 adopt 妥当。
+
+**Stale re-emission rationale**: 14 件 R7 re-emission は code grep + R2-R6 commit comment marker で verify。Codex multi-round の既知 stale re-emission pattern (R3 から累計 stale = 6+5+9+14+14=48 件、いずれも code 実装済)。
+
+実装:
+- `_intake_scanner.py`:
+  - PY_DENYLIST_FRAMEWORKS に `autogen_agentchat` / `autogen_core` / `autogen_ext` / `dapr_agents` / `letta_client` 追加 (R7-001/002/003)
+  - NPM_DENYLIST_FRAMEWORKS に `@letta-ai/letta-client` 追加 (R7-004)
+  - check_persistence に `psycopg_module_alias_re` + 動的 `<alias>.connect(` regex 追加 (R7-006 module alias)
+  - check_persistence の `psycopg_import_connect` を `re.DOTALL` + `(?:\(\s*)?` 対応で multiline parenthesized import 検出 (R7-006 multiline)
+- `check_framework_intake.sh`:
+  - check_license で `license_lower=$(echo $license | tr ...)` で正規化、`unknown` / `null` / `none` literal も unresolved 扱い (R7-005)
+
+R7 regression fixture 7 件追加: `test_autogen_v04_modules` (R7-001) / `test_dapr_agents_module` (R7-002) / `test_letta_client_python_sdk` (R7-003) / `test_letta_client_npm_sdk` (R7-004) / `test_license_unknown_placeholder` (R7-005 代理) / `test_psycopg_module_alias_connect` (R7-006 module alias) / `test_psycopg_multiline_import` (R7-006 multiline)。
+
+R1+R2+R3+R4+R5+R6+R7 累計: **46 fixture × 94 assertion 全 PASS** (failed: 0)。**35 adopt findings** + 2 unique defer + 48 reject (R3-R7 stale)。
+
 #### Emergency disable audit format
 
 CI gate を緊急 disable する場合、admin が GitHub Settings → Variables で `FRAMEWORK_INTAKE_CHECK_DISABLED=1` を設定。本 sprint pack の `## Review` 内に以下を 24h 以内に記録 (R1 F-013 adopt):

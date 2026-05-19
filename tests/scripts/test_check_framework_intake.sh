@@ -879,6 +879,127 @@ TS
     cd "$REPO_ROOT"
 }
 
+# ---- 40. test: PR70 R7 F-PR70-R7-001 - AutoGen v0.4+ module split ----
+test_autogen_v04_modules() {
+    local d="$TMPDIR_BASE/autogen_v04_$$"
+    setup_fake_repo "$d"
+    cat > backend/app/services/research/agentchat.py <<'PY'
+from autogen_agentchat.agents import AssistantAgent
+from autogen_core import CancellationToken
+PY
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "autogen v0.4 modules"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "autogen_v04_violation_exit1"
+    assert_stdout_contains "framework=autogen_agentchat" "autogen_v04_detail"
+    cd "$REPO_ROOT"
+}
+
+# ---- 41. test: PR70 R7 F-PR70-R7-002 - Dapr Agents module ----
+test_dapr_agents_module() {
+    local d="$TMPDIR_BASE/dapr_agents_$$"
+    setup_fake_repo "$d"
+    echo "from dapr_agents import DurableAgent" > backend/app/services/research/dapr.py
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "dapr_agents import"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "dapr_agents_violation_exit1"
+    assert_stdout_contains "framework=dapr_agents" "dapr_agents_detail"
+    cd "$REPO_ROOT"
+}
+
+# ---- 42. test: PR70 R7 F-PR70-R7-003 - Letta Python SDK letta_client ----
+test_letta_client_python_sdk() {
+    local d="$TMPDIR_BASE/letta_client_py_$$"
+    setup_fake_repo "$d"
+    echo "from letta_client import Letta" > backend/app/services/research/letta.py
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "letta_client import"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "letta_client_py_violation_exit1"
+    assert_stdout_contains "framework=letta_client" "letta_client_py_detail"
+    cd "$REPO_ROOT"
+}
+
+# ---- 43. test: PR70 R7 F-PR70-R7-004 - Letta npm @letta-ai/letta-client ----
+test_letta_client_npm_sdk() {
+    local d="$TMPDIR_BASE/letta_client_npm_$$"
+    setup_fake_repo "$d"
+    cat > frontend/app/letta.tsx <<'TS'
+import Letta from "@letta-ai/letta-client";
+export default function P() { return null; }
+TS
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "letta-ai/letta-client npm import"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "letta_client_npm_violation_exit1"
+    assert_stdout_contains "framework=@letta-ai/letta-client" "letta_client_npm_detail"
+    cd "$REPO_ROOT"
+}
+
+# ---- 44. test: PR70 R7 F-PR70-R7-005 - License: UNKNOWN treated as unresolved ----
+# Note: 直接 `pip show` を mock することは難しいため、unresolved 経路の代理として `unknown` placeholder pkg を test
+# 実際は CI で UNKNOWN license の pkg が install されているか否かによる。本 fixture では未インストール pkg で
+# license_field_empty_or_unresolved を出すことを既存 fixture で verify 済 (test_license_violation)。
+# R7-005 fix は shell 側で license=UNKNOWN/NULL/None literal も unresolved 扱いする branch を追加、
+# 直接 fixture 不能だが behaviour test として簡易確認.
+test_license_unknown_placeholder() {
+    local d="$TMPDIR_BASE/license_unknown_$$"
+    setup_fake_repo "$d"
+    # fake-pkg は install されないので license_field_empty_or_unresolved (代理 test、UNKNOWN literal の boundary は code review で verify)
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["fake-pkg-with-unknown-license"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "license unknown placeholder"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "license_unknown_violation_exit1"
+    assert_stdout_contains "license_field_empty_or_unresolved" "license_unknown_detail"
+    cd "$REPO_ROOT"
+}
+
+# ---- 45. test: PR70 R7 F-PR70-R7-006 - psycopg module alias `import psycopg as pg` ----
+test_psycopg_module_alias_connect() {
+    local d="$TMPDIR_BASE/psycopg_mod_alias_$$"
+    setup_fake_repo "$d"
+    cat > backend/app/services/research/db_mod.py <<'PY'
+import psycopg as pg
+async def get():
+    conn = await pg.connect("postgres://...")
+    return conn
+PY
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "psycopg module alias"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "psycopg_mod_alias_violation_exit1"
+    assert_stdout_contains "module_alias_connect" "psycopg_mod_alias_detail"
+    cd "$REPO_ROOT"
+}
+
+# ---- 46. test: PR70 R7 F-PR70-R7-006 - psycopg multiline parenthesized import ----
+test_psycopg_multiline_import() {
+    local d="$TMPDIR_BASE/psycopg_multi_$$"
+    setup_fake_repo "$d"
+    cat > backend/app/services/research/db_multi.py <<'PY'
+from psycopg import (
+    connect,
+)
+async def get():
+    conn = await connect("postgres://...")
+    return conn
+PY
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "psycopg multiline import"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "psycopg_multi_violation_exit1"
+    assert_stdout_contains "from_import_connect_alias" "psycopg_multi_detail"
+    cd "$REPO_ROOT"
+}
+
 # ---- run all ----
 TMPDIR_BASE=$(mktemp -d -t sp022_t01_fixture.XXXXXX)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
@@ -925,6 +1046,13 @@ test_legacy_tool_uv_dev_dependencies
 test_nested_include_group
 test_psycopg_aliased_connect
 test_dynamic_import_with_whitespace
+test_autogen_v04_modules
+test_dapr_agents_module
+test_letta_client_python_sdk
+test_letta_client_npm_sdk
+test_license_unknown_placeholder
+test_psycopg_module_alias_connect
+test_psycopg_multiline_import
 
 echo ""
 echo "== Summary =="

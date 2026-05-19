@@ -32,8 +32,17 @@ PY_DENYLIST_FRAMEWORKS: tuple[str, ...] = (
     "crewai",
     "autogen",
     "pyautogen",
+    # PR70 R7 F-PR70-R7-001 adopt: current Microsoft AutoGen split into autogen_agentchat /
+    # autogen_core / autogen_ext (legacy autogen is the v0.2 module, v0.4+ is split)
+    "autogen_agentchat",
+    "autogen_core",
+    "autogen_ext",
     "letta",
+    # PR70 R7 F-PR70-R7-003 adopt: current Letta Python SDK uses `letta_client` import root
+    "letta_client",
     "dapr",
+    # PR70 R7 F-PR70-R7-002 adopt: Dapr Agents (pip dapr-agents) uses `dapr_agents` module
+    "dapr_agents",
     "dify_client",
     "openhands",
     "taskingai",
@@ -48,6 +57,8 @@ NPM_DENYLIST_FRAMEWORKS: tuple[str, ...] = (
     "crewai",
     "autogen",
     "letta",
+    # PR70 R7 F-PR70-R7-004 adopt: Letta TypeScript SDK scoped name
+    "@letta-ai/letta-client",
     "dapr",
     "dify",
     "flowise",
@@ -200,15 +211,23 @@ def check_no_code_embed() -> list[str]:
 def check_persistence() -> list[str]:
     violations: list[str] = []
     sqlite_pattern = re.compile(r"^\s*(import\s+sqlite3|from\s+sqlite3\s+import)", re.MULTILINE)
-    # PR70 R2 F-PR70-R2-003 + R4 F-PR70-R4-005 + R5 F-PR70-R5-005 adopt:
+    # PR70 R2 F-PR70-R2-003 + R4 F-PR70-R4-005 + R5 F-PR70-R5-005 + R7 F-PR70-R7-006 adopt:
     # - module-qualified `psycopg.connect(` / `psycopg2.connect(`
-    # - `from psycopg import connect` alias
+    # - `from psycopg import connect` alias (single-line + multiline parenthesized)
     # - class-level `psycopg.AsyncConnection.connect(` / `psycopg.Connection.connect(`
     # - `from psycopg import AsyncConnection; AsyncConnection.connect(...)` import alias chain
+    # - R7-006: `import psycopg as <alias>; <alias>.connect(` module alias
+    # - R7-006: multiline `from psycopg import (connect,)` parenthesized import
     psycopg_pattern = re.compile(r"psycopg2?\.connect\(")
     psycopg_class_connect = re.compile(r"psycopg2?\.(?:Async)?Connection\.connect\(")
+    # `from psycopg import ... connect ...` (parenthesized multiline 含む)
     psycopg_import_connect = re.compile(
-        r"^\s*from\s+psycopg2?\s+import\s+(?:[^#\n]*?\b)?connect\b", re.MULTILINE
+        r"^\s*from\s+psycopg2?\s+import\s+(?:\(\s*)?(?:[^#)]*?\b)?connect\b",
+        re.MULTILINE | re.DOTALL,
+    )
+    # R7-006: module alias `import psycopg as pg` 検出 (alias 名取得)
+    psycopg_module_alias_re = re.compile(
+        r"^\s*import\s+psycopg2?\s+as\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE
     )
     # R5-005 + R6 F-PR70-R6-004 adopt: `from psycopg import [Async]Connection [as <alias>]`
     # の import-class-then-call chain。R6 で `as <alias>` 別名取得を追加、`<alias>.connect(`
@@ -244,6 +263,17 @@ def check_persistence() -> list[str]:
                 f"VIOLATION reason_code=framework_intake_violation_persistence "
                 f"evidence={path}:{line_num} framework=psycopg detail=from_import_connect_alias"
             )
+        # R7-006: detect `import psycopg as <alias>; <alias>.connect(` module alias
+        for mod_alias_match in psycopg_module_alias_re.finditer(content):
+            mod_alias = mod_alias_match.group(1)
+            mod_alias_call = re.compile(re.escape(mod_alias) + r"\.connect\(")
+            for call_match in mod_alias_call.finditer(content):
+                line_num = content[: call_match.start()].count("\n") + 1
+                violations.append(
+                    f"VIOLATION reason_code=framework_intake_violation_persistence "
+                    f"evidence={path}:{line_num} framework=psycopg detail=module_alias_connect"
+                )
+
         # R5-005 + R6 F-PR70-R6-004 adopt: file imports Connection/AsyncConnection from psycopg
         # (possibly with `as <alias>`) AND calls `<alias>.connect(` or `[Async]Connection.connect(`
         # → flag both as alias-chain bypass.

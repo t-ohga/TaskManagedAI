@@ -129,7 +129,9 @@ try:
 except Exception:
     pass" 2>/dev/null || true)
         fi
-        if [ -z "$license" ]; then
+        # PR70 R7 F-PR70-R7-005 adopt: treat literal UNKNOWN / NULL / None placeholders as unresolved
+        license_lower=$(echo "$license" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+        if [ -z "$license" ] || [ "$license_lower" = "unknown" ] || [ "$license_lower" = "null" ] || [ "$license_lower" = "none" ]; then
             VIOLATIONS+=("VIOLATION reason_code=framework_intake_violation_license evidence=$pkg framework=$pkg detail=license_field_empty_or_unresolved")
             continue
         fi
