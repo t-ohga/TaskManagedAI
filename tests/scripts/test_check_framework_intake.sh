@@ -30,10 +30,12 @@ setup_fake_repo() {
     git config user.name "test-fixture"
 
     # baseline directory structure (scanner が要求する全 path)
+    # PR70 F-PR70-006 adopt: backend/app/repositories も PERSISTENCE_ROOTS、fixture でも作成
     mkdir -p backend/app/services/providers \
              backend/app/services/research \
              backend/app/adapters \
              backend/app/db \
+             backend/app/repositories \
              frontend/app frontend/components frontend/lib \
              tests/security tests/db tests/repositories \
              eval/security/secret_canary eval/security/tenant_isolation \
@@ -323,6 +325,100 @@ test_baseline_scan_detects_violation() {
     cd "$REPO_ROOT"
 }
 
+# ---- 13. test: PR70 F-PR70-002/F-PR70-003 - comma-separated import detection ----
+test_comma_import_detection() {
+    local d="$TMPDIR_BASE/comma_import_$$"
+    setup_fake_repo "$d"
+    # Python multi-import: `import crewai, os` should be detected
+    echo "import crewai, os" > backend/app/services/research/agent.py
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "comma import"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "comma_import_violation_exit1"
+    assert_stdout_contains "framework_intake_violation_code_embed" "comma_import_violation_reason_code"
+    cd "$REPO_ROOT"
+}
+
+# ---- 14. test: PR70 F-PR70-005 - frontend side-effect import detection ----
+test_frontend_side_effect_import() {
+    local d="$TMPDIR_BASE/side_effect_$$"
+    setup_fake_repo "$d"
+    # side-effect import without `from`: `import "@langchain/langgraph";`
+    cat > frontend/app/page.tsx <<'TS'
+import "@langchain/langgraph";
+export default function Page() { return null; }
+TS
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "side-effect import"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "side_effect_import_violation_exit1"
+    assert_stdout_contains "framework_intake_violation_code_embed" "side_effect_import_violation_reason_code"
+    cd "$REPO_ROOT"
+}
+
+# ---- 15. test: PR70 F-PR70-006 - persistence in backend/app/repositories ----
+test_persistence_in_repositories() {
+    local d="$TMPDIR_BASE/persistence_repos_$$"
+    setup_fake_repo "$d"
+    # repository layer に sqlite3 import を入れる
+    echo "import sqlite3" > backend/app/repositories/legacy_repo.py
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "persistence in repositories"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "persistence_repositories_violation_exit1"
+    assert_stdout_contains "framework_intake_violation_persistence" "persistence_repositories_violation_reason_code"
+    cd "$REPO_ROOT"
+}
+
+# ---- 16. test: PR70 F-PR70-007 - frontend instrumentation hook scanned ----
+test_frontend_instrumentation_scanned() {
+    local d="$TMPDIR_BASE/instrumentation_$$"
+    setup_fake_repo "$d"
+    # Next.js root-level instrumentation file with telemetry import
+    cat > frontend/instrumentation.ts <<'TS'
+import "@sentry/nextjs";
+export function register() {}
+TS
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "instrumentation hook"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "instrumentation_telemetry_violation_exit1"
+    assert_stdout_contains "framework_intake_violation_telemetry" "instrumentation_telemetry_violation_reason_code"
+    cd "$REPO_ROOT"
+}
+
+# ---- 17. test: PR70 F-PR70-004 - extractor failure propagates as exit 2 ----
+test_extractor_failure_propagates() {
+    local d="$TMPDIR_BASE/extractor_fail_$$"
+    setup_fake_repo "$d"
+    # Corrupt pyproject.toml (TOML parse failure) on feature branch
+    echo "this is not valid TOML [[[broken" > pyproject.toml
+    git add -A; git commit -q -m "corrupt pyproject"
+    # ALSO change package.json so diff-gate trigger fires (dep file changed)
+    # actually corrupt pyproject.toml itself is enough since it's in the diff-gate watch list
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 2 "extractor_failure_exit2"
+    assert_stdout_contains "ERROR _extract_changed_deps.py failed" "extractor_failure_error_msg"
+    cd "$REPO_ROOT"
+}
+
+# ---- 18. test: PR70 F-PR70-001 - baseline-scan in local clone without origin/main ----
+test_baseline_scan_without_origin_main() {
+    local d="$TMPDIR_BASE/baseline_no_origin_$$"
+    setup_fake_repo "$d"
+    # remove origin remote to simulate local clone without remote-tracking branch
+    git remote remove origin
+    run_script_baseline
+    # baseline-scan should NOT require origin/main; should still run #3-#8 and PASS
+    assert_exit_code "$LAST_EXIT" 0 "baseline_scan_no_origin_main_exit0"
+    assert_stdout_contains "PASS" "baseline_scan_no_origin_main_pass"
+    cd "$REPO_ROOT"
+}
+
 # ---- run all ----
 TMPDIR_BASE=$(mktemp -d -t sp022_t01_fixture.XXXXXX)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
@@ -342,6 +438,12 @@ test_skip_no_deps_change
 test_clean_pass_with_known_dep
 test_baseline_scan_clean
 test_baseline_scan_detects_violation
+test_comma_import_detection
+test_frontend_side_effect_import
+test_persistence_in_repositories
+test_frontend_instrumentation_scanned
+test_extractor_failure_propagates
+test_baseline_scan_without_origin_main
 
 echo ""
 echo "== Summary =="

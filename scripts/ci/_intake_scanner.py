@@ -69,21 +69,26 @@ TELEMETRY_NPM: tuple[str, ...] = (
     "honcho",
 )
 
-# R2 F-006 adopt: actual Next.js App Router layout (no frontend/src/)
+# R2 F-006 adopt: actual Next.js App Router layout (no frontend/src/).
+# PR70 F-PR70-007 adopt: include Next.js root-level instrumentation hooks.
 FRONTEND_SCAN_ROOTS: tuple[Path, ...] = (
     Path("frontend/app"),
     Path("frontend/components"),
     Path("frontend/lib"),
     Path("frontend/middleware.ts"),
     Path("frontend/next.config.ts"),
+    Path("frontend/instrumentation.ts"),
+    Path("frontend/instrumentation-client.ts"),
 )
 FRONTEND_EXCLUDE_PARTS: frozenset[str] = frozenset({"__tests__", "tests", "node_modules"})
 BACKEND_SCAN_ROOTS: tuple[Path, ...] = (Path("backend/app"),)
 BACKEND_EXCLUDE_PARTS: frozenset[str] = frozenset({"migrations"})
+# PR70 F-PR70-006 adopt: include backend/app/repositories (SQLAlchemy session boundary)
 PERSISTENCE_ROOTS: tuple[Path, ...] = (
     Path("backend/app/services"),
     Path("backend/app/adapters"),
     Path("backend/app/db"),
+    Path("backend/app/repositories"),
 )
 
 FRONTEND_EXTS: frozenset[str] = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"})
@@ -133,10 +138,11 @@ def _read_text_or_none(path: Path) -> str | None:
 
 def check_no_code_embed() -> list[str]:
     violations: list[str] = []
+    # PR70 F-PR70-002 adopt: include `,` after package name (e.g., `import langgraph, os`)
     py_pattern = re.compile(
         r"^\s*(import|from)\s+("
         + "|".join(re.escape(n) for n in PY_DENYLIST_FRAMEWORKS)
-        + r")(\s|\.|$)",
+        + r")(\s|,|\.|$)",
         re.MULTILINE,
     )
     for path in _iter_python_files(BACKEND_SCAN_ROOTS):
@@ -150,9 +156,12 @@ def check_no_code_embed() -> list[str]:
                 f"evidence={path}:{line_num} framework={match.group(2)} detail=python_import"
             )
 
+    # PR70 F-PR70-005 adopt: include side-effect import `import "@scope/name";`
     npm_alts = "|".join(re.escape(n) for n in NPM_DENYLIST_FRAMEWORKS)
     npm_pattern = re.compile(
-        r"""(?:from\s+['"]|require\(['"]|import\(['"])(""" + npm_alts + r""")(?:/[^'"]*)?['"]"""
+        r"""(?:from\s+['"]|require\(['"]|import\(['"]|import\s+['"])("""
+        + npm_alts
+        + r""")(?:/[^'"]*)?['"]"""
     )
     for path in _iter_frontend_files(FRONTEND_SCAN_ROOTS):
         content = _read_text_or_none(path)
@@ -219,10 +228,11 @@ def check_external_network() -> list[str]:
 
 def check_telemetry() -> list[str]:
     violations: list[str] = []
+    # PR70 F-PR70-003 adopt: include `,` after package name (e.g., `import sentry_sdk, os`)
     py_pattern = re.compile(
         r"^\s*(import|from)\s+("
         + "|".join(re.escape(n) for n in TELEMETRY_PY)
-        + r")(\s|\.|$)",
+        + r")(\s|,|\.|$)",
         re.MULTILINE,
     )
     for path in _iter_python_files(BACKEND_SCAN_ROOTS):
@@ -236,9 +246,12 @@ def check_telemetry() -> list[str]:
                 f"evidence={path}:{line_num} framework={match.group(2)} detail=python_import"
             )
 
+    # PR70 F-PR70-003 adopt: include side-effect import `import "@sentry/nextjs";`
     npm_alts = "|".join(re.escape(n) for n in TELEMETRY_NPM)
     npm_pattern = re.compile(
-        r"""(?:from\s+['"]|require\(['"]|import\(['"])(""" + npm_alts + r""")(?:/[^'"]*)?['"]"""
+        r"""(?:from\s+['"]|require\(['"]|import\(['"]|import\s+['"])("""
+        + npm_alts
+        + r""")(?:/[^'"]*)?['"]"""
     )
     for path in _iter_frontend_files(FRONTEND_SCAN_ROOTS):
         content = _read_text_or_none(path)

@@ -50,15 +50,16 @@ if [ "${FRAMEWORK_INTAKE_CHECK_DISABLED:-}" = "1" ]; then
     exit 0
 fi
 
-# ---- 2. base ref resolution (R2 F-001 adopt, shallow checkout guard) ----
-if ! git rev-parse --verify origin/main >/dev/null 2>&1; then
-    echo "framework_intake_check: ERROR origin/main not resolvable (shallow checkout?)" >&2
-    echo "  hint: actions/checkout@v4 with fetch-depth: 0 required for diff-gate mode" >&2
-    exit 2
-fi
-
-# ---- 3. diff-gate mode early exit ----
+# ---- 2. diff-gate mode: base ref + early exit (PR70 F-PR70-001 adopt) ----
+# baseline-scan mode does NOT need origin/main (repo-wide scan), so the rev-parse
+# guard belongs inside diff-gate branch only. baseline-scan in local clones / non-main
+# checkouts must still be able to run #3-#8 without a remote-tracking branch.
 if [ "$MODE" = "diff-gate" ]; then
+    if ! git rev-parse --verify origin/main >/dev/null 2>&1; then
+        echo "framework_intake_check: ERROR origin/main not resolvable for diff-gate (shallow checkout?)" >&2
+        echo "  hint: actions/checkout@v4 with fetch-depth: 0 required for diff-gate mode" >&2
+        exit 2
+    fi
     if ! DEPS_CHANGED=$(git diff --name-only origin/main...HEAD -- \
         pyproject.toml uv.lock frontend/package.json frontend/pnpm-lock.yaml 2>&1); then
         echo "framework_intake_check: ERROR git diff failed (base resolve error): $DEPS_CHANGED" >&2
@@ -73,14 +74,25 @@ fi
 # ---- 4. violation collector ----
 declare -a VIOLATIONS=()
 
-# ---- 5. helper: changed direct deps ----
+# ---- 5. helper: changed direct deps (PR70 F-PR70-004 adopt: propagate extractor failure) ----
+# _extract_changed_deps.py exits 2 on parse failure (TOMLDecodeError / JSONDecodeError).
+# Previously `|| true` swallowed this into an empty dep list, causing license/attribution
+# checks to silently skip. Now any non-zero exit terminates the script with exit 2 so
+# the documented internal-error contract is honored.
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-extract_changed_deps_pypi() {
-    uv run --no-sync python "$SCRIPT_DIR/_extract_changed_deps.py" --ecosystem=pypi || true
+_run_extract() {
+    local ecosystem="$1"
+    local output extract_exit
+    output=$(uv run --no-sync python "$SCRIPT_DIR/_extract_changed_deps.py" --ecosystem="$ecosystem" 2>&1) && extract_exit=0 || extract_exit=$?
+    if [ "$extract_exit" -ne 0 ]; then
+        echo "framework_intake_check: ERROR _extract_changed_deps.py failed (ecosystem=$ecosystem exit=$extract_exit)" >&2
+        echo "$output" >&2
+        exit 2
+    fi
+    printf '%s\n' "$output"
 }
-extract_changed_deps_npm() {
-    uv run --no-sync python "$SCRIPT_DIR/_extract_changed_deps.py" --ecosystem=npm || true
-}
+extract_changed_deps_pypi() { _run_extract pypi; }
+extract_changed_deps_npm() { _run_extract npm; }
 
 # ---- 6. verify item #1: License (diff-gate mode only, R2 F-002 + R3 F-001 adopt) ----
 # `|| true` keeps script alive under `set -euo pipefail` when pip show / metadata fails;

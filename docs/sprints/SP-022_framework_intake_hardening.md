@@ -288,8 +288,24 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 #### Local verification 実行記録
 
 - `bash scripts/ci/check_framework_intake.sh` (baseline-scan mode、現 worktree) → `PASS (mode=baseline-scan)` exit 0
-- `bash tests/scripts/test_check_framework_intake.sh` → 12 fixture × 24 assertion すべて PASS (failed: 0)
+- `bash tests/scripts/test_check_framework_intake.sh` → 18 fixture × 36 assertion すべて PASS (failed: 0、PR70 R1 7 findings adopt 後の R2 で 6 fixture 拡張)
 - `uv run pytest tests/citations/ -q` → 1 passed (`test_map_schema_and_canonical_references`) + 1 skipped (`test_changed_deps_have_citation`、dependency 変更なし環境で R1 F-011 通り)
+
+#### PR #70 Codex auto-review R1 — 7 inline P2 findings 全件 adopt
+
+PR 起票後 約 7 分で landing、全 7 件 valid security gap 指摘:
+
+| ID | priority | symptom (要約) | adopt 反映先 |
+|---|---|---|---|
+| F-PR70-001 | P2 | `baseline-scan` mode で origin/main rev-parse check が exit 2 → repo-wide scan 不能 | `check_framework_intake.sh` で rev-parse check を diff-gate mode 内に移動 |
+| F-PR70-002 | P2 | Python `import langgraph, os` (comma-separated) を py_pattern が検出しない | `_intake_scanner.py` py_pattern を `(\s\|,\|\.\|$)` に拡張 |
+| F-PR70-003 | P2 | Python telemetry も同 comma 検出漏れ + frontend side-effect import `import "@sentry/nextjs";` 検出漏れ | telemetry py_pattern + npm_pattern 両方拡張 |
+| F-PR70-004 | P2 | `_extract_changed_deps.py` failure を `\|\| true` で silently swallow → license/attribution check が空 input で skip | `_run_extract` helper で non-zero exit を internal error (exit 2) として伝播 |
+| F-PR70-005 | P2 | frontend code embed の side-effect import `import "@langchain/langgraph";` 検出漏れ | npm_pattern に `import\s+['"]<denylist>['"]` 追加 |
+| F-PR70-006 | P2 | `backend/app/repositories/` が PERSISTENCE_ROOTS に含まれない → repository layer での `psycopg.connect` bypass | PERSISTENCE_ROOTS に追加 |
+| F-PR70-007 | P2 | Next.js root-level `frontend/instrumentation.ts` / `instrumentation-client.ts` が scan されない → telemetry integration の典型配置で bypass | FRONTEND_SCAN_ROOTS に追加 |
+
+reject: 0 / defer: 0 / 全件 adopt。R2 fixture 6 件 (`test_comma_import_detection` / `test_frontend_side_effect_import` / `test_persistence_in_repositories` / `test_frontend_instrumentation_scanned` / `test_extractor_failure_propagates` / `test_baseline_scan_without_origin_main`) で regression coverage 確保。
 
 #### Emergency disable audit format
 
