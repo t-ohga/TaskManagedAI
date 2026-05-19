@@ -162,6 +162,7 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 
 - P3+ (production 公開準備、ADR-00017 P2 character image final + 公開 docker image build pipeline + license / docs 整備)
 - (継続的) Wave 23 cron + Routines 実装
+- **post-SP022-T01 hardening (SP-022.X) — frontend npm license verify**: PR #70 R2 F-PR70-R2-002 defer 対応、`node_modules/<pkg>/package.json` の `license` field + LICENSE_DENYLIST scan、SPDX expression 解釈、`pnpm install` 前提条件、ADR-00020 §1 #1 scope 明確化 update を含む (本 SP022-T01 は PyPI 限定で skeleton 完成、frontend は post-task)
 
 ## 関連 ADR
 
@@ -306,6 +307,25 @@ PR 起票後 約 7 分で landing、全 7 件 valid security gap 指摘:
 | F-PR70-007 | P2 | Next.js root-level `frontend/instrumentation.ts` / `instrumentation-client.ts` が scan されない → telemetry integration の典型配置で bypass | FRONTEND_SCAN_ROOTS に追加 |
 
 reject: 0 / defer: 0 / 全件 adopt。R2 fixture 6 件 (`test_comma_import_detection` / `test_frontend_side_effect_import` / `test_persistence_in_repositories` / `test_frontend_instrumentation_scanned` / `test_extractor_failure_propagates` / `test_baseline_scan_without_origin_main`) で regression coverage 確保。
+
+#### PR #70 Codex auto-review R2 — 6 inline P2 findings 5 adopt + 1 defer
+
+`@codex review` mention 経由で 6330bc4 (R1 fix commit) 再 review、R2 で更に深い 6 件 security gap 指摘:
+
+| ID | priority | symptom (要約) | 判定 | adopt 反映先 |
+|---|---|---|---|---|
+| R2-001 | P2 | diff-gate mode で deps 変更なしの PR が code embed / telemetry / persistence violation を bypass (e.g., `import langgraph` だけ追加して `pyproject.toml` 触らない) | **adopt** | `check_framework_intake.sh` に `DIFF_GATE_HAS_DEP_CHANGES` flag、#3-#8 は常に実行、#1/#2 のみ deps 変更時に実行 |
+| R2-002 | P2 | npm dependency 追加 PR で license check が PyPI extractor のみ → frontend で restricted license library が attribution map entry あれば通過 | **defer** | ADR-00020 §1 #1 PyPI 限定は plan で明示 scope 外 (frontend pkg は post-T01 で SPDX 拡張)、ADR-00020 §1 #1 で scope 明確化は post-T01 SP-022.X (新 PR) で実施 |
+| R2-003 | P2 | `from psycopg import connect; connect(...)` alias が `psycopg2?\.connect\(` regex で検出不可 | **adopt** | `_intake_scanner.py` check_persistence に `from\s+psycopg2?\s+import\s+(?:.*\b)?connect\b` 追加 |
+| R2-004 | P2 | `optionalDependencies` を `_extract_changed_deps.py` が抽出していない → 新 framework を optional に置けば bypass | **adopt** | `load_package_json_at` で `optionalDependencies` も取り込む |
+| R2-005 | P2 | persistence rule が `services/adapters/db/repositories` 限定で `backend/app/api` / `backend/app/workers` を scan しない → route handler / worker で直接 DB connect bypass | **adopt** | `PERSISTENCE_ROOTS` に `backend/app/api` + `backend/app/workers` 追加 |
+| R2-006 | P2 | external_network scan が `config/` のみで repo root の `docker-compose*.yml` 等 deployment YAML を見ない → env var 経由で denylisted SaaS URL bypass | **adopt** | `check_external_network` に `docker-compose*.yml` / `docker-compose*.yaml` / `compose*.yml` / `compose*.yaml` glob 追加 |
+
+defer 理由詳細 (R2-002): ADR-00020 §1 #1 の License 機械検査は PyPI tooling 中心の skeleton 設計 (ADR §2 script skeleton も `pip show` のみ)。frontend npm license は `node_modules/<pkg>/package.json` の `license` field + LICENSE_DENYLIST scan の追加実装が必要、SPDX expression 解釈 + `pnpm install` 前提条件もあり、本 SP022-T01 scope (8 verify item の最小機械化) を超える。post-T01 task (SP-022.X for frontend license + post-T01 で ADR-00020 §1 #1 scope 明確化 update) で実装すべく `## 次スプリント候補` に記録。
+
+R2 regression fixture 5 件 (`test_diff_gate_runs_scanners_without_dep_change` / `test_psycopg_import_connect_alias` / `test_optional_dependencies_extracted` / `test_persistence_in_api_or_workers` / `test_docker_compose_external_network`) + 1 fixture 仕様変更 (`test_skip_no_deps_change` → `test_clean_pr_no_dep_change_runs_scanners` で PASS expected msg、R2-001 の挙動変更を test 側にも反映) で regression coverage 確保。
+
+R1+R2 累計: **23 fixture × 46 assertion 全 PASS** (failed: 0)。13 adopt findings (R1=7 + R2=5 adopt) + 1 defer (R2-002 post-T01)。
 
 #### Emergency disable audit format
 

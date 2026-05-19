@@ -50,10 +50,16 @@ if [ "${FRAMEWORK_INTAKE_CHECK_DISABLED:-}" = "1" ]; then
     exit 0
 fi
 
-# ---- 2. diff-gate mode: base ref + early exit (PR70 F-PR70-001 adopt) ----
+# ---- 2. diff-gate mode: base ref check (PR70 F-PR70-001 adopt) ----
 # baseline-scan mode does NOT need origin/main (repo-wide scan), so the rev-parse
 # guard belongs inside diff-gate branch only. baseline-scan in local clones / non-main
 # checkouts must still be able to run #3-#8 without a remote-tracking branch.
+#
+# PR70 R2 F-PR70-R2-001 adopt: deps unchanged but code-only PR (e.g., `import langgraph`
+# added without touching pyproject.toml) was previously skipped entirely. Now we set
+# DEPS_CHANGED flag and skip ONLY #1/#2 (license/attribution which need dep diff input);
+# #3-#8 ALWAYS run in diff-gate mode so code-only violations are still rejected before merge.
+DIFF_GATE_HAS_DEP_CHANGES="no"
 if [ "$MODE" = "diff-gate" ]; then
     if ! git rev-parse --verify origin/main >/dev/null 2>&1; then
         echo "framework_intake_check: ERROR origin/main not resolvable for diff-gate (shallow checkout?)" >&2
@@ -65,9 +71,8 @@ if [ "$MODE" = "diff-gate" ]; then
         echo "framework_intake_check: ERROR git diff failed (base resolve error): $DEPS_CHANGED" >&2
         exit 2
     fi
-    if [ -z "$DEPS_CHANGED" ]; then
-        echo "framework_intake_check: SKIP (mode=diff-gate, no dependency changes)"
-        exit 0
+    if [ -n "$DEPS_CHANGED" ]; then
+        DIFF_GATE_HAS_DEP_CHANGES="yes"
     fi
 fi
 
@@ -94,11 +99,15 @@ _run_extract() {
 extract_changed_deps_pypi() { _run_extract pypi; }
 extract_changed_deps_npm() { _run_extract npm; }
 
-# ---- 6. verify item #1: License (diff-gate mode only, R2 F-002 + R3 F-001 adopt) ----
+# ---- 6. verify item #1: License (diff-gate mode + new deps only, R2 F-002 + R3 F-001 adopt) ----
 # `|| true` keeps script alive under `set -euo pipefail` when pip show / metadata fails;
 # all empty-license cases are recorded as license_field_empty_or_unresolved violations.
+# PR70 R2 F-PR70-R2-001 adopt: skip when no dep changes (license check needs new deps to inspect).
 check_license() {
     if [ "$MODE" = "baseline-scan" ]; then
+        return 0
+    fi
+    if [ "$DIFF_GATE_HAS_DEP_CHANGES" = "no" ]; then
         return 0
     fi
     local pkg license
@@ -125,9 +134,13 @@ except Exception:
     done < <(extract_changed_deps_pypi)
 }
 
-# ---- 7. verify item #2: Attribution (diff-gate mode only) ----
+# ---- 7. verify item #2: Attribution (diff-gate mode + new deps only) ----
+# PR70 R2 F-PR70-R2-001 adopt: skip when no dep changes (attribution check needs new deps).
 check_attribution() {
     if [ "$MODE" = "baseline-scan" ]; then
+        return 0
+    fi
+    if [ "$DIFF_GATE_HAS_DEP_CHANGES" = "no" ]; then
         return 0
     fi
     local map_file="docs/citations/dependency_to_framework_map.json"

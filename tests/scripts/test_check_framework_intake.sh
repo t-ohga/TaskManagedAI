@@ -30,12 +30,15 @@ setup_fake_repo() {
     git config user.name "test-fixture"
 
     # baseline directory structure (scanner が要求する全 path)
-    # PR70 F-PR70-006 adopt: backend/app/repositories も PERSISTENCE_ROOTS、fixture でも作成
+    # PR70 F-PR70-006 adopt: backend/app/repositories も PERSISTENCE_ROOTS
+    # PR70 R2 F-PR70-R2-005 adopt: backend/app/api + backend/app/workers も対象
     mkdir -p backend/app/services/providers \
              backend/app/services/research \
              backend/app/adapters \
              backend/app/db \
              backend/app/repositories \
+             backend/app/api \
+             backend/app/workers \
              frontend/app frontend/components frontend/lib \
              tests/security tests/db tests/repositories \
              eval/security/secret_canary eval/security/tenant_isolation \
@@ -263,14 +266,17 @@ test_tenant_boundary_violation() {
     cd "$REPO_ROOT"
 }
 
-# ---- 9. test: clean PR (no dep changes) → SKIP ----
-test_skip_no_deps_change() {
-    local d="$TMPDIR_BASE/skip_no_deps_$$"
+# ---- 9. test: clean PR (no dep changes) → diff-gate mode runs #3-#8 and PASS on clean repo ----
+# PR70 R2 F-PR70-R2-001 adopt: 旧仕様 "deps 変更なしで SKIP exit 0" は code-only PR の
+# #3-#8 violation を bypass する gap だったので、新仕様では deps 変更なしでも #3-#8 を
+# 必ず実行し、clean repo では PASS となる。SKIP は #1/#2 (license/attribution) のみ。
+test_clean_pr_no_dep_change_runs_scanners() {
+    local d="$TMPDIR_BASE/clean_pr_no_deps_$$"
     setup_fake_repo "$d"
-    # feature branch で何も変更しない
+    # feature branch で何も変更しない (clean baseline)
     run_script_pr
-    assert_exit_code "$LAST_EXIT" 0 "skip_no_deps_change_exit0"
-    assert_stdout_contains "SKIP" "skip_no_deps_change_msg"
+    assert_exit_code "$LAST_EXIT" 0 "clean_pr_no_deps_change_exit0"
+    assert_stdout_contains "PASS" "clean_pr_no_deps_change_pass_msg"
     cd "$REPO_ROOT"
 }
 
@@ -419,6 +425,92 @@ test_baseline_scan_without_origin_main() {
     cd "$REPO_ROOT"
 }
 
+# ---- 19. test: PR70 R2 F-PR70-R2-001 - diff-gate runs #3-#8 even when deps unchanged ----
+test_diff_gate_runs_scanners_without_dep_change() {
+    local d="$TMPDIR_BASE/diff_gate_code_only_$$"
+    setup_fake_repo "$d"
+    # NO dep change, but add code embed violation
+    echo "import crewai" > backend/app/services/research/agent.py
+    git add -A; git commit -q -m "code-only PR adding crewai import"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "diff_gate_code_only_exit1"
+    assert_stdout_contains "framework_intake_violation_code_embed" "diff_gate_code_only_code_embed_reason"
+    cd "$REPO_ROOT"
+}
+
+# ---- 20. test: PR70 R2 F-PR70-R2-003 - psycopg connect alias detection ----
+test_psycopg_import_connect_alias() {
+    local d="$TMPDIR_BASE/psycopg_alias_$$"
+    setup_fake_repo "$d"
+    # `from psycopg import connect` alias should be detected
+    cat > backend/app/services/research/store.py <<'PY'
+from psycopg import connect
+conn = connect("postgres://...")
+PY
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "psycopg alias"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "psycopg_alias_violation_exit1"
+    assert_stdout_contains "from_import_connect_alias" "psycopg_alias_detail"
+    cd "$REPO_ROOT"
+}
+
+# ---- 21. test: PR70 R2 F-PR70-R2-004 - optionalDependencies extraction ----
+test_optional_dependencies_extracted() {
+    local d="$TMPDIR_BASE/optional_deps_$$"
+    setup_fake_repo "$d"
+    # add unknown package to optionalDependencies (no map entry → attribution violation)
+    cat > frontend/package.json <<'JSON'
+{
+  "name": "taskmanagedai-frontend-fixture",
+  "version": "0.0.0",
+  "dependencies": {},
+  "devDependencies": {},
+  "optionalDependencies": {"some-unknown-framework": "^1.0.0"}
+}
+JSON
+    git add -A; git commit -q -m "add optional dep"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "optional_deps_attribution_exit1"
+    assert_stdout_contains "framework_intake_violation_attribution" "optional_deps_attribution_reason"
+    cd "$REPO_ROOT"
+}
+
+# ---- 22. test: PR70 R2 F-PR70-R2-005 - api/workers persistence scan ----
+test_persistence_in_api_or_workers() {
+    local d="$TMPDIR_BASE/persistence_api_$$"
+    setup_fake_repo "$d"
+    # API route handler with direct sqlite3
+    echo "import sqlite3" > backend/app/api/routes.py
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "api sqlite3"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "persistence_api_violation_exit1"
+    assert_stdout_contains "framework_intake_violation_persistence" "persistence_api_reason"
+    cd "$REPO_ROOT"
+}
+
+# ---- 23. test: PR70 R2 F-PR70-R2-006 - docker-compose external network scan ----
+test_docker_compose_external_network() {
+    local d="$TMPDIR_BASE/compose_network_$$"
+    setup_fake_repo "$d"
+    cat > docker-compose.yml <<'YML'
+services:
+  app:
+    environment:
+      EXTERNAL_TELEMETRY_URL: "https://sentry.io/api/0/ingest"
+YML
+    sed -i.bak 's/dependencies = \[\]/dependencies = ["langgraph"]/' pyproject.toml
+    rm -f pyproject.toml.bak
+    git add -A; git commit -q -m "compose external network"
+    run_script_pr
+    assert_exit_code "$LAST_EXIT" 1 "compose_network_violation_exit1"
+    assert_stdout_contains "framework_intake_violation_external_network" "compose_network_reason"
+    cd "$REPO_ROOT"
+}
+
 # ---- run all ----
 TMPDIR_BASE=$(mktemp -d -t sp022_t01_fixture.XXXXXX)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
@@ -434,7 +526,7 @@ test_external_network_violation
 test_telemetry_violation
 test_secret_canary_violation
 test_tenant_boundary_violation
-test_skip_no_deps_change
+test_clean_pr_no_dep_change_runs_scanners
 test_clean_pass_with_known_dep
 test_baseline_scan_clean
 test_baseline_scan_detects_violation
@@ -444,6 +536,11 @@ test_persistence_in_repositories
 test_frontend_instrumentation_scanned
 test_extractor_failure_propagates
 test_baseline_scan_without_origin_main
+test_diff_gate_runs_scanners_without_dep_change
+test_psycopg_import_connect_alias
+test_optional_dependencies_extracted
+test_persistence_in_api_or_workers
+test_docker_compose_external_network
 
 echo ""
 echo "== Summary =="

@@ -117,9 +117,12 @@ def load_package_json_at(ref: str | None) -> set[str]:
             sys.exit(2)
 
     deps: set[str] = set()
-    # R2 F-006 adopt: scoped name `@scope/name` は canonical のまま保持
+    # R2 F-006 adopt: scoped name `@scope/name` は canonical のまま保持。
+    # PR70 R2 F-PR70-R2-004 adopt: also include optionalDependencies (still direct packages
+    # shipped by the frontend app), peerDependencies は dep として参照のみで scope 外。
     deps.update((data.get("dependencies") or {}).keys())
     deps.update((data.get("devDependencies") or {}).keys())
+    deps.update((data.get("optionalDependencies") or {}).keys())
     return deps
 
 

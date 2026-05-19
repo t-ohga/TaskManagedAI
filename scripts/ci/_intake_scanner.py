@@ -83,12 +83,16 @@ FRONTEND_SCAN_ROOTS: tuple[Path, ...] = (
 FRONTEND_EXCLUDE_PARTS: frozenset[str] = frozenset({"__tests__", "tests", "node_modules"})
 BACKEND_SCAN_ROOTS: tuple[Path, ...] = (Path("backend/app"),)
 BACKEND_EXCLUDE_PARTS: frozenset[str] = frozenset({"migrations"})
-# PR70 F-PR70-006 adopt: include backend/app/repositories (SQLAlchemy session boundary)
+# PR70 F-PR70-006 adopt: include backend/app/repositories (SQLAlchemy session boundary).
+# PR70 R2 F-PR70-R2-005 adopt: include backend/app/api + backend/app/workers (route handlers /
+# arq workers can call DB connect directly, must be scanned).
 PERSISTENCE_ROOTS: tuple[Path, ...] = (
     Path("backend/app/services"),
     Path("backend/app/adapters"),
     Path("backend/app/db"),
     Path("backend/app/repositories"),
+    Path("backend/app/api"),
+    Path("backend/app/workers"),
 )
 
 FRONTEND_EXTS: frozenset[str] = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"})
@@ -179,7 +183,12 @@ def check_no_code_embed() -> list[str]:
 def check_persistence() -> list[str]:
     violations: list[str] = []
     sqlite_pattern = re.compile(r"^\s*(import\s+sqlite3|from\s+sqlite3\s+import)", re.MULTILINE)
+    # PR70 R2 F-PR70-R2-003 adopt: also detect `from psycopg import connect` alias usage
+    # by flagging both the import-from-form AND the bare `psycopg.connect(` / `psycopg2.connect(`.
     psycopg_pattern = re.compile(r"psycopg2?\.connect\(")
+    psycopg_import_connect = re.compile(
+        r"^\s*from\s+psycopg2?\s+import\s+(?:[^#\n]*?\b)?connect\b", re.MULTILINE
+    )
     for path in _iter_python_files(PERSISTENCE_ROOTS):
         content = _read_text_or_none(path)
         if content is None:
@@ -196,6 +205,12 @@ def check_persistence() -> list[str]:
                 f"VIOLATION reason_code=framework_intake_violation_persistence "
                 f"evidence={path}:{line_num} framework=psycopg detail=direct_connect"
             )
+        for match in psycopg_import_connect.finditer(content):
+            line_num = content[: match.start()].count("\n") + 1
+            violations.append(
+                f"VIOLATION reason_code=framework_intake_violation_persistence "
+                f"evidence={path}:{line_num} framework=psycopg detail=from_import_connect_alias"
+            )
     return violations
 
 
@@ -211,6 +226,13 @@ def check_external_network() -> list[str]:
     if config_root.exists():
         for path in config_root.rglob("*"):
             if path.is_file() and path.suffix in CONFIG_EXTS:
+                targets.append(path)
+    # PR70 R2 F-PR70-R2-006 adopt: scan deployment YAML files (docker-compose*.yml / *.yaml)
+    # at repo root so framework integrations that introduce denylisted SaaS URLs via env vars
+    # in deployment config are caught.
+    for compose_glob in ("docker-compose*.yml", "docker-compose*.yaml", "compose*.yml", "compose*.yaml"):
+        for path in Path(".").glob(compose_glob):
+            if path.is_file():
                 targets.append(path)
 
     for path in targets:
