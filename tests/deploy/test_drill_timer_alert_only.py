@@ -366,6 +366,57 @@ def test_diff_gate_non_drill_service_excluded(tmp_path: Path) -> None:
     assert exit_code == 0, f"non-drill service excluded; got exit={exit_code} output={output}"
 
 
+# ---- PR71 R3-003 (P1): adjacent `&` without spaces ----
+def test_adjacent_ampersand_rejected(tmp_path: Path) -> None:
+    """`echo drill&/tmp/payload` (no space around `&`) should be rejected (cron /bin/sh control op)."""
+    _write_drill_timer_and_service(tmp_path, "/usr/bin/echo drill&/tmp/payload")  # noqa: S108
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "framework_intake_violation_drill_timer_alert_only_shell_composition" in output
+
+
+# ---- PR71 R3-002 (P1): diff-gate non-drill paired service referenced from drill timer ----
+def test_diff_gate_paired_service_non_drill_name(tmp_path: Path) -> None:
+    """When a drill timer references a non-drill named service, diff-gate must include it."""
+    # Use baseline-scan to verify behavior (filename `send-alert.service` referenced from
+    # `drill-alert.timer` via `[Timer] Unit=send-alert.service`).
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir(parents=True)
+    (deploy_dir / "taskhub-drill-alert.timer").write_text(
+        "[Unit]\nDescription=drill\n\n[Timer]\nOnCalendar=*-01,07-01 09:00:00\n"
+        "Unit=send-alert.service\n",
+        encoding="utf-8",
+    )
+    (deploy_dir / "send-alert.service").write_text(
+        "[Unit]\nDescription=alert sender\n\n[Service]\nType=oneshot\n"
+        "ExecStart=/usr/local/bin/taskhub migrate --target vps\n",
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    # baseline-scan で paired service 経由 detection 確認
+    assert exit_code == 1, f"expected violation, got exit={exit_code} output={output}"
+    assert "taskhub_destructive_subcommand" in output
+
+
+# ---- PR71 R3-001 cron.d 6-field user crontab (`root` user explicit) ----
+def test_cron_d_5_field_without_user_rejected(tmp_path: Path) -> None:
+    """cron.d entry without user field is `six_field_parse_failed`."""
+    cron_d = tmp_path / "etc" / "cron.d"
+    cron_d.mkdir(parents=True)
+    (cron_d / "drill-cron").write_text(
+        "0 9 1 1,7 * /usr/bin/notify-send drill\n",  # missing user field
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    # cron.d entry without explicit user field → six_field_parse_failed violation
+    # (PR71 R3-001 adopt: cron.d は 6-field 必須、`root` 等明示推奨 = SOP example で対処済)
+    assert (
+        "framework_intake_violation_drill_timer_alert_only_cron_parse_failed" in output
+        and "six_field_parse_failed" in output
+    )
+
+
 # ---- 11. cron env MAILTO (allowed env line) ----
 def test_cron_mailto_env_line_passes(tmp_path: Path) -> None:
     """`MAILTO=ops@example.com` does not trigger path-spoofing (only PATH/SHELL/BASH_ENV do)."""

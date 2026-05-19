@@ -596,4 +596,28 @@ R2 regression fixture 5 件追加: `test_exec_search_path_rejected` (R2-002 P1) 
 
 累計 fixture: **31 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 stage 3 + R2 stage 5)。
 
+#### PR #71 Codex auto-review R3 — 8 inline findings (P1×2 + P2×6) (3 adopt + 5 reject stale)
+
+`@codex review` mention 経由で 5482587 (R2 fix commit) 再 review、R3 で 8 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R3-001 NEW | P2 | SOP `docs/deploy/cron.d/drill-alert` example が 5-field、cron.d 6-field 要求と不整合 → `six_field_parse_failed` | **adopt** | SOP example の cron 行に `root` user field 追加 |
+| R3-002 NEW | **P1** | diff-gate で drill 名でない paired `.service` (e.g., `send-alert.service` referenced from `drill-alert.timer`) が `*drill*` filter で drop | **adopt** | changed non-drill `.service` を repo 全 timer から探索、reference あれば scan 対象に追加 |
+| R3-003 NEW | **P1** | `echo drill&/tmp/payload` (空白なし `&`) で shell composition regex 検出漏れ、cron `/bin/sh` は `&` を control operator 扱い | **adopt** | `SHELL_COMPOSITION_RE` で `\s&\s` → `&` (空白前後不問) に強化 |
+| R3-004 to R3-008 (5 件 stale) | P2 / P1 | cron.d macro user strip / SOP path / audit log preserve / ExecSearchPath / Exec prefix | **reject as stale re-emission** | R1/R2 で全件 adopt 実装済、code grep verify |
+
+**Stale re-emission rationale**: 5 件 R3 re-emission は R1/R2 commit (1343845 / 5482587) で実装済 (cron.d macro user strip line 327+、SOP path 修正、workflow `if:` 削除、ExecSearchPath_RE 追加、Exec prefix strip)。`feedback_codex_r2_reemission_reject_trap.md` 教訓: code grep verify 後 reject。
+
+実装:
+- `_drill_timer_scanner.py`:
+  - `SHELL_COMPOSITION_RE` で `&` を空白前後不問に強化 (R3-003 P1)
+  - diff-gate `changed_services` で non-drill `.service` の対 timer 探索 + scan 追加 (R3-002 P1)
+- `docs/deploy/half-yearly-drill-sop.md`:
+  - cron.d example に `root` user field 追加 (R3-001)
+
+R3 regression fixture 3 件追加: `test_adjacent_ampersand_rejected` (R3-003 P1) / `test_diff_gate_paired_service_non_drill_name` (R3-002 P1) / `test_cron_d_5_field_without_user_rejected` (R3-001 boundary)。
+
+累計 fixture: **34 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 3 + R2 5 + R3 3)。
+
 (後続: SP-022 完了時に T02 / T04-T09 全体 Review を追記)

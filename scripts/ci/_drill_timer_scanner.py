@@ -58,11 +58,13 @@ DENYLIST_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\b(shutdown|reboot|poweroff|halt)\b", "host_power_destructive"),
 )
 
-# R1 F-005 + R2 F-PR70-T03-R2-002 + PR71 R2-003 adopt: shell composition detection.
+# R1 F-005 + R2 F-PR70-T03-R2-002 + PR71 R2-003 + PR71 R3-003 (P1) adopt: shell composition.
 # Includes `~` / `*` / `?` shell expansion metacharacters because crontab(5) runs commands
-# via /bin/sh and `mail -A ~/.taskhub/approvals/*.signed` would expose secrets at runtime.
+# via /bin/sh. PR71 R3-003 P1 adopt: `&` is a /bin/sh control operator even when adjacent to
+# words (no surrounding spaces) — `echo drill&/tmp/payload` runs `/tmp/payload` as a second
+# command, so any unquoted `&` (not part of `&&`) must be rejected.
 SHELL_COMPOSITION_RE = re.compile(
-    r"(\$\(|`|;|&&|\|\||\||>>?|<+|\s&\s|\s&$|\s~/|\s~\s|\s~$|^\s*~|\*|\?)"
+    r"(\$\(|`|;|&&|\|\||\||>>?|<+|&|\s~/|\s~\s|\s~$|^\s*~|\*|\?)"
 )
 SHELL_NEWLINE_RE = re.compile(r"\n")
 
@@ -269,13 +271,31 @@ def check_systemd_files(scan_files: list[Path] | None, root: Path) -> list[str]:
         service_files = _iter_glob(root, SCAN_SERVICE_GLOBS)
     else:
         timer_files = [p for p in scan_files if p.suffix == ".timer" and p.exists()]
-        # PR71 R2-001 adopt: diff-gate でも `*drill*.service` のみ standalone scan、
-        # non-drill `.service` は paired timer 経由でのみ scan (baseline mode と整合)。
-        service_files = [
-            p
-            for p in scan_files
-            if p.suffix == ".service" and p.exists() and "drill" in p.name
-        ]
+        # PR71 R2-001 adopt: diff-gate でも `*drill*.service` のみ standalone scan。
+        # PR71 R3-002 (P1) adopt: 加えて non-drill 名の changed `.service` で repo 内 timer
+        # から reference があるもの (`[Timer] Unit=<changed_service>`) は drill-paired として
+        # scan に追加 (drill-name filter で drop されないように)。
+        changed_services = [p for p in scan_files if p.suffix == ".service" and p.exists()]
+        service_files = [p for p in changed_services if "drill" in p.name]
+        # discover existing timers that reference changed non-drill services
+        non_drill_changed_services = [p for p in changed_services if "drill" not in p.name]
+        if non_drill_changed_services:
+            for timer_path in _iter_glob(root, SCAN_TIMER_GLOBS):
+                if timer_path in timer_files:
+                    continue
+                timer_content = _read_text_or_none(timer_path)
+                if timer_content is None:
+                    continue
+                unit_match = SYSTEMD_UNIT_RE.search(timer_content)
+                if not unit_match:
+                    continue
+                referenced_unit = unit_match.group(1)
+                for changed_svc in non_drill_changed_services:
+                    if changed_svc.name == referenced_unit:
+                        # changed service が drill timer referenced — include both
+                        timer_files.append(timer_path)
+                        if changed_svc not in service_files:
+                            service_files.append(changed_svc)
         # PR71 R1-005 adopt: diff-gate で deleted `.service` の paired-missing check
         # changed list 内に deleted `.service` (exists() false) があれば、同名 / 関連 `.timer`
         # を repo baseline から探して `timer_files` に load し、paired-service-missing で

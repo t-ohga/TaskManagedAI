@@ -75,9 +75,11 @@ systemd-analyze calendar '*-01,07-01 09:00:00'
 ```cron
 # 半年 drill alert (毎年 1/1 と 7/1 9:00)
 # !! MAILTO は許可 env、PATH/SHELL/BASH_ENV は drill scheduling では絶対禁止 !!
+# !! PR71 R3-001 adopt: cron.d directory 配下は system-crontab 形式 (5 schedule + user + cmd)。
+#    本 example は `root` を user として明示、5-field user crontab と区別する。
 MAILTO=ops@example.com
-0 9 1 1,7 * /usr/bin/osascript -e display notification Half-yearly drill due with title TaskManagedAI
-0 9 1 1,7 * /usr/local/bin/slack-cli chat send --channel taskhub-ops Half-yearly drill due
+0 9 1 1,7 * root /usr/bin/osascript -e display notification Half-yearly drill due with title TaskManagedAI
+0 9 1 1,7 * root /usr/local/bin/slack-cli chat send --channel taskhub-ops Half-yearly drill due
 ```
 
 `PATH=` を **意図的に省略**: cron は default で `/usr/bin:/bin` を持つ、PATH spoofing 経路を発生させないため (本 SOP では trusted absolute path 推奨)。
