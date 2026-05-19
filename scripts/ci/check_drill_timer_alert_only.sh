@@ -55,13 +55,50 @@ if [ "$MODE" = "diff-gate" ]; then
         exit 2
     fi
     # R2 F-PR70-T03-R2-001 adopt: NUL list は temp file 経由 (bash command substitution は NUL を潰す)
+    # PR71 R4-003 adopt: use `--name-status -z` to capture old paths for renames/deletes
+    # (e.g., R<score>\0<old>\0<new>\0 / D\0<path>\0). Both old and new paths must be parsed
+    # so renamed `.service` with old name still referenced by existing `.timer` is detected.
     CHANGED_FILE=$(mktemp -t drill_timer_changed.XXXXXX)
-    trap 'rm -f "$CHANGED_FILE"' EXIT
-    if ! git diff --name-only -z --diff-filter=ACMRD "origin/${BASE_REF}...HEAD" > "$CHANGED_FILE" 2>&1; then
+    NAME_STATUS_FILE=$(mktemp -t drill_timer_namestatus.XXXXXX)
+    trap 'rm -f "$CHANGED_FILE" "$NAME_STATUS_FILE"' EXIT
+    if ! git diff --name-status -z --diff-filter=ACMRD "origin/${BASE_REF}...HEAD" > "$NAME_STATUS_FILE" 2>&1; then
         echo "drill_timer_alert_only_check: ERROR git diff failed" >&2
-        cat "$CHANGED_FILE" >&2 || true
+        cat "$NAME_STATUS_FILE" >&2 || true
         exit 2
     fi
+    # Extract all paths (R<score>\0<old>\0<new>\0 has both; A/M/D have single path).
+    # Use Python to robustly parse NUL records.
+    python3 - "$NAME_STATUS_FILE" > "$CHANGED_FILE" <<'PY'
+import sys
+from pathlib import Path
+data = Path(sys.argv[1]).read_bytes()
+tokens = data.split(b"\0")
+i = 0
+out: list[bytes] = []
+while i < len(tokens):
+    tok = tokens[i]
+    if not tok:
+        i += 1
+        continue
+    # name-status fields: <status>(\0<old>\0<new> for R/C, \0<path> for A/M/D)
+    status = tok.decode("utf-8", errors="replace")
+    if status.startswith(("R", "C")):
+        if i + 2 >= len(tokens):
+            break
+        out.append(tokens[i + 1])  # old path
+        out.append(tokens[i + 2])  # new path
+        i += 3
+    elif status in ("A", "M", "D") or len(status) == 1:
+        if i + 1 >= len(tokens):
+            break
+        out.append(tokens[i + 1])
+        i += 2
+    else:
+        i += 1
+sys.stdout.buffer.write(b"\0".join(out))
+if out:
+    sys.stdout.buffer.write(b"\0")
+PY
     if [ ! -s "$CHANGED_FILE" ]; then
         echo "drill_timer_alert_only_check: SKIP (mode=diff-gate, no file changes)"
         exit 0

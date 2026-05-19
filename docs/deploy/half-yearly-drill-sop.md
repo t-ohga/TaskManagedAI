@@ -55,7 +55,7 @@ Description=Half-yearly drill alert sender
 Type=oneshot
 # !! allowlist 内 command + trusted absolute path のみ !!
 # !! taskhub migrate / restore は絶対禁止、shell composition も禁止 !!
-ExecStart=/usr/local/bin/slack-cli chat send --channel taskhub-ops Half-yearly host migration drill due. See docs/deploy/half-yearly-drill-sop.md
+ExecStart=/usr/local/bin/slack-cli chat send --channel taskhub-ops "Half-yearly host migration drill due. See docs/deploy/half-yearly-drill-sop.md"
 ```
 
 検証手順 (R1 F-015 adopt):
@@ -78,7 +78,9 @@ systemd-analyze calendar '*-01,07-01 09:00:00'
 # !! PR71 R3-001 adopt: cron.d directory 配下は system-crontab 形式 (5 schedule + user + cmd)。
 #    本 example は `root` を user として明示、5-field user crontab と区別する。
 MAILTO=ops@example.com
-0 9 1 1,7 * root /usr/bin/osascript -e display notification Half-yearly drill due with title TaskManagedAI
+# PR71 R4-004 adopt: osascript の -e は 1 つの statement 引数を要求、AppleScript 全体を quote 必須
+# PR71 R4-005 (P1) adopt: scanner が `-e` payload を `display notification ...` 限定 verify
+0 9 1 1,7 * root /usr/bin/osascript -e 'display notification "Half-yearly drill due" with title "TaskManagedAI"'
 0 9 1 1,7 * root /usr/local/bin/slack-cli chat send --channel taskhub-ops Half-yearly drill due
 ```
 

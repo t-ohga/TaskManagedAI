@@ -117,10 +117,10 @@ SYSTEMD_UNIT_RE = re.compile(r"^\s*Unit\s*=\s*(\S+)\s*$", re.MULTILINE)
 SYSTEMD_EXEC_SEARCH_PATH_RE = re.compile(
     r"^\s*ExecSearchPath\s*=", re.MULTILINE
 )
-# PR71 R2-005 adopt: systemd Exec*= value can carry leading prefix characters
-# (`-` ignore-failure, `+` privileged, `:` no env expansion, `!` user override, `!!` legacy).
-# Strip these before path-spoofing validation; the resolved executable path follows.
-SYSTEMD_EXEC_PREFIX_RE = re.compile(r"^([-+:!]+|!!)+\s*")
+# PR71 R2-005 + R4-001 adopt: systemd Exec*= value can carry leading prefix characters
+# `-` ignore-failure, `+` privileged, `:` no env expansion, `!` user override, `!!` legacy,
+# `@` special executable prefix (PR71 R4-001 adopt). Strip before path validation.
+SYSTEMD_EXEC_PREFIX_RE = re.compile(r"^([-+:@!]+|!!)+\s*")
 
 # cron line patterns.
 CRON_MACRO_RE = re.compile(
@@ -159,6 +159,14 @@ SCAN_SERVICE_GLOBS: tuple[str, ...] = (
     "docs/deploy/**/*drill*.service",
     "deploy/**/*drill*.service",
     "ops/**/*drill*.service",
+)
+# PR71 R4-002 (P1) adopt: systemd drop-in override files (`<unit>.service.d/<name>.conf`)
+# can reset/replace ExecStart= of base unit; scan these alongside .service files.
+SCAN_SERVICE_DROPIN_GLOBS: tuple[str, ...] = (
+    "**/*drill*.service.d/*.conf",
+    "docs/deploy/**/*drill*.service.d/*.conf",
+    "deploy/**/*drill*.service.d/*.conf",
+    "ops/**/*drill*.service.d/*.conf",
 )
 SCAN_CRON_GLOBS: tuple[str, ...] = (
     "**/crontab",
@@ -227,12 +235,43 @@ def _check_path_spoofing(cmd_head: str) -> tuple[str | None, str | None]:
     return ("path_spoofing", f"untrusted_path={cmd_head[:80]}")
 
 
+def _check_osascript_payload(tokens: list[str]) -> tuple[str | None, str | None]:
+    """PR71 R4-005 (P1) adopt: constrain osascript `-e` argument to display notification only.
+
+    `osascript -e 'do shell script "..."'` allows arbitrary shell execution, reopening the
+    same destructive-webhook bypass the SOP excludes for `curl`. Require `-e <script>` where
+    the script begins with `display notification` (whitespace flexible).
+    """
+    if not tokens or tokens[0].rsplit("/", 1)[-1] != "osascript":
+        return (None, None)
+    # find -e <script> pair; reject if any -e script is not a `display notification` form
+    i = 1
+    saw_dash_e = False
+    while i < len(tokens):
+        if tokens[i] in ("-e", "--executable"):
+            saw_dash_e = True
+            if i + 1 >= len(tokens):
+                return ("osascript_payload_invalid", "missing_script_argument")
+            script = tokens[i + 1].strip()
+            # accept only `display notification ...` (case-insensitive, leading whitespace OK)
+            if not re.match(r"^\s*display\s+notification\b", script, re.IGNORECASE):
+                return ("osascript_payload_unsafe", f"script_not_display_notification={script[:60]}")
+            i += 2
+        else:
+            i += 1
+    if not saw_dash_e:
+        # `osascript path/to/script.scpt` allows file execution; require -e display notification
+        return ("osascript_payload_invalid", "missing_dash_e_flag")
+    return (None, None)
+
+
 def _check_command(cmd_line: str) -> tuple[str | None, str | None]:
     """Check a single command line against (1) shell composition, (2) denylist, (3) path
     spoofing, (4) allowlist head. Returns (reason_suffix, label) or (None, None) if pass.
 
-    R1 F-005 + R2 F-PR70-T03-R2-002 + R2 F-PR70-T03-R2-003 adopt: priority order matches the
-    plan's §4.3 evaluation order.
+    R1 F-005 + R2 F-PR70-T03-R2-002 + R2 F-PR70-T03-R2-003 + R4-005 (P1) adopt: priority
+    order matches the plan's §4.3 evaluation order; osascript `-e` payload restriction is
+    applied as final allowlist-time check.
     """
     # 1. shell composition (highest priority)
     reason, label = _check_shell_composition(cmd_line)
@@ -256,9 +295,13 @@ def _check_command(cmd_line: str) -> tuple[str | None, str | None]:
         return (reason, label)
     # 5. allowlist head match (basename for PATH-resolved bare command OR trusted absolute path)
     head_basename = cmd_head.rsplit("/", 1)[-1]
-    if head_basename in ALLOWLIST_HEADS:
-        return (None, None)
-    return ("unknown_command", head_basename)
+    if head_basename not in ALLOWLIST_HEADS:
+        return ("unknown_command", head_basename)
+    # 6. PR71 R4-005 (P1) adopt: osascript-specific `-e` payload validation
+    reason, label = _check_osascript_payload(tokens)
+    if reason is not None:
+        return (reason, label)
+    return (None, None)
 
 
 def check_systemd_files(scan_files: list[Path] | None, root: Path) -> list[str]:
@@ -269,14 +312,23 @@ def check_systemd_files(scan_files: list[Path] | None, root: Path) -> list[str]:
     if scan_files is None:
         timer_files = _iter_glob(root, SCAN_TIMER_GLOBS)
         service_files = _iter_glob(root, SCAN_SERVICE_GLOBS)
+        # PR71 R4-002 (P1) adopt: include drop-in override .conf files alongside .service files
+        service_files.extend(_iter_glob(root, SCAN_SERVICE_DROPIN_GLOBS))
     else:
         timer_files = [p for p in scan_files if p.suffix == ".timer" and p.exists()]
         # PR71 R2-001 adopt: diff-gate でも `*drill*.service` のみ standalone scan。
         # PR71 R3-002 (P1) adopt: 加えて non-drill 名の changed `.service` で repo 内 timer
         # から reference があるもの (`[Timer] Unit=<changed_service>`) は drill-paired として
         # scan に追加 (drill-name filter で drop されないように)。
+        # PR71 R4-002 (P1) adopt: include drop-in override `.conf` files (`*.service.d/<x>.conf`)
+        # in scope; drill-named drop-ins are scanned same way as `.service`.
         changed_services = [p for p in scan_files if p.suffix == ".service" and p.exists()]
-        service_files = [p for p in changed_services if "drill" in p.name]
+        changed_dropins = [
+            p
+            for p in scan_files
+            if p.suffix == ".conf" and ".service.d" in str(p) and p.exists() and "drill" in str(p)
+        ]
+        service_files = [p for p in changed_services if "drill" in p.name] + changed_dropins
         # discover existing timers that reference changed non-drill services
         non_drill_changed_services = [p for p in changed_services if "drill" not in p.name]
         if non_drill_changed_services:

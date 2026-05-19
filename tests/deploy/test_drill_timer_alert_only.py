@@ -106,12 +106,59 @@ def test_systemd_notify_send_passes(tmp_path: Path) -> None:
 
 
 def test_systemd_osascript_passes(tmp_path: Path) -> None:
+    # PR71 R4-005 (P1) adopt: osascript -e must be quoted as a single `display notification ...`
+    # statement; using shlex-friendly literal here.
     _write_drill_timer_and_service(
         tmp_path,
-        "/usr/bin/osascript -e display notification Drill due with title TaskManagedAI",
+        '/usr/bin/osascript -e "display notification \\"Drill due\\" with title \\"TaskManagedAI\\""',
     )
     exit_code, output = _run_scanner_baseline(tmp_path)
     assert exit_code == 0, f"expected pass, got exit={exit_code} output={output}"
+
+
+# PR71 R4-005 (P1): osascript with `do shell script` (arbitrary cmd) must reject
+def test_osascript_do_shell_script_rejected(tmp_path: Path) -> None:
+    """`osascript -e 'do shell script "..."'` enables arbitrary cmd → must reject."""
+    _write_drill_timer_and_service(
+        tmp_path,
+        '/usr/bin/osascript -e "do shell script \\"echo evil\\""',
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "osascript_payload_unsafe" in output
+
+
+# PR71 R4-001: systemd Exec prefix `@` strip
+def test_exec_prefix_at_pass(tmp_path: Path) -> None:
+    """`ExecStart=@/usr/bin/notify-send notify-send drill` (special @ prefix) should pass."""
+    _write_drill_timer_and_service(tmp_path, "@/usr/bin/notify-send notify-send drill")
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 0, f"expected pass, got exit={exit_code} output={output}"
+
+
+# PR71 R4-002 (P1): drop-in override .conf scanned
+def test_dropin_override_destructive_rejected(tmp_path: Path) -> None:
+    """drop-in override `taskhub-drill-alert.service.d/override.conf` with destructive ExecStart rejected."""
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir(parents=True)
+    (deploy_dir / "taskhub-drill-alert.timer").write_text(
+        "[Unit]\nDescription=drill\n\n[Timer]\nOnCalendar=*-01,07-01 09:00:00\n"
+        "Unit=taskhub-drill-alert.service\n",
+        encoding="utf-8",
+    )
+    (deploy_dir / "taskhub-drill-alert.service").write_text(
+        "[Service]\nType=oneshot\nExecStart=/usr/bin/notify-send drill\n",
+        encoding="utf-8",
+    )
+    dropin_dir = deploy_dir / "taskhub-drill-alert.service.d"
+    dropin_dir.mkdir(parents=True)
+    (dropin_dir / "override.conf").write_text(
+        "[Service]\nExecStart=\nExecStart=/usr/local/bin/taskhub migrate --target vps\n",
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "taskhub_destructive_subcommand" in output
 
 
 def test_cron_slack_cli_passes(tmp_path: Path) -> None:

@@ -620,4 +620,32 @@ R3 regression fixture 3 件追加: `test_adjacent_ampersand_rejected` (R3-003 P1
 
 累計 fixture: **34 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 3 + R2 5 + R3 3)。
 
+#### PR #71 Codex auto-review R4 — 10 inline findings (P1×3 + P2×7) (5 adopt + 5 reject stale)
+
+R4 で 10 件 emit、真に新 5 件 (P1×3 + P2×2) adopt、stale 5 件 (R1-R3 既 adopt) reject。
+
+| ID | priority | symptom (要約) | 判定 |
+|---|---|---|---|
+| R4-001 NEW | P2 | systemd Exec prefix `@` strip 漏れ | adopt |
+| R4-002 NEW | **P1** | systemd drop-in override `*.service.d/*.conf` scan 漏れ → destructive ExecStart= override bypass | adopt |
+| R4-003 NEW | P2 | `git diff --name-only` で rename old path 不可視 → 削除側 service が見えず paired-missing 漏れ | adopt |
+| R4-004 NEW | P2 | SOP osascript example の AppleScript unquoted で shell が `display` 単独引数として渡す | adopt |
+| R4-005 NEW | **P1** | `osascript -e 'do shell script "..."'` で arbitrary cmd 実行可能 (curl と同 bypass) | adopt (osascript `-e` を `display notification` 限定) |
+| R4-006 to R4-010 (5 件 stale) | - | R1/R2/R3 既 adopt re-emission | reject |
+
+実装:
+- `_drill_timer_scanner.py`:
+  - `SYSTEMD_EXEC_PREFIX_RE` に `@` 追加 (R4-001)
+  - `SCAN_SERVICE_DROPIN_GLOBS` 追加 + diff-gate / baseline 両方で drop-in scan (R4-002 P1)
+  - `_check_osascript_payload` 追加、osascript `-e` を `display notification` regex 限定 (R4-005 P1)
+- `check_drill_timer_alert_only.sh`:
+  - `git diff --name-status -z` + Python NUL parse で rename old / new path 両方抽出 (R4-003)
+- `docs/deploy/half-yearly-drill-sop.md`:
+  - osascript example の AppleScript を quote (R4-004)
+  - service example の slack-cli msg も quote
+
+R4 regression fixture 3 件追加 + 既存 1 件 update: `test_osascript_do_shell_script_rejected` (R4-005 P1) / `test_exec_prefix_at_pass` (R4-001) / `test_dropin_override_destructive_rejected` (R4-002 P1) / `test_systemd_osascript_passes` update (R4-005 strict check で AppleScript quote 必須化)。
+
+累計 fixture: **37 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 3 + R2 5 + R3 3 + R4 3)。
+
 (後続: SP-022 完了時に T02 / T04-T09 全体 Review を追記)
