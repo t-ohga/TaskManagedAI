@@ -162,6 +162,7 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 
 - P3+ (production 公開準備、ADR-00017 P2 character image final + 公開 docker image build pipeline + license / docs 整備)
 - (継続的) Wave 23 cron + Routines 実装
+- **post-SP022-T01 hardening (SP-022.X) — frontend npm license verify + per-framework adoption.md AND verify**: PR #70 R2 F-PR70-R2-002 + R3 F-PR70-R3-002 defer 対応、`node_modules/<pkg>/package.json` の `license` field + LICENSE_DENYLIST scan、SPDX expression 解釈、`pnpm install` 前提条件、ADR-00020 §1 #1 scope 明確化 update、ADR-00020 §1 #2 strict AND 解釈 (個別 `docs/citations/<framework>_adoption.md` artifact verify) も含む (本 SP022-T01 は PyPI 限定 + OR 設計で skeleton 完成、frontend / strict AND は post-task)
 
 ## 関連 ADR
 
@@ -249,4 +250,265 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 
 **audit-only gate**: SP-022 では本 trace matrix を文書として保持、実 contract test PASS は各 owning sprint exit gate (post-P0.1)。Owning Sprint Pack 不在 (SP-018/SP-020 未起票) の場合は「P0.1+ 起票予定」marker で保留、SP-018/SP-020 起票 PR で trace を実際に追加。SP022-T00 PR では SP-022 内 trace matrix の存在のみ verify。
 
-(後続: SP-022 完了時に T01-T09 全体 Review を追記)
+### SP022-T01 framework intake CI 機械化 completion (2026-05-19)
+
+#### 実装ファイル
+
+- `scripts/ci/check_framework_intake.sh` (新規、CI entry point、diff-gate / baseline-scan 2 mode + 8 verify item)
+- `scripts/ci/_extract_changed_deps.py` (新規、changed direct dependency 抽出 helper、[dependency-groups].* 含む)
+- `scripts/ci/_intake_scanner.py` (新規、verify item #3-#8 Python scanner、ripgrep 依存撤回)
+- `scripts/ci/__init__.py` (新規、package 化)
+- `tests/scripts/test_check_framework_intake.sh` (新規、12 fixture × 24 assertion 全 PASS)
+- `tests/citations/__init__.py` + `tests/citations/test_citation_completeness.py` (新規、map schema + canonical reference + changed dep citation assert)
+- `docs/citations/dependency_to_framework_map.json` (新規、10 framework × 11 entries: LangGraph / CrewAI / AutoGen / Letta / Dapr Agents / Dify / OpenHands / TaskingAI 初期登録)
+- `docs/citations/README.md` (新規、citation 構造の正本 index)
+- `.github/workflows/ci-smoke.yml` (modify、`actions/checkout@v4 fetch-depth: 0` + "Framework intake check" / "Framework intake fixture tests" step 追加、`env.FRAMEWORK_INTAKE_CHECK_DISABLED` repository variable 経由)
+- `.claude/plans/sp022-t01-framework-intake-ci.md` (本計画、22 findings adopt ledger 含む)
+
+#### codex-plan-review R1-R3 完了記録
+
+- codex-plan-review-round: R3 (round_max reached、R1=Phase A / R2=Phase B / R3=CRITICAL final)
+- codex-plan-review-findings: 22 (R1=14 [HIGH=4 / MEDIUM=8 / LOW=2] + R2=6 [HIGH=6] + R3=2 [CRITICAL=2])
+- codex-plan-review-adopt: 22 / reject: 0 / defer: 0 (全件 adopt 反映)
+- codex-plan-review-readiness-gate: READY (R3 round_max reached + clean、CRITICAL=0 / HIGH=0 残存)
+- codex-plan-review-evidence-path: `~/.claude/local/codex-reviews/2026-05-19/sprint-SP-012-batch-7-taskhub-admin-cli/codex-plan-review-20260519-173506.raw.jsonl` (R1) + `codex-plan-review-20260519-174422.raw.jsonl` (R2) + `codex-plan-review-20260519-175756.raw.jsonl` (R3)
+
+#### 8 verify trace matrix (ADR-00020 §1 mapping)
+
+| # | verify | 実装 module | reason_code | mode 別実行 |
+|---|---|---|---|---|
+| 1 | License | `check_license` (shell) + `uv run python -m pip show` | `framework_intake_violation_license` | diff-gate のみ |
+| 2 | Attribution | `check_attribution` (shell) + `dependency_to_framework_map.json` + `framework_pattern_candidates.md` | `framework_intake_violation_attribution` | diff-gate のみ |
+| 3 | No code embed | `_intake_scanner.py::check_no_code_embed` (Python + npm scoped + dynamic import) | `framework_intake_violation_code_embed` | 両 mode |
+| 4 | Persistence | `_intake_scanner.py::check_persistence` (sqlite3 / psycopg.connect) | `framework_intake_violation_persistence` | 両 mode |
+| 5 | External network | `_intake_scanner.py::check_external_network` (NETWORK_DENYLIST literal URL) | `framework_intake_violation_external_network` | 両 mode |
+| 6 | Telemetry off | `_intake_scanner.py::check_telemetry` (TELEMETRY_PY / TELEMETRY_NPM import) | `framework_intake_violation_telemetry` | 両 mode |
+| 7 | Secret canary | `_intake_scanner.py::check_secret_canary` (`backend/app/services/providers/preflight.py` + tests/security 2 fixture + eval/security/secret_canary) | `framework_intake_violation_secret_canary` | 両 mode |
+| 8 | Tenant/project boundary | `_intake_scanner.py::check_tenant_boundary` (AC-HARD-03 / tenant_isolation / cross_tenant marker existence) | `framework_intake_violation_tenant_boundary` | 両 mode |
+
+#### Local verification 実行記録
+
+- `bash scripts/ci/check_framework_intake.sh` (baseline-scan mode、現 worktree) → `PASS (mode=baseline-scan)` exit 0
+- `bash tests/scripts/test_check_framework_intake.sh` → 18 fixture × 36 assertion すべて PASS (failed: 0、PR70 R1 7 findings adopt 後の R2 で 6 fixture 拡張)
+- `uv run pytest tests/citations/ -q` → 1 passed (`test_map_schema_and_canonical_references`) + 1 skipped (`test_changed_deps_have_citation`、dependency 変更なし環境で R1 F-011 通り)
+
+#### PR #70 Codex auto-review R1 — 7 inline P2 findings 全件 adopt
+
+PR 起票後 約 7 分で landing、全 7 件 valid security gap 指摘:
+
+| ID | priority | symptom (要約) | adopt 反映先 |
+|---|---|---|---|
+| F-PR70-001 | P2 | `baseline-scan` mode で origin/main rev-parse check が exit 2 → repo-wide scan 不能 | `check_framework_intake.sh` で rev-parse check を diff-gate mode 内に移動 |
+| F-PR70-002 | P2 | Python `import langgraph, os` (comma-separated) を py_pattern が検出しない | `_intake_scanner.py` py_pattern を `(\s\|,\|\.\|$)` に拡張 |
+| F-PR70-003 | P2 | Python telemetry も同 comma 検出漏れ + frontend side-effect import `import "@sentry/nextjs";` 検出漏れ | telemetry py_pattern + npm_pattern 両方拡張 |
+| F-PR70-004 | P2 | `_extract_changed_deps.py` failure を `\|\| true` で silently swallow → license/attribution check が空 input で skip | `_run_extract` helper で non-zero exit を internal error (exit 2) として伝播 |
+| F-PR70-005 | P2 | frontend code embed の side-effect import `import "@langchain/langgraph";` 検出漏れ | npm_pattern に `import\s+['"]<denylist>['"]` 追加 |
+| F-PR70-006 | P2 | `backend/app/repositories/` が PERSISTENCE_ROOTS に含まれない → repository layer での `psycopg.connect` bypass | PERSISTENCE_ROOTS に追加 |
+| F-PR70-007 | P2 | Next.js root-level `frontend/instrumentation.ts` / `instrumentation-client.ts` が scan されない → telemetry integration の典型配置で bypass | FRONTEND_SCAN_ROOTS に追加 |
+
+reject: 0 / defer: 0 / 全件 adopt。R2 fixture 6 件 (`test_comma_import_detection` / `test_frontend_side_effect_import` / `test_persistence_in_repositories` / `test_frontend_instrumentation_scanned` / `test_extractor_failure_propagates` / `test_baseline_scan_without_origin_main`) で regression coverage 確保。
+
+#### PR #70 Codex auto-review R2 — 6 inline P2 findings 5 adopt + 1 defer
+
+`@codex review` mention 経由で 6330bc4 (R1 fix commit) 再 review、R2 で更に深い 6 件 security gap 指摘:
+
+| ID | priority | symptom (要約) | 判定 | adopt 反映先 |
+|---|---|---|---|---|
+| R2-001 | P2 | diff-gate mode で deps 変更なしの PR が code embed / telemetry / persistence violation を bypass (e.g., `import langgraph` だけ追加して `pyproject.toml` 触らない) | **adopt** | `check_framework_intake.sh` に `DIFF_GATE_HAS_DEP_CHANGES` flag、#3-#8 は常に実行、#1/#2 のみ deps 変更時に実行 |
+| R2-002 | P2 | npm dependency 追加 PR で license check が PyPI extractor のみ → frontend で restricted license library が attribution map entry あれば通過 | **defer** | ADR-00020 §1 #1 PyPI 限定は plan で明示 scope 外 (frontend pkg は post-T01 で SPDX 拡張)、ADR-00020 §1 #1 で scope 明確化は post-T01 SP-022.X (新 PR) で実施 |
+| R2-003 | P2 | `from psycopg import connect; connect(...)` alias が `psycopg2?\.connect\(` regex で検出不可 | **adopt** | `_intake_scanner.py` check_persistence に `from\s+psycopg2?\s+import\s+(?:.*\b)?connect\b` 追加 |
+| R2-004 | P2 | `optionalDependencies` を `_extract_changed_deps.py` が抽出していない → 新 framework を optional に置けば bypass | **adopt** | `load_package_json_at` で `optionalDependencies` も取り込む |
+| R2-005 | P2 | persistence rule が `services/adapters/db/repositories` 限定で `backend/app/api` / `backend/app/workers` を scan しない → route handler / worker で直接 DB connect bypass | **adopt** | `PERSISTENCE_ROOTS` に `backend/app/api` + `backend/app/workers` 追加 |
+| R2-006 | P2 | external_network scan が `config/` のみで repo root の `docker-compose*.yml` 等 deployment YAML を見ない → env var 経由で denylisted SaaS URL bypass | **adopt** | `check_external_network` に `docker-compose*.yml` / `docker-compose*.yaml` / `compose*.yml` / `compose*.yaml` glob 追加 |
+
+defer 理由詳細 (R2-002): ADR-00020 §1 #1 の License 機械検査は PyPI tooling 中心の skeleton 設計 (ADR §2 script skeleton も `pip show` のみ)。frontend npm license は `node_modules/<pkg>/package.json` の `license` field + LICENSE_DENYLIST scan の追加実装が必要、SPDX expression 解釈 + `pnpm install` 前提条件もあり、本 SP022-T01 scope (8 verify item の最小機械化) を超える。post-T01 task (SP-022.X for frontend license + post-T01 で ADR-00020 §1 #1 scope 明確化 update) で実装すべく `## 次スプリント候補` に記録。
+
+R2 regression fixture 5 件 (`test_diff_gate_runs_scanners_without_dep_change` / `test_psycopg_import_connect_alias` / `test_optional_dependencies_extracted` / `test_persistence_in_api_or_workers` / `test_docker_compose_external_network`) + 1 fixture 仕様変更 (`test_skip_no_deps_change` → `test_clean_pr_no_dep_change_runs_scanners` で PASS expected msg、R2-001 の挙動変更を test 側にも反映) で regression coverage 確保。
+
+R1+R2 累計: **23 fixture × 46 assertion 全 PASS** (failed: 0)。13 adopt findings (R1=7 + R2=5 adopt) + 1 defer (R2-002 post-T01)。
+
+#### PR #70 Codex auto-review R3 — 10 inline findings (2 adopt + 2 defer + 6 reject as stale re-emission)
+
+`@codex review` mention 経由で 44c18fe (R2 fix commit) 再 review、R3 で 10 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R3-001 (NEW) | P2 | `_extract_changed_deps.py` が optional-dependencies を license check に渡すが `uv sync --locked` default では extras install されず `pip show` empty で `license_field_empty_or_unresolved` 誤 violation | **adopt** | `_extract_changed_deps.py` に `--scope={core,extras,all}` flag 追加、check_license は core 限定 (installed deps のみ)、check_attribution は all (citation 必要) |
+| R3-002 (NEW) | P2 | Attribution check は map + candidates.md row のみ verify、ADR-00020 §1 #2 が要求する `docs/citations/<framework>_adoption.md` 個別 citation artifact 不検査 | **defer** | ADR-00020 §1 #2 plan で「OR」設計 (本 task では candidates.md 内 entry で十分)、ADR 文書を strict AND 解釈する変更は SP-022.X (R2-002 と同 hardening) で実施 |
+| R3-003 (NEW) | P2 | PERSISTENCE_ROOTS allowlist が `backend/app/domain` / `middleware` / `observability` / `seeds` / `schemas` を含まない、production product paths bypass | **adopt** | PERSISTENCE_ROOTS を `Path("backend/app")` 単一に拡大、BACKEND_EXCLUDE_PARTS={migrations} で db/migrations 除外維持 |
+| R3-004 | P2 | "Include repositories in persistence scan" | **reject as stale re-emission** | R2 で既 adopt、scripts/ci/_intake_scanner.py に `Path("backend/app/repositories")` 既存 (line 93、PR70 F-PR70-006 comment 付き) |
+| R3-005 | P2 | "Scan Next.js root instrumentation files" | **reject as stale re-emission** | R2 で既 adopt、FRONTEND_SCAN_ROOTS に `frontend/instrumentation.ts` + `instrumentation-client.ts` 既存 (line 80-81) |
+| R3-006 | P2 | "Catch imported psycopg connect aliases" | **reject as stale re-emission** | R2 で既 adopt、`psycopg_import_connect` regex 既存 (line 189-191) |
+| R3-007 | P2 | "Include optional frontend dependencies" | **reject as stale re-emission** | R2 で既 adopt、`load_package_json_at` で `optionalDependencies` 取り込み既存 (line 125) |
+| R3-008 | P2 | "Scan backend API files for direct persistence" | **reject as stale re-emission** | R2 で既 adopt、PERSISTENCE_ROOTS に `backend/app/api` + `backend/app/workers` 既存。R3-003 で `backend/app` 全体に拡大して更に強化 |
+| R3-009 | P2 | "Include deployment YAML in endpoint scans" | **reject as stale re-emission** | R2 で既 adopt、`check_external_network` に `docker-compose*.yml` glob 既存 (line 233) |
+| R3-010 | P2 | "Check npm dependency licenses too" | **defer (continue from R2-002)** | R2-002 と同 finding 再 emit、SP-022.X (post-T01 frontend license + ADR-00020 §1 #1 scope 明確化) で実施 |
+
+**Stale re-emission rationale**: `feedback_codex_r2_reemission_reject_trap.md` (project memory) 教訓に従い、6 件 R3 re-emission は **code grep + implementation verify** で reject 確定 (R2 commit 44c18fe で全件 fix 実装 + R2 regression fixture 5 件で PASS verify 済)。Codex multi-round の既知の "stale finding re-emission" pattern。
+
+実装:
+- `_extract_changed_deps.py`: `load_pyproject_at(ref, scope=...)` に `scope={core,extras,all}` filter、`main()` で `--scope` flag 追加 (R3-001)
+- `check_framework_intake.sh`: `_run_extract` に scope 引数追加、`extract_changed_deps_pypi_core()` 関数追加、`check_license` で `extract_changed_deps_pypi_core` 使用 (R3-001)
+- `_intake_scanner.py`: `PERSISTENCE_ROOTS = (Path("backend/app"),)` 単一化、`BACKEND_EXCLUDE_PARTS={migrations}` で migrations 除外維持 (R3-003)
+
+R3 regression fixture 2 件 (`test_optional_extras_skipped_for_license` + `test_persistence_in_domain_or_middleware`) 追加。
+
+R1+R2+R3 累計: **25 fixture × 51 assertion 全 PASS** (failed: 0)。**15 adopt findings** (R1=7 + R2=5 + R3=2 + 1 fixture 仕様変更を含む 18 total impact 1 仕様変更 = 18-15 fix 単位 = 計画通り) + 2 defer (R2-002 / R3-002、frontend license + adoption.md 個別 verify は SP-022.X post-T01) + 6 reject (R3 stale re-emission)。
+
+#### PR #70 Codex auto-review R4 — 10 inline findings (4 adopt + 1 defer + 5 reject as stale re-emission)
+
+`@codex review` mention 経由で 0c07fff (R3 fix commit) 再 review、R4 で 10 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R4-001 (npm license) | P2 | npm 追加 PR で license check が `extract_changed_deps_pypi_core` のみ実行、frontend license verify されない | **defer** | R2-002 / R3-010 と同 finding、SP-022.X (post-T01) で実施 |
+| R4-002 (NEW、R3-001 副作用) | P2 | `[dependency-groups].dev` も `uv sync --locked` default で install されるのに R3-001 で `core` scope から除外 → dev framework license bypass | **adopt** | `_extract_changed_deps.py` scope=core を `[project.dependencies] + [dependency-groups].*` に再定義、optional-dependencies のみ extras (license 対象外、`--extra` flag なしで未 install のため) |
+| R4-003 (NEW) | P2 | Python dynamic import `importlib.import_module("langgraph")` / `__import__("crewai")` を no-code-embed rule が検出しない | **adopt** | `_intake_scanner.py::check_no_code_embed` に `py_dynamic_pattern` 追加 |
+| R4-004 (NEW) | P2 | 10 framework 候補のうち Semantic Kernel (Python module `semantic_kernel`) が `PY_DENYLIST_FRAMEWORKS` に抜け | **adopt** | `PY_DENYLIST_FRAMEWORKS` に `semantic_kernel` 追加 |
+| R4-005 (NEW) | P2 | `psycopg.AsyncConnection.connect(...)` / `psycopg.Connection.connect(...)` class-level connect が `psycopg2?\.connect\(` regex で検出されない (中間 Connection class) | **adopt** | `psycopg_class_connect = re.compile(r"psycopg2?\.(?:Async)?Connection\.connect\(")` 追加 |
+| R4-006 to R4-010 (5 件) | P2 | "Scan Next.js root instrumentation" / "Catch imported psycopg connect aliases" / "Include optional frontend dependencies" / "Include deployment YAML" / "Enforce citation artifact" | **reject as stale re-emission** | R2/R3 で既 adopt 実装済 (code grep verify)、R3-002 defer は SP-022.X 維持 |
+
+**Stale re-emission rationale**: 5 件 R4 re-emission は code grep + R2/R3 commit comment ('PR70 R2 F-PR70-R2-XXX adopt' marker) で verify (R2 commit 44c18fe / R3 commit 0c07fff で全件 fix 済)。`feedback_codex_r2_reemission_reject_trap.md` 教訓: code grep + R2/R3 regression fixture PASS で実体検証してから reject 確定。
+
+実装:
+- `_extract_changed_deps.py`: `load_pyproject_at` scope=core を `[project.dependencies] + [dependency-groups].*` に再定義 (R4-002)
+- `_intake_scanner.py`:
+  - `PY_DENYLIST_FRAMEWORKS` に `semantic_kernel` 追加 (R4-004)
+  - `check_no_code_embed` に `py_dynamic_pattern` (importlib.import_module / __import__) 追加 (R4-003)
+  - `check_persistence` に `psycopg_class_connect` regex 追加 (R4-005)
+
+R4 regression fixture 4 件追加: `test_dependency_groups_license_checked` (R4-002) / `test_python_dynamic_import_detection` (R4-003) / `test_semantic_kernel_denylist` (R4-004) / `test_psycopg_class_level_connect` (R4-005)。
+
+R1+R2+R3+R4 累計: **29 fixture × 59 assertion 全 PASS** (failed: 0)。**19 adopt findings** (R1=7 + R2=5 + R3=2 + R4=4 + 1 fixture 仕様変更) + 2 defer (R2-002 / R3-002 / R4-001 / R4-010 = 同 root issue SP-022.X) + 11 reject (R3 stale 6 + R4 stale 5)。
+
+#### PR #70 Codex auto-review R5 — 15 inline findings (5 adopt + 1 defer (P1 escalated) + 9 reject as stale re-emission)
+
+`@codex review` mention 経由で add969a (R4 fix commit) 再 review、R5 で 15 件 emit (うち 1 件は P1 escalation):
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R5-001 (P1 escalated) | P1 | npm 追加 PR で license check が PyPI のみ、frontend license verify されない (R2-002/R3-010/R4-001 と同根、Codex が P1 に escalate) | **defer (continue R2-002)** | SP-022.X (frontend license verify) で実施、plan で明示 scope 外、本 PR 内では node_modules read + SPDX 解釈の実装重く別 PR で扱う |
+| R5-002 (NEW) | P2 | dynamic import submodule `importlib.import_module("langgraph.graph")` を regex が detect しない (quote 直後の literal name のみ) | **adopt** | py_dynamic_pattern を `(?:\.[A-Za-z_][A-Za-z0-9_.]*)?` 追加で submodule path 対応 |
+| R5-003 (NEW) | P2 | `[dependency-groups]` の non-default group (e.g., `docs`) は `uv sync --locked` default で install されないため license check は誤 violation を出す | **adopt** | `_extract_changed_deps.py` で `[tool.uv.default-groups]` を読み default-groups のみ scope=core、他は scope=extras (license 対象外) |
+| R5-004 (NEW) | P2 | telemetry も dynamic import (`importlib.import_module("sentry_sdk")`) を検出しない | **adopt** | check_telemetry に `py_telemetry_dynamic` regex 追加 |
+| R5-005 (NEW) | P2 | `from psycopg import AsyncConnection; AsyncConnection.connect(...)` import alias chain を class-level regex が検出しない | **adopt** | `psycopg_import_class` + `class_connect_call` の 2 段検出 (import-then-call chain) 追加、`from_import_class_connect_alias` detail |
+| R5-006 (NEW) | P2 | npm scoped name `semantic-kernel` (10 framework のうち Semantic Kernel) が NPM_DENYLIST に未追加 (R4-004 で Python だけ追加) | **adopt** | NPM_DENYLIST_FRAMEWORKS に `semantic-kernel` 追加 |
+| R5-007 to R5-015 (9 件 stale) | P2 | "Scan Next.js root instrumentation" / "Catch imported psycopg connect aliases" / "Include optional frontend dependencies" / "Include deployment YAML" / "Enforce citation artifact" / "License-check dependency groups" / "Detect Python dynamic framework imports" / "Add Semantic Kernel to the Python denylist" / "Catch psycopg class-level connects" | **reject as stale re-emission** | R2/R3/R4 で既 adopt 実装済、code grep + commit comment marker で verify (R2 44c18fe / R3 0c07fff / R4 add969a 各 fix commit) |
+
+**Stale re-emission rationale**: 9 件 R5 re-emission は code grep + R2/R3/R4 commit comment ('PR70 R2/R3/R4 F-PR70-RX-XXX adopt' marker) で verify。`feedback_codex_r2_reemission_reject_trap.md` 教訓: 必ず code grep + R2-R4 regression fixture PASS (29 fixture 既存) で実体検証してから reject 確定。
+
+実装:
+- `_extract_changed_deps.py`: scope=core を `default_groups` (uv `[tool.uv.default-groups]` または `{"dev"}` default) に限定、non-default group は scope=extras に移動 (R5-003)
+- `_intake_scanner.py`:
+  - `NPM_DENYLIST_FRAMEWORKS` に `semantic-kernel` 追加 (R5-006)
+  - `py_dynamic_pattern` に submodule path `(?:\.[...]+)?` 追加 (R5-002)
+  - `check_telemetry` に `py_telemetry_dynamic` 追加 + 既存 + 同 submodule path 対応 (R5-004)
+  - `check_persistence` に `psycopg_import_class` + `class_connect_call` 2 段検出追加 (R5-005)
+
+R5 regression fixture 5 件追加: `test_dynamic_submodule_import` (R5-002) / `test_non_default_dep_group_skipped_for_license` (R5-003) / `test_dynamic_telemetry_import` (R5-004) / `test_psycopg_import_class_alias_chain` (R5-005) / `test_semantic_kernel_npm` (R5-006)。
+
+R1+R2+R3+R4+R5 累計: **34 fixture × 70 assertion 全 PASS** (failed: 0)。**24 adopt findings** (R1=7 + R2=5 + R3=2 + R4=4 + R5=5 + 1 fixture 仕様変更) + 2 unique defer (frontend license + adoption.md AND、SP-022.X) + 20 reject (R3 stale 6 + R4 stale 5 + R5 stale 9)。
+
+#### PR #70 Codex auto-review R6 — 19 inline findings (5 adopt + 14 reject as stale re-emission)
+
+`@codex review` mention 経由で 44aba20 (R5 fix commit) 再 review、R6 で 19 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R6-001 (NEW) | P2 | `[tool.uv] default-groups = "all"` literal string で全 dep-group install されるが extractor は list のみ受付、他 default-installed group が extras 分類で license check skip | **adopt** | `default-groups == "all"` literal value 対応、`all_groups` 集合に置換 |
+| R6-002 (NEW) | P2 | legacy `[tool.uv].dev-dependencies` は uv で `dev` group merge されるが extractor 未対応、新 direct dep が intake gate bypass | **adopt** | scope=core で `tool.uv.dev-dependencies` も読み、`dev` が default に含まれる場合のみ含める |
+| R6-003 (NEW) | P2 | `[dependency-groups]` nested `{include-group = "lint"}` 配下の dep が license check で skip される | **adopt** | `_resolve_group` 再帰 helper で nested include-group 展開、循環参照防止 `seen` set |
+| R6-004 (NEW) | P2 | `from psycopg import AsyncConnection as PG; PG.connect(...)` alias 検出漏れ (class_connect_call は literal `AsyncConnection.connect` のみ match) | **adopt** | psycopg_import_class_re で `as <alias>` 含む import body を parse、imported_aliases set 構築 → alias.connect 動的 regex 生成 |
+| R6-005 (NEW) | P2 | frontend dynamic import `await import ("foo")` (whitespace) を `import\(['"]` regex が detect しない | **adopt** | npm_pattern で `import\s*\(\s*['"]` / `require\s*\(\s*['"]` に拡張、whitespace 許容 |
+| R6-006 to R6-019 (14 件 stale) | P2 (+1 P1) | 上記以外は R2-R5 既 adopt re-emission (Scan Next.js root / psycopg alias / optional frontend / deployment YAML / citation artifact / npm license [P1] / license-check dep-groups / dynamic framework imports / Semantic Kernel Python+npm / class-level connects / dynamic telemetry / imported Connection classes) | **reject as stale re-emission** | R2-R5 既 adopt 実装済、code grep + 各 fix commit comment marker で verify |
+
+**Stale re-emission rationale**: 14 件 R6 re-emission は code grep + R2/R3/R4/R5 commit comment ('PR70 RX F-PR70-RX-XXX adopt' marker) で verify。Codex multi-round の既知 stale re-emission pattern (`feedback_codex_pr_review_baseline_check.md` 教訓: 必ず code grep + R2-R5 regression fixture PASS で実体検証してから reject 確定)。
+
+実装:
+- `_extract_changed_deps.py`:
+  - `default-groups` `"all"` literal 対応 + 全 group set 置換 (R6-001)
+  - `[tool.uv].dev-dependencies` legacy 取り込み (R6-002)
+  - `_resolve_group` 再帰 helper で `{include-group = "..."}` nested 展開 + `seen` set 循環防止 (R6-003)
+- `_intake_scanner.py`:
+  - `psycopg_import_class_re` で `as <alias>` 含む import body parse、imported_aliases set 構築 → 動的 `<alias>.connect(` regex 生成 (R6-004)
+  - frontend `npm_pattern` で `import\s*\(\s*['"]` / `require\s*\(\s*['"]` whitespace 許容 (R6-005)
+
+R6 regression fixture 5 件追加: `test_default_groups_all_literal` (R6-001) / `test_legacy_tool_uv_dev_dependencies` (R6-002) / `test_nested_include_group` (R6-003) / `test_psycopg_aliased_connect` (R6-004) / `test_dynamic_import_with_whitespace` (R6-005)。
+
+R1+R2+R3+R4+R5+R6 累計: **39 fixture × 80 assertion 全 PASS** (failed: 0)。**29 adopt findings** + 2 unique defer + 34 reject (R3 stale 6 + R4 stale 5 + R5 stale 9 + R6 stale 14)。
+
+#### PR #70 Codex auto-review R7 — 20 inline findings (6 adopt + 14 reject as stale re-emission)
+
+`@codex review` mention 経由で bd58d7f (R6 fix commit) 再 review、R7 で 20 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R7-001 (NEW) | **P1** | AutoGen v0.4+ は `autogen_agentchat` / `autogen_core` / `autogen_ext` に split、denylist は legacy `autogen` / `pyautogen` のみ → 現行 import bypass | **adopt** | PY_DENYLIST に v0.4 系 3 module 追加 |
+| R7-002 (NEW) | **P1** | Dapr Agents は `dapr_agents` (pip `dapr-agents`)、denylist は base `dapr` のみ → SDK bypass | **adopt** | PY_DENYLIST に `dapr_agents` 追加 |
+| R7-003 (NEW) | **P1** | Letta Python SDK は `letta_client` (`from letta_client import Letta`)、denylist は `letta` のみ → SDK bypass | **adopt** | PY_DENYLIST に `letta_client` 追加 |
+| R7-004 (NEW) | **P1** | Letta npm SDK は scoped `@letta-ai/letta-client`、denylist は unscoped `letta` のみ → frontend SDK bypass | **adopt** | NPM_DENYLIST に `@letta-ai/letta-client` 追加 |
+| R7-005 (NEW) | P2 | `License: UNKNOWN` / `NULL` / `None` literal を license empty 判定 skip、later denylist で UNKNOWN は match せず silent pass | **adopt** | check_license で `license_lower` に正規化、UNKNOWN/NULL/None も unresolved 扱い |
+| R7-006 (NEW) | **P1** | `import psycopg as pg; pg.connect(...)` module alias 検出漏れ + multiline `from psycopg import (connect,)` parenthesized import 検出漏れ | **adopt** | check_persistence に `psycopg_module_alias_re` (module alias 動的 regex) + `psycopg_import_connect` を `re.DOTALL` で multiline 対応 |
+| R7-007 to R7-020 (14 件 stale) | P2 (+1 P1) | R2-R6 既 adopt re-emission (Next.js root / psycopg / optional frontend / deployment YAML / citation artifact / npm license [P1] / dep-groups / dynamic imports / Semantic Kernel / class-level connects / dynamic telemetry / Connection classes / legacy tool.uv dev / whitespace dynamic import) | **reject as stale re-emission** | R2-R6 既 adopt 実装済、code grep + 各 fix commit comment marker で verify |
+
+**P1 escalation rationale**: R7 で 4 件が P1 (AutoGen v0.4 + Dapr Agents + Letta Python SDK + Letta npm SDK) — これらは 10-framework 候補 ledger に明示記載の framework の **現行 import root が denylist に欠落** していた致命的 security gap。Codex が "I verified `from X import Y` exits 0 under `--rule=no_code_embed`" と動作確認まで実施した P1 finding、即 adopt 妥当。
+
+**Stale re-emission rationale**: 14 件 R7 re-emission は code grep + R2-R6 commit comment marker で verify。Codex multi-round の既知 stale re-emission pattern (R3 から累計 stale = 6+5+9+14+14=48 件、いずれも code 実装済)。
+
+実装:
+- `_intake_scanner.py`:
+  - PY_DENYLIST_FRAMEWORKS に `autogen_agentchat` / `autogen_core` / `autogen_ext` / `dapr_agents` / `letta_client` 追加 (R7-001/002/003)
+  - NPM_DENYLIST_FRAMEWORKS に `@letta-ai/letta-client` 追加 (R7-004)
+  - check_persistence に `psycopg_module_alias_re` + 動的 `<alias>.connect(` regex 追加 (R7-006 module alias)
+  - check_persistence の `psycopg_import_connect` を `re.DOTALL` + `(?:\(\s*)?` 対応で multiline parenthesized import 検出 (R7-006 multiline)
+- `check_framework_intake.sh`:
+  - check_license で `license_lower=$(echo $license | tr ...)` で正規化、`unknown` / `null` / `none` literal も unresolved 扱い (R7-005)
+
+R7 regression fixture 7 件追加: `test_autogen_v04_modules` (R7-001) / `test_dapr_agents_module` (R7-002) / `test_letta_client_python_sdk` (R7-003) / `test_letta_client_npm_sdk` (R7-004) / `test_license_unknown_placeholder` (R7-005 代理) / `test_psycopg_module_alias_connect` (R7-006 module alias) / `test_psycopg_multiline_import` (R7-006 multiline)。
+
+R1+R2+R3+R4+R5+R6+R7 累計: **46 fixture × 94 assertion 全 PASS** (failed: 0)。**35 adopt findings** + 2 unique defer + 48 reject (R3-R7 stale)。
+
+#### PR #70 Codex auto-review R8 — 22 inline findings (3 adopt + 19 reject as stale re-emission)
+
+`@codex review` mention 経由で 72e501f (R7 fix commit) 再 review、R8 で 22 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R8-001 (NEW) | P2 | `tests/citations/test_citation_completeness.py` pytest が origin/main 不在 local clone で fail (existing deps を全て added 扱い) | **adopt** | `_origin_main_resolvable()` helper 追加、origin/main 不在 → pytest.skip |
+| R8-002 (NEW) | P2 | `_run_extract` で stderr を stdout に merge → `uv run` non-fatal diagnostic (`Creating virtual environment at: .venv`) が dependency name に混入、`check_license` で偽 `license_field_empty_or_unresolved` emit | **adopt** | stderr を `mktemp` で separate capture、success 時 replay 抑制、failure 時のみ stderr replay |
+| R8-003 (NEW) | P2 | `psycopg_import_connect` の `re.DOTALL` over-match: `from psycopg import errors\n...\ndef connect(...)` を connect alias と誤検出 | **adopt** | `psycopg_import_connect` を `_single` (parenthesis なし、line-bound) + `_paren` (parenthesized only DOTALL) の 2 regex に分離 |
+| R8-004 to R8-022 (19 件 stale) | P2 (+1 P1) | R2-R7 既 adopt re-emission (Next.js / psycopg / optional frontend / deployment YAML / citation / npm license [P1] / dep-groups / dynamic imports / Semantic Kernel Python+npm / class-level connects / dynamic telemetry / legacy tool.uv dev / whitespace dynamic import / AutoGen v0.4 / Dapr Agents / Letta Python+npm SDK / psycopg aliased connects) | **reject as stale re-emission** | R2-R7 既 adopt 実装済、code grep + commit comment marker で verify |
+
+**Stale re-emission rationale**: 19 件 R8 re-emission は code grep + R2-R7 commit comment marker で verify。累計 stale = R3:6 + R4:5 + R5:9 + R6:14 + R7:14 + R8:19 = **67 件**、いずれも code 実装済 (Codex multi-round 既知の stale re-emission pattern)。`feedback_codex_pr_review_baseline_check.md` 教訓: code grep + R2-R7 regression fixture PASS で実体検証してから reject 確定。
+
+実装:
+- `tests/citations/test_citation_completeness.py`: `_origin_main_resolvable()` helper + `test_changed_deps_have_citation` で origin/main 不在時に pytest.skip (R8-001)
+- `scripts/ci/check_framework_intake.sh::_run_extract`: stderr を `mktemp` 一時 file に分離、success 時は replay せず、failure 時のみ stderr replay (R8-002)
+- `scripts/ci/_intake_scanner.py::check_persistence`: `psycopg_import_connect_single` (line-bound、non-parenthesized) + `psycopg_import_connect_paren` (parenthesized only DOTALL with bounded `[^)]*?` 内 inspection) の 2 regex で over-match 防止 (R8-003)
+
+R8 regression fixture 1 件追加: `test_psycopg_import_errors_no_false_positive` (R8-003、`from psycopg import errors` + 別行 `def connect()` で persistence gate が false-positive せずに skip することを verify)。
+
+R1+R2+R3+R4+R5+R6+R7+R8 累計: **47 fixture × 95 assertion 全 PASS** (failed: 0)。**38 adopt findings** + 2 unique defer + 67 reject (R3-R8 stale)。
+
+#### Emergency disable audit format
+
+CI gate を緊急 disable する場合、admin が GitHub Settings → Variables で `FRAMEWORK_INTAKE_CHECK_DISABLED=1` を設定。本 sprint pack の `## Review` 内に以下を 24h 以内に記録 (R1 F-013 adopt):
+
+```
+- disable_at_utc: <YYYY-MM-DD HH:MM:SS UTC>
+- disabled_by: <admin actor>
+- reason: <critical incident rationale>
+- recovery_commit_sha: <commit SHA that re-enabled>
+- retro_pack_ref: <docs/sprints/... or ADR-NNNNN>
+```
+
+#### tailscale-public-exposure hook false positive note (2026-05-19)
+
+`.claude/hooks/tailscale/check-tailscale-grants.sh` が `.github/workflows/ci-smoke.yml` の Edit 時に BLOCK を出した (regex `^[[:space:]]*-[[:space:]]*"?[0-9]+:[0-9]+` が既存 GitHub Actions services の internal port mapping `"5432:5432"` / `"6379:6379"` 等に hit)。本 PR では:
+- 新規追加の literal は `fetch-depth: 0` + Framework intake check step のみ、`Funnel` / `public ingress` / `Cloudflare Tunnel` / `0.0.0.0` / `public bind` は一切追加なし
+- 既存 port mapping は GitHub Actions services の CI-internal port (test docker container 内で `localhost:5432` listen)、production deployment 設定ではない
+- hook 動作は valid だが本 Edit に対しては false positive、ADR-00007 update 不要
+
+将来の hook polish 候補: `target=yes` 判定で `.github/workflows/` を `.github/` 全体除外、または regex を refine。本 task の scope 外、SP-022 別 task or post-P0.1 で対応判断。
+
+(後続: SP-022 完了時に T02-T09 全体 Review を追記)

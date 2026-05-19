@@ -57,6 +57,10 @@ jobs:
       TASKMANAGEDAI_RUN_DB_TESTS: "1"
     steps:
       - uses: actions/checkout@v4
+        # SP022-T01 R2 F-001 adopt: framework intake check で origin/main...HEAD diff を解決するため
+        # shallow checkout 不可 (actions/checkout@v4 default は fetch-depth: 1)
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -90,6 +94,17 @@ jobs:
 
       - name: Install backend dependencies
         run: uv sync --locked
+
+      - name: Framework intake check (ADR-00020 8 verify, SP022-T01)
+        # Emergency disable: set repository variable FRAMEWORK_INTAKE_CHECK_DISABLED=1 from
+        # GitHub Settings -> Variables (admin only, PR author cannot override from diff).
+        # SP022-T01 R1 F-013 adopt.
+        env:
+          FRAMEWORK_INTAKE_CHECK_DISABLED: ${{ vars.FRAMEWORK_INTAKE_CHECK_DISABLED }}
+        run: bash scripts/ci/check_framework_intake.sh
+
+      - name: Framework intake fixture tests
+        run: bash tests/scripts/test_check_framework_intake.sh
 
       - name: Ruff
         run: uv run ruff check backend tests

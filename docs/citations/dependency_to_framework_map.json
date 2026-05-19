@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "description": "Mapping from PyPI / npm dependency name to canonical framework name in docs/citations/framework_pattern_candidates.md. Used by scripts/ci/check_framework_intake.sh verify item #2 (Attribution) per ADR-00020. New direct dependencies (added in pyproject.toml / frontend/package.json) without a corresponding entry here cause framework_intake_violation_attribution.",
+  "_notes": [
+    "ecosystem=pypi: PEP 503 canonicalized (lowercase + [-_.]+ -> -).",
+    "ecosystem=npm: scoped names preserved verbatim as canonical (e.g., '@langchain/langgraph').",
+    "framework_canonical must exactly match the | **<name>** | header in docs/citations/framework_pattern_candidates.md table."
+  ],
+  "entries": [
+    {"dependency_name": "langgraph", "ecosystem": "pypi", "framework_canonical": "LangGraph"},
+    {"dependency_name": "@langchain/langgraph", "ecosystem": "npm", "framework_canonical": "LangGraph"},
+    {"dependency_name": "@langchain/langgraph-sdk", "ecosystem": "npm", "framework_canonical": "LangGraph"},
+    {"dependency_name": "crewai", "ecosystem": "pypi", "framework_canonical": "CrewAI"},
+    {"dependency_name": "autogen", "ecosystem": "pypi", "framework_canonical": "AutoGen"},
+    {"dependency_name": "pyautogen", "ecosystem": "pypi", "framework_canonical": "AutoGen"},
+    {"dependency_name": "letta", "ecosystem": "pypi", "framework_canonical": "Letta"},
+    {"dependency_name": "dapr", "ecosystem": "pypi", "framework_canonical": "Dapr Agents"},
+    {"dependency_name": "dify-client", "ecosystem": "pypi", "framework_canonical": "Dify"},
+    {"dependency_name": "openhands-ai", "ecosystem": "pypi", "framework_canonical": "OpenHands"},
+    {"dependency_name": "taskingai", "ecosystem": "pypi", "framework_canonical": "TaskingAI"}
+  ]
+}
