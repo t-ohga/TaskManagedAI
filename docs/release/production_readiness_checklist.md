@@ -161,7 +161,7 @@ P3+ 移送先: SP-023+ production release Sprint Pack + `.claude/rules/secretbro
 - `docs/sprints/SP-022_framework_intake_hardening.md` line 116-117 (本 T07 受け入れ条件正本)
 - `docs/sprints/SP-022_framework_intake_hardening.md` SP022-T06 section (KPI baseline 正本)
 - `docs/sprints/SP-022_framework_intake_hardening.md` SP022-T09 section (実機 drill 正本)
-- `docs/adr/00007_external_exposure_with_host_portable.md` (External Exposure invariant、Tailscale 閉域維持)
+- `docs/adr/00007_external_exposure.md` (External Exposure invariant、Tailscale 閉域維持、host-portable update を含む)
 - `docs/adr/00020_framework_intake_checklist.md` (Framework Intake Checklist)
 - `docs/adr/00021_host_portable_deployment.md` (Host-Portable Deployment)
 - `docs/deploy/half-yearly-drill-sop.md` (SP022-T03 で確立した drill scheduling SOP)
