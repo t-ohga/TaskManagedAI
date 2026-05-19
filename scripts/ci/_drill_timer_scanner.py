@@ -58,9 +58,12 @@ DENYLIST_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\b(shutdown|reboot|poweroff|halt)\b", "host_power_destructive"),
 )
 
-# R1 F-005 + R2 F-PR70-T03-R2-002 adopt: shell composition detection (input `<` 単独も
-# `<+` で 1 個以上 match).
-SHELL_COMPOSITION_RE = re.compile(r"(\$\(|`|;|&&|\|\||\||>>?|<+|\s&\s|\s&$)")
+# R1 F-005 + R2 F-PR70-T03-R2-002 + PR71 R2-003 adopt: shell composition detection.
+# Includes `~` / `*` / `?` shell expansion metacharacters because crontab(5) runs commands
+# via /bin/sh and `mail -A ~/.taskhub/approvals/*.signed` would expose secrets at runtime.
+SHELL_COMPOSITION_RE = re.compile(
+    r"(\$\(|`|;|&&|\|\||\||>>?|<+|\s&\s|\s&$|\s~/|\s~\s|\s~$|^\s*~|\*|\?)"
+)
 SHELL_NEWLINE_RE = re.compile(r"\n")
 
 # R2 F-PR70-T03-R2-003 adopt: trusted absolute path prefixes (allowlist external paths only
@@ -106,6 +109,16 @@ SYSTEMD_EXEC_RE = re.compile(
 
 # systemd timer `Unit=` directive (paired service resolution).
 SYSTEMD_UNIT_RE = re.compile(r"^\s*Unit\s*=\s*(\S+)\s*$", re.MULTILINE)
+# PR71 R2-002 (P1) adopt: ExecSearchPath= directive — systemd uses this to resolve bare
+# commands in Exec*=; presence on a drill service is a path-spoofing risk because allowlist
+# heads like `slack-cli` would be searched in attacker-controlled paths.
+SYSTEMD_EXEC_SEARCH_PATH_RE = re.compile(
+    r"^\s*ExecSearchPath\s*=", re.MULTILINE
+)
+# PR71 R2-005 adopt: systemd Exec*= value can carry leading prefix characters
+# (`-` ignore-failure, `+` privileged, `:` no env expansion, `!` user override, `!!` legacy).
+# Strip these before path-spoofing validation; the resolved executable path follows.
+SYSTEMD_EXEC_PREFIX_RE = re.compile(r"^([-+:!]+|!!)+\s*")
 
 # cron line patterns.
 CRON_MACRO_RE = re.compile(
@@ -256,7 +269,13 @@ def check_systemd_files(scan_files: list[Path] | None, root: Path) -> list[str]:
         service_files = _iter_glob(root, SCAN_SERVICE_GLOBS)
     else:
         timer_files = [p for p in scan_files if p.suffix == ".timer" and p.exists()]
-        service_files = [p for p in scan_files if p.suffix == ".service" and p.exists()]
+        # PR71 R2-001 adopt: diff-gate でも `*drill*.service` のみ standalone scan、
+        # non-drill `.service` は paired timer 経由でのみ scan (baseline mode と整合)。
+        service_files = [
+            p
+            for p in scan_files
+            if p.suffix == ".service" and p.exists() and "drill" in p.name
+        ]
         # PR71 R1-005 adopt: diff-gate で deleted `.service` の paired-missing check
         # changed list 内に deleted `.service` (exists() false) があれば、同名 / 関連 `.timer`
         # を repo baseline から探して `timer_files` に load し、paired-service-missing で
@@ -299,13 +318,24 @@ def check_systemd_files(scan_files: list[Path] | None, root: Path) -> list[str]:
                 f"evidence={tpath}:1 label=missing_paired_service expected={paired}"
             )
     # R1 F-004 adopt: scan all Exec* directives in service files
+    # PR71 R2-002 (P1) adopt: also check ExecSearchPath= — its presence on a drill service
+    # enables path spoofing for bare allowlist commands.
+    # PR71 R2-005 adopt: strip systemd Exec*= prefix chars (-, +, :, !, !!) before path check.
     for spath in sorted(paired_services):
         content = _read_text_or_none(spath)
         if content is None:
             continue
+        # ExecSearchPath= violation (fail-closed for drill services)
+        for sp_match in SYSTEMD_EXEC_SEARCH_PATH_RE.finditer(content):
+            line_num = content[: sp_match.start()].count("\n") + 1
+            violations.append(
+                f"VIOLATION reason_code=framework_intake_violation_drill_timer_alert_only_exec_search_path "
+                f"evidence={spath}:{line_num} directive=ExecSearchPath label=path_spoofing_via_search_path"
+            )
         for match in SYSTEMD_EXEC_RE.finditer(content):
             directive = match.group(1)
-            cmd_line = match.group(2).strip()
+            raw_value = match.group(2).strip()
+            cmd_line = SYSTEMD_EXEC_PREFIX_RE.sub("", raw_value)
             reason, label = _check_command(cmd_line)
             if reason:
                 line_num = content[: match.start()].count("\n") + 1
@@ -335,7 +365,9 @@ def check_cron_files(scan_files: list[Path] | None, root: Path) -> list[str]:
         content = _read_text_or_none(path)
         if content is None:
             continue
-        is_etc_crond = "cron.d" in path.parts
+        # PR71 R2-004 adopt: `etc/crontab` (system crontab) も 6-field (user 含む) として扱う。
+        # `cron.d` directory 配下 OR `etc/crontab` basename match で `is_etc_crond=true`。
+        is_etc_crond = "cron.d" in path.parts or path.name == "crontab" and "etc" in path.parts
         for lineno_minus1, raw_line in enumerate(content.splitlines()):
             line = raw_line.strip()
             line_num = lineno_minus1 + 1

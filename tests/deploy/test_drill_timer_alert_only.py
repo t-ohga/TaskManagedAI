@@ -296,6 +296,76 @@ def test_cron_d_macro_user_field_stripped_pass(tmp_path: Path) -> None:
     assert exit_code == 0, f"expected pass, got exit={exit_code} output={output}"
 
 
+# ---- PR71 R2-002 (P1): ExecSearchPath= spoofing ----
+def test_exec_search_path_rejected(tmp_path: Path) -> None:
+    """`ExecSearchPath=/tmp/evil` enables bare-cmd spoofing → must reject."""
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir(parents=True)
+    (deploy_dir / "taskhub-drill-alert.timer").write_text(
+        "[Unit]\nDescription=drill\n\n[Timer]\nOnCalendar=*-01,07-01 09:00:00\n"
+        "Unit=taskhub-drill-alert.service\n",
+        encoding="utf-8",
+    )
+    (deploy_dir / "taskhub-drill-alert.service").write_text(
+        "[Unit]\nDescription=drill\n\n[Service]\nType=oneshot\n"
+        "ExecSearchPath=/tmp/evil\n"
+        "ExecStart=slack-cli chat send drill\n",  # noqa: S108
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "framework_intake_violation_drill_timer_alert_only_exec_search_path" in output
+
+
+# ---- PR71 R2-005: systemd Exec prefix `-` (ignore-failure) ----
+def test_exec_prefix_dash_pass(tmp_path: Path) -> None:
+    """`ExecStart=-/usr/bin/notify-send drill` (ignore-failure prefix) should pass after strip."""
+    _write_drill_timer_and_service(tmp_path, "-/usr/bin/notify-send drill")
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 0, f"expected pass, got exit={exit_code} output={output}"
+
+
+# ---- PR71 R2-003: shell expansion `~` `*` `?` ----
+def test_tilde_expansion_rejected(tmp_path: Path) -> None:
+    """`mail -A ~/.taskhub/approvals/*.signed` should be rejected (tilde + glob expansion)."""
+    cron_d = tmp_path / "etc" / "cron.d"
+    cron_d.mkdir(parents=True)
+    (cron_d / "drill-cron").write_text(
+        "0 9 1 1,7 * root /usr/bin/mail -A ~/.taskhub/approvals/drill.signed ops@example.com\n",
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "framework_intake_violation_drill_timer_alert_only_shell_composition" in output
+
+
+def test_glob_expansion_rejected(tmp_path: Path) -> None:
+    """`mail -A ~/.taskhub/approvals/*.signed` glob `*` expansion rejected."""
+    cron_d = tmp_path / "etc" / "cron.d"
+    cron_d.mkdir(parents=True)
+    (cron_d / "drill-cron").write_text(
+        "0 9 1 1,7 * root /usr/bin/mail -A /var/taskhub/drill-*.log ops@example.com\n",
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 1
+    assert "framework_intake_violation_drill_timer_alert_only_shell_composition" in output
+
+
+# ---- PR71 R2-001: diff-gate non-drill service excluded ----
+def test_diff_gate_non_drill_service_excluded(tmp_path: Path) -> None:
+    """In baseline-scan (which excludes non-drill), non-drill `.service` not scanned."""
+    # baseline-scan も diff-gate も同 filter (`*drill*`)
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir(parents=True)
+    (deploy_dir / "production-app.service").write_text(
+        "[Service]\nExecStart=/usr/bin/docker compose up -d production\n",
+        encoding="utf-8",
+    )
+    exit_code, output = _run_scanner_baseline(tmp_path)
+    assert exit_code == 0, f"non-drill service excluded; got exit={exit_code} output={output}"
+
+
 # ---- 11. cron env MAILTO (allowed env line) ----
 def test_cron_mailto_env_line_passes(tmp_path: Path) -> None:
     """`MAILTO=ops@example.com` does not trigger path-spoofing (only PATH/SHELL/BASH_ENV do)."""

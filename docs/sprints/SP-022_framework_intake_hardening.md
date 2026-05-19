@@ -569,4 +569,31 @@ R1 regression fixture 3 件追加: `test_path_traversal_via_dotdot_rejected` (R1
 
 R1+T03 R1 累計 fixture: **26 pytest fixture 全 PASS** (failed: 0、SP022-T03 plan stage 23 + PR71 R1 stage 3)。
 
+#### PR #71 Codex auto-review R2 — 9 inline findings (P1×1 + P2×8) (5 adopt + 4 reject stale)
+
+`@codex review` mention 経由で 1343845 (R1 fix commit) 再 review、R2 で 9 件 emit。実態分析:
+
+| ID | priority | symptom (要約) | 判定 | rationale |
+|---|---|---|---|---|
+| R2-001 NEW | P2 | diff-gate でも `.service` 全 scan、drill filter 適用なし → non-drill app service 誤検出 | **adopt** | `scan_files` から `.service` filter で `"drill" in p.name` 追加 |
+| R2-002 NEW | **P1** | systemd `ExecSearchPath=/tmp/evil` で bare allowlist command spoofing | **adopt** | `SYSTEMD_EXEC_SEARCH_PATH_RE` 検出 + `drill_timer_alert_only_exec_search_path` violation |
+| R2-003 NEW | P2 | `~` / `*` / `?` shell expansion 検出漏れ (`mail -A ~/.taskhub/approvals/*.signed`) | **adopt** | `SHELL_COMPOSITION_RE` に `~/` `~ ` `^~` `*` `?` 追加 |
+| R2-004 NEW | P2 | `etc/crontab` (6-field system crontab) を 5-field 誤 parse → root user field を head と誤認識 | **adopt** | `is_etc_crond` 判定を `cron.d` OR `etc/crontab` basename match に拡張 |
+| R2-005 NEW | P2 | systemd Exec prefix `-` (ignore-failure) で `-/usr/bin/notify-send` path check fail | **adopt** | `SYSTEMD_EXEC_PREFIX_RE` で prefix `-`, `+`, `:`, `!`, `!!` strip 後に path check |
+| R2-006 to R2-009 (4 件 stale) | P2 | cron.d macro user strip / SOP path / audit log preserve / paired-service deletion | **reject as stale re-emission** | R1 で全件 adopt 実装済、code grep + commit marker で verify |
+
+**Stale re-emission rationale**: 4 件 R2 re-emission は R1 commit 1343845 で実装済 (cron.d macro user strip line 327 周辺、SOP path 修正、workflow `if:` 削除、deleted .service 対 timer baseline 探索)。`feedback_codex_r2_reemission_reject_trap.md` 教訓: code grep verify 後 reject。
+
+実装:
+- `_drill_timer_scanner.py`:
+  - `SHELL_COMPOSITION_RE` に `~` glob + `*` `?` 追加 (R2-003)
+  - `SYSTEMD_EXEC_SEARCH_PATH_RE` + `SYSTEMD_EXEC_PREFIX_RE` 追加 (R2-002 + R2-005)
+  - diff-gate `scan_files` の `.service` filter で `"drill" in p.name` (R2-001)
+  - `is_etc_crond` 判定で `etc/crontab` 6-field 認識 (R2-004)
+  - systemd `ExecStart=` parsing で prefix strip 後 path check (R2-005)
+
+R2 regression fixture 5 件追加: `test_exec_search_path_rejected` (R2-002 P1) / `test_exec_prefix_dash_pass` (R2-005) / `test_tilde_expansion_rejected` (R2-003) / `test_glob_expansion_rejected` (R2-003) / `test_diff_gate_non_drill_service_excluded` (R2-001)。
+
+累計 fixture: **31 pytest fixture 全 PASS** (failed: 0、plan stage 23 + R1 stage 3 + R2 stage 5)。
+
 (後続: SP-022 完了時に T02 / T04-T09 全体 Review を追記)
