@@ -1,0 +1,24 @@
+# SP022-T02 Phase 1 signed approval Ed25519 verify key fingerprint allowlist
+#
+# 本 file は production deployment 時に **実 verify key の SHA-256 fingerprint (hex string)**
+# を line-separated で追記する。
+#
+# Phase 1 implementation invariant (R3-F-001 adopt):
+# - file 不在 → hard fail (`taskhub_signed_approval_verify_key_fingerprint_allowlist_missing`)
+# - 空 file / comment-only → hard fail (`taskhub_signed_approval_verify_key_fingerprint_allowlist_empty`)
+# - fingerprint 不一致 → hard fail (`taskhub_signed_approval_verify_key_fingerprint_mismatch`)
+#
+# 行 format:
+# - 64 chars 16 進文字列 (sha256 hex)、line ごとに 1 fingerprint
+# - `#` で始まる行は comment として無視
+# - 空行 / whitespace-only 行は無視
+#
+# 例 (production deployment 時に実 fingerprint を追記):
+# 0000000000000000000000000000000000000000000000000000000000000000
+#
+# pytest fixture では `monkeypatch.setattr(taskhub_signed_approval,
+# "_verify_key_fingerprint_allowlist_path", lambda: tmp_path / "allowlist")` で
+# tmp_path 内 fixture-specific allowlist に置換され、本 production allowlist は触られない。
+#
+# 関連: ADR-00021 §3 / §5 (taskhub admin CLI spec + age key SOP)、
+# docs/deploy/half-yearly-drill-sop.md §7 (T02 planned contract、Phase 1 で normative 化)

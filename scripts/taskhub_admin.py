@@ -44,6 +44,23 @@ import argparse
 import sys
 from pathlib import Path
 
+# R2-F-001 adopt: dual import (direct-script `python scripts/taskhub_admin.py` と
+# console_script `uv run taskhub` の両方で動かす)
+# direct-script では sys.path[0]=scripts/ なので、parent (repo root) を append してから再 import
+try:
+    from scripts.taskhub_signed_approval import (
+        emit_audit_event,
+        require_approval_for_destructive,
+    )
+except ModuleNotFoundError:
+    _REPO_ROOT = Path(__file__).resolve().parent.parent
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    from scripts.taskhub_signed_approval import (  # noqa: E402
+        emit_audit_event,
+        require_approval_for_destructive,
+    )
+
 
 def _skeleton_message(subcommand: str, details: str = "") -> str:
     """skeleton mode の info message (real I/O は user 物理 drill phase で配備)."""
@@ -62,6 +79,28 @@ def _skeleton_message(subcommand: str, details: str = "") -> str:
     lines.append("  - docs/adr/00021_host_portable_deployment.md §5 (age key SOP)")
     lines.append("  - docs/adr/00021_host_portable_deployment.md §8 (drill schedule)")
     return "\n".join(lines)
+
+
+def _run_approval_gate(
+    subcommand: str, args: argparse.Namespace, *, target_host: str | None = None,
+) -> tuple[bool, str]:
+    """SP022-T02 Phase 1 signed approval pre-execution gate (R1-F-002 + R3-F-001 adopt).
+
+    Default deny for destructive subcommands. Returns (allowed, reason_code) and
+    emits redacted audit-line scaffold to stderr.
+    """
+    approval_id = getattr(args, "approval_id", None)
+    from_automation = getattr(args, "from_automation", False)
+    allow_unsigned_manual_skeleton = getattr(args, "allow_unsigned_manual_skeleton", False)
+    allowed, reason, extras = require_approval_for_destructive(
+        subcommand,
+        approval_id,
+        from_automation,
+        allow_unsigned_manual_skeleton,
+        target_host=target_host,
+    )
+    emit_audit_event(reason, extras)
+    return allowed, reason
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
@@ -96,7 +135,16 @@ def _cmd_backup(args: argparse.Namespace) -> int:
     ADR-00021 §11.1 PG-F-015 hardening: 旧 `--include-secrets` を
     `--include-sops-env` に rename. SOPS-encrypted .env のみを含め、age private
     key は絶対含めない (CI test で verify 予定).
+
+    SP022-T02 Phase 1: signed approval pre-execution gate (default deny).
     """
+    allowed, reason = _run_approval_gate("backup", args)
+    if not allowed:
+        print(  # noqa: T201
+            f"ERROR: signed approval gate denied (reason={reason})",
+            file=sys.stderr,
+        )
+        return 2
     if not args.output:
         print("ERROR: --output <path> is required", file=sys.stderr)  # noqa: T201
         return 2
@@ -121,6 +169,11 @@ def _cmd_restore(args: argparse.Namespace) -> int:
     ADR-00021 §290 / §299: restore 失敗時に `data/_pre-restore-<ts>/` から旧 volume を
     復旧する rollback mode (`--rollback <pre-restore-ts>`) を併設 (Codex R4 F-PR63-011 adopt).
     `--input` と `--rollback` は排他.
+
+    SP022-T02 Phase 1: signed approval pre-execution gate (default deny).
+    Phase 1 では `target_host` claim は未実装 (R2-F-003 adopt、Phase 2 で `--target-host` 追加判断).
+    Input validation (mutex / required / missing file) is performed BEFORE the gate
+    so that argparse-level usage errors take precedence over approval gate denial.
     """
     if args.input and args.rollback:
         print(  # noqa: T201
@@ -132,6 +185,26 @@ def _cmd_restore(args: argparse.Namespace) -> int:
         print(  # noqa: T201
             "ERROR: --input <path>.tar.age または --rollback <pre-restore-ts> "
             "のいずれかが必須",
+            file=sys.stderr,
+        )
+        return 2
+
+    # CLI usage validation (file-existence check) — gate runs AFTER (R2-F-002 adopt):
+    # existing tests expect "input backup file not found" stderr for missing input
+    if args.input:
+        input_path = Path(args.input)
+        if not input_path.exists():
+            print(  # noqa: T201
+                f"ERROR: input backup file not found: {input_path}",
+                file=sys.stderr,
+            )
+            return 2
+
+    # signed approval gate (after all input validation)
+    allowed, reason = _run_approval_gate("restore", args)
+    if not allowed:
+        print(  # noqa: T201
+            f"ERROR: signed approval gate denied (reason={reason})",
             file=sys.stderr,
         )
         return 2
@@ -151,12 +224,6 @@ def _cmd_restore(args: argparse.Namespace) -> int:
         return 1  # skeleton mode
 
     input_path = Path(args.input)
-    if not input_path.exists():
-        print(  # noqa: T201
-            f"ERROR: input backup file not found: {input_path}",
-            file=sys.stderr,
-        )
-        return 2
     print(  # noqa: T201
         _skeleton_message(
             "restore",
@@ -172,7 +239,20 @@ def _cmd_restore(args: argparse.Namespace) -> int:
 
 
 def _cmd_migrate(args: argparse.Namespace) -> int:
-    """`taskhub migrate --target <hostname> [--via <transport>]` skeleton."""
+    """`taskhub migrate --target <hostname> [--via <transport>]` skeleton.
+
+    SP022-T02 Phase 1: signed approval pre-execution gate (default deny) with
+    target_host claim 厳密化 (R2-F-003 adopt: CLI --target と record.target_host 両方
+    non-empty + strip 後 exact match).
+    """
+    # gate は --target argparse 必須 check 前に走る (signature check 統合)
+    allowed, reason = _run_approval_gate("migrate", args, target_host=args.target)
+    if not allowed:
+        print(  # noqa: T201
+            f"ERROR: signed approval gate denied (reason={reason})",
+            file=sys.stderr,
+        )
+        return 2
     if not args.target:
         print("ERROR: --target <hostname> is required", file=sys.stderr)  # noqa: T201
         return 2
@@ -230,7 +310,17 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 
 def _cmd_freeze(args: argparse.Namespace) -> int:
-    """`taskhub freeze --reason <text>` skeleton (split-brain prevention、§11.2)."""
+    """`taskhub freeze --reason <text>` skeleton (split-brain prevention、§11.2).
+
+    SP022-T02 Phase 1: signed approval pre-execution gate (default deny).
+    """
+    allowed, reason_code = _run_approval_gate("freeze", args)
+    if not allowed:
+        print(  # noqa: T201
+            f"ERROR: signed approval gate denied (reason={reason_code})",
+            file=sys.stderr,
+        )
+        return 2
     if not args.reason:
         print("ERROR: --reason <text> is required", file=sys.stderr)  # noqa: T201
         return 2
@@ -248,7 +338,17 @@ def _cmd_freeze(args: argparse.Namespace) -> int:
 
 
 def _cmd_thaw(args: argparse.Namespace) -> int:
-    """`taskhub thaw [--decommission-target]` skeleton (§670 2-party-control)."""
+    """`taskhub thaw [--decommission-target]` skeleton (§670 2-party-control).
+
+    SP022-T02 Phase 1: signed approval pre-execution gate (default deny).
+    """
+    allowed, reason_code = _run_approval_gate("thaw", args)
+    if not allowed:
+        print(  # noqa: T201
+            f"ERROR: signed approval gate denied (reason={reason_code})",
+            file=sys.stderr,
+        )
+        return 2
     flag = (
         " (--decommission-target に伴う target active marker 削除)"
         if args.decommission_target
@@ -291,8 +391,16 @@ def _cmd_age_rotate(args: argparse.Namespace) -> int:
 
     CRITICAL: age key rotation は user 物理運搬必須 (ADR-00021 §5 SOP).
     本 skeleton は info message のみ、実 rotation は user drill phase で配備.
+
+    SP022-T02 Phase 1: signed approval pre-execution gate (default deny).
     """
-    del args
+    allowed, reason_code = _run_approval_gate("age-rotate", args)
+    if not allowed:
+        print(  # noqa: T201
+            f"ERROR: signed approval gate denied (reason={reason_code})",
+            file=sys.stderr,
+        )
+        return 2
     print(  # noqa: T201
         _skeleton_message(
             "age-rotate",
@@ -339,6 +447,39 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         )
     )
     return 1
+
+
+def _add_signed_approval_args(parser: argparse.ArgumentParser) -> None:
+    """SP022-T02 Phase 1 signed approval CLI args (destructive subcommand 用).
+
+    R1-F-002 + R3-F-001 adopt: default deny + skeleton-only escape (Phase 2 で削除予定).
+    """
+    parser.add_argument(
+        "--approval-id",
+        type=str,
+        default=None,
+        help=(
+            "signed approval ID (~/.taskhub/approvals/<id>.signed)。"
+            "automation 実行時は必須、手動実行も default deny (escape は "
+            "`--allow-unsigned-manual-skeleton`)"
+        ),
+    )
+    parser.add_argument(
+        "--from-automation",
+        action="store_true",
+        help=(
+            "automation (cron/systemd/CI) 経由実行を明示。"
+            "signed approval ID と組合せ必須"
+        ),
+    )
+    parser.add_argument(
+        "--allow-unsigned-manual-skeleton",
+        action="store_true",
+        help=(
+            "(Phase 1 only、Phase 2 削除予定) skeleton mode の手動実行で approval gate を "
+            "escape。default deny を override する旨を audit に記録"
+        ),
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -396,6 +537,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     sub_backup.set_defaults(func=_cmd_backup)
+    _add_signed_approval_args(sub_backup)
 
     sub_restore = subparsers.add_parser(
         "restore",
@@ -418,6 +560,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     sub_restore.set_defaults(func=_cmd_restore)
+    _add_signed_approval_args(sub_restore)
 
     sub_freeze = subparsers.add_parser(
         "freeze",
@@ -430,6 +573,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="reason text for signed freeze marker (audit trail)",
     )
     sub_freeze.set_defaults(func=_cmd_freeze)
+    _add_signed_approval_args(sub_freeze)
 
     sub_thaw = subparsers.add_parser(
         "thaw",
@@ -444,6 +588,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     sub_thaw.set_defaults(func=_cmd_thaw)
+    _add_signed_approval_args(sub_thaw)
 
     sub_active_registry = subparsers.add_parser(
         "active-registry",
@@ -466,6 +611,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="transport (default: tailscale); see ADR-00021 §3 + SP-012 drill section",
     )
     sub_migrate.set_defaults(func=_cmd_migrate)
+    _add_signed_approval_args(sub_migrate)
 
     sub_status = subparsers.add_parser(
         "status",
@@ -503,6 +649,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="rotate age key + SOPS re-encrypt (user 物理運搬 SOP 必須)",
     )
     sub_age_rotate.set_defaults(func=_cmd_age_rotate)
+    _add_signed_approval_args(sub_age_rotate)
 
     sub_verify = subparsers.add_parser(
         "verify",
