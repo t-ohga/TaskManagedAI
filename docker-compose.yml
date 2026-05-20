@@ -10,6 +10,11 @@ services:
     command: ["uv", "run", "--no-sync", "uvicorn", "backend.app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "127.0.0.1:8000:8000"
+    # SP022-T02 Phase 3 (R22-F-001 + R23-F-001 adopt): artifacts bind mount で host path から
+    # container 内 /app/data/artifacts を mount。restore preflight (verify_target_binding_consistency)
+    # は api/worker 両方の bind mount を要求するため、必須.
+    volumes:
+      - ./data/artifacts:/app/data/artifacts:rw
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,6 +69,9 @@ services:
     environment:
       TASKMANAGEDAI_ENVIRONMENT: "${TASKMANAGEDAI_ENVIRONMENT:?must be set explicitly to production|development|test}"
     command: ["uv", "run", "--no-sync", "arq", "backend.app.workers.main.WorkerSettings"]
+    # SP022-T02 Phase 3 (R22-F-001 + R23-F-001 adopt): artifacts bind mount (api と同 path)
+    volumes:
+      - ./data/artifacts:/app/data/artifacts:rw
     depends_on:
       postgres:
         condition: service_healthy

@@ -98,15 +98,17 @@ AUTOMATION_ENV_VARS = (
 )
 
 DESTRUCTIVE_SUBCOMMANDS = frozenset(
-    {"backup", "restore", "migrate", "freeze", "thaw", "age-rotate"},
+    # F-PR78-005 adopt: restore-rollback は skeleton mode 中の rollback path、restore_claim 不要
+    # (real I/O は SP022-T02 Phase 4 carry-over、本 batch では skeleton 維持)
+    {"backup", "restore", "restore-rollback", "migrate", "freeze", "thaw", "age-rotate"},
 )
 
 DRILL_KIND_ALLOWED_SUBCOMMANDS: dict[str, frozenset[str]] = {
-    "host_migration_mac_vps": frozenset({"backup", "migrate", "restore"}),
-    "host_migration_linux_vps": frozenset({"backup", "migrate", "restore"}),
-    "host_migration_vps_vps": frozenset({"backup", "migrate", "restore"}),
+    "host_migration_mac_vps": frozenset({"backup", "migrate", "restore", "restore-rollback"}),
+    "host_migration_linux_vps": frozenset({"backup", "migrate", "restore", "restore-rollback"}),
+    "host_migration_vps_vps": frozenset({"backup", "migrate", "restore", "restore-rollback"}),
     "backup_only": frozenset({"backup"}),
-    "restore_only": frozenset({"restore"}),
+    "restore_only": frozenset({"restore", "restore-rollback"}),
     "age_rotate": frozenset({"age-rotate"}),
     "freeze_only": frozenset({"freeze"}),
     "thaw_only": frozenset({"thaw"}),
@@ -128,6 +130,34 @@ class BackupApprovalClaim:
     skip_service_stop: bool
     overwrite: bool
     age_public_key_fingerprint: str  # SHA-256 hex of age public key bytes
+
+
+# SP022-T02 Phase 3 / T08 batch 3: restore_claim (R1-R23 adopt)
+@dataclass(frozen=True)
+class RestoreApprovalClaim:
+    """Restore-specific approval claim (SP022-T02 Phase 3 / T08 batch 3).
+
+    R1-F-004 + R2-F-001 + R6 + R8-F-001 + R12 + R13 + R23 全 adopt: restore subcommand では
+    input_path / archive_sha256 / age_public_key_fingerprint / target_pg_dsn_components /
+    target_redis_endpoint / target_artifacts_dir / target_artifacts_container_path /
+    target_compose_project_name / target_compose_file_path / expected_postgres_major_version /
+    expected_alembic_head / skip_service_stop を approval payload に含め、CLI 引数 + runtime
+    inspect (target binding consistency preflight) で完全一致 verify。Phase 1 既存 record
+    (restore_claim 不在) は restore では deny、他 subcommand では従来通り verify。
+    """
+
+    input_path: str  # absolute path string, normpath
+    archive_sha256: str  # 64-char hex sha256 of .tar.age full content
+    age_public_key_fingerprint: str  # SHA-256 hex of age public key bytes (backup 整合)
+    target_pg_dsn_components: dict[str, str]  # {host, port, db, user} 4-tuple
+    target_redis_endpoint: str  # host:port literal
+    target_artifacts_dir: str  # absolute normpath, host-side
+    target_artifacts_container_path: str  # container destination path (e.g., /app/data/artifacts)
+    target_compose_project_name: str  # docker compose -p value
+    target_compose_file_path: str  # docker compose -f value, absolute normpath
+    expected_postgres_major_version: str  # e.g., "17"
+    expected_alembic_head: str  # restore 後 DB alembic_version 期待値
+    skip_service_stop: bool  # CLI 経路で物理 deny されるが claim には含めて完全一致 verify
 
 
 ReasonCode = Literal[
@@ -159,6 +189,9 @@ ReasonCode = Literal[
     "taskhub_signed_approval_backup_claim_required",  # R2-F-001 adopt: backup subcommand で claim 不在
     "taskhub_signed_approval_backup_claim_mismatch",   # R2-F-001 adopt: claim と CLI 引数不一致
     "taskhub_signed_approval_backup_allow_unsigned_skeleton_rejected",  # R2-F-001 adopt: backup では escape を物理 deny
+    "taskhub_signed_approval_restore_claim_required",  # SP022-T02 Phase 3: restore subcommand で claim 不在
+    "taskhub_signed_approval_restore_claim_mismatch",  # SP022-T02 Phase 3: claim と CLI 引数不一致
+    "taskhub_signed_approval_restore_allow_unsigned_skeleton_rejected",  # restore では escape を物理 deny
 ]
 
 AUDIT_PAYLOAD_ALLOWLIST_KEYS: frozenset[str] = frozenset(
@@ -186,7 +219,12 @@ AUDIT_PAYLOAD_ALLOWLIST_KEYS: frozenset[str] = frozenset(
 
 @dataclass(frozen=True)
 class ApprovalRecord:
-    """Approval record schema (strict)."""
+    """Approval record schema (strict).
+
+    SP022-T02 Phase 3 (R2-F-001 retro-fix): backup_claim + restore_claim を ApprovalRecord に
+    含め、`_rfc8785_canonical_payload_bytes` で署名対象に追加 (claim 後から書換による
+    signature 突破経路を物理排除)。
+    """
 
     approval_id: str
     decider: str
@@ -197,6 +235,8 @@ class ApprovalRecord:
     allowed_subcommands: tuple[str, ...]
     target_host: str | None
     signature_b64: str  # raw base64 string (validate 済)
+    backup_claim: BackupApprovalClaim | None = None   # R2-F-001 retro-fix: signature 対象
+    restore_claim: RestoreApprovalClaim | None = None # SP022-T02 Phase 3: signature 対象
 
 
 # --- detection helpers ---
@@ -233,6 +273,10 @@ def _validate_approval_id(approval_id: str) -> bool:
 def _rfc8785_canonical_payload_bytes(record: ApprovalRecord) -> bytes:
     """RFC 8785 strict JCS canonical JSON (datetime 原文字列保持).
 
+    SP022-T02 Phase 3 (R2-F-001 retro-fix + R9-F-002 + R23-F-001 adopt):
+    backup_claim / restore_claim も canonical payload に sub-record として含める。
+    claim 後から書換による signature 突破経路を物理排除。
+
     Reference vector is tested in tests/scripts/test_taskhub_signed_approval.py.
     """
     payload: dict[str, object] = {
@@ -245,6 +289,29 @@ def _rfc8785_canonical_payload_bytes(record: ApprovalRecord) -> bytes:
         "signed_at": record.signed_at_str,
         "target_host": record.target_host,
     }
+    if record.backup_claim is not None:
+        payload["backup_claim"] = {
+            "age_public_key_fingerprint": record.backup_claim.age_public_key_fingerprint,
+            "include_sops_env": record.backup_claim.include_sops_env,
+            "output_path": record.backup_claim.output_path,
+            "overwrite": record.backup_claim.overwrite,
+            "skip_service_stop": record.backup_claim.skip_service_stop,
+        }
+    if record.restore_claim is not None:
+        payload["restore_claim"] = {
+            "age_public_key_fingerprint": record.restore_claim.age_public_key_fingerprint,
+            "archive_sha256": record.restore_claim.archive_sha256,
+            "expected_alembic_head": record.restore_claim.expected_alembic_head,
+            "expected_postgres_major_version": record.restore_claim.expected_postgres_major_version,
+            "input_path": record.restore_claim.input_path,
+            "skip_service_stop": record.restore_claim.skip_service_stop,
+            "target_artifacts_container_path": record.restore_claim.target_artifacts_container_path,
+            "target_artifacts_dir": record.restore_claim.target_artifacts_dir,
+            "target_compose_file_path": record.restore_claim.target_compose_file_path,
+            "target_compose_project_name": record.restore_claim.target_compose_project_name,
+            "target_pg_dsn_components": dict(sorted(record.restore_claim.target_pg_dsn_components.items())),
+            "target_redis_endpoint": record.restore_claim.target_redis_endpoint,
+        }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
@@ -278,7 +345,8 @@ def _load_approval_record(approval_id: str) -> tuple[ApprovalRecord | None, Reas
         "allowed_subcommands",
         "signature",
     }
-    allowed_keys = required | {"target_host", "backup_claim"}  # backup_claim 追加 (F-PR77-001)
+    # SP022-T02 Phase 3 (R2-F-001 retro-fix): restore_claim も allowlist 拡張、canonical payload 対象
+    allowed_keys = required | {"target_host", "backup_claim", "restore_claim"}
     if not required.issubset(data.keys()):
         return None, "taskhub_signed_approval_record_malformed"
     extra_keys = set(data.keys()) - allowed_keys
@@ -324,6 +392,15 @@ def _load_approval_record(approval_id: str) -> tuple[ApprovalRecord | None, Reas
     if len(decoded) != 64:
         return None, "taskhub_signed_approval_signature_malformed"
 
+    # R2-F-001 retro-fix: backup_claim / restore_claim を ApprovalRecord に embed
+    # canonical payload 計算で署名対象として使用 (claim 後書換による signature 突破経路を遮断)
+    backup_claim = _parse_backup_claim_dict(data.get("backup_claim"))
+    if data.get("backup_claim") is not None and backup_claim is None:
+        return None, "taskhub_signed_approval_record_malformed"
+    restore_claim = _parse_restore_claim_dict(data.get("restore_claim"))
+    if data.get("restore_claim") is not None and restore_claim is None:
+        return None, "taskhub_signed_approval_record_malformed"
+
     record = ApprovalRecord(
         approval_id=data["approval_id"],
         decider=data["decider"],
@@ -334,8 +411,98 @@ def _load_approval_record(approval_id: str) -> tuple[ApprovalRecord | None, Reas
         allowed_subcommands=tuple(data["allowed_subcommands"]),
         target_host=target_host,
         signature_b64=sig_b64,
+        backup_claim=backup_claim,
+        restore_claim=restore_claim,
     )
     return record, None
+
+
+# SP022-T02 Phase 3 (R2-F-001 retro-fix): backup_claim / restore_claim parsers (strict schema)
+
+
+def _parse_backup_claim_dict(bc: object) -> BackupApprovalClaim | None:
+    if bc is None:
+        return None
+    if not isinstance(bc, dict):
+        return None
+    required = {
+        "output_path", "include_sops_env", "skip_service_stop",
+        "overwrite", "age_public_key_fingerprint",
+    }
+    if not required.issubset(bc.keys()):
+        return None
+    if set(bc.keys()) - required:
+        return None
+    if not isinstance(bc["output_path"], str) or not bc["output_path"]:
+        return None
+    if not isinstance(bc["include_sops_env"], bool):
+        return None
+    if not isinstance(bc["skip_service_stop"], bool):
+        return None
+    if not isinstance(bc["overwrite"], bool):
+        return None
+    if not isinstance(bc["age_public_key_fingerprint"], str) or not bc["age_public_key_fingerprint"]:
+        return None
+    return BackupApprovalClaim(
+        output_path=bc["output_path"],
+        include_sops_env=bc["include_sops_env"],
+        skip_service_stop=bc["skip_service_stop"],
+        overwrite=bc["overwrite"],
+        age_public_key_fingerprint=bc["age_public_key_fingerprint"],
+    )
+
+
+def _parse_restore_claim_dict(rc: object) -> RestoreApprovalClaim | None:
+    if rc is None:
+        return None
+    if not isinstance(rc, dict):
+        return None
+    required = {
+        "input_path", "archive_sha256", "age_public_key_fingerprint",
+        "target_pg_dsn_components", "target_redis_endpoint", "target_artifacts_dir",
+        "target_artifacts_container_path", "target_compose_project_name",
+        "target_compose_file_path", "expected_postgres_major_version",
+        "expected_alembic_head", "skip_service_stop",
+    }
+    if not required.issubset(rc.keys()):
+        return None
+    if set(rc.keys()) - required:
+        return None
+    # type checks
+    for str_field in (
+        "input_path", "archive_sha256", "age_public_key_fingerprint",
+        "target_redis_endpoint", "target_artifacts_dir",
+        "target_artifacts_container_path", "target_compose_project_name",
+        "target_compose_file_path", "expected_postgres_major_version",
+        "expected_alembic_head",
+    ):
+        if not isinstance(rc[str_field], str) or not rc[str_field]:
+            return None
+    if not isinstance(rc["skip_service_stop"], bool):
+        return None
+    dsn = rc["target_pg_dsn_components"]
+    if not isinstance(dsn, dict):
+        return None
+    dsn_required = {"host", "port", "db", "user"}
+    if not dsn_required.issubset(dsn.keys()) or set(dsn.keys()) - dsn_required:
+        return None
+    for k in dsn_required:
+        if not isinstance(dsn[k], str) or not dsn[k]:
+            return None
+    return RestoreApprovalClaim(
+        input_path=rc["input_path"],
+        archive_sha256=rc["archive_sha256"],
+        age_public_key_fingerprint=rc["age_public_key_fingerprint"],
+        target_pg_dsn_components={k: dsn[k] for k in sorted(dsn)},
+        target_redis_endpoint=rc["target_redis_endpoint"],
+        target_artifacts_dir=rc["target_artifacts_dir"],
+        target_artifacts_container_path=rc["target_artifacts_container_path"],
+        target_compose_project_name=rc["target_compose_project_name"],
+        target_compose_file_path=rc["target_compose_file_path"],
+        expected_postgres_major_version=rc["expected_postgres_major_version"],
+        expected_alembic_head=rc["expected_alembic_head"],
+        skip_service_stop=rc["skip_service_stop"],
+    )
 
 
 # --- verify key loader (R1-F-009 + R3-F-001 adopt) ---
@@ -464,6 +631,39 @@ def _backup_claims_match(cli: BackupApprovalClaim, record: BackupApprovalClaim) 
     )
 
 
+def _restore_claims_match(cli: RestoreApprovalClaim, record: RestoreApprovalClaim) -> bool:
+    """SP022-T02 Phase 3 adopt: restore_claim 全 field 完全一致 verify。
+
+    path / endpoint は absolute normpath / `host:port` literal で比較 (caller が pre-normalize 済)。
+    target_pg_dsn_components は dict、key-by-key strict 比較。
+    """
+    if cli.input_path != record.input_path:
+        return False
+    if cli.archive_sha256 != record.archive_sha256:
+        return False
+    if cli.age_public_key_fingerprint != record.age_public_key_fingerprint:
+        return False
+    if cli.target_pg_dsn_components != record.target_pg_dsn_components:
+        return False
+    if cli.target_redis_endpoint != record.target_redis_endpoint:
+        return False
+    if cli.target_artifacts_dir != record.target_artifacts_dir:
+        return False
+    if cli.target_artifacts_container_path != record.target_artifacts_container_path:
+        return False
+    if cli.target_compose_project_name != record.target_compose_project_name:
+        return False
+    if cli.target_compose_file_path != record.target_compose_file_path:
+        return False
+    if cli.expected_postgres_major_version != record.expected_postgres_major_version:
+        return False
+    if cli.expected_alembic_head != record.expected_alembic_head:
+        return False
+    if cli.skip_service_stop != record.skip_service_stop:
+        return False
+    return True
+
+
 def verify_signed_approval(
     approval_id: str,
     subcommand: str,
@@ -472,6 +672,7 @@ def verify_signed_approval(
     clock_skew: timedelta = DEFAULT_CLOCK_SKEW,
     max_ttl: timedelta = DEFAULT_MAX_TTL,
     backup_claim: BackupApprovalClaim | None = None,  # R2-F-001 adopt
+    restore_claim: RestoreApprovalClaim | None = None,  # SP022-T02 Phase 3 adopt
 ) -> tuple[bool, ReasonCode, dict[str, object]]:
     """Verify approval record (R1-F-001/005/007/014/015/016 + R2-F-003 + R2-F-001 全 adopt).
 
@@ -526,18 +727,32 @@ def verify_signed_approval(
             extras["actual_target_host"] = target_host
             return False, "taskhub_signed_approval_target_host_mismatch", extras
 
-    # R2-F-001 adopt: backup_claim verification for "backup" subcommand
+    # R2-F-001 adopt + retro-fix: backup_claim verification for "backup" subcommand
     if subcommand == "backup":
         if backup_claim is None:
             return False, "taskhub_signed_approval_backup_claim_required", extras
-        record_claim = _extract_backup_claim_from_record(approval_id)
-        if record_claim is None:
+        # R2-F-001 retro-fix: ApprovalRecord embedded backup_claim を使用 (signature 対象済)
+        record_backup_claim = record.backup_claim
+        if record_backup_claim is None:
             # Phase 1 既存 record (backup_claim 不在) は backup では deny
             return False, "taskhub_signed_approval_backup_claim_required", extras
-        if not _backup_claims_match(backup_claim, record_claim):
-            extras["expected_backup_claim_fingerprint"] = record_claim.age_public_key_fingerprint
+        if not _backup_claims_match(backup_claim, record_backup_claim):
+            extras["expected_backup_claim_fingerprint"] = record_backup_claim.age_public_key_fingerprint
             extras["actual_backup_claim_fingerprint"] = backup_claim.age_public_key_fingerprint
             return False, "taskhub_signed_approval_backup_claim_mismatch", extras
+
+    # SP022-T02 Phase 3 adopt: restore_claim verification for "restore" subcommand
+    if subcommand == "restore":
+        if restore_claim is None:
+            return False, "taskhub_signed_approval_restore_claim_required", extras
+        record_restore_claim = record.restore_claim
+        if record_restore_claim is None:
+            # Phase 1 / Phase 2 record (restore_claim 不在) は restore では deny
+            return False, "taskhub_signed_approval_restore_claim_required", extras
+        if not _restore_claims_match(restore_claim, record_restore_claim):
+            extras["expected_restore_archive_sha256"] = record_restore_claim.archive_sha256[:16]
+            extras["actual_restore_archive_sha256"] = restore_claim.archive_sha256[:16]
+            return False, "taskhub_signed_approval_restore_claim_mismatch", extras
 
     verify_key, fingerprint, key_error = _load_verify_key_and_fingerprint()
     if key_error or verify_key is None:
@@ -565,11 +780,14 @@ def require_approval_for_destructive(
     allow_unsigned_manual_skeleton: bool,
     target_host: str | None = None,
     backup_claim: BackupApprovalClaim | None = None,  # R2-F-001 adopt
+    restore_claim: RestoreApprovalClaim | None = None,  # SP022-T02 Phase 3 adopt
 ) -> tuple[bool, ReasonCode, dict[str, object]]:
     """Pre-execution gate (default deny for destructive subcommands).
 
     R2-F-001 adopt: backup subcommand では `--allow-unsigned-manual-skeleton` を物理 deny、
     backup_claim 必須化 (Phase 1 既存 record backup_claim 不在は backup では deny)。
+    SP022-T02 Phase 3 adopt: restore subcommand も同 pattern (--allow-unsigned-manual-skeleton 物理 deny、
+    restore_claim 必須化)。
     """
     extras: dict[str, object] = {
         "subcommand": subcommand,
@@ -583,6 +801,9 @@ def require_approval_for_destructive(
     # R2-F-001 adopt: backup subcommand では --allow-unsigned-manual-skeleton を物理 deny
     if subcommand == "backup" and allow_unsigned_manual_skeleton:
         return False, "taskhub_signed_approval_backup_allow_unsigned_skeleton_rejected", extras
+    # SP022-T02 Phase 3 adopt: restore subcommand も同 pattern
+    if subcommand == "restore" and allow_unsigned_manual_skeleton:
+        return False, "taskhub_signed_approval_restore_allow_unsigned_skeleton_rejected", extras
 
     automation = detect_automation_context()
     extras["automation_env_hits"] = automation["env_hits"]
@@ -596,7 +817,7 @@ def require_approval_for_destructive(
             return False, "taskhub_signed_approval_from_automation_requires_approval_id", extras
     elif not approval_id:
         if allow_unsigned_manual_skeleton:
-            # backup subcommand は上で deny 済、ここに到達するのは他 destructive
+            # backup / restore subcommand は上で deny 済、ここに到達するのは他 destructive
             extras["unsigned_manual_skeleton_used"] = True
             return True, "taskhub_signed_approval_unsigned_manual_skeleton_allowed", extras
         return False, "taskhub_signed_approval_destructive_requires_approval", extras
@@ -605,7 +826,8 @@ def require_approval_for_destructive(
         return False, "taskhub_signed_approval_destructive_requires_approval", extras
 
     allowed, reason, verify_extras = verify_signed_approval(
-        approval_id, subcommand, target_host=target_host, backup_claim=backup_claim,
+        approval_id, subcommand, target_host=target_host,
+        backup_claim=backup_claim, restore_claim=restore_claim,
     )
     for k, v in verify_extras.items():
         extras.setdefault(k, v)

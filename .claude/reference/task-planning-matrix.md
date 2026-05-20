@@ -21,7 +21,7 @@
 | Task | plan_status | 理由 |
 |---|---|---|
 | SP022-T01 (framework intake CI 機械化) | 🟥 heavy (完了済 PR #70) | (a) ADR-00020 acceptance 直結 + (e) 新規 CI 機械検査 (8 verify item) + (b) 4+ file 横断 (script + scanner + workflow + test) |
-| SP022-T02 (`taskhub migrate` 自動化) | 🟥 heavy + phase 分割必須 | (b) 7 subcommand multi-day scope + (a) ADR Gate Criteria #6 (Secrets) + #11 (broad refactor) 直結 + (d) SecretBroker boundary 直結 (age key / Ed25519 signature)。Phase 分割 = Phase 1 CLI scaffold + signed approval / Phase 2 backup-restore / Phase 3 migrate orchestration / Phase 4 freeze-thaw split-brain |
+| SP022-T02 (`taskhub migrate` 自動化) | 🟥 heavy + phase 分割必須 (Phase 1 完了 PR #75 / Phase 2 backup real I/O 完了 PR #77 / Phase 3 restore real I/O 完了済) | (b) 7 subcommand multi-day scope + (a) ADR Gate Criteria #6 (Secrets) + #11 (broad refactor) 直結 + (d) SecretBroker boundary 直結 (age key / Ed25519 signature)。Phase 分割 = Phase 1 CLI scaffold + signed approval / Phase 2 backup real I/O / Phase 3 restore real I/O (24 rounds 58 findings 100% adopt) / Phase 4 freeze-thaw split-brain + rollback standalone real I/O |
 | SP022-T03 (半年 drill SOP) | 🟥 heavy (完了済 PR #71) | (e) 新規 CI gate (`check_drill_timer_alert_only.sh`) + (b) 3+ file 横断 (SOP docs + scanner + workflow + tests) + (a) ADR-00021 §14.2 #4 PGA-F-013 直結 |
 | SP022-T04 (Phase E trace audit) | 🟥 heavy (完了済 PR #72) | (e) 新規 CI gate (`check_phase_e_trace.sh`) + (b) 4+ file 横断 (scanner + wrapper + tests + workflow + SP-022 matrix update) + (a) ADR-00020 audit-only gate 直結 |
 | SP022-T05 (AC-HARD multi-agent re-verify) | ⛔ deferred (`blocked_by: SP-013 multi-agent skeleton`) | (a) SP-013 multi-agent skeleton (P0.1) 依存、本 Sprint 中の着手不可。SP-013 完了後に level 再判定 (heavy 想定) |

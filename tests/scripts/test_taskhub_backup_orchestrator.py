@@ -27,6 +27,8 @@ from scripts.taskhub_subprocess_runner import SubprocessResult
 
 
 def test_build_meta_json_includes_required_fields() -> None:
+    """R2-F-005 PR #77 retro-fix: field name 統一 (host→host_name, timestamp→timestamp_utc,
+    backup_format_version→format_version)."""
     ts = datetime(2026, 5, 20, 12, 0, 0, tzinfo=UTC)
     meta = bo.build_meta_json(
         host_name="t-ohga-mac",
@@ -35,12 +37,16 @@ def test_build_meta_json_includes_required_fields() -> None:
         redis_version="7.4",
         alembic_head="abc123def456",
     )
-    assert meta["host"] == "t-ohga-mac"
-    assert meta["timestamp"] == "2026-05-20T12:00:00Z"
+    assert meta["host_name"] == "t-ohga-mac"
+    assert meta["timestamp_utc"] == "2026-05-20T12:00:00Z"
     assert meta["postgres_version"] == "17.0"
     assert meta["redis_version"] == "7.4"
     assert meta["alembic_head"] == "abc123def456"
-    assert "backup_format_version" in meta
+    assert meta["format_version"] == "1.0"
+    # 旧 field 名 (host / timestamp / backup_format_version) は absence verify
+    assert "host" not in meta
+    assert "timestamp" not in meta
+    assert "backup_format_version" not in meta
 
 
 def test_build_checksums_text_deterministic(tmp_path: Path) -> None:

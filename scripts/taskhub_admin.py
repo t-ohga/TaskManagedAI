@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -239,16 +240,13 @@ def _cmd_backup(args: argparse.Namespace) -> int:
 
 
 def _cmd_restore(args: argparse.Namespace) -> int:
-    """`taskhub restore --input <path>.tar.age | --rollback <pre-restore-ts>` skeleton.
+    """`taskhub restore --input <path>.tar.age` real I/O orchestration / `--rollback` skeleton.
 
-    ADR-00021 §290 / §299: restore 失敗時に `data/_pre-restore-<ts>/` から旧 volume を
-    復旧する rollback mode (`--rollback <pre-restore-ts>`) を併設 (Codex R4 F-PR63-011 adopt).
-    `--input` と `--rollback` は排他.
+    SP022-T02 Phase 3 / T08 batch 3: real restore orchestration.
+    24 rounds + 58 findings 100% adopt of codex-plan-review (CLAUDE.md §6.5.4).
 
-    SP022-T02 Phase 1: signed approval pre-execution gate (default deny).
-    Phase 1 では `target_host` claim は未実装 (R2-F-003 adopt、Phase 2 で `--target-host` 追加判断).
-    Input validation (mutex / required / missing file) is performed BEFORE the gate
-    so that argparse-level usage errors take precedence over approval gate denial.
+    R3-F-001 adopt: `--allow-unsigned-manual-skeleton` は restore で物理 deny (signed approval
+    + restore_claim 経由のみ).
     """
     if args.input and args.rollback:
         print(  # noqa: T201
@@ -264,19 +262,211 @@ def _cmd_restore(args: argparse.Namespace) -> int:
         )
         return 2
 
-    # CLI usage validation (file-existence check) — gate runs AFTER (R2-F-002 adopt):
-    # existing tests expect "input backup file not found" stderr for missing input
-    if args.input:
-        input_path = Path(args.input)
-        if not input_path.exists():
+    # R3-F-001 adopt: restore で --allow-unsigned-manual-skeleton は物理 deny
+    if getattr(args, "allow_unsigned_manual_skeleton", False):
+        print(  # noqa: T201
+            "ERROR: --allow-unsigned-manual-skeleton is rejected for restore subcommand "
+            "(real I/O requires signed approval + restore_claim, no skeleton escape allowed) "
+            "[reason=taskhub_signed_approval_restore_allow_unsigned_skeleton_rejected]",
+            file=sys.stderr,
+        )
+        return 2
+
+    # --rollback は skeleton mode (real I/O は SP022-T02 Phase 4 carry-over)
+    if args.rollback:
+        # F-PR78-005 adopt: rollback skeleton は "restore-rollback" subcommand を使用
+        # (restore_claim 必須化されていない別 subcommand、drill_kind 整合は維持)
+        allowed, reason = _run_approval_gate("restore-rollback", args)
+        if not allowed:
             print(  # noqa: T201
-                f"ERROR: input backup file not found: {input_path}",
+                f"ERROR: signed approval gate denied (reason={reason})",
                 file=sys.stderr,
             )
             return 2
+        print(  # noqa: T201
+            _skeleton_message(
+                "restore --rollback",
+                details=(
+                    f"Would rollback to pre-restore snapshot at "
+                    f"data/_pre-restore-{args.rollback}/. "
+                    "Real flow (Phase 4 carry-over): stop_app_services -> postgres-only restart -> "
+                    "artifacts/DB/Redis snapshot 戻し -> service start."
+                ),
+            )
+        )
+        return 1  # skeleton mode
 
-    # signed approval gate (after all input validation)
-    allowed, reason = _run_approval_gate("restore", args)
+    # --input: real I/O orchestration
+    input_path = Path(args.input)
+    if not input_path.exists():
+        print(  # noqa: T201
+            f"ERROR: input backup file not found: {input_path}",
+            file=sys.stderr,
+        )
+        return 2
+
+    # SP022-T02 Phase 3: build RestoreApprovalClaim from CLI + env, run approval gate, run_restore
+    try:
+        from scripts.taskhub_restore_orchestrator import (
+            RestoreOptions,
+            RestoreRuntimeError,
+            RestoreUsageError,
+            run_restore,
+        )
+        from scripts.taskhub_signed_approval import (
+            RestoreApprovalClaim,
+            emit_audit_event,
+            require_approval_for_destructive,
+        )
+    except ModuleNotFoundError:
+        _REPO_ROOT = Path(__file__).resolve().parent.parent
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.taskhub_restore_orchestrator import (  # noqa: E402
+            RestoreOptions,
+            RestoreRuntimeError,
+            RestoreUsageError,
+            run_restore,
+        )
+        from scripts.taskhub_signed_approval import (  # noqa: E402
+            RestoreApprovalClaim,
+            emit_audit_event,
+            require_approval_for_destructive,
+        )
+
+    # CLI 起動時 .tar.age の archive sha256 を再計算 (R6-F-002 + R16-F-002 TOCTOU 排除前段)
+    # immutable stage 経由は orchestrator 側で実行、ここでは claim 比較用の hash 取得のみ
+    import hashlib
+    h = hashlib.sha256()
+    try:
+        with input_path.open("rb") as f:
+            while True:
+                chunk = f.read(64 * 1024)
+                if not chunk:
+                    break
+                h.update(chunk)
+    except OSError as exc:
+        print(  # noqa: T201
+            f"ERROR: input file read failed: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    cli_archive_sha256 = h.hexdigest()
+
+    # age identity file (CLI > env)
+    age_identity_str = args.age_identity_file or os.environ.get("TASKHUB_BACKUP_AGE_IDENTITY_FILE")
+    if not age_identity_str:
+        print(  # noqa: T201
+            "ERROR: --age-identity-file is required (or set TASKHUB_BACKUP_AGE_IDENTITY_FILE env)",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Restore target identity from env (production deployment specific、本 batch では env 経由)
+    target_compose_project = os.environ.get(
+        "TASKHUB_RESTORE_COMPOSE_PROJECT", "taskmanagedai",
+    )
+    repo_root = Path(__file__).resolve().parent.parent
+    target_compose_file = Path(os.environ.get(
+        "TASKHUB_RESTORE_COMPOSE_FILE", str(repo_root / "docker-compose.yml"),
+    ))
+    target_pg_host = os.environ.get("TASKHUB_RESTORE_PG_HOST", "127.0.0.1")
+    target_pg_port = os.environ.get("TASKHUB_RESTORE_PG_PORT", "5432")
+    # F-PR78-R3-004 adopt: defaults を docker-compose.yml + .env.example の Compose default に整合
+    target_pg_db = os.environ.get("TASKHUB_RESTORE_PG_DB", "taskmanagedai")
+    target_pg_user = os.environ.get("TASKHUB_RESTORE_PG_USER", "taskmanagedai")
+    target_redis_host = os.environ.get("TASKHUB_RESTORE_REDIS_HOST", "127.0.0.1")
+    target_redis_port = os.environ.get("TASKHUB_RESTORE_REDIS_PORT", "6379")
+    target_artifacts_dir = Path(os.environ.get(
+        "TASKHUB_RESTORE_ARTIFACTS_DIR", str(repo_root / "data" / "artifacts"),
+    )).resolve()
+    target_artifacts_container_path = os.environ.get(
+        "TASKHUB_RESTORE_ARTIFACTS_CONTAINER_PATH", "/app/data/artifacts",
+    )
+    # F-PR78-R3-005 adopt: docker-compose.yml の postgres:16-alpine と整合 (major 16)
+    expected_pg_major = os.environ.get("TASKHUB_RESTORE_EXPECTED_PG_MAJOR", "16")
+    expected_alembic_head = os.environ.get("TASKHUB_RESTORE_EXPECTED_ALEMBIC_HEAD", "")
+
+    if not expected_alembic_head:
+        print(  # noqa: T201
+            "ERROR: TASKHUB_RESTORE_EXPECTED_ALEMBIC_HEAD env required (claim integrity field)",
+            file=sys.stderr,
+        )
+        return 2
+
+    options = RestoreOptions(
+        input_path=input_path.resolve(),
+        archive_sha256=cli_archive_sha256,
+        age_identity_file=Path(age_identity_str).resolve(),
+        target_pg_dsn_components={
+            "host": target_pg_host, "port": target_pg_port,
+            "db": target_pg_db, "user": target_pg_user,
+        },
+        target_redis_endpoint=f"{target_redis_host}:{target_redis_port}",
+        target_artifacts_dir=target_artifacts_dir,
+        target_artifacts_container_path=target_artifacts_container_path,
+        target_compose_project_name=target_compose_project,
+        target_compose_file_path=target_compose_file,
+        expected_postgres_major_version=expected_pg_major,
+        expected_alembic_head=expected_alembic_head,
+        overwrite=getattr(args, "overwrite", False),
+    )
+
+    # build RestoreApprovalClaim (CLI が approval issue 時の caller-supplied claim と一致 verify)
+    restore_claim = None
+    if args.approval_id:
+        # age public key fingerprint (backup 整合の verify、operator が approval issue 時に同 hash を claim に書く)
+        # F-PR78-001 adopt: silent fallback to "" は claim mismatch 確定 deny を生むため fail-fast に変更
+        # `.pub` 探索 path: (a) {identity_file}.pub (e.g. age.key.pub) or env override TASKHUB_BACKUP_AGE_PUBLIC_KEY
+        candidate_pub_paths = [
+            Path(str(options.age_identity_file) + ".pub"),  # age.key → age.key.pub
+            options.age_identity_file.with_suffix(".pub"),  # age.key → age.pub
+        ]
+        env_pub_override = os.environ.get("TASKHUB_BACKUP_AGE_PUBLIC_KEY")
+        if env_pub_override:
+            candidate_pub_paths.insert(0, Path(env_pub_override))
+        age_pub_bytes: bytes | None = None
+        tried_paths: list[Path] = []
+        for cand in candidate_pub_paths:
+            tried_paths.append(cand)
+            try:
+                age_pub_bytes = cand.read_bytes()
+                break
+            except OSError:
+                continue
+        if age_pub_bytes is None:
+            print(  # noqa: T201
+                f"ERROR: age public key not readable (claim integrity requires fingerprint). "
+                f"Set TASKHUB_BACKUP_AGE_PUBLIC_KEY or ensure {tried_paths[0]} exists. "
+                f"Tried: {[str(p) for p in tried_paths]}",
+                file=sys.stderr,
+            )
+            return 2
+        age_pub_fingerprint = hashlib.sha256(age_pub_bytes).hexdigest()
+        restore_claim = RestoreApprovalClaim(
+            input_path=str(options.input_path),
+            archive_sha256=cli_archive_sha256,
+            age_public_key_fingerprint=age_pub_fingerprint,
+            target_pg_dsn_components=dict(options.target_pg_dsn_components),
+            target_redis_endpoint=options.target_redis_endpoint,
+            target_artifacts_dir=str(options.target_artifacts_dir),
+            target_artifacts_container_path=options.target_artifacts_container_path,
+            target_compose_project_name=options.target_compose_project_name,
+            target_compose_file_path=str(options.target_compose_file_path),
+            expected_postgres_major_version=options.expected_postgres_major_version,
+            expected_alembic_head=options.expected_alembic_head,
+            skip_service_stop=False,  # R3-F-001 物理 deny 済、claim でも False 固定
+        )
+
+    # signed approval gate with restore_claim
+    allowed, reason, extras = require_approval_for_destructive(
+        "restore",
+        args.approval_id,
+        getattr(args, "from_automation", False),
+        getattr(args, "allow_unsigned_manual_skeleton", False),
+        restore_claim=restore_claim,
+    )
+    emit_audit_event(reason, extras)
     if not allowed:
         print(  # noqa: T201
             f"ERROR: signed approval gate denied (reason={reason})",
@@ -284,33 +474,17 @@ def _cmd_restore(args: argparse.Namespace) -> int:
         )
         return 2
 
-    if args.rollback:
-        print(  # noqa: T201
-            _skeleton_message(
-                "restore --rollback",
-                details=(
-                    f"Would rollback to pre-restore snapshot at "
-                    f"data/_pre-restore-{args.rollback}/. "
-                    "Real flow: service stop -> 旧 volume を data/_pre-restore-<ts>/ "
-                    "から現役 path に戻す -> service up + healthcheck."
-                ),
-            )
-        )
-        return 1  # skeleton mode
-
-    input_path = Path(args.input)
-    print(  # noqa: T201
-        _skeleton_message(
-            "restore",
-            details=(
-                f"Would restore from {input_path} (age-encrypted tar). "
-                "Real flow: age 復号 -> service stop -> volume move -> "
-                "pg_restore + Redis import + artifacts 配置 -> alembic check -> "
-                "healthcheck -> 失敗時 rollback."
-            ),
-        )
-    )
-    return 1  # skeleton mode
+    # Real restore orchestration (SP022-T02 Phase 3)
+    try:
+        result = run_restore(options)
+    except RestoreUsageError as exc:
+        print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+        return 2
+    except RestoreRuntimeError as exc:
+        print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+        return 1
+    print(json.dumps(result.summary(), sort_keys=True))  # noqa: T201
+    return 0
 
 
 def _cmd_migrate(args: argparse.Namespace) -> int:
@@ -534,7 +708,7 @@ def _cmd_verify_signed_journal(args: argparse.Namespace) -> int:
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
-    """`taskhub verify [--integrity] [--network-invariant] [--multi-agent]` skeleton + signed-journal offline mode (SP022-T08 batch 1)."""
+    """`taskhub verify [--integrity] [--network-invariant] [--multi-agent]` skeleton + signed-journal offline mode."""
     # R2-F-002 adopt: parse-time validation で --signed-journal を skeleton flags と排他化
     # (argparse mutually_exclusive_group は既存 --integrity --network-invariant 併用 test を破壊するため)
     skeleton_flags_present = any([
@@ -704,8 +878,23 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "rollback to pre-restore snapshot timestamp "
-            "(data/_pre-restore-<ts>/ 経路、排他: --input)"
+            "(data/_pre-restore-<ts>/ 経路、排他: --input、skeleton mode のみ)"
         ),
+    )
+    # SP022-T02 Phase 3: real I/O restore で必須の追加 args
+    sub_restore.add_argument(
+        "--age-identity-file",
+        type=str,
+        default=None,
+        help=(
+            "absolute path to age private key file (TASKHUB_BACKUP_AGE_IDENTITY_FILE env override 可能)。"
+            "file は 0o400 or 0o600 permission + 非 symlink。real I/O restore 必須。"
+        ),
+    )
+    sub_restore.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="overwrite existing artifacts dir (default False、accidental loss 防止)",
     )
     sub_restore.set_defaults(func=_cmd_restore)
     _add_signed_approval_args(sub_restore)
