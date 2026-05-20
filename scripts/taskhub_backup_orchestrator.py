@@ -31,7 +31,7 @@ import stat
 import sys
 import tarfile
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -854,7 +854,7 @@ def run_backup(options: BackupOptions) -> BackupResult:
         # meta.json + checksums.txt (F-008 + F-012 adopt)
         meta = build_meta_json(
             host_name=options.host_name,
-            timestamp_utc=datetime.now(timezone.utc),
+            timestamp_utc=datetime.now(UTC),
             postgres_version=postgres_version,
             redis_version=redis_version,
             alembic_head=alembic_head,

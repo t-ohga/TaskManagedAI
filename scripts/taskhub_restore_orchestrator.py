@@ -1540,8 +1540,8 @@ def verify_snapshot_manifest_binding(
     options: RestoreOptions,
     rrc: object,  # RestoreRollbackApprovalClaim (avoid circular import)
 ) -> None:
-    """SP022-T02 Phase 4 (R1 F-004 + ADV R1 F-017 adopt): manifest と RestoreOptions / rrc claim
-    の binding 一致 verify. raise RestoreUsageError on mismatch.
+    """SP022-T02 Phase 4 (R1 F-004 + ADV R1 F-017 + ADV PR F-7 adopt): manifest と
+    RestoreOptions / rrc claim の binding 一致 verify. raise RestoreUsageError on mismatch.
     """
     # ADV R1 F-017 adopt: manifest_version 必須 + v1 のみ
     if manifest.get("manifest_version") != 1:
@@ -1549,6 +1549,19 @@ def verify_snapshot_manifest_binding(
             "restore_rollback_snapshot_manifest_unsupported_version",
             detail=f"manifest_version={manifest.get('manifest_version')!r}, expected=1",
         )
+    # ADV PR F-7 adopt: snapshot_id を rrc.pre_restore_ts と一致 verify
+    # (別時点 manifest を `_pre-restore-<ts>/` 配下に混入してロールバック先誤り防止)
+    pre_restore_ts = getattr(rrc, "pre_restore_ts", None)
+    if pre_restore_ts is not None:
+        manifest_snapshot_id = manifest.get("snapshot_id")
+        if manifest_snapshot_id != pre_restore_ts:
+            raise RestoreUsageError(
+                "restore_rollback_snapshot_id_mismatch",
+                detail=(
+                    f"manifest.snapshot_id={manifest_snapshot_id!r}, "
+                    f"rrc.pre_restore_ts={pre_restore_ts!r}"
+                ),
+            )
     # target binding fields 1:1
     pairs: list[tuple[str, object, object]] = [
         ("target_compose_project_name", manifest.get("target_compose_project_name"),

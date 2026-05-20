@@ -28,7 +28,6 @@ from scripts.taskhub_approval_cli import (
     issue_approval_record,
 )
 
-
 # --- helpers ---
 
 
@@ -336,12 +335,28 @@ def test_issue_approval_id_collision_rejected(
     assert reason2 == "approval_issue_output_path_collision"
 
 
+def test_issue_migrate_without_target_host_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """ADV PR F-5 adopt: migrate in allowed_subcommands で target_host 未指定 → required."""
+    signing_key_path, approvals_dir, _, _ = _setup_taskhub_keys(monkeypatch, tmp_path)
+    opts = _make_default_options(
+        signing_key_path, approvals_dir,
+        allowed_subcommands=("migrate",),
+        target_host=None,
+    )
+    success, reason, _ = issue_approval_record(opts)
+    assert success is False
+    assert reason == "approval_issue_target_host_required"
+
+
 def test_issue_atomic_no_force_flag_argparse(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """ADV R2 F-001 adopt: --force flag が argparse choices に存在しない (廃止)."""
-    from scripts.taskhub_approval_cli import register_subparser
     import argparse
+
+    from scripts.taskhub_approval_cli import register_subparser
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="subcommand", required=False)
     register_subparser(subparsers)

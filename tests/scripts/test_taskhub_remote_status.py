@@ -26,7 +26,6 @@ from scripts.taskhub_remote_status import (
     load_remote_hosts_signed_config,
 )
 
-
 # --- helpers (test isolation) ---
 
 
@@ -143,6 +142,18 @@ def test_build_ssh_argv_host_pattern_invalid_rejected() -> None:
         _build_ssh_argv("UPPERCASE.HOST", "taskmanagedai", "/abs/file.yml", 10)
 
 
+def test_build_ssh_argv_fqdn_host_accepted() -> None:
+    """ADV PR F-3 adopt: FQDN (dotted name) を accept."""
+    argv = _build_ssh_argv("t-ohga-vps.tail-scale.ts.net", "taskmanagedai", "/abs/file.yml", 10)
+    assert argv[-2] == "t-ohga-vps.tail-scale.ts.net"
+
+
+def test_build_ssh_argv_single_label_host_accepted() -> None:
+    """ADV PR F-3 adopt: 1-label host も accept (Tailscale MagicDNS single-label name)."""
+    argv = _build_ssh_argv("t-ohga-vps", "taskmanagedai", "/abs/file.yml", 10)
+    assert argv[-2] == "t-ohga-vps"
+
+
 def test_build_ssh_argv_strict_options_present() -> None:
     argv = _build_ssh_argv("t-ohga-vps", "taskmanagedai", "/abs/docker-compose.yml", 10)
     # strict options 必須 (test #8)
@@ -187,6 +198,19 @@ def test_parse_compose_ps_json_skips_sha256sum_line() -> None:
     )
     services = _parse_compose_ps_json(stdout)
     assert len(services) == 1
+
+
+def test_parse_compose_ps_json_array_with_sha256sum_appended() -> None:
+    """ADV PR F-1 adopt: docker compose ps JSON array + sha256sum 行連結を正しく分離."""
+    sha256_line = "a" * 64 + "  /abs/docker-compose.yml"
+    stdout = (
+        b'[{"Service": "api", "State": "running"}, {"Service": "postgres", "State": "exited"}]\n'
+        + sha256_line.encode() + b"\n"
+    )
+    services = _parse_compose_ps_json(stdout)
+    assert len(services) == 2
+    names = {s["Service"] for s in services}
+    assert names == {"api", "postgres"}
 
 
 # --- load_remote_hosts_signed_config ---

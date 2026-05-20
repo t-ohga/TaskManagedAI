@@ -10,7 +10,6 @@ Coverage:
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import subprocess
@@ -110,6 +109,23 @@ def test_acquire_destructive_lock_env_override_used(
     with acquire_destructive_lock("freeze", None) as (acquired, reason, _):
         assert acquired is True, reason
         assert (custom_dir / "destructive-operation.lock").is_file()
+
+
+def test_acquire_destructive_lock_existing_file_mode_enforced(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """ADV PR F-6 adopt: 既存 lock file が 0o644 でも fchmod 0o600 で強制."""
+    lock_dir = tmp_path / "locks"
+    lock_dir.mkdir(parents=True, mode=0o700)
+    lock_path = lock_dir / "destructive-operation.lock"
+    # pre-create with mode 0o644 (multi-user info leak risk)
+    lock_path.write_text("", encoding="utf-8")
+    lock_path.chmod(0o644)
+    monkeypatch.setenv("TASKHUB_LOCK_DIR", str(lock_dir))
+    with acquire_destructive_lock("backup", None) as (acquired, reason, _):
+        assert acquired is True, reason
+        # 取得中に fchmod 0o600 が適用される
+        assert oct(lock_path.stat().st_mode & 0o777) == "0o600"
 
 
 def test_acquire_destructive_lock_symlink_rejected(

@@ -199,7 +199,10 @@ def _make_restore_rollback_claim(**overrides: object) -> sa.RestoreRollbackAppro
         "pre_restore_ts": "20260520T100000",
         "pre_restore_dir": "/var/lib/taskhub/data/_pre-restore-20260520T100000",
         "snapshot_manifest_sha256": "a" * 64,
-        "target_pg_dsn_components": {"host": "127.0.0.1", "port": "5432", "db": "taskmanagedai", "user": "taskmanagedai"},
+        "target_pg_dsn_components": {
+            "host": "127.0.0.1", "port": "5432",
+            "db": "taskmanagedai", "user": "taskmanagedai",
+        },
         "target_redis_endpoint": "127.0.0.1:6379",
         "target_artifacts_dir": "/var/lib/taskhub/data/artifacts",
         "target_artifacts_container_path": "/app/data/artifacts",

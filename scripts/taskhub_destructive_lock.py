@@ -85,6 +85,19 @@ def acquire_destructive_lock(
         yield False, "destructive_lock_file_permission", None
         return
 
+    # ADV PR F-6 adopt: os.open(mode=) は新規作成時にしか効かないため、既存 file の mode を強制
+    # (multi-user 環境で旧 lock file が 0o644 等の場合の info leak 防止)
+    try:
+        os.fchmod(fd, 0o600)
+    except OSError:
+        # fchmod 失敗時は lock 取得を諦める (defense-in-depth)
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        yield False, "destructive_lock_file_permission", None
+        return
+
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

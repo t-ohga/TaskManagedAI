@@ -728,13 +728,25 @@ def _cmd_restore_rollback(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
+        # ADV PR F-4 adopt: dict 以外 (array/string 等の有効 JSON) を reject
+        if not isinstance(manifest_data_inlock, dict):
+            print(  # noqa: T201
+                "ERROR: snapshot_manifest.json must be a JSON object "
+                "[reason=restore_rollback_snapshot_manifest_invalid_json]",
+                file=sys.stderr,
+            )
+            return 2
 
         # target binding consistency (Phase 3 既存 8-check、lock 内で実施)
+        # ADV PR F-2 adopt: RestoreRuntimeError も catch (Docker 未導入 / timeout / compose 不整合)
         try:
             verify_target_binding_consistency(options)
         except RestoreUsageError as exc:
             print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
             return 2
+        except RestoreRuntimeError as exc:
+            print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+            return 1
 
         # manifest binding verify (R1 F-004 adopt)
         try:

@@ -185,6 +185,12 @@ def issue_approval_record(opts: ApprovalIssueOptions) -> tuple[bool, ReasonCode,
         if sub not in DESTRUCTIVE_SUBCOMMANDS:
             return False, "approval_issue_drill_kind_subcommand_mismatch", None
 
+    # 3.5. target_host required for migrate (ADV PR F-5 adopt)
+    # verify_signed_approval(target_host=...) は record.target_host を strict require、
+    # migrate subcommand を allowed_subcommands に含めるなら target_host 必須。
+    if "migrate" in opts.allowed_subcommands and not opts.target_host:
+        return False, "approval_issue_target_host_required", None
+
     # 4. signed_at < expires_at
     if opts.signed_at >= opts.expires_at:
         return False, "approval_issue_signed_at_expires_inversion", None

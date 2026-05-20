@@ -247,8 +247,12 @@ def _build_ssh_argv(
         msg = f"compose_project invalid: {compose_project!r}"
         raise ValueError(msg)
     _validate_compose_file_path(compose_file)
-    # hostname: DNS RFC 1123 compatible
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", host):
+    # hostname: DNS RFC 1123 compatible + FQDN (Tailscale MagicDNS 等の dotted name)
+    # ADV PR F-3 adopt: 1-label only 制限を緩和、複数 label の FQDN 許容
+    if not re.fullmatch(
+        r"[a-z0-9][a-z0-9-]{0,62}(\.[a-z0-9][a-z0-9-]{0,62})*",
+        host,
+    ):
         msg = f"host invalid: {host!r}"
         raise ValueError(msg)
     known_hosts_path = Path.home() / ".ssh" / "known_hosts"
@@ -280,33 +284,39 @@ def _build_ssh_argv(
 def _parse_compose_ps_json(stdout: bytes) -> list[dict[str, object]]:
     """docker compose ps --format json output parse.
 
-    Format depends on Docker version: JSON array, NDJSON (JSONL), or single object.
+    ADV PR F-1 adopt: stdout は `docker compose ps --format json && sha256sum <file>` の連結。
+    sha256sum 行 (`<64-hex>  <path>`) を **先に separate** してから docker output を解析する。
+    Docker は公式仕様で JSON 配列 (or NDJSON、Docker version で異なる) を返す.
     """
     text = stdout.decode("utf-8", errors="strict")
-    # 末尾 sha256sum 行と分離 (compose_file_sha256 line を後で抽出)
-    # ここでは compose ps 部分のみ (sha256sum 行は別 parser)
+    # Step 1: sha256sum line を末尾から分離
+    docker_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        # sha256sum line (hex + 2 space + path) は skip
+        if re.match(r"^[0-9a-f]{64}\s\s", stripped):
+            continue
+        docker_lines.append(line)
+    docker_text = "\n".join(docker_lines).strip()
+
     services: list[dict[str, object]] = []
-    # try JSON array first
-    text_stripped = text.strip()
-    if text_stripped.startswith("["):
-        # array form
-        # ただし末尾に sha256sum line が連結している場合は除去
+    if not docker_text:
+        return services
+    # Step 2: try JSON array first (Docker 公式仕様)
+    if docker_text.startswith("["):
         try:
-            arr = json.loads(text_stripped)
+            arr = json.loads(docker_text)
             if isinstance(arr, list):
                 return [s for s in arr if isinstance(s, dict)]
         except json.JSONDecodeError:
             pass
-    # NDJSON form
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        # sha256sum line (hex + 2 space + path) は skip
-        if re.match(r"^[0-9a-f]{64}\s\s", line):
+    # Step 3: NDJSON fallback (older Docker compose)
+    for line in docker_text.splitlines():
+        line_stripped = line.strip()
+        if not line_stripped:
             continue
         try:
-            obj = json.loads(line)
+            obj = json.loads(line_stripped)
             if isinstance(obj, dict):
                 services.append(obj)
         except json.JSONDecodeError:
