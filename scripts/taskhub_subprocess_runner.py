@@ -183,9 +183,10 @@ def run_safe_subprocess(
     env = _filter_env(dict(os.environ), extra_allowlist=cfg.extra_env_allowlist)
     start = time.monotonic()
     # R15-F-002 adopt: stdin/stdout stream pipe (file fd 直接 child へ、memory load 回避)
-    stdin_arg: object = cfg.stdin_file if cfg.stdin_file is not None else subprocess.DEVNULL
+    stdin_arg: IO[bytes] | int = cfg.stdin_file if cfg.stdin_file is not None else subprocess.DEVNULL
+    stdout_arg: IO[bytes] | int
     if cfg.stdout_file is not None:
-        stdout_arg: object = cfg.stdout_file
+        stdout_arg = cfg.stdout_file
     elif cfg.capture_stdout:
         stdout_arg = subprocess.PIPE
     else:

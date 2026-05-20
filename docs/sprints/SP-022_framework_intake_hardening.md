@@ -387,6 +387,48 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 
 **audit-only gate**: SP-022 では本 trace matrix を文書として保持、実 contract test PASS は各 owning sprint exit gate (post-P0.1)。Owning Sprint Pack 不在 (SP-018/SP-020 未起票) の場合は「P0.1+ 起票予定」marker で保留、SP-018/SP-020 起票 PR で trace を実際に追加。PE-F-010 は SP022-T01 (PR #70) で実装完了、本 trace matrix から owner を SP-022 に正規化 (ADR-00020 `related_sprints: SP-022_framework_intake_hardening` 整合、SP-016 Pack は実 PE-F refs PE-F-006/PE-F-014 のみ)。SP022-T00 PR では SP-022 内 trace matrix の存在のみ verify、SP022-T04 PR (`scripts/ci/check_phase_e_trace.sh` + `_phase_e_trace_verifier.py`) で 16 finding 完全一致 + 5 column header + per-row owning sprint mapping + PE-F-010 closure marker を機械検査恒久化。
 
+### SP022-T02 Phase 3 / T08 batch 3 restore real I/O completion (2026-05-20)
+
+#### codex-plan-review R1-R24 completion record (CLAUDE.md §6.5.4 deep-hardening)
+
+- R1 (Phase A 構造 review): 17 findings (CRITICAL×3 / HIGH×6 / MED×7 / LOW×1) 全件 adopt
+- R2 (Phase B 実装可能性): 8 findings (CRITICAL×2 / HIGH×6) 全件 adopt — PR #77 retro-fix 同梱 (backup_claim signature canonical payload 不在の CRITICAL vulnerability)
+- R3-R23: 26 findings 全件 adopt (root cause findings: docker compose exec / TOCTOU 排除 / BGSAVE→SAVE / target binding consistency 等)
+- R24: 0 CRITICAL = plan READY 達成
+- **累計 58 findings、24 rounds、100% adopt rate**、user directive 「どれだけ時間かかってもいい品質完璧」反映
+
+#### Restore real I/O orchestration 実装
+
+- `scripts/taskhub_subprocess_runner.py` (MODIFY、Batch A): `SafeSubprocessConfig` に `stdin_file` + `stdout_file` 追加 (R15-F-002 streaming pipe、10GiB dump でも OOM 回避)
+- `scripts/taskhub_signed_approval.py` (MODIFY、Batch B): `RestoreApprovalClaim` (12 field) 拡張 + R2-F-001 retro-fix (canonical payload に backup_claim/restore_claim sub-record 含める、PR #77 claim signature 突破経路を物理排除)
+- `scripts/taskhub_backup_orchestrator.py` (MODIFY、Batch C、PR #77 retro-fix): `build_meta_json` field rename (host→host_name, timestamp→timestamp_utc, backup_format_version→format_version、R2-F-005)
+- `scripts/taskhub_restore_orchestrator.py` (NEW、Batch D、~1150 行): 全 24 rounds findings 反映の restore orchestration
+- `scripts/taskhub_admin.py` (MODIFY、Batch E): `_cmd_restore` real I/O 化 + `--age-identity-file` / `--overwrite` 引数追加 + `--allow-unsigned-manual-skeleton` 物理 deny (R3-F-001)
+- `docker-compose.yml` (MODIFY、Batch E): api/worker に artifacts bind mount 追加 (R22/R23 adopt)
+- `tests/scripts/test_taskhub_restore_orchestrator.py` (NEW、39 fixture、3 layer: pure + subprocess mocks + orchestration)
+- `tests/scripts/test_taskhub_admin.py` (MODIFY): restore skeleton mode test を `--allow-unsigned-manual-skeleton` 物理 deny test に置換
+
+#### Security invariants (R14-F-001 root cause fix)
+
+- pg_restore / pg_dump / redis SAVE / psql 全て docker compose exec 経由 + container 内 unix socket (host TCP port-collision 攻撃完全排除)
+- archive sha256 verify + age decrypt は immutable stage (cp --reflink / shutil.copy2) で別 inode 隔離 (R16/R17/R18/R19 統合 TOCTOU 排除)
+- BGSAVE 廃止、blocking SAVE 採用 (R17-F-001 race-free)
+- pre-restore snapshot は `.tmp` suffix → atomic rename (R20-F-001 partial file 防止)
+- tar member symlink/hardlink/device 明示 reject + size/count DoS limits (R11/R20)
+- target binding consistency preflight (Compose project/file/services/ports/env/volumes 整合、R8-R23 統合 8-check 防御)
+- rollback exception 範囲: RestoreRuntimeError | OSError | shutil.Error | SubprocessError | SubprocessTimeoutError | SubprocessNotFoundError (R6/R7)
+- per-component rollback existence verify + clean slate (R17/R19 統合)
+
+#### Carry-over (本 batch 対象外、Phase 4 / batch 4 以降)
+
+- `--rollback <pre-restore-ts>` standalone real I/O (本 batch では skeleton 維持)
+- split-brain remote detection (`taskhub status --remote` 経由旧 host service down verify)
+- `taskhub approval issue` real I/O subcommand (test fixture 経由 approval record manual 生成のみ本 batch)
+- age 秘密鍵 SecretBroker integration (P0 manual 運搬で OK、batch 5 BL-0149 carry-over)
+- actual pg_restore / age / redis-cli tool execution validation (SP022-T09 drill phase mandatory)
+- backup_orchestrator pg_dump compose exec 切替 (R14-F-001 PR #77 retro-fix の compose-exec 部分、本 batch では meta.json field rename のみ反映)
+- 既存 PR #75/#77 approval record の re-sign migration (canonical payload に backup_claim 追加で signature_invalid 化、operator は revoke + 新規 issue)
+
 ### SP022-T01 framework intake CI 機械化 completion (2026-05-19)
 
 #### 実装ファイル

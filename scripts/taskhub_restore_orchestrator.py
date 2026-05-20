@@ -21,16 +21,16 @@ import hashlib
 import json
 import os
 import shutil
-import socket
 import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
 import time
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, Any, Callable, Literal
+from typing import Any, Literal
 
 try:
     from scripts.taskhub_subprocess_runner import (
@@ -61,7 +61,7 @@ def _assert_python_version() -> None:
 
     pyproject.toml `requires-python = ">=3.12,<3.13"` 整合、graceful skip 禁止。
     """
-    if sys.version_info < (3, 12):
+    if sys.version_info < (3, 12):  # noqa: UP036 — intentional runtime defense check
         raise RuntimeError(
             f"taskhub_restore_orchestrator requires Python 3.12+, got {sys.version_info}",
         )
@@ -271,8 +271,8 @@ def verify_archive_sha256_and_decrypt_via_immutable_stage(
     # Stage に CoW copy (or fallback full byte copy)
     stage_path = stage_dir / "input_archive_immutable.tar.age"
     try:
-        subprocess.run(
-            ["cp", "--reflink=auto", str(input_path), str(stage_path)],
+        subprocess.run(  # noqa: S603, S607 - `cp` system tool with literal args, shell=False
+            ["cp", "--reflink=auto", str(input_path), str(stage_path)],  # noqa: S607
             check=True, capture_output=True, timeout=300,
         )
     except (subprocess.SubprocessError, FileNotFoundError):
@@ -515,7 +515,7 @@ def verify_postgres_major_version(meta: dict[str, Any], expected_major: str) -> 
     if not pg_ver:
         raise RestoreRuntimeError(
             "restore_postgres_major_version_mismatch",
-            detail=f"meta.json postgres_version missing/empty",
+            detail="meta.json postgres_version missing/empty",
         )
     major = pg_ver.split(".")[0]
     if major != expected_major:
@@ -528,7 +528,7 @@ def verify_postgres_major_version(meta: dict[str, Any], expected_major: str) -> 
 # --- target binding consistency preflight (R11-R23 統合) ---
 
 
-def _extract_published_port(ports_spec: Any, container_port: int) -> str | None:
+def _extract_published_port(ports_spec: Any, container_port: int) -> str | None:  # noqa: ANN401 — JSON ports spec is genuinely Any
     """Compose ports 配列から published host port を抽出 (long/short syntax 両対応)."""
     if not isinstance(ports_spec, list):
         return None
@@ -552,7 +552,7 @@ def _extract_published_port(ports_spec: Any, container_port: int) -> str | None:
     return None
 
 
-def _extract_host_ip(ports_spec: Any, container_port: int) -> str | None:
+def _extract_host_ip(ports_spec: Any, container_port: int) -> str | None:  # noqa: ANN401
     """Compose ports 配列から host_ip を抽出 (None = 0.0.0.0 相当 = fail-closed deny の signal)."""
     if not isinstance(ports_spec, list):
         return None
@@ -572,7 +572,7 @@ def _extract_host_ip(ports_spec: Any, container_port: int) -> str | None:
     return None
 
 
-def _normalize_compose_env(env_spec: Any) -> dict[str, str]:
+def _normalize_compose_env(env_spec: Any) -> dict[str, str]:  # noqa: ANN401
     """Compose environment を dict に normalize (dict or list-of-K=V 両対応)."""
     result: dict[str, str] = {}
     if isinstance(env_spec, dict):
@@ -1341,7 +1341,7 @@ def run_restore(options: RestoreOptions) -> RestoreResult:
     tmp_dir = resolve_restore_temp_layout()
     warnings: list[WarningCode] = []
     pre_restore_dir: Path | None = None
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
     meta: dict[str, Any] = {}
 
     try:
