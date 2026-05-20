@@ -20,6 +20,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import IO
 
 # R3-F-001 adopt: explicit allowlist for child env vars。
 # secret-bearing env は **絶対** allowlist に含めない。PostgreSQL credentials は
@@ -84,13 +85,19 @@ class SubprocessResult:
 
 @dataclass(frozen=True)
 class SafeSubprocessConfig:
-    """Configuration for run_safe_subprocess."""
+    """Configuration for run_safe_subprocess.
+
+    R15-F-002 adopt: stdin_file / stdout_file で stream pipe (kernel が file fd を直接 child に渡す、
+    Python memory に bytes load しない → OOM 回避、10 GiB dump でも streaming で送受信可能)。
+    """
 
     timeout_sec: int = DEFAULT_TIMEOUT_SEC
     cwd: Path | None = None
     extra_env_allowlist: tuple[str, ...] = field(default_factory=tuple)
     capture_stdout: bool = True
     capture_stderr: bool = True
+    stdin_file: IO[bytes] | None = None   # R15-F-002 adopt: stream pipe input (None=DEVNULL)
+    stdout_file: IO[bytes] | None = None  # R15-F-002 adopt: stream pipe output to file
 
 
 class SubprocessTimeoutError(Exception):
@@ -175,12 +182,20 @@ def run_safe_subprocess(
     command_name = Path(argv[0]).name
     env = _filter_env(dict(os.environ), extra_allowlist=cfg.extra_env_allowlist)
     start = time.monotonic()
+    # R15-F-002 adopt: stdin/stdout stream pipe (file fd 直接 child へ、memory load 回避)
+    stdin_arg: object = cfg.stdin_file if cfg.stdin_file is not None else subprocess.DEVNULL
+    if cfg.stdout_file is not None:
+        stdout_arg: object = cfg.stdout_file
+    elif cfg.capture_stdout:
+        stdout_arg = subprocess.PIPE
+    else:
+        stdout_arg = subprocess.DEVNULL
     try:
         proc = subprocess.run(  # noqa: S603
             argv,
             shell=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE if cfg.capture_stdout else subprocess.DEVNULL,
+            stdin=stdin_arg,
+            stdout=stdout_arg,
             stderr=subprocess.PIPE if cfg.capture_stderr else subprocess.DEVNULL,
             timeout=cfg.timeout_sec,
             check=False,
@@ -192,6 +207,7 @@ def run_safe_subprocess(
     except subprocess.TimeoutExpired:
         raise SubprocessTimeoutError(command_name, cfg.timeout_sec) from None
     duration = time.monotonic() - start
+    # stdout_file 経由なら stdout は file に直接書込済、result.stdout は空
     return SubprocessResult(
         command_name=command_name,
         arg_count=len(argv),
