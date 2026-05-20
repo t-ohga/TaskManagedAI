@@ -153,14 +153,18 @@ def _validate_and_load_signing_key(
             return None, "approval_issue_signing_key_symlink"
         return None, "approval_issue_signing_key_missing"
 
+    # ADV PR R10 F-001 adopt: fd leak 防止 (mode mismatch return path で os.close 必要、
+    # os.fdopen ownership transfer 前の全 return で明示 close)
     seed_buf = bytearray(32)
+    fd_owned = True  # fdopen で ownership transfer したら False に
     try:
         # 同一 FD 上で fstat → mode check
         st = os.fstat(fd)
         mode = stat.S_IMODE(st.st_mode)
         if mode != 0o600:
             return None, "approval_issue_signing_key_permission"
-        # 同一 FD 上で read (検証済 inode と同一)
+        # 同一 FD 上で read (検証済 inode と同一)、ownership transfer to fdopen
+        fd_owned = False
         with os.fdopen(fd, "rb", closefd=True) as f:
             data = f.read()
             if len(data) != 32:
@@ -174,11 +178,14 @@ def _validate_and_load_signing_key(
             for i in range(len(seed_buf)):
                 seed_buf[i] = 0
     except OSError:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
         return None, "approval_issue_signing_key_missing"
+    finally:
+        # fd ownership が fdopen に transfer 前の return / exception で fd close を保証
+        if fd_owned:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 # Backward-compat: 既存 test が _validate_signing_key と _load_signing_key_zeroize を直接呼び出す
