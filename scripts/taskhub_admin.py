@@ -274,8 +274,9 @@ def _cmd_restore(args: argparse.Namespace) -> int:
 
     # --rollback は skeleton mode (real I/O は SP022-T02 Phase 4 carry-over)
     if args.rollback:
-        # rollback mode は real I/O orchestrator 経由しないため、approval gate のみ
-        allowed, reason = _run_approval_gate("restore", args)
+        # F-PR78-005 adopt: rollback skeleton は "restore-rollback" subcommand を使用
+        # (restore_claim 必須化されていない別 subcommand、drill_kind 整合は維持)
+        allowed, reason = _run_approval_gate("restore-rollback", args)
         if not allowed:
             print(  # noqa: T201
                 f"ERROR: signed approval gate denied (reason={reason})",
@@ -413,14 +414,33 @@ def _cmd_restore(args: argparse.Namespace) -> int:
     restore_claim = None
     if args.approval_id:
         # age public key fingerprint (backup 整合の verify、operator が approval issue 時に同 hash を claim に書く)
-        age_pub_path = options.age_identity_file.with_suffix(".pub")
-        age_pub_fingerprint = ""
-        try:
-            age_pub_bytes = age_pub_path.read_bytes()
-            age_pub_fingerprint = hashlib.sha256(age_pub_bytes).hexdigest()
-        except OSError:
-            # public key 不在は warning のみ (private key from identity file は age 自身で verify)
-            age_pub_fingerprint = ""
+        # F-PR78-001 adopt: silent fallback to "" は claim mismatch 確定 deny を生むため fail-fast に変更
+        # `.pub` 探索 path: (a) {identity_file}.pub (e.g. age.key.pub) or env override TASKHUB_BACKUP_AGE_PUBLIC_KEY
+        candidate_pub_paths = [
+            Path(str(options.age_identity_file) + ".pub"),  # age.key → age.key.pub
+            options.age_identity_file.with_suffix(".pub"),  # age.key → age.pub
+        ]
+        env_pub_override = os.environ.get("TASKHUB_BACKUP_AGE_PUBLIC_KEY")
+        if env_pub_override:
+            candidate_pub_paths.insert(0, Path(env_pub_override))
+        age_pub_bytes: bytes | None = None
+        tried_paths: list[Path] = []
+        for cand in candidate_pub_paths:
+            tried_paths.append(cand)
+            try:
+                age_pub_bytes = cand.read_bytes()
+                break
+            except OSError:
+                continue
+        if age_pub_bytes is None:
+            print(  # noqa: T201
+                f"ERROR: age public key not readable (claim integrity requires fingerprint). "
+                f"Set TASKHUB_BACKUP_AGE_PUBLIC_KEY or ensure {tried_paths[0]} exists. "
+                f"Tried: {[str(p) for p in tried_paths]}",
+                file=sys.stderr,
+            )
+            return 2
+        age_pub_fingerprint = hashlib.sha256(age_pub_bytes).hexdigest()
         restore_claim = RestoreApprovalClaim(
             input_path=str(options.input_path),
             archive_sha256=cli_archive_sha256,
@@ -455,10 +475,10 @@ def _cmd_restore(args: argparse.Namespace) -> int:
     # Real restore orchestration (SP022-T02 Phase 3)
     try:
         result = run_restore(options)
-    except (RestoreUsageError,) as exc:
+    except RestoreUsageError as exc:
         print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
         return 2
-    except (RestoreRuntimeError,) as exc:
+    except RestoreRuntimeError as exc:
         print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
         return 1
     print(json.dumps(result.summary(), sort_keys=True))  # noqa: T201
@@ -686,7 +706,7 @@ def _cmd_verify_signed_journal(args: argparse.Namespace) -> int:
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
-    """`taskhub verify [--integrity] [--network-invariant] [--multi-agent]` skeleton + signed-journal offline mode (SP022-T08 batch 1)."""
+    """`taskhub verify [--integrity] [--network-invariant] [--multi-agent]` skeleton + signed-journal offline mode."""
     # R2-F-002 adopt: parse-time validation で --signed-journal を skeleton flags と排他化
     # (argparse mutually_exclusive_group は既存 --integrity --network-invariant 併用 test を破壊するため)
     skeleton_flags_present = any([

@@ -163,8 +163,11 @@ SUPPORTED_FORMAT_VERSIONS = frozenset({"1.0"})
 _ARCHIVE_ALLOWLIST_PATTERNS = (
     "meta.json",
     "checksums.txt",
+    "postgres",     # F-PR78-004 adopt: top-level dir entry (no trailing slash) も accept
     "postgres/",
+    "redis",        # F-PR78-004 adopt: top-level dir entry
     "redis/",
+    "artifacts",    # F-PR78-004 adopt: top-level dir entry
     "artifacts/",
     "env.encrypted",  # optional, include_sops_env
 )
@@ -375,9 +378,23 @@ def verify_tar_members_safe(tar: tarfile.TarFile) -> None:
 def check_archive_member_allowlist(name: str) -> tuple[bool, str | None]:
     """allowlist sniff: tar member name が allowlist prefix のいずれかで始まるか.
 
+    F-PR78-004 adopt: top-level dir entry (e.g., "postgres", "redis", "artifacts" without
+    trailing slash) も accept、backup_orchestrator が writeする tar header と整合.
+
     Returns: (allowed: bool, reason: str or None).
     """
-    if not any(name == p or name.startswith(p) for p in _ARCHIVE_ALLOWLIST_PATTERNS):
+    # Allowlist match: exact name (top-level dir entry) or starts with prefix (subpath)
+    matched = False
+    for p in _ARCHIVE_ALLOWLIST_PATTERNS:
+        if name == p:
+            matched = True
+            break
+        # prefix patterns ending in "/" allow subpaths under them
+        if p.endswith("/") and name.startswith(p):
+            matched = True
+            break
+        # Top-level dir name (no trailing slash) accepts itself as exact match only
+    if not matched:
         return False, f"not in allowlist: {name}"
     # deny filename pattern (id_rsa 等)
     basename = Path(name).name.lower()
@@ -704,10 +721,17 @@ def verify_target_binding_consistency(options: RestoreOptions) -> None:
         )
 
     # R21-F-001 + R22-F-001 + R23-F-001: artifacts_dir normalize + allowed roots + required services bind mount
+    # F-PR78-002 adopt: default に repo_root/data/artifacts も含める (admin.py default の `<repo>/data/artifacts` 整合)
     expected_artifacts_dir = options.target_artifacts_dir.resolve()
+    repo_root = Path(__file__).resolve().parent.parent
+    default_allowed_roots = ":".join([
+        "/var/lib/taskhub/artifacts",
+        str(Path.home() / ".taskhub" / "artifacts"),
+        str(repo_root / "data" / "artifacts"),  # F-PR78-002 fix: admin.py default 整合
+    ])
     allowed_roots_raw = os.environ.get(
         "TASKHUB_RESTORE_ALLOWED_ARTIFACTS_ROOTS",
-        f"/var/lib/taskhub/artifacts:{Path.home() / '.taskhub' / 'artifacts'}",
+        default_allowed_roots,
     )
     allowed_roots = [Path(p).resolve() for p in allowed_roots_raw.split(":") if p]
     artifacts_under_allowed = any(
@@ -755,11 +779,10 @@ def verify_target_binding_consistency(options: RestoreOptions) -> None:
                 container_part = vol.get("target", "")
             if host_part is None:
                 continue
-            try:
-                host_match = host_part == expected_artifacts_dir or \
-                             expected_artifacts_dir.is_relative_to(host_part)
-            except (ValueError, OSError):
-                host_match = False
+            # F-PR78-003 adopt: parent dir match (is_relative_to) は false-positive を生む
+            # (e.g., bind `./data:/app/data/artifacts` で claim `./data/artifacts` を accept してしまう)
+            # 修正: host path **exact match** + container path exact match の両方必須
+            host_match = host_part == expected_artifacts_dir
             container_match = container_part == expected_container_path
             if host_match and container_match:
                 found_in_services.add(svc_name)

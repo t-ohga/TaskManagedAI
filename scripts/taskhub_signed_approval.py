@@ -98,15 +98,17 @@ AUTOMATION_ENV_VARS = (
 )
 
 DESTRUCTIVE_SUBCOMMANDS = frozenset(
-    {"backup", "restore", "migrate", "freeze", "thaw", "age-rotate"},
+    # F-PR78-005 adopt: restore-rollback は skeleton mode 中の rollback path、restore_claim 不要
+    # (real I/O は SP022-T02 Phase 4 carry-over、本 batch では skeleton 維持)
+    {"backup", "restore", "restore-rollback", "migrate", "freeze", "thaw", "age-rotate"},
 )
 
 DRILL_KIND_ALLOWED_SUBCOMMANDS: dict[str, frozenset[str]] = {
-    "host_migration_mac_vps": frozenset({"backup", "migrate", "restore"}),
-    "host_migration_linux_vps": frozenset({"backup", "migrate", "restore"}),
-    "host_migration_vps_vps": frozenset({"backup", "migrate", "restore"}),
+    "host_migration_mac_vps": frozenset({"backup", "migrate", "restore", "restore-rollback"}),
+    "host_migration_linux_vps": frozenset({"backup", "migrate", "restore", "restore-rollback"}),
+    "host_migration_vps_vps": frozenset({"backup", "migrate", "restore", "restore-rollback"}),
     "backup_only": frozenset({"backup"}),
-    "restore_only": frozenset({"restore"}),
+    "restore_only": frozenset({"restore", "restore-rollback"}),
     "age_rotate": frozenset({"age-rotate"}),
     "freeze_only": frozenset({"freeze"}),
     "thaw_only": frozenset({"thaw"}),
