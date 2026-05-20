@@ -88,32 +88,27 @@ def test_cli_backup_requires_output() -> None:
     assert result.returncode == 2
 
 
-def test_cli_backup_skeleton_mode_returns_exit_1(tmp_path: Path) -> None:
-    """`backup --output <path>` → skeleton + exit 1 (drill 起点、ADR-00021 §3)."""
+def test_cli_backup_skeleton_escape_rejected(tmp_path: Path) -> None:
+    """SP022-T02 Phase 2 / T08 batch 2: backup は real I/O 化、--allow-unsigned-manual-skeleton 物理 deny。
+
+    R2-F-001 adopt: skeleton escape flag は backup では reject (real I/O は signed approval 必須)。
+    """
     target = tmp_path / "sp012-backup.tar.age"
-    # SP022-T02 Phase 1 (R1-F-002 adopt): destructive subcommand は default deny、
-    # skeleton 動作確認は `--allow-unsigned-manual-skeleton` escape で実施
     result = _run_cli("backup", "--output", str(target), "--allow-unsigned-manual-skeleton")
-    assert result.returncode == 1
-    assert "[SKELETON] taskhub backup" in result.stdout
-    assert str(target) in result.stdout
-    # default は SOPS-encrypted env 含めない
-    assert "(with SOPS-encrypted .env)" not in result.stdout
+    assert result.returncode == 2
+    assert "rejected for backup subcommand" in result.stderr
 
 
-def test_cli_backup_include_sops_env_option(tmp_path: Path) -> None:
-    """`backup --include-sops-env` (PG-F-015 hardening rename、Codex R3 F-PR63-006 adopt)."""
+def test_cli_backup_include_sops_env_arg_accepted_argparse(tmp_path: Path) -> None:
+    """`backup --include-sops-env` は引き続き argparse 受容、age public key 不在で early exit 2 になることを verify。"""
     target = tmp_path / "secrets-backup.tar.age"
-    # SP022-T02 Phase 1: skeleton mode 確認は escape flag 付与
+    # No approval_id, no allow_unsigned_manual_skeleton → manual destructive denied at gate (exit 2)
+    # OR age public key not found → exit 2 earlier
     result = _run_cli(
         "backup", "--output", str(target), "--include-sops-env",
-        "--allow-unsigned-manual-skeleton",
     )
-    assert result.returncode == 1
-    assert "[SKELETON] taskhub backup" in result.stdout
-    assert "(with SOPS-encrypted .env)" in result.stdout
-    # age private key は絶対含めない invariant が message に明示される
-    assert "age private key は" in result.stdout and "絶対含まない" in result.stdout
+    # default deny → exit 2、stderr に detail
+    assert result.returncode == 2
 
 
 def test_cli_backup_old_include_secrets_flag_is_rejected(tmp_path: Path) -> None:

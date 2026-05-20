@@ -67,7 +67,7 @@ risks:
 - **SP022-T05** (`plan_status: ⛔ deferred (blocked_by: SP-013 multi-agent skeleton、post-P0.1 carry-over)`): AC-HARD-01〜07 fixture を multi-agent 文脈で再 verify (**F-PR67-037 P2 adopt**: 本 task は SP-013 multi-agent skeleton に依存、SP-022 が pre-P0.1 unblock sprint reframe 後は SP-013 完了前に着手不可. 本 task のみ **SP-013 完了後の post-P0.1 carry-over** として位置、SP-022 完了 + P0.1 SP-013 完了後に SP-022.1 / SP-023 等の post-P0.1 hardening sprint で実施。本 Sprint Exit Review PR では task list に残存 + dependency note のみで close、別 PR で sprint scope re-allocation 実施)
 - **SP022-T06** (`plan_status: 🟨 light + 部分実装可 (Mac 単独 baseline は light、Linux/VPS は ⛔ deferred (blocked_by: 物理 host 取得))`): KPI baseline 設定 (host 別: Mac / Linux / VPS で acceptance_pass_rate 等の median を取得、運用 baseline 確定)
 - **SP022-T07** (`plan_status: 🟨 light (完了済 PR #73)`): production 公開準備チェックリスト draft (P3+ 着手時の前提整理、F-ADV-R1-007 + F-R2-005 adopt: **本 task は docs-only checklist skeleton まで**、以下の P3+ 実作業は本 task 内で禁止: (a) Docker image build pipeline、(b) DNS 設定、(c) public ingress (Funnel / Cloudflare Tunnel / public bind)、(d) external publication、(e) release deploy config、(f) license / docs 整備の本実装。これらは P3+ SP-023 以降の production release Sprint Pack で実施)
-- **SP022-T08** (`plan_status: 🟥 heavy + batch 分割必須 (batch 1 signed journal CLI offline mode **完了済 PR #76** / batch 2 backup-restore real I/O / batch 3 migrate-status-verify real I/O / batch 4 BL-0149 実 DB write / batch 5 signed journal CLI DB mode + private staging E2E / batch 6 frontend backend wiring)`): **SP-012 carry-over 完了** (F-PR67-025/027 P2 adopt): taskhub real I/O (10 subcommands all) + 実 DB write integration (BL-0149 sign-off endpoint + AuditEventRepository.append 経由 P0AcceptanceAudit write) + signed journal verification CLI (audit_events 全件 fetch + recompute + final_hash verify) + private staging CI/E2E 完成 + frontend dashboard backend API wiring。ADR Gate Criteria #1 (DB schema) + #4 (AI 権限) + #6 (Secrets) + #11 (broad refactor) 直結
+- **SP022-T08** (`plan_status: 🟥 heavy + batch 分割必須 (batch 1 signed journal CLI offline mode 完了済 PR #76 / batch 2 backup real I/O **完了済 PR #77** (T02 Phase 2 と一体実装) / batch 3 restore real I/O / batch 4 BL-0149 実 DB write / batch 5 signed journal CLI DB mode + private staging E2E / batch 6 frontend backend wiring)`): **SP-012 carry-over 完了** (F-PR67-025/027 P2 adopt): taskhub real I/O (10 subcommands all) + 実 DB write integration (BL-0149 sign-off endpoint + AuditEventRepository.append 経由 P0AcceptanceAudit write) + signed journal verification CLI (audit_events 全件 fetch + recompute + final_hash verify) + private staging CI/E2E 完成 + frontend dashboard backend API wiring。ADR Gate Criteria #1 (DB schema) + #4 (AI 権限) + #6 (Secrets) + #11 (broad refactor) 直結
 - **SP022-T09** (`plan_status: ⛔ deferred (blocked_by: SP022-T02 impl + 物理 host 2 台 (Mac + VPS) + user 介在 drill 実施)`): **実機 host migration drill (Mac→VPS) PASS** (RTO≤4h、F-PR67-022/029 P2 adopt: T00 accept 後の post-acceptance verification、P0.1 unblock 必須 gate)
 
 ## タスク一覧
@@ -324,6 +324,45 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 - batch 5: signed journal CLI DB mode (`--from-db`) + private staging CI/E2E
 - batch 6: frontend dashboard backend API wiring
 - pure signed_journal_core.py 抽出判断 (R2-F-001 adopt carry-over): import scope 軽量化が必要なら batch 2 で別 module へ pure 部分を抽出
+
+### SP022-T02 Phase 2 / T08 batch 2 backup real I/O completion (2026-05-20)
+
+#### codex-plan-review R1-R3 completion record
+
+- R1 (Phase A): 14 findings (CRITICAL×2 / HIGH×7 / MED×5)
+- R2 (Phase B): 2 findings (CRITICAL×1 / HIGH×1)
+- R3 (CRITICAL final): 1 CRITICAL
+- 累計 17 findings 全件 adopt (100%、根本的解決アプローチ、user directive 「どれだけ時間かかってもいい」反映)
+- Readiness Gate: READY
+
+#### Backup real I/O orchestration 実装
+
+- `scripts/taskhub_subprocess_runner.py` (NEW): common subprocess runner (timeout / stdin=DEVNULL / env allowlist / stderr sanitize / argv logging)、R1-F-009 + R3-F-001 adopt
+- `scripts/taskhub_backup_orchestrator.py` (NEW、~650 lines): backup orchestration (pure + subprocess wrappers + orchestration) + 17 reason_code + archive allowlist + 0700 tmp dir + `.part` atomic rename + R1-R3 17 findings 全件反映
+- `scripts/taskhub_signed_approval.py` (MODIFY): `BackupApprovalClaim` 拡張、verify/require 関数 backup_claim 引数追加、backup subcommand で skeleton escape 物理 deny (R2-F-001 adopt)
+- `scripts/taskhub_admin.py` (MODIFY): `_cmd_backup` を real orchestration 呼出に置き換え + 2 新引数 (`--skip-service-stop` / `--overwrite`) + backup_claim build + signed approval gate extended
+- `tests/scripts/test_taskhub_subprocess_runner.py` (NEW、17 fixture)
+- `tests/scripts/test_taskhub_backup_orchestrator.py` (NEW、24 fixture): Layer 1 pure + Layer 2 mock + Layer 3 orchestration
+- `tests/scripts/test_taskhub_admin.py` / `test_taskhub_admin_security.py` / `test_taskhub_signed_approval.py` (MODIFY): backup 関連 test を real orchestration mode に update
+- `tests/deploy/test_taskhub_backup_integration.py` (NEW): SP022-T09 mandatory drill checklist marker stub
+
+#### Security invariants (本 batch 確立)
+
+- archive allowlist: SSH/age/SOPS private key filename + content prefix + symlink 全 reject (R1-F-001 CRITICAL)
+- tmp dir 0700 + cleanup OSError audit + exit 1 (R1-F-002 CRITICAL)
+- env allowlist secret reject + PGPASSFILE のみ (R3-F-001 CRITICAL)
+- backup_claim mismatch deny + skeleton escape backup reject (R2-F-001 CRITICAL)
+- partial output 防止: `.part` atomic rename
+- stderr sanitization: private key / AGE-SECRET-KEY / password redact
+
+#### Phase 3-6 carry-over (本 batch 対象外)
+
+- batch 3 (T02 Phase 3): restore real I/O
+- batch 4: BL-0149 sign-off endpoint 実 DB write
+- batch 5: signed journal CLI `--from-db` + private staging E2E
+- batch 6: frontend dashboard wiring
+- T02 Phase 4: migrate / freeze / thaw
+- actual pg_dump / age tool 実行 validation → SP022-T09 mandatory drill checklist
 
 ## Phase E adversarial closure trace (PE-F-001〜PE-F-016、F-R2-003 + SP022-T04 R1-R3 adopt: SP-022 内 audit-only trace matrix で local closure、symptom column 追加 + PE-F-010 closure marker + PE-F-010 owner SP-016→SP-022 正規化)
 
