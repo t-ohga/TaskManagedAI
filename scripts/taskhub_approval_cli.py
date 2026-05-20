@@ -43,6 +43,7 @@ try:
         BackupApprovalClaim,
         RestoreApprovalClaim,
         RestoreRollbackApprovalClaim,
+        _parse_restore_rollback_claim_dict,
         _rfc8785_canonical_payload_bytes,
     )
 except ModuleNotFoundError:  # pragma: no cover
@@ -59,6 +60,7 @@ except ModuleNotFoundError:  # pragma: no cover
         BackupApprovalClaim,
         RestoreApprovalClaim,
         RestoreRollbackApprovalClaim,
+        _parse_restore_rollback_claim_dict,
         _rfc8785_canonical_payload_bytes,
     )
 
@@ -245,7 +247,26 @@ def issue_approval_record(opts: ApprovalIssueOptions) -> tuple[bool, ReasonCode,
     if ttl > DEFAULT_MAX_TTL:
         return False, "approval_issue_ttl_exceeded", None
 
-    # 6. claim required check
+    # 6. claim required check + strict format validation (ADV PR R6 F-001 adopt:
+    # issue 時に verify 側と同じ strict format validate を実行、success exit + verify reject
+    # で urgent rollback が block される回帰を防止)
+    if "restore-rollback" in opts.allowed_subcommands and opts.restore_rollback_claim is not None:
+        rrc = opts.restore_rollback_claim
+        # _parse_restore_rollback_claim_dict と同じ canonical dict layout に変換 + round-trip parse
+        rrc_dict_for_validate: dict[str, object] = {
+            "pre_restore_ts": rrc.pre_restore_ts,
+            "pre_restore_dir": rrc.pre_restore_dir,
+            "snapshot_manifest_sha256": rrc.snapshot_manifest_sha256,
+            "target_pg_dsn_components": dict(rrc.target_pg_dsn_components),
+            "target_redis_endpoint": rrc.target_redis_endpoint,
+            "target_artifacts_dir": rrc.target_artifacts_dir,
+            "target_artifacts_container_path": rrc.target_artifacts_container_path,
+            "target_compose_project_name": rrc.target_compose_project_name,
+            "target_compose_file_path": rrc.target_compose_file_path,
+            "expected_postgres_major_version": rrc.expected_postgres_major_version,
+        }
+        if _parse_restore_rollback_claim_dict(rrc_dict_for_validate) is None:
+            return False, "approval_issue_restore_rollback_claim_field_missing", None
     if "backup" in opts.allowed_subcommands and opts.backup_claim is None:
         return False, "approval_issue_backup_claim_required", None
     if "restore" in opts.allowed_subcommands and opts.restore_claim is None:
