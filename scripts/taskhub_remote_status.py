@@ -245,7 +245,8 @@ def _build_ssh_argv(
     host: str, compose_project: str, compose_file: str, timeout_sec: int,
 ) -> list[str]:
     """SSH command を vector で構築、shell injection 完全排除 (R1 F-007 adopt)."""
-    PROJECT_REGEX = re.compile(r"^[a-z][a-z0-9_-]*$")
+    # ADV PR R3 F-002 adopt: Docker Compose 公式仕様で project name は letter OR digit 起始 OK
+    PROJECT_REGEX = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
     if not PROJECT_REGEX.fullmatch(compose_project):
         msg = f"compose_project invalid: {compose_project!r}"
         raise ValueError(msg)
@@ -274,8 +275,10 @@ def _build_ssh_argv(
         "--",
         host,
         (
+            # ADV PR R3 F-001 adopt: --all 必須 (default は running container のみ、
+            # exited/dead が見えず safe-down の host が remote_identity_unverified 誤判定)
             f"docker compose -p {shlex.quote(compose_project)} "
-            f"-f {shlex.quote(compose_file)} ps --format json "
+            f"-f {shlex.quote(compose_file)} ps --all --format json "
             f"&& sha256sum {shlex.quote(compose_file)}"
         ),
     ]
@@ -391,8 +394,12 @@ def query_remote_compose_status(opts: RemoteStatusOptions) -> RemoteStatusResult
             services_up=(), services_down=(),
             raw_stdout_size_bytes=0, split_brain_safe=False,
         )
-    # ADV PR R2 F-001 adopt: stdout を tempfile に stream (subprocess が直接 file に書込、
-    # Python memory に full bytes を load しない)、その後 size enforce
+    # ADV PR R2 F-001 + R3 F-003 adopt: stdout を tempfile に stream
+    # (subprocess が直接 file に書込、Python memory に full bytes を load しない)、
+    # subprocess timeout (opts.ssh_timeout_sec + 5) で write 中の disk 消費を限定。
+    # post-read size enforce で 64 KiB cap → memory 防御は完全、disk 防御は subprocess
+    # timeout 経由 (write 速度 × timeout 上限 で bounded、本 PR scope では timeout 緩和済)。
+    # SafeSubprocessConfig に max_stdout_bytes 追加は SP-022 carry-over。
     import tempfile
     stdout_size: int = 0
     stdout_bytes: bytes = b""

@@ -568,9 +568,19 @@ def _cmd_restore_rollback(args: argparse.Namespace) -> int:
         )
         return 2
 
-    # data dir resolve (R1 F-003 adopt: resolve(strict=True) で symlink resolve + 存在 verify)
+    # data dir resolve (R1 F-003 + ADV PR R3 F-004 adopt: resolve(strict=True) で symlink resolve +
+    # 存在 verify、data_dir は **TASKHUB_RESTORE_ARTIFACTS_DIR の parent から derive** (snapshot は
+    # `options.target_artifacts_dir.parent / f"_pre-restore-<ts>"` で作成されるため、env override
+    # で artifacts_dir が <repo>/data 配下でない場合に snapshot が見つからない経路を防止)
     repo_root = Path(__file__).resolve().parent.parent
-    target_data_dir_str = os.environ.get("TASKHUB_RESTORE_DATA_DIR", str(repo_root / "data"))
+    artifacts_dir_str = os.environ.get(
+        "TASKHUB_RESTORE_ARTIFACTS_DIR", str(repo_root / "data" / "artifacts"),
+    )
+    # explicit override で data_dir 個別指定可能 (artifacts_dir 親と異なる場合の互換性維持)
+    target_data_dir_str = os.environ.get(
+        "TASKHUB_RESTORE_DATA_DIR",
+        str(Path(artifacts_dir_str).parent),
+    )
     try:
         target_data_dir = Path(target_data_dir_str).resolve(strict=True)
     except (OSError, FileNotFoundError):
