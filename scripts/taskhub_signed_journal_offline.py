@@ -22,10 +22,11 @@ import dataclasses
 import json
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
+from uuid import UUID
 
 # pure function pipeline import — backend.app.db chain も transitively import
 # されるが、actual DB session は確立しない (R2-F-001 adopt)
@@ -89,10 +90,23 @@ class SignedJournalUsageError(Exception):
         if self.line_no is not None:
             parts.append(f"line_no={self.line_no}")
         if self.field is not None:
-            parts.append(f"field={self.field}")
+            # F-PR76-003 adopt: untrusted field name (attacker-controlled extra JSON keys)
+            # は newline / control chars で stderr forge できる。`_sanitize_token` で限定
+            parts.append(f"field={_sanitize_token(self.field)}")
         if self.detail:
-            parts.append(f"detail={self.detail}")
+            parts.append(f"detail={_sanitize_token(self.detail)}")
         return " ".join(parts)
+
+
+def _sanitize_token(s: str, max_len: int = 80) -> str:
+    """F-PR76-003 adopt: stderr に untrusted token を出す前に control chars / newline を strip.
+
+    `[\x00-\x1f\x7f-\x9f]` を `?` で置換、max_len で truncate (full payload leak 防止)。
+    """
+    sanitized = re.sub(r"[\x00-\x1f\x7f-\x9f]", "?", s)
+    if len(sanitized) > max_len:
+        sanitized = sanitized[:max_len] + "..."
+    return sanitized
 
 
 class SignedJournalTamperError(Exception):
@@ -206,12 +220,21 @@ def _parse_jsonl_line(line: str, line_no: int) -> AuditEventLike:
         )
 
     # type validation
+    # F-PR76-004 adopt: id は UUID として validate (audit_events.id は UUID column)
     if not isinstance(data["id"], str) or not data["id"]:
         raise SignedJournalUsageError(
             "signed_journal_offline_jsonl_schema_invalid",
             line_no=line_no, field="id",
             detail="must be non-empty string",
         )
+    try:
+        UUID(data["id"])
+    except (ValueError, TypeError):
+        raise SignedJournalUsageError(
+            "signed_journal_offline_jsonl_schema_invalid",
+            line_no=line_no, field="id",
+            detail="must be valid UUID string",
+        ) from None
     if not isinstance(data["event_type"], str) or not data["event_type"]:
         raise SignedJournalUsageError(
             "signed_journal_offline_jsonl_schema_invalid",
@@ -265,12 +288,43 @@ def _parse_jsonl_line(line: str, line_no: int) -> AuditEventLike:
             )
         return v
 
+    # F-PR76-004 adopt: actor_id / principal_id も UUID format validate
+    actor_id_val = _opt_str("actor_id")
+    if actor_id_val is not None:
+        try:
+            UUID(actor_id_val)
+        except (ValueError, TypeError):
+            raise SignedJournalUsageError(
+                "signed_journal_offline_jsonl_schema_invalid",
+                line_no=line_no, field="actor_id",
+                detail="must be valid UUID string or null",
+            ) from None
+    principal_id_val = _opt_str("principal_id")
+    if principal_id_val is not None:
+        try:
+            UUID(principal_id_val)
+        except (ValueError, TypeError):
+            raise SignedJournalUsageError(
+                "signed_journal_offline_jsonl_schema_invalid",
+                line_no=line_no, field="principal_id",
+                detail="must be valid UUID string or null",
+            ) from None
+
+    # F-PR76-005 adopt: DB CHECK constraint mirror —
+    # `(principal_id is null) or (actor_id is not null)`
+    if principal_id_val is not None and actor_id_val is None:
+        raise SignedJournalUsageError(
+            "signed_journal_offline_jsonl_schema_invalid",
+            line_no=line_no, field="principal_id",
+            detail="DB invariant violation: principal_id requires actor_id (audit_events_ck_principal_requires_actor)",
+        )
+
     return AuditEventLike(
         id=data["id"],
         event_type=data["event_type"],
         tenant_id=data["tenant_id"],
-        actor_id=_opt_str("actor_id"),
-        principal_id=_opt_str("principal_id"),
+        actor_id=actor_id_val,
+        principal_id=principal_id_val,
         correlation_id=_opt_str("correlation_id"),
         trace_id=_opt_str("trace_id"),
         event_payload=data["event_payload"],
@@ -306,7 +360,23 @@ def _iter_jsonl_lines(
         close_after = True
     try:
         count = 0
-        for line_no, line in enumerate(source, start=1):
+        line_no = 0
+        # F-PR76-001 adopt: UnicodeDecodeError を SignedJournalUsageError に map、
+        # binary / non-UTF-8 input で uncaught traceback (exit 1) 防止。
+        # `iter(source)` で source iterator を 1 度だけ作成、`next` 経由で例外 catch。
+        source_iter = iter(source)
+        while True:
+            try:
+                line = next(source_iter)
+            except StopIteration:
+                break
+            except UnicodeDecodeError:
+                raise SignedJournalUsageError(
+                    "signed_journal_offline_jsonl_schema_invalid",
+                    line_no=line_no + 1,
+                    detail="input is not valid UTF-8",
+                ) from None
+            line_no += 1
             # R1-F-002 adopt: bytes 長で line size validation
             line_bytes = line.encode("utf-8")
             if len(line_bytes) > max_line_bytes:
@@ -352,15 +422,25 @@ def verify_jsonl_signed_journal(
     _validate_max_line_bytes(max_line_bytes)
     _validate_expected_final_hash(expected_final_hash)
 
-    events = list(_iter_jsonl_lines(input_path, max_entries, max_line_bytes))
+    # F-PR76-002 adopt: streaming generator を直接 pass、eager materialization 廃止。
+    # build_signed_journal_chain は `for audit_event in audit_events` で 1 度 iterate
+    # するのみで、各 AuditEventLike (full event_payload dict) は serialization 後に
+    # GC 可能 (small SignedJournalEntry のみが entries list に残る)。
+    events_iter = _iter_jsonl_lines(input_path, max_entries, max_line_bytes)
     try:
-        # AuditEventLike is duck-typed-compatible with AuditEvent (signed_journal
-        # `_serialize_audit_event` only accesses attributes by name)。type cast
-        # で静的型を満たしつつ runtime は duck typing で機能する。
-        chain = build_signed_journal_chain(cast("list[AuditEvent]", events))
+        # F-PR76-002 adopt: AuditEventLike is duck-typed-compatible with AuditEvent
+        # (signed_journal `_serialize_audit_event` only accesses attributes by name)。
+        # 直接 generator を渡し eager materialization 回避。
+        # SignedJournalUsageError は generator 内で raise されるため、build_signed_journal_chain
+        # の for-loop 通じて propagate (ValueError ではなく SignedJournalUsageError を直接 catch)。
+        chain = build_signed_journal_chain(cast("Iterable[AuditEvent]", events_iter))
+    except SignedJournalUsageError:
+        # generator 内 (UnicodeDecodeError / schema invalid 等) で raise されたものは
+        # そのまま伝播 (caller の _cmd_verify_signed_journal が exit 2 + stderr 出力)
+        raise
     except ValueError as exc:
-        # R1-F-003 adopt: build 中の ValueError (NaN/Inf reject 等) は input invalidity
-        # → exit 2 schema_invalid (raw exc message は出さない)
+        # R1-F-003 adopt: build_signed_journal_chain 内で raise される ValueError
+        # (NaN/Inf reject 等) は input invalidity → exit 2 schema_invalid
         raise SignedJournalUsageError(
             "signed_journal_offline_jsonl_schema_invalid",
             detail=f"chain build rejected input: {type(exc).__name__}",

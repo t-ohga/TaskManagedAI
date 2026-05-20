@@ -373,3 +373,77 @@ def test_verify_error_message_no_raw_payload_leakage(tmp_path: Path) -> None:
     assert secret_value not in msg
     # but should mention the field name (sanitized identifier)
     assert "field=" in msg or "schema_invalid" in msg
+
+
+# ---- PR #76 Codex R1 finding fixtures (F-PR76-001 / 004 / 005) ----
+
+
+def test_verify_invalid_utf8_input_raises_schema_invalid(tmp_path: Path) -> None:
+    """F-PR76-001 adopt: binary / non-UTF-8 input → exit 2 schema_invalid."""
+    p = tmp_path / "binary.jsonl"
+    # Write invalid UTF-8 bytes
+    p.write_bytes(b"\xff\xfe\x80\x81\x82 not valid utf-8\n")
+    with pytest.raises(sjo.SignedJournalUsageError) as exc_info:
+        sjo.verify_jsonl_signed_journal(str(p))
+    assert exc_info.value.reason_code == "signed_journal_offline_jsonl_schema_invalid"
+    assert "UTF-8" in (exc_info.value.detail or "")
+
+
+def test_verify_id_must_be_uuid_format(tmp_path: Path) -> None:
+    """F-PR76-004 adopt: id は UUID format validate、任意 string reject."""
+    bad = _make_event(event_id="not-a-uuid")
+    p = _write_jsonl(tmp_path, [bad])
+    with pytest.raises(sjo.SignedJournalUsageError) as exc_info:
+        sjo.verify_jsonl_signed_journal(str(p))
+    assert exc_info.value.reason_code == "signed_journal_offline_jsonl_schema_invalid"
+    assert exc_info.value.field == "id"
+
+
+def test_verify_actor_id_must_be_uuid_format(tmp_path: Path) -> None:
+    """F-PR76-004 adopt: actor_id 非 null は UUID format validate."""
+    bad = _make_event(actor_id="not-a-uuid")
+    p = _write_jsonl(tmp_path, [bad])
+    with pytest.raises(sjo.SignedJournalUsageError) as exc_info:
+        sjo.verify_jsonl_signed_journal(str(p))
+    assert exc_info.value.field == "actor_id"
+
+
+def test_verify_principal_requires_actor_invariant(tmp_path: Path) -> None:
+    """F-PR76-005 adopt: DB CHECK constraint mirror (principal_id is null OR actor_id is not null)."""
+    # principal_id non-null かつ actor_id null → reject
+    bad = _make_event(
+        actor_id=None,
+        principal_id="00000000-0000-0000-0000-000000000099",
+    )
+    p = _write_jsonl(tmp_path, [bad])
+    with pytest.raises(sjo.SignedJournalUsageError) as exc_info:
+        sjo.verify_jsonl_signed_journal(str(p))
+    assert exc_info.value.reason_code == "signed_journal_offline_jsonl_schema_invalid"
+    assert exc_info.value.field == "principal_id"
+    assert "principal_requires_actor" in (exc_info.value.detail or "")
+
+
+def test_verify_field_name_with_control_chars_sanitized_in_stderr(tmp_path: Path) -> None:
+    """F-PR76-003 adopt: extra field name に newline 等 control chars → sanitized stderr."""
+    p = tmp_path / "evil_field.jsonl"
+    # Build a JSONL line manually with a field name containing newlines (forge attempt)
+    evil_event = {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "event_type": "x",
+        "tenant_id": 1,
+        "actor_id": None,
+        "principal_id": None,
+        "correlation_id": None,
+        "trace_id": None,
+        "event_payload": {},
+        "created_at": "2026-05-20T00:00:00+00:00",
+        # malicious field name with newline
+        "extra\nFORGED reason_code=fake": "value",
+    }
+    p.write_text(json.dumps(evil_event) + "\n", encoding="utf-8")
+    with pytest.raises(sjo.SignedJournalUsageError) as exc_info:
+        sjo.verify_jsonl_signed_journal(str(p))
+    msg = exc_info.value.stderr_message()
+    # control chars (\n) should be replaced with `?`
+    assert "\n" not in msg
+    assert "FORGED reason_code=fake" not in msg or "?" in msg
