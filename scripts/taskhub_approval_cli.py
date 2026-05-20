@@ -354,7 +354,18 @@ def issue_approval_record(opts: ApprovalIssueOptions) -> tuple[bool, ReasonCode,
 
     # 12. atomic create with O_CREAT|O_EXCL|O_NOFOLLOW (ADV R1 F-005 + R2 F-001 adopt)
     # output_dir は §7 直前で lazy resolve 済
+    # ADV PR R7 F-002 adopt: parent dir が symlink でないこと verify (O_NOFOLLOW は最終 file のみ保護)
     output_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if output_dir.is_symlink():
+        return False, "approval_issue_output_path_invalid", None
+    # parent path 全体に symlink がないこと再帰 check (defense-in-depth)
+    cur = output_dir
+    while True:
+        if cur.is_symlink():
+            return False, "approval_issue_output_path_invalid", None
+        if cur == cur.parent:
+            break
+        cur = cur.parent
     final_path = output_dir / f"{opts.approval_id}.signed"
     fd = None
     try:

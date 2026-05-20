@@ -1642,20 +1642,29 @@ def verify_snapshot_component_hashes(
         if present is True:
             # 必須 file
             target_path = pre_restore_dir / fname
-            if fname == "artifacts":
-                if not target_path.is_dir():
-                    raise RestoreRuntimeError(
-                        "restore_rollback_snapshot_component_missing",
-                        detail=f"artifacts dir not found: {target_path}",
-                    )
-                actual_sha256 = _artifacts_merkle_sha256(target_path)
-            else:
-                if not target_path.is_file():
-                    raise RestoreRuntimeError(
-                        "restore_rollback_snapshot_component_missing",
-                        detail=f"component file not found: {target_path}",
-                    )
-                actual_sha256 = _file_sha256(target_path)
+            # ADV PR R7 F-001 adopt: file read OSError (permission / transient FS error) を
+            # structured RestoreRuntimeError に変換 (uncaught exception を cmd_restore_rollback で
+            # propagate させない、stable reason_code 維持)
+            try:
+                if fname == "artifacts":
+                    if not target_path.is_dir():
+                        raise RestoreRuntimeError(
+                            "restore_rollback_snapshot_component_missing",
+                            detail=f"artifacts dir not found: {target_path}",
+                        )
+                    actual_sha256 = _artifacts_merkle_sha256(target_path)
+                else:
+                    if not target_path.is_file():
+                        raise RestoreRuntimeError(
+                            "restore_rollback_snapshot_component_missing",
+                            detail=f"component file not found: {target_path}",
+                        )
+                    actual_sha256 = _file_sha256(target_path)
+            except OSError as exc:
+                raise RestoreRuntimeError(
+                    "restore_rollback_snapshot_component_hash_mismatch",
+                    detail=f"{fname}: hash read failed: {type(exc).__name__}: {exc}",
+                ) from exc
             if actual_sha256 != expected_sha256:
                 raise RestoreRuntimeError(
                     "restore_rollback_snapshot_component_hash_mismatch",
@@ -1718,12 +1727,13 @@ def rollback_from_pre_restore_snapshot(
         shutil.rmtree(options.target_artifacts_dir, ignore_errors=False)
     artifacts_backup = pre_restore_dir / "artifacts"
     if artifacts_backup.exists():
-        # ADV PR R5 F-001 adopt: shutil.copytree で snapshot 内 artifacts を保持
-        # (move すると後続 pg_restore / Redis 失敗時の retry で hash verify が
-        # component_missing で fail-closed する経路を排除)
+        # ADV PR R5 F-001 + R7 F-003 adopt: shutil.copytree で snapshot 内 artifacts を保持
+        # symlinks=True で symlink 自体を symlink として preserve (snapshot capture と rollback
+        # restore の semantics が一致、外部 file content を dereference して取り込む経路を排除).
+        # _artifacts_merkle_sha256 は symlink を exclude するため hash verify 整合維持.
         shutil.copytree(
             artifacts_backup, options.target_artifacts_dir,
-            symlinks=False, ignore_dangling_symlinks=True,
+            symlinks=True,
         )
 
     # 2. DB rollback: snapshot 存在 verify (R19-F-002)
@@ -1764,10 +1774,10 @@ def rollback_from_pre_restore_snapshot(
             shutil.rmtree(new_aof_dir, ignore_errors=False)
         shutil.copy2(pre_redis_dump, redis_host_path / "dump.rdb")
         if pre_aof_backup.exists():
-            # ADV PR R5 F-001 adopt: AOF も copytree で snapshot 保持 (move 不可)
+            # ADV PR R5 F-001 + R7 F-003 adopt: AOF も symlinks=True で copytree
             shutil.copytree(
                 pre_aof_backup, redis_host_path / "appendonlydir",
-                symlinks=False, ignore_dangling_symlinks=True,
+                symlinks=True,
             )
         try:
             start_redis_service_wait_healthy(options)
