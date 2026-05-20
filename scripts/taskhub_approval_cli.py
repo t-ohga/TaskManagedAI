@@ -94,10 +94,14 @@ ReasonCode = Literal[
     "approval_issue_output_path_invalid",
 ]
 
-# constants
-_TASKHUB_HOME_DEFAULT = Path.home() / ".taskhub"
-_SIGNING_KEY_PATH_DEFAULT = _TASKHUB_HOME_DEFAULT / "keys" / "approval-signing-key"
-_APPROVAL_DIR_DEFAULT = _TASKHUB_HOME_DEFAULT / "approvals"
+# ADV PR R4 F-003 adopt: lazy resolution (Path.home() RuntimeError を import time crash から
+# runtime guarded handling に移動。service user / mis-configured environment 対応)
+def _default_signing_key_path() -> Path:
+    return Path.home() / ".taskhub" / "keys" / "approval-signing-key"
+
+
+def _default_approval_dir() -> Path:
+    return Path.home() / ".taskhub" / "approvals"
 
 
 @dataclass(frozen=True)
@@ -113,8 +117,9 @@ class ApprovalIssueOptions:
     backup_claim: BackupApprovalClaim | None = None
     restore_claim: RestoreApprovalClaim | None = None
     restore_rollback_claim: RestoreRollbackApprovalClaim | None = None
-    signing_key_path: Path = _SIGNING_KEY_PATH_DEFAULT
-    output_dir: Path = _APPROVAL_DIR_DEFAULT
+    # signing_key_path / output_dir は None なら issue_approval_record で lazy resolve
+    signing_key_path: Path | None = None
+    output_dir: Path | None = None
 
 
 def _validate_and_load_signing_key(
@@ -195,7 +200,14 @@ def issue_approval_record(opts: ApprovalIssueOptions) -> tuple[bool, ReasonCode,
     """approval record を発行、(success, reason_code, output_path) を返す.
 
     R1 F-009/F-011/F-017 + ADV R1 F-004/F-005/F-015 + ADV R2 F-001 adopt.
+    ADV PR R4 F-003 adopt: signing_key_path / output_dir lazy resolve (Path.home() RuntimeError handling).
     """
+    # ADV PR R4 F-003 adopt: lazy default resolve (Path.home() の RuntimeError を捕捉)
+    try:
+        signing_key_path = opts.signing_key_path if opts.signing_key_path is not None else _default_signing_key_path()
+        output_dir = opts.output_dir if opts.output_dir is not None else _default_approval_dir()
+    except RuntimeError:
+        return False, "approval_issue_signing_key_missing", None
     # 1. approval_id format validate
     if not APPROVAL_ID_REGEX.fullmatch(opts.approval_id):
         return False, "approval_issue_approval_id_malformed", None
@@ -205,6 +217,10 @@ def issue_approval_record(opts: ApprovalIssueOptions) -> tuple[bool, ReasonCode,
         return False, "approval_issue_reason_summary_malformed", None
 
     # 3. drill_kind / subcommand 整合
+    # ADV PR R4 F-002 adopt: 1 approval = exactly 1 destructive subcommand (least-privilege)
+    # runbook §2 per-subcommand と integrate、blast radius を 1 operation に限定
+    if len(opts.allowed_subcommands) != 1:
+        return False, "approval_issue_drill_kind_subcommand_mismatch", None
     if opts.drill_kind not in DRILL_KIND_ALLOWED_SUBCOMMANDS:
         return False, "approval_issue_drill_kind_subcommand_mismatch", None
     allowed_for_drill = DRILL_KIND_ALLOWED_SUBCOMMANDS[opts.drill_kind]
@@ -238,7 +254,7 @@ def issue_approval_record(opts: ApprovalIssueOptions) -> tuple[bool, ReasonCode,
         return False, "approval_issue_restore_rollback_claim_required", None
 
     # 7. signing key validate + load (ADV PR R2 F-003 adopt: 同一 FD 上で TOCTOU 排除)
-    priv, key_err = _validate_and_load_signing_key(opts.signing_key_path)
+    priv, key_err = _validate_and_load_signing_key(signing_key_path)
     if key_err or priv is None:
         return False, key_err or "approval_issue_signing_key_missing", None
 
@@ -316,7 +332,7 @@ def issue_approval_record(opts: ApprovalIssueOptions) -> tuple[bool, ReasonCode,
         }
 
     # 12. atomic create with O_CREAT|O_EXCL|O_NOFOLLOW (ADV R1 F-005 + R2 F-001 adopt)
-    output_dir = opts.output_dir
+    # output_dir は §7 直前で lazy resolve 済
     output_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
     final_path = output_dir / f"{opts.approval_id}.signed"
     fd = None
@@ -497,8 +513,9 @@ def register_subparser(subparsers: argparse._SubParsersAction) -> None:  # type:
         "--drill-kind", required=True,
         choices=sorted(DRILL_KIND_ALLOWED_SUBCOMMANDS.keys()),
     )
+    # ADV PR R4 F-002 adopt: nargs=1 強制 (1 approval = 1 destructive subcommand、least-privilege)
     issue_parser.add_argument(
-        "--allowed-subcommands", required=True, nargs="+",
+        "--allowed-subcommands", required=True, nargs=1,
         choices=sorted(DESTRUCTIVE_SUBCOMMANDS),
     )
     issue_parser.add_argument("--target-host", default=None)

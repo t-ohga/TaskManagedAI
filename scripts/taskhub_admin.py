@@ -858,9 +858,21 @@ def _cmd_status(args: argparse.Namespace) -> int:
                 RemoteStatusOptions,
                 query_remote_compose_status,
             )
+        # ADV PR R4 F-001 adopt: TASKHUB_REMOTE_SSH_TIMEOUT_SEC parse を guarded validation
+        timeout_str = os.environ.get("TASKHUB_REMOTE_SSH_TIMEOUT_SEC", "10")
+        try:
+            timeout_sec = int(timeout_str)
+            if timeout_sec <= 0:
+                raise ValueError(f"timeout must be positive: {timeout_sec}")
+        except (ValueError, TypeError) as exc:
+            print(  # noqa: T201
+                f"ERROR: TASKHUB_REMOTE_SSH_TIMEOUT_SEC invalid: {timeout_str!r} ({exc})",
+                file=sys.stderr,
+            )
+            return 2
         opts = RemoteStatusOptions(
             remote_host=args.remote,
-            ssh_timeout_sec=int(os.environ.get("TASKHUB_REMOTE_SSH_TIMEOUT_SEC", "10")),
+            ssh_timeout_sec=timeout_sec,
         )
         try:
             result = query_remote_compose_status(opts)
