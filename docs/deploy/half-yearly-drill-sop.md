@@ -113,17 +113,31 @@ MAILTO=ops@example.com
 - **approval signature verification 失敗** → drill kick-off reject、SecretBroker audit event 発火 (raw secret なし、SP-004/006 SecretBroker boundary 経由)
 - **Tailscale connection lost** → drill abort、source host の service を resume (`taskhub thaw`、SP-012 batch 7 で skeleton)、24h 以内に retro 実施
 
-## 7. (planned contract for SP022-T02、本 SOP では仕様明文化のみ)
+## 7. signed approval Ed25519 verify (SP022-T02 Phase 1 で normative 化、F-R1-006 + R3 adopt: 節分割)
 
-> **Note**: 本 §7 は **SP022-T02 (`taskhub migrate` 自動化) で実装される planned contract**、本 SP022-T03 では SOP 内 reference として明文化のみ。normative spec / 受け入れ条件は SP022-T02 ticket に記載される。
+### 7.1 normative invariants (SP022-T02 Phase 1 で実装完了、`scripts/taskhub_signed_approval.py`)
 
-T02 で実装される `taskhub migrate` は本 T03 SOP の手動 approval flow と整合するため、以下 invariant が **T02 implementation contract** として想定される:
+以下は **normative spec** (`scripts/ci/check_phase_e_trace.sh` / `tests/scripts/test_taskhub_signed_approval.py` で機械検査済):
 
-- `--approval-id <id>` 必須、signed approval record `~/.taskhub/approvals/<id>.signed` の Ed25519 signature verify (Ed25519 key 管理は SOPS age 経由を T02 で決定)
-- cron / systemd 環境変数 (`SYSTEMD_INVOCATION` / `CRON_INVOCATION` 等) 検出時は default deny、`--from-automation` 明示 + signed approval 両方必須
-- signature verify 失敗 → exit 2 + audit event 発火 (raw secret なし、SecretBroker boundary 経由)
+- `--approval-id <id>` (`~/.taskhub/approvals/<id>.signed`) の Ed25519 signature verify (RFC 8785 strict JCS canonical JSON、原 datetime 文字列保持)
+- approval_id allowlist (`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`) + path traversal deny + record-CLI ID 一致 verify
+- destructive subcommand 6 件 (`backup` / `restore` / `migrate` / `freeze` / `thaw` / `age-rotate`) の **default deny** (manual exec も含む、Phase 1 では `--allow-unsigned-manual-skeleton` skeleton-only escape あり、Phase 2 で削除予定)
+- automation detection (`SYSTEMD_INVOCATION_ID` / `CRON_INVOCATION` / `GITHUB_ACTIONS` / `CI` / `BUILD_ID` 等 12 env var matrix + TTY absence)、検出時に `--from-automation` 明示 + `--approval-id` 両方必須
+- approval record fields: `approval_id` / `decider` / `reason_summary` (allowlist) / `signed_at` (strict UTC `Z`) / `expires_at` (strict UTC `Z`、48h max_ttl) / `drill_kind` (8 enum) / `allowed_subcommands` (drill_kind 上限照合) / `target_host` (migrate で non-empty + exact match 必須) / `signature` (strict base64 + 64-byte)
+- Ed25519 verify key (`~/.taskhub/keys/approval-verify-key.pub`) の owner/mode permission check + repo-internal SHA-256 fingerprint allowlist (`.taskhub/approval-verify-key-fingerprints.allowlist`) hard fail verify
+- audit event payload allowlist 方式 (raw signing key / raw signature / raw `reason` 不在)、reason_code 24 種、stderr scaffold (Phase 2 で SecretBroker-mediated audit sink に置換予定)
 
-詳細仕様 (signature algorithm 選定、approval record schema、audit event payload format 等) は **SP022-T02 ticket で確定**。本 T03 SOP は T02 完了後に正式 invariant に更新する。
+### 7.2 planned (Phase 2-4 carry-over)
+
+以下は **planned**、SP022-T02 Phase 2-4 で実装:
+
+- 実 backup / restore / migrate / freeze / thaw / age-rotate I/O 配置 (Phase 2-4)
+- SecretBroker-mediated audit sink integration (Phase 2)
+- approval consumption ledger (one-time approval marker、Phase 2)
+- age key rotation 自動化 (Phase 2-3)
+- process tree-based automation detection (Phase 2 ADR Gate 判断)
+- `--allow-unsigned-manual-skeleton` escape flag 削除 (Phase 2 実 I/O 配置時に削除、Phase 1 のみ存在)
+- `restore` subcommand の `target_host` claim (Phase 2 で `--target-host` argument 追加判断)
 
 ## 8. retro Pack (drill 完了後 24h 以内)
 

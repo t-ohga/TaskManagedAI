@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -10,14 +11,35 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CLI_PATH = _REPO_ROOT / "scripts" / "taskhub_admin.py"
 
+# F-PR75-004 adopt: automation env を ambient から strip して subprocess inherit を防ぐ
+# (CI run で GITHUB_ACTIONS / CI 等が leak し、destructive subcommand が default deny → 既存 test fail)
+_AUTOMATION_ENV_VARS = (
+    "SYSTEMD_INVOCATION_ID", "INVOCATION_ID", "JOURNAL_STREAM", "CRON_INVOCATION",
+    "GITHUB_ACTIONS", "CI", "BUILD_ID", "BUILD_NUMBER", "RUN_ID",
+    "KUBERNETES_SERVICE_HOST", "container", "BASH_EXECUTION_STRING",
+)
 
-def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+
+def _sanitized_env() -> dict[str, str]:
+    """ambient parent env から automation hints を strip した default env."""
+    env = dict(os.environ)
+    for var in _AUTOMATION_ENV_VARS:
+        env.pop(var, None)
+    return env
+
+
+def _run_cli(
+    *args: str, env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    # R2-F-005 + F-PR75-004 adopt: env override 引数追加 (security integration tests で
+    # HOME=tmp_path を渡すために必要)。caller が env=None なら sanitized_env (automation 削除)。
     return subprocess.run(  # noqa: S603
         [sys.executable, str(_CLI_PATH), *args],
         capture_output=True,
         text=True,
         cwd=str(_REPO_ROOT),
         check=False,
+        env=env if env is not None else _sanitized_env(),
     )
 
 
@@ -68,7 +90,9 @@ def test_cli_backup_requires_output() -> None:
 def test_cli_backup_skeleton_mode_returns_exit_1(tmp_path: Path) -> None:
     """`backup --output <path>` → skeleton + exit 1 (drill 起点、ADR-00021 §3)."""
     target = tmp_path / "sp012-backup.tar.age"
-    result = _run_cli("backup", "--output", str(target))
+    # SP022-T02 Phase 1 (R1-F-002 adopt): destructive subcommand は default deny、
+    # skeleton 動作確認は `--allow-unsigned-manual-skeleton` escape で実施
+    result = _run_cli("backup", "--output", str(target), "--allow-unsigned-manual-skeleton")
     assert result.returncode == 1
     assert "[SKELETON] taskhub backup" in result.stdout
     assert str(target) in result.stdout
@@ -79,7 +103,11 @@ def test_cli_backup_skeleton_mode_returns_exit_1(tmp_path: Path) -> None:
 def test_cli_backup_include_sops_env_option(tmp_path: Path) -> None:
     """`backup --include-sops-env` (PG-F-015 hardening rename、Codex R3 F-PR63-006 adopt)."""
     target = tmp_path / "secrets-backup.tar.age"
-    result = _run_cli("backup", "--output", str(target), "--include-sops-env")
+    # SP022-T02 Phase 1: skeleton mode 確認は escape flag 付与
+    result = _run_cli(
+        "backup", "--output", str(target), "--include-sops-env",
+        "--allow-unsigned-manual-skeleton",
+    )
     assert result.returncode == 1
     assert "[SKELETON] taskhub backup" in result.stdout
     assert "(with SOPS-encrypted .env)" in result.stdout
@@ -119,8 +147,14 @@ def test_cli_restore_input_and_rollback_are_mutually_exclusive(tmp_path: Path) -
 
 
 def test_cli_restore_rollback_skeleton_mode_returns_exit_1() -> None:
-    """`restore --rollback <pre-restore-ts>` → skeleton + exit 1 (ADR-00021 §290 / §299)."""
-    result = _run_cli("restore", "--rollback", "2026-05-18T10-00-00")
+    """`restore --rollback <pre-restore-ts>` → skeleton + exit 1 (ADR-00021 §290 / §299).
+
+    SP022-T02 Phase 1: skeleton mode 確認は `--allow-unsigned-manual-skeleton` escape 付与。
+    """
+    result = _run_cli(
+        "restore", "--rollback", "2026-05-18T10-00-00",
+        "--allow-unsigned-manual-skeleton",
+    )
     assert result.returncode == 1
     assert "[SKELETON] taskhub restore --rollback" in result.stdout
     assert "2026-05-18T10-00-00" in result.stdout
@@ -136,10 +170,15 @@ def test_cli_restore_missing_input_path_returns_exit_2(tmp_path: Path) -> None:
 
 
 def test_cli_restore_skeleton_mode_returns_exit_1(tmp_path: Path) -> None:
-    """input file 存在 → skeleton message + exit 1."""
+    """input file 存在 → skeleton message + exit 1.
+
+    SP022-T02 Phase 1: skeleton mode 確認は escape flag 付与。
+    """
     fake_backup = tmp_path / "fake-backup.tar.age"
     fake_backup.write_bytes(b"fake-age-encrypted-content")
-    result = _run_cli("restore", "--input", str(fake_backup))
+    result = _run_cli(
+        "restore", "--input", str(fake_backup), "--allow-unsigned-manual-skeleton",
+    )
     assert result.returncode == 1
     assert "[SKELETON] taskhub restore" in result.stdout
     assert "age-encrypted tar" in result.stdout
@@ -152,8 +191,13 @@ def test_cli_migrate_requires_target() -> None:
 
 
 def test_cli_migrate_skeleton_mode_returns_exit_1() -> None:
-    """`migrate --target <host>` → skeleton + exit 1 (default transport = tailscale per ADR-00021 §3 + SP-012 drill)."""
-    result = _run_cli("migrate", "--target", "example-host")
+    """`migrate --target <host>` → skeleton + exit 1 (default transport = tailscale per ADR-00021 §3 + SP-012 drill).
+
+    SP022-T02 Phase 1: skeleton mode 確認は escape flag 付与。
+    """
+    result = _run_cli(
+        "migrate", "--target", "example-host", "--allow-unsigned-manual-skeleton",
+    )
     assert result.returncode == 1
     assert "[SKELETON] taskhub migrate" in result.stdout
     assert "example-host" in result.stdout
@@ -162,16 +206,28 @@ def test_cli_migrate_skeleton_mode_returns_exit_1() -> None:
 
 
 def test_cli_migrate_via_tailscale_option_matches_adr_drill() -> None:
-    """ADR-00021 §3 と SP-012 §128 host migration drill command `--via tailscale` を accepting する (Codex R1 adopt)."""
-    result = _run_cli("migrate", "--target", "t-ohga-vps", "--via", "tailscale")
+    """ADR-00021 §3 と SP-012 §128 host migration drill command `--via tailscale` を accepting する (Codex R1 adopt).
+
+    SP022-T02 Phase 1: skeleton mode 確認は escape flag 付与。
+    """
+    result = _run_cli(
+        "migrate", "--target", "t-ohga-vps", "--via", "tailscale",
+        "--allow-unsigned-manual-skeleton",
+    )
     assert result.returncode == 1
     assert "via tailscale" in result.stdout
     assert "t-ohga-vps" in result.stdout
 
 
 def test_cli_migrate_via_scp_option() -> None:
-    """`migrate --target <host> --via scp` を accepting する (代替 transport)."""
-    result = _run_cli("migrate", "--target", "example-host", "--via", "scp")
+    """`migrate --target <host> --via scp` を accepting する (代替 transport).
+
+    SP022-T02 Phase 1: skeleton mode 確認は escape flag 付与。
+    """
+    result = _run_cli(
+        "migrate", "--target", "example-host", "--via", "scp",
+        "--allow-unsigned-manual-skeleton",
+    )
     assert result.returncode == 1
     assert "via scp" in result.stdout
 
@@ -218,8 +274,14 @@ def test_cli_freeze_requires_reason() -> None:
 
 
 def test_cli_freeze_skeleton_mode_returns_exit_1() -> None:
-    """`freeze --reason <text>` → skeleton + exit 1."""
-    result = _run_cli("freeze", "--reason", "migration to t-ohga-vps at 2026-05-18T10:00Z")
+    """`freeze --reason <text>` → skeleton + exit 1.
+
+    SP022-T02 Phase 1: skeleton mode 確認は escape flag 付与。
+    """
+    result = _run_cli(
+        "freeze", "--reason", "migration to t-ohga-vps at 2026-05-18T10:00Z",
+        "--allow-unsigned-manual-skeleton",
+    )
     assert result.returncode == 1
     assert "[SKELETON] taskhub freeze" in result.stdout
     assert "signed freeze marker" in result.stdout
@@ -227,8 +289,11 @@ def test_cli_freeze_skeleton_mode_returns_exit_1() -> None:
 
 
 def test_cli_thaw_skeleton_mode_returns_exit_1() -> None:
-    """`thaw` (flag なし) → skeleton + exit 1 (Codex R4 F-PR63-009 adopt、ADR-00021 §670)."""
-    result = _run_cli("thaw")
+    """`thaw` (flag なし) → skeleton + exit 1 (Codex R4 F-PR63-009 adopt、ADR-00021 §670).
+
+    SP022-T02 Phase 1: skeleton mode 確認は escape flag 付与。
+    """
+    result = _run_cli("thaw", "--allow-unsigned-manual-skeleton")
     assert result.returncode == 1
     assert "[SKELETON] taskhub thaw" in result.stdout
     assert "preflight" in result.stdout
@@ -238,8 +303,13 @@ def test_cli_thaw_skeleton_mode_returns_exit_1() -> None:
 
 
 def test_cli_thaw_decommission_target_flag() -> None:
-    """`thaw --decommission-target` → 2-party-control + 別 actor approval invariant 言及あり."""
-    result = _run_cli("thaw", "--decommission-target")
+    """`thaw --decommission-target` → 2-party-control + 別 actor approval invariant 言及あり.
+
+    SP022-T02 Phase 1: skeleton mode 確認は escape flag 付与。
+    """
+    result = _run_cli(
+        "thaw", "--decommission-target", "--allow-unsigned-manual-skeleton",
+    )
     assert result.returncode == 1
     assert "[SKELETON] taskhub thaw" in result.stdout
     # flag 有効時は default にない説明 prefix が含まれる
@@ -257,8 +327,11 @@ def test_cli_active_registry_skeleton_mode_returns_exit_1() -> None:
 
 
 def test_cli_age_rotate_skeleton_mode_returns_exit_1() -> None:
-    """`age-rotate` → skeleton + exit 1, ADR-00021 §5 SOP 言及あり."""
-    result = _run_cli("age-rotate")
+    """`age-rotate` → skeleton + exit 1, ADR-00021 §5 SOP 言及あり.
+
+    SP022-T02 Phase 1: skeleton mode 確認は escape flag 付与。
+    """
+    result = _run_cli("age-rotate", "--allow-unsigned-manual-skeleton")
     assert result.returncode == 1
     assert "[SKELETON] taskhub age-rotate" in result.stdout
     assert "ADR-00021 §5" in result.stdout

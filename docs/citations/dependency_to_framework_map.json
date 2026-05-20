@@ -17,6 +17,7 @@
     {"dependency_name": "dapr", "ecosystem": "pypi", "framework_canonical": "Dapr Agents"},
     {"dependency_name": "dify-client", "ecosystem": "pypi", "framework_canonical": "Dify"},
     {"dependency_name": "openhands-ai", "ecosystem": "pypi", "framework_canonical": "OpenHands"},
-    {"dependency_name": "taskingai", "ecosystem": "pypi", "framework_canonical": "TaskingAI"}
+    {"dependency_name": "taskingai", "ecosystem": "pypi", "framework_canonical": "TaskingAI"},
+    {"dependency_name": "cryptography", "ecosystem": "pypi", "framework_canonical": "Foundational Crypto (non-AI)"}
   ]
 }
