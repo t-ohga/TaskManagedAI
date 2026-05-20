@@ -315,13 +315,20 @@ def build_meta_json(
     postgres_version: str,
     redis_version: str,
     alembic_head: str,
-    backup_format_version: str = "1",
+    format_version: str = "1.0",
 ) -> dict[str, Any]:
-    """meta.json builder (F-008 adopt: 取得済 source から組み立て)。"""
+    """meta.json builder (F-008 adopt + R2-F-005 PR #77 retro-fix: SP022-T02 Phase 3 restore 側との
+    field 名整合化).
+
+    field rename (R2-F-005 adopt):
+    - `backup_format_version` → `format_version` (1.0 semver で前方互換管理)
+    - `host` → `host_name`
+    - `timestamp` → `timestamp_utc` (rfc3339 Z suffix で UTC 明示)
+    """
     return {
-        "backup_format_version": backup_format_version,
-        "host": host_name,
-        "timestamp": timestamp_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "format_version": format_version,
+        "host_name": host_name,
+        "timestamp_utc": timestamp_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "postgres_version": postgres_version,
         "redis_version": redis_version,
         "alembic_head": alembic_head,
