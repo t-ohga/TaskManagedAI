@@ -1416,7 +1416,9 @@ def _file_sha256(path: Path) -> str:
 def _artifacts_merkle_sha256(artifacts_dir: Path) -> str:
     """artifacts dir 全 file の concatenated relative-path + content sha256 を再帰計算.
 
-    SP022-T02 Phase 4 (R1 F-004 adopt): simple Merkle (relative_path + sha256) sequential hash.
+    SP022-T02 Phase 4 (R1 F-004 + ADV PR R2 F-002 adopt): simple Merkle (relative_path + sha256)
+    sequential hash. **symlink は exclude** (外部 file への symlink を含めると、後日 rollback 時に
+    snapshot 自体が未変更でも外部更新で hash_mismatch になる).
     """
     h = hashlib.sha256()
     if not artifacts_dir.is_dir():
@@ -1424,6 +1426,10 @@ def _artifacts_merkle_sha256(artifacts_dir: Path) -> str:
     # sort で deterministic
     entries: list[Path] = []
     for entry in sorted(artifacts_dir.rglob("*")):
+        # ADV PR R2 F-002 adopt: symlink は skip (is_file は symlink 先 follow)
+        # lstat で symlink 自体を判定
+        if entry.is_symlink():
+            continue
         if entry.is_file():
             entries.append(entry)
     for entry in entries:
@@ -1606,12 +1612,23 @@ def verify_snapshot_component_hashes(
     present=true は file sha256 一致 verify、present=false は warnings に skipped_reason 追加.
 
     raise RestoreRuntimeError on (present=true で hash mismatch or file missing).
+    ADV PR R2 F-005 adopt: 必須 components key 存在 check 追加 (manifest 改ざんで hash verify skip 防止).
     """
     components = manifest.get("components")
     if not isinstance(components, dict):
         raise RestoreRuntimeError(
             "restore_rollback_snapshot_manifest_invalid_json",
             detail="components field missing or not dict",
+        )
+    # ADV PR R2 F-005 adopt: 必須 key 集合 存在 verify (欠落させると hash verify 全 skip 経路)
+    required_components = frozenset({
+        "pre_restore_pg_dump.dump", "pre_restore_dump.rdb", "artifacts",
+    })
+    missing_components = required_components - set(components.keys())
+    if missing_components:
+        raise RestoreRuntimeError(
+            "restore_rollback_snapshot_manifest_invalid_json",
+            detail=f"required components missing from manifest: {sorted(missing_components)}",
         )
     for fname, spec in components.items():
         if not isinstance(spec, dict):

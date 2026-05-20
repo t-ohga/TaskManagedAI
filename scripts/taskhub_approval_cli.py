@@ -117,49 +117,78 @@ class ApprovalIssueOptions:
     output_dir: Path = _APPROVAL_DIR_DEFAULT
 
 
-def _validate_signing_key(path: Path) -> tuple[bool, ReasonCode | None]:
-    """signing key file の存在 / mode / symlink check.
-
-    ADV R1 F-005/F-018 adopt: O_NOFOLLOW で symlink reject + parent 0o700 必須.
+def _validate_and_load_signing_key(
+    path: Path,
+) -> tuple[Ed25519PrivateKey | None, ReasonCode | None]:
+    """ADV R1 F-019 + ADV PR R2 F-003 adopt: O_NOFOLLOW + fstat で symlink/permission 検査と
+    raw 32-byte seed 読取を **同一 FD 上で完結** (TOCTOU race 排除、検査済みとは別 inode を
+    読み込む経路を物理排除).
     """
-    if path.is_symlink():
-        return False, "approval_issue_signing_key_symlink"
-    if not path.is_file():
-        return False, "approval_issue_signing_key_missing"
-    try:
-        st = path.stat()
-    except OSError:
-        return False, "approval_issue_signing_key_missing"
-    mode = stat.S_IMODE(st.st_mode)
-    if mode != 0o600:
-        return False, "approval_issue_signing_key_permission"
+    # parent dir mode check (path 自体は O_NOFOLLOW open で symlink reject)
     parent = path.parent
     try:
         parent_st = parent.stat()
     except OSError:
-        return False, "approval_issue_signing_key_dir_permission"
+        return None, "approval_issue_signing_key_dir_permission"
     parent_mode = stat.S_IMODE(parent_st.st_mode)
     if parent_mode != 0o700:
-        return False, "approval_issue_signing_key_dir_permission"
+        return None, "approval_issue_signing_key_dir_permission"
+
+    # O_NOFOLLOW: symlink を物理 reject (open 時点で ELOOP)
+    try:
+        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None, "approval_issue_signing_key_missing"
+    except OSError as e:
+        # ELOOP (40) = symlink reject by O_NOFOLLOW
+        import errno
+        if e.errno == errno.ELOOP:
+            return None, "approval_issue_signing_key_symlink"
+        return None, "approval_issue_signing_key_missing"
+
+    seed_buf = bytearray(32)
+    try:
+        # 同一 FD 上で fstat → mode check
+        st = os.fstat(fd)
+        mode = stat.S_IMODE(st.st_mode)
+        if mode != 0o600:
+            return None, "approval_issue_signing_key_permission"
+        # 同一 FD 上で read (検証済 inode と同一)
+        with os.fdopen(fd, "rb", closefd=True) as f:
+            data = f.read()
+            if len(data) != 32:
+                return None, "approval_issue_signing_key_invalid_format"
+            seed_buf = bytearray(data)
+            del data
+        try:
+            priv = Ed25519PrivateKey.from_private_bytes(bytes(seed_buf))
+            return priv, None
+        finally:
+            for i in range(len(seed_buf)):
+                seed_buf[i] = 0
+    except OSError:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        return None, "approval_issue_signing_key_missing"
+
+
+# Backward-compat: 既存 test が _validate_signing_key と _load_signing_key_zeroize を直接呼び出す
+# 可能性に備えた alias (両者を統合した新関数)
+def _validate_signing_key(path: Path) -> tuple[bool, ReasonCode | None]:
+    """Deprecated: ADV PR R2 F-003 で `_validate_and_load_signing_key` に統合済。
+    互換性のため残置 (testing で個別呼出可能)。
+    """
+    priv, reason = _validate_and_load_signing_key(path)
+    if reason is not None:
+        return False, reason
     return True, None
 
 
 def _load_signing_key_zeroize(path: Path) -> tuple[Ed25519PrivateKey | None, ReasonCode | None]:
-    """ADV R1 F-019 adopt: bytearray 経由で raw 32-byte seed load + 即時 zeroize."""
-    try:
-        seed_buf = bytearray(path.read_bytes())
-    except OSError:
-        return None, "approval_issue_signing_key_missing"
-    try:
-        if len(seed_buf) != 32:
-            return None, "approval_issue_signing_key_invalid_format"
-        # bytes(seed_buf) は新 immutable bytes (cryptography library 内部 lifetime)
-        priv = Ed25519PrivateKey.from_private_bytes(bytes(seed_buf))
-        return priv, None
-    finally:
-        # bytearray 即時 overwrite (best-effort zeroize)
-        for i in range(len(seed_buf)):
-            seed_buf[i] = 0
+    """Deprecated: ADV PR R2 F-003 で `_validate_and_load_signing_key` に統合済."""
+    return _validate_and_load_signing_key(path)
 
 
 def issue_approval_record(opts: ApprovalIssueOptions) -> tuple[bool, ReasonCode, Path | None]:
@@ -208,15 +237,10 @@ def issue_approval_record(opts: ApprovalIssueOptions) -> tuple[bool, ReasonCode,
     if "restore-rollback" in opts.allowed_subcommands and opts.restore_rollback_claim is None:
         return False, "approval_issue_restore_rollback_claim_required", None
 
-    # 7. signing key validate
-    ok, key_err = _validate_signing_key(opts.signing_key_path)
-    if not ok:
+    # 7. signing key validate + load (ADV PR R2 F-003 adopt: 同一 FD 上で TOCTOU 排除)
+    priv, key_err = _validate_and_load_signing_key(opts.signing_key_path)
+    if key_err or priv is None:
         return False, key_err or "approval_issue_signing_key_missing", None
-
-    # 8. signing key load + zeroize
-    priv, load_err = _load_signing_key_zeroize(opts.signing_key_path)
-    if load_err or priv is None:
-        return False, load_err or "approval_issue_signing_key_missing", None
 
     # 9. build ApprovalRecord (signature placeholder で後で update)
     signed_at_str = opts.signed_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -303,7 +327,15 @@ def issue_approval_record(opts: ApprovalIssueOptions) -> tuple[bool, ReasonCode,
             0o600,
         )
         content = json.dumps(record_dict, indent=2, sort_keys=True).encode("utf-8")
-        os.write(fd, content)
+        # ADV PR R2 F-006 adopt: os.write 戻り値 check + 短書き込み loop (途中切れた JSON で
+        # verify 失敗の不整合を防止)
+        offset = 0
+        while offset < len(content):
+            n = os.write(fd, content[offset:])
+            if n <= 0:
+                # 0 bytes 書込は EOF / 異常、loop break で OSError 経路へ
+                raise OSError("short write: 0 bytes written")
+            offset += n
         os.fsync(fd)
     except FileExistsError:
         return False, "approval_issue_output_path_collision", None

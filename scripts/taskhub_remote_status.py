@@ -207,6 +207,9 @@ def load_remote_hosts_signed_config() -> RemoteHostsConfigLoadResult:
             isinstance(s, str) and s for s in expected_services_v
         ):
             return RemoteHostsConfigLoadResult("remote_status_config_malformed", {})
+        # ADV PR R2 F-004 adopt: 空 list reject (空集合 == 空集合で safe-down 判定無効化を防止)
+        if len(expected_services_v) == 0:
+            return RemoteHostsConfigLoadResult("remote_status_config_malformed", {})
         hosts[host_name] = RemoteHostConfig(
             compose_project=compose_project_v,
             compose_file=compose_file_v,
@@ -388,11 +391,33 @@ def query_remote_compose_status(opts: RemoteStatusOptions) -> RemoteStatusResult
             services_up=(), services_down=(),
             raw_stdout_size_bytes=0, split_brain_safe=False,
         )
+    # ADV PR R2 F-001 adopt: stdout を tempfile に stream (subprocess が直接 file に書込、
+    # Python memory に full bytes を load しない)、その後 size enforce
+    import tempfile
+    stdout_size: int = 0
+    stdout_bytes: bytes = b""
     try:
-        result = run_safe_subprocess(
-            argv,
-            config=SafeSubprocessConfig(timeout_sec=opts.ssh_timeout_sec + 5),
-        )
+        with tempfile.TemporaryFile(mode="w+b") as stdout_tmp:
+            result = run_safe_subprocess(
+                argv,
+                config=SafeSubprocessConfig(
+                    timeout_sec=opts.ssh_timeout_sec + 5,
+                    capture_stdout=False,
+                    stdout_file=stdout_tmp,
+                ),
+            )
+            stdout_tmp.seek(0, 2)
+            stdout_size = stdout_tmp.tell()
+            if stdout_size > _STDOUT_MAX_BYTES:
+                return RemoteStatusResult(
+                    reason_code="remote_status_stdout_oversize",
+                    host=opts.remote_host,
+                    services_up=(), services_down=(),
+                    raw_stdout_size_bytes=stdout_size,
+                    split_brain_safe=False,
+                )
+            stdout_tmp.seek(0)
+            stdout_bytes = stdout_tmp.read(_STDOUT_MAX_BYTES + 1)
     except SubprocessTimeoutError:
         return RemoteStatusResult(
             reason_code="remote_status_ssh_timeout",
@@ -408,15 +433,7 @@ def query_remote_compose_status(opts: RemoteStatusOptions) -> RemoteStatusResult
             raw_stdout_size_bytes=0, split_brain_safe=False,
         )
 
-    stdout_bytes = result.stdout
-    if len(stdout_bytes) > _STDOUT_MAX_BYTES:
-        return RemoteStatusResult(
-            reason_code="remote_status_stdout_oversize",
-            host=opts.remote_host,
-            services_up=(), services_down=(),
-            raw_stdout_size_bytes=len(stdout_bytes),
-            split_brain_safe=False,
-        )
+    # ADV PR R2 F-001 adopt: stdout は既に streaming で tempfile に書込済、size enforce 済
 
     stderr_text = result.stderr_sanitized
 
