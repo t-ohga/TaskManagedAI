@@ -138,8 +138,15 @@ def test_build_ssh_argv_project_pattern_invalid_rejected() -> None:
 
 
 def test_build_ssh_argv_host_pattern_invalid_rejected() -> None:
+    """ADV PR R9 F-003 adopt: uppercase は accept、leading hyphen / underscore は reject."""
     with pytest.raises(ValueError, match="host invalid"):
-        _build_ssh_argv("UPPERCASE.HOST", "taskmanagedai", "/abs/file.yml", 10)
+        _build_ssh_argv("-leading-hyphen.host", "taskmanagedai", "/abs/file.yml", 10)
+
+
+def test_build_ssh_argv_host_uppercase_accepted() -> None:
+    """ADV PR R9 F-003 adopt: RFC 1123 hostname は case-insensitive、UPPERCASE 含む host も accept."""
+    argv = _build_ssh_argv("UPPERCASE.HOST", "taskmanagedai", "/abs/file.yml", 10)
+    assert argv[-2] == "UPPERCASE.HOST"
 
 
 def test_build_ssh_argv_fqdn_host_accepted() -> None:

@@ -1633,15 +1633,23 @@ def verify_snapshot_component_hashes(
             "restore_rollback_snapshot_manifest_invalid_json",
             detail="components field missing or not dict",
         )
-    # ADV PR R2 F-005 adopt: 必須 key 集合 存在 verify (欠落させると hash verify 全 skip 経路)
-    required_components = frozenset({
+    # ADV PR R2 F-005 + R9 F-002 adopt: 必須 key 集合 + extra key reject (exact set)
+    # ADV PR R9 F-002 adopt: 絶対 path / `..` 含む key で snapshot boundary escape を防止
+    # exact allowed_components set 強制 (manifest 改ざんで unexpected key 経由の path traversal を排除)
+    allowed_components = frozenset({
         "pre_restore_pg_dump.dump", "pre_restore_dump.rdb", "artifacts",
     })
-    missing_components = required_components - set(components.keys())
+    missing_components = allowed_components - set(components.keys())
     if missing_components:
         raise RestoreRuntimeError(
             "restore_rollback_snapshot_manifest_invalid_json",
             detail=f"required components missing from manifest: {sorted(missing_components)}",
+        )
+    extra_components = set(components.keys()) - allowed_components
+    if extra_components:
+        raise RestoreRuntimeError(
+            "restore_rollback_snapshot_manifest_invalid_json",
+            detail=f"unexpected component keys in manifest: {sorted(extra_components)}",
         )
     for fname, spec in components.items():
         if not isinstance(spec, dict):
