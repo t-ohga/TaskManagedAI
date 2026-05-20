@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -10,19 +11,35 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CLI_PATH = _REPO_ROOT / "scripts" / "taskhub_admin.py"
 
+# F-PR75-004 adopt: automation env を ambient から strip して subprocess inherit を防ぐ
+# (CI run で GITHUB_ACTIONS / CI 等が leak し、destructive subcommand が default deny → 既存 test fail)
+_AUTOMATION_ENV_VARS = (
+    "SYSTEMD_INVOCATION_ID", "INVOCATION_ID", "JOURNAL_STREAM", "CRON_INVOCATION",
+    "GITHUB_ACTIONS", "CI", "BUILD_ID", "BUILD_NUMBER", "RUN_ID",
+    "KUBERNETES_SERVICE_HOST", "container", "BASH_EXECUTION_STRING",
+)
+
+
+def _sanitized_env() -> dict[str, str]:
+    """ambient parent env から automation hints を strip した default env."""
+    env = dict(os.environ)
+    for var in _AUTOMATION_ENV_VARS:
+        env.pop(var, None)
+    return env
+
 
 def _run_cli(
     *args: str, env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    # R2-F-005 adopt: env override 引数追加 (security integration tests で
-    # HOME=tmp_path を渡すために必要)
+    # R2-F-005 + F-PR75-004 adopt: env override 引数追加 (security integration tests で
+    # HOME=tmp_path を渡すために必要)。caller が env=None なら sanitized_env (automation 削除)。
     return subprocess.run(  # noqa: S603
         [sys.executable, str(_CLI_PATH), *args],
         capture_output=True,
         text=True,
         cwd=str(_REPO_ROOT),
         check=False,
-        env=env,
+        env=env if env is not None else _sanitized_env(),
     )
 
 

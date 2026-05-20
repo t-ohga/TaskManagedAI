@@ -49,8 +49,14 @@ def _taskhub_home() -> Path:
 
     `Path.home()` は HOME env を respect (OS-standard user isolation)。
     pytest fixture は `monkeypatch.setenv("HOME", str(tmp_path))` で redirect。
+    F-PR75-006 adopt: `Path.home()` の RuntimeError (resolvable home なし、container/service UID 等) を
+    fail-closed sentinel path に変換、呼出側で existence check が deny 経路へ進む。
     """
-    return Path.home() / ".taskhub"
+    try:
+        return Path.home() / ".taskhub"
+    except RuntimeError:
+        # Sentinel non-existent path; downstream existence checks fail → structured deny
+        return Path("/__taskhub_home_unresolved__") / ".taskhub"
 
 
 def _approval_dir() -> Path:
@@ -238,6 +244,7 @@ def _load_approval_record(approval_id: str) -> tuple[ApprovalRecord | None, Reas
     if not isinstance(data, dict):
         return None, "taskhub_signed_approval_record_malformed"
 
+    # F-PR75-005 adopt: extra unsigned fields も reject (allowlist strict)
     required = {
         "approval_id",
         "decider",
@@ -248,7 +255,12 @@ def _load_approval_record(approval_id: str) -> tuple[ApprovalRecord | None, Reas
         "allowed_subcommands",
         "signature",
     }
+    allowed_keys = required | {"target_host"}  # target_host は optional だが signature 対象
     if not required.issubset(data.keys()):
+        return None, "taskhub_signed_approval_record_malformed"
+    extra_keys = set(data.keys()) - allowed_keys
+    if extra_keys:
+        # extra unsigned fields は record_malformed として deny (tampered metadata 防止)
         return None, "taskhub_signed_approval_record_malformed"
 
     # R1-F-015 adopt
@@ -319,12 +331,20 @@ def _verify_key_permissions(key_path: Path) -> ReasonCode | None:
 
 
 def _load_verify_key_and_fingerprint() -> tuple[Ed25519PublicKey | None, str | None, ReasonCode | None]:
-    """R1-F-009 + R3-F-001 adopt: fingerprint allowlist hard fail invariant."""
+    """R1-F-009 + R3-F-001 + F-PR75-001 + F-PR75-002 adopt: fingerprint allowlist hard fail invariant.
+
+    F-PR75-001 adopt: verify key file の `read_bytes()` を OSError catch、CLI crash 防止 + structured deny。
+    F-PR75-002 adopt: allowlist file の `read_text()` を OSError catch、同様に structured deny。
+    """
     verify_key_path = _verify_key_path()
     perm_error = _verify_key_permissions(verify_key_path)
     if perm_error:
         return None, None, perm_error
-    raw = verify_key_path.read_bytes()
+    try:
+        raw = verify_key_path.read_bytes()
+    except OSError:
+        # F-PR75-001 adopt: existence/permission は通過したが read 失敗 (transient FS error 等)
+        return None, None, "taskhub_signed_approval_verify_key_missing"
     key_bytes: bytes | None = None
     if len(raw) == 32:
         key_bytes = raw
@@ -343,9 +363,14 @@ def _load_verify_key_and_fingerprint() -> tuple[Ed25519PublicKey | None, str | N
     allowlist_path = _verify_key_fingerprint_allowlist_path()
     if not allowlist_path.exists():
         return None, fingerprint, "taskhub_signed_approval_verify_key_fingerprint_allowlist_missing"
+    try:
+        allowlist_lines = allowlist_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        # F-PR75-002 adopt: file 存在するが read 不能 → effectively missing として hard fail
+        return None, fingerprint, "taskhub_signed_approval_verify_key_fingerprint_allowlist_missing"
     allowlist = {
         line.strip()
-        for line in allowlist_path.read_text(encoding="utf-8").splitlines()
+        for line in allowlist_lines
         if line.strip() and not line.startswith("#")
     }
     if not allowlist:
@@ -376,8 +401,13 @@ def verify_signed_approval(
     extras["drill_kind"] = record.drill_kind
 
     now = datetime.now(timezone.utc)
-    signed_at = datetime.strptime(record.signed_at_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    expires_at = datetime.strptime(record.expires_at_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    # F-PR75-003 adopt: regex pass しても strptime が ValueError (例: 2026-02-30 等の impossible
+    # calendar date) を投げる可能性、structured deny に変換
+    try:
+        signed_at = datetime.strptime(record.signed_at_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        expires_at = datetime.strptime(record.expires_at_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False, "taskhub_signed_approval_datetime_format_invalid", extras
 
     # R1-F-007 adopt: clock skew + max_ttl
     if signed_at > now + clock_skew:
