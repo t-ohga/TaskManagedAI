@@ -1700,12 +1700,12 @@ def rollback_from_pre_restore_snapshot(
 ) -> None:
     """3 component (artifacts + DB + Redis) snapshot から復旧.
 
-    R4-F-001 + R5-F-001 + R17-F-003 + R19-F-002 + R20-F-001 統合 order:
+    R4-F-001 + R5-F-001 + R17-F-003 + R19-F-002 + R20-F-001 + ADV PR R5 F-001 統合 order:
     0a. app services を確実 stop (partial-up race 防止、R4-F-001)
     0b. postgres のみ up + healthy (Redis 失敗で DB rollback 不能を防止、R5-F-001)
-    1. artifacts move back (R17-F-003 clean slate)
+    1. artifacts **copy** back (ADV PR R5 F-001 adopt: snapshot を immutable に保つ、retry 可能)
     2. DB pg_restore via compose exec (snapshot 存在 verify、R19-F-002)
-    3. Redis dump.rdb 復旧 + AOF 復旧 (snapshot 存在 verify、R19-F-002)
+    3. Redis dump.rdb + AOF **copy** 復旧 (ADV PR R5 F-001 adopt: snapshot 不可逆消費を防止)
     4. data services + app services start
     """
     # 0a. app stop (partial-up race 防止)
@@ -1713,12 +1713,18 @@ def rollback_from_pre_restore_snapshot(
     # 0b. postgres alive 保証
     start_postgres_wait_healthy(options)
 
-    # 1. artifacts: 新削除 → snapshot 戻し
+    # 1. artifacts: 新削除 → snapshot から **copy** 戻し (move 不可、retry のため immutable 保持)
     if options.target_artifacts_dir.exists():
         shutil.rmtree(options.target_artifacts_dir, ignore_errors=False)
     artifacts_backup = pre_restore_dir / "artifacts"
     if artifacts_backup.exists():
-        shutil.move(str(artifacts_backup), str(options.target_artifacts_dir))
+        # ADV PR R5 F-001 adopt: shutil.copytree で snapshot 内 artifacts を保持
+        # (move すると後続 pg_restore / Redis 失敗時の retry で hash verify が
+        # component_missing で fail-closed する経路を排除)
+        shutil.copytree(
+            artifacts_backup, options.target_artifacts_dir,
+            symlinks=False, ignore_dangling_symlinks=True,
+        )
 
     # 2. DB rollback: snapshot 存在 verify (R19-F-002)
     pre_db_dump = pre_restore_dir / "pre_restore_pg_dump.dump"
@@ -1758,7 +1764,11 @@ def rollback_from_pre_restore_snapshot(
             shutil.rmtree(new_aof_dir, ignore_errors=False)
         shutil.copy2(pre_redis_dump, redis_host_path / "dump.rdb")
         if pre_aof_backup.exists():
-            shutil.move(str(pre_aof_backup), str(redis_host_path / "appendonlydir"))
+            # ADV PR R5 F-001 adopt: AOF も copytree で snapshot 保持 (move 不可)
+            shutil.copytree(
+                pre_aof_backup, redis_host_path / "appendonlydir",
+                symlinks=False, ignore_dangling_symlinks=True,
+            )
         try:
             start_redis_service_wait_healthy(options)
         except RestoreRuntimeError as e:
