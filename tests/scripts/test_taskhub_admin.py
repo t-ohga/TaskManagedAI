@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -446,3 +447,96 @@ def test_taskhub_console_script_help_shows_taskhub_prog_name() -> None:
     # usage 行は `usage: taskhub ...` (旧 prog 名 `taskhub_admin` ではない)
     assert "usage: taskhub " in result.stdout
     assert "usage: taskhub_admin " not in result.stdout
+
+
+# ---- SP022-T08 batch 1: signed journal offline JSONL CLI integration (6 fixture) ----
+
+
+def _write_event_jsonl(tmp_path: Path, payloads: list[dict]) -> Path:
+    """Helper: write event_payload list as JSONL with full schema."""
+    p = tmp_path / "events.jsonl"
+    lines = []
+    for i, payload in enumerate(payloads, start=1):
+        event = {
+            "id": f"00000000-0000-0000-0000-{i:012d}",
+            "event_type": "approval_requested",
+            "tenant_id": 1,
+            "actor_id": "00000000-0000-0000-0000-000000000099",
+            "principal_id": None,
+            "correlation_id": None,
+            "trace_id": None,
+            "event_payload": payload,
+            "created_at": "2026-05-20T00:00:00+00:00",
+        }
+        lines.append(json.dumps(event))
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return p
+
+
+def test_cli_verify_signed_journal_requires_input() -> None:
+    """SP022-T08 batch 1: --signed-journal 単独 → exit 2."""
+    result = _run_cli("verify", "--signed-journal")
+    assert result.returncode == 2
+    assert "requires --input" in result.stderr
+
+
+def test_cli_verify_signed_journal_valid_jsonl_passes(tmp_path: Path) -> None:
+    """SP022-T08 batch 1: valid JSONL → exit 0、stdout に final_hash."""
+    p = _write_event_jsonl(tmp_path, [{"k": "v"}, {"k2": "v2"}])
+    result = _run_cli("verify", "--signed-journal", "--input", str(p))
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["entry_count"] == 2
+    assert len(out["final_hash"]) == 64
+    assert out["reason_code"] == "signed_journal_offline_hash_computed"
+    assert out["verification_performed"] is False
+
+
+def test_cli_verify_signed_journal_tamper_detected(tmp_path: Path) -> None:
+    """SP022-T08 batch 1: --expected-final-hash mismatch → exit 1 tamper detection."""
+    p = _write_event_jsonl(tmp_path, [{"k": "v"}])
+    # All-zero hash mismatch
+    fake_hash = "0" * 64
+    result = _run_cli("verify", "--signed-journal", "--input", str(p),
+                      "--expected-final-hash", fake_hash)
+    assert result.returncode == 1
+    out = json.loads(result.stdout)
+    assert out["tamper_detected"] is True
+    assert out["reason_code"] == "signed_journal_offline_expected_hash_mismatch"
+
+
+def test_cli_verify_signed_journal_mutually_exclusive_with_skeleton_flags(tmp_path: Path) -> None:
+    """R2-F-002 adopt: --signed-journal + --integrity 同時 → exit 2 (parse-time validation)."""
+    p = _write_event_jsonl(tmp_path, [{"k": "v"}])
+    result = _run_cli("verify", "--signed-journal", "--input", str(p), "--integrity")
+    assert result.returncode == 2
+    assert "併用不可" in result.stderr or "exclusive" in result.stderr.lower()
+
+
+def test_cli_verify_signed_journal_stdin_mode(tmp_path: Path) -> None:
+    """R1-F-011 adopt: --input - (stdin) で file mode と同 final_hash."""
+    p = _write_event_jsonl(tmp_path, [{"k": "v"}])
+    file_result = _run_cli("verify", "--signed-journal", "--input", str(p))
+    file_out = json.loads(file_result.stdout)
+    file_hash = file_out["final_hash"]
+
+    # Run again via stdin
+    stdin_input = p.read_text(encoding="utf-8")
+    stdin_result = subprocess.run(  # noqa: S603
+        [sys.executable, str(_CLI_PATH), "verify", "--signed-journal", "--input", "-"],
+        capture_output=True, text=True, cwd=str(_REPO_ROOT), check=False,
+        input=stdin_input, env=_sanitized_env(),
+    )
+    assert stdin_result.returncode == 0, stdin_result.stderr
+    stdin_out = json.loads(stdin_result.stdout)
+    assert stdin_out["final_hash"] == file_hash
+
+
+def test_cli_verify_signed_journal_expected_hash_invalid_arg_exits_2(tmp_path: Path) -> None:
+    """R1-F-007 adopt: 不正な expected_final_hash → exit 2 usage error."""
+    p = _write_event_jsonl(tmp_path, [{"k": "v"}])
+    # uppercase hex
+    result = _run_cli("verify", "--signed-journal", "--input", str(p),
+                      "--expected-final-hash", "A" * 64)
+    assert result.returncode == 2
+    assert "expected_hash_invalid" in result.stderr or "hex" in result.stderr.lower()

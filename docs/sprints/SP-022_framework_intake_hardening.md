@@ -67,7 +67,7 @@ risks:
 - **SP022-T05** (`plan_status: ⛔ deferred (blocked_by: SP-013 multi-agent skeleton、post-P0.1 carry-over)`): AC-HARD-01〜07 fixture を multi-agent 文脈で再 verify (**F-PR67-037 P2 adopt**: 本 task は SP-013 multi-agent skeleton に依存、SP-022 が pre-P0.1 unblock sprint reframe 後は SP-013 完了前に着手不可. 本 task のみ **SP-013 完了後の post-P0.1 carry-over** として位置、SP-022 完了 + P0.1 SP-013 完了後に SP-022.1 / SP-023 等の post-P0.1 hardening sprint で実施。本 Sprint Exit Review PR では task list に残存 + dependency note のみで close、別 PR で sprint scope re-allocation 実施)
 - **SP022-T06** (`plan_status: 🟨 light + 部分実装可 (Mac 単独 baseline は light、Linux/VPS は ⛔ deferred (blocked_by: 物理 host 取得))`): KPI baseline 設定 (host 別: Mac / Linux / VPS で acceptance_pass_rate 等の median を取得、運用 baseline 確定)
 - **SP022-T07** (`plan_status: 🟨 light (完了済 PR #73)`): production 公開準備チェックリスト draft (P3+ 着手時の前提整理、F-ADV-R1-007 + F-R2-005 adopt: **本 task は docs-only checklist skeleton まで**、以下の P3+ 実作業は本 task 内で禁止: (a) Docker image build pipeline、(b) DNS 設定、(c) public ingress (Funnel / Cloudflare Tunnel / public bind)、(d) external publication、(e) release deploy config、(f) license / docs 整備の本実装。これらは P3+ SP-023 以降の production release Sprint Pack で実施)
-- **SP022-T08** (`plan_status: 🟥 heavy + batch 分割必須 (batch 1 CLI foundation / batch 2 backup-restore / batch 3 migrate-status-verify / batch 4 BL-0149 実 DB write / batch 5 signed journal CLI / batch 6 frontend backend wiring)`): **SP-012 carry-over 完了** (F-PR67-025/027 P2 adopt): taskhub real I/O (10 subcommands all) + 実 DB write integration (BL-0149 sign-off endpoint + AuditEventRepository.append 経由 P0AcceptanceAudit write) + signed journal verification CLI (audit_events 全件 fetch + recompute + final_hash verify) + private staging CI/E2E 完成 + frontend dashboard backend API wiring。ADR Gate Criteria #1 (DB schema) + #4 (AI 権限) + #6 (Secrets) + #11 (broad refactor) 直結
+- **SP022-T08** (`plan_status: 🟥 heavy + batch 分割必須 (batch 1 signed journal CLI offline mode **完了済 PR #76** / batch 2 backup-restore real I/O / batch 3 migrate-status-verify real I/O / batch 4 BL-0149 実 DB write / batch 5 signed journal CLI DB mode + private staging E2E / batch 6 frontend backend wiring)`): **SP-012 carry-over 完了** (F-PR67-025/027 P2 adopt): taskhub real I/O (10 subcommands all) + 実 DB write integration (BL-0149 sign-off endpoint + AuditEventRepository.append 経由 P0AcceptanceAudit write) + signed journal verification CLI (audit_events 全件 fetch + recompute + final_hash verify) + private staging CI/E2E 完成 + frontend dashboard backend API wiring。ADR Gate Criteria #1 (DB schema) + #4 (AI 権限) + #6 (Secrets) + #11 (broad refactor) 直結
 - **SP022-T09** (`plan_status: ⛔ deferred (blocked_by: SP022-T02 impl + 物理 host 2 台 (Mac + VPS) + user 介在 drill 実施)`): **実機 host migration drill (Mac→VPS) PASS** (RTO≤4h、F-PR67-022/029 P2 adopt: T00 accept 後の post-acceptance verification、P0.1 unblock 必須 gate)
 
 ## タスク一覧
@@ -288,6 +288,42 @@ $ taskhub kpi-baseline --host t-ohga-linux --output baselines/linux.json
 - P3+ 本実装は本 T07 内で禁止: (a) Container image build pipeline、(b) DNS 本実装、(c) public ingress 有効化、(d) external publication 有効化、(e) release deploy config 本実装、(f) LICENSE / NOTICE / SECURITY / README 本実装
 - P0.1 unblock 判定は **file existence のみ**、checklist の checked/unchecked 状態は evaluated **されない** (F-ADV-R1-007 + F-R2-005 adopt)
 - T07 成果物カウントは `docs/release/production_readiness_checklist.md` の 1 file、SP-022 Pack `## Review` update は acceptance metadata (R1-F-001 adopt)
+
+### SP022-T08 batch 1 signed journal verification CLI completion (2026-05-20)
+
+#### codex-plan-review R1-R3 completion record
+
+- codex-plan-review-round: R3 (round_max reached、R1 Phase A 構造 / R2 Phase B 実装可能性 / R3 CRITICAL final)
+- codex-plan-review-findings: 19 (R1=17 [HIGH×5 / MED×9 / LOW×3] + R2=2 [HIGH×2] + R3=0)
+- codex-plan-review-adopt: 19 / reject: 0 / defer: 0 (全 finding adopt 反映、累計 100% adoption)
+- codex-plan-review-readiness-gate: READY (R3 round_max reached、CRITICAL=0 残存)
+
+#### Signed journal CLI offline mode 実装
+
+- `scripts/taskhub_signed_journal_offline.py` (NEW): JSONL stream parser + `AuditEventLike` dataclass (duck-typed AuditEvent) + `verify_jsonl_signed_journal()` + `SignedJournalUsageError` / `SignedJournalTamperError` 専用例外型 + 10 reason_code
+- `scripts/taskhub_admin.py` (MODIFY): `_cmd_verify` extension + `_cmd_verify_signed_journal` helper + 4 新引数 (`--signed-journal` / `--input` / `--expected-final-hash` / `--max-entries` / `--max-line-bytes`) + parse-time mutually exclusive validation (R2-F-002 adopt)
+- `tests/scripts/test_taskhub_signed_journal_offline.py` (NEW、27 fixture): positive 7 + negative 18 + error redaction 2、全 PASS
+- `tests/scripts/test_taskhub_admin.py` (MODIFY): 6 CLI integration fixture 追加 (--signed-journal positive / tamper / mutex / stdin / invalid hash)
+- 既存 Sprint 12 batch 10 (PR #66) `backend/app/services/audit/signed_journal.py` pure function pipeline を不変で wrap (CRITICAL invariant: signed_journal.py 不変、CLI は wrapper のみ)
+
+#### Security invariants (offline mode)
+
+- strict structural schema (extra fields reject、required nullable fields 全件 null 明示必須、R1-F-006 + R1-F-017 adopt)
+- timezone-aware datetime 必須 (naive deny、R1-F-010 adopt)
+- NaN/Infinity reject via `json.loads(parse_constant=...)` (R1-F-004 adopt)
+- `--expected-final-hash` regex `^[0-9a-f]{64}$` validation (R1-F-007 adopt)
+- DoS 防御: `--max-entries` (1-100000) + `--max-line-bytes` (1024-1048576) range validation (R1-F-002 + R1-F-015 adopt)
+- error message redaction: SignedJournalUsageError は `reason_code` + `line_no` + `field` のみ、raw payload value leak 防止 (R1-F-005 adopt)
+- exit code: 0 PASS / 1 explicit tamper / 2 usage error (R1-F-003 adopt: input ValueError → exit 2、explicit hash mismatch → exit 1 分離)
+
+#### Phase 2-6 carry-over (本 batch 1 対象外)
+
+- batch 2: backup-restore real I/O (pg_dump / pg_restore / age encryption)
+- batch 3: migrate-status-verify real I/O (Tailscale transfer / target host)
+- batch 4: BL-0149 sign-off endpoint 実 DB write (AuditEventRepository.append integration)
+- batch 5: signed journal CLI DB mode (`--from-db`) + private staging CI/E2E
+- batch 6: frontend dashboard backend API wiring
+- pure signed_journal_core.py 抽出判断 (R2-F-001 adopt carry-over): import scope 軽量化が必要なら batch 2 で別 module へ pure 部分を抽出
 
 ## Phase E adversarial closure trace (PE-F-001〜PE-F-016、F-R2-003 + SP022-T04 R1-R3 adopt: SP-022 内 audit-only trace matrix で local closure、symptom column 追加 + PE-F-010 closure marker + PE-F-010 owner SP-016→SP-022 正規化)
 

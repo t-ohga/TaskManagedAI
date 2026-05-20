@@ -41,6 +41,7 @@ Exit code:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -416,8 +417,67 @@ def _cmd_age_rotate(args: argparse.Namespace) -> int:
     return 1
 
 
+def _cmd_verify_signed_journal(args: argparse.Namespace) -> int:
+    """SP022-T08 batch 1: signed journal offline JSONL verification mode."""
+    # dual import (direct-script + console_script)、R2-F-001 adopt scope
+    try:
+        from scripts.taskhub_signed_journal_offline import (
+            DEFAULT_MAX_ENTRIES,
+            DEFAULT_MAX_LINE_BYTES,
+            SignedJournalUsageError,
+            verify_jsonl_signed_journal,
+        )
+    except ModuleNotFoundError:
+        _REPO_ROOT = Path(__file__).resolve().parent.parent
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.taskhub_signed_journal_offline import (  # noqa: E402
+            DEFAULT_MAX_ENTRIES,
+            DEFAULT_MAX_LINE_BYTES,
+            SignedJournalUsageError,
+            verify_jsonl_signed_journal,
+        )
+    if not args.input:
+        print(  # noqa: T201
+            "ERROR: --signed-journal requires --input <path>.jsonl (or '-' for stdin)",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        result = verify_jsonl_signed_journal(
+            args.input,
+            expected_final_hash=args.expected_final_hash,
+            max_entries=args.max_entries if args.max_entries is not None else DEFAULT_MAX_ENTRIES,
+            max_line_bytes=args.max_line_bytes if args.max_line_bytes is not None else DEFAULT_MAX_LINE_BYTES,
+        )
+    except SignedJournalUsageError as exc:
+        print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+        return 2
+    print(json.dumps(result, sort_keys=True))  # noqa: T201
+    if result.get("tamper_detected"):
+        return 1
+    return 0
+
+
 def _cmd_verify(args: argparse.Namespace) -> int:
-    """`taskhub verify [--integrity] [--network-invariant] [--multi-agent]` skeleton."""
+    """`taskhub verify [--integrity] [--network-invariant] [--multi-agent]` skeleton + signed-journal offline mode (SP022-T08 batch 1)."""
+    # R2-F-002 adopt: parse-time validation で --signed-journal を skeleton flags と排他化
+    # (argparse mutually_exclusive_group は既存 --integrity --network-invariant 併用 test を破壊するため)
+    skeleton_flags_present = any([
+        args.integrity, args.network_invariant, args.multi_agent,
+    ])
+    if args.signed_journal and skeleton_flags_present:
+        print(  # noqa: T201
+            "ERROR: --signed-journal は --integrity / --network-invariant / "
+            "--multi-agent と併用不可 (real I/O mode と skeleton mode は排他)",
+            file=sys.stderr,
+        )
+        return 2
+
+    # SP022-T08 batch 1: signed-journal offline mode (real I/O)
+    if args.signed_journal:
+        return _cmd_verify_signed_journal(args)
+
     checks: list[str] = []
     if args.integrity:
         checks.append("--integrity (row count / checksum / Redis count / alembic check)")
@@ -673,6 +733,42 @@ def _build_parser() -> argparse.ArgumentParser:
             "(inter_agent_messages / memory_retrieval_artifacts / "
             "project_agent_roles / review_artifacts / agent_runs)"
         ),
+    )
+    # SP022-T08 batch 1: signed journal offline JSONL verification mode (real I/O、非 skeleton)
+    sub_verify.add_argument(
+        "--signed-journal",
+        action="store_true",
+        help=(
+            "signed journal hash chain verification (SP022-T08 batch 1、"
+            "offline JSONL mode、real I/O)"
+        ),
+    )
+    sub_verify.add_argument(
+        "--input",
+        type=str,
+        default=None,
+        help="JSONL file path (or '-' for stdin)。--signed-journal と組合せ必須",
+    )
+    sub_verify.add_argument(
+        "--expected-final-hash",
+        type=str,
+        default=None,
+        help=(
+            "expected SHA-256 hex (64 chars lowercase、^[0-9a-f]{64}$)。"
+            "computed final_hash と比較、不一致なら exit 1 tamper detection"
+        ),
+    )
+    sub_verify.add_argument(
+        "--max-entries",
+        type=int,
+        default=None,
+        help="JSONL entries 上限 (default 100000、range 1-100000、DoS 防御)",
+    )
+    sub_verify.add_argument(
+        "--max-line-bytes",
+        type=int,
+        default=None,
+        help="JSONL 1 行最大バイト数 (default 65536、range 1024-1048576、DoS 防御)",
     )
     sub_verify.set_defaults(func=_cmd_verify)
 
