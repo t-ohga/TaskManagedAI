@@ -197,6 +197,9 @@ class BackupOptions:
     redis_port: int
     artifacts_dir: Path
     sops_env_path: Path
+    # F-PR77-003 adopt: pgpassfile は **必須**、`~/.pgpass` 暗黙 fallback を fail-closed
+    # で禁止 (caller が明示 path を指定するか env で渡す)
+    pgpassfile_path: Path | None
     pg_dump_timeout_sec: int = PG_DUMP_TIMEOUT_SEC
     redis_rdb_timeout_sec: int = REDIS_RDB_TIMEOUT_SEC
     age_encrypt_timeout_sec: int = AGE_ENCRYPT_TIMEOUT_SEC
@@ -215,7 +218,28 @@ class BackupOptions:
 
         docker-compose.yml parse は本 batch では implement せず、env override で十分
         cover (将来 batch で yaml parse を ADR で追加判断)。
+
+        F-PR77-004 adopt: env port parse 失敗は `BackupUsageError` に正規化、stack trace
+        による異常終了を防止。
         """
+        def _int_env(var: str, default: int) -> int:
+            raw = os.environ.get(var)
+            if raw is None:
+                return default
+            try:
+                value = int(raw)
+            except ValueError:
+                raise BackupUsageError(
+                    "backup_output_path_invalid",  # generic usage error reuse for env parse
+                    detail=f"env {var} not an integer: {_sanitize_token(raw, 30)}",
+                ) from None
+            if value < 1 or value > 65535:
+                raise BackupUsageError(
+                    "backup_output_path_invalid",
+                    detail=f"env {var} out of range [1, 65535]: {value}",
+                )
+            return value
+
         return cls(
             output_path=output_path,
             host_name=os.environ.get("TASKHUB_BACKUP_HOST", socket.gethostname()),
@@ -229,11 +253,11 @@ class BackupOptions:
                 ),
             ),
             pg_host=os.environ.get("TASKHUB_BACKUP_PG_HOST", "127.0.0.1"),
-            pg_port=int(os.environ.get("TASKHUB_BACKUP_PG_PORT", "5432")),
+            pg_port=_int_env("TASKHUB_BACKUP_PG_PORT", 5432),
             pg_user=os.environ.get("TASKHUB_BACKUP_PG_USER", "taskhub"),
             pg_db=os.environ.get("TASKHUB_BACKUP_PG_DB", "taskhub"),
             redis_host=os.environ.get("TASKHUB_BACKUP_REDIS_HOST", "127.0.0.1"),
-            redis_port=int(os.environ.get("TASKHUB_BACKUP_REDIS_PORT", "6379")),
+            redis_port=_int_env("TASKHUB_BACKUP_REDIS_PORT", 6379),
             artifacts_dir=Path(
                 os.environ.get(
                     "TASKHUB_BACKUP_ARTIFACTS_DIR",
@@ -245,6 +269,11 @@ class BackupOptions:
                     "TASKHUB_BACKUP_SOPS_ENV_PATH",
                     str(repo_root / ".env.encrypted"),
                 ),
+            ),
+            pgpassfile_path=(
+                Path(os.environ["TASKHUB_BACKUP_PGPASSFILE"])
+                if os.environ.get("TASKHUB_BACKUP_PGPASSFILE")
+                else None
             ),
         )
 
@@ -696,15 +725,14 @@ def run_backup(options: BackupOptions) -> BackupResult:
     import time
     start = time.monotonic()
 
-    # F-005 adopt: output_path validation + .part suffix policy
-    if options.output_path.suffix not in (".age",):
-        # accept full ".tar.age" by checking suffix chain
-        suffixes = options.output_path.suffixes
-        if not (len(suffixes) >= 2 and suffixes[-2:] == [".tar", ".age"]):
-            raise BackupUsageError(
-                "backup_output_path_invalid",
-                detail="must end with .tar.age",
-            )
+    # F-005 + F-PR77-002 adopt: output_path validation + .part suffix policy
+    # `.tar.age` 拡張子チェーン (suffix chain `[".tar", ".age"]`) を厳密 verify
+    suffixes = options.output_path.suffixes
+    if not (len(suffixes) >= 2 and suffixes[-2:] == [".tar", ".age"]):
+        raise BackupUsageError(
+            "backup_output_path_invalid",
+            detail="must end with .tar.age",
+        )
     if not options.output_path.parent.exists():
         raise BackupUsageError(
             "backup_output_path_invalid",
@@ -714,6 +742,34 @@ def run_backup(options: BackupOptions) -> BackupResult:
         raise BackupUsageError(
             "backup_output_already_exists",
             detail="use --overwrite to replace",
+        )
+
+    # F-PR77-003 adopt: PGPASSFILE は **必須**、`~/.pgpass` libpq 暗黙 fallback を fail-closed で禁止
+    # - file 存在 + permission 0600 + 通常 file を verify (symlink reject、HIGH severity)
+    if options.pgpassfile_path is None:
+        raise BackupUsageError(
+            "backup_output_path_invalid",
+            detail=(
+                "pgpassfile_path required (set TASKHUB_BACKUP_PGPASSFILE env or pass "
+                "explicitly); ~/.pgpass implicit fallback is denied"
+            ),
+        )
+    pgpass = options.pgpassfile_path
+    if pgpass.is_symlink():
+        raise BackupUsageError(
+            "backup_output_path_invalid",
+            detail=f"pgpassfile must not be symlink: {pgpass}",
+        )
+    if not pgpass.is_file():
+        raise BackupUsageError(
+            "backup_output_path_invalid",
+            detail=f"pgpassfile not found or not regular file: {pgpass}",
+        )
+    pgpass_mode = stat.S_IMODE(pgpass.stat().st_mode)
+    if pgpass_mode not in (0o600, 0o400):
+        raise BackupUsageError(
+            "backup_output_path_invalid",
+            detail=f"pgpassfile permission must be 0600 or 0400 (got 0o{pgpass_mode:o})",
         )
 
     tmp_dir = resolve_backup_temp_layout()
@@ -745,7 +801,8 @@ def run_backup(options: BackupOptions) -> BackupResult:
             pg_user=options.pg_user,
             pg_db=options.pg_db,
             output_path=pg_dump_output,
-            pgpassfile=None,  # R3-F-001 adopt: caller provides via env, not argv; here None for local-trust dev env
+            # F-PR77-003 adopt: 検証済 PGPASSFILE を明示渡し (None fallback 禁止)
+            pgpassfile=options.pgpassfile_path,
             timeout_sec=options.pg_dump_timeout_sec,
         )
         if result.returncode != 0:

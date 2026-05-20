@@ -297,10 +297,16 @@ def _setup_mock_backup_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> d
     (artifacts / "data.txt").write_text("artifact data", encoding="utf-8")
     output = tmp_path / "backup.tar.age"
 
+    # F-PR77-003 adopt: pgpassfile は run_backup 必須 invariant (0600 + 通常 file)
+    pgpass = tmp_path / ".pgpass"
+    pgpass.write_text("127.0.0.1:5432:taskhub:taskhub:fakepw\n", encoding="utf-8")
+    os.chmod(pgpass, 0o600)
+
     return {
         "age_pub": age_pub,
         "artifacts": artifacts,
         "output": output,
+        "pgpass": pgpass,
     }
 
 
@@ -350,9 +356,12 @@ def test_run_backup_full_sequence_success(
         repo_root=tmp_path,
     )
     # override age_public_key_path / artifacts_dir to test fixtures
-    options = bo.BackupOptions(
-        **{**options.__dict__, "age_public_key_path": env["age_pub"], "artifacts_dir": env["artifacts"]}
-    )
+    options = bo.BackupOptions(**{
+        **options.__dict__,
+        "age_public_key_path": env["age_pub"],
+        "artifacts_dir": env["artifacts"],
+        "pgpassfile_path": env["pgpass"],
+    })
 
     result = bo.run_backup(options)
     assert result.reason_code == "backup_completed"
@@ -403,6 +412,10 @@ def test_run_backup_archive_allowlist_violation_in_artifacts(
     artifacts.mkdir()
     # plant a private key in artifacts/
     (artifacts / "id_rsa").write_bytes(b"-----BEGIN OPENSSH PRIVATE KEY-----\nfake")
+    # F-PR77-003 adopt: pgpassfile 必須
+    pgpass = tmp_path / ".pgpass"
+    pgpass.write_text("127.0.0.1:5432:taskhub:taskhub:fakepw\n", encoding="utf-8")
+    os.chmod(pgpass, 0o600)
 
     monkeypatch.setattr(bo, "acquire_postgres_version", lambda: "17.0")
     monkeypatch.setattr(bo, "acquire_redis_version", lambda h, p: "7.4")
@@ -415,9 +428,12 @@ def test_run_backup_archive_allowlist_violation_in_artifacts(
     options = bo.BackupOptions.from_environment(
         output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
     )
-    options = bo.BackupOptions(
-        **{**options.__dict__, "age_public_key_path": age_pub, "artifacts_dir": artifacts}
-    )
+    options = bo.BackupOptions(**{
+        **options.__dict__,
+        "age_public_key_path": age_pub,
+        "artifacts_dir": artifacts,
+        "pgpassfile_path": pgpass,
+    })
 
     with pytest.raises(bo.BackupRuntimeError) as exc_info:
         bo.run_backup(options)
@@ -439,9 +455,12 @@ def test_run_backup_pg_dump_failure_cleans_tmp_and_no_partial_output(
     options = bo.BackupOptions.from_environment(
         output_path=env["output"], repo_root=tmp_path,
     )
-    options = bo.BackupOptions(
-        **{**options.__dict__, "age_public_key_path": env["age_pub"], "artifacts_dir": env["artifacts"]}
-    )
+    options = bo.BackupOptions(**{
+        **options.__dict__,
+        "age_public_key_path": env["age_pub"],
+        "artifacts_dir": env["artifacts"],
+        "pgpassfile_path": env["pgpass"],
+    })
     with pytest.raises(bo.BackupRuntimeError) as exc_info:
         bo.run_backup(options)
     assert exc_info.value.reason_code == "backup_pg_dump_failed"
@@ -450,3 +469,122 @@ def test_run_backup_pg_dump_failure_cleans_tmp_and_no_partial_output(
     # part file should not exist
     part_path = env["output"].with_name(env["output"].name + ".part")
     assert not part_path.exists()
+
+
+# --- F-PR77-003 fail-closed invariant tests ---
+
+
+def test_run_backup_rejects_when_pgpassfile_not_provided(tmp_path: Path) -> None:
+    """F-PR77-003 adopt: pgpassfile_path=None で run_backup は fail-closed (~/.pgpass 暗黙 fallback 禁止)."""
+    age_pub = tmp_path / "age.pub"
+    age_pub.write_text("age1mocked", encoding="utf-8")
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
+    )
+    # explicitly set pgpassfile_path to None (no env, no override)
+    options = bo.BackupOptions(
+        **{**options.__dict__, "age_public_key_path": age_pub, "artifacts_dir": artifacts, "pgpassfile_path": None}
+    )
+    with pytest.raises(bo.BackupUsageError) as exc_info:
+        bo.run_backup(options)
+    assert exc_info.value.reason_code == "backup_output_path_invalid"
+    assert "pgpassfile_path required" in (exc_info.value.detail or "")
+
+
+def test_run_backup_rejects_pgpassfile_with_world_readable_permissions(
+    tmp_path: Path,
+) -> None:
+    """F-PR77-003 adopt: pgpassfile permission != 0600/0400 → reject."""
+    age_pub = tmp_path / "age.pub"
+    age_pub.write_text("age1mocked", encoding="utf-8")
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    # bad permissions: world readable
+    pgpass = tmp_path / ".pgpass"
+    pgpass.write_text("127.0.0.1:5432:taskhub:taskhub:fakepw\n", encoding="utf-8")
+    os.chmod(pgpass, 0o644)
+
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
+    )
+    options = bo.BackupOptions(
+        **{**options.__dict__, "age_public_key_path": age_pub, "artifacts_dir": artifacts, "pgpassfile_path": pgpass}
+    )
+    with pytest.raises(bo.BackupUsageError) as exc_info:
+        bo.run_backup(options)
+    assert exc_info.value.reason_code == "backup_output_path_invalid"
+    assert "permission" in (exc_info.value.detail or "")
+
+
+def test_run_backup_rejects_symlink_pgpassfile(tmp_path: Path) -> None:
+    """F-PR77-003 adopt: pgpassfile が symlink → reject (TOCTOU + symlink follow 防止)."""
+    age_pub = tmp_path / "age.pub"
+    age_pub.write_text("age1mocked", encoding="utf-8")
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    real_pgpass = tmp_path / ".pgpass.real"
+    real_pgpass.write_text("127.0.0.1:5432:taskhub:taskhub:fakepw\n", encoding="utf-8")
+    os.chmod(real_pgpass, 0o600)
+    symlink_pgpass = tmp_path / ".pgpass"
+    symlink_pgpass.symlink_to(real_pgpass)
+
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
+    )
+    options = bo.BackupOptions(**{
+        **options.__dict__,
+        "age_public_key_path": age_pub,
+        "artifacts_dir": artifacts,
+        "pgpassfile_path": symlink_pgpass,
+    })
+    with pytest.raises(bo.BackupUsageError) as exc_info:
+        bo.run_backup(options)
+    assert exc_info.value.reason_code == "backup_output_path_invalid"
+    assert "symlink" in (exc_info.value.detail or "")
+
+
+# --- F-PR77-004 env port int parse tests ---
+
+
+def test_backup_options_rejects_non_integer_env_port(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """F-PR77-004 adopt: env port が非数値なら BackupUsageError (ValueError 漏れない)."""
+    monkeypatch.setenv("TASKHUB_BACKUP_PG_PORT", "not_a_number")
+    with pytest.raises(bo.BackupUsageError) as exc_info:
+        bo.BackupOptions.from_environment(
+            output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
+        )
+    assert exc_info.value.reason_code == "backup_output_path_invalid"
+    assert "TASKHUB_BACKUP_PG_PORT" in (exc_info.value.detail or "")
+
+
+def test_backup_options_rejects_env_port_out_of_range(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """F-PR77-004 adopt: env port が範囲外なら BackupUsageError."""
+    monkeypatch.setenv("TASKHUB_BACKUP_REDIS_PORT", "99999")
+    with pytest.raises(bo.BackupUsageError) as exc_info:
+        bo.BackupOptions.from_environment(
+            output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
+        )
+    assert exc_info.value.reason_code == "backup_output_path_invalid"
+    assert "TASKHUB_BACKUP_REDIS_PORT" in (exc_info.value.detail or "")
+
+
+# --- F-PR77-002 strict .tar.age extension check ---
+
+
+def test_run_backup_rejects_age_only_extension(tmp_path: Path) -> None:
+    """F-PR77-002 adopt: .age 単独拡張子は .tar.age チェーン違反として reject."""
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "wrong.age",  # .tar が欠落
+        repo_root=tmp_path,
+    )
+    with pytest.raises(bo.BackupUsageError) as exc_info:
+        bo.run_backup(options)
+    assert exc_info.value.reason_code == "backup_output_path_invalid"
+    assert ".tar.age" in (exc_info.value.detail or "")

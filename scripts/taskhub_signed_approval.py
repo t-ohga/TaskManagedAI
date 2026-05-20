@@ -266,6 +266,8 @@ def _load_approval_record(approval_id: str) -> tuple[ApprovalRecord | None, Reas
         return None, "taskhub_signed_approval_record_malformed"
 
     # F-PR75-005 adopt: extra unsigned fields も reject (allowlist strict)
+    # F-PR77-001 adopt: backup_claim は SP022-T02 Phase 2 で導入された signed extension
+    # field、allowlist に含める (Phase 2 record で backup を通すため)
     required = {
         "approval_id",
         "decider",
@@ -276,7 +278,7 @@ def _load_approval_record(approval_id: str) -> tuple[ApprovalRecord | None, Reas
         "allowed_subcommands",
         "signature",
     }
-    allowed_keys = required | {"target_host"}  # target_host は optional だが signature 対象
+    allowed_keys = required | {"target_host", "backup_claim"}  # backup_claim 追加 (F-PR77-001)
     if not required.issubset(data.keys()):
         return None, "taskhub_signed_approval_record_malformed"
     extra_keys = set(data.keys()) - allowed_keys
