@@ -98,6 +98,15 @@ ReasonCode = Literal[
     "restore_rollback_attempted",
     "restore_rollback_failed",
     "restore_completed",
+    # SP022-T02 Phase 4 (R1 F-004 + R2 F-004 + R5 F-001 + ADV R1 F-017 adopt): snapshot manifest
+    "restore_rollback_snapshot_manifest_missing",
+    "restore_rollback_snapshot_manifest_invalid_json",
+    "restore_rollback_snapshot_manifest_target_mismatch",
+    "restore_rollback_snapshot_component_hash_mismatch",
+    "restore_rollback_snapshot_component_missing",
+    "restore_rollback_snapshot_id_mismatch",
+    "restore_rollback_snapshot_manifest_unsupported_version",
+    "restore_rollback_snapshot_manifest_toctou_mismatch",
 ]
 
 WarningCode = Literal[
@@ -105,6 +114,9 @@ WarningCode = Literal[
     "restore_rollback_redis_skipped_no_pre_snapshot",
     "restore_rollback_db_skipped_no_pre_snapshot",
     "restore_meta_json_unknown_keys",
+    # SP022-T02 Phase 4 (R2 F-004 adopt): partial snapshot component skip warnings
+    "restore_rollback_snapshot_component_db_dump_not_present",
+    "restore_rollback_snapshot_component_redis_dump_not_present",
 ]
 
 
@@ -210,6 +222,40 @@ class RestoreOptions:
     expected_postgres_major_version: str  # e.g., "17"
     expected_alembic_head: str
     overwrite: bool
+
+    @classmethod
+    def for_rollback_mode(
+        cls,
+        *,
+        pre_restore_dir: Path,
+        target_pg_dsn_components: dict[str, str],
+        target_redis_endpoint: str,
+        target_artifacts_dir: Path,
+        target_artifacts_container_path: str,
+        target_compose_project_name: str,
+        target_compose_file_path: Path,
+        expected_postgres_major_version: str,
+    ) -> RestoreOptions:
+        """SP022-T02 Phase 4 (R1 F-005 + R2 F-005 adopt): rollback 用 minimal RestoreOptions.
+
+        archive_sha256 / age_identity_file / expected_alembic_head は rollback では未使用
+        (snapshot 内 data が正本)、sentinel value で埋める。CLI rollback 分岐は
+        `rollback_from_pre_restore_snapshot()` を直接呼ぶため `run_restore()` には渡さない.
+        """
+        return cls(
+            input_path=pre_restore_dir,
+            archive_sha256="",
+            age_identity_file=Path("/dev/null"),
+            target_pg_dsn_components=target_pg_dsn_components,
+            target_redis_endpoint=target_redis_endpoint,
+            target_artifacts_dir=target_artifacts_dir,
+            target_artifacts_container_path=target_artifacts_container_path,
+            target_compose_project_name=target_compose_project_name,
+            target_compose_file_path=target_compose_file_path,
+            expected_postgres_major_version=expected_postgres_major_version,
+            expected_alembic_head="",
+            overwrite=True,
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1343,7 +1389,260 @@ def create_pre_restore_snapshot(
         ) from None
     os.rename(redis_snapshot_tmp, redis_snapshot_path)
 
+    # SP022-T02 Phase 4 (R1 F-004 + R2 F-004 + R2 F-006 + ADV R1 F-017 adopt):
+    # snapshot_manifest.json を atomic write (.tmp → rename)、全 component の hash 揃った後に最後
+    _write_snapshot_manifest(
+        pre_restore_dir, options, ts,
+        db_dump_path=db_snapshot_path,
+        redis_dump_path=redis_snapshot_path,
+        artifacts_dir=pre_restore_dir / "artifacts",
+    )
+
     return pre_restore_dir
+
+
+def _file_sha256(path: Path) -> str:
+    """streaming sha256 for files (1 MiB chunks)."""
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _artifacts_merkle_sha256(artifacts_dir: Path) -> str:
+    """artifacts dir 全 file の concatenated relative-path + content sha256 を再帰計算.
+
+    SP022-T02 Phase 4 (R1 F-004 adopt): simple Merkle (relative_path + sha256) sequential hash.
+    """
+    h = hashlib.sha256()
+    if not artifacts_dir.is_dir():
+        return h.hexdigest()
+    # sort で deterministic
+    entries: list[Path] = []
+    for entry in sorted(artifacts_dir.rglob("*")):
+        if entry.is_file():
+            entries.append(entry)
+    for entry in entries:
+        rel = entry.relative_to(artifacts_dir).as_posix()
+        h.update(rel.encode("utf-8") + b"\n")
+        h.update(_file_sha256(entry).encode("utf-8") + b"\n")
+    return h.hexdigest()
+
+
+def read_alembic_head_via_compose_exec(options: RestoreOptions) -> str | None:
+    """SP022-T02 Phase 4 (R2 F-006 adopt): snapshot 作成時に alembic head を docker compose exec
+    + container 内 unix socket 経由で取得 (host TCP 経由禁止). Returns None if unavailable.
+    """
+    argv = (
+        _compose_argv_prefix(options)
+        + ["exec", "-T", "postgres", "psql"]
+        + [f"--username={options.target_pg_dsn_components['user']}"]
+        + [f"--dbname={options.target_pg_dsn_components['db']}"]
+        + ["-h", "/var/run/postgresql", "--no-password",
+           "-c", "select version_num from alembic_version", "-t", "-A"]
+    )
+    try:
+        result = run_safe_subprocess(argv, config=SafeSubprocessConfig(timeout_sec=30))
+    except (SubprocessNotFoundError, SubprocessTimeoutError):
+        return None
+    if result.returncode != 0:
+        return None
+    head = result.stdout.decode("utf-8").strip()
+    return head if head else None
+
+
+def _write_snapshot_manifest(
+    pre_restore_dir: Path,
+    options: RestoreOptions,
+    ts: str,
+    *,
+    db_dump_path: Path,
+    redis_dump_path: Path,
+    artifacts_dir: Path,
+) -> None:
+    """SP022-T02 Phase 4 (R1 F-004 + R2 F-004 + R2 F-006 + ADV R1 F-017 adopt):
+    snapshot_manifest.json を atomic write (.tmp → rename).
+
+    component schema = `{present: bool, sha256: string|null, skipped_reason: string|null}`
+    に従い、partial snapshot semantics を保持。
+    """
+    components: dict[str, dict[str, object]] = {}
+    # db component
+    if db_dump_path.is_file():
+        components["pre_restore_pg_dump.dump"] = {
+            "present": True,
+            "sha256": _file_sha256(db_dump_path),
+            "skipped_reason": None,
+        }
+    else:
+        components["pre_restore_pg_dump.dump"] = {
+            "present": False,
+            "sha256": None,
+            "skipped_reason": "db_dump_not_present_at_snapshot",
+        }
+    # redis component
+    if redis_dump_path.is_file():
+        components["pre_restore_dump.rdb"] = {
+            "present": True,
+            "sha256": _file_sha256(redis_dump_path),
+            "skipped_reason": None,
+        }
+    else:
+        components["pre_restore_dump.rdb"] = {
+            "present": False,
+            "sha256": None,
+            "skipped_reason": "redis_dump_not_present_at_snapshot",
+        }
+    # artifacts component (dir merkle)
+    if artifacts_dir.is_dir():
+        components["artifacts"] = {
+            "present": True,
+            "sha256": _artifacts_merkle_sha256(artifacts_dir),
+            "skipped_reason": None,
+        }
+    else:
+        components["artifacts"] = {
+            "present": False,
+            "sha256": None,
+            "skipped_reason": "artifacts_dir_not_present_at_snapshot",
+        }
+
+    snapshot_id = pre_restore_dir.name.replace("_pre-restore-", "", 1)
+    manifest: dict[str, object] = {
+        "manifest_version": 1,
+        "snapshot_id": snapshot_id,
+        "created_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "target_compose_project_name": options.target_compose_project_name,
+        "target_compose_file_path": str(options.target_compose_file_path),
+        "target_pg_dsn_components": dict(sorted(options.target_pg_dsn_components.items())),
+        "target_redis_endpoint": options.target_redis_endpoint,
+        "target_artifacts_dir": str(options.target_artifacts_dir),
+        "target_artifacts_container_path": options.target_artifacts_container_path,
+        "postgres_major_version": options.expected_postgres_major_version,
+        "alembic_head_at_snapshot": read_alembic_head_via_compose_exec(options),
+        "components": components,
+    }
+    manifest_tmp = pre_restore_dir / "snapshot_manifest.json.tmp"
+    manifest_path = pre_restore_dir / "snapshot_manifest.json"
+    manifest_tmp.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    os.rename(manifest_tmp, manifest_path)
+
+
+def verify_snapshot_manifest_binding(
+    manifest: dict[str, object],
+    options: RestoreOptions,
+    rrc: object,  # RestoreRollbackApprovalClaim (avoid circular import)
+) -> None:
+    """SP022-T02 Phase 4 (R1 F-004 + ADV R1 F-017 adopt): manifest と RestoreOptions / rrc claim
+    の binding 一致 verify. raise RestoreUsageError on mismatch.
+    """
+    # ADV R1 F-017 adopt: manifest_version 必須 + v1 のみ
+    if manifest.get("manifest_version") != 1:
+        raise RestoreUsageError(
+            "restore_rollback_snapshot_manifest_unsupported_version",
+            detail=f"manifest_version={manifest.get('manifest_version')!r}, expected=1",
+        )
+    # target binding fields 1:1
+    pairs: list[tuple[str, object, object]] = [
+        ("target_compose_project_name", manifest.get("target_compose_project_name"),
+         options.target_compose_project_name),
+        ("target_compose_file_path", manifest.get("target_compose_file_path"),
+         str(options.target_compose_file_path)),
+        ("target_redis_endpoint", manifest.get("target_redis_endpoint"),
+         options.target_redis_endpoint),
+        ("target_artifacts_dir", manifest.get("target_artifacts_dir"),
+         str(options.target_artifacts_dir)),
+        ("target_artifacts_container_path", manifest.get("target_artifacts_container_path"),
+         options.target_artifacts_container_path),
+        ("postgres_major_version", manifest.get("postgres_major_version"),
+         options.expected_postgres_major_version),
+    ]
+    for name, actual, expected in pairs:
+        if actual != expected:
+            raise RestoreUsageError(
+                "restore_rollback_snapshot_manifest_target_mismatch",
+                detail=f"{name}: manifest={actual!r}, options={expected!r}",
+            )
+    # DSN components: sorted dict compare
+    manifest_dsn = manifest.get("target_pg_dsn_components")
+    if not isinstance(manifest_dsn, dict):
+        raise RestoreUsageError(
+            "restore_rollback_snapshot_manifest_target_mismatch",
+            detail="target_pg_dsn_components not dict",
+        )
+    if dict(sorted(manifest_dsn.items())) != dict(sorted(options.target_pg_dsn_components.items())):
+        raise RestoreUsageError(
+            "restore_rollback_snapshot_manifest_target_mismatch",
+            detail="target_pg_dsn_components mismatch",
+        )
+
+
+def verify_snapshot_component_hashes(
+    pre_restore_dir: Path,
+    manifest: dict[str, object],
+    warnings: list[WarningCode],
+) -> None:
+    """SP022-T02 Phase 4 (R1 F-004 + R2 F-004 adopt): manifest 内 components 表に従い、
+    present=true は file sha256 一致 verify、present=false は warnings に skipped_reason 追加.
+
+    raise RestoreRuntimeError on (present=true で hash mismatch or file missing).
+    """
+    components = manifest.get("components")
+    if not isinstance(components, dict):
+        raise RestoreRuntimeError(
+            "restore_rollback_snapshot_manifest_invalid_json",
+            detail="components field missing or not dict",
+        )
+    for fname, spec in components.items():
+        if not isinstance(spec, dict):
+            raise RestoreRuntimeError(
+                "restore_rollback_snapshot_manifest_invalid_json",
+                detail=f"components.{fname} not dict",
+            )
+        present = spec.get("present")
+        expected_sha256 = spec.get("sha256")
+        skipped_reason = spec.get("skipped_reason")
+        if present is True:
+            # 必須 file
+            target_path = pre_restore_dir / fname
+            if fname == "artifacts":
+                if not target_path.is_dir():
+                    raise RestoreRuntimeError(
+                        "restore_rollback_snapshot_component_missing",
+                        detail=f"artifacts dir not found: {target_path}",
+                    )
+                actual_sha256 = _artifacts_merkle_sha256(target_path)
+            else:
+                if not target_path.is_file():
+                    raise RestoreRuntimeError(
+                        "restore_rollback_snapshot_component_missing",
+                        detail=f"component file not found: {target_path}",
+                    )
+                actual_sha256 = _file_sha256(target_path)
+            if actual_sha256 != expected_sha256:
+                raise RestoreRuntimeError(
+                    "restore_rollback_snapshot_component_hash_mismatch",
+                    detail=f"{fname}: expected={expected_sha256!r}, actual={actual_sha256!r}",
+                )
+        elif present is False:
+            # partial snapshot: skipped_reason を warning に
+            if fname == "pre_restore_pg_dump.dump":
+                warnings.append("restore_rollback_snapshot_component_db_dump_not_present")
+            elif fname == "pre_restore_dump.rdb":
+                warnings.append("restore_rollback_snapshot_component_redis_dump_not_present")
+            _ = skipped_reason  # observed only
+        else:
+            raise RestoreRuntimeError(
+                "restore_rollback_snapshot_manifest_invalid_json",
+                detail=f"components.{fname}.present must be bool, got {present!r}",
+            )
 
 
 def place_redis_dump_rdb_via_named_volume(
@@ -1664,8 +1963,12 @@ __all__ = [
     "place_redis_dump_rdb_via_named_volume",
     "read_and_verify_meta_json",
     "resolve_restore_temp_layout",
+    "read_alembic_head_via_compose_exec",
     "rollback_from_pre_restore_snapshot",
     "run_restore",
+    "verify_snapshot_component_hashes",
+    "verify_snapshot_manifest_binding",
+    "verify_target_binding_consistency",
     "start_app_services_wait_healthy",
     "start_postgres_wait_healthy",
     "start_redis_service_wait_healthy",

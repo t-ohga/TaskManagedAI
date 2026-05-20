@@ -33,7 +33,7 @@ import re
 import stat
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Literal
@@ -132,6 +132,27 @@ class BackupApprovalClaim:
     age_public_key_fingerprint: str  # SHA-256 hex of age public key bytes
 
 
+# SP022-T02 Phase 4 / T08 batch 4: restore_rollback_claim (R1 F-001 + ADV R1 F-010 adopt)
+@dataclass(frozen=True)
+class RestoreRollbackApprovalClaim:
+    """Restore-rollback-specific approval claim (SP022-T02 Phase 4).
+
+    Phase 3 restore_claim と異なり archive_sha256 / age public key 不要 (snapshot 内 data
+    が正本)、代わりに pre_restore_dir + snapshot_manifest_sha256 で snapshot binding を確立。
+    """
+
+    pre_restore_ts: str  # snapshot timestamp (`^\d{8}T\d{6}(?:-\d+)?$`)
+    pre_restore_dir: str  # absolute normpath of snapshot directory
+    snapshot_manifest_sha256: str  # 64-char lowercase hex sha256 of snapshot_manifest.json
+    target_pg_dsn_components: dict[str, str]  # {host, port, db, user}
+    target_redis_endpoint: str
+    target_artifacts_dir: str
+    target_artifacts_container_path: str
+    target_compose_project_name: str
+    target_compose_file_path: str
+    expected_postgres_major_version: str
+
+
 # SP022-T02 Phase 3 / T08 batch 3: restore_claim (R1-R23 adopt)
 @dataclass(frozen=True)
 class RestoreApprovalClaim:
@@ -192,6 +213,10 @@ ReasonCode = Literal[
     "taskhub_signed_approval_restore_claim_required",  # SP022-T02 Phase 3: restore subcommand で claim 不在
     "taskhub_signed_approval_restore_claim_mismatch",  # SP022-T02 Phase 3: claim と CLI 引数不一致
     "taskhub_signed_approval_restore_allow_unsigned_skeleton_rejected",  # restore では escape を物理 deny
+    # SP022-T02 Phase 4 / T08 batch 4: restore_rollback_claim (R1 F-001 + R1 F-002 adopt)
+    "taskhub_signed_approval_restore_rollback_claim_required",
+    "taskhub_signed_approval_restore_rollback_claim_mismatch",
+    "taskhub_signed_approval_restore_rollback_allow_unsigned_skeleton_rejected",
 ]
 
 AUDIT_PAYLOAD_ALLOWLIST_KEYS: frozenset[str] = frozenset(
@@ -237,6 +262,7 @@ class ApprovalRecord:
     signature_b64: str  # raw base64 string (validate 済)
     backup_claim: BackupApprovalClaim | None = None   # R2-F-001 retro-fix: signature 対象
     restore_claim: RestoreApprovalClaim | None = None # SP022-T02 Phase 3: signature 対象
+    restore_rollback_claim: RestoreRollbackApprovalClaim | None = None  # SP022-T02 Phase 4
 
 
 # --- detection helpers ---
@@ -312,7 +338,34 @@ def _rfc8785_canonical_payload_bytes(record: ApprovalRecord) -> bytes:
             "target_pg_dsn_components": dict(sorted(record.restore_claim.target_pg_dsn_components.items())),
             "target_redis_endpoint": record.restore_claim.target_redis_endpoint,
         }
+    if record.restore_rollback_claim is not None:
+        # SP022-T02 Phase 4 (R1 F-001 adopt): restore_rollback_claim も canonical payload に追加
+        rrc = record.restore_rollback_claim
+        payload["restore_rollback_claim"] = {
+            "expected_postgres_major_version": rrc.expected_postgres_major_version,
+            "pre_restore_dir": rrc.pre_restore_dir,
+            "pre_restore_ts": rrc.pre_restore_ts,
+            "snapshot_manifest_sha256": rrc.snapshot_manifest_sha256,
+            "target_artifacts_container_path": rrc.target_artifacts_container_path,
+            "target_artifacts_dir": rrc.target_artifacts_dir,
+            "target_compose_file_path": rrc.target_compose_file_path,
+            "target_compose_project_name": rrc.target_compose_project_name,
+            "target_pg_dsn_components": dict(sorted(rrc.target_pg_dsn_components.items())),
+            "target_redis_endpoint": rrc.target_redis_endpoint,
+        }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def canonical_for_signature(domain: str, payload: dict[str, object]) -> bytes:
+    """SP022-T02 Phase 4 / ADV R2 F-002 adopt: domain-separated JCS canonicalizer.
+
+    本 PR では domain = "remote_hosts.v1" のみ採用 (approval record は既存
+    _rfc8785_canonical_payload_bytes の layout 維持で PR #75/#77/#78 backward compat 保証).
+
+    layout: jcs_canonical({"domain": domain, "payload": payload})
+    """
+    wrapped: dict[str, object] = {"domain": domain, "payload": payload}
+    return json.dumps(wrapped, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
 # --- record loader (R1-F-005 + R1-F-015 + R1-F-001 + R1-F-016 adopt) ---
@@ -346,7 +399,8 @@ def _load_approval_record(approval_id: str) -> tuple[ApprovalRecord | None, Reas
         "signature",
     }
     # SP022-T02 Phase 3 (R2-F-001 retro-fix): restore_claim も allowlist 拡張、canonical payload 対象
-    allowed_keys = required | {"target_host", "backup_claim", "restore_claim"}
+    # SP022-T02 Phase 4 (R1 F-001 + R2 F-002 adopt): restore_rollback_claim も allowlist に追加
+    allowed_keys = required | {"target_host", "backup_claim", "restore_claim", "restore_rollback_claim"}
     if not required.issubset(data.keys()):
         return None, "taskhub_signed_approval_record_malformed"
     extra_keys = set(data.keys()) - allowed_keys
@@ -400,6 +454,10 @@ def _load_approval_record(approval_id: str) -> tuple[ApprovalRecord | None, Reas
     restore_claim = _parse_restore_claim_dict(data.get("restore_claim"))
     if data.get("restore_claim") is not None and restore_claim is None:
         return None, "taskhub_signed_approval_record_malformed"
+    # SP022-T02 Phase 4 (R1 F-001 + R2 F-002 adopt): restore_rollback_claim parser
+    restore_rollback_claim = _parse_restore_rollback_claim_dict(data.get("restore_rollback_claim"))
+    if data.get("restore_rollback_claim") is not None and restore_rollback_claim is None:
+        return None, "taskhub_signed_approval_record_malformed"
 
     record = ApprovalRecord(
         approval_id=data["approval_id"],
@@ -413,6 +471,7 @@ def _load_approval_record(approval_id: str) -> tuple[ApprovalRecord | None, Reas
         signature_b64=sig_b64,
         backup_claim=backup_claim,
         restore_claim=restore_claim,
+        restore_rollback_claim=restore_rollback_claim,
     )
     return record, None
 
@@ -502,6 +561,94 @@ def _parse_restore_claim_dict(rc: object) -> RestoreApprovalClaim | None:
         expected_postgres_major_version=rc["expected_postgres_major_version"],
         expected_alembic_head=rc["expected_alembic_head"],
         skip_service_stop=rc["skip_service_stop"],
+    )
+
+
+# SP022-T02 Phase 4 (R1 F-001 + R2 F-002 + ADV R1 F-010 adopt): restore_rollback_claim parser
+def _parse_restore_rollback_claim_dict(rrc: object) -> RestoreRollbackApprovalClaim | None:
+    """strict per-field type/format validate (10 field exact)."""
+    if rrc is None:
+        return None
+    if not isinstance(rrc, dict):
+        return None
+    required = {
+        "pre_restore_ts", "pre_restore_dir", "snapshot_manifest_sha256",
+        "target_pg_dsn_components", "target_redis_endpoint",
+        "target_artifacts_dir", "target_artifacts_container_path",
+        "target_compose_project_name", "target_compose_file_path",
+        "expected_postgres_major_version",
+    }
+    if not required.issubset(rrc.keys()):
+        return None
+    if set(rrc.keys()) - required:
+        return None
+    # ADV R1 F-010 adopt: per-field validate
+    str_fields = (
+        "pre_restore_ts", "pre_restore_dir", "snapshot_manifest_sha256",
+        "target_redis_endpoint", "target_artifacts_dir", "target_artifacts_container_path",
+        "target_compose_project_name", "target_compose_file_path",
+        "expected_postgres_major_version",
+    )
+    for f in str_fields:
+        v = rrc[f]
+        if not isinstance(v, str) or not v:
+            return None
+    # snapshot_manifest_sha256: 64-char lowercase hex
+    if not re.fullmatch(r"^[0-9a-f]{64}$", rrc["snapshot_manifest_sha256"]):
+        return None
+    # absolute normalized paths
+    for f in ("pre_restore_dir", "target_artifacts_dir",
+              "target_artifacts_container_path", "target_compose_file_path"):
+        if not rrc[f].startswith("/"):
+            return None
+    # postgres_major_version (ADV R1 F-016 adopt regex)
+    if not re.fullmatch(r"^[1-9][0-9]*$", rrc["expected_postgres_major_version"]):
+        return None
+    # pre_restore_ts (R1 F-003 adopt regex)
+    if not re.fullmatch(r"^\d{8}T\d{6}(?:-\d+)?$", rrc["pre_restore_ts"]):
+        return None
+    # target_pg_dsn_components: dict[str, str], keys = {host, port, db, user}
+    dsn = rrc["target_pg_dsn_components"]
+    if not isinstance(dsn, dict):
+        return None
+    dsn_required = {"host", "port", "db", "user"}
+    if set(dsn.keys()) != dsn_required:
+        return None
+    for k in dsn_required:
+        if not isinstance(dsn[k], str) or not dsn[k]:
+            return None
+    if not re.fullmatch(r"^[1-9][0-9]*$", dsn["port"]):
+        return None
+    return RestoreRollbackApprovalClaim(
+        pre_restore_ts=rrc["pre_restore_ts"],
+        pre_restore_dir=rrc["pre_restore_dir"],
+        snapshot_manifest_sha256=rrc["snapshot_manifest_sha256"],
+        target_pg_dsn_components={k: dsn[k] for k in sorted(dsn)},
+        target_redis_endpoint=rrc["target_redis_endpoint"],
+        target_artifacts_dir=rrc["target_artifacts_dir"],
+        target_artifacts_container_path=rrc["target_artifacts_container_path"],
+        target_compose_project_name=rrc["target_compose_project_name"],
+        target_compose_file_path=rrc["target_compose_file_path"],
+        expected_postgres_major_version=rrc["expected_postgres_major_version"],
+    )
+
+
+def _restore_rollback_claims_match(
+    a: RestoreRollbackApprovalClaim, b: RestoreRollbackApprovalClaim,
+) -> bool:
+    """10 field strict compare (dict は sorted items)."""
+    return (
+        a.pre_restore_ts == b.pre_restore_ts
+        and a.pre_restore_dir == b.pre_restore_dir
+        and a.snapshot_manifest_sha256 == b.snapshot_manifest_sha256
+        and dict(sorted(a.target_pg_dsn_components.items()))
+            == dict(sorted(b.target_pg_dsn_components.items()))
+        and a.target_redis_endpoint == b.target_redis_endpoint
+        and a.target_artifacts_dir == b.target_artifacts_dir
+        and a.target_artifacts_container_path == b.target_artifacts_container_path
+        and a.target_compose_project_name == b.target_compose_project_name
+        and a.target_compose_file_path == b.target_compose_file_path
+        and a.expected_postgres_major_version == b.expected_postgres_major_version
     )
 
 
@@ -673,6 +820,7 @@ def verify_signed_approval(
     max_ttl: timedelta = DEFAULT_MAX_TTL,
     backup_claim: BackupApprovalClaim | None = None,  # R2-F-001 adopt
     restore_claim: RestoreApprovalClaim | None = None,  # SP022-T02 Phase 3 adopt
+    restore_rollback_claim: RestoreRollbackApprovalClaim | None = None,  # SP022-T02 Phase 4
 ) -> tuple[bool, ReasonCode, dict[str, object]]:
     """Verify approval record (R1-F-001/005/007/014/015/016 + R2-F-003 + R2-F-001 全 adopt).
 
@@ -687,12 +835,12 @@ def verify_signed_approval(
     extras["decider"] = record.decider
     extras["drill_kind"] = record.drill_kind
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # F-PR75-003 adopt: regex pass しても strptime が ValueError (例: 2026-02-30 等の impossible
     # calendar date) を投げる可能性、structured deny に変換
     try:
-        signed_at = datetime.strptime(record.signed_at_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-        expires_at = datetime.strptime(record.expires_at_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        signed_at = datetime.strptime(record.signed_at_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        expires_at = datetime.strptime(record.expires_at_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     except ValueError:
         return False, "taskhub_signed_approval_datetime_format_invalid", extras
 
@@ -754,6 +902,19 @@ def verify_signed_approval(
             extras["actual_restore_archive_sha256"] = restore_claim.archive_sha256[:16]
             return False, "taskhub_signed_approval_restore_claim_mismatch", extras
 
+    # SP022-T02 Phase 4 (R1 F-001 + R2 F-002 adopt): restore_rollback_claim verify
+    if subcommand == "restore-rollback":
+        if restore_rollback_claim is None:
+            return False, "taskhub_signed_approval_restore_rollback_claim_required", extras
+        record_rrc = record.restore_rollback_claim
+        if record_rrc is None:
+            # Phase 1/2/3 record (restore_rollback_claim 不在) は restore-rollback では deny
+            return False, "taskhub_signed_approval_restore_rollback_claim_required", extras
+        if not _restore_rollback_claims_match(restore_rollback_claim, record_rrc):
+            extras["expected_rrc_pre_restore_ts"] = record_rrc.pre_restore_ts
+            extras["actual_rrc_pre_restore_ts"] = restore_rollback_claim.pre_restore_ts
+            return False, "taskhub_signed_approval_restore_rollback_claim_mismatch", extras
+
     verify_key, fingerprint, key_error = _load_verify_key_and_fingerprint()
     if key_error or verify_key is None:
         if fingerprint:
@@ -781,6 +942,7 @@ def require_approval_for_destructive(
     target_host: str | None = None,
     backup_claim: BackupApprovalClaim | None = None,  # R2-F-001 adopt
     restore_claim: RestoreApprovalClaim | None = None,  # SP022-T02 Phase 3 adopt
+    restore_rollback_claim: RestoreRollbackApprovalClaim | None = None,  # SP022-T02 Phase 4
 ) -> tuple[bool, ReasonCode, dict[str, object]]:
     """Pre-execution gate (default deny for destructive subcommands).
 
@@ -804,6 +966,9 @@ def require_approval_for_destructive(
     # SP022-T02 Phase 3 adopt: restore subcommand も同 pattern
     if subcommand == "restore" and allow_unsigned_manual_skeleton:
         return False, "taskhub_signed_approval_restore_allow_unsigned_skeleton_rejected", extras
+    # SP022-T02 Phase 4 (R1 F-002 adopt): restore-rollback も同 pattern
+    if subcommand == "restore-rollback" and allow_unsigned_manual_skeleton:
+        return False, "taskhub_signed_approval_restore_rollback_allow_unsigned_skeleton_rejected", extras
 
     automation = detect_automation_context()
     extras["automation_env_hits"] = automation["env_hits"]
@@ -828,6 +993,7 @@ def require_approval_for_destructive(
     allowed, reason, verify_extras = verify_signed_approval(
         approval_id, subcommand, target_host=target_host,
         backup_claim=backup_claim, restore_claim=restore_claim,
+        restore_rollback_claim=restore_rollback_claim,
     )
     for k, v in verify_extras.items():
         extras.setdefault(k, v)
@@ -841,7 +1007,7 @@ def emit_audit_event(reason_code: ReasonCode, extras: dict[str, object]) -> None
     """allowlist-only redacted audit-line scaffold (stderr, Phase 1)."""
     payload: dict[str, object] = {
         "reason_code": reason_code,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "audit_marker": "taskhub_signed_approval_gate",
     }
     for k, v in extras.items():

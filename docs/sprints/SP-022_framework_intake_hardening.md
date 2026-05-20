@@ -902,4 +902,63 @@ R7 regression fixture 3 件追加: `test_exec_reset_followed_by_replacement_pass
 
 累計 fixture: **48 pytest fixture 全 PASS** (failed: 0、plan 23 + R1 3 + R2 5 + R3 3 + R4 3 + R5 4 + R6 4 + R7 3)。
 
+### SP022-T02 Phase 4 / T08 batch 4 completion (2026-05-20、本 PR)
+
+#### codex-all-loops review + adversarial 累計 53 findings 100% adopt
+
+- **Phase 1 codex-review-loop** R1-R7: 31 findings (R1=19 R2=6 R3=2 R4=1 R5=1 R6=2 R7=0)
+- **Phase 2 codex-adversarial-loop** R1-R3: 22 findings (R1=18 R2=4 R3=0)
+- Cumulative findings 53、100% adopted、CRITICAL=0 達成 (両 phase Readiness Gate READY)
+
+#### 実装ファイル (新規 4 + 修正 3 + tests 4 + docs 2)
+
+新規:
+- `scripts/taskhub_destructive_lock.py`: `acquire_destructive_lock` context manager (fcntl.flock LOCK_EX|LOCK_NB + TASKHUB_LOCK_DIR env override + O_NOFOLLOW)
+- `scripts/taskhub_remote_status.py`: Tailscale SSH + signed config (compose_file_sha256 + config_version + expires_at) + state machine (running/safe_down/transitional/unknown)
+- `scripts/taskhub_approval_cli.py`: Ed25519-signed approval issue CLI (raw 32-byte seed + bytearray zeroize + final path O_CREAT|O_EXCL|O_NOFOLLOW + chmod 0o600)
+- `docs/deploy/operator-runbook.md`: operator SOP §1-§9 (bootstrap / approval issue per-subcommand / re-sign migration / signed config / SecretBroker limit / known_hosts / lock / keyring rotation)
+
+修正:
+- `scripts/taskhub_signed_approval.py`: `RestoreRollbackApprovalClaim` dataclass + ReasonCode 3 種 + parser/matcher + `canonical_for_signature` helper + verify/require_approval rrc 拡張
+- `scripts/taskhub_restore_orchestrator.py`: `RestoreOptions.for_rollback_mode` classmethod + `read_alembic_head_via_compose_exec` + `_write_snapshot_manifest` + `verify_snapshot_manifest_binding` + `verify_snapshot_component_hashes` + ReasonCode 8 種 + WarningCode 2 種
+- `scripts/taskhub_admin.py`: `_cmd_restore_rollback` 新規 (--rollback real I/O) + `_cmd_restore --input` 既存 path への lock 統合 + `_cmd_status --remote` real I/O 化 + approval subparser 登録
+
+tests:
+- `tests/scripts/test_taskhub_destructive_lock.py` (5 fixture)
+- `tests/scripts/test_taskhub_remote_status.py` (19 fixture)
+- `tests/scripts/test_taskhub_approval_cli.py` (17 fixture)
+- `tests/scripts/test_taskhub_signed_approval.py` (modify、5 fixture 追加)
+
+regression: pytest **290/290 PASS**、mypy clean、ruff clean.
+
+#### Security invariants (本 PR で確立)
+
+- `restore-rollback` approval は `RestoreRollbackApprovalClaim` (10 field) で snapshot binding を signature root に固定
+- snapshot_manifest.json + manifest_version=1 + per-component {present/sha256/skipped_reason} で partial snapshot semantics 維持
+- host-level destructive lock (fcntl.flock LOCK_EX|LOCK_NB) で backup/restore/restore-rollback の cross-subcommand mutual exclusion (本 PR scope: restore + rollback、他は Phase 5 carry-over)
+- TOCTOU 排除: lock 取得後 manifest sha256 / target binding / component hash の **再計算 + verify**
+- remote_hosts.signed.json: config_version + expires_at + compose_file_sha256 + Ed25519 signature (domain="remote_hosts.v1" canonical layout)
+- approval signing key: raw 32-byte seed format + bytearray zeroize + final path O_CREAT|O_EXCL|O_NOFOLLOW + chmod 0o600
+
+#### Carry-over (本 batch 対象外、Phase 5 以降)
+
+- **`SP022-T02 Phase 5`** (別 PR): `backup_orchestrator pg_dump compose exec` 切替、T09 unblock の hard gate
+- **SP-012 split-brain second line of defense**: active.signed marker chain + thaw 2-party-control + 同 migration_epoch reject negative test
+- **SP-012 keyring rotation**: `approval-verify-keys.d/<fingerprint>.pub` keyring + old+new overlap 期間 dual-trust
+- destructive lock cross-subcommand 拡張: backup / migrate / freeze / thaw も lock 取得対象に統合
+
+#### Phase 4 後の SP-022 task progress (post-本 PR)
+
+| Task | status |
+|---|---|
+| SP022-T01 framework intake CI 機械化 | ✅ 完了 (PR #70) |
+| SP022-T02 `taskhub migrate` 自動化 | 🟥 heavy: Phase 1 ✅ (PR #75) + Phase 2 ✅ (PR #77) + Phase 3 ✅ (PR #78) + **Phase 4 ✅ (本 PR)** / Phase 5 carry-over |
+| SP022-T03 半年 drill SOP | ✅ 完了 (PR #71) |
+| SP022-T04 Phase E trace audit | ✅ 完了 (PR #72) |
+| SP022-T05 AC-HARD multi-agent re-verify | ⛔ deferred (blocked_by: SP-013) |
+| SP022-T06 KPI baseline 3 host | 🟨 light (Mac 単独可) |
+| SP022-T07 production checklist skeleton | ✅ 完了 (PR #73) |
+| SP022-T08 SP-012 carry-over 9 件 | 🟥 heavy: batch 1-3 ✅ (PR #76/#77/#78) + **batch 4 ✅ (本 PR、approval issue + remote_status + destructive_lock)** / batch 5-6 carry-over |
+| SP022-T09 実機 host migration drill | ⛔ deferred (blocked_by: SP022-T02 Phase 5 + SP-012 split-brain second line + SP-012 keyring rotation) |
+
 (後続: SP-022 完了時に T02 / T04-T09 全体 Review を追記)

@@ -272,29 +272,9 @@ def _cmd_restore(args: argparse.Namespace) -> int:
         )
         return 2
 
-    # --rollback は skeleton mode (real I/O は SP022-T02 Phase 4 carry-over)
+    # --rollback: SP022-T02 Phase 4 real I/O orchestration (R1-R6 + ADV R1-R3 adopt)
     if args.rollback:
-        # F-PR78-005 adopt: rollback skeleton は "restore-rollback" subcommand を使用
-        # (restore_claim 必須化されていない別 subcommand、drill_kind 整合は維持)
-        allowed, reason = _run_approval_gate("restore-rollback", args)
-        if not allowed:
-            print(  # noqa: T201
-                f"ERROR: signed approval gate denied (reason={reason})",
-                file=sys.stderr,
-            )
-            return 2
-        print(  # noqa: T201
-            _skeleton_message(
-                "restore --rollback",
-                details=(
-                    f"Would rollback to pre-restore snapshot at "
-                    f"data/_pre-restore-{args.rollback}/. "
-                    "Real flow (Phase 4 carry-over): stop_app_services -> postgres-only restart -> "
-                    "artifacts/DB/Redis snapshot 戻し -> service start."
-                ),
-            )
-        )
-        return 1  # skeleton mode
+        return _cmd_restore_rollback(args)
 
     # --input: real I/O orchestration
     input_path = Path(args.input)
@@ -474,17 +454,330 @@ def _cmd_restore(args: argparse.Namespace) -> int:
         )
         return 2
 
-    # Real restore orchestration (SP022-T02 Phase 3)
+    # SP022-T02 Phase 4 (R4 F-001 + R6 F-001 adopt): --input にも destructive lock 統合
+    # (rollback と cross-subcommand mutual exclusion)
     try:
-        result = run_restore(options)
-    except RestoreUsageError as exc:
-        print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+        from scripts.taskhub_destructive_lock import acquire_destructive_lock
+    except ModuleNotFoundError:
+        _REPO_ROOT = Path(__file__).resolve().parent.parent
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.taskhub_destructive_lock import acquire_destructive_lock  # noqa: E402
+
+    with acquire_destructive_lock("restore", args.approval_id) as (acquired, lock_reason, blocker):
+        if not acquired:
+            blocker_summary = ""
+            if blocker:
+                blocker_summary = (
+                    f" blocker={blocker.get('subcommand')!r} pid={blocker.get('pid')!r}"
+                    f" started_at={blocker.get('started_at_utc')!r}"
+                )
+            print(  # noqa: T201
+                f"ERROR: destructive operation lock not acquired "
+                f"(reason={lock_reason}){blocker_summary}",
+                file=sys.stderr,
+            )
+            return 2
+
+        # Real restore orchestration (SP022-T02 Phase 3、lock 内で実行)
+        try:
+            result = run_restore(options)
+        except RestoreUsageError as exc:
+            print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+            return 2
+        except RestoreRuntimeError as exc:
+            print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+            return 1
+        print(json.dumps(result.summary(), sort_keys=True))  # noqa: T201
+        return 0
+
+
+def _cmd_restore_rollback(args: argparse.Namespace) -> int:
+    """SP022-T02 Phase 4 / T08 batch 4: `taskhub restore --rollback <ts>` real I/O.
+
+    R1 (CRITICAL F-001) + R1 F-002/003/004/005 + R2 F-005 + R3 F-002 + R4 F-001 + R5 F-001
+    + R6 F-002 + ADV R1 F-002/017 + ADV R2 F-002 全 adopt.
+    """
+    import hashlib
+    import json as _json
+    import re as _re
+    import shutil as _shutil
+    import subprocess as _subprocess
+
+    try:
+        from scripts.taskhub_destructive_lock import acquire_destructive_lock
+        from scripts.taskhub_restore_orchestrator import (
+            RestoreOptions,
+            RestoreRuntimeError,
+            RestoreUsageError,
+            rollback_from_pre_restore_snapshot,
+            verify_snapshot_component_hashes,
+            verify_snapshot_manifest_binding,
+            verify_target_binding_consistency,
+        )
+        from scripts.taskhub_signed_approval import (
+            RestoreRollbackApprovalClaim,
+            emit_audit_event,
+            require_approval_for_destructive,
+        )
+        from scripts.taskhub_subprocess_runner import (
+            SubprocessNotFoundError,
+            SubprocessTimeoutError,
+        )
+    except ModuleNotFoundError:
+        _REPO_ROOT = Path(__file__).resolve().parent.parent
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.taskhub_destructive_lock import acquire_destructive_lock  # noqa: E402
+        from scripts.taskhub_restore_orchestrator import (  # noqa: E402
+            RestoreOptions,
+            RestoreRuntimeError,
+            RestoreUsageError,
+            rollback_from_pre_restore_snapshot,
+            verify_snapshot_component_hashes,
+            verify_snapshot_manifest_binding,
+            verify_target_binding_consistency,
+        )
+        from scripts.taskhub_signed_approval import (  # noqa: E402
+            RestoreRollbackApprovalClaim,
+            emit_audit_event,
+            require_approval_for_destructive,
+        )
+        from scripts.taskhub_subprocess_runner import (  # noqa: E402
+            SubprocessNotFoundError,
+            SubprocessTimeoutError,
+        )
+
+    # R1 F-003 adopt: pre-restore ts strict regex
+    PRE_RESTORE_TS_REGEX = _re.compile(r"^\d{8}T\d{6}(?:-\d+)?$")
+    if not PRE_RESTORE_TS_REGEX.fullmatch(args.rollback):
+        print(  # noqa: T201
+            f"ERROR: --rollback ts format invalid: {args.rollback!r} "
+            "(expected YYYYMMDDTHHMMSS or YYYYMMDDTHHMMSS-N)",
+            file=sys.stderr,
+        )
         return 2
-    except RestoreRuntimeError as exc:
-        print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
-        return 1
-    print(json.dumps(result.summary(), sort_keys=True))  # noqa: T201
-    return 0
+
+    # R1 F-002 adopt: --allow-unsigned-manual-skeleton restore-rollback 物理 deny
+    if getattr(args, "allow_unsigned_manual_skeleton", False):
+        print(  # noqa: T201
+            "ERROR: --allow-unsigned-manual-skeleton is rejected for restore-rollback subcommand "
+            "(real I/O requires signed approval + restore_rollback_claim, no skeleton escape allowed) "
+            "[reason=taskhub_signed_approval_restore_rollback_allow_unsigned_skeleton_rejected]",
+            file=sys.stderr,
+        )
+        return 2
+
+    # data dir resolve (R1 F-003 adopt: resolve(strict=True) で symlink resolve + 存在 verify)
+    repo_root = Path(__file__).resolve().parent.parent
+    target_data_dir_str = os.environ.get("TASKHUB_RESTORE_DATA_DIR", str(repo_root / "data"))
+    try:
+        target_data_dir = Path(target_data_dir_str).resolve(strict=True)
+    except (OSError, FileNotFoundError):
+        print(  # noqa: T201
+            f"ERROR: target_data_dir not found: {target_data_dir_str}",
+            file=sys.stderr,
+        )
+        return 2
+
+    pre_restore_dir_raw = target_data_dir / f"_pre-restore-{args.rollback}"
+    if pre_restore_dir_raw.is_symlink():
+        print(f"ERROR: pre-restore path must not be symlink: {pre_restore_dir_raw}", file=sys.stderr)  # noqa: T201
+        return 2
+    try:
+        pre_restore_dir = pre_restore_dir_raw.resolve(strict=True)
+    except (OSError, FileNotFoundError):
+        print(f"ERROR: pre-restore snapshot not found: {pre_restore_dir_raw}", file=sys.stderr)  # noqa: T201
+        return 2
+    if pre_restore_dir.is_symlink():
+        print(f"ERROR: pre-restore resolved path must not be symlink: {pre_restore_dir}", file=sys.stderr)  # noqa: T201
+        return 2
+    try:
+        pre_restore_dir.relative_to(target_data_dir)
+    except ValueError:
+        print(f"ERROR: pre-restore path escapes data_dir: {pre_restore_dir}", file=sys.stderr)  # noqa: T201
+        return 2
+
+    # manifest read + pre-lock sha256 (claim 用、R5 F-001 で lock 内再計算する)
+    manifest_path = pre_restore_dir / "snapshot_manifest.json"
+    if not manifest_path.is_file():
+        print(  # noqa: T201
+            f"ERROR: snapshot_manifest.json not found in {pre_restore_dir} "
+            "[reason=restore_rollback_snapshot_manifest_missing]",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        manifest_bytes = manifest_path.read_bytes()
+    except OSError as exc:
+        print(f"ERROR: snapshot_manifest.json read failed: {exc}", file=sys.stderr)  # noqa: T201
+        return 2
+    manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    try:
+        _json.loads(manifest_bytes.decode("utf-8"))  # validate, lock 内で再 parse
+    except (_json.JSONDecodeError, UnicodeDecodeError):
+        print(  # noqa: T201
+            "ERROR: snapshot_manifest.json invalid JSON "
+            "[reason=restore_rollback_snapshot_manifest_invalid_json]",
+            file=sys.stderr,
+        )
+        return 2
+
+    # RestoreOptions for_rollback_mode + RestoreRollbackApprovalClaim construct
+    target_compose_project = os.environ.get(
+        "TASKHUB_RESTORE_COMPOSE_PROJECT", "taskmanagedai",
+    )
+    target_compose_file = Path(os.environ.get(
+        "TASKHUB_RESTORE_COMPOSE_FILE", str(repo_root / "docker-compose.yml"),
+    ))
+    target_pg_host = os.environ.get("TASKHUB_RESTORE_PG_HOST", "127.0.0.1")
+    target_pg_port = os.environ.get("TASKHUB_RESTORE_PG_PORT", "5432")
+    target_pg_db = os.environ.get("TASKHUB_RESTORE_PG_DB", "taskmanagedai")
+    target_pg_user = os.environ.get("TASKHUB_RESTORE_PG_USER", "taskmanagedai")
+    target_redis_host = os.environ.get("TASKHUB_RESTORE_REDIS_HOST", "127.0.0.1")
+    target_redis_port = os.environ.get("TASKHUB_RESTORE_REDIS_PORT", "6379")
+    target_artifacts_dir = Path(os.environ.get(
+        "TASKHUB_RESTORE_ARTIFACTS_DIR", str(repo_root / "data" / "artifacts"),
+    )).resolve()
+    target_artifacts_container_path = os.environ.get(
+        "TASKHUB_RESTORE_ARTIFACTS_CONTAINER_PATH", "/app/data/artifacts",
+    )
+    expected_pg_major = os.environ.get("TASKHUB_RESTORE_EXPECTED_PG_MAJOR", "16")
+
+    options = RestoreOptions.for_rollback_mode(
+        pre_restore_dir=pre_restore_dir,
+        target_pg_dsn_components={
+            "host": target_pg_host, "port": target_pg_port,
+            "db": target_pg_db, "user": target_pg_user,
+        },
+        target_redis_endpoint=f"{target_redis_host}:{target_redis_port}",
+        target_artifacts_dir=target_artifacts_dir,
+        target_artifacts_container_path=target_artifacts_container_path,
+        target_compose_project_name=target_compose_project,
+        target_compose_file_path=target_compose_file,
+        expected_postgres_major_version=expected_pg_major,
+    )
+
+    rrc = RestoreRollbackApprovalClaim(
+        pre_restore_ts=args.rollback,
+        pre_restore_dir=str(pre_restore_dir),
+        snapshot_manifest_sha256=manifest_sha256,
+        target_pg_dsn_components=dict(options.target_pg_dsn_components),
+        target_redis_endpoint=options.target_redis_endpoint,
+        target_artifacts_dir=str(options.target_artifacts_dir),
+        target_artifacts_container_path=options.target_artifacts_container_path,
+        target_compose_project_name=options.target_compose_project_name,
+        target_compose_file_path=str(options.target_compose_file_path),
+        expected_postgres_major_version=options.expected_postgres_major_version,
+    )
+
+    # signed approval gate with restore_rollback_claim
+    allowed, reason, extras = require_approval_for_destructive(
+        "restore-rollback",
+        args.approval_id,
+        getattr(args, "from_automation", False),
+        getattr(args, "allow_unsigned_manual_skeleton", False),
+        restore_rollback_claim=rrc,
+    )
+    emit_audit_event(reason, extras)
+    if not allowed:
+        print(f"ERROR: signed approval gate denied (reason={reason})", file=sys.stderr)  # noqa: T201
+        return 2
+
+    # R3 F-002 + R5 F-001 adopt: destructive lock 取得後に re-verify
+    with acquire_destructive_lock("restore-rollback", args.approval_id) as (acquired, lock_reason, blocker):
+        if not acquired:
+            blocker_summary = ""
+            if blocker:
+                blocker_summary = (
+                    f" blocker={blocker.get('subcommand')!r} pid={blocker.get('pid')!r}"
+                    f" started_at={blocker.get('started_at_utc')!r}"
+                )
+            print(  # noqa: T201
+                f"ERROR: destructive operation lock not acquired "
+                f"(reason={lock_reason}){blocker_summary}",
+                file=sys.stderr,
+            )
+            return 2
+
+        warnings: list[str] = []
+
+        # R5 F-001 adopt: lock 内で manifest sha256 再計算 (TOCTOU verify)
+        try:
+            manifest_bytes_inlock = manifest_path.read_bytes()
+        except OSError:
+            print(  # noqa: T201
+                "ERROR: snapshot_manifest.json unreadable after lock acquisition",
+                file=sys.stderr,
+            )
+            return 2
+        manifest_sha256_inlock = hashlib.sha256(manifest_bytes_inlock).hexdigest()
+        if manifest_sha256_inlock != manifest_sha256:
+            print(  # noqa: T201
+                f"ERROR: snapshot_manifest.json was modified between approval gate and lock "
+                f"(pre-lock sha256={manifest_sha256[:16]}, in-lock sha256={manifest_sha256_inlock[:16]}) "
+                "[reason=restore_rollback_snapshot_manifest_toctou_mismatch]",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            manifest_data_inlock = _json.loads(manifest_bytes_inlock.decode("utf-8"))
+        except (_json.JSONDecodeError, UnicodeDecodeError):
+            print(  # noqa: T201
+                "ERROR: snapshot_manifest.json invalid JSON after lock",
+                file=sys.stderr,
+            )
+            return 2
+
+        # target binding consistency (Phase 3 既存 8-check、lock 内で実施)
+        try:
+            verify_target_binding_consistency(options)
+        except RestoreUsageError as exc:
+            print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+            return 2
+
+        # manifest binding verify (R1 F-004 adopt)
+        try:
+            verify_snapshot_manifest_binding(manifest_data_inlock, options, rrc)
+        except RestoreUsageError as exc:
+            print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+            return 2
+
+        # component hashes verify (R1 F-004 + R2 F-004 adopt)
+        try:
+            verify_snapshot_component_hashes(pre_restore_dir, manifest_data_inlock, warnings)  # type: ignore[arg-type]
+        except RestoreRuntimeError as exc:
+            print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+            return 1
+
+        # R1 F-005 adopt: 例外集合 拡張 + rollback 実行
+        try:
+            rollback_from_pre_restore_snapshot(pre_restore_dir, options, warnings)  # type: ignore[arg-type]
+        except RestoreUsageError as exc:
+            print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+            return 2
+        except (
+            RestoreRuntimeError, OSError, _shutil.Error,
+            _subprocess.SubprocessError, SubprocessTimeoutError,
+            SubprocessNotFoundError,
+        ) as exc:
+            print(  # noqa: T201
+                f"ERROR: rollback failed: {type(exc).__name__}: {exc}. "
+                f"Manual recovery: docker compose -p {target_compose_project} "
+                f"-f {target_compose_file} ps | snapshot at {pre_restore_dir}",
+                file=sys.stderr,
+            )
+            return 1
+
+        summary = {
+            "subcommand": "restore-rollback",
+            "pre_restore_dir": str(pre_restore_dir),
+            "snapshot_manifest_sha256": manifest_sha256[:16],
+            "warnings": warnings,
+            "status": "completed",
+        }
+        print(_json.dumps(summary, sort_keys=True))  # noqa: T201
+        return 0
 
 
 def _cmd_migrate(args: argparse.Namespace) -> int:
@@ -527,6 +820,44 @@ def _cmd_status(args: argparse.Namespace) -> int:
     prevention (`--remote <old-host>` で旧 host service down 確認) を追加
     (Codex R4 F-PR63-008 adopt).
     """
+    # SP022-T02 Phase 4 (R1 F-006/F-007/F-016 + R2 F-001/F-003 + ADV R1 全 adopt):
+    # --remote real I/O (host-specific signed config + SSH Tailscale + state machine)
+    if args.remote:
+        try:
+            from scripts.taskhub_remote_status import (
+                RemoteStatusOptions,
+                query_remote_compose_status,
+            )
+        except ModuleNotFoundError:
+            _REPO_ROOT = Path(__file__).resolve().parent.parent
+            if str(_REPO_ROOT) not in sys.path:
+                sys.path.insert(0, str(_REPO_ROOT))
+            from scripts.taskhub_remote_status import (  # noqa: E402
+                RemoteStatusOptions,
+                query_remote_compose_status,
+            )
+        opts = RemoteStatusOptions(
+            remote_host=args.remote,
+            ssh_timeout_sec=int(os.environ.get("TASKHUB_REMOTE_SSH_TIMEOUT_SEC", "10")),
+        )
+        try:
+            result = query_remote_compose_status(opts)
+        except Exception as exc:  # noqa: BLE001
+            print(  # noqa: T201
+                f"ERROR: remote status query failed: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        print(json.dumps({  # noqa: T201
+            "remote_host": opts.remote_host,
+            "reason_code": result.reason_code,
+            "services_up": list(result.services_up),
+            "services_down": list(result.services_down),
+            "split_brain_safe": result.split_brain_safe,
+        }, sort_keys=True))
+        return 0 if result.split_brain_safe else 1
+
+    # --age-safety / --mac-preflight は既存 skeleton 維持
     extras: list[str] = []
     if args.age_safety:
         extras.append(
@@ -537,10 +868,6 @@ def _cmd_status(args: argparse.Namespace) -> int:
         extras.append(
             "--mac-preflight (§14.2 PGA-F-006: pmset -g から sleep / powernap / "
             "wakeonlan setting を hard fail check)"
-        )
-    if args.remote:
-        extras.append(
-            f"--remote {args.remote} (§285 split-brain check: 旧 host service down 確認)"
         )
 
     base_detail = (
@@ -1048,6 +1375,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="JSONL 1 行最大バイト数 (default 65536、range 1024-1048576、DoS 防御)",
     )
     sub_verify.set_defaults(func=_cmd_verify)
+
+    # SP022-T08 batch 4: approval issue CLI subparser
+    try:
+        from scripts.taskhub_approval_cli import register_subparser as _register_approval
+    except ModuleNotFoundError:
+        _REPO_ROOT = Path(__file__).resolve().parent.parent
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.taskhub_approval_cli import register_subparser as _register_approval  # noqa: E402
+    _register_approval(subparsers)
 
     return parser
 
