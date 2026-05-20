@@ -594,11 +594,33 @@ def _strip_protocol_suffix(port_str: str) -> str:
     return port_str
 
 
+def _parse_redis_endpoint(endpoint: str) -> tuple[str, str]:
+    """`host:port` literal を parse、IPv4 / IPv6 (bracketed and unbracketed loopback) 両対応.
+
+    F-PR78-R3-001 adopt: `partition(":")` は `::1:6379` で empty host + malformed port を生むため
+    廃止。`rsplit(":", 1)` で host と port を分離 + bracketed (`[::1]:6379`) も unwrap。
+    Returns: (host, port_str)
+    """
+    if endpoint.startswith("["):
+        # bracketed: `[::1]:6379`
+        bracket_end = endpoint.find("]")
+        if bracket_end == -1 or not endpoint[bracket_end + 1:].startswith(":"):
+            return endpoint, ""
+        host = endpoint[1:bracket_end]
+        port = endpoint[bracket_end + 2:]
+        return host, port
+    # rsplit で末尾の port を分離 (IPv6 unbracketed `::1:6379` も最後の `:` で split)
+    if ":" not in endpoint:
+        return endpoint, ""
+    host, _, port = endpoint.rpartition(":")
+    return host, port
+
+
 def _parse_short_port_syntax(p: str) -> tuple[str | None, str | None, str | None]:
     """Compose short syntax port mapping を parse、(host_ip, host_port, container_port) を返す.
 
-    F-PR78-R2-003 + R2-005 adopt: IPv6 bracketed (`[::1]:6001:6001`) + protocol suffix
-    (`5432:5432/tcp`) の両対応。
+    F-PR78-R2-003 + R2-005 + R3-002 adopt: IPv6 bracketed (`[::1]:6001:6001`) +
+    unbracketed IPv6 (`::1:6001:6001`) + protocol suffix (`5432:5432/tcp`) の全対応。
     """
     # IPv6 bracketed: [host_ip]:host_port:container_port
     if p.startswith("["):
@@ -615,7 +637,8 @@ def _parse_short_port_syntax(p: str) -> tuple[str | None, str | None, str | None
             return None, None, None
         host_port, cont_port = parts
         return host_ip, host_port, _strip_protocol_suffix(cont_port)
-    # IPv4 / plain: split on ":"
+    # F-PR78-R3-002 fix: unbracketed IPv6 forms (`::1`, `fe80::N` 等 colon を含む host_ip)
+    # 末尾 2 segment を host_port / container_port、その前を host_ip として parse
     parts = p.split(":")
     if len(parts) == 2:
         host_port, cont_port = parts
@@ -623,6 +646,18 @@ def _parse_short_port_syntax(p: str) -> tuple[str | None, str | None, str | None
     if len(parts) == 3:
         host_ip, host_port, cont_port = parts
         return host_ip, host_port, _strip_protocol_suffix(cont_port)
+    if len(parts) > 3:
+        # IPv6 unbracketed: 末尾 2 が ports、それ以前が host_ip (再 join)
+        host_port = parts[-2]
+        cont_port = parts[-1]
+        host_ip = ":".join(parts[:-2])
+        # sanity: ports は numeric
+        if not host_port.isdigit():
+            return None, None, None
+        cont_clean = _strip_protocol_suffix(cont_port)
+        if not cont_clean.isdigit():
+            return None, None, None
+        return host_ip, host_port, cont_clean
     return None, None, None
 
 
@@ -774,7 +809,10 @@ def verify_target_binding_consistency(options: RestoreOptions) -> None:
         )
     redis_ports = redis_svc.get("ports", [])
     redis_published = _extract_published_port(redis_ports, container_port=6379)
-    expected_redis_host, _, expected_redis_port_str = options.target_redis_endpoint.partition(":")
+    # F-PR78-R3-001 fix: IPv6 endpoint (`::1:6379` or `[::1]:6379`) safe parse
+    expected_redis_host, expected_redis_port_str = _parse_redis_endpoint(
+        options.target_redis_endpoint,
+    )
     if redis_published is None or str(redis_published) != expected_redis_port_str:
         raise RestoreRuntimeError(
             "restore_target_binding_mismatch",
@@ -1487,6 +1525,16 @@ def run_restore(options: RestoreOptions) -> RestoreResult:
 
         # === Step 1.5: target binding consistency preflight (R11-R23) ===
         verify_target_binding_consistency(options)
+
+        # === Step 1.6: pre-restore snapshot parent verify (F-PR78-R3-003 fix) ===
+        # mkdir(mode=0o700, parents=False) failure を service stop 後でなく **service stop 前** に検出
+        # (rollback 不能 outage 防止)
+        snapshot_parent = options.target_artifacts_dir.parent
+        if not snapshot_parent.is_dir():
+            raise RestoreUsageError(
+                "restore_output_path_invalid",
+                detail=f"pre-restore snapshot parent dir does not exist: {snapshot_parent}",
+            )
 
         # === Step 2: app service stop ===
         stop_app_services(options)

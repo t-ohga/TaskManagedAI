@@ -372,8 +372,9 @@ def _cmd_restore(args: argparse.Namespace) -> int:
     ))
     target_pg_host = os.environ.get("TASKHUB_RESTORE_PG_HOST", "127.0.0.1")
     target_pg_port = os.environ.get("TASKHUB_RESTORE_PG_PORT", "5432")
-    target_pg_db = os.environ.get("TASKHUB_RESTORE_PG_DB", "taskhub")
-    target_pg_user = os.environ.get("TASKHUB_RESTORE_PG_USER", "taskhub")
+    # F-PR78-R3-004 adopt: defaults を docker-compose.yml + .env.example の Compose default に整合
+    target_pg_db = os.environ.get("TASKHUB_RESTORE_PG_DB", "taskmanagedai")
+    target_pg_user = os.environ.get("TASKHUB_RESTORE_PG_USER", "taskmanagedai")
     target_redis_host = os.environ.get("TASKHUB_RESTORE_REDIS_HOST", "127.0.0.1")
     target_redis_port = os.environ.get("TASKHUB_RESTORE_REDIS_PORT", "6379")
     target_artifacts_dir = Path(os.environ.get(
@@ -382,7 +383,8 @@ def _cmd_restore(args: argparse.Namespace) -> int:
     target_artifacts_container_path = os.environ.get(
         "TASKHUB_RESTORE_ARTIFACTS_CONTAINER_PATH", "/app/data/artifacts",
     )
-    expected_pg_major = os.environ.get("TASKHUB_RESTORE_EXPECTED_PG_MAJOR", "17")
+    # F-PR78-R3-005 adopt: docker-compose.yml の postgres:16-alpine と整合 (major 16)
+    expected_pg_major = os.environ.get("TASKHUB_RESTORE_EXPECTED_PG_MAJOR", "16")
     expected_alembic_head = os.environ.get("TASKHUB_RESTORE_EXPECTED_ALEMBIC_HEAD", "")
 
     if not expected_alembic_head:
