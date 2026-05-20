@@ -484,13 +484,20 @@ def read_and_verify_meta_json(
 
 
 def verify_checksums(extracted_dir: Path) -> None:
-    """checksums.txt と extracted 内 file の sha256 deterministic compare."""
+    """checksums.txt と extracted 内 file の sha256 deterministic compare.
+
+    F-PR78-R2-001 CRITICAL fix: checksums.txt path を strict verify (absolute path / `..` traversal
+    reject、host file 読み取り attack 防止)。
+    F-PR78-R2-006 fix: 抽出済 file 集合 vs checksums.txt declared 集合の exact match verify
+    (undeclared payload による tampered archive 防止)。
+    """
     checksums_path = extracted_dir / "checksums.txt"
     if not checksums_path.is_file():
         raise RestoreRuntimeError(
             "restore_checksums_mismatch",
             detail="checksums.txt missing",
         )
+    extracted_root = extracted_dir.resolve()
     expected: dict[str, str] = {}
     for line in checksums_path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -503,10 +510,28 @@ def verify_checksums(extracted_dir: Path) -> None:
                 "restore_checksums_mismatch",
                 detail=f"checksums.txt malformed line: {line[:80]}",
             )
-        expected[parts[1]] = parts[0]
+        rel = parts[1]
+        # F-PR78-R2-001 fix: absolute path / `..` traversal を文字列レベルで reject
+        if rel.startswith("/") or rel.startswith("\\"):
+            raise RestoreRuntimeError(
+                "restore_checksums_mismatch",
+                detail=f"checksums.txt has absolute path (rejected): {rel}",
+            )
+        if ".." in Path(rel).parts:
+            raise RestoreRuntimeError(
+                "restore_checksums_mismatch",
+                detail=f"checksums.txt has `..` traversal (rejected): {rel}",
+            )
+        expected[rel] = parts[0]
     # compute actual sha256 of each extracted file
     for rel_path, expected_hash in expected.items():
-        full = extracted_dir / rel_path
+        full = (extracted_dir / rel_path).resolve()
+        # F-PR78-R2-001 fix: resolved path が extracted_root 配下であること verify
+        if not (full == extracted_root or full.is_relative_to(extracted_root)):
+            raise RestoreRuntimeError(
+                "restore_checksums_mismatch",
+                detail=f"checksums.txt path escapes extracted root: {rel_path}",
+            )
         if not full.is_file():
             raise RestoreRuntimeError(
                 "restore_checksums_mismatch",
@@ -524,6 +549,23 @@ def verify_checksums(extracted_dir: Path) -> None:
                 "restore_checksums_mismatch",
                 detail=f"sha256 mismatch: {rel_path}",
             )
+    # F-PR78-R2-006 fix: extracted 内に checksums.txt 未宣言 file があれば reject
+    # (tampered archive が undeclared payload を追加するのを防止)
+    extracted_files: set[str] = set()
+    for entry in extracted_dir.rglob("*"):
+        if not entry.is_file():
+            continue
+        rel = entry.relative_to(extracted_dir).as_posix()
+        if rel == "checksums.txt":
+            continue  # self-exclude
+        extracted_files.add(rel)
+    declared_files = set(expected.keys())
+    undeclared = extracted_files - declared_files
+    if undeclared:
+        raise RestoreRuntimeError(
+            "restore_checksums_mismatch",
+            detail=f"extracted files not declared in checksums.txt: {sorted(undeclared)[:5]}",
+        )
 
 
 def verify_postgres_major_version(meta: dict[str, Any], expected_major: str) -> None:
@@ -545,22 +587,54 @@ def verify_postgres_major_version(meta: dict[str, Any], expected_major: str) -> 
 # --- target binding consistency preflight (R11-R23 統合) ---
 
 
+def _strip_protocol_suffix(port_str: str) -> str:
+    """`5432/tcp` / `5432/udp` から protocol suffix を strip して port number のみ返す (F-PR78-R2-005)."""
+    if "/" in port_str:
+        return port_str.split("/", 1)[0]
+    return port_str
+
+
+def _parse_short_port_syntax(p: str) -> tuple[str | None, str | None, str | None]:
+    """Compose short syntax port mapping を parse、(host_ip, host_port, container_port) を返す.
+
+    F-PR78-R2-003 + R2-005 adopt: IPv6 bracketed (`[::1]:6001:6001`) + protocol suffix
+    (`5432:5432/tcp`) の両対応。
+    """
+    # IPv6 bracketed: [host_ip]:host_port:container_port
+    if p.startswith("["):
+        bracket_end = p.find("]")
+        if bracket_end == -1:
+            return None, None, None
+        host_ip = p[1:bracket_end]
+        rest = p[bracket_end + 1:]
+        if not rest.startswith(":"):
+            return None, None, None
+        rest = rest[1:]
+        parts = rest.split(":")
+        if len(parts) != 2:
+            return None, None, None
+        host_port, cont_port = parts
+        return host_ip, host_port, _strip_protocol_suffix(cont_port)
+    # IPv4 / plain: split on ":"
+    parts = p.split(":")
+    if len(parts) == 2:
+        host_port, cont_port = parts
+        return None, host_port, _strip_protocol_suffix(cont_port)
+    if len(parts) == 3:
+        host_ip, host_port, cont_port = parts
+        return host_ip, host_port, _strip_protocol_suffix(cont_port)
+    return None, None, None
+
+
 def _extract_published_port(ports_spec: Any, container_port: int) -> str | None:  # noqa: ANN401 — JSON ports spec is genuinely Any
-    """Compose ports 配列から published host port を抽出 (long/short syntax 両対応)."""
+    """Compose ports 配列から published host port を抽出 (long/short/IPv6/protocol-suffix 両対応)."""
     if not isinstance(ports_spec, list):
         return None
     for p in ports_spec:
         if isinstance(p, str):
-            # short syntax: "5432:5432" or "127.0.0.1:5432:5432"
-            parts = p.split(":")
-            if len(parts) == 2:
-                host_port, cont_port = parts
-                if cont_port == str(container_port):
-                    return host_port
-            elif len(parts) == 3:
-                _, host_port, cont_port = parts
-                if cont_port == str(container_port):
-                    return host_port
+            _, host_port, cont_port = _parse_short_port_syntax(p)
+            if cont_port == str(container_port) and host_port is not None:
+                return host_port
         elif isinstance(p, dict):
             if str(p.get("target", "")) == str(container_port):
                 published = p.get("published")
@@ -570,17 +644,18 @@ def _extract_published_port(ports_spec: Any, container_port: int) -> str | None:
 
 
 def _extract_host_ip(ports_spec: Any, container_port: int) -> str | None:  # noqa: ANN401
-    """Compose ports 配列から host_ip を抽出 (None = 0.0.0.0 相当 = fail-closed deny の signal)."""
+    """Compose ports 配列から host_ip を抽出 (None = 0.0.0.0 相当 = fail-closed deny の signal).
+
+    F-PR78-R2-003 adopt: IPv6 bracketed syntax (e.g. `[::1]:5432:5432`) も parse。
+    """
     if not isinstance(ports_spec, list):
         return None
     for p in ports_spec:
         if isinstance(p, str):
-            parts = p.split(":")
-            if len(parts) == 3:
-                host_ip, _, cont_port = parts
-                if cont_port == str(container_port):
-                    return host_ip
-            # 2-part syntax には host_ip なし
+            host_ip, _, cont_port = _parse_short_port_syntax(p)
+            if cont_port == str(container_port) and host_ip:
+                return host_ip
+            # 2-part syntax には host_ip なし → 続行
         elif isinstance(p, dict):
             if str(p.get("target", "")) == str(container_port):
                 hip = p.get("host_ip")
@@ -1140,12 +1215,35 @@ def create_pre_restore_snapshot(
     R18-F-002 fix: artifacts move 完了直後 register_dir() callback で outer に登録
     (後続失敗でも rollback 起動可能).
     R20-F-001 fix: snapshot file は `.tmp` suffix → atomic rename (partial file 防止).
+    F-PR78-R2-004 fix: timestamp collision (rapid retry 同秒) で mkdir 失敗 → register_dir skip
+    で rollback 不能を防ぐため、collision 時は ts に増分 suffix 付加.
+    F-PR78-R2-002 fix: target_artifacts_dir 不在 (clean target first-time recovery) で
+    FileNotFoundError → empty artifacts component として処理.
     """
-    pre_restore_dir = options.target_artifacts_dir.parent / f"_pre-restore-{ts}"
-    pre_restore_dir.mkdir(mode=0o700)
+    # F-PR78-R2-004 fix: timestamp collision で `<ts>.N` 形式で retry
+    pre_restore_dir: Path | None = None
+    for attempt in range(10):
+        suffix = f"-{attempt}" if attempt > 0 else ""
+        candidate = options.target_artifacts_dir.parent / f"_pre-restore-{ts}{suffix}"
+        try:
+            candidate.mkdir(mode=0o700)
+            pre_restore_dir = candidate
+            break
+        except FileExistsError:
+            continue
+    if pre_restore_dir is None:
+        raise RestoreRuntimeError(
+            "restore_pre_restore_pg_dump_failed",
+            detail=f"_pre-restore-{ts}-* directory collision after 10 attempts",
+        )
 
-    # 1. artifacts: dir move (atomic rename)
-    shutil.move(str(options.target_artifacts_dir), str(pre_restore_dir / "artifacts"))
+    # 1. artifacts: dir move (atomic rename) or empty stub for clean target
+    # F-PR78-R2-002 fix: target_artifacts_dir 不在は first-time recovery 経路として扱い
+    if options.target_artifacts_dir.exists():
+        shutil.move(str(options.target_artifacts_dir), str(pre_restore_dir / "artifacts"))
+    else:
+        # 空 artifacts snapshot (rollback 時の clean state 戻し用)
+        (pre_restore_dir / "artifacts").mkdir(mode=0o700)
     # R18-F-002 fix: outer に登録
     register_dir(pre_restore_dir)
 
