@@ -262,7 +262,13 @@ def _cmd_restore(args: argparse.Namespace) -> int:
         )
         return 2
 
-    # R3-F-001 adopt: restore で --allow-unsigned-manual-skeleton は物理 deny
+    # ADV PR R11 F-003 adopt: --rollback dispatch を unsigned-skeleton check より先に行い、
+    # rollback-specific reason_code (restore_rollback_allow_unsigned_skeleton_rejected) を
+    # rollback handler 内で正しく emit する (restore-specific reject path で先に潰さない)
+    if args.rollback:
+        return _cmd_restore_rollback(args)
+
+    # R3-F-001 adopt: restore で --allow-unsigned-manual-skeleton は物理 deny (--input 経路のみ)
     if getattr(args, "allow_unsigned_manual_skeleton", False):
         print(  # noqa: T201
             "ERROR: --allow-unsigned-manual-skeleton is rejected for restore subcommand "
@@ -271,10 +277,6 @@ def _cmd_restore(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-
-    # --rollback: SP022-T02 Phase 4 real I/O orchestration (R1-R6 + ADV R1-R3 adopt)
-    if args.rollback:
-        return _cmd_restore_rollback(args)
 
     # --input: real I/O orchestration
     input_path = Path(args.input)
@@ -548,22 +550,23 @@ def _cmd_restore_rollback(args: argparse.Namespace) -> int:
             SubprocessTimeoutError,
         )
 
+    # R1 F-002 + ADV PR R11 F-003 adopt: --allow-unsigned-manual-skeleton 物理 deny を先頭で
+    # (rollback-specific reason_code を確実に emit、ts regex check より前)
+    if getattr(args, "allow_unsigned_manual_skeleton", False):
+        print(  # noqa: T201
+            "ERROR: --allow-unsigned-manual-skeleton is rejected for restore-rollback subcommand "
+            "(real I/O requires signed approval + restore_rollback_claim, no skeleton escape allowed) "
+            "[reason=taskhub_signed_approval_restore_rollback_allow_unsigned_skeleton_rejected]",
+            file=sys.stderr,
+        )
+        return 2
+
     # R1 F-003 adopt: pre-restore ts strict regex
     PRE_RESTORE_TS_REGEX = _re.compile(r"^\d{8}T\d{6}(?:-\d+)?$")
     if not PRE_RESTORE_TS_REGEX.fullmatch(args.rollback):
         print(  # noqa: T201
             f"ERROR: --rollback ts format invalid: {args.rollback!r} "
             "(expected YYYYMMDDTHHMMSS or YYYYMMDDTHHMMSS-N)",
-            file=sys.stderr,
-        )
-        return 2
-
-    # R1 F-002 adopt: --allow-unsigned-manual-skeleton restore-rollback 物理 deny
-    if getattr(args, "allow_unsigned_manual_skeleton", False):
-        print(  # noqa: T201
-            "ERROR: --allow-unsigned-manual-skeleton is rejected for restore-rollback subcommand "
-            "(real I/O requires signed approval + restore_rollback_claim, no skeleton escape allowed) "
-            "[reason=taskhub_signed_approval_restore_rollback_allow_unsigned_skeleton_rejected]",
             file=sys.stderr,
         )
         return 2
@@ -882,13 +885,27 @@ def _cmd_status(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-        print(json.dumps({  # noqa: T201
+        # ADV PR R11 F-001 adopt: --age-safety / --mac-preflight を併用可能に
+        # (early return せず local skeleton checks も評価、operator が両方の結果を見れる)
+        local_extras: list[str] = []
+        if args.age_safety:
+            local_extras.append(
+                "--age-safety (§14.1 PGA-F-001: FileVault / cloud-sync exclusion / permission 600 verify)"
+            )
+        if args.mac_preflight:
+            local_extras.append(
+                "--mac-preflight (§14.2 PGA-F-006: pmset -g から sleep / powernap / wakeonlan setting を hard fail check)"
+            )
+        summary: dict[str, object] = {
             "remote_host": opts.remote_host,
             "reason_code": result.reason_code,
             "services_up": list(result.services_up),
             "services_down": list(result.services_down),
             "split_brain_safe": result.split_brain_safe,
-        }, sort_keys=True))
+        }
+        if local_extras:
+            summary["local_skeleton_checks"] = local_extras
+        print(json.dumps(summary, sort_keys=True))  # noqa: T201
         return 0 if result.split_brain_safe else 1
 
     # --age-safety / --mac-preflight は既存 skeleton 維持

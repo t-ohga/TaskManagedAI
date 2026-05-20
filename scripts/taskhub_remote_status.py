@@ -404,12 +404,15 @@ def query_remote_compose_status(opts: RemoteStatusOptions) -> RemoteStatusResult
     stdout_bytes: bytes = b""
     try:
         with tempfile.TemporaryFile(mode="w+b") as stdout_tmp:
+            # ADV PR R11 F-002 adopt: SSH_AUTH_SOCK / SSH_AGENT_PID を env allowlist に追加
+            # (ssh-agent 経由 passphrase-protected key 利用環境で BatchMode=yes + 認証失敗を防止)
             result = run_safe_subprocess(
                 argv,
                 config=SafeSubprocessConfig(
                     timeout_sec=opts.ssh_timeout_sec + 5,
                     capture_stdout=False,
                     stdout_file=stdout_tmp,
+                    extra_env_allowlist=("SSH_AUTH_SOCK", "SSH_AGENT_PID"),
                 ),
             )
             stdout_tmp.seek(0, 2)

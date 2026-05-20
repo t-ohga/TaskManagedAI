@@ -143,15 +143,16 @@ def test_cli_restore_input_and_rollback_are_mutually_exclusive(tmp_path: Path) -
 
 
 def test_cli_restore_rollback_allow_unsigned_skeleton_rejected() -> None:
-    """SP022-T02 Phase 3 adopt (R3-F-001 fix): restore で `--allow-unsigned-manual-skeleton` は
-    物理 deny (skeleton 経路は real I/O への path-collision/data-loss を許容しないため)。
+    """SP022-T02 Phase 4 (R1 F-002 + ADV PR R11 F-003 adopt): rollback で
+    `--allow-unsigned-manual-skeleton` は rollback-specific reason_code で 物理 deny
+    (restore_rollback_allow_unsigned_skeleton_rejected が先頭で emit、ts regex check より前)。
     """
     result = _run_cli(
-        "restore", "--rollback", "2026-05-18T10-00-00",
+        "restore", "--rollback", "20260518T100000",
         "--allow-unsigned-manual-skeleton",
     )
     assert result.returncode == 2
-    assert "restore_allow_unsigned_skeleton_rejected" in result.stderr
+    assert "restore_rollback_allow_unsigned_skeleton_rejected" in result.stderr
 
 
 def test_cli_restore_missing_input_path_returns_exit_2(tmp_path: Path) -> None:
