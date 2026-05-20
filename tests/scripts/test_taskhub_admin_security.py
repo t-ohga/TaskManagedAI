@@ -56,17 +56,18 @@ def test_backup_manual_without_approval_denies_by_default(tmp_path: Path) -> Non
     assert "destructive_requires_approval" in result.stderr
 
 
-def test_backup_manual_with_allow_unsigned_skeleton_proceeds(tmp_path: Path) -> None:
-    """R1-F-002 adopt: --allow-unsigned-manual-skeleton で escape (Phase 1 only)."""
+def test_backup_manual_with_allow_unsigned_skeleton_rejected(tmp_path: Path) -> None:
+    """R2-F-001 adopt: SP022-T02 Phase 2 / T08 batch 2 で backup は real I/O 化、
+    `--allow-unsigned-manual-skeleton` は backup では物理 deny される (Phase 1 escape は他
+    destructive subcommand では維持、backup のみ削除)。
+    """
     target = tmp_path / "out.tar.age"
     result = _run_cli_with_env(
         "backup", "--output", str(target), "--allow-unsigned-manual-skeleton",
         env_overrides={"HOME": str(tmp_path)},
     )
-    assert result.returncode == 1  # skeleton mode
-    assert "[SKELETON] taskhub backup" in result.stdout
-    # audit marker contains unsigned_manual_skeleton_used=true
-    assert "unsigned_manual_skeleton_used" in result.stderr
+    assert result.returncode == 2  # rejected
+    assert "rejected for backup subcommand" in result.stderr
 
 
 def test_backup_with_automation_env_without_flag_denies(tmp_path: Path) -> None:

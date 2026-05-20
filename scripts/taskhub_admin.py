@@ -131,37 +131,111 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
 
 def _cmd_backup(args: argparse.Namespace) -> int:
-    """`taskhub backup --output <path> [--include-sops-env]` skeleton (drill 起点).
+    """`taskhub backup --output <path> [--include-sops-env]` real orchestration.
 
-    ADR-00021 §11.1 PG-F-015 hardening: 旧 `--include-secrets` を
-    `--include-sops-env` に rename. SOPS-encrypted .env のみを含め、age private
-    key は絶対含めない (CI test で verify 予定).
-
-    SP022-T02 Phase 1: signed approval pre-execution gate (default deny).
+    SP022-T02 Phase 1: signed approval gate (default deny + Phase 1 only escape の
+    `--allow-unsigned-manual-skeleton` は backup では物理 deny、R2-F-001 adopt)。
+    SP022-T02 Phase 2 / T08 batch 2: real backup orchestration (pg_dump / Redis / age)。
     """
-    allowed, reason = _run_approval_gate("backup", args)
+    if not args.output:
+        print("ERROR: --output <path> is required", file=sys.stderr)  # noqa: T201
+        return 2
+
+    # R2-F-001 adopt: backup では --allow-unsigned-manual-skeleton を物理 deny
+    # (gate 内でも deny されるが、early reject で error message を明確化)
+    if getattr(args, "allow_unsigned_manual_skeleton", False):
+        print(  # noqa: T201
+            "ERROR: --allow-unsigned-manual-skeleton is rejected for backup subcommand "
+            "(real I/O requires signed approval, no skeleton escape allowed)",
+            file=sys.stderr,
+        )
+        return 2
+
+    # SP022-T02 Phase 2 / T08 batch 2: build BackupOptions + age public key fingerprint
+    try:
+        from scripts.taskhub_backup_orchestrator import (
+            BackupOptions,
+            BackupRuntimeError,
+            BackupToolNotFoundError,
+            BackupUsageError,
+            run_backup,
+        )
+    except ModuleNotFoundError:
+        _REPO_ROOT = Path(__file__).resolve().parent.parent
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.taskhub_backup_orchestrator import (  # noqa: E402
+            BackupOptions,
+            BackupRuntimeError,
+            BackupToolNotFoundError,
+            BackupUsageError,
+            run_backup,
+        )
+
+    repo_root = Path(__file__).resolve().parent.parent
+    output_path = Path(args.output).resolve()
+    backup_options = BackupOptions.from_environment(
+        output_path=output_path,
+        repo_root=repo_root,
+        include_sops_env=args.include_sops_env,
+        skip_service_stop=getattr(args, "skip_service_stop", False),
+        overwrite=getattr(args, "overwrite", False),
+    )
+
+    # R2-F-001 adopt: build BackupApprovalClaim only when approval_id given
+    # (age public key read を gate より前にしない、test 等で age key 不在の場合 gate 結果を verify するため)
+    backup_claim = None
+    if args.approval_id:
+        from hashlib import sha256
+        try:
+            age_pub_bytes = backup_options.age_public_key_path.read_bytes()
+            age_pub_fingerprint = sha256(age_pub_bytes).hexdigest()
+        except OSError:
+            print(  # noqa: T201
+                f"ERROR: age public key not readable: {backup_options.age_public_key_path}",
+                file=sys.stderr,
+            )
+            return 2
+        from scripts.taskhub_signed_approval import BackupApprovalClaim
+        backup_claim = BackupApprovalClaim(
+            output_path=str(output_path),
+            include_sops_env=backup_options.include_sops_env,
+            skip_service_stop=backup_options.skip_service_stop,
+            overwrite=backup_options.overwrite,
+            age_public_key_fingerprint=age_pub_fingerprint,
+        )
+
+    # signed approval gate with backup_claim (R2-F-001 adopt)
+    from scripts.taskhub_signed_approval import (
+        emit_audit_event,
+        require_approval_for_destructive,
+    )
+    allowed, reason, extras = require_approval_for_destructive(
+        "backup",
+        args.approval_id,
+        getattr(args, "from_automation", False),
+        getattr(args, "allow_unsigned_manual_skeleton", False),
+        backup_claim=backup_claim,
+    )
+    emit_audit_event(reason, extras)
     if not allowed:
         print(  # noqa: T201
             f"ERROR: signed approval gate denied (reason={reason})",
             file=sys.stderr,
         )
         return 2
-    if not args.output:
-        print("ERROR: --output <path> is required", file=sys.stderr)  # noqa: T201
+
+    # Real backup orchestration (SP022-T02 Phase 2 / T08 batch 2)
+    try:
+        result = run_backup(backup_options)
+    except (BackupUsageError, BackupToolNotFoundError) as exc:
+        print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
         return 2
-    suffix = " (with SOPS-encrypted .env)" if args.include_sops_env else ""
-    print(  # noqa: T201
-        _skeleton_message(
-            "backup",
-            details=(
-                f"Would create age-encrypted backup at {args.output}{suffix}. "
-                "Real flow: graceful service stop -> pg_dump + Redis BGSAVE + "
-                "artifacts tar (+ optional SOPS-encrypted .env、age private key は "
-                "絶対含まない) -> age 公開鍵で暗号化 -> .tar.age 出力."
-            ),
-        )
-    )
-    return 1  # skeleton mode
+    except BackupRuntimeError as exc:
+        print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+        return 1
+    print(json.dumps(result.summary(), sort_keys=True))  # noqa: T201
+    return 0
 
 
 def _cmd_restore(args: argparse.Namespace) -> int:
@@ -595,6 +669,20 @@ def _build_parser() -> argparse.ArgumentParser:
             "ADR-00021 §11.1 PG-F-015: age private key は絶対含めない、"
             "旧 --include-secrets 名は廃止 (fail に分類)"
         ),
+    )
+    # SP022-T02 Phase 2 / T08 batch 2: real I/O 新引数
+    sub_backup.add_argument(
+        "--skip-service-stop",
+        action="store_true",
+        help=(
+            "skip docker compose service stop step (test/dev env only、"
+            "production drill では使用禁止、warning audit に emit)"
+        ),
+    )
+    sub_backup.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="overwrite existing --output file (default False、accidental loss 防止)",
     )
     sub_backup.set_defaults(func=_cmd_backup)
     _add_signed_approval_args(sub_backup)

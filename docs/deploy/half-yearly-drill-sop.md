@@ -170,3 +170,19 @@ drill 完了 (success / failure / abort) 後 24h 以内に retro Pack を `docs/
 - SP022-T09 (実機 host migration drill Mac→VPS RTO≤4h PASS、本 SOP を実機 drill 実施時に使用)
 - `scripts/ci/check_drill_timer_alert_only.sh` (本 SP022-T03 で実装)
 - `tests/deploy/test_drill_timer_alert_only.py` (本 SP022-T03 で 23 pytest fixtures 完備)
+
+## 11. SP022-T09 mandatory drill checklist (SP022-T02 Phase 2 / T08 batch 2 で正本化、F-014 adopt)
+
+`taskhub backup` real I/O orchestration (SP022-T02 Phase 2 / T08 batch 2 PR #77) の actual tool 実行 validation は **SP022-T09 実機 host migration drill で必須実施**。autonomous test session では subprocess mock のみで test 済、real validation は本 checklist が cover。
+
+T09 drill 完了時に以下 7 項目を **全件 PASS** で確認、いずれかが fail なら drill 全体を fail (T09 完了不可):
+
+1. **Actual `taskhub backup` 実行**: signed approval record (Ed25519 verify key fingerprint allowlist 登録済) を準備 + `taskhub backup --output <path>.tar.age --approval-id <id>` で real backup を生成、exit code 0 + output file 存在を verify
+2. **Age decrypt dry-run**: `age -d -i ~/.taskhub/keys/age.key.txt <path>.tar.age` で age 復号成功を verify、復号後 tar file が tar listing で parse 可能
+3. **Tar listing 確認**: `tar -tf <decrypted>.tar` 出力に ADR-00021 §4 file structure (meta.json / checksums.txt / postgres/pg_dump.dump / postgres/alembic_version.txt / redis/dump.rdb / artifacts/...) が全件存在
+4. **Checksums verify**: `cd <extract> && sha256sum -c checksums.txt` で全 file の sha256 が一致 PASS
+5. **pg_restore 互換確認**: `pg_restore --list <pg_dump.dump>` で custom format binary が parse 可能、actual `pg_restore --create -d <new_db>` 実行 (T02 Phase 3 restore 実装後に full verify、本 T09 では list parse のみ)
+6. **Private key 非混入確認**: `tar -tf <decrypted>.tar | grep -E '(id_rsa|id_ed25519|age-key|keys\.txt|\.private\.pem)'` で 0 件、`tar -xOf <decrypted>.tar ... | head -c 1024 | grep -E '(BEGIN OPENSSH PRIVATE|AGE-SECRET-KEY-)'` で 0 件 (CRITICAL invariant、F-001 adopt 検証)
+7. **Cleanup verify**: backup 完了後に `ls /tmp/taskhub-backup-*` で 0 件 (tmp dir cleanup 確実、F-002 adopt 検証)、`ls <output>.tar.age.part` で 0 件 (partial output 非残存、F-005 adopt 検証)
+
+各項目の結果は `~/.taskhub/drills/<date>/checklist-results.json` に記録、retro Pack で SP-022 `## Review` に追記。

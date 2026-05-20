@@ -112,6 +112,24 @@ DRILL_KIND_ALLOWED_SUBCOMMANDS: dict[str, frozenset[str]] = {
     "thaw_only": frozenset({"thaw"}),
 }
 
+# SP022-T02 Phase 2 / T08 batch 2: backup_claim (R2-F-001 adopt)
+@dataclass(frozen=True)
+class BackupApprovalClaim:
+    """Backup-specific approval claim (SP022-T02 Phase 2 / T08 batch 2).
+
+    R2-F-001 adopt: backup subcommand では output_path / include_sops_env /
+    skip_service_stop / overwrite / age_public_key_fingerprint 全て approval payload に
+    含め、CLI 引数との完全一致を verify。Phase 1 既存 record (backup_claim 不在) は
+    backup では deny、他 subcommand では従来通り verify。
+    """
+
+    output_path: str  # absolute path string, normpath
+    include_sops_env: bool
+    skip_service_stop: bool
+    overwrite: bool
+    age_public_key_fingerprint: str  # SHA-256 hex of age public key bytes
+
+
 ReasonCode = Literal[
     "taskhub_signed_approval_verified",
     "taskhub_signed_approval_skipped_non_destructive",
@@ -138,6 +156,9 @@ ReasonCode = Literal[
     "taskhub_signed_approval_verify_key_fingerprint_allowlist_missing",
     "taskhub_signed_approval_verify_key_fingerprint_allowlist_empty",
     "taskhub_signed_approval_verify_key_permission_unsafe",
+    "taskhub_signed_approval_backup_claim_required",  # R2-F-001 adopt: backup subcommand で claim 不在
+    "taskhub_signed_approval_backup_claim_mismatch",   # R2-F-001 adopt: claim と CLI 引数不一致
+    "taskhub_signed_approval_backup_allow_unsigned_skeleton_rejected",  # R2-F-001 adopt: backup では escape を物理 deny
 ]
 
 AUDIT_PAYLOAD_ALLOWLIST_KEYS: frozenset[str] = frozenset(
@@ -384,6 +405,63 @@ def _load_verify_key_and_fingerprint() -> tuple[Ed25519PublicKey | None, str | N
 # --- main verification ---
 
 
+def _extract_backup_claim_from_record(approval_id: str) -> BackupApprovalClaim | None:
+    """Re-read approval record file and extract backup_claim sub-record (R2-F-001 adopt).
+
+    既存 ApprovalRecord は backup_claim を含まないため、record file から直接 parse する。
+    Phase 1 record (backup_claim key 不在) は None を返す → caller が backup_claim_required deny。
+    """
+    if not _validate_approval_id(approval_id):
+        return None
+    path = _approval_dir() / f"{approval_id}.signed"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    bc = data.get("backup_claim")
+    if not isinstance(bc, dict):
+        return None
+    required = {"output_path", "include_sops_env", "skip_service_stop",
+                "overwrite", "age_public_key_fingerprint"}
+    if not required.issubset(bc.keys()):
+        return None
+    if not isinstance(bc["output_path"], str) or not bc["output_path"]:
+        return None
+    if not isinstance(bc["include_sops_env"], bool):
+        return None
+    if not isinstance(bc["skip_service_stop"], bool):
+        return None
+    if not isinstance(bc["overwrite"], bool):
+        return None
+    if not isinstance(bc["age_public_key_fingerprint"], str) or not bc["age_public_key_fingerprint"]:
+        return None
+    return BackupApprovalClaim(
+        output_path=bc["output_path"],
+        include_sops_env=bc["include_sops_env"],
+        skip_service_stop=bc["skip_service_stop"],
+        overwrite=bc["overwrite"],
+        age_public_key_fingerprint=bc["age_public_key_fingerprint"],
+    )
+
+
+def _backup_claims_match(cli: BackupApprovalClaim, record: BackupApprovalClaim) -> bool:
+    """R2-F-001 adopt: backup_claim 全 field 完全一致 verify。
+
+    output_path は absolute path string で比較 (caller が normpath 済前提)。
+    """
+    return (
+        cli.output_path == record.output_path
+        and cli.include_sops_env == record.include_sops_env
+        and cli.skip_service_stop == record.skip_service_stop
+        and cli.overwrite == record.overwrite
+        and cli.age_public_key_fingerprint == record.age_public_key_fingerprint
+    )
+
+
 def verify_signed_approval(
     approval_id: str,
     subcommand: str,
@@ -391,8 +469,14 @@ def verify_signed_approval(
     *,
     clock_skew: timedelta = DEFAULT_CLOCK_SKEW,
     max_ttl: timedelta = DEFAULT_MAX_TTL,
+    backup_claim: BackupApprovalClaim | None = None,  # R2-F-001 adopt
 ) -> tuple[bool, ReasonCode, dict[str, object]]:
-    """Verify approval record (R1-F-001/005/007/014/015/016 + R2-F-003 全 adopt)."""
+    """Verify approval record (R1-F-001/005/007/014/015/016 + R2-F-003 + R2-F-001 全 adopt).
+
+    R2-F-001 adopt: subcommand == "backup" の場合、record 内 backup_claim (sub-record) と
+    引数 backup_claim を完全一致 verify。Phase 1 既存 record (backup_claim 不在) は backup で
+    は deny。他 subcommand では backup_claim 引数を ignore (backwards compat)。
+    """
     extras: dict[str, object] = {"approval_id": approval_id, "subcommand": subcommand}
     record, load_error = _load_approval_record(approval_id)
     if load_error or record is None:
@@ -440,6 +524,19 @@ def verify_signed_approval(
             extras["actual_target_host"] = target_host
             return False, "taskhub_signed_approval_target_host_mismatch", extras
 
+    # R2-F-001 adopt: backup_claim verification for "backup" subcommand
+    if subcommand == "backup":
+        if backup_claim is None:
+            return False, "taskhub_signed_approval_backup_claim_required", extras
+        record_claim = _extract_backup_claim_from_record(approval_id)
+        if record_claim is None:
+            # Phase 1 既存 record (backup_claim 不在) は backup では deny
+            return False, "taskhub_signed_approval_backup_claim_required", extras
+        if not _backup_claims_match(backup_claim, record_claim):
+            extras["expected_backup_claim_fingerprint"] = record_claim.age_public_key_fingerprint
+            extras["actual_backup_claim_fingerprint"] = backup_claim.age_public_key_fingerprint
+            return False, "taskhub_signed_approval_backup_claim_mismatch", extras
+
     verify_key, fingerprint, key_error = _load_verify_key_and_fingerprint()
     if key_error or verify_key is None:
         if fingerprint:
@@ -465,8 +562,13 @@ def require_approval_for_destructive(
     from_automation: bool,
     allow_unsigned_manual_skeleton: bool,
     target_host: str | None = None,
+    backup_claim: BackupApprovalClaim | None = None,  # R2-F-001 adopt
 ) -> tuple[bool, ReasonCode, dict[str, object]]:
-    """Pre-execution gate (default deny for destructive subcommands)."""
+    """Pre-execution gate (default deny for destructive subcommands).
+
+    R2-F-001 adopt: backup subcommand では `--allow-unsigned-manual-skeleton` を物理 deny、
+    backup_claim 必須化 (Phase 1 既存 record backup_claim 不在は backup では deny)。
+    """
     extras: dict[str, object] = {
         "subcommand": subcommand,
         "from_automation": from_automation,
@@ -475,6 +577,10 @@ def require_approval_for_destructive(
     if subcommand not in DESTRUCTIVE_SUBCOMMANDS:
         # R1-F-017 adopt
         return True, "taskhub_signed_approval_skipped_non_destructive", extras
+
+    # R2-F-001 adopt: backup subcommand では --allow-unsigned-manual-skeleton を物理 deny
+    if subcommand == "backup" and allow_unsigned_manual_skeleton:
+        return False, "taskhub_signed_approval_backup_allow_unsigned_skeleton_rejected", extras
 
     automation = detect_automation_context()
     extras["automation_env_hits"] = automation["env_hits"]
@@ -488,6 +594,7 @@ def require_approval_for_destructive(
             return False, "taskhub_signed_approval_from_automation_requires_approval_id", extras
     elif not approval_id:
         if allow_unsigned_manual_skeleton:
+            # backup subcommand は上で deny 済、ここに到達するのは他 destructive
             extras["unsigned_manual_skeleton_used"] = True
             return True, "taskhub_signed_approval_unsigned_manual_skeleton_allowed", extras
         return False, "taskhub_signed_approval_destructive_requires_approval", extras
@@ -496,7 +603,7 @@ def require_approval_for_destructive(
         return False, "taskhub_signed_approval_destructive_requires_approval", extras
 
     allowed, reason, verify_extras = verify_signed_approval(
-        approval_id, subcommand, target_host=target_host,
+        approval_id, subcommand, target_host=target_host, backup_claim=backup_claim,
     )
     for k, v in verify_extras.items():
         extras.setdefault(k, v)

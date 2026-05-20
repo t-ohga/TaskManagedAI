@@ -128,8 +128,10 @@ def test_verify_valid_signature_allows_subcommand(
     priv, pub_bytes, fingerprint = _make_keypair()
     approval_dir = _setup_isolated_taskhub(monkeypatch, tmp_path, pub_bytes=pub_bytes, fingerprint=fingerprint)
     _write_approval_record(approval_dir, priv=priv)
+    # R2-F-001 adopt: "restore" を使用 (backup は backup_claim 必須化されたため、generic positive
+    # test には不適切。backup_claim 専用 test は別途追加)
     allowed, reason, extras = sa.verify_signed_approval(
-        "drill-2026-07-01-abc123de", "backup",
+        "drill-2026-07-01-abc123de", "restore",
     )
     assert allowed is True, (reason, extras)
     assert reason == "taskhub_signed_approval_verified"
@@ -194,14 +196,14 @@ def test_rfc8785_canonical_encoder_reference_vector_match() -> None:
 
 def test_verify_approval_id_path_traversal_denied(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    allowed, reason, _ = sa.verify_signed_approval("../etc/passwd", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("../etc/passwd", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_approval_id_malformed"
 
 
 def test_verify_approval_id_allowlist_violation_denied(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    allowed, reason, _ = sa.verify_signed_approval("bad id with space", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("bad id with space", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_approval_id_malformed"
 
@@ -216,7 +218,7 @@ def test_verify_approval_id_too_long_denied(monkeypatch: pytest.MonkeyPatch, tmp
 
 def test_verify_record_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    allowed, reason, _ = sa.verify_signed_approval("nonexistent-approval", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("nonexistent-approval", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_record_not_found"
 
@@ -226,7 +228,7 @@ def test_verify_record_malformed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     approval_dir = tmp_path / ".taskhub" / "approvals"
     approval_dir.mkdir(parents=True)
     (approval_dir / "drill-foo.signed").write_text("not valid json {{{", encoding="utf-8")
-    allowed, reason, _ = sa.verify_signed_approval("drill-foo", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-foo", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_record_malformed"
 
@@ -240,7 +242,7 @@ def test_verify_record_id_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     src = approval_dir / "drill-record-name-x.signed"
     dst = approval_dir / "drill-different-name-y.signed"
     src.rename(dst)
-    allowed, reason, _ = sa.verify_signed_approval("drill-different-name-y", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-different-name-y", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_record_id_mismatch"
 
@@ -253,7 +255,7 @@ def test_verify_datetime_format_invalid(monkeypatch: pytest.MonkeyPatch, tmp_pat
         approval_dir, priv=priv,
         extra_fields={"signed_at": "2026-06-30T15:00:00+00:00"},
     )
-    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_datetime_format_invalid"
 
@@ -267,7 +269,7 @@ def test_verify_signed_at_future(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         signed_at=future,
         expires_at=future + timedelta(hours=2),
     )
-    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_signed_at_future"
 
@@ -281,7 +283,7 @@ def test_verify_expired(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
         signed_at=past - timedelta(hours=1),
         expires_at=past,  # expired
     )
-    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_expired"
 
@@ -296,7 +298,7 @@ def test_verify_ttl_exceeded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
         signed_at=now - timedelta(days=10),
         expires_at=now + timedelta(days=10),  # ttl = 20d
     )
-    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_ttl_exceeded"
 
@@ -308,7 +310,7 @@ def test_verify_reason_summary_malformed(monkeypatch: pytest.MonkeyPatch, tmp_pa
         approval_dir, priv=priv,
         reason_summary="has spaces and control\nchars",
     )
-    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_reason_summary_malformed"
 
@@ -358,7 +360,8 @@ def test_verify_drill_kind_subcommands_mismatch(monkeypatch: pytest.MonkeyPatch,
         drill_kind="backup_only",
         allowed_subcommands=("backup", "migrate"),
     )
-    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "backup")
+    # query with "migrate" (in allowed_subcommands but not in drill_kind allowlist)
+    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "migrate")
     assert allowed is False
     assert reason == "taskhub_signed_approval_drill_kind_subcommands_mismatch"
 
@@ -370,7 +373,7 @@ def test_verify_signature_malformed(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         approval_dir, priv=priv,
         signature_override="not-a-valid-base64-sig",  # wrong length
     )
-    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_signature_malformed"
 
@@ -384,7 +387,7 @@ def test_verify_signature_invalid(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
         approval_dir, priv=priv,
         signature_override=forged_sig,
     )
-    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_signature_invalid"
 
@@ -398,7 +401,7 @@ def test_verify_key_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     priv, _, _ = _make_keypair()
     approval_dir = tmp_path / ".taskhub" / "approvals"
     _write_approval_record(approval_dir, priv=priv)
-    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_verify_key_missing"
 
@@ -412,7 +415,7 @@ def test_verify_key_fingerprint_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_pa
     )
     approval_dir = tmp_path / ".taskhub" / "approvals"
     _write_approval_record(approval_dir, priv=priv)
-    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_verify_key_fingerprint_mismatch"
 
@@ -431,7 +434,7 @@ def test_verify_key_fingerprint_allowlist_missing(monkeypatch: pytest.MonkeyPatc
     )
     approval_dir = tmp_path / ".taskhub" / "approvals"
     _write_approval_record(approval_dir, priv=priv)
-    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_verify_key_fingerprint_allowlist_missing"
 
@@ -445,7 +448,7 @@ def test_verify_key_fingerprint_allowlist_empty(monkeypatch: pytest.MonkeyPatch,
     )
     approval_dir = tmp_path / ".taskhub" / "approvals"
     _write_approval_record(approval_dir, priv=priv)
-    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_verify_key_fingerprint_allowlist_empty"
 
@@ -458,7 +461,7 @@ def test_verify_key_permission_unsafe(monkeypatch: pytest.MonkeyPatch, tmp_path:
     # Make verify key world-writable
     verify_key_path = tmp_path / ".taskhub" / "keys" / "approval-verify-key.pub"
     verify_key_path.chmod(0o666)  # group + others writable
-    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "backup")
+    allowed, reason, _ = sa.verify_signed_approval("drill-2026-07-01-abc123de", "restore")
     assert allowed is False
     assert reason == "taskhub_signed_approval_verify_key_permission_unsafe"
 
@@ -467,7 +470,7 @@ def test_automation_detected_without_flag_denies(monkeypatch: pytest.MonkeyPatch
     """R1-F-002 + R1-F-003 adopt."""
     monkeypatch.setenv("SYSTEMD_INVOCATION_ID", "fake-id")
     allowed, reason, _ = sa.require_approval_for_destructive(
-        "backup", None, from_automation=False, allow_unsigned_manual_skeleton=False,
+        "restore", None, from_automation=False, allow_unsigned_manual_skeleton=False,
     )
     assert allowed is False
     assert reason == "taskhub_signed_approval_automation_detected_without_flag"
@@ -477,7 +480,7 @@ def test_from_automation_without_approval_id_denies(monkeypatch: pytest.MonkeyPa
     """R1-F-002 adopt."""
     monkeypatch.setenv("CRON_INVOCATION", "fake")
     allowed, reason, _ = sa.require_approval_for_destructive(
-        "backup", None, from_automation=True, allow_unsigned_manual_skeleton=False,
+        "restore", None, from_automation=True, allow_unsigned_manual_skeleton=False,
     )
     assert allowed is False
     assert reason == "taskhub_signed_approval_from_automation_requires_approval_id"
@@ -488,7 +491,7 @@ def test_destructive_manual_without_approval_denies_by_default(monkeypatch: pyte
     for var in sa.AUTOMATION_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     allowed, reason, _ = sa.require_approval_for_destructive(
-        "backup", None, from_automation=False, allow_unsigned_manual_skeleton=False,
+        "restore", None, from_automation=False, allow_unsigned_manual_skeleton=False,
     )
     assert allowed is False
     assert reason == "taskhub_signed_approval_destructive_requires_approval"
@@ -499,7 +502,7 @@ def test_destructive_manual_with_allow_unsigned_skeleton_passes(monkeypatch: pyt
     for var in sa.AUTOMATION_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     allowed, reason, extras = sa.require_approval_for_destructive(
-        "backup", None, from_automation=False, allow_unsigned_manual_skeleton=True,
+        "restore", None, from_automation=False, allow_unsigned_manual_skeleton=True,
     )
     assert allowed is True
     assert reason == "taskhub_signed_approval_unsigned_manual_skeleton_allowed"
