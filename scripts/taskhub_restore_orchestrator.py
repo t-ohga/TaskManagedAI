@@ -1416,26 +1416,39 @@ def _file_sha256(path: Path) -> str:
 def _artifacts_merkle_sha256(artifacts_dir: Path) -> str:
     """artifacts dir 全 file の concatenated relative-path + content sha256 を再帰計算.
 
-    SP022-T02 Phase 4 (R1 F-004 + ADV PR R2 F-002 adopt): simple Merkle (relative_path + sha256)
-    sequential hash. **symlink は exclude** (外部 file への symlink を含めると、後日 rollback 時に
-    snapshot 自体が未変更でも外部更新で hash_mismatch になる).
+    SP022-T02 Phase 4 (R1 F-004 + ADV PR R2 F-002 + R8 F-001 adopt): simple Merkle で
+    全 entry を hash 対象 (file content + symlink link target も含む).
+    ADV PR R8 F-001 adopt: symlink を include (ただし symlink content ではなく link target を
+    hash) → symlink 改ざんが hash_mismatch で検出される、rollback で symlinks=True 保持と
+    snapshot capture が semantically consistent。tag prefix で file/symlink を区別。
     """
     h = hashlib.sha256()
     if not artifacts_dir.is_dir():
         return h.hexdigest()
     # sort で deterministic
-    entries: list[Path] = []
+    file_entries: list[Path] = []
+    symlink_entries: list[Path] = []
     for entry in sorted(artifacts_dir.rglob("*")):
-        # ADV PR R2 F-002 adopt: symlink は skip (is_file は symlink 先 follow)
-        # lstat で symlink 自体を判定
         if entry.is_symlink():
-            continue
-        if entry.is_file():
-            entries.append(entry)
-    for entry in entries:
+            symlink_entries.append(entry)
+        elif entry.is_file():
+            file_entries.append(entry)
+    # File content entries (tag = "F")
+    for entry in file_entries:
         rel = entry.relative_to(artifacts_dir).as_posix()
+        h.update(b"F\n")
         h.update(rel.encode("utf-8") + b"\n")
         h.update(_file_sha256(entry).encode("utf-8") + b"\n")
+    # Symlink target entries (tag = "L"、link target も hash 対象 / R8 F-001 adopt)
+    for entry in symlink_entries:
+        rel = entry.relative_to(artifacts_dir).as_posix()
+        try:
+            target = os.readlink(entry)
+        except OSError:
+            target = ""
+        h.update(b"L\n")
+        h.update(rel.encode("utf-8") + b"\n")
+        h.update(target.encode("utf-8") + b"\n")
     return h.hexdigest()
 
 

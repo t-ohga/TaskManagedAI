@@ -14,8 +14,8 @@ Subcommands (ADR-00021 §3 table + §11/§14 hardening + §11.5 multi-agent fixt
 - `taskhub thaw [--decommission-target]`: skeleton (2-party-control + active-registry verify、§670)
 - `taskhub active-registry`: skeleton (signed local ledger or closed-network shared 状態、
   source/target 同時 active reject contract、§670 PGA-F-003)
-- `taskhub restore --input <path> | --rollback <pre-restore-ts>`: skeleton (restore + rollback
-  両モード、§290 / §299 rollback 経路)
+- `taskhub restore --input <path>`: SP022-T02 Phase 3 real I/O (restore orchestration、signed approval 経由)
+- `taskhub restore --rollback <pre-restore-ts>`: SP022-T02 Phase 4 real I/O (rollback、signed approval + restore_rollback_claim verify 経由、§290 / §299 rollback 経路、dry-run ではない)
 - `taskhub migrate --target <hostname>`: skeleton (one-shot host migration)
 - `taskhub status [--age-safety] [--mac-preflight] [--remote <host>]`: skeleton (host status
   + §14.1 age-safety drill + §14.2 mac-preflight + split-brain remote check)
@@ -1238,8 +1238,9 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "rollback to pre-restore snapshot timestamp "
-            "(data/_pre-restore-<ts>/ 経路、排他: --input、skeleton mode のみ)"
+            "rollback to pre-restore snapshot timestamp (data/_pre-restore-<ts>/ 経路、排他: --input)。"
+            "SP022-T02 Phase 4 で real I/O 化済 (signed restore-rollback approval + manifest verify 経由で "
+            "destructive artifacts/DB/Redis snapshot restore を実行)。dry-run ではない。"
         ),
     )
     # SP022-T02 Phase 3: real I/O restore で必須の追加 args

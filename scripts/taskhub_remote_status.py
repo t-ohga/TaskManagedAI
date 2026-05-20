@@ -252,11 +252,10 @@ def _build_ssh_argv(
         raise ValueError(msg)
     _validate_compose_file_path(compose_file)
     # hostname: DNS RFC 1123 compatible + FQDN (Tailscale MagicDNS 等の dotted name)
-    # ADV PR F-3 adopt: 1-label only 制限を緩和、複数 label の FQDN 許容
-    if not re.fullmatch(
-        r"[a-z0-9][a-z0-9-]{0,62}(\.[a-z0-9][a-z0-9-]{0,62})*",
-        host,
-    ):
+    # ADV PR F-3 + R8 F-003 adopt: label 始端 + 終端は alphanumeric (trailing/leading hyphen reject)
+    # `[a-z0-9]` (single char) or `[a-z0-9][a-z0-9-]*[a-z0-9]` (始端終端 alnum)
+    label = r"(?:[a-z0-9]|[a-z0-9][a-z0-9-]{0,61}[a-z0-9])"
+    if not re.fullmatch(rf"{label}(\.{label})*", host):
         msg = f"host invalid: {host!r}"
         raise ValueError(msg)
     known_hosts_path = Path.home() / ".ssh" / "known_hosts"
