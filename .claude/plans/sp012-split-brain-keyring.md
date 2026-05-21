@@ -1121,6 +1121,144 @@ R6 で 2 件 CRITICAL adopt 反映後、R7 で新規 CRITICAL ゼロ + HIGH ≤ 
 
 ---
 
+## §9.8 ADV2 Phase 2 R8 CRITICAL 2 件 adopt (真の新規論点: approval artifact 実在検証 + config_dir snapshot rollback 防御)
+
+### F-001 (R8) signed approval artifact 実在検証 + immutable archive path 正本化 (CRITICAL security、hash-only 検証の不完全さ)
+
+**問題**: ActiveMarker / DecommissionMarker / CommitMarker が `cutover_approval_id` + `cutover_approval_claim_hash` を signature root に含めるが、read path 側で対応 signed ApprovalClaim artifact を **immutable store から取得して署名検証 + field exact-match** する条件が未定義。marker signer 持つ攻撃者 (または誤実装) が任意 hash を埋めた marker chain を生成すると、marker 署名と chain hash は整合して見える → **2-party-control を通らない cutover が active-registry gate に受理可能**。
+
+**fix**:
+
+#### (1) signed approval artifact immutable archive の正本化
+
+新 path: `<config_dir>/active_registry/approval_archive/<approval_id>.signed.json`
+- approval issue 時に signed ApprovalClaim artifact を atomic write + parent fsync
+- 以後 **immutable** (各 approval_id は 1 度書込のみ、上書き禁止、append-only)
+- artifact 内容: `{claim_hash, signed_claim_payload, approval_signature, signer_fingerprint, issued_at, claim_kind: "cutover" | "commit"}`
+- O_NOFOLLOW + permission 0o400 + directory permission 0o700
+
+#### (2) read path / startup gate / write gate での artifact 検証必須化
+
+ActiveMarker / DecommissionMarker / CommitMarker verify path で:
+1. marker の `cutover_approval_id` から archive path を resolve
+2. archive artifact を load (artifact missing → `taskhub_active_registry_approval_artifact_missing` で reject)
+3. approval keyring の **authorization_verify** で artifact signature を verify (`status=active` のみ許可、§9.4 F-005 適用)
+4. artifact 内の `claim_hash` と marker の `cutover_approval_claim_hash` を exact match (mismatch → `taskhub_active_registry_approval_claim_hash_mismatch` reject)
+5. artifact 内 signed_claim_payload から以下 fields を抽出 + marker と exact match:
+   - `source_host_id` ↔ marker.source_host_id (R1 F-011)
+   - `target_host_id` ↔ marker.target_host_id
+   - `migration_epoch` ↔ marker.migration_epoch
+   - `cutover_id` ↔ marker.cutover_id
+   - `source_prepare_marker_hash` ↔ marker / commit preimage の source_prepare_marker_hash
+   - `target_prepare_marker_hash` ↔ commit preimage の target_prepare_marker_hash
+   - `cutover_lease_snapshot_content_sha256` ↔ commit preimage の lease snapshot hash
+   - `executor_actor_id != approver_actor_id` (separation of duties、R2 F-001 server-owned 経由で resolved actor_id)
+6. いずれか不一致なら fail-closed reject
+
+#### (3) CommitMarker への signed approval artifact embed オプション
+
+operator runbook §18 で 2 mode を提供:
+- **Mode A (推奨、軽量)**: archive path 参照 + verify (CommitMarker 自体には hash のみ bind、artifact は archive から load)
+- **Mode B (offline 検証可能、heavy)**: CommitMarker に signed approval artifact 全体を embed (artifact missing risk なし、ただし CommitMarker サイズ増、operator 判断)
+
+#### (4) negative tests
+
+- `test_marker_with_missing_approval_artifact_rejected`
+- `test_marker_with_random_approval_claim_hash_rejected`
+- `test_marker_with_mismatched_source_host_id_in_artifact_rejected`
+- `test_marker_with_mismatched_cutover_id_in_artifact_rejected`
+- `test_marker_with_artifact_signed_by_revoked_keyring_key_rejected`
+- `test_approval_artifact_overwrite_attempt_rejected_immutable_archive`
+
+#### (5) ReasonCode 追加 (42 → 45 件)
+
+- `taskhub_active_registry_approval_artifact_missing` (R8 F-001)
+- `taskhub_active_registry_approval_claim_hash_mismatch` (R8 F-001)
+- `taskhub_active_registry_approval_artifact_field_mismatch` (R8 F-001、source_host_id / cutover_id / lease snapshot hash 等の各 field mismatch を集約)
+
+### F-002 (R8) `<config_dir>` 全体 snapshot rollback 防御 (CRITICAL security、non-rollback state anchor)
+
+**問題**: bootstrap 後の fail-closed 判定 (`approval_keyring_initialized.signed`) / manifest generation replay 防御 / revocation tombstone denylist がすべて `<config_dir>` 配下 → **`<config_dir>` 全体を pre-bootstrap / pre-revocation snapshot に rollback** されると、verifier は `approval_keyring_initialized.signed` 欠落を「未 bootstrap」と誤認 → **legacy single-key fallback / 旧 manifest generation / 旧 tombstone chain head が再受理**可能。root fingerprint pinning は root key 差し替えを防ぐが、generation/tombstone head の rollback は検出できない。
+
+**fix**:
+
+#### (1) `<config_dir>` 外 monotonic state anchor の導入
+
+新 path: **`/etc/taskhub/keyring_state.head.signed`** (config_dir 外、operator が root 権限で deploy、optional remote replica)
+- 別途 SOPS encrypted backup + remote quorum copy も推奨 (operator runbook §19 で記述)
+- 内容 (root-signed canonical payload):
+  ```json
+  {
+    "initialized": true | false,
+    "legacy_fallback_disabled_at": "<UTC iso8601> | null",
+    "latest_manifest_generation": <int>,
+    "latest_manifest_content_sha256": "<sha>",
+    "latest_commit_log_chain_hash": "<sha>",
+    "latest_tombstone_chain_hash": "<sha>",
+    "latest_active_registry_epoch": <int>,
+    "latest_fleet_membership_generation": <int>,
+    "head_signed_at": "<UTC iso8601>",
+    "domain": "taskhub.keyring_state.head.v1"
+  }
+  ```
+- root signature key は `<config_dir>` 外 (例: TPM / HSM / 別 root key、ADR-00029 で operator 判断)
+
+#### (2) loader の non-rollback check
+
+`<config_dir>` を load する全 verifier (active-registry gate / startup gate / approval keyring loader) で:
+1. `/etc/taskhub/keyring_state.head.signed` を root verify
+2. head の `initialized=true` → `<config_dir>/approval_keyring_initialized.signed` marker が存在必須 (欠落 → `taskhub_keyring_state_head_initialized_marker_missing_after_bootstrap` で fail-closed reject)
+3. head の `latest_manifest_generation` >= `<config_dir>` の current manifest generation (lower → `taskhub_keyring_state_head_manifest_generation_rollback_detected` reject)
+4. head の `latest_commit_log_chain_hash` ∈ current commit_log chain (current head が head signed の chain hash を含まない → rollback 検出)
+5. head の `latest_tombstone_chain_hash` ∈ current tombstone chain (same)
+6. head の `latest_active_registry_epoch` >= `<config_dir>` の current epoch counter (lower → rollback)
+7. head の `latest_fleet_membership_generation` >= `<config_dir>` の current fleet generation
+
+#### (3) legacy fallback 限定
+
+- legacy single-key fallback は **head の `initialized=false` が head signature で証明される初期環境のみ**で許可
+- head に `initialized=true` が記録されている環境では legacy fallback **無条件 reject** (snapshot rollback で marker 欠落しても head が真実)
+- head 不在環境 (head deploy 前の初期環境): legacy fallback 許可 (新規 install のみ)、operator runbook §19 で deploy SOP 明示
+
+#### (4) head 更新 lifecycle
+
+- bootstrap 成功時: head を `initialized=true` + `legacy_fallback_disabled_at=<now>` + 初期 generation/chain hash で署名
+- commit-manifest 成功時: head の `latest_manifest_generation` + `latest_manifest_content_sha256` 更新 (root-signed)
+- revoke-key + tombstone append 時: head の `latest_tombstone_chain_hash` 更新
+- cutover 成功時: head の `latest_active_registry_epoch` + `latest_fleet_membership_generation` 更新
+- 各更新は monotonic increment 必須 (lower → reject)、root signature 必須
+
+#### (5) negative tests
+
+- `test_config_dir_full_rollback_to_pre_bootstrap_snapshot_rejected`
+- `test_config_dir_rollback_with_manifest_generation_lower_than_head_rejected`
+- `test_config_dir_rollback_truncating_tombstone_chain_rejected`
+- `test_config_dir_rollback_with_lower_active_registry_epoch_rejected`
+- `test_legacy_fallback_blocked_when_head_initialized_true`
+- `test_legacy_fallback_allowed_only_when_head_initialized_false_or_head_absent`
+
+#### (6) ReasonCode 追加 (45 → 49 件)
+
+- `taskhub_keyring_state_head_signature_invalid` (R8 F-002)
+- `taskhub_keyring_state_head_initialized_marker_missing_after_bootstrap` (R8 F-002)
+- `taskhub_keyring_state_head_manifest_generation_rollback_detected` (R8 F-002)
+- `taskhub_keyring_state_head_chain_hash_mismatch` (R8 F-002、commit_log / tombstone / epoch / fleet 全 chain の rollback 検知集約)
+
+### R8 adopt 累計値更新
+
+- ReasonCode: **42 → 49 件** (R8 で 7 件追加: F-001 3 件 + F-002 4 件)
+- fixture: 約 108 → **約 120 件** (R8 で 12 件追加)
+- 変更ファイル: 20 → **22 file** (新規 2 file 追加):
+  - `<config_dir>/active_registry/approval_archive/<approval_id>.signed.json` (新規 immutable archive path、F-001)
+  - `/etc/taskhub/keyring_state.head.signed` (新規 config_dir 外 monotonic state anchor、F-002)
+- 累計 R1+R2+R3+R4+R5+R6+R7+R8 adopt: CRITICAL 15 + HIGH 20 = **35/39 件** (残 4 件は R1 MEDIUM、R9 で確定)
+
+### critical_zero gate 判定
+
+R8 で 2 件 CRITICAL adopt 反映後、R9 で新規 CRITICAL ゼロ + HIGH ≤ 2 が期待値。R9 clean で Phase 2 完遂、Batch A-D 実装着手可能。
+
+---
+
 ## §10 PR 後の SP-022 task progress (post-本 PR)
 
 | Task | status |
