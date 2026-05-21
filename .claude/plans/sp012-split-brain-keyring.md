@@ -1259,6 +1259,127 @@ R8 で 2 件 CRITICAL adopt 反映後、R9 で新規 CRITICAL ゼロ + HIGH ≤ 
 
 ---
 
+## §9.9 ADV2 Phase 2 R9 CRITICAL 2 件 adopt (時刻証明 invariant fix)
+
+### F-001 (R9) §9.7 F-001 commit-time invariant 論理向き反転 fix (CRITICAL design、logic error)
+
+**問題**: §9.7 F-001 で「`committed_at <= max(host_commit_confirmed_at)` (host confirmation 後の commit を許容)」と記載したが、これは **論理向きが逆**。2PC の commit semantics は「全 required host confirmation **後**に commit が成立」なので、`committed_at` は host confirmation timestamps の max **以上** であるべき。現状の `<=` だと、全 host confirmation が揃う前の時刻を CommitMarker の確定時刻として受理可能、lease window 内に `committed_at` を前倒しした CommitMarker が active state として扱われる余地。
+
+**fix (§9.7 F-001 verify path 条件を以下に置換)**:
+
+```
+verify path 必須条件 (clock skew tolerance ε = 60 seconds):
+
+(a) lease_acquired_at <= min(host_commit_confirmed_at)
+    (lease 取得後に host confirmation が始まったことを証明)
+
+(b) max(host_commit_confirmed_at) <= committed_at < lease_expires_at
+    (全 host confirmation 後に commit が確定 + lease window 内)
+
+(c) committed_at - max(host_commit_confirmed_at) <= ε
+    (許容 clock skew、operator runbook §20 で ε 規定、default 60s)
+
+(d) min(host_commit_confirmed_at) >= lease_acquired_at - ε
+    (clock skew tolerance lower bound、negative drift 許容)
+```
+
+(a)+(b)+(c) いずれか違反 → fail-closed reject。
+
+**negative tests 追加 (§9.7 F-001 fixture set を update)**:
+- `test_commit_marker_with_committed_at_before_last_host_confirmation_rejected` (本 fix の正面)
+- `test_commit_marker_with_committed_at_before_first_host_confirmation_rejected`
+- `test_commit_marker_with_clock_skew_exceeding_epsilon_rejected`
+- `test_commit_marker_with_committed_at_outside_lease_window_high_side_rejected`
+
+**ReasonCode 修正**: 既存 `taskhub_cutover_committed_at_after_confirmation_window_rejected` の意味を反転 (実装時 condition `>=` で reject)、または新規 reason `taskhub_cutover_committed_at_before_last_confirmation_rejected` を追加して既存と並存。Batch D 実装時に正本確定 (50 件目候補)。
+
+### F-002 (R9) Server-owned approval issuance timestamp + journal (CRITICAL security、backdate via signed_at field 攻撃防御)
+
+**問題**: keyring の `expires_at` / `deprecated_at` 判定が `record_signed_at` (payload 内自己申告時刻) に依存 → caller が payload 内の `signed_at` を期限内へ **backdate** するだけで dual-trust expiry をすり抜け、期限切れ後の旧 key で署名した destructive approval が authorization_verify を通過。 key validity の enforcement は「署名内容が正しい」だけでは足りず、「その署名が key の有効期間内に発行されたこと」を verifier が **independent** に確認できる必要がある。
+
+**fix**:
+
+#### (1) Server-owned approval issuance journal の導入
+
+新 path: `<config_dir>/approvals/issuance_journal.signed.jsonl` (append-only、server-owned monotonic write)
+
+各 entry の canonical schema (server signing key で署名、approval issue path 内部のみで write 可):
+```json
+{
+  "approval_id": "<uuid>",
+  "claim_hash": "<sha256 of signed claim payload>",
+  "issued_at": "<UTC iso8601、server clock>",
+  "issuer_signer_fingerprint": "<server-owned issuer key fp>",
+  "previous_entry_hash": "<sha256 of prev entry canonical>",
+  "key_fingerprint_at_issue": "<keyring active key fp at issue>",
+  "key_status_at_issue": "active",
+  "domain": "taskhub.approval_issuance_journal.v1"
+}
+```
+
+journal entry の signature root に **previous_entry_hash + issued_at** を含めるため、後から backdate / replay 不可能 (chain integrity)。
+
+#### (2) approval issue path での server-owned write
+
+`scripts/taskhub_approval_cli.py` の issue path で:
+1. claim canonical payload を operator が prepare
+2. server-owned issue path が以下を atomic 実行:
+   - approval_id (UUID) 生成
+   - 現在時刻取得 (server NTP-synced clock) → `issued_at`
+   - 現 keyring active key fp を抽出 → `key_fingerprint_at_issue` + `key_status_at_issue=active` 必須 (status != active → issue refuse)
+   - issuance_journal の末尾 entry hash を読み、`previous_entry_hash` 計算
+   - issuance entry canonical → server signing key で署名 → journal append + parent fsync
+3. 同じ `issued_at` を signed approval artifact (`<config_dir>/active_registry/approval_archive/<approval_id>.signed.json`) の **immutable field** として記録
+4. CLI が caller-supplied `--signed-at` を受け取る path は **物理削除**
+
+#### (3) authorization_verify path で issuance journal を必須 cross-check
+
+approval keyring の authorization_verify で:
+1. signed approval artifact を archive から load
+2. artifact 内 `approval_id` から issuance_journal entry を resolve
+3. journal entry の signature を server-owned issuer key で verify
+4. journal entry の `claim_hash` ↔ artifact `claim_hash` exact match
+5. journal entry の `issued_at` ↔ artifact `issued_at` exact match
+6. journal entry の `key_fingerprint_at_issue` ↔ artifact signature の verify key fp が一致
+7. journal の **previous_entry_hash chain** が完全 (journal truncate / replay 検出)
+8. journal の `issued_at` で key validity を判定 (`issued_at >= key.issued_at AND issued_at < key.expires_at AND key.status_at(issued_at) == active`)
+9. `issued_at` と key の `deprecated_at` 比較 (`status == deprecated AND issued_at >= deprecated_at` reject、§9.4 F-005 適用)
+
+caller-supplied `record_signed_at` は **payload 内に残るが key validity 判定には使わない** (operator 視認用のみ)。
+
+#### (4) Issuance journal を `keyring_state.head.signed` の chain anchor に含める
+
+§9.8 F-002 で導入した `/etc/taskhub/keyring_state.head.signed` の `latest_commit_log_chain_hash` field と並んで `latest_approval_issuance_journal_chain_hash` field を追加 (config_dir snapshot rollback で journal truncate を検出)。
+
+#### (5) negative tests
+
+- `test_approval_with_caller_supplied_signed_at_after_key_expired_rejected` (本 fix の正面)
+- `test_approval_with_payload_signed_at_backdated_to_within_key_validity_but_journal_after_expiry_rejected`
+- `test_approval_issued_after_key_status_deprecated_rejected_at_authorization_verify`
+- `test_issuance_journal_truncated_detected_via_head_chain_hash`
+- `test_issuance_journal_entry_signed_by_non_issuer_key_rejected`
+- `test_issuance_journal_previous_entry_hash_chain_break_rejected`
+
+#### (6) ReasonCode 追加 (49 → 53 件)
+
+- `taskhub_approval_issuance_journal_entry_signature_invalid` (R9 F-002)
+- `taskhub_approval_issuance_journal_chain_hash_mismatch` (R9 F-002、journal truncate / replay 検出)
+- `taskhub_approval_signed_after_key_expired_per_journal` (R9 F-002、key validity 判定で journal issued_at が key expired 後)
+- `taskhub_approval_caller_supplied_signed_at_rejected` (R9 F-002、CLI signature レベル removal を runtime 検出した場合)
+
+### R9 adopt 累計値更新
+
+- ReasonCode: **49 → 53 件** (R9 F-002 で 4 件追加)、F-001 は既存 ReasonCode 意味反転で対応 (Batch D 実装で 50 件目候補新規 or 既存修正)
+- fixture: 約 120 → **約 130 件** (R9 で 10 件追加: F-001 4 件 + F-002 6 件)
+- 変更ファイル: 22 → **23 file** (新規 `<config_dir>/approvals/issuance_journal.signed.jsonl` runtime artifact + `scripts/taskhub_approval_issuance.py` 新規 server-owned issue logic 1 file)
+- 累計 R1+R2+R3+R4+R5+R6+R7+R8+R9 adopt: CRITICAL 17 + HIGH 20 = **37/41 件** (残 4 件は R1 MEDIUM、R10 で確定)
+
+### critical_zero gate 判定
+
+R9 で 2 件 CRITICAL adopt 反映後、R10 で新規 CRITICAL ゼロ + HIGH ≤ 2 が期待値。R10 clean で Phase 2 完遂、Batch A-D 実装着手可能。本 §9.9 F-001 は §9.7 logic error fix、F-002 は §9.4 F-005 deprecated key authorization vs §9.8 F-001 approval artifact 検証の **時刻証明 root cause 修正** (両者を補完する server-owned timestamp source 確立)。
+
+---
+
 ## §10 PR 後の SP-022 task progress (post-本 PR)
 
 | Task | status |
