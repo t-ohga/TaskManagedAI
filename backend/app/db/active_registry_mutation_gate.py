@@ -103,6 +103,30 @@ def _on_orm_execute(orm_execute_state: object) -> None:
             session.info[_DML_EXECUTED_KEY] = True
 
 
+def _on_before_flush(
+    session: Session, flush_context: object, instances: object
+) -> None:
+    """SQLAlchemy `before_flush` listener: ORM 経由 mutation を flush 直前に capture。
+
+    Codex PR #85 R3 F-R3-002 fix (P1): autoflush / explicit flush() でも
+    session.new / deleted / dirty が clear される前に flag を set する。
+    `before_commit` は autoflush 後に発火する可能性があるため、本 listener が
+    最初に拾うことで commit-time の gate check で漏れなく mutation を検出する。
+    """
+    _ = flush_context, instances  # SQLAlchemy event signature 整合のため
+    if session.new or session.deleted:
+        session.info[_DML_EXECUTED_KEY] = True
+        return
+    for instance in session.dirty:
+        try:
+            if session.is_modified(instance, include_collections=True):
+                session.info[_DML_EXECUTED_KEY] = True
+                return
+        except Exception:  # noqa: BLE001 - 検査失敗時は fail-closed (mutation 扱い)
+            session.info[_DML_EXECUTED_KEY] = True
+            return
+
+
 def _on_after_commit_or_rollback(session: Session) -> None:
     """commit / rollback 後に DML flag を clear (次の transaction に持ち越さない)。"""
     session.info.pop(_DML_EXECUTED_KEY, None)
@@ -170,6 +194,9 @@ def attach_db_mutation_gate(
     event.listen(session_class, "before_commit", listener)
     # F-R2-006 fix: DML execute detection + transaction-scope flag clear
     event.listen(session_class, "do_orm_execute", _on_orm_execute)
+    # F-R3-002 fix: ORM flush 直前に session.new/deleted/dirty を capture
+    # (autoflush で session collections が clear される前に flag set)
+    event.listen(session_class, "before_flush", _on_before_flush)
     event.listen(session_class, "after_commit", _on_after_commit_or_rollback)
     event.listen(session_class, "after_rollback", _on_after_commit_or_rollback)
     return listener
@@ -180,10 +207,12 @@ def detach_db_mutation_gate(
 ) -> None:
     """test 用: listener detach。production runtime では使わない。"""
     event.remove(session_class, "before_commit", listener)
-    # F-R2-006 fix: 同 attach した auxiliary listeners も detach (既に remove 済みは
-    # debug log のみ、production runtime では呼ばれない経路のため log で十分)。
+    # F-R2-006 + F-R3-002 fix: 同 attach した auxiliary listeners も detach (既に
+    # remove 済みは debug log のみ、production runtime では呼ばれない経路のため
+    # log で十分)。
     for event_name, aux_listener in (
         ("do_orm_execute", _on_orm_execute),
+        ("before_flush", _on_before_flush),
         ("after_commit", _on_after_commit_or_rollback),
         ("after_rollback", _on_after_commit_or_rollback),
     ):
@@ -198,10 +227,16 @@ def detach_db_mutation_gate(
 
 def configure_db_mutation_gate_from_settings(
     session_class: type[Session],
+    *,
+    settings: object | None = None,
 ) -> Callable[[Session], None] | None:
     """Settings.active_registry_gate_enabled に応じて L3 listener を attach。
 
     Codex PR #85 R1 F-004 fix (P1): production wiring を実装。
+    Codex PR #85 R3 F-R3-001 fix (P2): caller が settings を inject 可能。
+    `create_app(settings=...)` 経由の programmatic / test app 構築で
+    cached `get_settings()` ではなく injected Settings を尊重する。
+
     enabled=False (default) なら no-op (None 返却)、enabled=True なら file-based
     resolver + attach、production startup で host_id 未設定なら ValueError。
 
@@ -211,19 +246,19 @@ def configure_db_mutation_gate_from_settings(
     # 遅延 import (循環依存防止)
     from pathlib import Path
 
-    from backend.app.config import get_settings
+    from backend.app.config import Settings, get_settings
     from scripts import taskhub_active_registry_gate as gate_helper
 
-    settings = get_settings()
-    if not settings.active_registry_gate_enabled:
+    resolved_settings = settings if isinstance(settings, Settings) else get_settings()
+    if not resolved_settings.active_registry_gate_enabled:
         return None
-    host_id = settings.taskhub_host_id.strip()
+    host_id = resolved_settings.taskhub_host_id.strip()
     if not host_id:
         raise ValueError(
             "TASKMANAGEDAI_TASKHUB_HOST_ID is required when "
             "TASKMANAGEDAI_ACTIVE_REGISTRY_GATE_ENABLED=true."
         )
-    config_dir = Path(settings.taskhub_config_dir)
+    config_dir = Path(resolved_settings.taskhub_config_dir)
     resolver = gate_helper.build_file_based_public_key_resolver(config_dir)
     listener = attach_db_mutation_gate(
         session_class,

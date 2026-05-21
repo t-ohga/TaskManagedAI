@@ -108,6 +108,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # disabled state では no-op、enabled state では 全 POST/PUT/PATCH/DELETE が
     # gate を通る (exempt: /health, /metrics, /auth/*)。
     install_active_registry_gate_middleware(app)
+    # Codex PR #85 R3 F-R3-001 fix (P2): L3 DB mutation gate を resolved_settings で
+    # reconfigure (programmatic app 構築での Settings divergence 防止)。
+    # import 時の default attach を detach + 新 settings で再 attach (idempotent)。
+    from backend.app.db.session import configure_active_registry_db_gate
+
+    configure_active_registry_db_gate(settings=resolved_settings)
 
     app.include_router(api_router)
     app.include_router(approval_inbox.router)

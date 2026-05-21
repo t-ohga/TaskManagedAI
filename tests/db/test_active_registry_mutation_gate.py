@@ -296,6 +296,38 @@ def test_db_commit_detects_statement_dml_update(tmp_path: Path) -> None:
         engine.dispose()
 
 
+def test_db_commit_detects_flushed_orm_mutation(tmp_path: Path) -> None:
+    """Codex R3 F-R3-002 (P1) fix: 明示的 flush() で session.new がクリアされても
+    `before_flush` listener が事前に flag を set するため gate で reject される。"""
+    config_dir, priv, fp = _setup_active_registry(tmp_path)
+    engine, SessionLocal, listener = _make_engine_and_session(config_dir, priv, fp)
+    try:
+        # 先に seed
+        with SessionLocal() as session:
+            session.add(_Sample(id=40, name="seed"))
+            session.commit()
+        # active marker を削除 (gate fail condition)
+        (
+            config_dir
+            / gate_helper.ACTIVE_REGISTRY_DIRNAME
+            / gate_helper.ACTIVE_MARKER_FILENAME
+        ).unlink()
+        # 明示的 flush() 後に commit() → before_flush で flag set → before_commit で reject
+        with SessionLocal() as session:
+            session.add(_Sample(id=41, name="flushed_before_commit"))
+            session.flush()  # session.new が clear される
+            # この時点で session.new は空、_DML_EXECUTED_KEY flag が set されているはず
+            with pytest.raises(ActiveRegistryGateRejectedCommit) as excinfo:
+                session.commit()
+            assert (
+                excinfo.value.reason_code
+                == "taskhub_active_registry_db_commit_rejected_by_gate"
+            )
+    finally:
+        detach_db_mutation_gate(SessionLocal.class_, listener)
+        engine.dispose()
+
+
 def test_db_commit_dml_flag_cleared_after_commit(tmp_path: Path) -> None:
     """Codex R2 F-R2-006 (P1) fix: DML flag が transaction 終了で clear される.
 
