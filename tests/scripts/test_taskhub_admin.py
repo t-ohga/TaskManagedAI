@@ -143,15 +143,16 @@ def test_cli_restore_input_and_rollback_are_mutually_exclusive(tmp_path: Path) -
 
 
 def test_cli_restore_rollback_allow_unsigned_skeleton_rejected() -> None:
-    """SP022-T02 Phase 3 adopt (R3-F-001 fix): restore で `--allow-unsigned-manual-skeleton` は
-    物理 deny (skeleton 経路は real I/O への path-collision/data-loss を許容しないため)。
+    """SP022-T02 Phase 4 (R1 F-002 + ADV PR R11 F-003 adopt): rollback で
+    `--allow-unsigned-manual-skeleton` は rollback-specific reason_code で 物理 deny
+    (restore_rollback_allow_unsigned_skeleton_rejected が先頭で emit、ts regex check より前)。
     """
     result = _run_cli(
-        "restore", "--rollback", "2026-05-18T10-00-00",
+        "restore", "--rollback", "20260518T100000",
         "--allow-unsigned-manual-skeleton",
     )
     assert result.returncode == 2
-    assert "restore_allow_unsigned_skeleton_rejected" in result.stderr
+    assert "restore_rollback_allow_unsigned_skeleton_rejected" in result.stderr
 
 
 def test_cli_restore_missing_input_path_returns_exit_2(tmp_path: Path) -> None:
@@ -249,13 +250,19 @@ def test_cli_status_mac_preflight_flag_matches_pga_f_006() -> None:
     assert "pmset" in result.stdout or "sleep" in result.stdout
 
 
-def test_cli_status_remote_split_brain_check() -> None:
-    """`status --remote <host>` (ADR-00021 §285 split-brain prevention)."""
-    result = _run_cli("status", "--remote", "old-host.example")
+def test_cli_status_remote_split_brain_check(tmp_path: Path) -> None:
+    """SP022-T02 Phase 4 real I/O: `status --remote <host>` returns JSON summary + exit 1 for unsafe.
+
+    signed config 不在 → reason_code=remote_status_config_missing + split_brain_safe=False + exit 1.
+    """
+    env = _sanitized_env()
+    env["HOME"] = str(tmp_path)
+    result = _run_cli("status", "--remote", "old-host.example", env=env)
     assert result.returncode == 1
-    assert "--remote" in result.stdout
-    assert "old-host.example" in result.stdout
-    assert "split-brain" in result.stdout
+    summary = json.loads(result.stdout)
+    assert summary["remote_host"] == "old-host.example"
+    assert summary["reason_code"] == "remote_status_config_missing"
+    assert summary["split_brain_safe"] is False
 
 
 def test_cli_freeze_requires_reason() -> None:

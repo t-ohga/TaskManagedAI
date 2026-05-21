@@ -191,6 +191,132 @@ def test_rfc8785_canonical_encoder_reference_vector_match() -> None:
     assert sa._rfc8785_canonical_payload_bytes(reference_record) == expected
 
 
+# --- SP022-T02 Phase 4 / R1 F-001 + R2 F-002 + ADV R1 F-010 adopt: restore_rollback_claim tests ---
+
+
+def _make_restore_rollback_claim(**overrides: object) -> sa.RestoreRollbackApprovalClaim:
+    defaults: dict[str, object] = {
+        "pre_restore_ts": "20260520T100000",
+        "pre_restore_dir": "/var/lib/taskhub/data/_pre-restore-20260520T100000",
+        "snapshot_manifest_sha256": "a" * 64,
+        "target_pg_dsn_components": {
+            "host": "127.0.0.1", "port": "5432",
+            "db": "taskmanagedai", "user": "taskmanagedai",
+        },
+        "target_redis_endpoint": "127.0.0.1:6379",
+        "target_artifacts_dir": "/var/lib/taskhub/data/artifacts",
+        "target_artifacts_container_path": "/app/data/artifacts",
+        "target_compose_project_name": "taskmanagedai",
+        "target_compose_file_path": "/home/op/taskhub/docker-compose.yml",
+        "expected_postgres_major_version": "16",
+    }
+    defaults.update(overrides)
+    return sa.RestoreRollbackApprovalClaim(**defaults)  # type: ignore[arg-type]
+
+
+def test_signed_approval_verify_restore_rollback_phase1_record_denied(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Phase 1 record (rrc 不在) は restore-rollback で deny。"""
+    priv, pub_bytes, fingerprint = _make_keypair()
+    approval_dir = _setup_isolated_taskhub(monkeypatch, tmp_path, pub_bytes=pub_bytes, fingerprint=fingerprint)
+    _write_approval_record(
+        approval_dir, priv=priv,
+        allowed_subcommands=("restore-rollback",),
+        drill_kind="restore_only",
+    )
+    rrc = _make_restore_rollback_claim()
+    allowed, reason, _ = sa.verify_signed_approval(
+        "drill-2026-07-01-abc123de", "restore-rollback",
+        restore_rollback_claim=rrc,
+    )
+    assert allowed is False
+    assert reason == "taskhub_signed_approval_restore_rollback_claim_required"
+
+
+def test_require_approval_for_destructive_restore_rollback_allow_unsigned_rejected() -> None:
+    """R1 F-002 adopt: restore-rollback + allow_unsigned_manual_skeleton 物理 deny."""
+    allowed, reason, _ = sa.require_approval_for_destructive(
+        "restore-rollback", None, from_automation=False,
+        allow_unsigned_manual_skeleton=True,
+    )
+    assert allowed is False
+    assert reason == "taskhub_signed_approval_restore_rollback_allow_unsigned_skeleton_rejected"
+
+
+def test_parse_restore_rollback_claim_strict_type_validate() -> None:
+    """ADV R1 F-010 adopt: per-field type/format validate."""
+    # valid baseline
+    valid_dict = {
+        "pre_restore_ts": "20260520T100000",
+        "pre_restore_dir": "/abs/path",
+        "snapshot_manifest_sha256": "f" * 64,
+        "target_pg_dsn_components": {"host": "h", "port": "5432", "db": "d", "user": "u"},
+        "target_redis_endpoint": "h:6379",
+        "target_artifacts_dir": "/abs/art",
+        "target_artifacts_container_path": "/abs/cont",
+        "target_compose_project_name": "p",
+        "target_compose_file_path": "/abs/compose.yml",
+        "expected_postgres_major_version": "16",
+    }
+    assert sa._parse_restore_rollback_claim_dict(valid_dict) is not None
+
+    # invalid sha256 (not hex)
+    bad = dict(valid_dict, snapshot_manifest_sha256="z" * 64)
+    assert sa._parse_restore_rollback_claim_dict(bad) is None
+
+    # invalid postgres major (with semver / leading zero / space)
+    for bad_pg in ("16.0", " 16", "016", "0", ""):
+        bad = dict(valid_dict, expected_postgres_major_version=bad_pg)
+        assert sa._parse_restore_rollback_claim_dict(bad) is None
+
+    # ts format invalid
+    for bad_ts in ("foo", "2026-05-20T10:00:00Z", "20260520"):
+        bad = dict(valid_dict, pre_restore_ts=bad_ts)
+        assert sa._parse_restore_rollback_claim_dict(bad) is None
+
+    # non-absolute path
+    bad = dict(valid_dict, pre_restore_dir="rel/path")
+    assert sa._parse_restore_rollback_claim_dict(bad) is None
+
+    # dsn missing key
+    bad = dict(valid_dict, target_pg_dsn_components={"host": "h", "port": "5432", "db": "d"})
+    assert sa._parse_restore_rollback_claim_dict(bad) is None
+
+    # dsn port non-digit
+    bad = dict(valid_dict, target_pg_dsn_components={"host": "h", "port": "abc", "db": "d", "user": "u"})
+    assert sa._parse_restore_rollback_claim_dict(bad) is None
+
+    # extra key
+    bad = dict(valid_dict, extra_field="x")
+    assert sa._parse_restore_rollback_claim_dict(bad) is None
+
+
+def test_canonical_for_signature_remote_hosts_domain_layout() -> None:
+    """ADV R2 F-002 adopt: shared canonicalizer domain layout."""
+    payload = {"hosts": {"a": 1}, "signed_at": "2026-05-20T00:00:00Z"}
+    canonical = sa.canonical_for_signature("remote_hosts.v1", payload)
+    # jcs canonical of {"domain": "remote_hosts.v1", "payload": payload}
+    import json as _json
+    expected_obj = {"domain": "remote_hosts.v1", "payload": payload}
+    expected = _json.dumps(expected_obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    assert canonical == expected
+
+
+def test_signed_approval_verify_phase1_record_no_rrc_backward_compat(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """ADV R2 F-002 adopt: PR #75/77/78 record (rrc 不在) は backward compat で verify pass."""
+    priv, pub_bytes, fingerprint = _make_keypair()
+    approval_dir = _setup_isolated_taskhub(monkeypatch, tmp_path, pub_bytes=pub_bytes, fingerprint=fingerprint)
+    _write_approval_record(approval_dir, priv=priv)
+    # migrate subcommand は rrc 不要、既存 Phase 1 record の layout で verify OK
+    allowed, reason, _ = sa.verify_signed_approval(
+        "drill-2026-07-01-abc123de", "migrate",
+    )
+    assert allowed is True, (reason,)
+
+
 # --- negative (19) ---
 
 

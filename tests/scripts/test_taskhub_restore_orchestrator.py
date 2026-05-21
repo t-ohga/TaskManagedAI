@@ -10,15 +10,12 @@ Coverage:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
 import stat
-import subprocess
 import sys
 import tarfile
-from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,10 +23,7 @@ import pytest
 
 from scripts import taskhub_restore_orchestrator as ro
 from scripts.taskhub_subprocess_runner import (
-    SafeSubprocessConfig,
-    SubprocessNotFoundError,
     SubprocessResult,
-    SubprocessTimeoutError,
 )
 
 
