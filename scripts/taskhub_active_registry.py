@@ -68,6 +68,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, Literal
 
+# Codex PR #82 R6 fix (P1×2): rfc8785 0.1.4 (trail-of-bits) を使用して ECMAScript
+# Number.prototype.toString を含む RFC 8785 strict canonicalization を実装。
+# NFC normalization は rfc8785 lib に含まれないため、本 module で wrapper 層 (NFC + collision
+# detection) を維持する。
+import rfc8785  # type: ignore[import-not-found]
+
 # Ed25519 dependencies are validated at import-time via taskhub_signed_approval
 from cryptography.exceptions import InvalidSignature  # type: ignore[import-not-found]
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # type: ignore[import-not-found]
@@ -188,175 +194,71 @@ def _normalize_strings_nfc(obj: Any) -> Any:  # noqa: ANN401 - JSON 任意構造
     return obj
 
 
-# === RFC 8785 strict encoder primitives (Codex PR #82 R3 F-001 + F-002 fix) ===
-#
-# Codex PR #82 R3 F-001 (P1): RFC 8785 §3.2.3 requires object property ordering by **UTF-16
-# code units**, not Python's str ordering (Unicode code points). For BMP-only strings the
-# orderings are identical, but for supplementary characters (U+10000+, encoded as
-# surrogate pairs in UTF-16) Python's code-point sort orders them after BMP characters
-# (≥ U+10000) while UTF-16 code-unit sort orders surrogates (U+D800-DBFF) before non-
-# surrogate BMP characters above U+E000. We implement UTF-16 code-unit ordering via
-# str.encode("utf-16-be") which produces big-endian byte pairs; lexicographic byte
-# comparison equals code-unit comparison.
-#
-# Codex PR #82 R3 F-002 (P1): RFC 8785 §3.2.2.3 requires numbers to follow ECMAScript
-# `ToString` semantics (es6 §7.1.12.1). Python's json.dumps emits "1.0" for float 1.0
-# but ECMAScript ToString emits "1". For cross-language verification (RFC 8785 is
-# defined precisely for this), we implement a number serializer that:
-#   - integers (incl. int subclass excluding bool): plain int repr
-#   - bool: not a number — handled separately
-#   - float: -0.0 → "0", integer-valued (==int(x) and isfinite) → int repr, otherwise repr(x)
-#     (Python's float repr is the shortest round-trip, which matches ECMAScript shortest
-#     representation for the cases this codebase exercises: timestamps, scores, counters)
-
-
-def _utf16_sort_key(s: str) -> bytes:
-    """RFC 8785 §3.2.3 UTF-16 code-unit ordering: str.encode("utf-16-be") returns big-endian
-    code units; byte lexicographic compare == code-unit compare."""
-    return s.encode("utf-16-be")
-
-
-# RFC 8785 I-JSON number range constraint (Codex PR #82 R4 F-005 fix、P2)
-# Integers outside ±(2^53 - 1) cannot be precisely represented in IEEE-754 double precision
-# (which RFC 8785 / I-JSON require). Encoding such integers without validation will cause
-# rounding-induced hash/signature divergence between producer (arbitrary-precision Python int)
-# and verifier (IEEE-754 double-bound JS/Go/Rust).
+# RFC 8785 I-JSON number range constraint (Codex PR #82 R4 F-005、参考定数 — rfc8785 lib も同等を enforce)
 _IJSON_MAX_INTEGER: Final = (1 << 53) - 1  # 9007199254740991
 _IJSON_MIN_INTEGER: Final = -((1 << 53) - 1)  # -9007199254740991
 
 
 def _encode_number(n: int | float) -> str:
-    """RFC 8785 §3.2.2.3 ECMAScript ToString + §3.2.2.4 I-JSON integer range constraint.
+    """Codex PR #82 R6 fix (P1×2): rfc8785 lib (trail-of-bits 0.1.4) を使用して ECMAScript
+    Number.prototype.toString 互換を保証。
 
-    - bool: rejected here (caller must handle bool before reaching number path)
-    - int: str(n)、ただし I-JSON range (±2^53 - 1) を超える int は ValueError (Codex R4 F-005、P2)
-    - float NaN/Inf: ValueError (RFC 8785 forbids non-finite numbers)
-    - float 0.0 / -0.0: "0" (ECMAScript ToString rule)
-    - float integer-valued and abs < 1e21: int repr (Codex R4 F-002 fix、P1: 1e21 以上は ECMAScript
-      で scientific notation になるため int repr 不可)
-    - float otherwise (incl. integer-valued >= 1e21): _ecmascript_float_repr() で ECMAScript ToString 互換 repr
+    旧 custom implementation は次の edge case で ECMAScript と不一致だった:
+    - R6 F-001: 2.7159992154358246e+18 を `str(int(n))` で encode → "2715999215435824640"
+      ECMAScript ToString → "2715999215435824600" (shortest decimal that round-trips to the
+      same double)。`str(int(n))` は actual stored value を出すが、ECMAScript は shortest
+      decimal を選ぶため不一致。
+    - R6 F-002: 2.559738902941283e-06 を `repr` で encode → "2.559738902941283e-06"
+      ECMAScript ToString → "0.000002559738902941283" (fixed notation for 1e-6 ≤ |n| < 1e21)。
+
+    rfc8785 lib は上記両 case を正しく ECMAScript ToString 通り出力する。NaN/Inf は
+    FloatDomainError、oversize int は IntegerDomainError で reject。
+
+    本 wrapper では:
+    - bool guard (Python の bool is subclass of int だが JSON では true/false token を使用)
+    - int / float の domain validation を caller-facing ValueError に統一 (rfc8785 の
+      FloatDomainError / IntegerDomainError は raise pattern が異なるため caller の error
+      handling で wrapping)
     """
-    if isinstance(n, bool):  # bool is subclass of int — guard explicitly
+    if isinstance(n, bool):
         raise TypeError("bool must be encoded as JSON true/false, not number")
-    if isinstance(n, int):
-        # Codex PR #82 R4 F-005 fix (P2): I-JSON integer range constraint
-        if n > _IJSON_MAX_INTEGER or n < _IJSON_MIN_INTEGER:
-            raise ValueError(
-                f"RFC 8785 / I-JSON integer out of IEEE-754 double-precision range "
-                f"(allowed: ±{_IJSON_MAX_INTEGER}, got: {n})"
-            )
-        return str(n)
-    # float
-    if not _is_finite(n):
-        raise ValueError(f"RFC 8785 forbids non-finite numbers: {n!r}")
-    if n == 0.0:
-        return "0"  # -0.0 と 0.0 を 0 に統一 (ECMAScript ToString rule)
-    # Codex PR #82 R4 F-001 + R5 F-001 fix (P1): integer-valued float < 1e21 は **常に** integral
-    # form を出力する (ECMAScript Number.prototype.toString は abs < 1e21 で整数値なら
-    # decimal integers を emit、I-JSON range 超過でも integral form。Python repr が
-    # scientific を選ぶ境界 (>= 1e16) は ECMAScript と異なる)。
-    # I-JSON range constraint は **input-time validation** として扱い、integer 入力時に reject
-    # 済 (encode 時に float 経由で来た場合は integral form を出すが verifier 側で precision-loss
-    # 警告を出すべき、本実装では integral form を出力するに留め caller responsibility)。
-    abs_n = abs(n)
-    if n == int(n) and abs_n < 1e21:
-        # integer-valued float, in ECMAScript integral range → always emit integral form
-        as_int = int(n)
-        return str(as_int)
-    return _ecmascript_float_repr(n)
-
-
-def _is_finite(n: float) -> bool:
-    return n == n and n not in (float("inf"), float("-inf"))
-
-
-_EXPONENT_LEADING_ZERO_RE: Final = re.compile(r"([eE])([+-]?)0+(\d)")
-
-
-def _ecmascript_float_repr(n: float) -> str:
-    """Codex PR #82 R4 F-001 + F-002 fix (P1): ECMAScript ToString-compatible float repr.
-
-    Python の `repr(float)` は shortest round-trip representation を生成する (PEP 3101 / IEEE 754
-    correct rounding) が、ECMAScript ToString と次の点で異なる:
-
-    1. **Exponent leading zero**: Python `1e-07`, ECMAScript `1e-7`。
-       Fix: regex で leading zeros を strip。"e+05" → "e+5"、"e-007" → "e-7"。
-    2. **Integer-valued float ≥ 1e21**: Python `repr(1e21)` → "1e+21"、ECMAScript `(1e21).toString()`
-       → "1e+21" — match。
-    3. **Integer-valued float 1e16 ≤ n < 1e21**: Python `repr(1e16)` → "1e+16"、
-       ECMAScript → "10000000000000000" — DIFFERENT。
-       Fix: 範囲内で integer-valued なら int repr (上位 caller (_encode_number) で先に確定済)。
-    4. **trailing exponent**: ECMAScript は `e+` を `e+` (plus は保持) — Python repr と一致
-
-    本 implementation は Python repr (shortest round-trip) を base にして、leading-zero exponent
-    strip のみ apply。ECMAScript ToString と byte-exact ではないが、本 codebase が扱う数値
-    (timestamps / counters / scores) の範囲では byte-exact 一致を保証する。1e-100 等の極小値は
-    cross-language verify でも一致 (Python `1e-100` / ECMAScript `1e-100` 共に)。
-    """
-    raw = repr(n)  # shortest round-trip
-    # strip leading zeros in exponent: "1.5e-07" → "1.5e-7", "1e+05" → "1e+5"
-    return _EXPONENT_LEADING_ZERO_RE.sub(r"\1\2\3", raw)
-
-
-def _encode_string(s: str) -> str:
-    """JSON string serialization (uses json.dumps for proper \\uXXXX escape of control chars)."""
-    return json.dumps(s, ensure_ascii=False)
-
-
-def _encode_value(value: Any, buf: list[str]) -> None:  # noqa: ANN401
-    """Recursive RFC 8785 strict encoder appending to a string list buffer (faster than StringIO)."""
-    if value is None:
-        buf.append("null")
-        return
-    if isinstance(value, bool):
-        buf.append("true" if value else "false")
-        return
-    if isinstance(value, (int, float)):
-        buf.append(_encode_number(value))
-        return
-    if isinstance(value, str):
-        buf.append(_encode_string(value))
-        return
-    if isinstance(value, dict):
-        buf.append("{")
-        # Codex PR #82 R3 F-001 fix (P1): sort keys by UTF-16 code units
-        sorted_keys = sorted(value.keys(), key=lambda k: _utf16_sort_key(k) if isinstance(k, str) else b"")
-        for i, key in enumerate(sorted_keys):
-            if i > 0:
-                buf.append(",")
-            if not isinstance(key, str):
-                raise TypeError(f"RFC 8785 object keys must be strings: {key!r}")
-            buf.append(_encode_string(key))
-            buf.append(":")
-            _encode_value(value[key], buf)
-        buf.append("}")
-        return
-    if isinstance(value, (list, tuple)):
-        buf.append("[")
-        for i, item in enumerate(value):
-            if i > 0:
-                buf.append(",")
-            _encode_value(item, buf)
-        buf.append("]")
-        return
-    raise TypeError(f"Cannot encode value of type {type(value).__name__}")
+    try:
+        # rfc8785.dumps wraps a value list to canonical bytes; we extract the single value bytes
+        encoded = rfc8785.dumps([n])
+    except rfc8785.IntegerDomainError as e:
+        raise ValueError(
+            f"RFC 8785 / I-JSON integer out of IEEE-754 double-precision range "
+            f"(allowed: ±{_IJSON_MAX_INTEGER}, got: {n})"
+        ) from e
+    except rfc8785.FloatDomainError as e:
+        raise ValueError(f"RFC 8785 forbids non-finite numbers: {n!r}") from e
+    # encoded = b'[<number>]', strip the brackets
+    return encoded[1:-1].decode("utf-8")
 
 
 def _rfc8785_canonical_bytes(payload: Any) -> bytes:  # noqa: ANN401
-    """RFC 8785 strict JCS canonical JSON encoder.
+    """RFC 8785 strict JCS canonical JSON encoder (Codex PR #82 R6 fix).
 
-    - NFC normalization on all strings (R1 F-003)
-    - allow_nan=False (R1 F-006、raised via _encode_number)
-    - UTF-16 code-unit sort on object keys (R3 F-001)
-    - ECMAScript ToString number serialization (R3 F-002)
-    - NFC dict key collision detection (R3 F-003)
+    rfc8785 lib (trail-of-bits 0.1.4) を delegate:
+    - UTF-16 code-unit sort on object keys (RFC 8785 §3.2.3)
+    - ECMAScript Number.toString number serialization (§3.2.2.3) — R6 F-001 + F-002 fix
+    - I-JSON integer range constraint (§3.2.2.4) — R4 F-005
+    - JSON string escape (\\uXXXX for control chars)
     - no whitespace separators
     - UTF-8 output
+
+    本 wrapper は NFC normalization + collision detection を pre-process として実施
+    (rfc8785 lib は NFC を行わないため):
+    - NFC normalization on all strings (R1 F-003)
+    - NFC dict key collision detection (R3 F-003) — fail-closed ValueError
     """
     normalized = _normalize_strings_nfc(payload)
-    buffer: list[str] = []
-    _encode_value(normalized, buffer)
-    return "".join(buffer).encode("utf-8")
+    try:
+        return rfc8785.dumps(normalized)
+    except rfc8785.IntegerDomainError as e:
+        raise ValueError(f"RFC 8785 / I-JSON integer out of IEEE-754 double-precision range: {e}") from e
+    except rfc8785.FloatDomainError as e:
+        raise ValueError(f"RFC 8785 forbids non-finite numbers: {e}") from e
 
 
 def _sha256_hex(data: bytes) -> str:

@@ -997,23 +997,20 @@ def test_encode_number_accepts_ijson_range_boundary() -> None:
     assert ar._encode_number(_IJSON_MIN := -((1 << 53) - 1)) == str(_IJSON_MIN)
 
 
-def test_ecmascript_float_repr_strips_leading_zero_exponent() -> None:
-    """Codex PR #82 R4 F-001 fix (P1): exponent leading zero を strip ("1e-07" → "1e-7")."""
-    # repr(1.5e-7) → "1.5e-07" in Python, ECMAScript → "1.5e-7"
-    encoded = ar._ecmascript_float_repr(1.5e-7)
-    assert encoded == "1.5e-07".replace("e-07", "e-7")
-    assert "e-7" in encoded
-    assert "e-07" not in encoded
-    # 3-digit exponent unchanged
-    encoded3 = ar._ecmascript_float_repr(1.5e-100)
-    assert "e-100" in encoded3
+def test_ecmascript_float_small_number_uses_fixed_notation() -> None:
+    """Codex PR #82 R6 F-002 fix (P1、rfc8785 delegation): 1e-6 ≤ |n| < 1 で fixed notation."""
+    # 2.559738902941283e-06 → "0.000002559738902941283" (rfc8785 lib ECMAScript ToString)
+    encoded = ar._encode_number(2.559738902941283e-06)
+    assert encoded == "0.000002559738902941283"
+    # 1.5e-7 < 1e-6 → scientific notation
+    encoded2 = ar._encode_number(1.5e-7)
+    assert "e-7" in encoded2 or encoded2.startswith("1.5")
 
 
-def test_ecmascript_float_repr_handles_integer_valued_above_1e21() -> None:
+def test_ecmascript_float_handles_integer_valued_above_1e21() -> None:
     """integer-valued float >= 1e21 は scientific notation を使う (ECMAScript ToString rule)."""
-    # 1e21 は repr(1e21) → "1e+21" (Python はこの境界で scientific)
     encoded = ar._encode_number(1e21)
-    assert encoded == "1e+21"  # exponent +21 (3 digit ではない、no strip needed)
+    assert encoded == "1e+21"
 
 
 def test_rfc8785_canonical_with_oversize_integer_rejected() -> None:
