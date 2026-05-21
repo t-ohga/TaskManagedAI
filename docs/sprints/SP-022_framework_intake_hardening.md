@@ -4,7 +4,7 @@ type: "heavy"
 status: "draft"
 sprint_no: 22
 created_at: "2026-05-10"
-updated_at: "2026-05-19"
+updated_at: "2026-05-22"
 target_days: 3
 max_days: 5
 # F-PR67-019 P2 adopt (PR #67 R4): ADR-00021 acceptance は SP-022 で実機 host
@@ -1026,3 +1026,77 @@ backup_age_key_toctou_mismatch / backup_age_recipient_invalid / backup_service_s
 | SP022-T09 実機 host migration drill | ⛔ deferred (blocked_by: **SP-012 split-brain second line + SP-012 keyring rotation のみ、SP022-T02 Phase 5 unblock 済**) |
 
 (後続: SP-022 全 must_ship 完了 → P0 Exit declaration → TASKHUB_P0_1_OPENED=1 + SP-013 着手)
+
+
+### SP-012 must_ship 完遂 — T09 unblock 状態 update (2026-05-22 session)
+
+#### SP-012 must_ship 2 件 完遂 (T09 unblock 残条件 → 物理 host 取得 + user drill 実施のみ)
+
+SP-012 must_ship 2 件 (split-brain second line of defense + approval keyring rotation) は **2026-05-22 で実装完遂**。`docs/sprints/SP-012_p0_acceptance.md` の Sprint 12 Exit Addendum (PR #87、`3e94e99c`) 参照。
+
+**完遂内訳** (累計 19 PR merged、累計 47 round / 212 findings 100% adopt):
+- PR #76: ADR-00028 + ADR-00029 proposed → **accepted** (split-brain second line + keyring rotation の design ADR 同時昇格)
+- PR #81: SP-012 Batch A skeleton (60 ReasonCode 正本化 + active_registry/keyring/approval_issuance 3 module skeleton)
+- PR #82: SP-012 Batch B keyring (32 findings 100% adopt)
+- PR #83: SP-012 Batch C approval issuance + clock attestation (6 findings + R2 CLEAN)
+- PR #84: SP-012 Batch D 2PC PrepareMarker/CommitMarker (13 findings + R4 CLEAN、87 fixture PASS)
+- PR #85: backend gate L1+L2+L3 (FastAPI middleware + ARQ worker + SQLAlchemy before_commit、19 findings + R7 CLEAN、65 fixture + 3841 regression PASS)
+- PR #86: operator runbook §13-§22 (10 sections / 951 行、43 findings + R6 CLEAN)
+- PR #87: SP-012 Sprint Pack Review Addendum (R1 CLEAN)
+
+#### SP022-T09 unblock 残条件 (post-SP-012 must_ship 完遂)
+
+| 残条件 | 状態 | 解消 trigger |
+|---|---|---|
+| SP-012 split-brain second line | ✅ 完了 (PR #81-#84) | active.signed marker chain + 2PC PrepareMarker/CommitMarker + 同 migration_epoch reject |
+| SP-012 approval keyring rotation | ✅ 完了 (PR #82-#83) | `approval-verify-keys.d/<sha256-hex>.pub` keyring + dual-trust + revocation tombstone |
+| SP022-T02 Phase 5 (backup compose exec) | ✅ 完了 (PR #80) | docker compose exec + container 内 unix socket + verified copy 4 種 |
+| 物理 host 取得 (Mac + VPS 2 台) | ⛔ user 物理作業 | user の hardware availability |
+| user 介在 drill 実施 (Mac→VPS、RTO≤4h) | ⛔ user 物理作業 | user の drill 実施 + result verification |
+
+**T09 unblock 残作業 = 物理 host 取得 + user drill 実施のみ**。SP-012/SP-022 carry-over の technical blocker は全て解消。
+
+#### SP022-T08 batch 5+6 / SP022-T06 残作業 (本 session scope 外)
+
+| 残作業 | 優先度 | 状態 | 解消 path |
+|---|---|---|---|
+| SP022-T08 batch 5: signed journal CLI DB mode + private staging E2E | 🟥 high | carry-over | SP-022 残作業 (本 session scope 外、SP-013 着手前に完了) |
+| SP022-T08 batch 6: frontend dashboard backend API wiring | 🟥 high | carry-over | SP-022 残作業 (本 session scope 外) |
+| SP022-T06 KPI baseline (Mac 単独) | 🟨 light | implementable | Mac 単独で baseline 取得可能 (acceptance_pass_rate / time_to_merge / approval_wait_ms / citation_coverage / cost_per_completed_task の median) |
+| SP022-T06 KPI baseline (Linux/VPS) | ⛔ deferred | blocked | 物理 host 取得待ち |
+| SP022-T05 AC-HARD multi-agent re-verify | ⛔ deferred | blocked | SP-013 着手後 |
+| destructive_lock cross-subcommand 拡張 (migrate / freeze / thaw) | 🟨 light | carry-over | SP-022 残作業 |
+
+#### P0 Exit declaration path (Codex F-PR67-035 P2 + F-PR67-041 P2 adopt 経路)
+
+```
+SP-012 must_ship 完遂 (本 session、2026-05-22) → ✅
+  ↓
+SP-022 T08 batch 5+6 完了 (signed journal CLI DB mode + frontend wiring) → 🟥 next
+  ↓
+SP-022 T06 KPI baseline 3 host (Mac 単独 light 可、Linux/VPS は物理 host 取得後)
+  ↓
+SP-022 T09 実機 host migration drill (Mac→VPS、RTO≤4h) PASS → ⛔ user 物理作業
+  ↓
+ADR-00021 + ADR-00007 post-acceptance verification 完遂 → ADR_status: accepted (frontmatter update)
+  ↓
+SP-012 frontmatter status: partial_completed_with_carry_over → completed
+SP-022 frontmatter status: implementable → completed
+  ↓
+P0 Exit declaration (Hard Gates 7 全件 PASS + Quality KPIs 5 の未達 ≤ 1 個)
+  ↓
+TASKHUB_P0_1_OPENED=1 + SP-013 着手
+```
+
+#### 累計 SP-012/SP-022 sessions / PR / findings
+
+| metric | 値 |
+|---|---:|
+| 累計 PR merged (SP-012 must_ship + SP-022 implementation) | 19 |
+| 累計 Codex multi-round review | 47 rounds |
+| 累計 findings 100% adopt | 212 |
+| CRITICAL=0 | ✅ all PR |
+| HIGH≤2 (critical_zero gate) | ✅ all PR |
+| reject / defer | 0 / 0 |
+
+**SP-012 must_ship 完遂で T09 unblock 技術 blocker 解消、残作業 = 物理 host drill のみ**。本 update を SP-022 Pack の Review に追記して P0.1 unblock path を明示。
