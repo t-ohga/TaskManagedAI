@@ -308,7 +308,7 @@ overlap 期間中の dual-trust は SP-012 carry-over.
 approval verify keyring (`<config_dir>/approval-verify-keyring.signed.json` + `<config_dir>/approval-verify-keys.d/<sha256-hex>.pub`) の管理 SOP。
 plan §9.3 R1 F-001/F-007/F-011 + ADR-00029 で導入された signed manifest + multi-key + revocation tombstone を扱う。
 
-> **CLI 状況**: 本 SOP の `taskhub keyring …` は **SP-013 で実装予定の CLI extension** (SP-012 では `scripts/taskhub_keyring.py` の dataclass + verify helper のみ実装)。本 §13 は spec として記述、operator は `python -m scripts.taskhub_keyring …` または下記直接スクリプト経路を使う。
+> **CLI 状況**: 本 SOP の `taskhub keyring …` は **SP-013 で実装予定の CLI extension** (SP-012 では `scripts/taskhub_keyring.py` の dataclass + verify helper のみ実装、`__main__` 経路なし)。本 §13 は spec として記述、operator は下記の **PYTHONPATH 経由 + heredoc inline pattern** で `python3 - <<'PYEOF'` 経由 helper を direct invoke する (`python -m scripts.taskhub_keyring` は no-op、`from scripts.taskhub_keyring import` は inner `import taskhub_active_registry` で `ModuleNotFoundError` のため使えない)。
 
 ### §13.0 keyring の canonical 構造
 
@@ -429,7 +429,13 @@ done
 
 ```bash
 # step 1: 即座 freeze (write 停止、source host)
-taskhub freeze --reason "key compromise: <fingerprint[:16]>"
+#   `taskhub freeze` は destructive のため `--approval-id` 必須 (default deny)。
+#   key compromise incident response 用の pre-issued approval が必要。
+REVOKE_FREEZE_APPROVAL_ID="key-compromise-freeze-$(date +%Y%m%d-%H%M)"
+# operator が taskhub approval issue で APPROVAL_ID を事前生成 (out-of-band 2-party)
+taskhub freeze \
+  --reason "key compromise: <fingerprint[:16]>" \
+  --approval-id "$REVOKE_FREEZE_APPROVAL_ID"
 
 # step 2: revoke approval を取得 (operator 二人以上の独立承認、out-of-band)
 #   - approval_id 生成 + claim hash + signed approval を取得
@@ -529,8 +535,21 @@ for HOST in vps linux mac; do
 done
 
 # step 2: prepare_pending state が 24h 以上 stale なら recovery 必要
-ssh "$TARGET_HOST" 'stat -c "%Y %n" /etc/taskhub/active_registry/prepare.pending 2>/dev/null' | \
-  awk '{ if (systime() - $1 > 86400) print "STALE prepare: " $2 }'
+#   注意: `stat -c` は GNU 専用 (Linux)、macOS / BSD は `stat -f` を使う。fleet が
+#   mixed-host (vps=linux, mac=darwin) のため Python で portable に確認する。
+ssh "$TARGET_HOST" "python3 -" <<'PYEOF'
+import os, sys, time
+from pathlib import Path
+path = Path("/etc/taskhub/active_registry/prepare.pending")
+if not path.exists():
+    sys.exit(0)
+mtime = path.stat().st_mtime
+age_seconds = time.time() - mtime
+if age_seconds > 86400:
+    print(f"STALE prepare: {path} (age: {age_seconds/3600:.1f}h)")
+else:
+    print(f"prepare exists but not stale ({age_seconds/3600:.1f}h < 24h)")
+PYEOF
 ```
 
 ### §14.2 manual recovery (commit interrupt)
@@ -560,7 +579,9 @@ ssh "$SOURCE_HOST" "taskhub thaw --approval-id '$THAW_APPROVAL_ID'"
 
 # Scenario C: replay commit (signed_manifest の hash が両 side で一致を前提に、final rename を再実行)
 # CommitMarker.canonical_payload() を root signed manifest で再構築し、両 side で atomic rename
-# (SP-013 CLI 実装まで、operator が `python -m scripts.taskhub_active_registry` を直接呼出)
+# (SP-013 CLI 実装まで、operator は PYTHONPATH 経由 + python3 - <<PYEOF heredoc で
+#  scripts/taskhub_active_registry.py の dataclass + helper を direct invoke する。
+#  `python -m scripts.taskhub_active_registry` は no-op、`__main__` 経路なし)
 ```
 
 ### §14.3 split-brain detection (両 active 状態)
@@ -889,7 +910,10 @@ done
     # SP-012 期間中の暫定: fleet.signed.json を jq で直接 read
     for HOST in $(jq -r '.hosts[] | select(.status == "active") | .host_id' \
                   /etc/taskhub/active_registry/active_registry_fleet.signed.json); do
-      tailscale ssh "$HOST" 'rsync --inplace --append \
+      # 注意: rsync `--append` は file が growing-only の前提なので、signed manifest
+      # (rewrite で same size or shorter になることもある) には使えない (rsync は skip する)。
+      # `--inplace` のみで full content sync する (mtime + checksum check で transfer 最適化)。
+      tailscale ssh "$HOST" 'rsync --inplace --checksum \
         rsync://ci.internal/taskhub/approval-verify-keyring.signed.json \
         /etc/taskhub/'
     done
@@ -1178,8 +1202,14 @@ alert rules:
 ```bash
 # gate enabled だが 503 が返ってこない場合 (gate disabled state 確認)
 # 注意: /health は gate exempt path (middleware bypass) なので gate 動作確認に使えない。
-# 必ず mutation endpoint (/api/<*>) に POST/PUT/PATCH/DELETE で確認する。
-curl -s -X POST http://localhost:8000/api/tickets -d '{}' -H 'Content-Type: application/json'
+# 必ず実在する mutation endpoint に POST/PUT/PATCH/DELETE で確認する。
+# SP-012 期間中の代表的 mutation route (`backend/app/api/*.py` 実装済):
+#   - POST /api/claims                       (claims.py)
+#   - POST /api/evidence-items               (evidence_items.py)
+#   - POST /api/agent-runs/{run_id}/cancel  (agent_runs.py)
+#   - POST /api/approval-inbox/{id}/decide  (approval_inbox.py)
+#   - POST /api/notifications/{id}/mark_read (notifications.py)
+curl -s -X POST http://localhost:8000/api/claims -d '{}' -H 'Content-Type: application/json'
 # 期待値 (gate enabled + active marker absent): 503 + reason_code = "taskhub_active_registry_write_rejected_by_gate"
 # 期待値 (gate disabled、env var false): 401 (dev-login 不在) or validation error
 
