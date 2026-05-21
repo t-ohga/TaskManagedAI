@@ -59,10 +59,21 @@ class ActiveRegistryGateRejectedCommit(IntegrityError):
 def _session_has_mutations(session: Session) -> bool:
     """session に pending INSERT/UPDATE/DELETE が含まれているかを確認。
 
-    read-only な commit (例: identity map のみ flush していない select session)
-    を block しないための optimization + correctness 保護。
+    Codex PR #85 R1 F-005 fix (P2): `session.dirty` は optimistic で、column
+    に同値を再代入しただけでも entry が乗ることがある (SQLAlchemy 公式 docs)。
+    `is_modified()` で net column change を per-instance に確認することで
+    read-only / no-op commit を gate から確実に exempt する。
     """
-    return bool(session.new) or bool(session.dirty) or bool(session.deleted)
+    if session.new or session.deleted:
+        return True
+    # `session.dirty` の各 instance に対し net change を確認
+    for instance in session.dirty:
+        try:
+            if session.is_modified(instance, include_collections=True):
+                return True
+        except Exception:  # noqa: BLE001 - 検査失敗時は fail-closed (mutation あり扱い)
+            return True
+    return False
 
 
 def _build_before_commit_listener(
@@ -130,3 +141,49 @@ def detach_db_mutation_gate(
 ) -> None:
     """test 用: listener detach。production runtime では使わない。"""
     event.remove(session_class, "before_commit", listener)
+
+
+def configure_db_mutation_gate_from_settings(
+    session_class: type[Session],
+) -> Callable[[Session], None] | None:
+    """Settings.active_registry_gate_enabled に応じて L3 listener を attach。
+
+    Codex PR #85 R1 F-004 fix (P1): production wiring を実装。
+    enabled=False (default) なら no-op (None 返却)、enabled=True なら file-based
+    resolver + attach、production startup で host_id 未設定なら ValueError。
+
+    Returns:
+        attached listener (test 用 detach handle) or None (gate disabled)
+    """
+    # 遅延 import (循環依存防止)
+    from pathlib import Path
+
+    from backend.app.config import get_settings
+    from scripts import taskhub_active_registry_gate as gate_helper
+
+    settings = get_settings()
+    if not settings.active_registry_gate_enabled:
+        return None
+    host_id = settings.taskhub_host_id.strip()
+    if not host_id:
+        raise ValueError(
+            "TASKMANAGEDAI_TASKHUB_HOST_ID is required when "
+            "TASKMANAGEDAI_ACTIVE_REGISTRY_GATE_ENABLED=true."
+        )
+    config_dir = Path(settings.taskhub_config_dir)
+    resolver = gate_helper.build_file_based_public_key_resolver(config_dir)
+    listener = attach_db_mutation_gate(
+        session_class,
+        config_dir=config_dir,
+        host_id=host_id,
+        public_key_resolver=resolver,
+    )
+    logger.info(
+        "active_registry_db_mutation_gate_attached",
+        extra={
+            "host_id": host_id,
+            "config_dir": str(config_dir),
+            "gate_kind": GATE_KIND_DB_COMMIT,
+        },
+    )
+    return listener

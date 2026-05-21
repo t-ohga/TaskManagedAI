@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     arq_queue_name: str = "taskmanagedai:jobs"
     worker_cancel_channel: str = "taskmanagedai:cancel"
 
+    # SP-012 §9.10 R10 F-001: active-registry gate (L1+L2+L3 defense-in-depth).
+    # production deployment 時に enabled=True にする (`TASKMANAGEDAI_ACTIVE_REGISTRY_GATE_ENABLED=true`).
+    # test / development default は disabled (既存 fixture / contract test を維持)、
+    # production startup で config_dir / host_id が解決できなければ fail-closed startup abort。
+    active_registry_gate_enabled: bool = False
+    taskhub_config_dir: str = "/etc/taskhub"
+    taskhub_host_id: str = ""
+
     @model_validator(mode="after")
     def validate_local_boundary(self) -> Self:
         if self.environment == "production":

@@ -148,3 +148,52 @@ def exit_with_startup_abort(reason_code: str) -> None:
     )
     sys.stderr.flush()
     os._exit(1)
+
+
+def configure_worker_gate_from_settings(
+    ctx: MutableMapping[str, object],
+) -> bool:
+    """ARQ on_startup から呼び出す: Settings.active_registry_gate_enabled に応じて attach。
+
+    Codex PR #85 R1 F-003 fix (P1): production wiring を実装。
+    enabled=False (default) なら no-op、enabled=True なら file-based resolver で attach +
+    `verify_worker_startup(ctx)` を即時実行 (失敗時 `WorkerStartupAbort(SystemExit(1))`)。
+
+    Returns:
+        True: gate を attach + startup verify 成功
+        False: gate skip (development / test)
+    """
+    # 遅延 import (循環依存防止)
+    from backend.app.config import get_settings
+    from scripts import taskhub_active_registry_gate as gate_helper
+
+    settings = get_settings()
+    if not settings.active_registry_gate_enabled:
+        return False
+    host_id = settings.taskhub_host_id.strip()
+    if not host_id:
+        raise ValueError(
+            "TASKMANAGEDAI_TASKHUB_HOST_ID is required when "
+            "TASKMANAGEDAI_ACTIVE_REGISTRY_GATE_ENABLED=true."
+        )
+    from pathlib import Path
+
+    config_dir = Path(settings.taskhub_config_dir)
+    resolver = gate_helper.build_file_based_public_key_resolver(config_dir)
+    attach_worker_gate_config(
+        ctx,
+        config_dir=config_dir,
+        host_id=host_id,
+        public_key_resolver=resolver,
+    )
+    # startup verify (失敗時 raise SystemExit(1))
+    verify_worker_startup(ctx)
+    logger.info(
+        "active_registry_worker_gate_attached",
+        extra={
+            "host_id": host_id,
+            "config_dir": str(config_dir),
+            "gate_kind": GATE_KIND_STARTUP,
+        },
+    )
+    return True

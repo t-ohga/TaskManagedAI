@@ -229,6 +229,40 @@ def test_db_commit_rejects_on_freeze_marker(tmp_path: Path) -> None:
         engine.dispose()
 
 
+def test_db_commit_skips_gate_when_dirty_set_has_no_net_change(tmp_path: Path) -> None:
+    """Codex R1 F-005 (P2) fix: `session.dirty` に同値再代入の no-op が乗っても
+    `is_modified()` 経由で net change を確認するため gate を呼ばない (no-op skip)。"""
+    config_dir, priv, fp = _setup_active_registry(tmp_path, with_active_marker=True)
+    engine, SessionLocal, listener = _make_engine_and_session(config_dir, priv, fp)
+    try:
+        # active marker 在りで seed INSERT
+        with SessionLocal() as session:
+            session.add(_Sample(id=11, name="real"))
+            session.commit()
+        # active marker を削除 (gate 失敗 condition を作る)
+        (
+            config_dir
+            / gate_helper.ACTIVE_REGISTRY_DIRNAME
+            / gate_helper.ACTIVE_MARKER_FILENAME
+        ).unlink()
+        # 同値再代入で net change なしの commit → gate skip で no exception 期待
+        with SessionLocal() as session:
+            obj = session.get(_Sample, 11)
+            assert obj is not None
+            obj.name = "real"  # 同値、is_modified=False
+            session.commit()
+        # 念のため: 別 column の actual change は gate 経由 reject (active marker 不在)
+        with SessionLocal() as session:
+            obj = session.get(_Sample, 11)
+            assert obj is not None
+            obj.name = "changed"  # 値変更 → is_modified=True
+            with pytest.raises(ActiveRegistryGateRejectedCommit):
+                session.commit()
+    finally:
+        detach_db_mutation_gate(SessionLocal.class_, listener)
+        engine.dispose()
+
+
 def test_db_commit_rejects_when_marker_appears_mid_session(tmp_path: Path) -> None:
     """session 開始後に freeze marker が現れても commit 直前 gate check で reject (mid-flight)."""
     config_dir, priv, fp = _setup_active_registry(tmp_path)

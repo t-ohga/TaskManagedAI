@@ -12,6 +12,9 @@ from arq.connections import RedisSettings
 
 from backend.app.config import Settings, get_settings
 from backend.app.observability import setup_logging, setup_otel
+from backend.app.workers.active_registry_worker_gate import (
+    configure_worker_gate_from_settings,
+)
 from backend.app.workers.tasks import noop_task
 
 logger = logging.getLogger(__name__)
@@ -126,6 +129,13 @@ async def on_startup(ctx: WorkerContext) -> None:
             "cancel_channel": settings.worker_cancel_channel,
         },
     )
+
+    # SP-012 §9.10 R10 F-001: L2 active-registry worker gate wiring。
+    # Codex PR #85 R1 F-003 fix (P1): production wiring を実装。
+    # enabled=False (default) なら no-op、enabled=True なら attach + startup verify。
+    # startup verify 失敗時は `WorkerStartupAbort(SystemExit(1))` で process 終了。
+    # 各 job 内で `verify_worker_dequeue(ctx)` を呼ぶことで dequeue 時 gate check。
+    configure_worker_gate_from_settings(ctx)
 
 
 async def on_shutdown(ctx: WorkerContext) -> None:

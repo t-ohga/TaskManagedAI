@@ -425,6 +425,60 @@ def test_load_fleet_membership_parses_well_formed_doc(tmp_path: Path) -> None:
     assert fleet.hosts[0].host_id == "host-target"
 
 
+def test_load_fleet_membership_rejects_mismatched_domain(tmp_path: Path) -> None:
+    """Codex R1 F-002 (P2) fix: domain mismatch は fail-closed None 返却."""
+    doc = _make_fleet_doc()
+    doc["domain"] = "taskhub.signed_manifest.v1"  # 別 schema
+    _write_marker(tmp_path, gate_helper.FLEET_MEMBERSHIP_FILENAME, doc)
+    assert gate_helper.load_fleet_membership_from_disk(tmp_path) is None
+
+
+def test_load_fleet_membership_rejects_missing_domain(tmp_path: Path) -> None:
+    """Codex R1 F-002 (P2) fix: domain field 自体が無い場合も fail-closed."""
+    doc = _make_fleet_doc()
+    del doc["domain"]
+    _write_marker(tmp_path, gate_helper.FLEET_MEMBERSHIP_FILENAME, doc)
+    assert gate_helper.load_fleet_membership_from_disk(tmp_path) is None
+
+
+# === build_file_based_public_key_resolver tests (Codex R1 F-001/F-003/F-004 wiring) ===
+
+
+def test_file_based_resolver_returns_none_when_file_missing(tmp_path: Path) -> None:
+    """fingerprint に対応する .pub file が無い → None (fail-closed)."""
+    resolver = gate_helper.build_file_based_public_key_resolver(tmp_path)
+    assert resolver("abc123") is None
+
+
+def test_file_based_resolver_loads_valid_raw_key(tmp_path: Path) -> None:
+    """正しい 32 bytes raw key file → bytes 返却."""
+    signers_dir = tmp_path / gate_helper.ACTIVE_REGISTRY_DIRNAME / gate_helper.SIGNERS_DIRNAME
+    signers_dir.mkdir(parents=True)
+    raw_key = b"\x01" * 32
+    (signers_dir / "abc123.pub").write_bytes(raw_key)
+    resolver = gate_helper.build_file_based_public_key_resolver(tmp_path)
+    assert resolver("abc123") == raw_key
+
+
+def test_file_based_resolver_rejects_wrong_size_key(tmp_path: Path) -> None:
+    """size != 32 bytes → None (PEM 形式は未対応の P1 想定、本 fix では reject)."""
+    signers_dir = tmp_path / gate_helper.ACTIVE_REGISTRY_DIRNAME / gate_helper.SIGNERS_DIRNAME
+    signers_dir.mkdir(parents=True)
+    (signers_dir / "abc123.pub").write_bytes(b"\x01" * 16)  # 32 bytes 未満
+    resolver = gate_helper.build_file_based_public_key_resolver(tmp_path)
+    assert resolver("abc123") is None
+
+
+def test_file_based_resolver_rejects_path_traversal(tmp_path: Path) -> None:
+    """fingerprint が `..` 等を含む → regex で reject (path traversal 防御)."""
+    resolver = gate_helper.build_file_based_public_key_resolver(tmp_path)
+    assert resolver("../etc/passwd") is None
+    assert resolver(".") is None
+    assert resolver("") is None
+    assert resolver("a/b") is None
+    assert resolver("a\x00b") is None
+
+
 # === gate_kind paramization (smoke、L1/L2/L3 ともに同 reason_code をマップする保証) ===
 
 

@@ -231,6 +231,30 @@ def test_service_startup_fails_with_stale_active_marker_signature(tmp_path: Path
     _ = fp  # 参照 (fixture 引数 unpack 整合)
 
 
+def test_api_write_rejected_on_malformed_gate_config(tmp_path: Path) -> None:
+    """Codex R1 F-006 (P2) fix: 部分的に attach された malformed config も 503 fail-closed."""
+    app = FastAPI()
+    # 部分的に attach (host_id 欠落、tmp_path で path traversal 安全な fixture を使用)
+    app.state.active_registry_gate_config = {
+        "config_dir": tmp_path / "no-such-config",
+        # "host_id": "..." 欠落
+        "public_key_resolver": lambda _fp: None,
+    }
+
+    @app.post("/test/write", dependencies=[Depends(require_active_registry_write_authority)])
+    async def _write() -> dict[str, str]:
+        return {"status": "written"}
+
+    with TestClient(app) as client:
+        response = client.post("/test/write")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["detail"]["error_code"] == "active_registry_gate_malformed_config"
+    assert body["detail"]["reason_code"] == (
+        "taskhub_active_registry_gate_malformed_config"
+    )
+
+
 def test_configure_active_registry_gate_is_idempotent(tmp_path: Path) -> None:
     """同じ config を複数回 attach しても safe (idempotent)."""
     config_dir, priv, fp = _setup_fleet_and_active(tmp_path)

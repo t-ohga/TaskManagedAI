@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 from fastapi import HTTPException, Request, status
 
@@ -28,10 +29,13 @@ def _resolve_gate_config(request: Request) -> tuple[Path, str, Callable[[str], b
     """app.state.active_registry_gate_config から (config_dir, host_id, resolver) を取得。
 
     backend startup 時に `configure_active_registry_gate()` で attach される。
-    attach 漏れは設計違反 → fail-closed (503 + reason_code)。
+    attach 漏れ / 部分的 attach は設計違反 → fail-closed (503 + reason_code)。
+
+    Codex PR #85 R1 F-006 fix (P2): 直接 indexing は KeyError → FastAPI 500 を
+    引き起こすため、`.get()` + None check で defensive に 503 fail-closed。
     """
     cfg = getattr(request.app.state, "active_registry_gate_config", None)
-    if cfg is None:
+    if not isinstance(cfg, dict):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
@@ -43,7 +47,23 @@ def _resolve_gate_config(request: Request) -> tuple[Path, str, Callable[[str], b
                 ),
             },
         )
-    return cfg["config_dir"], cfg["host_id"], cfg["public_key_resolver"]
+    config_dir = cfg.get("config_dir")
+    host_id = cfg.get("host_id")
+    resolver = cfg.get("public_key_resolver")
+    if not isinstance(config_dir, Path) or not isinstance(host_id, str) or not callable(resolver):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "active_registry_gate_malformed_config",
+                "reason_code": "taskhub_active_registry_gate_malformed_config",
+                "error_summary": (
+                    "Active-registry gate config is malformed (missing config_dir / "
+                    "host_id / public_key_resolver). configure_active_registry_gate() "
+                    "must supply all three fields."
+                ),
+            },
+        )
+    return config_dir, host_id, cast(Callable[[str], bytes | None], resolver)
 
 
 def require_active_registry_write_authority(request: Request) -> None:
@@ -108,3 +128,48 @@ def configure_active_registry_gate(
             "public_key_resolver": public_key_resolver,
         },
     )
+
+
+def configure_active_registry_gate_from_settings(app_state: object) -> bool:
+    """settings (Settings.active_registry_gate_enabled) から gate 設定を attach。
+
+    Codex PR #85 R1 F-001 fix (P1): production wiring を実装。
+    Settings.active_registry_gate_enabled=True なら file-based resolver で attach。
+    False (default) なら no-op (development / test の既存 fixture を維持)。
+
+    production startup で enabled=True かつ host_id 未設定なら ValueError raise
+    (fail-closed startup abort)。
+
+    Returns:
+        True: gate を attach (production deployment)
+        False: gate skip (development / test default)
+    """
+    # 遅延 import (循環依存防止 + test での monkey-patch 容易性)
+    from backend.app.config import get_settings
+
+    settings = get_settings()
+    if not settings.active_registry_gate_enabled:
+        return False
+    host_id = settings.taskhub_host_id.strip()
+    if not host_id:
+        raise ValueError(
+            "TASKMANAGEDAI_TASKHUB_HOST_ID is required when "
+            "TASKMANAGEDAI_ACTIVE_REGISTRY_GATE_ENABLED=true."
+        )
+    config_dir = Path(settings.taskhub_config_dir)
+    resolver = gate_helper.build_file_based_public_key_resolver(config_dir)
+    configure_active_registry_gate(
+        app_state,
+        config_dir=config_dir,
+        host_id=host_id,
+        public_key_resolver=resolver,
+    )
+    logger.info(
+        "active_registry_gate_attached",
+        extra={
+            "host_id": host_id,
+            "config_dir": str(config_dir),
+            "gate_kind": GATE_KIND_API,
+        },
+    )
+    return True
