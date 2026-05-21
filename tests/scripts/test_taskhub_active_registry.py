@@ -308,6 +308,7 @@ def test_allocate_next_epoch_initial(tmp_path: Path) -> None:
         host_id="host-1",
         writer_signer_fingerprint="fp-writer-1",
         private_key_signer=signer,
+        journal_tail_verifier=ar.accept_unverified_tail,
     )
     assert new_epoch == 1
     assert entry.epoch == 1
@@ -337,13 +338,16 @@ def test_allocate_next_epoch_monotonic_increment(tmp_path: Path) -> None:
         return priv.sign(data)
 
     e1, _, _ = ar.allocate_next_epoch(
-        counter_path, lock_path, journal_path, "host-1", "fp-1", signer
+        counter_path, lock_path, journal_path, "host-1", "fp-1", signer,
+        journal_tail_verifier=ar.accept_unverified_tail,
     )
     e2, _, _ = ar.allocate_next_epoch(
-        counter_path, lock_path, journal_path, "host-1", "fp-1", signer
+        counter_path, lock_path, journal_path, "host-1", "fp-1", signer,
+        journal_tail_verifier=ar.accept_unverified_tail,
     )
     e3, _, _ = ar.allocate_next_epoch(
-        counter_path, lock_path, journal_path, "host-1", "fp-1", signer
+        counter_path, lock_path, journal_path, "host-1", "fp-1", signer,
+        journal_tail_verifier=ar.accept_unverified_tail,
     )
     assert (e1, e2, e3) == (1, 2, 3)
     # journal に 3 entry
@@ -362,10 +366,12 @@ def test_allocate_next_epoch_journal_chain_integrity(tmp_path: Path) -> None:
         return priv.sign(data)
 
     _, _, e1 = ar.allocate_next_epoch(
-        counter_path, lock_path, journal_path, "host-1", "fp-1", signer
+        counter_path, lock_path, journal_path, "host-1", "fp-1", signer,
+        journal_tail_verifier=ar.accept_unverified_tail,
     )
     _, _, e2 = ar.allocate_next_epoch(
-        counter_path, lock_path, journal_path, "host-1", "fp-1", signer
+        counter_path, lock_path, journal_path, "host-1", "fp-1", signer,
+        journal_tail_verifier=ar.accept_unverified_tail,
     )
     # e2.previous_entry_hash == sha256(canonical(e1 minus signature))
     e1_canonical_payload = e1.canonical_payload()
@@ -384,14 +390,22 @@ def test_allocate_next_epoch_counter_tamper_detected(tmp_path: Path) -> None:
     def signer(data: bytes) -> bytes:
         return priv.sign(data)
 
-    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
     # tamper: epoch を書き換えるが sha256 は更新しない
     tampered = json.loads(counter_path.read_bytes())
     tampered["epoch"] = 999
     counter_path.write_bytes(json.dumps(tampered).encode("utf-8"))
 
     with pytest.raises(RuntimeError, match="taskhub_active_registry_epoch_counter_tampered"):
-        ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+        ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
 
 
 # === Codex PR #82 R1 fix coverage ===
@@ -437,7 +451,11 @@ def test_allocate_next_epoch_lock_file_race_free(tmp_path: Path) -> None:
     lock_path.touch(mode=0o644)
 
     # first allocate should still succeed (race-free)
-    e1, _, _ = ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    e1, _, _ = ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
     assert e1 == 1
 
     # permission must be tightened to 0o600 even though we created it with 0o644
@@ -461,12 +479,20 @@ def test_allocate_next_epoch_torn_journal_tail_recovery(tmp_path: Path) -> None:
         return priv.sign(data)
 
     # 1st valid allocation
-    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
     # simulate torn write: append partial JSON line at end
     with journal_path.open("ab") as jf:
         jf.write(b'{"epoch":2,"issued_at":"2026-')  # truncated mid-string
     # 2nd allocation should still succeed by scanning backward
-    e2, _, _ = ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    e2, _, _ = ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
     assert e2 == 2  # derived from valid entry 1, not from torn line
 
 
@@ -485,16 +511,32 @@ def test_allocate_next_epoch_crash_recovery_no_duplicate(tmp_path: Path) -> None
         return priv.sign(data)
 
     # allocate epoch 1, 2, 3
-    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
-    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
-    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
+    ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
+    ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
     # simulate crash: rollback counter to epoch=1 with valid sha256
     counter_payload_stale = {"epoch": 1, "issued_at": "2026-05-21T10:00:00.000000Z"}
     counter_canonical = ar._rfc8785_canonical_bytes(counter_payload_stale)
     counter_payload_stale["sha256"] = ar._sha256_hex(counter_canonical)
     counter_path.write_bytes(json.dumps(counter_payload_stale).encode("utf-8"))
     # next allocation must derive epoch from journal tail (epoch=3), not counter (epoch=1)
-    e_next, _, entry = ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    e_next, _, entry = ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
     assert e_next == 4  # max(1, 3) + 1 = 4
     assert entry.epoch == 4
 
@@ -511,16 +553,32 @@ def test_allocate_next_epoch_counter_replay_with_recomputed_sha_blocked(tmp_path
     def signer(data: bytes) -> bytes:
         return priv.sign(data)
 
-    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
-    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
-    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
+    ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
+    ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
     # attacker tampers counter to lower epoch + recomputes sha256
     tampered_payload = {"epoch": 1, "issued_at": "2026-05-21T10:00:00.000000Z"}
     tampered_canonical = ar._rfc8785_canonical_bytes(tampered_payload)
     tampered_payload["sha256"] = ar._sha256_hex(tampered_canonical)
     counter_path.write_bytes(json.dumps(tampered_payload).encode("utf-8"))
     # journal_tail_epoch=3 で max(1, 3)+1=4 を導出、attacker は epoch=2 を replay できない
-    e_next, _, _ = ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    e_next, _, _ = ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
     assert e_next == 4  # not 2
 
 
@@ -617,7 +675,11 @@ def test_allocate_next_epoch_rejects_counter_symlink(tmp_path: Path) -> None:
         return priv.sign(data)
 
     with pytest.raises(OSError):
-        ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+        ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
 
 
 def test_allocate_next_epoch_rejects_journal_symlink(tmp_path: Path) -> None:
@@ -634,7 +696,11 @@ def test_allocate_next_epoch_rejects_journal_symlink(tmp_path: Path) -> None:
         return priv.sign(data)
 
     with pytest.raises(OSError):
-        ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+        ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
 
 
 def test_allocate_next_epoch_rejects_forged_journal_tail(tmp_path: Path) -> None:
@@ -652,7 +718,11 @@ def test_allocate_next_epoch_rejects_forged_journal_tail(tmp_path: Path) -> None
         return priv.sign(data)
 
     # 1st valid allocation, then append a forged line with high epoch but wrong domain
-    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
     with journal_path.open("ab") as jf:
         jf.write(b'{"domain":"evil.fake.v1","epoch":9999,"signature":"forged","writer_signer_fingerprint":"x"}\n')
     # tamper counter to lower for replay attempt
@@ -660,7 +730,11 @@ def test_allocate_next_epoch_rejects_forged_journal_tail(tmp_path: Path) -> None
     tampered["sha256"] = ar._sha256_hex(ar._rfc8785_canonical_bytes(tampered))
     counter_path.write_bytes(json.dumps(tampered).encode("utf-8"))
     # next allocation should pick journal_tail_epoch=1 (forged line skipped due to wrong domain)
-    e_next, _, _ = ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    e_next, _, _ = ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
     assert e_next == 2  # max(1, 1) + 1 = 2 (not 10000 from forged)
 
 
@@ -674,12 +748,20 @@ def test_allocate_next_epoch_bounded_tail_read(tmp_path: Path) -> None:
     def signer(data: bytes) -> bytes:
         return priv.sign(data)
 
-    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
     # inject large prefix to journal (simulating long history)
     with journal_path.open("ab") as jf:
         jf.write(b"#" * (128 * 1024) + b"\n")  # 128 KiB of garbage prefix
     # subsequent allocation should still find tail entry within 64 KiB window
-    e_next, _, _ = ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    e_next, _, _ = ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path,
+            "host-1", "fp-1", signer,
+            journal_tail_verifier=ar.accept_unverified_tail,
+        )
     assert e_next == 2  # max(1, 1) + 1
 
 
@@ -855,8 +937,9 @@ def test_find_journal_tail_signature_verifier_accepts_valid_entry(tmp_path: Path
     assert found["epoch"] == 7
 
 
-def test_allocate_next_epoch_with_tail_verifier_callable(tmp_path: Path) -> None:
-    """allocate_next_epoch が journal_tail_verifier kwarg を受け取り、forged tail を reject."""
+def test_allocate_next_epoch_verifier_rejects_all_fail_closed(tmp_path: Path) -> None:
+    """Codex PR #82 R4 F-004 fix (P2): journal が存在するが verifier で全 entry が reject される
+    → silent genesis fallback ではなく fail-closed RuntimeError."""
     priv = Ed25519PrivateKey.generate()
     counter_path = tmp_path / "epoch.counter"
     lock_path = tmp_path / "epoch.lock"
@@ -865,15 +948,75 @@ def test_allocate_next_epoch_with_tail_verifier_callable(tmp_path: Path) -> None
     def signer(data: bytes) -> bytes:
         return priv.sign(data)
 
-    # initial allocation creates a valid entry
-    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
-
-    # second allocation with a verifier that rejects everything → previous_entry_hash falls
-    # back to genesis (because no entry passes verification), but new_epoch derives from
-    # counter (= 1) so new_epoch = max(1, 0) + 1 = 2 (verifier just affects previous_entry_hash chain)
-    e_next, _, entry_next = ar.allocate_next_epoch(
+    # initial allocation creates a valid entry (verifier=accept_all)
+    ar.allocate_next_epoch(
         counter_path, lock_path, journal_path, "host-1", "fp-1", signer,
-        journal_tail_verifier=lambda _: False,
+        journal_tail_verifier=ar.accept_unverified_tail,
     )
-    assert e_next == 2  # epoch from counter
-    assert entry_next.previous_entry_hash == "0" * 64  # genesis fallback (forged rejected)
+
+    # second allocation with reject_all verifier → fail-closed
+    with pytest.raises(
+        RuntimeError, match="taskhub_active_registry_epoch_journal_no_valid_tail_found"
+    ):
+        ar.allocate_next_epoch(
+            counter_path, lock_path, journal_path, "host-1", "fp-1", signer,
+            journal_tail_verifier=lambda _: False,
+        )
+
+
+def test_allocate_next_epoch_requires_explicit_verifier_kwarg(tmp_path: Path) -> None:
+    """Codex PR #82 R4 F-003 fix (P1): journal_tail_verifier は keyword-only required arg。
+    omit すると TypeError (caller が verifier を意識的に渡すよう強制、foot-gun 削除)."""
+    priv = Ed25519PrivateKey.generate()
+    counter_path = tmp_path / "epoch.counter"
+    lock_path = tmp_path / "epoch.lock"
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+
+    def signer(data: bytes) -> bytes:
+        return priv.sign(data)
+
+    with pytest.raises(TypeError, match="journal_tail_verifier"):
+        ar.allocate_next_epoch(  # type: ignore[call-arg]
+            counter_path, lock_path, journal_path, "host-1", "fp-1", signer,
+        )
+
+
+def test_encode_number_rejects_oversize_integer() -> None:
+    """Codex PR #82 R4 F-005 fix (P2): I-JSON integer range (±2^53 - 1) を超えると ValueError."""
+    # MAX_INTEGER + 1
+    with pytest.raises(ValueError, match="I-JSON integer out of IEEE-754 double-precision range"):
+        ar._encode_number(1 << 53)
+    # MIN_INTEGER - 1
+    with pytest.raises(ValueError, match="I-JSON integer out of IEEE-754 double-precision range"):
+        ar._encode_number(-(1 << 53))
+
+
+def test_encode_number_accepts_ijson_range_boundary() -> None:
+    """I-JSON range boundary (±(2^53 - 1)) は accept される."""
+    assert ar._encode_number(_IJSON_MAX := (1 << 53) - 1) == str(_IJSON_MAX)
+    assert ar._encode_number(_IJSON_MIN := -((1 << 53) - 1)) == str(_IJSON_MIN)
+
+
+def test_ecmascript_float_repr_strips_leading_zero_exponent() -> None:
+    """Codex PR #82 R4 F-001 fix (P1): exponent leading zero を strip ("1e-07" → "1e-7")."""
+    # repr(1.5e-7) → "1.5e-07" in Python, ECMAScript → "1.5e-7"
+    encoded = ar._ecmascript_float_repr(1.5e-7)
+    assert encoded == "1.5e-07".replace("e-07", "e-7")
+    assert "e-7" in encoded
+    assert "e-07" not in encoded
+    # 3-digit exponent unchanged
+    encoded3 = ar._ecmascript_float_repr(1.5e-100)
+    assert "e-100" in encoded3
+
+
+def test_ecmascript_float_repr_handles_integer_valued_above_1e21() -> None:
+    """integer-valued float >= 1e21 は scientific notation を使う (ECMAScript ToString rule)."""
+    # 1e21 は repr(1e21) → "1e+21" (Python はこの境界で scientific)
+    encoded = ar._encode_number(1e21)
+    assert encoded == "1e+21"  # exponent +21 (3 digit ではない、no strip needed)
+
+
+def test_rfc8785_canonical_with_oversize_integer_rejected() -> None:
+    """encoding-level でも I-JSON range 違反は reject される."""
+    with pytest.raises(ValueError, match="I-JSON integer"):
+        ar._rfc8785_canonical_bytes({"v": (1 << 53)})

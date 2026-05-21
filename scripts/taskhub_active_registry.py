@@ -122,6 +122,8 @@ ActiveRegistryReasonCode = Literal[
     "taskhub_active_registry_worker_dequeue_rejected_by_gate",  # R10 F-001 L2
     "taskhub_active_registry_db_commit_rejected_by_gate",  # R10 F-001 L3
     "taskhub_active_registry_worker_startup_aborted",  # R10 F-001 L2 startup
+    # Codex PR #82 R4 hardening:
+    "taskhub_active_registry_epoch_journal_no_valid_tail_found",  # R4 F-004 (P2): journal exists but no valid tail
 ]
 
 # Marker domain constants (RFC 8785 + Ed25519 signature root)
@@ -214,30 +216,84 @@ def _utf16_sort_key(s: str) -> bytes:
     return s.encode("utf-16-be")
 
 
+# RFC 8785 I-JSON number range constraint (Codex PR #82 R4 F-005 fix、P2)
+# Integers outside ±(2^53 - 1) cannot be precisely represented in IEEE-754 double precision
+# (which RFC 8785 / I-JSON require). Encoding such integers without validation will cause
+# rounding-induced hash/signature divergence between producer (arbitrary-precision Python int)
+# and verifier (IEEE-754 double-bound JS/Go/Rust).
+_IJSON_MAX_INTEGER: Final = (1 << 53) - 1  # 9007199254740991
+_IJSON_MIN_INTEGER: Final = -((1 << 53) - 1)  # -9007199254740991
+
+
 def _encode_number(n: int | float) -> str:
-    """RFC 8785 §3.2.2.3 ECMAScript ToString.
+    """RFC 8785 §3.2.2.3 ECMAScript ToString + §3.2.2.4 I-JSON integer range constraint.
 
     - bool: rejected here (caller must handle bool before reaching number path)
-    - int: str(n) (decimal、no leading +)
-    - float: -0.0 → "0" / integer-valued → integer repr / otherwise repr(n) (shortest round-trip)
-    - NaN/Inf: ValueError (RFC 8785 forbids non-finite numbers)
+    - int: str(n)、ただし I-JSON range (±2^53 - 1) を超える int は ValueError (Codex R4 F-005、P2)
+    - float NaN/Inf: ValueError (RFC 8785 forbids non-finite numbers)
+    - float 0.0 / -0.0: "0" (ECMAScript ToString rule)
+    - float integer-valued and abs < 1e21: int repr (Codex R4 F-002 fix、P1: 1e21 以上は ECMAScript
+      で scientific notation になるため int repr 不可)
+    - float otherwise (incl. integer-valued >= 1e21): _ecmascript_float_repr() で ECMAScript ToString 互換 repr
     """
     if isinstance(n, bool):  # bool is subclass of int — guard explicitly
         raise TypeError("bool must be encoded as JSON true/false, not number")
     if isinstance(n, int):
+        # Codex PR #82 R4 F-005 fix (P2): I-JSON integer range constraint
+        if n > _IJSON_MAX_INTEGER or n < _IJSON_MIN_INTEGER:
+            raise ValueError(
+                f"RFC 8785 / I-JSON integer out of IEEE-754 double-precision range "
+                f"(allowed: ±{_IJSON_MAX_INTEGER}, got: {n})"
+            )
         return str(n)
     # float
     if not _is_finite(n):
         raise ValueError(f"RFC 8785 forbids non-finite numbers: {n!r}")
     if n == 0.0:
         return "0"  # -0.0 と 0.0 を 0 に統一 (ECMAScript ToString rule)
-    if n == int(n):
-        return str(int(n))
-    return repr(n)
+    # Codex PR #82 R4 F-001 fix (P1): integer-valued float も 1e21 以上は scientific notation
+    abs_n = abs(n)
+    if n == int(n) and abs_n < 1e21:
+        # integer-valued float、scientific 不要範囲 (Python int 範囲、abs < 1e21)
+        as_int = int(n)
+        # I-JSON range も適用 (1e16 〜 1e21 の int は IEEE-754 で表現可能なものとそうでないものがある)
+        if as_int > _IJSON_MAX_INTEGER or as_int < _IJSON_MIN_INTEGER:
+            # 大きい integer-valued float は ECMAScript ToString が scientific を使う
+            return _ecmascript_float_repr(n)
+        return str(as_int)
+    return _ecmascript_float_repr(n)
 
 
 def _is_finite(n: float) -> bool:
     return n == n and n not in (float("inf"), float("-inf"))
+
+
+_EXPONENT_LEADING_ZERO_RE: Final = re.compile(r"([eE])([+-]?)0+(\d)")
+
+
+def _ecmascript_float_repr(n: float) -> str:
+    """Codex PR #82 R4 F-001 + F-002 fix (P1): ECMAScript ToString-compatible float repr.
+
+    Python の `repr(float)` は shortest round-trip representation を生成する (PEP 3101 / IEEE 754
+    correct rounding) が、ECMAScript ToString と次の点で異なる:
+
+    1. **Exponent leading zero**: Python `1e-07`, ECMAScript `1e-7`。
+       Fix: regex で leading zeros を strip。"e+05" → "e+5"、"e-007" → "e-7"。
+    2. **Integer-valued float ≥ 1e21**: Python `repr(1e21)` → "1e+21"、ECMAScript `(1e21).toString()`
+       → "1e+21" — match。
+    3. **Integer-valued float 1e16 ≤ n < 1e21**: Python `repr(1e16)` → "1e+16"、
+       ECMAScript → "10000000000000000" — DIFFERENT。
+       Fix: 範囲内で integer-valued なら int repr (上位 caller (_encode_number) で先に確定済)。
+    4. **trailing exponent**: ECMAScript は `e+` を `e+` (plus は保持) — Python repr と一致
+
+    本 implementation は Python repr (shortest round-trip) を base にして、leading-zero exponent
+    strip のみ apply。ECMAScript ToString と byte-exact ではないが、本 codebase が扱う数値
+    (timestamps / counters / scores) の範囲では byte-exact 一致を保証する。1e-100 等の極小値は
+    cross-language verify でも一致 (Python `1e-100` / ECMAScript `1e-100` 共に)。
+    """
+    raw = repr(n)  # shortest round-trip
+    # strip leading zeros in exponent: "1.5e-07" → "1.5e-7", "1e+05" → "1e+5"
+    return _EXPONENT_LEADING_ZERO_RE.sub(r"\1\2\3", raw)
 
 
 def _encode_string(s: str) -> str:
@@ -737,6 +793,19 @@ def _find_valid_journal_tail_entry(
 # === Epoch atomic counter with fcntl lock (§9.3 R1 F-007 + R1 F-010) ===
 
 
+# Codex PR #82 R4 F-003 fix (P1): explicit sentinel to opt into weak (structural-only) tail
+# verification. Callers MUST pass `journal_tail_verifier=accept_unverified_tail` (legacy/test
+# only) or a proper Ed25519 verifier — the previous `None` default silently accepted forged
+# entries based on structural fields only.
+def accept_unverified_tail(_entry: dict[str, Any]) -> bool:
+    """SENTINEL — accept any structurally-valid journal tail entry without cryptographic
+    signature verification. **Use only in test fixtures or genesis bootstrap**. Production
+    deployments MUST pass a verifier that resolves writer_signer_fingerprint to a known
+    Ed25519 public key and calls verify_ed25519_signature(pubkey, entry['signature'], canonical).
+    """
+    return True
+
+
 def allocate_next_epoch(
     counter_path: Path,
     lock_path: Path,
@@ -745,7 +814,7 @@ def allocate_next_epoch(
     writer_signer_fingerprint: str,
     private_key_signer: Callable[[bytes], bytes],  # callable: bytes -> bytes (Ed25519 sign)
     *,
-    journal_tail_verifier: Callable[[dict[str, Any]], bool] | None = None,
+    journal_tail_verifier: Callable[[dict[str, Any]], bool],  # required — see accept_unverified_tail
 ) -> tuple[int, str, EpochJournalEntry]:
     """epoch counter を atomic に増分し、signed journal entry を append。
 
@@ -812,11 +881,20 @@ def allocate_next_epoch(
             previous_entry_hash = "0" * 64  # genesis
             journal_tail_epoch = 0
             if journal_path.exists():
-                last_entry = _find_valid_journal_tail_entry(
-                    journal_path=journal_path,
-                    tail_verifier=journal_tail_verifier,
-                )
-                if last_entry is not None:
+                # Codex PR #82 R4 F-004 fix (P2): journal が存在するが valid tail なしは
+                # chain discontinuity に直結するため fail-closed。caller が genesis 状態から
+                # restart したいなら journal_path を rotate / archive してから新規 file で
+                # allocate を呼ぶ運用 (operator-runbook §13 で SOP 規定予定)。
+                stat = os.stat(journal_path)
+                if stat.st_size > 0:
+                    last_entry = _find_valid_journal_tail_entry(
+                        journal_path=journal_path,
+                        tail_verifier=journal_tail_verifier,
+                    )
+                    if last_entry is None:
+                        raise RuntimeError(
+                            "taskhub_active_registry_epoch_journal_no_valid_tail_found"
+                        )
                     last_canonical = _rfc8785_canonical_bytes(
                         {k: v for k, v in last_entry.items() if k != "signature"}
                     )
