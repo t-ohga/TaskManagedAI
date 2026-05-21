@@ -241,15 +241,12 @@ def test_with_active_registry_gate_passes_when_gate_ok(tmp_path: Path) -> None:
     assert result == 10
 
 
-def test_with_active_registry_gate_raises_arq_retry_when_gate_fails(tmp_path: Path) -> None:
-    """Codex R5 F-R5-001 fix (P1): wrapped task が gate fail 時に `ArqRetry(defer=60)` を raise.
-
-    `on_job_start` から raise する代わりに task body 内で raise することで、
-    ARQ job-execution try/except が Retry を正しく handle (job re-queue) する。
+def test_with_active_registry_gate_re_enqueues_when_gate_fails(tmp_path: Path) -> None:
+    """Codex R5 F-R5-001 + R6 F-R6-001 fix (P1): wrapped task が gate fail 時に
+    ctx['redis'].enqueue_job 経由で fresh job を投入 + return None (current job success)。
+    ArqRetry を直接 raise しないため ARQ default max_tries=5 を消費しない。
     """
     import asyncio
-
-    from arq.worker import Retry as ArqRetry
 
     config_dir, priv, fp = _setup_active(tmp_path)
     # freeze marker 配置 → gate fail
@@ -261,13 +258,77 @@ def test_with_active_registry_gate_raises_arq_retry_when_gate_fails(tmp_path: Pa
     async def _real_task(ctx: dict[str, object]) -> str:
         return "executed"  # 到達しないはず
 
+    # Mock redis with `enqueue_job` callable that records calls
+    enqueue_calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+
+    class _MockRedis:
+        async def enqueue_job(self, function: str, *args: object, **kwargs: object) -> None:
+            enqueue_calls.append((function, args, kwargs))
+
     wrapped = with_active_registry_gate(_real_task)
+    ctx: dict[str, object] = {"redis": _MockRedis()}
+    _attach(ctx, config_dir, priv, fp)
+    result = asyncio.run(wrapped(ctx))
+    # current job is "success" with None result, new job enqueued
+    assert result is None
+    assert len(enqueue_calls) == 1
+    function_name, _args, kwargs = enqueue_calls[0]
+    assert function_name == "_real_task"
+    assert kwargs.get("_defer_by") == 60
+
+
+def test_with_active_registry_gate_falls_back_to_retry_when_redis_unavailable(
+    tmp_path: Path,
+) -> None:
+    """Codex R6 F-R6-001 fix (P1): ctx['redis'] が enqueue 不可な場合は
+    `ArqRetry(defer=60)` に fallback (drop よりはまし)。"""
+    import asyncio
+
+    from arq.worker import Retry as ArqRetry
+
+    config_dir, priv, fp = _setup_active(tmp_path)
+    (config_dir / gate_helper.ACTIVE_REGISTRY_DIRNAME / gate_helper.FREEZE_MARKER_FILENAME).write_text(
+        json.dumps({"host_id": "host-target", "frozen_at": "2026-05-21T11:00:00Z"}),
+        encoding="utf-8",
+    )
+
+    async def _real_task(ctx: dict[str, object]) -> str:
+        return "executed"
+
+    wrapped = with_active_registry_gate(_real_task)
+    # ctx に redis を attach しない → fallback path
     ctx: dict[str, object] = {}
     _attach(ctx, config_dir, priv, fp)
-    with pytest.raises(ArqRetry) as excinfo:
+    with pytest.raises(ArqRetry):
         asyncio.run(wrapped(ctx))
-    # `ArqRetry.defer` は timedelta or int seconds、defer=60 で初期化済み
-    assert excinfo.value.defer_score is not None  # ArqRetry 内部 attribute (再投入予定)
+
+
+def test_with_active_registry_gate_re_enqueue_failure_falls_back_to_retry(
+    tmp_path: Path,
+) -> None:
+    """Codex R6 F-R6-001 fix (P1): enqueue 自体が例外 (redis down 等) なら ArqRetry fallback."""
+    import asyncio
+
+    from arq.worker import Retry as ArqRetry
+
+    config_dir, priv, fp = _setup_active(tmp_path)
+    (config_dir / gate_helper.ACTIVE_REGISTRY_DIRNAME / gate_helper.FREEZE_MARKER_FILENAME).write_text(
+        json.dumps({"host_id": "host-target", "frozen_at": "2026-05-21T11:00:00Z"}),
+        encoding="utf-8",
+    )
+
+    async def _real_task(ctx: dict[str, object]) -> str:
+        return "executed"
+
+    class _BrokenRedis:
+        async def enqueue_job(self, *_args: object, **_kwargs: object) -> None:
+            raise ConnectionError("redis down")
+
+    wrapped = with_active_registry_gate(_real_task)
+    ctx: dict[str, object] = {"redis": _BrokenRedis()}
+    _attach(ctx, config_dir, priv, fp)
+    with pytest.raises(ArqRetry):
+        asyncio.run(wrapped(ctx))
 
 
 def test_with_active_registry_gate_passes_when_gate_disabled(tmp_path: Path) -> None:

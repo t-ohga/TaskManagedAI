@@ -169,14 +169,15 @@ def verify_worker_dequeue_if_configured(ctx: MutableMapping[str, object]) -> Non
 def with_active_registry_gate(
     task_fn: Callable[..., Awaitable[Any]],
 ) -> Callable[..., Awaitable[Any]]:
-    """ARQ task function を gate check + Retry handling で wrap する decorator。
+    """ARQ task function を gate check + re-enqueue handling で wrap する decorator。
 
     Codex PR #85 R5 F-R5-001 fix (P1): `on_job_start` から `ArqRetry` を raise する
-    ことは ARQ worker job-execution try/except の外側で発生するため、worker loop
-    が retry を認識できず terminate するリスクがある。task function 内で
-    verify + Retry raise する pattern に rewrite (ARQ の `Retry` exception は
-    task function 内で raise された場合のみ job-execution try/except で正しく
-    handle される)。
+    ことは ARQ worker job-execution try/except の外側で発生するため、task wrapper 経由に変更。
+    Codex PR #85 R6 F-R6-001 fix (P1): `ArqRetry(defer=60)` を毎回 raise すると
+    ARQ default `max_tries=5` を消費し sustained freeze/decommission window で job が
+    permanent failure になる。`ctx["redis"].enqueue_job(...)` で fresh try counter で
+    新規 job を投入 + current job は None 返却 (success 扱い) するようにする。
+    enqueue 失敗時は ArqRetry fallback (max_tries に拘束されるが drop よりはまし)。
 
     使い方:
         @with_active_registry_gate
@@ -198,8 +199,40 @@ def with_active_registry_gate(
         try:
             verify_worker_dequeue_if_configured(ctx)
         except WorkerDequeueRejected as exc:
+            # Codex R6 F-R6-001 fix: fresh re-enqueue で max_tries 消費を回避
+            redis = ctx.get("redis")
+            enqueue_job = getattr(redis, "enqueue_job", None)
+            if callable(enqueue_job):
+                try:
+                    result = enqueue_job(task_fn.__name__, *args, _defer_by=60, **kwargs)
+                    # ArqRedis.enqueue_job は coroutine を返す。dynamic call のため
+                    # `inspect.isawaitable` で safe に await。
+                    import inspect
+
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception as enqueue_exc:  # noqa: BLE001 - redis 接続不可等
+                    logger.error(
+                        "worker_gate_re_enqueue_failed_fallback_to_retry",
+                        extra={
+                            "reason_code": exc.reason_code,
+                            "task": task_fn.__name__,
+                            "enqueue_exc": str(enqueue_exc),
+                        },
+                    )
+                    raise ArqRetry(defer=60) from exc
+                logger.warning(
+                    "worker_dequeue_rejected_re_enqueued",
+                    extra={
+                        "reason_code": exc.reason_code,
+                        "task": task_fn.__name__,
+                        "defer_seconds": 60,
+                    },
+                )
+                return None  # current job 完了 (success)、新規 job が defer 後再実行
+            # fallback: redis pool 未取得 → ArqRetry (max_tries 拘束だが drop よりはまし)
             logger.warning(
-                "worker_dequeue_rejected_retry_scheduled",
+                "worker_dequeue_rejected_retry_scheduled_no_redis",
                 extra={"reason_code": exc.reason_code, "defer_seconds": 60},
             )
             raise ArqRetry(defer=60) from exc
