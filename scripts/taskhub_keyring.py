@@ -111,8 +111,10 @@ KEYRING_DIR_PERMISSION = 0o700  # owner only
 # audit_verify は historical record の signature 検証 (record_signed_at < deprecated_at で pass)
 # のため使う。authorization と audit を 1 predicate で兼ねない (§9.4 R2 F-005 invariant)。
 VerifyMode = Literal[
-    "authorization_verify",  # destructive operation 実行可否判定 (status=active only、deprecated/revoked は無条件 reject)
-    "audit_verify",  # historical record の signature 検証用 (status ∈ {active, deprecated}、record_signed_at < deprecated_at で pass)
+    # destructive operation 実行可否判定 (status=active only、deprecated/revoked は無条件 reject)
+    "authorization_verify",
+    # historical record signature 検証用 (status ∈ {active, deprecated}、record_signed_at < deprecated_at)
+    "audit_verify",
 ]
 
 # Default lifetime / overlap policy (§3.A NIST SP 800-57 推奨)

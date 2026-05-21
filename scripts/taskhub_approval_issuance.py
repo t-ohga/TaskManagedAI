@@ -27,7 +27,7 @@ approval issuance journal + clock monotonicity attestation 実装の foundationa
   "previous_entry_hash": "<sha256 of prev entry canonical>",
   "key_fingerprint_at_issue": "<keyring active key fp at issue>",
   "key_status_at_issue": "active",
-  "monotonic_clock_attestation": {                          // §9.10 R10 F-002 必須 (Codex R1 F-003 fix: invariant 3 と整合)
+  "monotonic_clock_attestation": {  // §9.10 R10 F-002 必須 (Codex R1 F-003 fix)
     "source": "linux_clock_monotonic" | "tpm_clock" | "trusted_time_attestation",
     "value": <int nanoseconds>,
     "previous_value": <int nanoseconds>
