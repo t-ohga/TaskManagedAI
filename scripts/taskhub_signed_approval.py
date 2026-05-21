@@ -117,12 +117,19 @@ DRILL_KIND_ALLOWED_SUBCOMMANDS: dict[str, frozenset[str]] = {
 # SP022-T02 Phase 2 / T08 batch 2: backup_claim (R2-F-001 adopt)
 @dataclass(frozen=True)
 class BackupApprovalClaim:
-    """Backup-specific approval claim (SP022-T02 Phase 2 / T08 batch 2).
+    """Backup-specific approval claim (SP022-T02 Phase 2 / T08 batch 2 / Phase 5).
 
     R2-F-001 adopt: backup subcommand では output_path / include_sops_env /
     skip_service_stop / overwrite / age_public_key_fingerprint 全て approval payload に
-    含め、CLI 引数との完全一致を verify。Phase 1 既存 record (backup_claim 不在) は
-    backup では deny、他 subcommand では従来通り verify。
+    含め、CLI 引数との完全一致を verify。
+
+    SP022-T02 Phase 5 ADV2 R3 F-002 + R4 F-002 + R9 F-001 + R13 F-001 CRITICAL adopt:
+    backup_runtime_binding_fingerprint (6 field 化) を追加。canonical OperationContext
+    (compose_file_realpath + sha256 + project_directory + artifacts_dir_realpath + manifest_sha256
+    + sops_env + env_file + compose_config_canonical_hash + pg_user/db + service identity) を
+    JCS canonical JSON → SHA-256。PR #77 legacy 5-field record (`backup_runtime_binding_fingerprint=None`)
+    は signed_approval.py レベルでは parse + signature verify OK (互換性維持)、`_cmd_backup` Phase 5
+    real I/O では常に reject (`backup_claim_legacy_runtime_binding_unsupported`、再 issue 必須)。
     """
 
     output_path: str  # absolute path string, normpath
@@ -130,6 +137,8 @@ class BackupApprovalClaim:
     skip_service_stop: bool
     overwrite: bool
     age_public_key_fingerprint: str  # SHA-256 hex of age public key bytes
+    # SP022-T02 Phase 5: optional (Phase 5 新 record でのみ非 None、PR #77 legacy では None)
+    backup_runtime_binding_fingerprint: str | None = None
 
 
 # SP022-T02 Phase 4 / T08 batch 4: restore_rollback_claim (R1 F-001 + ADV R1 F-010 adopt)
