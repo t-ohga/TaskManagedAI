@@ -53,12 +53,31 @@ def test_filter_env_rejects_rediscli_auth() -> None:
     assert "REDISCLI_AUTH" not in filtered
 
 
-def test_filter_env_allows_pgpassfile() -> None:
-    """R3-F-001 adopt: PGPASSFILE は temp file 経路として allowlist 残存."""
-    pgpass_str = "/tmp/.pgpass"  # noqa: S108 — test fixture, intentional /tmp literal for env value
+def test_filter_env_rejects_pgpassfile_by_default() -> None:
+    """SP022-T02 Phase 5 ADV R1 F-008 + R2 F-002 adopt: PGPASSFILE は default allowlist から削除.
+
+    Phase 5 compose exec + container 内 trust auth に切替、host pgpassfile 経路は不要。
+    default _filter_env では PGPASSFILE を pass しないことを確認。
+    """
+    pgpass_str = "/tmp/.pgpass"  # noqa: S108 — test fixture
     parent = {"PATH": "/usr/bin", "PGPASSFILE": pgpass_str}
     filtered = _filter_env(parent)
-    assert filtered.get("PGPASSFILE") == pgpass_str
+    assert "PGPASSFILE" not in filtered, (
+        "Phase 5 で PGPASSFILE は default allowlist から削除されるべき (compose exec 経路)"
+    )
+
+
+def test_filter_env_allows_pgpassfile_via_extra_allowlist_override() -> None:
+    """SP022-T02 Phase 5 ADV R2 F-002 adopt: legacy host で PGPASSFILE が必要な場合は明示 override.
+
+    extra_allowlist で明示指定すれば pass する (caller の opt-in、default は閉)。
+    """
+    pgpass_str = "/tmp/.pgpass"  # noqa: S108 — test fixture
+    parent = {"PATH": "/usr/bin", "PGPASSFILE": pgpass_str}
+    filtered = _filter_env(parent, extra_allowlist=("PGPASSFILE",))
+    assert filtered.get("PGPASSFILE") == pgpass_str, (
+        "extra_allowlist で明示 override すれば legacy host 互換で pass する"
+    )
 
 
 def test_sanitize_stderr_redacts_private_key() -> None:

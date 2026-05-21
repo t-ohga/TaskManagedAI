@@ -15,7 +15,8 @@ Subcommands (ADR-00021 §3 table + §11/§14 hardening + §11.5 multi-agent fixt
 - `taskhub active-registry`: skeleton (signed local ledger or closed-network shared 状態、
   source/target 同時 active reject contract、§670 PGA-F-003)
 - `taskhub restore --input <path>`: SP022-T02 Phase 3 real I/O (restore orchestration、signed approval 経由)
-- `taskhub restore --rollback <pre-restore-ts>`: SP022-T02 Phase 4 real I/O (rollback、signed approval + restore_rollback_claim verify 経由、§290 / §299 rollback 経路、dry-run ではない)
+- `taskhub restore --rollback <pre-restore-ts>`: SP022-T02 Phase 4 real I/O (rollback、signed
+  approval + restore_rollback_claim verify 経由、§290 / §299 rollback 経路、dry-run ではない)
 - `taskhub migrate --target <hostname>`: skeleton (one-shot host migration)
 - `taskhub status [--age-safety] [--mac-preflight] [--remote <host>]`: skeleton (host status
   + §14.1 age-safety drill + §14.2 mac-preflight + split-brain remote check)
@@ -45,6 +46,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 # R2-F-001 adopt: dual import (direct-script `python scripts/taskhub_admin.py` と
 # console_script `uv run taskhub` の両方で動かす)
@@ -152,14 +154,16 @@ def _cmd_backup(args: argparse.Namespace) -> int:
         )
         return 2
 
-    # SP022-T02 Phase 2 / T08 batch 2: build BackupOptions + age public key fingerprint
+    # SP022-T02 Phase 2 / T08 batch 2 / Phase 5: build BackupOptions + age public key fingerprint
     try:
         from scripts.taskhub_backup_orchestrator import (
             BackupOptions,
             BackupRuntimeError,
             BackupToolNotFoundError,
             BackupUsageError,
+            compute_full_backup_runtime_binding_fingerprint,
             run_backup,
+            validate_age_recipient_bytes,
         )
     except ModuleNotFoundError:
         _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -170,7 +174,9 @@ def _cmd_backup(args: argparse.Namespace) -> int:
             BackupRuntimeError,
             BackupToolNotFoundError,
             BackupUsageError,
+            compute_full_backup_runtime_binding_fingerprint,
             run_backup,
+            validate_age_recipient_bytes,
         )
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -181,6 +187,14 @@ def _cmd_backup(args: argparse.Namespace) -> int:
         include_sops_env=args.include_sops_env,
         skip_service_stop=getattr(args, "skip_service_stop", False),
         overwrite=getattr(args, "overwrite", False),
+    )
+    # SP022-T02 Phase 5 detect: target_compose_file_path が repo_root 配下に存在 +
+    # docker compose CLI が available + record claim に backup_runtime_binding_fingerprint がある場合
+    # → phase_5_mode で実行 (docker compose exec 経路)
+    phase_5_mode = (
+        backup_options.target_compose_file_path != Path("/dev/null")
+        and backup_options.target_compose_file_path.is_file()
+        and os.environ.get("TASKHUB_BACKUP_PHASE_5_MODE", "1") != "0"
     )
 
     # R2-F-001 adopt: build BackupApprovalClaim only when approval_id given
@@ -226,7 +240,27 @@ def _cmd_backup(args: argparse.Namespace) -> int:
         )
         return 2
 
-    # Real backup orchestration (SP022-T02 Phase 2 / T08 batch 2)
+    # SP022-T02 Phase 5 dispatch (phase_5_mode 時 destructive_lock + verified copy bind)
+    if phase_5_mode and args.approval_id:
+        # Codex PR #80 F-001/F-002 adopt: signed record の backup_claim を extras から取得
+        # caller-supplied claim を local で recompute せず、signed record の fingerprint を使う
+        record_backup_claim_from_signed = extras.get("record_backup_claim")
+        return _cmd_backup_phase_5(
+            args,
+            backup_options=backup_options,
+            record_backup_claim=record_backup_claim_from_signed,
+            backup_orchestrator=(
+                BackupOptions,
+                BackupRuntimeError,
+                BackupToolNotFoundError,
+                BackupUsageError,
+                compute_full_backup_runtime_binding_fingerprint,
+                run_backup,
+                validate_age_recipient_bytes,
+            ),
+        )
+
+    # PR #77 互換: legacy host TCP + PGPASSFILE 経路 (phase_5_mode=False)
     try:
         result = run_backup(backup_options)
     except (BackupUsageError, BackupToolNotFoundError) as exc:
@@ -237,6 +271,229 @@ def _cmd_backup(args: argparse.Namespace) -> int:
         return 1
     print(json.dumps(result.summary(), sort_keys=True))  # noqa: T201
     return 0
+
+
+def _cmd_backup_phase_5(  # noqa: C901 — Phase 5 lock-flow は 6 step を 1 関数で原子的に維持
+    args: argparse.Namespace,
+    *,
+    backup_options: Any,  # BackupOptions (Any to avoid forward-ref circular)  # noqa: ANN401
+    record_backup_claim: Any = None,  # BackupApprovalClaim from signed record  # noqa: ANN401
+    backup_orchestrator: tuple[Any, ...],  # imports tuple
+) -> int:
+    """SP022-T02 Phase 5: destructive_lock 統合 + verified copy bind + post-stop fingerprint verify.
+
+    実行順序 (ADV2 R11 F-001 CRITICAL adopt):
+    (1) destructive_lock 取得 (backup/restore/restore-rollback mutual exclusion)
+    (2) lock 内 age_public_key 再読込 + sha256 fingerprint verify (ADV R1 F-003 TOCTOU)
+    (3) verified_age_recipient bind + age recipient regex validate (R3 F-001 + R1 F-006)
+    (4) verified_temp_dir 作成 (0o700)
+    (5) verified compose copy + project_dir snapshot + metadata snapshot (R5 F-002 + R6 F-001 + R7 F-001)
+    (6) verified env_file copy + metadata snapshot (R4 F-002 + R9 F-002)
+    (7) verified sops_env copy + metadata snapshot (R5 F-002)
+    (8) backup_options に verified copy 4 種 + snapshot 4 種 + sidecar bind
+    (9) run_backup(phase_5_mode=True, record_backup_claim, verified_temp_dir)
+        で post-stop staging + fingerprint verify + archive
+    """
+    import dataclasses
+    import shutil
+    import tempfile
+    from hashlib import sha256
+
+    (
+        BackupOptions,
+        BackupRuntimeError,
+        BackupToolNotFoundError,
+        BackupUsageError,
+        compute_full_backup_runtime_binding_fingerprint,
+        run_backup,
+        validate_age_recipient_bytes,
+    ) = backup_orchestrator
+
+    # (1) destructive_lock
+    try:
+        from scripts.taskhub_destructive_lock import acquire_destructive_lock
+    except ModuleNotFoundError:
+        _REPO_ROOT = Path(__file__).resolve().parent.parent
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.taskhub_destructive_lock import acquire_destructive_lock  # noqa: E402
+
+    with acquire_destructive_lock("backup", args.approval_id) as (acquired, _lock_reason, blocker):
+        if not acquired:
+            print(  # noqa: T201
+                f"ERROR: destructive_lock not acquired (blocker={blocker!r})",
+                file=sys.stderr,
+            )
+            return 2
+
+        # (2) age_public_key 再読込 + fingerprint verify (TOCTOU)
+        try:
+            age_pub_bytes_inlock = backup_options.age_public_key_path.read_bytes()
+        except OSError:
+            print(  # noqa: T201
+                "ERROR: age public key not readable after lock acquisition "
+                "[reason=backup_age_key_toctou_mismatch]",
+                file=sys.stderr,
+            )
+            return 2
+        age_pub_fp_inlock = sha256(age_pub_bytes_inlock).hexdigest()
+        # Codex PR #80 F-001 CRITICAL adopt: record-side claim (signed approval から extras 経由取得) と
+        # in-lock 再計算 fingerprint を exact match 比較。self-referential fallback を **物理削除**、
+        # record claim が None なら verify-by-signature gate が既に Phase 1 record (claim 不在) を deny 済の
+        # ため到達不能 (defense-in-depth で raise)。
+        if record_backup_claim is None:
+            print(  # noqa: T201
+                "ERROR: record_backup_claim missing in Phase 5 path "
+                "(signed approval gate should have rejected, defense-in-depth) "
+                "[reason=taskhub_signed_approval_backup_claim_required]",
+                file=sys.stderr,
+            )
+            return 2
+        expected_age_fp = record_backup_claim.age_public_key_fingerprint
+        if age_pub_fp_inlock != expected_age_fp:
+            print(  # noqa: T201
+                f"ERROR: age_public_key fingerprint TOCTOU mismatch "
+                f"(expected={expected_age_fp[:16]}, in-lock={age_pub_fp_inlock[:16]}) "
+                "[reason=backup_age_key_toctou_mismatch]",
+                file=sys.stderr,
+            )
+            return 2
+
+        # (3) verified_age_recipient bind + regex validate
+        try:
+            verified_recipient = validate_age_recipient_bytes(age_pub_bytes_inlock)
+        except BackupRuntimeError as exc:
+            print(exc.stderr_message() if hasattr(exc, "stderr_message") else str(exc),  # noqa: T201
+                  file=sys.stderr)
+            return 2
+
+        # (4) verified_temp_dir 作成 (0o700)
+        verified_temp_dir = Path(tempfile.mkdtemp(prefix="taskhub-backup-verified-"))
+        try:
+            os.chmod(verified_temp_dir, 0o700)
+        except OSError:
+            pass
+
+        try:
+            # (5) verified compose copy + project_dir + metadata snapshot
+            verified_source_compose_realpath = backup_options.target_compose_file_path.resolve(strict=True)
+            verified_source_project_dir = verified_source_compose_realpath.parent
+            try:
+                compose_bytes_inlock = backup_options.target_compose_file_path.read_bytes()
+            except OSError:
+                print("ERROR: compose file unreadable after lock "  # noqa: T201
+                      "[reason=backup_compose_file_unreadable]", file=sys.stderr)
+                return 2
+            compose_sha_inlock = sha256(compose_bytes_inlock).hexdigest()
+            verified_compose_execution_input = verified_temp_dir / "compose.yml"
+            _write_verified_copy(verified_compose_execution_input, compose_bytes_inlock)
+            if verified_compose_execution_input.read_bytes() != compose_bytes_inlock:
+                print("ERROR: verified compose copy sha256 mismatch "  # noqa: T201
+                      "[reason=backup_compose_verified_copy_tampered]", file=sys.stderr)
+                return 2
+            verified_compose_metadata_snapshot = _metadata_snapshot(
+                verified_compose_execution_input, compose_sha_inlock,
+            )
+
+            # (6) verified env_file copy + metadata snapshot (env_file_path が None でなければ)
+            verified_env_file_execution_input: Path | None = None
+            verified_env_file_metadata_snapshot: dict[str, int | str] | None = None
+            if backup_options.env_file_path is not None:
+                try:
+                    env_bytes_inlock = backup_options.env_file_path.read_bytes()
+                except OSError:
+                    print("ERROR: env_file unreadable after lock "  # noqa: T201
+                          "[reason=backup_compose_env_file_unreadable]", file=sys.stderr)
+                    return 2
+                env_sha_inlock = sha256(env_bytes_inlock).hexdigest()
+                verified_env_file_execution_input = verified_temp_dir / "env.env"
+                _write_verified_copy(verified_env_file_execution_input, env_bytes_inlock)
+                verified_env_file_metadata_snapshot = _metadata_snapshot(
+                    verified_env_file_execution_input, env_sha_inlock,
+                )
+
+            # (7) verified sops_env copy + metadata snapshot (include_sops_env 時のみ)
+            verified_sops_env_execution_input: Path | None = None
+            verified_sops_env_metadata_snapshot: dict[str, int | str] | None = None
+            if backup_options.include_sops_env:
+                try:
+                    sops_bytes_inlock = backup_options.sops_env_path.read_bytes()
+                except OSError:
+                    print("ERROR: sops_env unreadable after lock "  # noqa: T201
+                          "[reason=backup_payload_source_unreadable]", file=sys.stderr)
+                    return 2
+                sops_sha_inlock = sha256(sops_bytes_inlock).hexdigest()
+                verified_sops_env_execution_input = verified_temp_dir / "sops_env.bin"
+                _write_verified_copy(verified_sops_env_execution_input, sops_bytes_inlock)
+                verified_sops_env_metadata_snapshot = _metadata_snapshot(
+                    verified_sops_env_execution_input, sops_sha_inlock,
+                )
+
+            # (8) backup_options 一括 bind (run_backup 内 post-stop で artifacts staging を実行)
+            backup_options = dataclasses.replace(
+                backup_options,
+                verified_age_recipient=verified_recipient,
+                verified_source_project_dir=verified_source_project_dir,
+                verified_compose_execution_input=verified_compose_execution_input,
+                verified_compose_metadata_snapshot=verified_compose_metadata_snapshot,
+                verified_env_file_execution_input=verified_env_file_execution_input,
+                verified_env_file_metadata_snapshot=verified_env_file_metadata_snapshot,
+                verified_sops_env_execution_input=verified_sops_env_execution_input,
+                verified_sops_env_metadata_snapshot=verified_sops_env_metadata_snapshot,
+            )
+
+            # (9) run_backup phase_5_mode=True で post-stop staging + fingerprint verify + archive
+            # Codex PR #80 F-002 + F-006 CRITICAL adopt: signed record の backup_claim をそのまま使う
+            # (local で recompute せず caller-supplied claim の fingerprint を verify、self-referential 排除)。
+            # try-except 内で実行 (BackupRuntimeError / ToolNotFoundError を structured exit に変換)
+            try:
+                result = run_backup(
+                    backup_options,
+                    phase_5_mode=True,
+                    record_backup_claim=record_backup_claim,  # signed record から取得済
+                    verified_temp_dir=verified_temp_dir,
+                )
+            except (BackupUsageError, BackupToolNotFoundError) as exc:
+                print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+                return 2
+            except BackupRuntimeError as exc:
+                print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+                return 1
+            print(json.dumps(result.summary(), sort_keys=True))  # noqa: T201
+            return 0
+        finally:
+            shutil.rmtree(verified_temp_dir, ignore_errors=True)
+
+
+def _write_verified_copy(target: Path, content: bytes) -> None:
+    """SP022-T02 Phase 5: verified copy を O_NOFOLLOW + O_EXCL + 0o400 で atomic write."""
+    fd = os.open(
+        str(target),
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o400,
+    )
+    try:
+        os.write(fd, content)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _metadata_snapshot(target: Path, sha256_hex: str) -> dict[str, int | str]:
+    """SP022-T02 Phase 5: verified copy の dev/ino/uid/mode/sha256 snapshot 取得."""
+    import stat as _stat
+    st = os.lstat(str(target))
+    return {
+        "dev": st.st_dev,
+        "ino": st.st_ino,
+        "uid": st.st_uid,
+        "mode": _stat.S_IMODE(st.st_mode),
+        "sha256": sha256_hex,
+    }
+
+
+# Codex PR #80 F-002 CRITICAL adopt: _build_record_claim_with_phase5_fingerprint 削除
+# (self-referential recompute は fingerprint validation を tautological にする、signed record 経由のみ使う)
 
 
 def _cmd_restore(args: argparse.Namespace) -> int:
@@ -894,7 +1151,8 @@ def _cmd_status(args: argparse.Namespace) -> int:
             )
         if args.mac_preflight:
             local_extras.append(
-                "--mac-preflight (§14.2 PGA-F-006: pmset -g から sleep / powernap / wakeonlan setting を hard fail check)"
+                "--mac-preflight (§14.2 PGA-F-006: pmset -g から "
+                "sleep / powernap / wakeonlan setting を hard fail check)",
             )
         summary: dict[str, object] = {
             "remote_host": opts.remote_host,
