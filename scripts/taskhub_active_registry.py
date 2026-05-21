@@ -566,24 +566,26 @@ class CommitMarker:
         """commit_finalization_preimage_hash の計算対象 (signature root の重要部分).
 
         §9.7 R6 F-001 canonical schema:
-        committed_at + cutover_lease_snapshot hash + fleet_membership_snapshot hash +
+        committed_at + lease window (acquired/expires) + lease snapshot + fleet snapshot +
         source/target prepare marker hashes + cutover/commit approval claim hashes +
-        required_host_ids_hash + domain。
+        required_host_ids_hash + cutover_id + domain。
 
-        Codex PR #84 R1 F-001 fix (P1、L579): domain field は CommitMarker domain (canonical
-        schema) と整合する。preimage は CommitMarker 自体の signature root に相当する subset
-        のため、`taskhub.active_registry.cutover_commit.v1` を使う (旧 .finalization_preimage.v1
-        suffix は documentation で別 schema として扱われたが、cross-language verifier との byte-
-        exact 一致のため canonical schema に合わせる)。
+        Codex PR #84 R1 F-001 fix (P1、L579): domain field は CommitMarker domain (canonical schema) と整合。
+        Codex PR #84 R3 F-002 fix (P1、L583): lease_acquired_at + lease_expires_at + cutover_id を preimage
+        に含める (host signature が lease window と cutover identity に binding されるため、commit-marker
+        signer が lease bounds を rewrite して同 host signature を流用する attack を排除)。
         """
         return {
             "commit_approval_claim_hash": self.commit_approval_claim_hash,
             "committed_at": self.committed_at,
             "cutover_approval_claim_hash": self.cutover_approval_claim_hash,
             "cutover_approval_id": self.cutover_approval_id,
+            "cutover_id": self.cutover_id,
             "cutover_lease_snapshot_content_sha256": self.cutover_lease_snapshot_content_sha256,
             "domain": DOMAIN_CUTOVER_COMMIT_V1,
             "fleet_membership_snapshot_content_sha256": self.fleet_membership_snapshot_content_sha256,
+            "lease_acquired_at": self.lease_acquired_at,
+            "lease_expires_at": self.lease_expires_at,
             "required_host_ids_hash": self.required_host_ids_hash,
             "source_prepare_marker_hash": self.source_prepare_marker_hash,
             "target_prepare_marker_hash": self.target_prepare_marker_hash,
@@ -621,11 +623,25 @@ class CommitMarker:
 # === CommitMarker verify helpers (§9.7 R6 F-001 + §9.9 R9 F-001 logic correction) ===
 
 
+# Codex PR #84 R3 F-002 fix (P1、L684): sentinel for opt-in to weak (structural-only)
+# commit marker verification. Production deployments MUST pass an actual resolver that maps
+# (host_id, signer_fingerprint) -> public key bytes. Use this sentinel ONLY in test fixtures.
+def accept_unverified_commit_marker_signatures(_host_id: str, _signer_fingerprint: str) -> bytes | None:
+    """SENTINEL — bypass host signature verification (test fixture only).
+
+    Returning bytes が None means "skip cryptographic check for this host"。bytes (32-byte pub key)
+    を返したら verify する。本 sentinel は全 host に対して None を返す → caller-supplied
+    sentinel として明示渡しが必要 (None default は foot-gun のため廃止、required arg 化)。
+    """
+    return None
+
+
 def verify_commit_marker_invariants(
     marker: CommitMarker,
     required_host_ids: tuple[str, ...],
+    *,
+    host_signer_public_key_resolver: Callable[[str, str], bytes | None],  # required (R3 F-001 fix)
     clock_skew_tolerance_seconds: int = COMMIT_TIME_CLOCK_SKEW_TOLERANCE_SECONDS,
-    host_signer_public_key_resolver: Callable[[str, str], bytes | None] | None = None,
 ) -> tuple[bool, str]:
     """Verify §9.7 R6 F-001 + §9.9 R9 F-001 commit-time invariants.
 
@@ -678,23 +694,6 @@ def verify_commit_marker_invariants(
     if not marker.host_finalization_signatures:
         return False, "taskhub_cutover_lease_required_host_partial_confirmation"
 
-    # Codex PR #84 R2 F-003 fix (P1、L660): cryptographically verify each host signature
-    # signature は Ed25519(commit_finalization_preimage_hash || commit_confirmed_at) over canonical bytes
-    if host_signer_public_key_resolver is not None:
-        for hfs in marker.host_finalization_signatures:
-            pub = host_signer_public_key_resolver(hfs.host_id, hfs.signer_fingerprint)
-            if pub is None:
-                return False, "taskhub_cutover_commit_finalization_signature_invalid"
-            # canonical bytes: preimage_hash || "|" || commit_confirmed_at (deterministic)
-            sig_payload = _rfc8785_canonical_bytes({
-                "commit_confirmed_at": hfs.commit_confirmed_at,
-                "commit_finalization_preimage_hash": marker.commit_finalization_preimage_hash,
-                "host_id": hfs.host_id,
-                "signer_fingerprint": hfs.signer_fingerprint,
-            })
-            if not verify_ed25519_signature(pub, hfs.signature, sig_payload):
-                return False, "taskhub_cutover_commit_finalization_signature_invalid"
-
     # parse timestamps
     try:
         lease_acquired = validate_iso8601_utc(marker.lease_acquired_at)
@@ -735,6 +734,39 @@ def verify_commit_marker_invariants(
     min_confirmed = min(c for _, c in confirmations)
     if lease_acquired - min_confirmed > skew_threshold:
         return False, "taskhub_cutover_commit_confirmed_at_outside_lease_window"
+
+    # Codex PR #84 R2 F-003 + R3 F-002 + R3 F-003 + R3 F-004 fix (P1, L660+L583+L691+L685):
+    # cryptographic signature verification を timing checks の後に実施 (cheap fail-fast、最後に
+    # expensive crypto)。
+    # (R3 F-003) recompute preimage hash from marker fields + verify against marker.commit_finalization_preimage_hash
+    # (R3 F-002 L583) preimage は lease window + cutover_id を含む (commit_finalization_preimage())
+    # (R3 F-004) resolver exception を fail-closed reason に catch
+    recomputed_preimage_bytes = _rfc8785_canonical_bytes(marker.commit_finalization_preimage())
+    recomputed_preimage_hash = _sha256_hex(recomputed_preimage_bytes)
+    if recomputed_preimage_hash != marker.commit_finalization_preimage_hash:
+        return False, "taskhub_cutover_commit_finalization_signature_invalid"
+
+    # accept_unverified_commit_marker_signatures sentinel: signature verification を skip
+    # (test/genesis bootstrap 専用)。production は実 resolver を渡す前提。
+    if host_signer_public_key_resolver is accept_unverified_commit_marker_signatures:
+        return True, ""
+
+    for hfs in marker.host_finalization_signatures:
+        try:
+            pub = host_signer_public_key_resolver(hfs.host_id, hfs.signer_fingerprint)
+        except Exception:  # noqa: BLE001 — fail-closed on resolver exception (R3 F-004)
+            return False, "taskhub_cutover_commit_finalization_signature_invalid"
+        if pub is None:
+            return False, "taskhub_cutover_commit_finalization_signature_invalid"
+        # canonical bytes binds host_id + signer_fingerprint + commit_confirmed_at + recomputed_preimage_hash
+        sig_payload = _rfc8785_canonical_bytes({
+            "commit_confirmed_at": hfs.commit_confirmed_at,
+            "commit_finalization_preimage_hash": recomputed_preimage_hash,
+            "host_id": hfs.host_id,
+            "signer_fingerprint": hfs.signer_fingerprint,
+        })
+        if not verify_ed25519_signature(pub, hfs.signature, sig_payload):
+            return False, "taskhub_cutover_commit_finalization_signature_invalid"
 
     return True, ""
 
