@@ -197,24 +197,63 @@ class IssuanceJournalEntry:
 # === Verify chain integrity ===
 
 
+# Codex PR #83 R1 F-006 fix (P2、L239): allowed monotonic clock attestation sources (3 mode)
+_ALLOWED_CLOCK_SOURCES: frozenset[str] = frozenset({
+    "linux_clock_monotonic",
+    "tpm_clock",
+    "trusted_time_attestation",
+})
+
+# Codex PR #83 R1 F-004 fix (P2、L214): genesis sentinel for previous_issued_at
+_GENESIS_PREVIOUS_ISSUED_AT = "1970-01-01T00:00:00Z"
+
+
 def verify_issuance_chain_invariants(
     *,
     new_entry: IssuanceJournalEntry,
     previous_entry: IssuanceJournalEntry | None,
 ) -> tuple[bool, str]:
-    """Codex PR #82 R1 F-001 fix (P1): clock skew tolerance + monotonic sequence + clock attestation.
+    """Codex PR #82 R1 F-001 + Codex PR #83 R1 F-002/F-004/F-006 fix.
 
     Returns: (ok, reason_code or "")
     """
+    # Codex PR #83 R1 F-002 fix (P1、L249): new_entry.key_status_at_issue must be "active"
+    if new_entry.key_status_at_issue != ISSUE_ALLOWED_KEY_STATUS:
+        return False, "taskhub_approval_signed_after_key_expired_per_journal"
+
+    # Codex PR #83 R1 F-006 fix (P2、L239): clock attestation source allowlist
+    if new_entry.monotonic_clock_attestation.source not in _ALLOWED_CLOCK_SOURCES:
+        return False, "taskhub_approval_issuance_monotonic_clock_source_unavailable"
+
+    # Codex PR #83 R1 F-004 fix (P2、L214): validate new_entry timestamps
+    try:
+        new_dt = _ar.validate_iso8601_utc(new_entry.issued_at)
+    except ValueError:
+        return False, "taskhub_approval_issuance_journal_entry_signature_invalid"
+
     if previous_entry is None:
-        # genesis entry — must have monotonic_sequence == 1 and previous_entry_hash == "0"*64
+        # genesis entry — additional validations:
+        # - monotonic_sequence == 1
+        # - previous_entry_hash == "0"*64
+        # - previous_issued_at == genesis sentinel
+        # - monotonic_clock_attestation.value > previous_value
         if new_entry.monotonic_sequence != 1:
             return False, "taskhub_approval_issuance_journal_monotonic_sequence_skip_detected"
         if new_entry.previous_entry_hash != "0" * 64:
             return False, "taskhub_approval_issuance_journal_chain_hash_mismatch"
+        # Codex PR #83 R1 F-004 fix (P2、L214): genesis previous_issued_at sentinel validation
+        if new_entry.previous_issued_at != _GENESIS_PREVIOUS_ISSUED_AT:
+            return False, "taskhub_approval_issuance_journal_chain_hash_mismatch"
+        # genesis: ensure previous_issued_at sentinel is also valid iso8601 (defense in depth)
+        try:
+            _ar.validate_iso8601_utc(new_entry.previous_issued_at)
+        except ValueError:
+            return False, "taskhub_approval_issuance_journal_entry_signature_invalid"
         # monotonic_clock_attestation.value > previous_value (genesis: previous_value=0 expected)
         if new_entry.monotonic_clock_attestation.value <= new_entry.monotonic_clock_attestation.previous_value:
             return False, "taskhub_approval_issuance_journal_monotonic_regression_detected"
+        # silence unused new_dt for genesis path
+        _ = new_dt
         return True, ""
 
     # non-genesis: full chain check
@@ -222,10 +261,7 @@ def verify_issuance_chain_invariants(
     if new_entry.monotonic_sequence != previous_entry.monotonic_sequence + 1:
         return False, "taskhub_approval_issuance_journal_monotonic_sequence_skip_detected"
     # (2) wall-clock: new issued_at >= previous - ε (allow ε=5s NTP backward correction)
-    # iso8601 string lex compare is fine for UTC times of consistent format, but for
-    # tolerance-based compare we should parse to datetime
     try:
-        new_dt = _ar.validate_iso8601_utc(new_entry.issued_at)
         prev_dt = _ar.validate_iso8601_utc(previous_entry.issued_at)
     except ValueError:
         return False, "taskhub_approval_issuance_journal_entry_signature_invalid"

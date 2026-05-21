@@ -479,3 +479,100 @@ def test_is_keyring_initialized_returns_true_when_marker_present(tmp_path: Path)
     marker = tmp_path / "approval_keyring_initialized.signed"
     marker.write_text("placeholder content")
     assert tk.is_keyring_initialized(marker) is True
+
+
+# === Codex PR #83 R1 fix coverage ===
+
+
+def test_authorization_verify_rejects_unknown_status() -> None:
+    """Codex PR #83 R1 F-001 fix (P1、L379 audit + L379 同 path authorization):
+    typo / corrupted status は fail-closed (no_valid_key)."""
+    manifest = _make_manifest(entries=(_entry(status="malformed_state"),))
+    ok, reason = tk.authorization_verify_key(manifest, "a" * 64, "2026-06-01T00:00:00Z")
+    assert ok is False
+    assert reason == "taskhub_signed_approval_keyring_no_valid_key"
+
+
+def test_audit_verify_rejects_unknown_status() -> None:
+    """Codex PR #83 R1 F-001 fix (P1、L379): audit_verify でも unknown status は reject."""
+    manifest = _make_manifest(entries=(_entry(status="malformed_state"),))
+    ok, reason = tk.audit_verify_key(manifest, "a" * 64, "2026-06-01T00:00:00Z")
+    assert ok is False
+    assert reason == "taskhub_signed_approval_keyring_no_valid_key"
+
+
+def test_authorization_verify_rejects_malformed_timestamp() -> None:
+    """Codex PR #83 R1 F-003 fix (P2、L351): malformed iso8601 timestamp は fail-closed."""
+    manifest = _make_manifest(entries=(_entry(),))
+    # invalid record_signed_at
+    ok, reason = tk.authorization_verify_key(manifest, "a" * 64, "not-a-timestamp")
+    assert ok is False
+    assert reason == "taskhub_signed_approval_keyring_key_expired"
+
+
+def test_verify_signed_manifest_rejects_fingerprint_public_key_mismatch() -> None:
+    """Codex PR #83 R1 F-005 fix (P1、L441):
+    entry.fingerprint != sha256(decoded(public_key_base64)) は manifest_tampered."""
+    priv = Ed25519PrivateKey.generate()
+    root_pub = priv.public_key().public_bytes_raw()
+    # construct a key with fp mismatch: claim fingerprint "f"*64 but public_key_base64 decodes to different bytes
+    actual_priv = Ed25519PrivateKey.generate()
+    actual_pub_bytes = actual_priv.public_key().public_bytes_raw()
+    # The actual fingerprint of actual_pub_bytes
+    actual_fp = tk.compute_key_fingerprint(actual_pub_bytes)
+    # Use a different (wrong) fingerprint in the entry
+    wrong_fp = "f" * 64
+    assert wrong_fp != actual_fp
+    bad_entry = tk.SignedManifestEntry(
+        fingerprint=wrong_fp,  # claimed fingerprint
+        status="active",
+        issued_at="2026-01-01T00:00:00Z",
+        expires_at="2027-01-01T00:00:00Z",
+        public_key_base64=tk.KEY_FORMAT_PREFIX + base64.b64encode(actual_pub_bytes).decode("ascii"),
+    )
+    manifest_unsigned = _make_manifest(entries=(bad_entry,))
+    canonical = ar._rfc8785_canonical_bytes(manifest_unsigned.canonical_payload())
+    sig = priv.sign(canonical)
+    manifest_signed = tk.SignedKeyringManifest(
+        generation=manifest_unsigned.generation,
+        entries=manifest_unsigned.entries,
+        previous_committed_manifest_hash=manifest_unsigned.previous_committed_manifest_hash,
+        commit_log_chain_hash=manifest_unsigned.commit_log_chain_hash,
+        signer_fingerprint=manifest_unsigned.signer_fingerprint,
+        signed_at=manifest_unsigned.signed_at,
+        signature=base64.b64encode(sig).decode("ascii"),
+    )
+    ok, reason = tk.verify_signed_manifest(manifest_signed, root_pub)
+    assert ok is False
+    assert reason == "taskhub_signed_approval_keyring_manifest_tampered"
+
+
+def test_verify_signed_manifest_accepts_consistent_fingerprint_and_public_key() -> None:
+    """positive control: fingerprint == sha256(decoded(public_key_base64)) なら verify pass."""
+    priv = Ed25519PrivateKey.generate()
+    root_pub = priv.public_key().public_bytes_raw()
+    entry_priv = Ed25519PrivateKey.generate()
+    entry_pub_bytes = entry_priv.public_key().public_bytes_raw()
+    consistent_fp = tk.compute_key_fingerprint(entry_pub_bytes)
+    good_entry = tk.SignedManifestEntry(
+        fingerprint=consistent_fp,
+        status="active",
+        issued_at="2026-01-01T00:00:00Z",
+        expires_at="2027-01-01T00:00:00Z",
+        public_key_base64=tk.KEY_FORMAT_PREFIX + base64.b64encode(entry_pub_bytes).decode("ascii"),
+    )
+    manifest_unsigned = _make_manifest(entries=(good_entry,))
+    canonical = ar._rfc8785_canonical_bytes(manifest_unsigned.canonical_payload())
+    sig = priv.sign(canonical)
+    manifest_signed = tk.SignedKeyringManifest(
+        generation=manifest_unsigned.generation,
+        entries=manifest_unsigned.entries,
+        previous_committed_manifest_hash=manifest_unsigned.previous_committed_manifest_hash,
+        commit_log_chain_hash=manifest_unsigned.commit_log_chain_hash,
+        signer_fingerprint=manifest_unsigned.signer_fingerprint,
+        signed_at=manifest_unsigned.signed_at,
+        signature=base64.b64encode(sig).decode("ascii"),
+    )
+    ok, reason = tk.verify_signed_manifest(manifest_signed, root_pub)
+    assert ok is True
+    assert reason == ""

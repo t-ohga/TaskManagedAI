@@ -321,6 +321,26 @@ class KeyringStateHead:
 # === Verify helpers (authorization_verify vs audit_verify predicate 分離) ===
 
 
+def _verify_validity_window(
+    issued_at: str,
+    expires_at: str,
+    record_signed_at: str,
+) -> bool:
+    """Codex PR #83 R1 F-005 fix (P2、L351): parse iso8601 datetimes before window comparison.
+
+    旧 lexicographic string compare は variable fractional seconds / +00:00 vs Z 等の
+    equivalent UTC forms で boundary mis-classification を起こす。fix: validate_iso8601_utc()
+    で全 timestamp を datetime parse してから比較する。
+    """
+    try:
+        iss_dt = _ar.validate_iso8601_utc(issued_at)
+        exp_dt = _ar.validate_iso8601_utc(expires_at)
+        rec_dt = _ar.validate_iso8601_utc(record_signed_at)
+    except ValueError:
+        return False
+    return iss_dt <= rec_dt < exp_dt
+
+
 def authorization_verify_key(
     manifest: SignedKeyringManifest,
     fingerprint: str,
@@ -329,8 +349,8 @@ def authorization_verify_key(
 ) -> tuple[bool, str]:
     """§9.4 R2 F-005: **authorization_verify** mode — destructive operation 実行可否判定.
 
-    status=active only、deprecated/revoked は無条件 reject。tombstone denylist も check
-    (§9.5 R3 F-001 rollback でも live verifier で reject)。
+    status=active only、deprecated/revoked + unknown status は全て reject (Codex PR #83 R1
+    F-001 fix、P1)。tombstone denylist も check (§9.5 R3 F-001 rollback でも live verifier で reject)。
 
     Returns: (ok, reason_code or "")
     """
@@ -339,15 +359,17 @@ def authorization_verify_key(
     entry = manifest.find_entry(fingerprint)
     if entry is None:
         return False, "taskhub_signed_approval_keyring_no_valid_key"
+    # Codex PR #83 R1 F-001 fix (P1): unknown status は fail-closed
+    if entry.status not in ("active", "deprecated", "revoked"):
+        return False, "taskhub_signed_approval_keyring_no_valid_key"
     if entry.status == "revoked":
         return False, "taskhub_signed_approval_keyring_key_revoked"
     if entry.status == "deprecated":
         # §9.4 R2 F-005: deprecated key は authorization_verify で無条件 reject
         return False, "taskhub_signed_approval_keyring_key_expired"
-    if entry.status != "active":
-        return False, "taskhub_signed_approval_keyring_no_valid_key"
-    # validity window check (signed_at は iso8601 文字列で string compare で OK、UTC 同 length)
-    if not (entry.issued_at <= record_signed_at < entry.expires_at):
+    # active のみここに到達
+    # Codex PR #83 R1 F-003 fix (P2、L351): datetime parse + compare
+    if not _verify_validity_window(entry.issued_at, entry.expires_at, record_signed_at):
         return False, "taskhub_signed_approval_keyring_key_expired"
     return True, ""
 
@@ -361,21 +383,31 @@ def audit_verify_key(
     """§9.4 R2 F-005: **audit_verify** mode — historical record signature 検証用.
 
     status ∈ {active, deprecated} で record_signed_at < deprecated_at なら pass。
-    revoked + tombstone は無条件 reject (compromise revocation の append-only denylist)。
+    revoked + tombstone + unknown status は無条件 reject (Codex PR #83 R1 F-001 fix、P1).
     """
     if fingerprint in tombstone_fingerprints:
         return False, "taskhub_signed_approval_keyring_key_revoked"
     entry = manifest.find_entry(fingerprint)
     if entry is None:
         return False, "taskhub_signed_approval_keyring_no_valid_key"
+    # Codex PR #83 R1 F-001 fix (P1): unknown status は fail-closed
+    if entry.status not in ("active", "deprecated", "revoked"):
+        return False, "taskhub_signed_approval_keyring_no_valid_key"
     if entry.status == "revoked":
         return False, "taskhub_signed_approval_keyring_key_revoked"
     # active + deprecated 両方 OK、ただし deprecated は record_signed_at < deprecated_at の制約
     if entry.status == "deprecated":
-        if entry.deprecated_at is None or record_signed_at >= entry.deprecated_at:
+        if entry.deprecated_at is None:
             return False, "taskhub_signed_approval_keyring_key_expired"
-        # fall-through to validity window check
-    if not (entry.issued_at <= record_signed_at < entry.expires_at):
+        try:
+            dep_dt = _ar.validate_iso8601_utc(entry.deprecated_at)
+            rec_dt = _ar.validate_iso8601_utc(record_signed_at)
+        except ValueError:
+            return False, "taskhub_signed_approval_keyring_key_expired"
+        if rec_dt >= dep_dt:
+            return False, "taskhub_signed_approval_keyring_key_expired"
+    # Codex PR #83 R1 F-003 fix (P2): datetime parse + compare for window
+    if not _verify_validity_window(entry.issued_at, entry.expires_at, record_signed_at):
         return False, "taskhub_signed_approval_keyring_key_expired"
     return True, ""
 
@@ -439,6 +471,16 @@ def verify_signed_manifest(
         if entry.fingerprint in seen:
             return False, "taskhub_signed_approval_keyring_manifest_tampered"
         seen.add(entry.fingerprint)
+        # Codex PR #83 R1 F-005 fix (P1、L441): fingerprint == sha256(decoded public_key_base64) を verify
+        # 内部不整合の manifest entry (fp と pub key bytes mismatch) を reject、tombstone/denylist
+        # semantics + key selection logic が cryptographically strict な fp→key binding に依存するため
+        try:
+            decoded_pub = validate_key_format(entry.public_key_base64)
+        except ValueError:
+            return False, "taskhub_signed_approval_keyring_manifest_tampered"
+        actual_fp = compute_key_fingerprint(decoded_pub)
+        if actual_fp != entry.fingerprint:
+            return False, "taskhub_signed_approval_keyring_manifest_tampered"
     return True, ""
 
 

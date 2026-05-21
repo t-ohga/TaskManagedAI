@@ -308,3 +308,84 @@ def test_reject_caller_supplied_signed_at_rejects_string() -> None:
     """caller-supplied signed_at string は ValueError."""
     with pytest.raises(ValueError, match="taskhub_approval_caller_supplied_signed_at_rejected"):
         tai.reject_caller_supplied_signed_at("2026-05-21T10:00:00Z")
+
+
+# === Codex PR #83 R1 fix coverage ===
+
+
+def test_chain_rejects_non_active_key_status_at_issue() -> None:
+    """Codex PR #83 R1 F-002 fix (P1、L249): key_status_at_issue != 'active' は reject."""
+    att = tai.MonotonicClockAttestation(source="linux_clock_monotonic", value=1000, previous_value=0)
+    entry = tai.IssuanceJournalEntry(
+        approval_id="uuid-evil", claim_hash="a" * 64, issued_at="2026-05-21T10:00:00Z",
+        monotonic_sequence=1, previous_issued_at="1970-01-01T00:00:00Z",
+        issuer_signer_fingerprint="fp", previous_entry_hash="0" * 64,
+        key_fingerprint_at_issue="b" * 64,
+        key_status_at_issue="deprecated",  # not active
+        monotonic_clock_attestation=att, signature="",
+    )
+    ok, reason = tai.verify_issuance_chain_invariants(new_entry=entry, previous_entry=None)
+    assert ok is False
+    assert reason == "taskhub_approval_signed_after_key_expired_per_journal"
+
+
+def test_chain_rejects_unknown_clock_attestation_source() -> None:
+    """Codex PR #83 R1 F-006 fix (P2、L239): unknown source は reject."""
+    att = tai.MonotonicClockAttestation(source="unknown_source", value=1000, previous_value=0)
+    entry = tai.IssuanceJournalEntry(
+        approval_id="uuid-1", claim_hash="a" * 64, issued_at="2026-05-21T10:00:00Z",
+        monotonic_sequence=1, previous_issued_at="1970-01-01T00:00:00Z",
+        issuer_signer_fingerprint="fp", previous_entry_hash="0" * 64,
+        key_fingerprint_at_issue="b" * 64, key_status_at_issue="active",
+        monotonic_clock_attestation=att, signature="",
+    )
+    ok, reason = tai.verify_issuance_chain_invariants(new_entry=entry, previous_entry=None)
+    assert ok is False
+    assert reason == "taskhub_approval_issuance_monotonic_clock_source_unavailable"
+
+
+def test_chain_accepts_all_three_clock_modes() -> None:
+    """Codex PR #83 R1 F-006: 3 allowed sources は accept (positive control)."""
+    for source in ("linux_clock_monotonic", "tpm_clock", "trusted_time_attestation"):
+        att = tai.MonotonicClockAttestation(source=source, value=1000, previous_value=0)
+        entry = tai.IssuanceJournalEntry(
+            approval_id=f"uuid-{source}", claim_hash="a" * 64, issued_at="2026-05-21T10:00:00Z",
+            monotonic_sequence=1, previous_issued_at="1970-01-01T00:00:00Z",
+            issuer_signer_fingerprint="fp", previous_entry_hash="0" * 64,
+            key_fingerprint_at_issue="b" * 64, key_status_at_issue="active",
+            monotonic_clock_attestation=att, signature="",
+        )
+        ok, reason = tai.verify_issuance_chain_invariants(new_entry=entry, previous_entry=None)
+        assert ok is True, f"{source} failed: {reason}"
+
+
+def test_genesis_rejects_wrong_previous_issued_at_sentinel() -> None:
+    """Codex PR #83 R1 F-004 fix (P2、L214): genesis previous_issued_at != '1970-01-01T00:00:00Z' は reject."""
+    att = tai.MonotonicClockAttestation(source="linux_clock_monotonic", value=1000, previous_value=0)
+    entry = tai.IssuanceJournalEntry(
+        approval_id="uuid-1", claim_hash="a" * 64, issued_at="2026-05-21T10:00:00Z",
+        monotonic_sequence=1,
+        previous_issued_at="2020-01-01T00:00:00Z",  # not genesis sentinel
+        issuer_signer_fingerprint="fp", previous_entry_hash="0" * 64,
+        key_fingerprint_at_issue="b" * 64, key_status_at_issue="active",
+        monotonic_clock_attestation=att, signature="",
+    )
+    ok, reason = tai.verify_issuance_chain_invariants(new_entry=entry, previous_entry=None)
+    assert ok is False
+    assert reason == "taskhub_approval_issuance_journal_chain_hash_mismatch"
+
+
+def test_chain_rejects_malformed_issued_at() -> None:
+    """Codex PR #83 R1 F-004 fix (P2、L214): malformed issued_at は entry_signature_invalid."""
+    att = tai.MonotonicClockAttestation(source="linux_clock_monotonic", value=1000, previous_value=0)
+    entry = tai.IssuanceJournalEntry(
+        approval_id="uuid-1", claim_hash="a" * 64,
+        issued_at="not-an-iso8601-timestamp",  # malformed
+        monotonic_sequence=1, previous_issued_at="1970-01-01T00:00:00Z",
+        issuer_signer_fingerprint="fp", previous_entry_hash="0" * 64,
+        key_fingerprint_at_issue="b" * 64, key_status_at_issue="active",
+        monotonic_clock_attestation=att, signature="",
+    )
+    ok, reason = tai.verify_issuance_chain_invariants(new_entry=entry, previous_entry=None)
+    assert ok is False
+    assert reason == "taskhub_approval_issuance_journal_entry_signature_invalid"
