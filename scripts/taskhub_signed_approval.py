@@ -528,10 +528,16 @@ def _parse_backup_claim_dict(bc: object) -> BackupApprovalClaim | None:
         return None
     if not isinstance(bc["age_public_key_fingerprint"], str) or not bc["age_public_key_fingerprint"]:
         return None
-    # SP022-T02 Phase 5: backup_runtime_binding_fingerprint validate (None or non-empty str)
+    # SP022-T02 Phase 5 + Codex PR #80 R2 F-009 adopt: backup_runtime_binding_fingerprint は
+    # **64-char lowercase hex** (SHA-256 hex output) を schema validation で enforce
+    # (malformed value が signature verify を通過して lock 内 fingerprint comparison まで遅延するのを排除)
     runtime_fp = bc.get("backup_runtime_binding_fingerprint")
-    if runtime_fp is not None and (not isinstance(runtime_fp, str) or not runtime_fp):
-        return None
+    if runtime_fp is not None:
+        if not isinstance(runtime_fp, str) or not runtime_fp:
+            return None
+        # SHA-256 hex format: 64 chars [0-9a-f] (lowercase)
+        if len(runtime_fp) != 64 or not all(c in "0123456789abcdef" for c in runtime_fp):
+            return None
     return BackupApprovalClaim(
         output_path=bc["output_path"],
         include_sops_env=bc["include_sops_env"],

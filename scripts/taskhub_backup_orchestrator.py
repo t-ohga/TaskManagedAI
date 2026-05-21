@@ -1976,9 +1976,11 @@ def run_backup(
             detail=f"unexpected: {type(exc).__name__}",
         ) from None
     finally:
-        # ADV R1 F-001 + R2 F-003 + R6 F-002 + ADV2 R1 F-007 + R4 F-002 + Codex PR #80 F-004 adopt:
+        # ADV R1 F-001 + R2 F-003 + R6 F-002 + ADV2 R1 F-007 + R4 F-002 + Codex PR #80 F-004/F-007/F-008 adopt:
         # cleanup を **先** に実行してから restart 試行する順序 (secret-bearing plaintext staging を
-        # restart failure 経路で残さない)。restart 失敗時の raise は cleanup 完遂後に発生する。
+        # restart failure 経路で残さない)。
+        # Codex PR #80 R2 F-007/F-008 adopt: cleanup failure signal を primary/restart exception と
+        # 組み合わせて **必ず stderr/audit に記録** (silent suppress 排除)。
         # F-002: cleanup OSError は audit + raise (silent ignore 廃止)
         try:
             shutil.rmtree(tmp_dir, ignore_errors=False)
@@ -1991,12 +1993,28 @@ def run_backup(
         else:
             cleanup_failure_exc = None
 
+        # Codex PR #80 R2 F-007 adopt: cleanup failure は primary_exc 有無に関わらず必ず stderr に記録
+        # (secret-bearing data 削除失敗 signal を silent suppress しない、incident response 強化)
+        if cleanup_failure_exc is not None:
+            sys.stderr.write(
+                f"[backup_tmp_cleanup_failed] {cleanup_failure_exc!s} "
+                f"(plaintext staging dir may remain: {tmp_dir.name})\n",
+            )
+
         # phase_5_mode で stop が試行された場合は restart を必ず試行 (cleanup 後)
         # restart 失敗は致命的 (warning 流用禁止、consistency boundary 維持)
         if phase_5_mode and stopped_or_attempted:
             try:
                 start_app_services_wait_healthy_via_compose_exec(options)
             except BackupRuntimeError as restart_exc:
+                # Codex PR #80 R2 F-008 adopt: dual-failure (cleanup + restart) 経路で
+                # cleanup_failure_exc を stderr に記録した後に restart raise
+                # (cleanup signal を drop しない、operator が両方 incident response 可能)
+                if cleanup_failure_exc is not None:
+                    sys.stderr.write(
+                        f"[backup_tmp_cleanup_failed + backup_service_start_failed dual incident] "
+                        f"cleanup_detail={cleanup_failure_exc!s}\n",
+                    )
                 # primary failure があれば primary 優先 raise + restart failure detail を stderr に記録
                 if primary_exc is not None:
                     sys.stderr.write(
