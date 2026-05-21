@@ -407,16 +407,16 @@ def test_rfc8785_canonical_nfc_normalization() -> None:
 
 
 def test_rfc8785_canonical_rejects_nan() -> None:
-    """Codex PR #82 R1 F-006 fix (P2): allow_nan=False で NaN を reject."""
+    """Codex PR #82 R1 F-006 fix (P2): RFC 8785 strict encoder で NaN を reject."""
     payload = {"value": float("nan")}
-    with pytest.raises(ValueError, match="Out of range float values are not JSON compliant"):
+    with pytest.raises(ValueError, match="RFC 8785 forbids non-finite numbers"):
         ar._rfc8785_canonical_bytes(payload)
 
 
 def test_rfc8785_canonical_rejects_infinity() -> None:
-    """Codex PR #82 R1 F-006 fix (P2): allow_nan=False で Infinity を reject."""
+    """Codex PR #82 R1 F-006 fix (P2): RFC 8785 strict encoder で Infinity を reject."""
     payload = {"value": float("inf")}
-    with pytest.raises(ValueError, match="Out of range float values are not JSON compliant"):
+    with pytest.raises(ValueError, match="RFC 8785 forbids non-finite numbers"):
         ar._rfc8785_canonical_bytes(payload)
 
 
@@ -690,3 +690,190 @@ def test_write_marker_atomic_uses_owner_only_permission(tmp_path: Path) -> None:
     ar.write_marker_atomic(marker_path, {"a": 1, "domain": "test.v1"})
     mode = stat_mod.S_IMODE(marker_path.stat().st_mode)
     assert mode == 0o600
+
+
+# === Codex PR #82 R3 fix coverage ===
+
+
+def test_rfc8785_utf16_code_unit_sort() -> None:
+    """Codex PR #82 R3 F-001 fix (P1): object key sort は UTF-16 code units 単位.
+
+    BMP-only ASCII では Python の str ordering と同じだが、supplementary character
+    (例: U+1F600 grinning face = surrogate pair D83D DE00) を含む key は UTF-16 code unit
+    order と Python code point order で異なる。
+    """
+    # ASCII keys: orderings should match (sanity)
+    payload_ascii = {"b": 1, "a": 2}
+    encoded = ar._rfc8785_canonical_bytes(payload_ascii)
+    assert encoded == b'{"a":2,"b":1}'
+
+    # Supplementary character keys: high surrogate D83D < some BMP chars > U+E000
+    # but Python str compare uses code points: U+1F600 > U+FFFD
+    # UTF-16 BE encoded: U+1F600 -> b"\xD8\x3D\xDE\x00" starts with 0xD8
+    # U+FFFD -> b"\xFF\xFD" starts with 0xFF
+    # So UTF-16 BE byte-wise: 0xD8 < 0xFF, supplementary should sort BEFORE U+FFFD
+    payload_supp = {"\U0001F600": "smile", "�": "replacement"}
+    encoded_supp = ar._rfc8785_canonical_bytes(payload_supp)
+    # in UTF-16 sort, U+1F600 (surrogate) comes before U+FFFD
+    assert encoded_supp.find(b'"\xf0\x9f\x98\x80"') < encoded_supp.find(b'"\xef\xbf\xbd"')
+
+
+def test_rfc8785_number_serialization_integer_valued_float() -> None:
+    """Codex PR #82 R3 F-002 fix (P1): float 1.0 は ECMAScript ToString で "1" に."""
+    payload = {"x": 1.0, "y": 2.5, "z": -0.0}
+    encoded = ar._rfc8785_canonical_bytes(payload)
+    # x=1.0 → "1" (integer-valued), y=2.5 → "2.5" (non-integer), z=-0.0 → "0"
+    assert encoded == b'{"x":1,"y":2.5,"z":0}'
+
+
+def test_rfc8785_number_serialization_integer() -> None:
+    """integer は標準 decimal repr で encode."""
+    encoded = ar._rfc8785_canonical_bytes({"v": 12345})
+    assert encoded == b'{"v":12345}'
+
+
+def test_rfc8785_number_serialization_negative_zero() -> None:
+    """RFC 8785 §3.2.2.3: -0.0 は "0" に正規化 (ECMAScript ToString rule)."""
+    encoded = ar._rfc8785_canonical_bytes({"v": -0.0})
+    assert encoded == b'{"v":0}'
+
+
+def test_rfc8785_bool_is_not_number() -> None:
+    """bool は int subclass だが number として encode しない (true/false token)."""
+    encoded = ar._rfc8785_canonical_bytes({"v": True})
+    assert encoded == b'{"v":true}'
+    encoded2 = ar._rfc8785_canonical_bytes({"w": False})
+    assert encoded2 == b'{"w":false}'
+
+
+def test_rfc8785_null_serialization() -> None:
+    """null は "null" token."""
+    encoded = ar._rfc8785_canonical_bytes({"v": None})
+    assert encoded == b'{"v":null}'
+
+
+def test_rfc8785_nested_dict_sorted() -> None:
+    """nested dict も再帰的に sort される."""
+    encoded = ar._rfc8785_canonical_bytes({"outer": {"z": 1, "a": 2}, "another": 3})
+    assert encoded == b'{"another":3,"outer":{"a":2,"z":1}}'
+
+
+def test_normalize_strings_nfc_collision_detection() -> None:
+    """Codex PR #82 R3 F-003 fix (P2): NFC で collide する dict key を検出 → ValueError."""
+    # "café" with NFC composed (é = U+00E9) vs NFD decomposed (e + U+0301)
+    composed = "café"  # NFC form
+    decomposed = "café"  # NFD form
+    # both normalize to the same NFC form, so the dict has 2 distinct keys that collide
+    colliding = {composed: 1, decomposed: 2}
+    with pytest.raises(ValueError, match="NFC-colliding dict keys detected"):
+        ar._normalize_strings_nfc(colliding)
+
+
+def test_find_journal_tail_with_64kib_only(tmp_path: Path) -> None:
+    """Codex PR #82 R3 F-004 fix (P2): journal valid entry が 64 KiB 内なら通常 return."""
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+    valid_entry = {
+        "domain": ar.DOMAIN_EPOCH_JOURNAL_V1,
+        "epoch": 1,
+        "issued_at": "2026-05-21T10:00:00.000000Z",
+        "host_id": "host-1",
+        "writer_signer_fingerprint": "fp-writer-1",
+        "previous_entry_hash": "0" * 64,
+        "signature": "fake-sig-base64",
+    }
+    journal_path.write_bytes(
+        json.dumps(valid_entry, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
+    )
+    found = ar._find_valid_journal_tail_entry(journal_path=journal_path, tail_verifier=None)
+    assert found is not None
+    assert found["epoch"] == 1
+
+
+def test_find_journal_tail_progressive_expansion_beyond_64kib(tmp_path: Path) -> None:
+    """Codex PR #82 R3 F-004 fix (P2): valid entry が 64 KiB を超えた position にあっても
+    progressive expansion で発見される."""
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+    valid_entry = {
+        "domain": ar.DOMAIN_EPOCH_JOURNAL_V1,
+        "epoch": 1,
+        "issued_at": "2026-05-21T10:00:00.000000Z",
+        "host_id": "host-1",
+        "writer_signer_fingerprint": "fp-writer-1",
+        "previous_entry_hash": "0" * 64,
+        "signature": "fake-sig-base64",
+    }
+    with journal_path.open("wb") as f:
+        f.write(json.dumps(valid_entry, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n")
+        # 100 KiB of garbage / partial lines after the valid entry (> 64 KiB window)
+        f.write(b"#" * (100 * 1024) + b"\n")
+    found = ar._find_valid_journal_tail_entry(journal_path=journal_path, tail_verifier=None)
+    assert found is not None
+    assert found["epoch"] == 1
+
+
+def test_find_journal_tail_signature_verifier_rejects_forged_entry(tmp_path: Path) -> None:
+    """Codex PR #82 R3 F-005 fix (P1): tail_verifier callable で forged signature を reject."""
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+    valid_entry = {
+        "domain": ar.DOMAIN_EPOCH_JOURNAL_V1,
+        "epoch": 1,
+        "issued_at": "2026-05-21T10:00:00.000000Z",
+        "host_id": "host-1",
+        "writer_signer_fingerprint": "fp-writer-1",
+        "previous_entry_hash": "0" * 64,
+        "signature": "forged-sig-base64",
+    }
+    journal_path.write_bytes(
+        json.dumps(valid_entry, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
+    )
+
+    # verifier rejects all (simulating forged signature detection)
+    def reject_all(entry: dict) -> bool:
+        return False
+
+    found = ar._find_valid_journal_tail_entry(journal_path=journal_path, tail_verifier=reject_all)
+    assert found is None  # no valid entry passed signature verify
+
+
+def test_find_journal_tail_signature_verifier_accepts_valid_entry(tmp_path: Path) -> None:
+    """tail_verifier=lambda: True なら structural valid entry を accept (positive control)."""
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+    valid_entry = {
+        "domain": ar.DOMAIN_EPOCH_JOURNAL_V1,
+        "epoch": 7,
+        "issued_at": "2026-05-21T10:00:00.000000Z",
+        "host_id": "host-1",
+        "writer_signer_fingerprint": "fp-writer-1",
+        "previous_entry_hash": "0" * 64,
+        "signature": "verified-sig-base64",
+    }
+    journal_path.write_bytes(
+        json.dumps(valid_entry, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
+    )
+    found = ar._find_valid_journal_tail_entry(journal_path=journal_path, tail_verifier=lambda _: True)
+    assert found is not None
+    assert found["epoch"] == 7
+
+
+def test_allocate_next_epoch_with_tail_verifier_callable(tmp_path: Path) -> None:
+    """allocate_next_epoch が journal_tail_verifier kwarg を受け取り、forged tail を reject."""
+    priv = Ed25519PrivateKey.generate()
+    counter_path = tmp_path / "epoch.counter"
+    lock_path = tmp_path / "epoch.lock"
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+
+    def signer(data: bytes) -> bytes:
+        return priv.sign(data)
+
+    # initial allocation creates a valid entry
+    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+
+    # second allocation with a verifier that rejects everything → previous_entry_hash falls
+    # back to genesis (because no entry passes verification), but new_epoch derives from
+    # counter (= 1) so new_epoch = max(1, 0) + 1 = 2 (verifier just affects previous_entry_hash chain)
+    e_next, _, entry_next = ar.allocate_next_epoch(
+        counter_path, lock_path, journal_path, "host-1", "fp-1", signer,
+        journal_tail_verifier=lambda _: False,
+    )
+    assert e_next == 2  # epoch from counter
+    assert entry_next.previous_entry_hash == "0" * 64  # genesis fallback (forged rejected)

@@ -159,11 +159,26 @@ def _normalize_strings_nfc(obj: Any) -> Any:  # noqa: ANN401 - JSON 任意構造
 
     composed (例: \\u00e9) vs decomposed (例: e + combining acute) で hash/sign が
     異なる cross-host mismatch を avoid。
+
+    Codex PR #82 R3 F-003 fix (P2): NFC normalization 後の dict key collision を検出。
+    異なる decomposed key (例: "café" NFC + "café" NFD) が同 NFC form に collapse すると、
+    dict comprehension で silent overwrite (data loss + signature mismatch) が起きる。
+    collision を検出したら ValueError で fail-closed。
     """
     if isinstance(obj, str):
         return unicodedata.normalize("NFC", obj)
     if isinstance(obj, dict):
-        return {_normalize_strings_nfc(k): _normalize_strings_nfc(v) for k, v in obj.items()}
+        # Codex PR #82 R3 F-003 fix (P2): explicit loop with collision check
+        normalized_dict: dict[Any, Any] = {}
+        for k, v in obj.items():
+            nk = _normalize_strings_nfc(k)
+            if nk in normalized_dict:
+                raise ValueError(
+                    f"NFC-colliding dict keys detected during canonicalization: "
+                    f"distinct source keys normalize to {nk!r}"
+                )
+            normalized_dict[nk] = _normalize_strings_nfc(v)
+        return normalized_dict
     if isinstance(obj, list):
         return [_normalize_strings_nfc(v) for v in obj]
     if isinstance(obj, tuple):
@@ -171,23 +186,119 @@ def _normalize_strings_nfc(obj: Any) -> Any:  # noqa: ANN401 - JSON 任意構造
     return obj
 
 
-def _rfc8785_canonical_bytes(payload: dict[str, Any]) -> bytes:
+# === RFC 8785 strict encoder primitives (Codex PR #82 R3 F-001 + F-002 fix) ===
+#
+# Codex PR #82 R3 F-001 (P1): RFC 8785 §3.2.3 requires object property ordering by **UTF-16
+# code units**, not Python's str ordering (Unicode code points). For BMP-only strings the
+# orderings are identical, but for supplementary characters (U+10000+, encoded as
+# surrogate pairs in UTF-16) Python's code-point sort orders them after BMP characters
+# (≥ U+10000) while UTF-16 code-unit sort orders surrogates (U+D800-DBFF) before non-
+# surrogate BMP characters above U+E000. We implement UTF-16 code-unit ordering via
+# str.encode("utf-16-be") which produces big-endian byte pairs; lexicographic byte
+# comparison equals code-unit comparison.
+#
+# Codex PR #82 R3 F-002 (P1): RFC 8785 §3.2.2.3 requires numbers to follow ECMAScript
+# `ToString` semantics (es6 §7.1.12.1). Python's json.dumps emits "1.0" for float 1.0
+# but ECMAScript ToString emits "1". For cross-language verification (RFC 8785 is
+# defined precisely for this), we implement a number serializer that:
+#   - integers (incl. int subclass excluding bool): plain int repr
+#   - bool: not a number — handled separately
+#   - float: -0.0 → "0", integer-valued (==int(x) and isfinite) → int repr, otherwise repr(x)
+#     (Python's float repr is the shortest round-trip, which matches ECMAScript shortest
+#     representation for the cases this codebase exercises: timestamps, scores, counters)
+
+
+def _utf16_sort_key(s: str) -> bytes:
+    """RFC 8785 §3.2.3 UTF-16 code-unit ordering: str.encode("utf-16-be") returns big-endian
+    code units; byte lexicographic compare == code-unit compare."""
+    return s.encode("utf-16-be")
+
+
+def _encode_number(n: int | float) -> str:
+    """RFC 8785 §3.2.2.3 ECMAScript ToString.
+
+    - bool: rejected here (caller must handle bool before reaching number path)
+    - int: str(n) (decimal、no leading +)
+    - float: -0.0 → "0" / integer-valued → integer repr / otherwise repr(n) (shortest round-trip)
+    - NaN/Inf: ValueError (RFC 8785 forbids non-finite numbers)
+    """
+    if isinstance(n, bool):  # bool is subclass of int — guard explicitly
+        raise TypeError("bool must be encoded as JSON true/false, not number")
+    if isinstance(n, int):
+        return str(n)
+    # float
+    if not _is_finite(n):
+        raise ValueError(f"RFC 8785 forbids non-finite numbers: {n!r}")
+    if n == 0.0:
+        return "0"  # -0.0 と 0.0 を 0 に統一 (ECMAScript ToString rule)
+    if n == int(n):
+        return str(int(n))
+    return repr(n)
+
+
+def _is_finite(n: float) -> bool:
+    return n == n and n not in (float("inf"), float("-inf"))
+
+
+def _encode_string(s: str) -> str:
+    """JSON string serialization (uses json.dumps for proper \\uXXXX escape of control chars)."""
+    return json.dumps(s, ensure_ascii=False)
+
+
+def _encode_value(value: Any, buf: list[str]) -> None:  # noqa: ANN401
+    """Recursive RFC 8785 strict encoder appending to a string list buffer (faster than StringIO)."""
+    if value is None:
+        buf.append("null")
+        return
+    if isinstance(value, bool):
+        buf.append("true" if value else "false")
+        return
+    if isinstance(value, (int, float)):
+        buf.append(_encode_number(value))
+        return
+    if isinstance(value, str):
+        buf.append(_encode_string(value))
+        return
+    if isinstance(value, dict):
+        buf.append("{")
+        # Codex PR #82 R3 F-001 fix (P1): sort keys by UTF-16 code units
+        sorted_keys = sorted(value.keys(), key=lambda k: _utf16_sort_key(k) if isinstance(k, str) else b"")
+        for i, key in enumerate(sorted_keys):
+            if i > 0:
+                buf.append(",")
+            if not isinstance(key, str):
+                raise TypeError(f"RFC 8785 object keys must be strings: {key!r}")
+            buf.append(_encode_string(key))
+            buf.append(":")
+            _encode_value(value[key], buf)
+        buf.append("}")
+        return
+    if isinstance(value, (list, tuple)):
+        buf.append("[")
+        for i, item in enumerate(value):
+            if i > 0:
+                buf.append(",")
+            _encode_value(item, buf)
+        buf.append("]")
+        return
+    raise TypeError(f"Cannot encode value of type {type(value).__name__}")
+
+
+def _rfc8785_canonical_bytes(payload: Any) -> bytes:  # noqa: ANN401
     """RFC 8785 strict JCS canonical JSON encoder.
 
-    sort_keys=True + separators=(',', ':') + ensure_ascii=False + NFC UTF-8 +
-    allow_nan=False。nested dict は recursive に sort される (json.dumps の sort_keys=True で達成)。
-
-    Codex PR #82 R1 F-003 fix (P2): NFC normalization を全 string field に適用。
-    Codex PR #82 R1 F-006 fix (P2): allow_nan=False で NaN/Infinity を reject (RFC 8785/JCS 違反)。
+    - NFC normalization on all strings (R1 F-003)
+    - allow_nan=False (R1 F-006、raised via _encode_number)
+    - UTF-16 code-unit sort on object keys (R3 F-001)
+    - ECMAScript ToString number serialization (R3 F-002)
+    - NFC dict key collision detection (R3 F-003)
+    - no whitespace separators
+    - UTF-8 output
     """
     normalized = _normalize_strings_nfc(payload)
-    return json.dumps(
-        normalized,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,  # Codex PR #82 R1 F-006 fix (P2)
-    ).encode("utf-8")
+    buffer: list[str] = []
+    _encode_value(normalized, buffer)
+    return "".join(buffer).encode("utf-8")
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -539,6 +650,90 @@ def verify_signer_host_ownership(
     return True, ""
 
 
+# === Journal tail discovery helpers (Codex PR #82 R3 F-004 + F-005 fix) ===
+
+
+def _is_structurally_valid_journal_entry(entry: Any) -> bool:  # noqa: ANN401
+    """Codex PR #82 R2 F-004 fix (P1): structural validation only.
+
+    domain + epoch + signature + writer_signer_fingerprint の field 存在 + 型 check のみ。
+    Ed25519 signature verify は journal_tail_verifier callable (R3 F-005) で行う。
+    """
+    if not isinstance(entry, dict):
+        return False
+    if entry.get("domain") != DOMAIN_EPOCH_JOURNAL_V1:
+        return False
+    if not isinstance(entry.get("epoch"), int):
+        return False
+    if not isinstance(entry.get("signature"), str) or not entry["signature"]:
+        return False
+    if not isinstance(entry.get("writer_signer_fingerprint"), str):
+        return False
+    return True
+
+
+def _find_valid_journal_tail_entry(
+    *,
+    journal_path: Path,
+    tail_verifier: Callable[[dict[str, Any]], bool] | None,
+) -> dict[str, Any] | None:
+    """journal file の末尾から valid entry を progressive expansion で探索。
+
+    Codex PR #82 R3 F-004 fix (P2): 64 KiB → 256 KiB → 1 MiB → full file の progressive
+    expansion で、64 KiB tail window に valid entry がなくても (large lines / corrupted tail)
+    valid entry を発見できるまで遡る。journal が完全に空 / 完全に無効なら None を返し、
+    caller は genesis (epoch=0) として扱う。
+
+    Codex PR #82 R3 F-005 fix (P1): tail_verifier が指定されていれば、structural validation
+    通過後に signature verify を実施。verifier=None なら legacy weak structural check のみ
+    (production deployment では verifier 必須)。
+    """
+    # progressive expansion: 64 KiB → 256 KiB → 1 MiB → full file
+    window_sizes = [64 * 1024, 256 * 1024, 1024 * 1024]
+    journal_fd = os.open(str(journal_path), os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        stat = os.fstat(journal_fd)
+        if stat.st_size == 0:
+            return None
+        # if file is smaller than the smallest window, read it all
+        seen_offsets: set[int] = set()
+        for win in [*window_sizes, stat.st_size]:
+            tail_size = min(stat.st_size, win)
+            start_offset = stat.st_size - tail_size
+            if start_offset in seen_offsets:
+                continue
+            seen_offsets.add(start_offset)
+            os.lseek(journal_fd, start_offset, os.SEEK_SET)
+            tail_bytes = _read_all(journal_fd, tail_size + 1)
+            journal_lines = tail_bytes.split(b"\n")
+            # The first line may be truncated (we started mid-line), so skip it if we did
+            # not start at offset 0
+            iter_lines = list(reversed(journal_lines))
+            if start_offset > 0 and len(iter_lines) > 0:
+                # the last item in iter_lines is the first line — may be truncated
+                # we'll still try, but accept that some entries may not parse
+                pass
+            for line in iter_lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    candidate = json.loads(stripped)
+                except (json.JSONDecodeError, AttributeError, ValueError):
+                    continue
+                if not _is_structurally_valid_journal_entry(candidate):
+                    continue
+                # Codex PR #82 R3 F-005 fix (P1): cryptographic signature verify
+                if tail_verifier is not None and not tail_verifier(candidate):
+                    continue  # forged signature — skip and continue backward scan
+                return candidate
+            if tail_size >= stat.st_size:
+                break  # already read the whole file, no valid entry exists
+        return None
+    finally:
+        os.close(journal_fd)
+
+
 # === Epoch atomic counter with fcntl lock (§9.3 R1 F-007 + R1 F-010) ===
 
 
@@ -549,18 +744,28 @@ def allocate_next_epoch(
     host_id: str,
     writer_signer_fingerprint: str,
     private_key_signer: Callable[[bytes], bytes],  # callable: bytes -> bytes (Ed25519 sign)
+    *,
+    journal_tail_verifier: Callable[[dict[str, Any]], bool] | None = None,
 ) -> tuple[int, str, EpochJournalEntry]:
     """epoch counter を atomic に増分し、signed journal entry を append。
 
     Pattern (§9.3 R1 F-007 + R1 F-010):
         1. lock_path に LOCK_EX|LOCK_NB を取得 (lock_path は rename 不可、安定 inode)
         2. counter_path を読込 (sha256 verify)
-        3. epoch N+1 計算 + issued_at = now() を同時記録
-        4. journal_path の末尾 entry hash 計算 → previous_entry_hash
+        3. journal_path 末尾を progressive expansion で scan、signature verifier 経由で
+           valid tail entry を取得 (Codex PR #82 R3 F-004 + F-005 fix)
+        4. epoch N+1 計算 + issued_at = now() を同時記録
         5. EpochJournalEntry canonical → private_key_signer で署名
         6. journal_path に append + fsync
         7. counter_path を atomic rename で書込 (epoch=N+1, sha256=self_hash)
         8. lock release
+
+    Args:
+        journal_tail_verifier: Codex PR #82 R3 F-005 fix (P1) — Ed25519 signature verifier for
+            tail entries. Callable(entry_dict) -> bool. If None, only structural checks
+            (domain + epoch + signature present) are performed (legacy weak verify、警告: forged
+            signature string で epoch derivation steal を防げないため、production deployment では
+            必ず resolver を渡す)。
 
     Returns: (new_epoch, issued_at_iso8601, journal_entry)
     """
@@ -607,43 +812,10 @@ def allocate_next_epoch(
             previous_entry_hash = "0" * 64  # genesis
             journal_tail_epoch = 0
             if journal_path.exists():
-                # bounded tail read: 末尾 64 KiB だけ memory に load
-                journal_fd = os.open(str(journal_path), os.O_RDONLY | os.O_NOFOLLOW)
-                try:
-                    stat = os.fstat(journal_fd)
-                    tail_size = min(stat.st_size, 64 * 1024)
-                    if tail_size > 0:
-                        os.lseek(journal_fd, stat.st_size - tail_size, os.SEEK_SET)
-                        tail_bytes = _read_all(journal_fd, tail_size)
-                    else:
-                        tail_bytes = b""
-                finally:
-                    os.close(journal_fd)
-                journal_lines = tail_bytes.split(b"\n")
-                # backward scan for last valid + signature-verified JSON line
-                last_entry = None
-                for line in reversed(journal_lines):
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    try:
-                        candidate = json.loads(stripped)
-                        # validation (§9.3 R1 F-010): domain + epoch + signature + writer_signer_fingerprint
-                        if not isinstance(candidate, dict):
-                            continue
-                        if candidate.get("domain") != DOMAIN_EPOCH_JOURNAL_V1:
-                            continue
-                        if not isinstance(candidate.get("epoch"), int):
-                            continue
-                        if not isinstance(candidate.get("signature"), str) or not candidate["signature"]:
-                            continue
-                        if not isinstance(candidate.get("writer_signer_fingerprint"), str):
-                            continue
-                        last_entry = candidate
-                        break
-                    except (json.JSONDecodeError, AttributeError):
-                        # torn / corrupted line — skip, scan further back
-                        continue
+                last_entry = _find_valid_journal_tail_entry(
+                    journal_path=journal_path,
+                    tail_verifier=journal_tail_verifier,
+                )
                 if last_entry is not None:
                     last_canonical = _rfc8785_canonical_bytes(
                         {k: v for k, v in last_entry.items() if k != "signature"}
