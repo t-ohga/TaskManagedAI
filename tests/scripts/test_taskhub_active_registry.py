@@ -390,3 +390,167 @@ def test_allocate_next_epoch_counter_tamper_detected(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="taskhub_active_registry_epoch_counter_tampered"):
         ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+
+
+# === Codex PR #82 R1 fix coverage ===
+
+
+def test_rfc8785_canonical_nfc_normalization() -> None:
+    """Codex PR #82 R1 F-003 fix (P2): NFC normalization で composed/decomposed が一致."""
+    composed = "café"  # NFC form (é = U+00E9)
+    decomposed = "café"  # NFD form (e + combining acute U+0301)
+    payload_c = {"name": composed}
+    payload_d = {"name": decomposed}
+    assert ar._rfc8785_canonical_bytes(payload_c) == ar._rfc8785_canonical_bytes(payload_d)
+
+
+def test_rfc8785_canonical_rejects_nan() -> None:
+    """Codex PR #82 R1 F-006 fix (P2): allow_nan=False で NaN を reject."""
+    payload = {"value": float("nan")}
+    with pytest.raises(ValueError, match="Out of range float values are not JSON compliant"):
+        ar._rfc8785_canonical_bytes(payload)
+
+
+def test_rfc8785_canonical_rejects_infinity() -> None:
+    """Codex PR #82 R1 F-006 fix (P2): allow_nan=False で Infinity を reject."""
+    payload = {"value": float("inf")}
+    with pytest.raises(ValueError, match="Out of range float values are not JSON compliant"):
+        ar._rfc8785_canonical_bytes(payload)
+
+
+def test_allocate_next_epoch_lock_file_race_free(tmp_path: Path) -> None:
+    """Codex PR #82 R1 F-001 fix (P1): lock file initialization は race-free.
+
+    O_EXCL を外したため、lock file が既存でも spurious FileExistsError にならない。
+    """
+    priv = Ed25519PrivateKey.generate()
+    counter_path = tmp_path / "epoch.counter"
+    lock_path = tmp_path / "epoch.lock"
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+
+    def signer(data: bytes) -> bytes:
+        return priv.sign(data)
+
+    # pre-create lock file with looser permission to simulate prior state
+    lock_path.touch(mode=0o644)
+
+    # first allocate should still succeed (race-free)
+    e1, _, _ = ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    assert e1 == 1
+
+    # permission must be tightened to 0o600 even though we created it with 0o644
+    import stat as stat_mod
+    actual_mode = stat_mod.S_IMODE(lock_path.stat().st_mode)
+    assert actual_mode == 0o600
+
+
+def test_allocate_next_epoch_torn_journal_tail_recovery(tmp_path: Path) -> None:
+    """Codex PR #82 R1 F-005 fix (P1): torn JSONL tail (partial line) でも recovery 可能.
+
+    journal の last line が partial / corrupted でも backward scan で valid entry を取得、
+    allocation を block しない。
+    """
+    priv = Ed25519PrivateKey.generate()
+    counter_path = tmp_path / "epoch.counter"
+    lock_path = tmp_path / "epoch.lock"
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+
+    def signer(data: bytes) -> bytes:
+        return priv.sign(data)
+
+    # 1st valid allocation
+    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    # simulate torn write: append partial JSON line at end
+    with journal_path.open("ab") as jf:
+        jf.write(b'{"epoch":2,"issued_at":"2026-')  # truncated mid-string
+    # 2nd allocation should still succeed by scanning backward
+    e2, _, _ = ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    assert e2 == 2  # derived from valid entry 1, not from torn line
+
+
+def test_allocate_next_epoch_crash_recovery_no_duplicate(tmp_path: Path) -> None:
+    """Codex PR #82 R1 F-002 fix (P1): journal append 後 counter rename 失敗の crash recovery.
+
+    journal に entry が記録済 + counter が古い stale 状態でも、journal_tail_epoch から
+    monotonic increment を導出するため duplicate epoch にならない。
+    """
+    priv = Ed25519PrivateKey.generate()
+    counter_path = tmp_path / "epoch.counter"
+    lock_path = tmp_path / "epoch.lock"
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+
+    def signer(data: bytes) -> bytes:
+        return priv.sign(data)
+
+    # allocate epoch 1, 2, 3
+    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    # simulate crash: rollback counter to epoch=1 with valid sha256
+    counter_payload_stale = {"epoch": 1, "issued_at": "2026-05-21T10:00:00.000000Z"}
+    counter_canonical = ar._rfc8785_canonical_bytes(counter_payload_stale)
+    counter_payload_stale["sha256"] = ar._sha256_hex(counter_canonical)
+    counter_path.write_bytes(json.dumps(counter_payload_stale).encode("utf-8"))
+    # next allocation must derive epoch from journal tail (epoch=3), not counter (epoch=1)
+    e_next, _, entry = ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    assert e_next == 4  # max(1, 3) + 1 = 4
+    assert entry.epoch == 4
+
+
+def test_allocate_next_epoch_counter_replay_with_recomputed_sha_blocked(tmp_path: Path) -> None:
+    """Codex PR #82 R1 F-004 fix (P1): counter tampering で lower epoch を sha256 と一緒に
+    書き換えても、journal_tail_epoch から replay 不可能.
+    """
+    priv = Ed25519PrivateKey.generate()
+    counter_path = tmp_path / "epoch.counter"
+    lock_path = tmp_path / "epoch.lock"
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+
+    def signer(data: bytes) -> bytes:
+        return priv.sign(data)
+
+    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    # attacker tampers counter to lower epoch + recomputes sha256
+    tampered_payload = {"epoch": 1, "issued_at": "2026-05-21T10:00:00.000000Z"}
+    tampered_canonical = ar._rfc8785_canonical_bytes(tampered_payload)
+    tampered_payload["sha256"] = ar._sha256_hex(tampered_canonical)
+    counter_path.write_bytes(json.dumps(tampered_payload).encode("utf-8"))
+    # journal_tail_epoch=3 で max(1, 3)+1=4 を導出、attacker は epoch=2 を replay できない
+    e_next, _, _ = ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    assert e_next == 4  # not 2
+
+
+def test_write_marker_atomic_short_write_resilient(tmp_path: Path) -> None:
+    """Codex PR #82 R1 F-007 fix (P2): _write_all loop で short write 耐性."""
+    marker_path = tmp_path / "test.signed"
+    # large payload to exercise potential short write path
+    large_payload = {"data": "x" * 100_000, "domain": "test.v1"}
+    ar.write_marker_atomic(marker_path, large_payload)
+    # read back and verify content
+    fd = ar.os.open(str(marker_path), ar.os.O_RDONLY | ar.os.O_NOFOLLOW)
+    try:
+        from_disk = ar._read_all(fd, ar._MARKER_MAX_BYTES)
+    finally:
+        ar.os.close(fd)
+    expected_canonical = ar._rfc8785_canonical_bytes(large_payload)
+    assert from_disk == expected_canonical
+
+
+def test_read_marker_doc_chunked_read(tmp_path: Path) -> None:
+    """Codex PR #82 R1 F-008 fix (P2): _read_all で EOF まで loop、chunked OK."""
+    marker_path = tmp_path / "test.signed"
+    payload = {"a": 1, "b": "test", "data": "y" * 200_000}
+    ar.write_marker_atomic(marker_path, payload)
+    loaded = ar.read_marker_doc(marker_path)
+    assert loaded == ar._normalize_strings_nfc(payload)  # NFC applied during write
+
+
+def test_read_marker_doc_size_cap_enforced(tmp_path: Path) -> None:
+    """Codex PR #82 R1 F-008 fix (P2): max_bytes 超過は OSError で reject (truncation defense)."""
+    marker_path = tmp_path / "test.signed"
+    # write file > 1 MiB directly (bypass write_marker_atomic)
+    marker_path.write_bytes(b"x" * (2 * 1024 * 1024))
+    with pytest.raises(OSError, match="exceeds max bytes limit"):
+        ar.read_marker_doc(marker_path)

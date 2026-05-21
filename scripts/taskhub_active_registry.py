@@ -60,6 +60,7 @@ import hashlib
 import json
 import os
 import re
+import unicodedata
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -152,17 +153,40 @@ MarkerKind = Literal[
 # === RFC 8785 canonical JCS encoder (§3.B.1 + DD-06 統一) ===
 
 
+def _normalize_strings_nfc(obj: Any) -> Any:  # noqa: ANN401 - JSON 任意構造の再帰正規化
+    """Codex PR #82 R1 F-003 fix (P2): RFC 8785 canonical 出力前に全 string field を
+    Unicode NFC (Normalization Form Canonical Composition) で正規化する。
+
+    composed (例: \\u00e9) vs decomposed (例: e + combining acute) で hash/sign が
+    異なる cross-host mismatch を avoid。
+    """
+    if isinstance(obj, str):
+        return unicodedata.normalize("NFC", obj)
+    if isinstance(obj, dict):
+        return {_normalize_strings_nfc(k): _normalize_strings_nfc(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_normalize_strings_nfc(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_normalize_strings_nfc(v) for v in obj)
+    return obj
+
+
 def _rfc8785_canonical_bytes(payload: dict[str, Any]) -> bytes:
     """RFC 8785 strict JCS canonical JSON encoder.
 
-    sort_keys=True + separators=(',', ':') + ensure_ascii=False + NFC UTF-8。
-    nested dict は recursive に sort される (json.dumps の sort_keys=True で達成)。
+    sort_keys=True + separators=(',', ':') + ensure_ascii=False + NFC UTF-8 +
+    allow_nan=False。nested dict は recursive に sort される (json.dumps の sort_keys=True で達成)。
+
+    Codex PR #82 R1 F-003 fix (P2): NFC normalization を全 string field に適用。
+    Codex PR #82 R1 F-006 fix (P2): allow_nan=False で NaN/Infinity を reject (RFC 8785/JCS 違反)。
     """
+    normalized = _normalize_strings_nfc(payload)
     return json.dumps(
-        payload,
+        normalized,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
+        allow_nan=False,  # Codex PR #82 R1 F-006 fix (P2)
     ).encode("utf-8")
 
 
@@ -526,17 +550,22 @@ def allocate_next_epoch(
     Returns: (new_epoch, issued_at_iso8601, journal_entry)
     """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    # touch lock file with secure permission
-    if not lock_path.exists():
-        fd_create = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
-        os.close(fd_create)
-    # acquire exclusive lock
-    fd = os.open(str(lock_path), os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    # Codex PR #82 R1 F-001 fix (P1): O_CREAT (without O_EXCL) で race-free に lock file 確保。
+    # 旧実装は `if not lock_path.exists(): O_EXCL` で TOCTOU race を持っていた (loser が
+    # FileExistsError で abort)。flock 自体が排他保証を行うため、lock file 作成は idempotent
+    # で良い。secure permission は os.fchmod で post-create に強制。
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
+        # ensure secure permission even if file existed with looser mode
+        try:
+            os.fchmod(fd, 0o600)
+        except OSError:
+            # filesystems without chmod support (rare on Linux) — accept default
+            pass
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
             # read current counter (or initialize)
-            current_epoch = 0
+            current_epoch_from_counter = 0
             if counter_path.exists():
                 with counter_path.open("rb") as f:
                     raw = f.read()
@@ -547,24 +576,44 @@ def allocate_next_epoch(
                 check_canonical = _rfc8785_canonical_bytes(check_payload)
                 if _sha256_hex(check_canonical) != expected_sha:
                     raise RuntimeError("taskhub_active_registry_epoch_counter_tampered")
-                current_epoch = int(counter_doc["epoch"])
-            # allocate next epoch
-            new_epoch = current_epoch + 1
-            issued_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            # read journal last entry hash
+                current_epoch_from_counter = int(counter_doc["epoch"])
+            # Codex PR #82 R1 F-005 fix (P1): torn JSONL tail tolerance + backward scan で
+            # 最後の valid entry を取得。crash で半分書きの partial line があっても recovery
+            # block しない。
+            # Codex PR #82 R1 F-002 + F-004 fix (P1): journal tail epoch も読込み、
+            # max(counter_epoch, journal_tail_epoch) + 1 で new_epoch を決定 (crash recovery +
+            # counter tamper replay defense)。
             previous_entry_hash = "0" * 64  # genesis
+            journal_tail_epoch = 0
             if journal_path.exists():
-                with journal_path.open("rb") as jf:
-                    last_line = b""
-                    for line in jf:
-                        if line.strip():
-                            last_line = line
-                if last_line:
-                    last_entry = json.loads(last_line)
+                journal_lines = journal_path.read_bytes().split(b"\n")
+                # backward scan for last valid JSON line (torn tail tolerance)
+                last_entry = None
+                for line in reversed(journal_lines):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        last_entry = json.loads(line)
+                        # additional sanity: must have epoch field
+                        if not isinstance(last_entry.get("epoch"), int):
+                            last_entry = None
+                            continue
+                        break
+                    except (json.JSONDecodeError, AttributeError):
+                        # torn / corrupted line — skip, scan further back
+                        continue
+                if last_entry is not None:
                     last_canonical = _rfc8785_canonical_bytes(
                         {k: v for k, v in last_entry.items() if k != "signature"}
                     )
                     previous_entry_hash = _sha256_hex(last_canonical)
+                    journal_tail_epoch = int(last_entry["epoch"])
+            # Codex PR #82 R1 F-002 + F-004 fix (P1): epoch monotonicity は counter + journal
+            # max + 1 で導出。crash 後 (journal append 済 + counter rename 失敗) や counter
+            # tamper (lower epoch + sha256 再計算) でも replay 不可能。
+            new_epoch = max(current_epoch_from_counter, journal_tail_epoch) + 1
+            issued_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             # build + sign journal entry
             entry = EpochJournalEntry(
                 epoch=new_epoch,
@@ -622,15 +671,58 @@ def allocate_next_epoch(
 # === Helper: write/read marker ===
 
 
+# marker file 1 件あたりの最大 size cap (truncation defense)
+_MARKER_MAX_BYTES: Final = 1024 * 1024  # 1 MiB
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    """Codex PR #82 R1 F-007 fix (P2): os.write は短い write (short write) を返す可能性が
+    あるため、全 bytes 書込めるまで loop。EINTR は OS-level で retry されるが、念のため
+    write 戻り値を確認。
+    """
+    view = memoryview(data)
+    total = 0
+    while total < len(view):
+        written = os.write(fd, view[total:])
+        if written == 0:
+            raise OSError("os.write returned 0 (disk full or unwritable fd)")
+        total += written
+
+
+def _read_all(fd: int, max_bytes: int) -> bytes:
+    """Codex PR #82 R1 F-008 fix (P2): os.read は単発で完全 read を保証しないため、
+    EOF (b"") まで loop。max_bytes 超過は OSError (truncation defense)。
+    """
+    chunks: list[bytes] = []
+    total = 0
+    chunk_size = 64 * 1024  # 64 KiB chunks
+    while True:
+        remaining = max_bytes - total + 1  # +1 to detect overflow
+        if remaining <= 0:
+            raise OSError(f"marker file exceeds max bytes limit ({max_bytes})")
+        chunk = os.read(fd, min(chunk_size, remaining))
+        if not chunk:
+            break  # EOF
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > max_bytes:
+            raise OSError(f"marker file exceeds max bytes limit ({max_bytes})")
+    return b"".join(chunks)
+
+
 def write_marker_atomic(marker_path: Path, marker_doc: dict[str, Any]) -> None:
-    """marker file を atomic rename で書込 (O_NOFOLLOW + parent fsync)。"""
+    """marker file を atomic rename で書込 (O_NOFOLLOW + parent fsync)。
+
+    Codex PR #82 R1 F-007 fix (P2): os.write を _write_all loop に置換、short write
+    で truncated JSON が persist する race を防止。
+    """
     marker_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = marker_path.with_suffix(f".tmp.{uuid.uuid4().hex}")
     canonical = _rfc8785_canonical_bytes(marker_doc)
     # write with restrictive permission
     fd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
     try:
-        os.write(fd, canonical)
+        _write_all(fd, canonical)
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -643,13 +735,14 @@ def write_marker_atomic(marker_path: Path, marker_doc: dict[str, Any]) -> None:
 
 
 def read_marker_doc(marker_path: Path) -> dict[str, Any]:
-    """marker file を読込 (O_NOFOLLOW + canonical 正規化なし)。
+    """marker file を読込 (O_NOFOLLOW + canonical 正規化なし、1 MiB cap)。
 
-    呼び出し側で domain + canonical_payload + signature verify を行う。
+    Codex PR #82 R1 F-008 fix (P2): os.read を _read_all loop (EOF まで) に置換、
+    short read で truncated JSON decode が intermittent fail する race を防止。
     """
     fd = os.open(str(marker_path), os.O_RDONLY | os.O_NOFOLLOW)
     try:
-        raw = os.read(fd, 1024 * 1024)  # 1 MiB cap
+        raw = _read_all(fd, _MARKER_MAX_BYTES)
     finally:
         os.close(fd)
     return json.loads(raw)
