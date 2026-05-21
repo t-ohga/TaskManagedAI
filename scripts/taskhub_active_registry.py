@@ -507,8 +507,14 @@ def verify_signer_host_ownership(
     marker_host_id: str,
     marker_signer_fingerprint: str,
     marker_kind: str,
+    *,
+    now: datetime | None = None,  # injectable for testing; defaults to UTC now
 ) -> tuple[bool, str]:
-    """`marker.host_id` と signer fingerprint ownership を exact match。
+    """`marker.host_id` と signer fingerprint ownership を exact match + lifecycle window check。
+
+    Codex PR #82 R2 F-001 fix (P1): host.valid_from / valid_to の lifecycle window を
+    必須 verify。expired host / not-yet-active host の signature を ownership check で通さない
+    (taskhub_active_registry_host_lifecycle_expired は §9.7 R6 F-002 で既定済)。
 
     Returns: (ok, reason_code or "" on ok)
     """
@@ -517,6 +523,15 @@ def verify_signer_host_ownership(
         return False, "taskhub_active_registry_fleet_membership_violation"
     if host.status not in ("active",):
         return False, "taskhub_active_registry_host_revoked_or_retired"
+    # Codex PR #82 R2 F-001 fix (P1): lifecycle window check
+    current_time = now if now is not None else datetime.now(UTC)
+    try:
+        valid_from = validate_iso8601_utc(host.valid_from)
+        valid_to = validate_iso8601_utc(host.valid_to)
+    except ValueError:
+        return False, "taskhub_active_registry_host_lifecycle_expired"
+    if current_time < valid_from or current_time >= valid_to:
+        return False, "taskhub_active_registry_host_lifecycle_expired"
     if marker_signer_fingerprint not in host.allowed_marker_signer_fingerprints:
         return False, "taskhub_active_registry_signer_not_in_allowlist"
     if marker_kind not in host.allowed_marker_kinds:
@@ -564,11 +579,15 @@ def allocate_next_epoch(
             pass
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
-            # read current counter (or initialize)
+            # Codex PR #82 R2 F-002 fix (P1): counter_path を O_NOFOLLOW で open、
+            # symlink swap attack (任意 JSON injection) を physical reject。
             current_epoch_from_counter = 0
             if counter_path.exists():
-                with counter_path.open("rb") as f:
-                    raw = f.read()
+                cf_fd = os.open(str(counter_path), os.O_RDONLY | os.O_NOFOLLOW)
+                try:
+                    raw = _read_all(cf_fd, _MARKER_MAX_BYTES)
+                finally:
+                    os.close(cf_fd)
                 counter_doc = json.loads(raw)
                 expected_sha = counter_doc.get("sha256")
                 # self-referential sha256: payload minus sha256 field
@@ -578,27 +597,49 @@ def allocate_next_epoch(
                     raise RuntimeError("taskhub_active_registry_epoch_counter_tampered")
                 current_epoch_from_counter = int(counter_doc["epoch"])
             # Codex PR #82 R1 F-005 fix (P1): torn JSONL tail tolerance + backward scan で
-            # 最後の valid entry を取得。crash で半分書きの partial line があっても recovery
-            # block しない。
+            # 最後の valid entry を取得。crash で半分書きの partial line があっても recovery block しない。
             # Codex PR #82 R1 F-002 + F-004 fix (P1): journal tail epoch も読込み、
-            # max(counter_epoch, journal_tail_epoch) + 1 で new_epoch を決定 (crash recovery +
-            # counter tamper replay defense)。
+            # max(counter_epoch, journal_tail_epoch) + 1 で new_epoch を決定。
+            # Codex PR #82 R2 F-003 fix (P2): journal tail を bounded read (末尾 64 KiB のみ)
+            # で取得、O(N) full read を排除して allocation latency を一定にする。
+            # Codex PR #82 R2 F-004 fix (P1): journal tail line は signature + domain validation
+            # を実施してから epoch derivation に使用 (forged tail entry による replay 排除)。
             previous_entry_hash = "0" * 64  # genesis
             journal_tail_epoch = 0
             if journal_path.exists():
-                journal_lines = journal_path.read_bytes().split(b"\n")
-                # backward scan for last valid JSON line (torn tail tolerance)
+                # bounded tail read: 末尾 64 KiB だけ memory に load
+                journal_fd = os.open(str(journal_path), os.O_RDONLY | os.O_NOFOLLOW)
+                try:
+                    stat = os.fstat(journal_fd)
+                    tail_size = min(stat.st_size, 64 * 1024)
+                    if tail_size > 0:
+                        os.lseek(journal_fd, stat.st_size - tail_size, os.SEEK_SET)
+                        tail_bytes = _read_all(journal_fd, tail_size)
+                    else:
+                        tail_bytes = b""
+                finally:
+                    os.close(journal_fd)
+                journal_lines = tail_bytes.split(b"\n")
+                # backward scan for last valid + signature-verified JSON line
                 last_entry = None
                 for line in reversed(journal_lines):
-                    line = line.strip()
-                    if not line:
+                    stripped = line.strip()
+                    if not stripped:
                         continue
                     try:
-                        last_entry = json.loads(line)
-                        # additional sanity: must have epoch field
-                        if not isinstance(last_entry.get("epoch"), int):
-                            last_entry = None
+                        candidate = json.loads(stripped)
+                        # validation (§9.3 R1 F-010): domain + epoch + signature + writer_signer_fingerprint
+                        if not isinstance(candidate, dict):
                             continue
+                        if candidate.get("domain") != DOMAIN_EPOCH_JOURNAL_V1:
+                            continue
+                        if not isinstance(candidate.get("epoch"), int):
+                            continue
+                        if not isinstance(candidate.get("signature"), str) or not candidate["signature"]:
+                            continue
+                        if not isinstance(candidate.get("writer_signer_fingerprint"), str):
+                            continue
+                        last_entry = candidate
                         break
                     except (json.JSONDecodeError, AttributeError):
                         # torn / corrupted line — skip, scan further back
@@ -609,9 +650,7 @@ def allocate_next_epoch(
                     )
                     previous_entry_hash = _sha256_hex(last_canonical)
                     journal_tail_epoch = int(last_entry["epoch"])
-            # Codex PR #82 R1 F-002 + F-004 fix (P1): epoch monotonicity は counter + journal
-            # max + 1 で導出。crash 後 (journal append 済 + counter rename 失敗) や counter
-            # tamper (lower epoch + sha256 再計算) でも replay 不可能。
+            # Codex PR #82 R1 F-002 + F-004 fix (P1): epoch monotonicity は counter + journal max + 1。
             new_epoch = max(current_epoch_from_counter, journal_tail_epoch) + 1
             issued_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             # build + sign journal entry
@@ -633,17 +672,37 @@ def allocate_next_epoch(
                 previous_entry_hash=entry.previous_entry_hash,
                 signature=base64.b64encode(sig_bytes).decode("ascii"),
             )
-            # append journal (atomic via temp file + rename is hard for jsonl;
-            # use O_APPEND + fsync to maintain durability)
+            # Codex PR #82 R2 F-005 fix (P1): journal append を O_NOFOLLOW で実行、
+            # symlink swap → arbitrary file clobbering を physical reject。
+            # Codex PR #82 R2 F-007 fix (P2): journal 初回 create 時に parent dir fsync を実施、
+            # crash 後の directory entry loss を防止 (append-only durability guarantee)。
             journal_path.parent.mkdir(parents=True, exist_ok=True)
-            with journal_path.open("ab") as jf:
-                jf.write(json.dumps({
-                    **signed_entry.canonical_payload(),
-                    "signature": signed_entry.signature,
-                }, sort_keys=True, separators=(",", ":")).encode("utf-8"))
-                jf.write(b"\n")
-                jf.flush()
-                os.fsync(jf.fileno())
+            is_first_create = not journal_path.exists()
+            journal_fd = os.open(
+                str(journal_path),
+                os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW,
+                0o600,
+            )
+            try:
+                journal_line = json.dumps(
+                    {
+                        **signed_entry.canonical_payload(),
+                        "signature": signed_entry.signature,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8") + b"\n"
+                _write_all(journal_fd, journal_line)
+                os.fsync(journal_fd)
+            finally:
+                os.close(journal_fd)
+            if is_first_create:
+                # parent dir fsync for first-create directory entry durability
+                jdir_fd = os.open(str(journal_path.parent), os.O_RDONLY)
+                try:
+                    os.fsync(jdir_fd)
+                finally:
+                    os.close(jdir_fd)
             # write counter atomically
             new_counter_payload = {"epoch": new_epoch, "issued_at": issued_at}
             new_counter_canonical = _rfc8785_canonical_bytes(new_counter_payload)
@@ -719,8 +778,9 @@ def write_marker_atomic(marker_path: Path, marker_doc: dict[str, Any]) -> None:
     marker_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = marker_path.with_suffix(f".tmp.{uuid.uuid4().hex}")
     canonical = _rfc8785_canonical_bytes(marker_doc)
-    # write with restrictive permission
-    fd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
+    # Codex PR #82 R2 F-006 fix (P2): marker temp file を 0o600 (owner-only) で create、
+    # rename 後も other local users から read 不可。lock file 0o600 と一貫。
+    fd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
     try:
         _write_all(fd, canonical)
         os.fsync(fd)

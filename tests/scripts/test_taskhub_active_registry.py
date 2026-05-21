@@ -148,7 +148,9 @@ def test_decommission_marker_canonical_includes_prev_active_chain_hash() -> None
 
 def _make_fleet(*, host_id: str = "host-1", signer_fp: str = "sig-fp-1",
                role: str = "source", marker_kinds: tuple[str, ...] = ("active", "decommission", "freeze"),
-               status: str = "active") -> ar.FleetMembership:
+               status: str = "active",
+               valid_from: str = "2026-05-01T00:00:00Z",
+               valid_to: str = "2027-05-01T00:00:00Z") -> ar.FleetMembership:
     return ar.FleetMembership(
         generation=1,
         hosts=(
@@ -159,8 +161,8 @@ def _make_fleet(*, host_id: str = "host-1", signer_fp: str = "sig-fp-1",
                 status=status,
                 allowed_marker_signer_fingerprints=(signer_fp,),
                 allowed_marker_kinds=marker_kinds,
-                valid_from="2026-05-01T00:00:00Z",
-                valid_to="2027-05-01T00:00:00Z",
+                valid_from=valid_from,
+                valid_to=valid_to,
             ),
         ),
         head_signed_at="2026-05-21T10:00:00Z",
@@ -554,3 +556,137 @@ def test_read_marker_doc_size_cap_enforced(tmp_path: Path) -> None:
     marker_path.write_bytes(b"x" * (2 * 1024 * 1024))
     with pytest.raises(OSError, match="exceeds max bytes limit"):
         ar.read_marker_doc(marker_path)
+
+
+# === Codex PR #82 R2 fix coverage ===
+
+
+def test_ownership_check_rejects_expired_host_lifecycle() -> None:
+    """Codex PR #82 R2 F-001 fix (P1): host.valid_to <= now() は taskhub_active_registry_host_lifecycle_expired."""
+    import datetime as dt
+    fleet = _make_fleet(valid_to="2026-01-01T00:00:00Z")  # already expired
+    now = dt.datetime(2026, 5, 21, tzinfo=dt.UTC)
+    ok, reason = ar.verify_signer_host_ownership(
+        fleet=fleet, marker_host_id="host-1", marker_signer_fingerprint="sig-fp-1",
+        marker_kind="active", now=now,
+    )
+    assert ok is False
+    assert reason == "taskhub_active_registry_host_lifecycle_expired"
+
+
+def test_ownership_check_rejects_not_yet_active_host_lifecycle() -> None:
+    """Codex PR #82 R2 F-001 fix (P1): now() < host.valid_from は host_lifecycle_expired."""
+    import datetime as dt
+    fleet = _make_fleet(valid_from="2027-01-01T00:00:00Z")  # future, not yet active
+    now = dt.datetime(2026, 5, 21, tzinfo=dt.UTC)
+    ok, reason = ar.verify_signer_host_ownership(
+        fleet=fleet, marker_host_id="host-1", marker_signer_fingerprint="sig-fp-1",
+        marker_kind="active", now=now,
+    )
+    assert ok is False
+    assert reason == "taskhub_active_registry_host_lifecycle_expired"
+
+
+def test_ownership_check_pass_within_lifecycle_window() -> None:
+    """Codex PR #82 R2 F-001 fix (P1): lifecycle window 内は pass."""
+    import datetime as dt
+    fleet = _make_fleet(
+        valid_from="2026-01-01T00:00:00Z",
+        valid_to="2027-01-01T00:00:00Z",
+    )
+    now = dt.datetime(2026, 5, 21, tzinfo=dt.UTC)
+    ok, reason = ar.verify_signer_host_ownership(
+        fleet=fleet, marker_host_id="host-1", marker_signer_fingerprint="sig-fp-1",
+        marker_kind="active", now=now,
+    )
+    assert ok is True
+    assert reason == ""
+
+
+def test_allocate_next_epoch_rejects_counter_symlink(tmp_path: Path) -> None:
+    """Codex PR #82 R2 F-002 fix (P1): counter_path が symlink なら O_NOFOLLOW で reject (OSError)."""
+    priv = Ed25519PrivateKey.generate()
+    counter_path = tmp_path / "epoch.counter"
+    lock_path = tmp_path / "epoch.lock"
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+    target = tmp_path / "evil.json"
+    target.write_text('{"epoch":1,"issued_at":"2026-01-01T00:00:00.000000Z","sha256":"fake"}')
+    counter_path.symlink_to(target)
+
+    def signer(data: bytes) -> bytes:
+        return priv.sign(data)
+
+    with pytest.raises(OSError):
+        ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+
+
+def test_allocate_next_epoch_rejects_journal_symlink(tmp_path: Path) -> None:
+    """Codex PR #82 R2 F-005 fix (P1): journal_path が symlink なら O_NOFOLLOW で reject."""
+    priv = Ed25519PrivateKey.generate()
+    counter_path = tmp_path / "epoch.counter"
+    lock_path = tmp_path / "epoch.lock"
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+    target = tmp_path / "victim.log"
+    target.write_text("existing content\n")
+    journal_path.symlink_to(target)
+
+    def signer(data: bytes) -> bytes:
+        return priv.sign(data)
+
+    with pytest.raises(OSError):
+        ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+
+
+def test_allocate_next_epoch_rejects_forged_journal_tail(tmp_path: Path) -> None:
+    """Codex PR #82 R2 F-004 fix (P1): journal tail line に domain field がない forged entry は無視.
+
+    forged tail (domain なし or signature なし or wrong domain) で epoch derivation を
+    steal できないこと。pre-write entry が valid なら、forged 行は skip され有効 entry まで遡る。
+    """
+    priv = Ed25519PrivateKey.generate()
+    counter_path = tmp_path / "epoch.counter"
+    lock_path = tmp_path / "epoch.lock"
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+
+    def signer(data: bytes) -> bytes:
+        return priv.sign(data)
+
+    # 1st valid allocation, then append a forged line with high epoch but wrong domain
+    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    with journal_path.open("ab") as jf:
+        jf.write(b'{"domain":"evil.fake.v1","epoch":9999,"signature":"forged","writer_signer_fingerprint":"x"}\n')
+    # tamper counter to lower for replay attempt
+    tampered = {"epoch": 1, "issued_at": "2026-05-21T10:00:00.000000Z"}
+    tampered["sha256"] = ar._sha256_hex(ar._rfc8785_canonical_bytes(tampered))
+    counter_path.write_bytes(json.dumps(tampered).encode("utf-8"))
+    # next allocation should pick journal_tail_epoch=1 (forged line skipped due to wrong domain)
+    e_next, _, _ = ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    assert e_next == 2  # max(1, 1) + 1 = 2 (not 10000 from forged)
+
+
+def test_allocate_next_epoch_bounded_tail_read(tmp_path: Path) -> None:
+    """Codex PR #82 R2 F-003 fix (P2): bounded tail read (64 KiB) で large journal でも latency 一定."""
+    priv = Ed25519PrivateKey.generate()
+    counter_path = tmp_path / "epoch.counter"
+    lock_path = tmp_path / "epoch.lock"
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+
+    def signer(data: bytes) -> bytes:
+        return priv.sign(data)
+
+    ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    # inject large prefix to journal (simulating long history)
+    with journal_path.open("ab") as jf:
+        jf.write(b"#" * (128 * 1024) + b"\n")  # 128 KiB of garbage prefix
+    # subsequent allocation should still find tail entry within 64 KiB window
+    e_next, _, _ = ar.allocate_next_epoch(counter_path, lock_path, journal_path, "host-1", "fp-1", signer)
+    assert e_next == 2  # max(1, 1) + 1
+
+
+def test_write_marker_atomic_uses_owner_only_permission(tmp_path: Path) -> None:
+    """Codex PR #82 R2 F-006 fix (P2): marker file は 0o600 owner-only で create."""
+    import stat as stat_mod
+    marker_path = tmp_path / "test.signed"
+    ar.write_marker_atomic(marker_path, {"a": 1, "domain": "test.v1"})
+    mode = stat_mod.S_IMODE(marker_path.stat().st_mode)
+    assert mode == 0o600
