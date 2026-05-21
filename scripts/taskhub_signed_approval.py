@@ -226,6 +226,35 @@ ReasonCode = Literal[
     "taskhub_signed_approval_restore_rollback_claim_required",
     "taskhub_signed_approval_restore_rollback_claim_mismatch",
     "taskhub_signed_approval_restore_rollback_allow_unsigned_skeleton_rejected",
+    # SP-012 Batch A: approval keyring + signed manifest + dual-trust (ADR-00029、
+    # `.claude/plans/sp012-split-brain-keyring.md` §3.A canonical)
+    # base 6 件 (Phase 1 ADV R1 で確定):
+    "taskhub_signed_approval_keyring_key_invalid_fingerprint",
+    "taskhub_signed_approval_keyring_key_expired",
+    "taskhub_signed_approval_keyring_key_revoked",
+    "taskhub_signed_approval_keyring_no_valid_key",
+    "taskhub_signed_approval_keyring_manifest_signature_invalid",  # ADV R1 F-004
+    "taskhub_signed_approval_keyring_manifest_tampered",  # ADV R1 F-004
+    # ADV2 R1 hardening: keyring rotation / signed manifest / candidate / CLI (§9.3):
+    "taskhub_signed_approval_keyring_initialized_marker_violated",  # §9.3 R1 F-005 directory swap downgrade defense
+    "taskhub_signed_approval_keyring_generation_replay_or_lower",  # §9.3 R1 F-007 append-only generation chain
+    "taskhub_signed_approval_keyring_candidate_hash_envelope_mismatch",  # §9.3 R1 F-008 candidate self-ref envelope
+    "taskhub_signed_approval_cli_path_traversal_rejected",  # §9.3 R1 F-009 staging dir allowlist + dirfd-relative
+    # ADV2 R8 hardening: config_dir snapshot rollback defense via state head anchor (§9.8 F-002):
+    "taskhub_keyring_state_head_signature_invalid",
+    "taskhub_keyring_state_head_initialized_marker_missing_after_bootstrap",
+    "taskhub_keyring_state_head_manifest_generation_rollback_detected",
+    "taskhub_keyring_state_head_chain_hash_mismatch",
+    # ADV2 R9 hardening: server-owned approval issuance journal (§9.9 F-002):
+    "taskhub_approval_issuance_journal_entry_signature_invalid",
+    "taskhub_approval_issuance_journal_chain_hash_mismatch",
+    "taskhub_approval_signed_after_key_expired_per_journal",
+    "taskhub_approval_caller_supplied_signed_at_rejected",
+    # ADV2 R10 hardening: clock monotonicity + rollback regression detection (§9.10 F-002):
+    "taskhub_approval_issuance_journal_monotonic_regression_detected",
+    "taskhub_approval_issuance_journal_monotonic_sequence_skip_detected",
+    "taskhub_approval_issuance_reboot_not_attested",
+    "taskhub_approval_issuance_monotonic_clock_source_unavailable",
 ]
 
 AUDIT_PAYLOAD_ALLOWLIST_KEYS: frozenset[str] = frozenset(
