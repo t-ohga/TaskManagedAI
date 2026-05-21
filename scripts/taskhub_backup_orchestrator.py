@@ -1096,7 +1096,20 @@ def _verified_copy_tree_no_follow(
                             chunk = os.read(src_fd, 65536)
                             if not chunk:
                                 break
-                            os.write(dst_fd, chunk)
+                            # Codex PR #80 R3 F-011 P2 adopt: partial write 検出 + 完全書き込み保証
+                            # os.write は I/O pressure / interrupt で partial 完了可、loop で残量書き込み
+                            remaining = chunk
+                            while remaining:
+                                written = os.write(dst_fd, remaining)
+                                if written <= 0:
+                                    raise BackupRuntimeError(
+                                        "backup_artifacts_staging_tampered",
+                                        detail=(
+                                            f"partial write or write returned {written} for {rel}, "
+                                            "potential staged file corruption"
+                                        ),
+                                    )
+                                remaining = remaining[written:]
                             hasher.update(chunk)
                         os.fsync(dst_fd)
                     finally:
@@ -1152,11 +1165,93 @@ def _compute_artifacts_dir_manifest_sha256(
                 "backup_compose_binding_not_initialized",
                 detail="source_mode_sidecar_path required for mode_source='source_lstat'",
             )
-        # sidecar から source mode 情報を読込 → そのまま manifest として hash 化
+        # Codex PR #80 R3 F-010 P1 CRITICAL adopt: sidecar JSON だけを hash する旧経路を排除、
+        # staged tree を walk して **各 file の実 sha256 を再計算** + sidecar 内 sha256 と比較
+        # (same-UID tamper で staged content 変更 + sidecar untouched 攻撃を検知)。
         sidecar_text = source_mode_sidecar_path.read_text(encoding="utf-8")
         sidecar_data = json.loads(sidecar_text)
-        # canonical JCS-like: sort_keys + compact separators
-        canonical = json.dumps(sidecar_data, separators=(",", ":"), sort_keys=True)
+        sidecar_files = {f["path"]: f for f in sidecar_data.get("files", []) if isinstance(f, dict)}
+        # staged tree walk + per-file sha256 再計算 + sidecar entry と一致 verify
+        staged_entries: list[dict[str, Any]] = []
+        staged_total_bytes = 0
+
+        def _walk_staged(d: Path, prefix: str) -> None:
+            nonlocal staged_total_bytes
+            for entry in sorted(os.scandir(str(d)), key=lambda e: e.name):
+                rel = f"{prefix}{entry.name}"
+                st_entry = os.lstat(entry.path)
+                if stat.S_ISDIR(st_entry.st_mode):
+                    # sidecar entry verify
+                    expected = sidecar_files.get(rel)
+                    if expected is None or expected.get("type") != "dir":
+                        raise BackupRuntimeError(
+                            "backup_artifacts_staging_tampered",
+                            detail=f"staged dir not in sidecar: {rel}",
+                        )
+                    staged_entries.append({"path": rel, "type": "dir", "mode": expected["mode"]})
+                    _walk_staged(Path(entry.path), rel + "/")
+                elif stat.S_ISREG(st_entry.st_mode):
+                    expected = sidecar_files.get(rel)
+                    if expected is None or expected.get("type") != "file":
+                        raise BackupRuntimeError(
+                            "backup_artifacts_staging_tampered",
+                            detail=f"staged file not in sidecar: {rel}",
+                        )
+                    # staged file 実 sha256 を chunked 再計算
+                    hasher = hashlib.sha256()
+                    with open(entry.path, "rb") as fobj:  # noqa: PTH123 — chunked
+                        while True:
+                            chunk = fobj.read(65536)
+                            if not chunk:
+                                break
+                            hasher.update(chunk)
+                    actual_sha = hasher.hexdigest()
+                    if actual_sha != expected.get("sha256"):
+                        raise BackupRuntimeError(
+                            "backup_artifacts_staging_tampered",
+                            detail=(
+                                f"staged file sha256 mismatch at {rel}: "
+                                f"sidecar={expected.get('sha256', '')[:16]}, "
+                                f"staged={actual_sha[:16]}"
+                            ),
+                        )
+                    if st_entry.st_size != expected.get("size"):
+                        raise BackupRuntimeError(
+                            "backup_artifacts_staging_tampered",
+                            detail=f"staged file size mismatch at {rel}",
+                        )
+                    staged_total_bytes += st_entry.st_size
+                    staged_entries.append({
+                        "path": rel, "type": "file",
+                        "sha256": actual_sha,
+                        "mode": expected["mode"],  # source lstat mode (sidecar から)
+                        "size": expected["size"],
+                    })
+                else:
+                    # symlink / device / FIFO / socket は staging tree に存在しないはず (copy 時 reject)
+                    raise BackupRuntimeError(
+                        "backup_artifacts_staging_tampered",
+                        detail=f"staged tree unexpected entry type at {rel}",
+                    )
+
+        _walk_staged(dir_path, "")
+        # sidecar 内 entry が staged tree に全て存在するか (delete 攻撃検知)
+        staged_paths = {e["path"] for e in staged_entries}
+        sidecar_paths = set(sidecar_files.keys())
+        if staged_paths != sidecar_paths:
+            missing = sidecar_paths - staged_paths
+            extra = staged_paths - sidecar_paths
+            raise BackupRuntimeError(
+                "backup_artifacts_staging_tampered",
+                detail=f"staged tree drift: missing={sorted(missing)[:3]} extra={sorted(extra)[:3]}",
+            )
+        manifest_dict = {
+            "manifest_version": 1,
+            "files": staged_entries,
+            "total_files": len(staged_entries),
+            "total_bytes": staged_total_bytes,
+        }
+        canonical = json.dumps(manifest_dict, separators=(",", ":"), sort_keys=True)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     # mode_source == "lstat" → source tree walk
     entries: list[dict[str, Any]] = []
@@ -1889,8 +1984,25 @@ def run_backup(
             warnings_list.append("backup_artifacts_dir_empty")
 
         # optional env.encrypted
+        # Codex PR #80 R3 F-012 P1 CRITICAL adopt: phase_5_mode で verified_sops_env_execution_input
+        # (lock 内に read した bytes の immutable copy) から archive、caller-controlled source は読まない
+        # (post-lock attack で source 改変 / 削除 → backup が tampered/missing content を含む経路を物理閉鎖)
         if options.include_sops_env:
-            if options.sops_env_path.exists():
+            if phase_5_mode:
+                if options.verified_sops_env_execution_input is None:
+                    raise BackupRuntimeError(
+                        "backup_compose_binding_not_initialized",
+                        detail="phase_5_mode + include_sops_env requires verified_sops_env_execution_input",
+                    )
+                # metadata snapshot 再検証 (R5 F-002 same-UID swap 検知) 後に verified copy から archive
+                _verify_metadata_snapshot(
+                    options.verified_sops_env_execution_input,
+                    options.verified_sops_env_metadata_snapshot,
+                    tamper_reason="backup_payload_source_tampered",
+                )
+                shutil.copy2(options.verified_sops_env_execution_input, tmp_dir / "env.encrypted")
+            elif options.sops_env_path.exists():
+                # legacy PR #77 mode (phase_5_mode=False) は従来通り source 直接 copy
                 shutil.copy2(options.sops_env_path, tmp_dir / "env.encrypted")
             else:
                 warnings_list.append("backup_sops_env_skipped")
