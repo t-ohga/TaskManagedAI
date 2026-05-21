@@ -251,15 +251,17 @@ def _encode_number(n: int | float) -> str:
         raise ValueError(f"RFC 8785 forbids non-finite numbers: {n!r}")
     if n == 0.0:
         return "0"  # -0.0 と 0.0 を 0 に統一 (ECMAScript ToString rule)
-    # Codex PR #82 R4 F-001 fix (P1): integer-valued float も 1e21 以上は scientific notation
+    # Codex PR #82 R4 F-001 + R5 F-001 fix (P1): integer-valued float < 1e21 は **常に** integral
+    # form を出力する (ECMAScript Number.prototype.toString は abs < 1e21 で整数値なら
+    # decimal integers を emit、I-JSON range 超過でも integral form。Python repr が
+    # scientific を選ぶ境界 (>= 1e16) は ECMAScript と異なる)。
+    # I-JSON range constraint は **input-time validation** として扱い、integer 入力時に reject
+    # 済 (encode 時に float 経由で来た場合は integral form を出すが verifier 側で precision-loss
+    # 警告を出すべき、本実装では integral form を出力するに留め caller responsibility)。
     abs_n = abs(n)
     if n == int(n) and abs_n < 1e21:
-        # integer-valued float、scientific 不要範囲 (Python int 範囲、abs < 1e21)
+        # integer-valued float, in ECMAScript integral range → always emit integral form
         as_int = int(n)
-        # I-JSON range も適用 (1e16 〜 1e21 の int は IEEE-754 で表現可能なものとそうでないものがある)
-        if as_int > _IJSON_MAX_INTEGER or as_int < _IJSON_MIN_INTEGER:
-            # 大きい integer-valued float は ECMAScript ToString が scientific を使う
-            return _ecmascript_float_repr(n)
         return str(as_int)
     return _ecmascript_float_repr(n)
 
@@ -710,20 +712,40 @@ def verify_signer_host_ownership(
 
 
 def _is_structurally_valid_journal_entry(entry: Any) -> bool:  # noqa: ANN401
-    """Codex PR #82 R2 F-004 fix (P1): structural validation only.
+    """Structural validation: full EpochJournalEntry schema 必須.
 
-    domain + epoch + signature + writer_signer_fingerprint の field 存在 + 型 check のみ。
+    Codex PR #82 R2 F-004 fix (P1): domain + epoch + signature + writer_signer_fingerprint check.
+    Codex PR #82 R5 F-003 fix (P2): epoch=bool (bool is subclass of int) を reject。
+    Codex PR #82 R5 F-004 fix (P2): EpochJournalEntry full schema を検証 (host_id +
+    issued_at + previous_entry_hash も必須、truncated/minimal entry を reject)。
+
     Ed25519 signature verify は journal_tail_verifier callable (R3 F-005) で行う。
     """
     if not isinstance(entry, dict):
         return False
     if entry.get("domain") != DOMAIN_EPOCH_JOURNAL_V1:
         return False
-    if not isinstance(entry.get("epoch"), int):
+    # Codex PR #82 R5 F-003 fix (P2): bool is subclass of int — explicit exclusion
+    epoch_val = entry.get("epoch")
+    if not isinstance(epoch_val, int) or isinstance(epoch_val, bool):
+        return False
+    # epoch must be non-negative
+    if epoch_val < 0:
         return False
     if not isinstance(entry.get("signature"), str) or not entry["signature"]:
         return False
-    if not isinstance(entry.get("writer_signer_fingerprint"), str):
+    if not isinstance(entry.get("writer_signer_fingerprint"), str) or not entry["writer_signer_fingerprint"]:
+        return False
+    # Codex PR #82 R5 F-004 fix (P2): full EpochJournalEntry schema validation
+    if not isinstance(entry.get("host_id"), str) or not entry["host_id"]:
+        return False
+    if not isinstance(entry.get("issued_at"), str) or not entry["issued_at"]:
+        return False
+    if not isinstance(entry.get("previous_entry_hash"), str) or not entry["previous_entry_hash"]:
+        return False
+    # previous_entry_hash must be 64-char hex (sha256)
+    prev_hash = entry["previous_entry_hash"]
+    if len(prev_hash) != 64 or not all(c in "0123456789abcdef" for c in prev_hash):
         return False
     return True
 
@@ -780,8 +802,14 @@ def _find_valid_journal_tail_entry(
                 if not _is_structurally_valid_journal_entry(candidate):
                     continue
                 # Codex PR #82 R3 F-005 fix (P1): cryptographic signature verify
-                if tail_verifier is not None and not tail_verifier(candidate):
-                    continue  # forged signature — skip and continue backward scan
+                # Codex PR #82 R5 F-002 fix (P1): verifier exception (semantically incomplete /
+                # unexpected format) を catch して fail-soft (この entry を skip して backward scan
+                # 継続)。verifier の raise が crash-recovery を全体 block するのを防ぐ。
+                try:
+                    if tail_verifier is not None and not tail_verifier(candidate):
+                        continue  # forged signature — skip
+                except Exception:  # noqa: BLE001, S112 — fail-soft skip for verifier exceptions
+                    continue
                 return candidate
             if tail_size >= stat.st_size:
                 break  # already read the whole file, no valid entry exists

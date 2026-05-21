@@ -1020,3 +1020,115 @@ def test_rfc8785_canonical_with_oversize_integer_rejected() -> None:
     """encoding-level でも I-JSON range 違反は reject される."""
     with pytest.raises(ValueError, match="I-JSON integer"):
         ar._rfc8785_canonical_bytes({"v": (1 << 53)})
+
+
+# === Codex PR #82 R5 fix coverage ===
+
+
+def test_encode_number_integer_valued_float_above_ijson_emits_integral() -> None:
+    """Codex PR #82 R5 F-001 fix (P1): integer-valued float < 1e21 で I-JSON range 超過でも
+    integral form (ECMAScript Number.toString) を emit、scientific には fall-back しない."""
+    # 2^53 = 9007199254740992、abs < 1e21、ECMAScript ToString → "9007199254740992"
+    encoded = ar._encode_number(float(1 << 53))
+    assert encoded == "9007199254740992"
+    # 1e16 → ECMAScript ToString → "10000000000000000"
+    assert ar._encode_number(1e16) == "10000000000000000"
+    # 1e20 → still integral form
+    assert ar._encode_number(1e20) == "100000000000000000000"
+
+
+def test_structural_validation_rejects_bool_epoch() -> None:
+    """Codex PR #82 R5 F-003 fix (P2): epoch=True/False (bool is int subclass) を reject."""
+    entry = {
+        "domain": ar.DOMAIN_EPOCH_JOURNAL_V1,
+        "epoch": True,  # bool — should be rejected
+        "issued_at": "2026-05-21T10:00:00.000000Z",
+        "host_id": "host-1",
+        "writer_signer_fingerprint": "fp-1",
+        "previous_entry_hash": "0" * 64,
+        "signature": "sig",
+    }
+    assert ar._is_structurally_valid_journal_entry(entry) is False
+
+
+def test_structural_validation_rejects_missing_host_id() -> None:
+    """Codex PR #82 R5 F-004 fix (P2): host_id 不在は reject (full schema 必須)."""
+    entry = {
+        "domain": ar.DOMAIN_EPOCH_JOURNAL_V1,
+        "epoch": 1,
+        "issued_at": "2026-05-21T10:00:00.000000Z",
+        "writer_signer_fingerprint": "fp-1",
+        "previous_entry_hash": "0" * 64,
+        "signature": "sig",
+        # host_id missing
+    }
+    assert ar._is_structurally_valid_journal_entry(entry) is False
+
+
+def test_structural_validation_rejects_missing_issued_at() -> None:
+    """Codex PR #82 R5 F-004 fix (P2): issued_at 不在は reject."""
+    entry = {
+        "domain": ar.DOMAIN_EPOCH_JOURNAL_V1,
+        "epoch": 1,
+        "host_id": "host-1",
+        "writer_signer_fingerprint": "fp-1",
+        "previous_entry_hash": "0" * 64,
+        "signature": "sig",
+        # issued_at missing
+    }
+    assert ar._is_structurally_valid_journal_entry(entry) is False
+
+
+def test_structural_validation_rejects_invalid_previous_entry_hash() -> None:
+    """Codex PR #82 R5 F-004 fix (P2): previous_entry_hash は 64-char hex 必須."""
+    entry = {
+        "domain": ar.DOMAIN_EPOCH_JOURNAL_V1,
+        "epoch": 1,
+        "issued_at": "2026-05-21T10:00:00.000000Z",
+        "host_id": "host-1",
+        "writer_signer_fingerprint": "fp-1",
+        "previous_entry_hash": "not-a-valid-hex-hash",  # invalid format
+        "signature": "sig",
+    }
+    assert ar._is_structurally_valid_journal_entry(entry) is False
+
+
+def test_structural_validation_rejects_negative_epoch() -> None:
+    """epoch は 非負 integer 必須."""
+    entry = {
+        "domain": ar.DOMAIN_EPOCH_JOURNAL_V1,
+        "epoch": -1,
+        "issued_at": "2026-05-21T10:00:00.000000Z",
+        "host_id": "host-1",
+        "writer_signer_fingerprint": "fp-1",
+        "previous_entry_hash": "0" * 64,
+        "signature": "sig",
+    }
+    assert ar._is_structurally_valid_journal_entry(entry) is False
+
+
+def test_find_journal_tail_verifier_exception_fail_soft(tmp_path: Path) -> None:
+    """Codex PR #82 R5 F-002 fix (P1): verifier が exception raise しても backward scan を継続
+    (fail-soft skip)、allocation を block しない."""
+    journal_path = tmp_path / "epoch.journal.signed.jsonl"
+    valid_entry = {
+        "domain": ar.DOMAIN_EPOCH_JOURNAL_V1,
+        "epoch": 1,
+        "issued_at": "2026-05-21T10:00:00.000000Z",
+        "host_id": "host-1",
+        "writer_signer_fingerprint": "fp-1",
+        "previous_entry_hash": "0" * 64,
+        "signature": "sig",
+    }
+    journal_path.write_bytes(
+        json.dumps(valid_entry, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
+    )
+
+    def raising_verifier(_entry: dict) -> bool:
+        raise RuntimeError("verifier crashed on this entry")
+
+    # verifier が raise → entry を skip + scan 継続。本 fixture は entry 1 個のみなので結果 None
+    found = ar._find_valid_journal_tail_entry(
+        journal_path=journal_path, tail_verifier=raising_verifier
+    )
+    assert found is None  # all entries failed (raised), backward scan exhausted
