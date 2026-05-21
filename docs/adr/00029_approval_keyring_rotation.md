@@ -1,9 +1,10 @@
 ---
 id: "ADR-00029"
 title: "Approval Verify Keyring Rotation (keyring + signed manifest + dual-trust + bootstrap + lifecycle vs compromise + server-owned approval issuance journal + config_dir snapshot rollback defense)"
-status: "proposed"
+status: "accepted"
 created_at: "2026-05-21"
 updated_at: "2026-05-21"
+accepted_at: "2026-05-21"
 decision_target: "PR #75-#80 で確立した `approval-verify-key.pub` single-key 体制を keyring (`approval-verify-keys.d/<fingerprint>.pub` + `approval-verify-keyring.signed.json` signed manifest) へ拡張: overlap 期間 dual-trust verify + lifecycle expiry (deprecated) vs compromise revocation (revoked) 区別 + signed candidate manifest + atomic install + server-owned approval issuance journal + immutable approval artifact archive + `/etc/taskhub/keyring_state.head.signed` non-rollback state anchor + clock monotonicity attestation"
 sprint_ref:
   - "SP-012_p0_acceptance"

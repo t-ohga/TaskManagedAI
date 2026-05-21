@@ -1,9 +1,10 @@
 ---
 id: "ADR-00028"
 title: "Split-Brain Second Line of Defense (active-registry marker chain + cutover 2-party-control + 2PC + fleet-wide lease + signer-host ownership + commit-time cryptographic proof + L1+L2+L3 write gate + clock monotonicity)"
-status: "proposed"
+status: "accepted"
 created_at: "2026-05-21"
 updated_at: "2026-05-21"
+accepted_at: "2026-05-21"
 decision_target: "Host-Portable deployment (ADR-00021) における split-brain prevention の **second line of defense**: active.signed/decommission.signed/prepare.signed/commit.signed marker chain + cutover 2-party-control + two-phase commit + fleet-wide cutover lease + signer-host ownership binding + commit-time cryptographic finalization signature + active-registry write gate (L1 API ingress + L2 worker dequeue + L3 DB mutation boundary) + server-owned clock monotonicity attestation"
 sprint_ref:
   - "SP-012_p0_acceptance"

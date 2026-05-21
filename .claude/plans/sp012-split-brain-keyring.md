@@ -104,6 +104,16 @@ Batch A (keyring) で `taskhub_signed_approval.py` の ReasonCode Literal に追
 
 ### Batch B: active-registry real flow + split-brain second line of defense
 
+> ⚠️ **Batch 1 commit gate sync (本 commit `0599637` 直後の Batch A 1st commit で適用済 / 適用中)**: 本 §3.B / §3.B.3 / §3.C.1〜3.C.4 / §6.1 / §9 の base spec は **§9.3〜§9.10 hardening contract で更新済**。implementation 時は §9.3〜§9.10 を **canonical final spec** として扱い、本 §3.B base spec は historical context として残す。実装の primary source は §9.3-§9.10:
+> - ActiveMarker / DecommissionMarker schema → §9.3 (R1 F-011 source host id binding) + §9.5 (R3 F-002 signer-host ownership) + §9.8 (R8 F-001 approval artifact 検証)
+> - PrepareMarker / CommitMarker (新規 marker types) → §9.4 (R2 F-002 別 signature domain) + §9.5 (R3 F-003 lease binding) + §9.7 (R6 F-001 commit-time finalization signature) + §9.9 (R9 F-001 commit-time logic correction) + §9.6 (R5 F-001 immutable archived snapshot)
+> - CutoverApprovalClaim signature → §9.4 (R2 F-001 caller-supplied actor 削除、principal-token-fd 経路)
+> - fleet-wide cutover lease → §9.4 (R2 F-003) + §9.5 (R3 F-003 lease-bound commit) + §9.6 (R5 F-001 immutable archive)
+> - active-registry write gate → §9.4 (R2 F-007 L1 FastAPI) + §9.7 (R6 F-002 current fleet policy) + §9.10 (R10 F-001 L1+L2+L3 defense-in-depth)
+> - server-owned clock monotonicity → §9.9 (R9 F-002 issuance journal) + §9.10 (R10 F-002 monotonicity attestation 3 mode)
+> - bootstrap operation → §9.3 (R1 F-005 initialized marker) + §9.4 (R2 F-004 legacy_not_before) + §9.5 (R3 F-001 rollback でも tombstone denylist 維持)
+> - approval artifact immutable archive → §9.8 (R8 F-001) + config_dir snapshot rollback defense → §9.8 (R8 F-002 /etc/taskhub/keyring_state.head.signed)
+
 #### 3.B.1 `active.signed` marker chain (`scripts/taskhub_admin.py` + `scripts/taskhub_active_registry.py` 新規)
 
 **ADV R1 F-001 CRITICAL adopt: ActiveMarker / DecommissionMarker schema を分離 + chain hash binding**:
@@ -170,6 +180,17 @@ read 経路:
   - **legacy compat note**: `taskhub thaw --decommission-target` は target rollback 用途で残し、本 plan の cutover とは独立 subcommand 扱い (ADV R7 F-001 で意味分離済)
 
 ### Batch C: keyring rotation operator runbook + CLI
+
+> ⚠️ **§3.C.1〜3.C.4 base spec は §9.3〜§9.9 で更新済** (Batch 1 commit gate canonical):
+> - KeyringRotationApprovalClaim 5 variants (add_key / remove_key / revoke_key / commit_manifest / bootstrap) → §9.3 (R1 F-012 bootstrap transition) + §9.4 (R2 F-004 legacy_not_before) + §9.5 (R3 F-002 signer-host ownership)
+> - caller-supplied `--expires-at` / `--signed-at` / actor parameter 物理削除 → §9.4 (R2 F-001 server-owned-boundary 遵守、principal-token-fd 経路)
+> - authorization_verify vs audit_verify predicate 分離 → §9.4 (R2 F-005 deprecated_at 後の新規署名 reject)
+> - server-owned approval issuance journal → §9.9 (R9 F-002 chain integrity + monotonic_sequence + clock attestation)
+> - immutable signed candidate manifest → §9.3 (R1 F-006 generation_id atomic install) + §9.3 (R1 F-008 candidate self-ref envelope) + §9.3 (R1 F-009 path traversal defense)
+> - revocation tombstone denylist → §9.5 (R3 F-001 rollback でも live path に維持)
+> - signed manifest replay defense → §9.3 (R1 F-007 generation chain + previous_committed_manifest_hash + commit_log_chain_hash)
+> - root trust anchor pinning → §9.3 (R1 F-004 config_dir 外 pin /etc/taskhub/root_fingerprints.signed)
+> - keyring_state.head.signed (config_dir 外 monotonic state anchor) → §9.8 (R8 F-002 snapshot rollback defense) + §9.10 (R10 F-002 monotonicity update)
 
 #### 3.C.1 `taskhub keyring add-key --pubkey <path>` (新規 CLI、ADV R1 F-005 + ADV R6 F-003 HIGH adopt)
 
@@ -441,6 +462,13 @@ uv run pytest tests/scripts/ -x  # full regression (現 319 + 新 46 = 365+ test
 ```
 
 ## §6.1 state machine semantics (ADV R1 F-010 MEDIUM adopt)
+
+> ⚠️ **§6.1 base spec は §9.3-§9.10 で更新済** (Batch 1 commit gate canonical):
+> - cutover phase の atomic 不可前提 + 2PC pattern → §9.3 (R1 F-003) + §9.4 (R2 F-002 別 domain) で **cutover-prepare → cutover-commit の 2 step に分解**
+> - state transition: `freeze → backup → transfer → restore → verify → cutover-prepare → cutover-commit → verified-active`
+> - 各 phase の signed journal record で chain hash 確認 (ADV R1 F-001) + epoch counter journal (§9.3 R1 F-010 monotonic + writer fingerprint + remote quorum)
+> - cutover phase は **2 step**: prepare (Phase α、staged `.signed.pending`) + commit (Phase β、`commit.signed` certificate 別 domain)
+> - lease window 内の commit-time invariant (§9.6 R5 F-001 + §9.7 R6 F-001 + §9.9 R9 F-001 logic correction): `max(host_commit_confirmed_at) <= committed_at < lease_expires_at`
 
 freeze / decommission の semantic 分離:
 
