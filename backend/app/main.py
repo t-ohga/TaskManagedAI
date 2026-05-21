@@ -11,6 +11,10 @@ from starlette.types import ASGIApp
 
 from backend.app.api import agent_runs as agent_runs_api
 from backend.app.api import approval_inbox, notifications
+from backend.app.api.dependencies.active_registry_gate import (
+    configure_active_registry_gate_from_settings,
+    install_active_registry_gate_middleware,
+)
 from backend.app.api.router import api_router
 from backend.app.config import Settings, get_settings
 from backend.app.middleware.dev_actor import (
@@ -91,6 +95,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         app.add_middleware(PrometheusRequestDurationMiddleware, registry=prometheus_registry)
         app.include_router(create_metrics_router(prometheus_registry))
+
+    # SP-012 §9.10 R10 F-001 + §9.4 R2 F-007: L1 active-registry write gate wiring.
+    # Codex PR #85 R1 F-001 fix (P1) + R2 F-R2-004 fix (P2): production wiring +
+    # `resolved_settings` の inject (test / programmatic app 構築で
+    # `create_app(settings)` の値を尊重)。
+    # `TASKMANAGEDAI_ACTIVE_REGISTRY_GATE_ENABLED=true` で attach。
+    # disabled (default) なら no-op (development / test の既存 contract test を維持)。
+    configure_active_registry_gate_from_settings(app.state, settings=resolved_settings)
+    # Codex PR #85 R2 F-R2-003 fix (P2): HTTP method-based middleware で全 mutation
+    # 経路を fail-closed gate に通す (per-endpoint Depends 配線の代替)。
+    # disabled state では no-op、enabled state では 全 POST/PUT/PATCH/DELETE が
+    # gate を通る (exempt: /health, /metrics, /auth/*)。
+    install_active_registry_gate_middleware(app)
+    # Codex PR #85 R3 F-R3-001 fix (P2): L3 DB mutation gate を resolved_settings で
+    # reconfigure (programmatic app 構築での Settings divergence 防止)。
+    # import 時の default attach を detach + 新 settings で再 attach (idempotent)。
+    from backend.app.db.session import configure_active_registry_db_gate
+
+    configure_active_registry_db_gate(settings=resolved_settings)
 
     app.include_router(api_router)
     app.include_router(approval_inbox.router)
