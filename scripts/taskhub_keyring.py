@@ -23,10 +23,17 @@
 
 ## Lifecycle (§6.5、§9.4 R2 F-005 authorization vs audit predicate 分離)
 
-- `status: "active"`: 新規署名可、authorization_verify + audit_verify 両方 pass
-- `status: "deprecated"`: 新規署名不可、authorization_verify は record_signed_at < deprecated_at
-  のみ pass、audit_verify は issued_at <= signed_at < expires_at で pass
-- `status: "revoked"`: signed_at 関係なく無条件 reject (audit history 維持のため entry は keep)
+**Codex R1 F-006 fix (P2)**: authorization_verify vs audit_verify を単一 predicate で兼ねない、
+2 mode 完全分離 (`VerifyMode` enum 参照):
+
+- `status: "active"`: 新規署名可、**authorization_verify** + **audit_verify** 両方 pass
+- `status: "deprecated"`: 新規署名 / destructive 不可、**authorization_verify は無条件 reject**
+  (authorization mode = 「これから destructive operation を行う」判定、deprecated key は使わせない)、
+  **audit_verify は record_signed_at < deprecated_at の record で pass** (historical signature 検証用、
+  PR #75-#80 で署名済 record の audit verify を継続するため)
+- `status: "revoked"`: 新規署名 / destructive 不可、**authorization_verify + audit_verify 両方とも
+  signed_at 関係なく無条件 reject** (compromise revocation、audit history は manifest entry を keep
+  するが verify path では除外)
 
 ## KeyringRotationApprovalClaim 5 variants (§3.C.1、§9.3 R1 F-012 bootstrap 追加)
 
@@ -97,9 +104,15 @@ KEY_FILE_PERMISSION = 0o400  # read-only owner
 KEYRING_DIR_PERMISSION = 0o700  # owner only
 
 # Verify path mode (§9.4 R2 F-005 authorization vs audit predicate 分離)
+# Codex R1 F-006 fix (P2): 上部 docstring の deprecated key 扱いと統一、authorization_verify は
+# status=active のみ pass、status=deprecated は authorization 不可 (audit_verify でのみ pass)
+# 上部 docstring の "status=deprecated + record_signed_at < deprecated_at で authorization pass"
+# は誤った記述だったため、本 enum 定義で正本確定: deprecated key は **新規 destructive 不可**、
+# audit_verify は historical record の signature 検証 (record_signed_at < deprecated_at で pass)
+# のため使う。authorization と audit を 1 predicate で兼ねない (§9.4 R2 F-005 invariant)。
 VerifyMode = Literal[
-    "authorization_verify",  # destructive operation 実行可否判定 (status=active only)
-    "audit_verify",  # historical record audit 用 (status ∈ {active, deprecated})
+    "authorization_verify",  # destructive operation 実行可否判定 (status=active only、deprecated/revoked は無条件 reject)
+    "audit_verify",  # historical record の signature 検証用 (status ∈ {active, deprecated}、record_signed_at < deprecated_at で pass)
 ]
 
 # Default lifetime / overlap policy (§3.A NIST SP 800-57 推奨)

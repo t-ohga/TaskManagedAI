@@ -420,7 +420,7 @@ ReasonCode 拡張は **正本 16 件** (ADV R6 F-005 MEDIUM adopt 集計同期: 
 - R6 F-001 commit-time cryptographic proof + finalization signature 必須化 (backdate 攻撃防御)
 - R6 F-002 current fleet policy check (active-registry write gate / startup gate、compromise 即時失効経路)
 
-**Batch 1 commit gate**: Batch A 着手時の最初の commit で、本文 §3.B / §3.B.3 / §3.C.1 / §6.1 / §9 を §9.3-§9.7 final spec に完全 sync (drift fix を 1 commit にまとめる、本文と §9.3-§9.7 の duplication 解消)。同 commit で §6.3 ReasonCode 表 + §6.4 fixture 表 + §7 受け入れ条件 も同時 sync。`uv run pytest tests/scripts/test_signed_approval_keyring_invariants.py` が §6.3 base 42 + R2/R3/R5/R6 追加 field-level enforcement で PASS することを Batch 1 完了条件とする。
+**Batch 1 commit gate**: Batch A 着手時の最初の commit で、本文 §3.B / §3.B.3 / §3.C.1 / §6.1 / §9 を §9.3-§9.7 final spec に完全 sync (drift fix を 1 commit にまとめる、本文と §9.3-§9.7 の duplication 解消)。同 commit で §6.3 ReasonCode 表 + §6.4 fixture 表 + §7 受け入れ条件 も同時 sync。**Codex R1 F-004 fix (P2)**: 元の `tests/scripts/test_signed_approval_keyring_invariants.py` は本 PR 段階では実在しないため、Batch 1 完了条件を **(a) `tests/scripts/test_taskhub_signed_approval.py` (既存 36 test) PASS + (b) Batch C 実装で新規 `tests/scripts/test_taskhub_keyring.py` を追加すると同時に `test_signed_approval_keyring_invariants.py` (新規) を起票して PASS** に分割する。本 PR 時点では既存 36 test PASS が verify される (Batch A skeleton で確認済)、新規 invariants test は Batch C で同 commit 追加。
 
 ### 修正 (7 scripts + 2 tests + 2 docs + 2 ADR + 1 CI script + ADV2 R2/R3 hardening 5 file + R5 reconciliation gate 1 file = **20 file**、§9.4 F-007 + §9.5 F-001 + §9.6 R5 F-001 追加)
 
@@ -440,7 +440,7 @@ ReasonCode 拡張は **正本 16 件** (ADV R6 F-005 MEDIUM adopt 集計同期: 
 | `docs/sprints/SP-012_p0_acceptance.md` | must_ship 2 件 completion section 追加 | +80 |
 | `docs/deploy/operator-runbook.md` | §13 keyring rotation SOP + §14 active-registry split-brain check SOP + §15 ReasonCode reason table (ADV R8 F-005 統一) + §16 ADR-00028/00029 accepted 化 SOP | +180 |
 
-| `.claude/scripts/check_reason_code_coverage.sh` (新規、ADV R8 F-005 集計同期) | **31 ReasonCode** (base 16 + R1+R2+R3 追加 15) の 5 source 整合 pre-commit / CI check | +120 |
+| `.claude/scripts/check_reason_code_coverage.sh` (新規、ADV R8 F-005 集計同期) | **Codex R1 F-007 fix (P2)**: **60 ReasonCode** (base 16 + ADV2 R1+R2+R3 追加 15 + R5 +3 + R6 +8 + R8 +7 + R9 +4 + R10 +7 = 60、§4.5 ReasonCode 表参照) の 5 source 整合 pre-commit / CI check。元の "31 ReasonCode" は §9.5 R3 R3 stage 限定の中間 count で、§9.10 確定後の最終 contract は 60 件。CI check を 31 のままにすると R5-R10 追加分のドリフトを検出できず cross-source enum integrity gate が無効化される | +150 |
 | `backend/app/api/dependencies/active_registry_gate.py` (新規、§9.4 F-007) | FastAPI dependency: fleet-current active marker resolve + host_id 一致 + frozen/decommissioned check + fail-closed 503 | +150 |
 | `backend/app/main.py` (§9.4 F-007 wiring) | active_registry_gate dependency を全 write endpoint に attach | +30 |
 | `docker-compose.yml` (§9.4 F-007 entrypoint) | entrypoint script で active marker verify pre-check、失敗時 exit 1 | +20 |
@@ -585,7 +585,7 @@ verify path (再掲、§3.A.2 と同一):
 
 `taskhub keyring revoke-key --fingerprint <fp>` (新規、ADV R9 F-001 HIGH adopt 統一: §3.C.3 と同じ contract):
 - CLI 引数: `--fingerprint <fp>` のみ (reason text は signed claim には encode せず、audit event で保管)
-- 共通必須引数: `--approval-id <id>` + KeyringRotationApprovalClaim (operation="revoke_key"、§3.C.1 4 variants 参照)
+- 共通必須引数: `--approval-id <id>` + KeyringRotationApprovalClaim (operation="revoke_key"、§3.C.1 **5 variants** 参照、**Codex R1 F-002 fix (P2)**: §9.3 R1 F-012 で bootstrap variant 追加されたため正本 count は 5 = add_key / remove_key / revoke_key / commit_manifest / bootstrap)
 - manifest 更新 (commit-manifest 経由 atomic install): `status: "revoked"` + `revoked_at: <now>` + **`revocation_reason_hash: <sha256(reason text)>`** + `incident_id: <id>` 記録 (本文は plan / claim / manifest に保管しない、audit event のみに保管)
 - 既存 record の verify は revoked status の key に対して **常に reject** (signed_at 関係なし、§3.A.2 status check 優先)
 - audit event 必須 (revocation reason 本文は audit event に残す、operator-runbook §17 で revocation incident response SOP 規定、§15 reason table / §16 ADR SOP と section 番号衝突を回避)

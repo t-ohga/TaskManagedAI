@@ -8,8 +8,12 @@ approval issuance journal + clock monotonicity attestation 実装の foundationa
 ## Issuance journal schema (§9.9 R9 F-002 + §9.10 R10 F-002)
 
 - path: `<config_dir>/approvals/issuance_journal.signed.jsonl`
-- append-only、server-signed by `<config_dir>/issuance_journal_issuer.pub` (config_dir 外
-  推奨 path で deploy)
+- append-only、server-signed by issuance journal **issuer signing key** (Ed25519 **private key**、
+  e.g. `/etc/taskhub/issuance_journal_issuer.key` config_dir 外で root-owned + 0o400 で deploy、
+  対応する **verify-only public key** は `<config_dir>/issuance_journal_issuer.pub` で配備、
+  loader は public key で signature verify のみ実施。private key は AI / runner / artifact /
+  log に出さない、rules/secretbroker-boundary.md raw secret 非保存 invariant 遵守)
+  **Codex R1 F-005 fix (P1)**: 公開鍵では署名できない、private signing key と verify-only public key を明示分離
 - 各 entry の canonical schema:
 
 ```json
@@ -23,7 +27,7 @@ approval issuance journal + clock monotonicity attestation 実装の foundationa
   "previous_entry_hash": "<sha256 of prev entry canonical>",
   "key_fingerprint_at_issue": "<keyring active key fp at issue>",
   "key_status_at_issue": "active",
-  "monotonic_clock_attestation": {                          // §9.10 R10 F-002 推奨
+  "monotonic_clock_attestation": {                          // §9.10 R10 F-002 必須 (Codex R1 F-003 fix: invariant 3 と整合)
     "source": "linux_clock_monotonic" | "tpm_clock" | "trusted_time_attestation",
     "value": <int nanoseconds>,
     "previous_value": <int nanoseconds>
@@ -35,8 +39,13 @@ approval issuance journal + clock monotonicity attestation 実装の foundationa
 ## Invariants (issue path / verify path 両方で fail-closed)
 
 1. monotonic_sequence == previous_monotonic_sequence + 1 (§9.10 R10 F-002)
-2. issued_at >= previous_issued_at (allowed clock skew ε = 5 seconds for NTP correction)
-3. monotonic_clock_attestation.value > monotonic_clock_attestation.previous_value
+2. **issued_at >= previous_issued_at - ε** (許容 clock skew ε = 5 seconds for NTP backward correction、
+   Codex R1 F-001 fix (P1): 元の `issued_at >= previous_issued_at` 必須化は NTP backward correction で
+   時刻が数秒戻る正常ケースを fail-closed にしていたため、`- ε` を明示。`(previous_issued_at - new issued_at) > ε`
+   の場合のみ `taskhub_approval_issuance_journal_monotonic_regression_detected` で reject)
+3. monotonic_clock_attestation.value > monotonic_clock_attestation.previous_value (**必須**、
+   Codex R1 F-003 fix (P2): schema 記述を必須化 + invariant 3 と整合、attestation 非搭載 mode は
+   `taskhub_approval_issuance_monotonic_clock_source_unavailable` で deploy 時 reject)
 4. journal の previous_entry_hash chain が完全 (journal truncate / replay 検出)
 
 ## Caller-supplied `signed_at` 物理削除 (§9.9 R9 F-002)
