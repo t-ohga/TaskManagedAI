@@ -370,7 +370,13 @@ class BackupOptions:
                     str(repo_root / ".env.encrypted"),
                 ),
             ),
-            pgpassfile_path=None,  # Phase 5: compose exec で不要、None default
+            pgpassfile_path=(
+                # Phase 5 では None default、legacy fallback (PR #77 host TCP) で
+                # TASKHUB_BACKUP_PGPASSFILE 明示設定時は env から解決 (Codex PR #80 F-005 adopt)
+                Path(os.environ["TASKHUB_BACKUP_PGPASSFILE"])
+                if os.environ.get("TASKHUB_BACKUP_PGPASSFILE")
+                else None
+            ),
             target_compose_project_name=target_compose_project,
             target_compose_file_path=target_compose_file,
             env_file_path=env_file_path,
@@ -1970,8 +1976,22 @@ def run_backup(
             detail=f"unexpected: {type(exc).__name__}",
         ) from None
     finally:
-        # ADV R1 F-001 + R2 F-003 + R6 F-002 + ADV2 R1 F-007 + R4 F-002 adopt:
-        # phase_5_mode で stop が試行された場合は restart を必ず試行 (finally)、
+        # ADV R1 F-001 + R2 F-003 + R6 F-002 + ADV2 R1 F-007 + R4 F-002 + Codex PR #80 F-004 adopt:
+        # cleanup を **先** に実行してから restart 試行する順序 (secret-bearing plaintext staging を
+        # restart failure 経路で残さない)。restart 失敗時の raise は cleanup 完遂後に発生する。
+        # F-002: cleanup OSError は audit + raise (silent ignore 廃止)
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=False)
+        except OSError as exc:
+            # secret-bearing tmp が残った場合 → CRITICAL audit + raise (ただし restart 試行は維持)
+            cleanup_failure_exc = BackupRuntimeError(
+                "backup_tmp_cleanup_failed",
+                detail=f"cleanup_oserror: {type(exc).__name__} path={tmp_dir.name}",
+            )
+        else:
+            cleanup_failure_exc = None
+
+        # phase_5_mode で stop が試行された場合は restart を必ず試行 (cleanup 後)
         # restart 失敗は致命的 (warning 流用禁止、consistency boundary 維持)
         if phase_5_mode and stopped_or_attempted:
             try:
@@ -1987,15 +2007,9 @@ def run_backup(
                 else:
                     # backup 成功 + restart 失敗のみ → restart_exc を propagate
                     raise
-        # F-002 adopt: cleanup OSError は audit + raise (silent ignore 廃止)
-        try:
-            shutil.rmtree(tmp_dir, ignore_errors=False)
-        except OSError as exc:
-            # secret-bearing tmp が残った場合 → CRITICAL audit + raise
-            raise BackupRuntimeError(
-                "backup_tmp_cleanup_failed",
-                detail=f"cleanup_oserror: {type(exc).__name__} path={tmp_dir.name}",
-            ) from None
+        # cleanup 失敗があれば最後に raise (restart が成功した場合のみ)
+        if cleanup_failure_exc is not None and primary_exc is None:
+            raise cleanup_failure_exc from None
 
 
 __all__ = [

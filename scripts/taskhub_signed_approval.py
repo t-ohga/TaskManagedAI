@@ -325,13 +325,21 @@ def _rfc8785_canonical_payload_bytes(record: ApprovalRecord) -> bytes:
         "target_host": record.target_host,
     }
     if record.backup_claim is not None:
-        payload["backup_claim"] = {
+        backup_claim_dict: dict[str, object] = {
             "age_public_key_fingerprint": record.backup_claim.age_public_key_fingerprint,
             "include_sops_env": record.backup_claim.include_sops_env,
             "output_path": record.backup_claim.output_path,
             "overwrite": record.backup_claim.overwrite,
             "skip_service_stop": record.backup_claim.skip_service_stop,
         }
+        # SP022-T02 Phase 5 + Codex PR #80 F-003 adopt: Phase 5 6 field record の binding fingerprint を
+        # signature root に **含める** (None 以外のとき)。PR #77 legacy 5-field record は新 field なしで
+        # 既存 signature root layout 維持 (backward compat)。
+        if record.backup_claim.backup_runtime_binding_fingerprint is not None:
+            backup_claim_dict["backup_runtime_binding_fingerprint"] = (
+                record.backup_claim.backup_runtime_binding_fingerprint
+            )
+        payload["backup_claim"] = backup_claim_dict
     if record.restore_claim is not None:
         payload["restore_claim"] = {
             "age_public_key_fingerprint": record.restore_claim.age_public_key_fingerprint,
@@ -489,6 +497,13 @@ def _load_approval_record(approval_id: str) -> tuple[ApprovalRecord | None, Reas
 
 
 def _parse_backup_claim_dict(bc: object) -> BackupApprovalClaim | None:
+    """SP022-T02 Phase 5 + Codex PR #80 F-003 adopt: 5-field PR #77 legacy + 6-field Phase 5 両対応.
+
+    legacy 5-field record (signature root に backup_runtime_binding_fingerprint なし)
+    も Phase 5 6-field record (signature root に含む) も parse + verify OK。
+    legacy → backup_runtime_binding_fingerprint=None で BackupApprovalClaim を返す。
+    Phase 5 → str (sha256 hex) を含む BackupApprovalClaim を返す。
+    """
     if bc is None:
         return None
     if not isinstance(bc, dict):
@@ -497,9 +512,11 @@ def _parse_backup_claim_dict(bc: object) -> BackupApprovalClaim | None:
         "output_path", "include_sops_env", "skip_service_stop",
         "overwrite", "age_public_key_fingerprint",
     }
+    # SP022-T02 Phase 5: backup_runtime_binding_fingerprint は optional
+    allowed = required | {"backup_runtime_binding_fingerprint"}
     if not required.issubset(bc.keys()):
         return None
-    if set(bc.keys()) - required:
+    if set(bc.keys()) - allowed:
         return None
     if not isinstance(bc["output_path"], str) or not bc["output_path"]:
         return None
@@ -511,12 +528,17 @@ def _parse_backup_claim_dict(bc: object) -> BackupApprovalClaim | None:
         return None
     if not isinstance(bc["age_public_key_fingerprint"], str) or not bc["age_public_key_fingerprint"]:
         return None
+    # SP022-T02 Phase 5: backup_runtime_binding_fingerprint validate (None or non-empty str)
+    runtime_fp = bc.get("backup_runtime_binding_fingerprint")
+    if runtime_fp is not None and (not isinstance(runtime_fp, str) or not runtime_fp):
+        return None
     return BackupApprovalClaim(
         output_path=bc["output_path"],
         include_sops_env=bc["include_sops_env"],
         skip_service_stop=bc["skip_service_stop"],
         overwrite=bc["overwrite"],
         age_public_key_fingerprint=bc["age_public_key_fingerprint"],
+        backup_runtime_binding_fingerprint=runtime_fp,
     )
 
 
@@ -897,6 +919,10 @@ def verify_signed_approval(
             extras["expected_backup_claim_fingerprint"] = record_backup_claim.age_public_key_fingerprint
             extras["actual_backup_claim_fingerprint"] = backup_claim.age_public_key_fingerprint
             return False, "taskhub_signed_approval_backup_claim_mismatch", extras
+        # SP022-T02 Phase 5 + Codex PR #80 F-001/F-002 adopt: record-side claim を extras に格納
+        # _cmd_backup Phase 5 で record claim を取り出して record_backup_claim_fingerprint を verify
+        # (caller-supplied claim 再計算ではなく signed record の fingerprint を使う)
+        extras["record_backup_claim"] = record_backup_claim
 
     # SP022-T02 Phase 3 adopt: restore_claim verification for "restore" subcommand
     if subcommand == "restore":
