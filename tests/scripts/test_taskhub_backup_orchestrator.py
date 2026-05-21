@@ -594,3 +594,314 @@ def test_run_backup_rejects_age_only_extension(tmp_path: Path) -> None:
         bo.run_backup(options)
     assert exc_info.value.reason_code == "backup_output_path_invalid"
     assert ".tar.age" in (exc_info.value.detail or "")
+
+
+# --- SP022-T02 Phase 5 unit tests (codex-all-loops 75 findings 100% adopt 後の core invariants) ---
+
+
+def test_phase5_validate_age_recipient_bytes_accepts_valid_age1() -> None:
+    """ADV R3 F-001 + ADV2 R1 F-006: 有効な age1 prefix + 58 chars bech32 → accept."""
+    # age v1 仕様: "age1" + 58 chars bech32 base32 (total 62 chars)
+    valid_recipient = "age1" + "a" * 58
+    assert len(valid_recipient) == 62  # "age1" + 58 chars = 62
+    result = bo.validate_age_recipient_bytes(valid_recipient.encode("ascii"))
+    assert result == valid_recipient
+
+
+def test_phase5_validate_age_recipient_bytes_rejects_non_ascii() -> None:
+    """ADV2 R1 F-006: non-ASCII bytes → backup_age_recipient_invalid."""
+    with pytest.raises(bo.BackupRuntimeError) as exc_info:
+        bo.validate_age_recipient_bytes(b"\xff\xfeage1invalid")
+    assert exc_info.value.reason_code == "backup_age_recipient_invalid"
+
+
+def test_phase5_validate_age_recipient_bytes_rejects_multiline() -> None:
+    """ADV2 R1 F-006: multi-line content → backup_age_recipient_invalid."""
+    multiline = b"age1qrs0t9u8v7w6x5y4z3a2b1c0defghijklmnopqrstuvwxyz0123456789ab\nextra"
+    with pytest.raises(bo.BackupRuntimeError) as exc_info:
+        bo.validate_age_recipient_bytes(multiline)
+    assert exc_info.value.reason_code == "backup_age_recipient_invalid"
+
+
+def test_phase5_validate_age_recipient_bytes_rejects_wrong_prefix() -> None:
+    """ADV R3 F-001: age1 prefix 以外 → backup_age_recipient_invalid."""
+    with pytest.raises(bo.BackupRuntimeError) as exc_info:
+        bo.validate_age_recipient_bytes(b"ssh-rsa AAAAB3...")
+    assert exc_info.value.reason_code == "backup_age_recipient_invalid"
+
+
+def test_phase5_validate_age_recipient_bytes_rejects_oversized() -> None:
+    """ADV2 R1 F-006: 200 chars 超 → backup_age_recipient_invalid."""
+    oversized = b"age1" + b"a" * 250
+    with pytest.raises(bo.BackupRuntimeError) as exc_info:
+        bo.validate_age_recipient_bytes(oversized)
+    assert exc_info.value.reason_code == "backup_age_recipient_invalid"
+
+
+def test_phase5_compose_argv_prefix_requires_verified_bind(tmp_path: Path) -> None:
+    """ADV R7 F-001: verified_compose_execution_input 未 bind 時は fail-closed."""
+    monkeypatch_env_for_phase5(tmp_path)
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
+    )
+    # verified copy 未 bind 状態で _compose_argv_prefix 呼出 → fail-closed
+    with pytest.raises(bo.BackupRuntimeError) as exc_info:
+        bo._compose_argv_prefix(options)
+    assert exc_info.value.reason_code == "backup_compose_binding_not_initialized"
+
+
+def monkeypatch_env_for_phase5(tmp_path: Path) -> None:
+    """Helper: Phase 5 用 test env を準備 (compose file + env_file 作成)."""
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n  postgres:\n    image: postgres:16\n", encoding="utf-8",
+    )
+    (tmp_path / ".env.local").write_text("FOO=bar\n", encoding="utf-8")
+    (tmp_path / "data").mkdir(exist_ok=True)
+    (tmp_path / "data" / "artifacts").mkdir(exist_ok=True)
+
+
+def test_phase5_compute_artifacts_dir_manifest_sha256_lstat_mode(tmp_path: Path) -> None:
+    """ADV2 R6 F-003 + R7 F-003: regular file + directory のみ accept、source mode を canonical entry に."""
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "foo.txt").write_text("hello", encoding="utf-8")
+    (artifacts / "sub").mkdir()
+    (artifacts / "sub" / "bar.txt").write_text("world", encoding="utf-8")
+    sha = bo._compute_artifacts_dir_manifest_sha256(artifacts, mode_source="lstat")
+    # deterministic (sorted by path + canonical JSON)
+    sha_again = bo._compute_artifacts_dir_manifest_sha256(artifacts, mode_source="lstat")
+    assert sha == sha_again
+    assert len(sha) == 64  # SHA-256 hex
+
+
+def test_phase5_compute_artifacts_dir_manifest_sha256_rejects_symlink(tmp_path: Path) -> None:
+    """ADV2 R6 F-003 + R11 F-002: symlink → backup_artifacts_source_unsupported_file_type."""
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    target = tmp_path / "external_target.txt"
+    target.write_text("external", encoding="utf-8")
+    (artifacts / "link").symlink_to(target)
+    with pytest.raises(bo.BackupRuntimeError) as exc_info:
+        bo._compute_artifacts_dir_manifest_sha256(artifacts, mode_source="lstat")
+    assert exc_info.value.reason_code == "backup_artifacts_source_unsupported_file_type"
+
+
+def test_phase5_compute_artifacts_dir_manifest_sha256_rejects_reserved_name(tmp_path: Path) -> None:
+    """ADV2 R8 F-002: source tree に reserved name → backup_artifacts_source_reserved_name."""
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "_artifacts_source_mode.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(bo.BackupRuntimeError) as exc_info:
+        bo._compute_artifacts_dir_manifest_sha256(artifacts, mode_source="lstat")
+    assert exc_info.value.reason_code == "backup_artifacts_source_reserved_name"
+
+
+def test_phase5_verified_copy_tree_no_follow_creates_staging(tmp_path: Path) -> None:
+    """ADV2 R5 F-002: source tree を no-follow walk + O_NOFOLLOW で dst に copy."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "data.txt").write_text("hello", encoding="utf-8")
+    (src / "sub").mkdir()
+    (src / "sub" / "nested.txt").write_text("world", encoding="utf-8")
+    dst = tmp_path / "dst"
+    sidecar = tmp_path / "sidecar.json"
+    root_anchor = os.lstat(str(src))
+    bo._verified_copy_tree_no_follow(
+        src=src, dst=dst, root_lstat_anchor=root_anchor,
+        source_mode_sidecar_path=sidecar,
+    )
+    assert (dst / "data.txt").read_text(encoding="utf-8") == "hello"
+    assert (dst / "sub" / "nested.txt").read_text(encoding="utf-8") == "world"
+    # ADV2 R8 F-002: sidecar が staging tree の外 (tmp_path 直下) に書出されている
+    assert sidecar.exists()
+    assert not (dst / "_artifacts_source_mode.json").exists()
+
+
+def test_phase5_verified_copy_tree_no_follow_rejects_oversized_file(tmp_path: Path) -> None:
+    """ADV2 R6 F-003: per-file 256 MiB 超 → backup_artifacts_file_too_large."""
+    src = tmp_path / "src"
+    src.mkdir()
+    big = src / "huge.bin"
+    # 模擬 256 MiB+1 byte file (sparse file で時間短縮)
+    with big.open("wb") as f:
+        f.seek(bo.MAX_ARTIFACT_FILE_BYTES)
+        f.write(b"x")
+    dst = tmp_path / "dst"
+    sidecar = tmp_path / "sidecar.json"
+    with pytest.raises(bo.BackupRuntimeError) as exc_info:
+        bo._verified_copy_tree_no_follow(
+            src=src, dst=dst,
+            root_lstat_anchor=os.lstat(str(src)),
+            source_mode_sidecar_path=sidecar,
+        )
+    assert exc_info.value.reason_code == "backup_artifacts_file_too_large"
+
+
+def test_phase5_compute_full_fingerprint_issue_redeem_algorithm_canonical(tmp_path: Path) -> None:
+    """ADV2 R3 F-001 + R7 F-001: single full-helper が canonical schema で deterministic.
+
+    issue / redeem 両 mode が同 BackupOptions + 同 content で **同じ fingerprint** を返す
+    (mock 経由で docker compose config を bypass、source path 直接読込 path の deterministic 確認)。
+    """
+    monkeypatch_env_for_phase5(tmp_path)
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
+    )
+    # docker compose config は本 test では mock (helper の canonical 部分のみ verify)
+    fp1 = bo.compute_backup_runtime_binding_fingerprint(
+        options,
+        compose_file_sha256="aa" * 32,
+        sops_env_sha256=None,
+        compose_config_canonical_sha256="bb" * 32,
+        env_file_sha256="cc" * 32,
+        artifacts_dir_manifest_sha256="dd" * 32,
+    )
+    fp2 = bo.compute_backup_runtime_binding_fingerprint(
+        options,
+        compose_file_sha256="aa" * 32,
+        sops_env_sha256=None,
+        compose_config_canonical_sha256="bb" * 32,
+        env_file_sha256="cc" * 32,
+        artifacts_dir_manifest_sha256="dd" * 32,
+    )
+    assert fp1 == fp2
+    assert len(fp1) == 64
+
+
+def test_phase5_compute_full_fingerprint_changes_with_compose_sha(tmp_path: Path) -> None:
+    """ADV2 R3 F-002: compose_file_sha256 が変われば fingerprint も変わる (binding 完全性)."""
+    monkeypatch_env_for_phase5(tmp_path)
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
+    )
+    fp_a = bo.compute_backup_runtime_binding_fingerprint(
+        options, compose_file_sha256="aa" * 32, sops_env_sha256=None,
+        compose_config_canonical_sha256="bb" * 32, env_file_sha256=None,
+        artifacts_dir_manifest_sha256="dd" * 32,
+    )
+    fp_b = bo.compute_backup_runtime_binding_fingerprint(
+        options, compose_file_sha256="ee" * 32, sops_env_sha256=None,  # changed
+        compose_config_canonical_sha256="bb" * 32, env_file_sha256=None,
+        artifacts_dir_manifest_sha256="dd" * 32,
+    )
+    assert fp_a != fp_b
+
+
+def test_phase5_run_backup_phase_5_mode_requires_record_claim(tmp_path: Path) -> None:
+    """ADV2 R13 F-001: phase_5_mode=True で record_backup_claim 必須."""
+    monkeypatch_env_for_phase5(tmp_path)
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
+    )
+    with pytest.raises(bo.BackupRuntimeError) as exc_info:
+        bo.run_backup(options, phase_5_mode=True, record_backup_claim=None, verified_temp_dir=None)
+    assert exc_info.value.reason_code == "backup_compose_binding_not_initialized"
+
+
+def test_phase5_run_backup_rejects_legacy_5field_claim(tmp_path: Path) -> None:
+    """ADV2 R14 F-002 CRITICAL: phase_5_mode=True で fingerprint=None claim → legacy reject."""
+    from scripts.taskhub_signed_approval import BackupApprovalClaim
+    monkeypatch_env_for_phase5(tmp_path)
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
+    )
+    legacy_claim = BackupApprovalClaim(
+        output_path=str(tmp_path / "out.tar.age"),
+        include_sops_env=False, skip_service_stop=False, overwrite=False,
+        age_public_key_fingerprint="a" * 64,
+        # backup_runtime_binding_fingerprint=None (legacy 5-field)
+    )
+    verified_temp = tmp_path / "verified"
+    verified_temp.mkdir(mode=0o700)
+    with pytest.raises(bo.BackupRuntimeError) as exc_info:
+        bo.run_backup(
+            options, phase_5_mode=True,
+            record_backup_claim=legacy_claim,
+            verified_temp_dir=verified_temp,
+        )
+    assert exc_info.value.reason_code == "backup_claim_legacy_runtime_binding_unsupported"
+
+
+def test_phase5_parse_compose_ps_healthy_service_field_primary_key() -> None:
+    """ADV2 R2 F-005: Service field が primary key (Name は container name と乖離する)."""
+    stdout = b'[{"Name":"taskmanagedai-api-1","Service":"api","Health":"healthy"},' \
+             b'{"Name":"taskmanagedai-worker-1","Service":"worker","Health":"healthy"}]'
+    assert bo._parse_compose_ps_healthy(stdout, {"api", "worker"}) is True
+
+
+def test_phase5_parse_compose_ps_healthy_rejects_starting() -> None:
+    """ADV2 R1 F-010 + R2 F-005: Health=starting は healthy ではない."""
+    stdout = b'[{"Name":"x-api-1","Service":"api","Health":"starting"},' \
+             b'{"Name":"x-worker-1","Service":"worker","Health":"healthy"}]'
+    assert bo._parse_compose_ps_healthy(stdout, {"api", "worker"}) is False
+
+
+def test_phase5_parse_compose_ps_healthy_jsonlines_fallback() -> None:
+    """ADV2 R1 F-010: JSON-lines 形式 fallback (compose v2 出力形式 fluctuation)."""
+    stdout = (
+        b'{"Name":"x-api-1","Service":"api","Health":"healthy"}\n'
+        b'{"Name":"x-worker-1","Service":"worker","Health":"healthy"}\n'
+    )
+    assert bo._parse_compose_ps_healthy(stdout, {"api", "worker"}) is True
+
+
+def test_phase5_redact_compose_env_values_removes_value() -> None:
+    """ADV2 R1 F-003: docker compose config 出力で secret env value を redact."""
+    yaml_text = '    environment:\n      DEV_LOGIN_COOKIE_SECRET: "supersecret"\n'
+    redacted = bo._redact_compose_env_values(yaml_text)
+    assert "supersecret" not in redacted
+    assert "<redacted>" in redacted
+
+
+def test_phase5_backup_options_phase5_fields_default_none(tmp_path: Path) -> None:
+    """SP022-T02 Phase 5: BackupOptions 新 fields は default None (PR #77 互換)."""
+    monkeypatch_env_for_phase5(tmp_path)
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
+    )
+    # Phase 5 verified copy fields は CLI 起動直後は None (lock 内で bind される)
+    assert options.verified_age_recipient is None
+    assert options.verified_source_project_dir is None
+    assert options.verified_compose_execution_input is None
+    assert options.verified_compose_metadata_snapshot is None
+    assert options.verified_env_file_execution_input is None
+    assert options.verified_artifacts_staging_dir is None
+    assert options.artifacts_dir_realpath_snapshot is None
+    # ただし compose binding と env_file は from_environment で server-owned に解決済
+    assert options.target_compose_project_name == "taskmanagedai"
+    assert options.target_compose_file_path == (tmp_path / "docker-compose.yml").resolve()
+    assert options.env_file_path == (tmp_path / ".env.local").resolve()
+    # pg_user / pg_db default は taskmanagedai (docker-compose.yml 整合)
+    assert options.pg_user == "taskmanagedai"
+    assert options.pg_db == "taskmanagedai"
+
+
+def test_phase5_backup_options_rejects_compose_file_outside_allowlist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """ADV R2 F-001: target_compose_file_path が allowlist (repo_root/etc/var/lib) 外 → reject."""
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (tmp_path / ".env.local").write_text("FOO=bar\n", encoding="utf-8")
+    # /srv 配下は allowlist 外
+    monkeypatch.setenv("TASKHUB_BACKUP_COMPOSE_FILE", "/srv/evil/docker-compose.yml")
+    with pytest.raises(bo.BackupUsageError) as exc_info:
+        bo.BackupOptions.from_environment(
+            output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
+        )
+    assert exc_info.value.reason_code == "backup_output_path_invalid"
+    assert "not in allowed root" in (exc_info.value.detail or "")
+
+
+def test_phase5_backup_options_rejects_invalid_compose_project_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """ADV R1 F-004: target_compose_project_name が regex 違反 → reject."""
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (tmp_path / ".env.local").write_text("FOO=bar\n", encoding="utf-8")
+    monkeypatch.setenv("TASKHUB_BACKUP_COMPOSE_PROJECT", "INVALID-Upper")  # uppercase 禁止
+    with pytest.raises(bo.BackupUsageError) as exc_info:
+        bo.BackupOptions.from_environment(
+            output_path=tmp_path / "out.tar.age", repo_root=tmp_path,
+        )
+    assert exc_info.value.reason_code == "backup_output_path_invalid"
+    assert "target_compose_project_name invalid" in (exc_info.value.detail or "")
