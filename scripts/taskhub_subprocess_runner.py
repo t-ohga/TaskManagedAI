@@ -22,9 +22,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
 
-# R3-F-001 adopt: explicit allowlist for child env vars。
-# secret-bearing env は **絶対** allowlist に含めない。PostgreSQL credentials は
-# temp .pgpass file + PGPASSFILE env のみ経路として許可。
+# R3-F-001 + SP022-T02 Phase 5 ADV R1 F-008 adopt: explicit allowlist for child env vars。
+# secret-bearing env は **絶対** allowlist に含めない。
+# Phase 5 では PGPASSFILE は不要 (docker compose exec + container 内 unix socket + pg_hba trust auth)。
 DEFAULT_ENV_ALLOWLIST = frozenset({
     "PATH",
     "HOME",
@@ -35,7 +35,7 @@ DEFAULT_ENV_ALLOWLIST = frozenset({
     "USER",
     "LOGNAME",
     "TMPDIR",
-    "PGPASSFILE",  # R3-F-001 adopt: temp .pgpass file path 経由のみ
+    # PGPASSFILE 削除 (ADV R1 F-008: Phase 5 compose exec で不要、container 内 trust auth に切替)
 })
 
 # R3-F-001 adopt: secret-bearing env を pass しないよう明示 reject pattern。
