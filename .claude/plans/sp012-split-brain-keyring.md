@@ -529,6 +529,91 @@ revert 時の artifact 扱い (削除ではなく **archive/quarantine**、audit
 
 revert 時に compromise 検知済の key / marker は manifest 上で `status=revoked` を残したまま archive (削除しない、後続 audit で revocation history 可視化)。revert 後の re-implementation 時は old fingerprint を keyring から永続排除。
 
+## §9.3 ADV2 Phase 2 R1 HIGH 11 件 adopt (本 plan の hardening contract、Batch A-D 実装で全件反映)
+
+R1 で検出された 14 CRITICAL+HIGH 全件 adopt 完了 (CRITICAL 3 は §3.B.1 / §6.1 で反映済、HIGH 11 件を以下に集約):
+
+### F-004 root trust anchor pinning (HIGH security)
+`approval_keyring_root.pub` と `active_registry_allowlist_root.pub` の fingerprint を **config_dir 外** で pin:
+- 推奨: `/etc/taskhub/root_fingerprints.signed` (immutable system file、operator runbook で配備、または SOPS 管理 secret)
+- load 時に `sha256(root_pub)` を必ず照合 (`expected_root_fingerprint` constant or env vault binding)
+- negative test: `test_keyring_root_pub_swap_after_bootstrap_rejected` + `test_active_registry_allowlist_root_swap_rejected`
+
+### F-005 keyring directory swap downgrade 防御 (HIGH security)
+`<config_dir>/approval_keyring_initialized.signed` marker を bootstrap 成功時に作成:
+- 一度 bootstrap が成功した config では keyring directory / signed manifest / root fingerprint の欠落を **fail-closed**
+- directory missing / symlink / inode swap / manifest absent → `taskhub_signed_approval_keyring_initialized_marker_violated` で reject
+- legacy single-key fallback は bootstrap marker 未存在時のみ許可
+
+### F-006 multi-file install race (HIGH race)
+`approval-verify-keyring.generations/<generation_id>/` directory 構造:
+- 各 generation で key files + manifest を揃えて fsync、最後に `current` pointer (symlink or signed pointer file) を atomic rename
+- loader は `current` 配下だけを dirfd + `O_NOFOLLOW` で読む (新旧混在 race 排除)
+- manifest payload に `generation_id` + key file content hashes を含める
+
+### F-007 manifest replay 防御 (HIGH security)
+signed manifest に **append-only chain** を導入:
+- `generation` (monotonic counter)、`previous_committed_manifest_hash`、`commit_log_chain_hash`、`committed_at` を canonical payload に含める
+- `commit-manifest` は current generation + 1 のみ許可
+- rollback も generation を戻さず、revoked/deprecated history を **append-only archive** に残す (`commit_log.signed.jsonl` 等)
+
+### F-008 candidate self-reference hash 規約 (HIGH security)
+`candidate_manifest_content_sha256` を **payload 外の envelope** に配置:
+- canonical payload (signature root 対象) には `candidate_manifest_content_sha256` を含めない、envelope (signature 外 metadata) に置く
+- もしくは canonical payload では該当 field を固定 sentinel 値 (例: `"0" * 64`) にして hash 計算後に envelope へ移動
+- test fixture: `test_candidate_manifest_canonical_preimage_deterministic` で hash preimage JSON と expected hash を固定
+
+### F-009 CLI path traversal 防御 (HIGH security)
+`--pubkey <path>` / `--signed-candidate <path>` の入力制限:
+- staging dir 配下の basename allowlist に限定 (絶対 path / `../` / symlink / world-writable parent / hardlink count > 1 reject)
+- dirfd-relative `openat(O_NOFOLLOW)` で安全 open + `fstat` regular file + owner uid + parent mode 検証
+- negative tests: `test_cli_pubkey_path_traversal_rejected` + `test_cli_signed_candidate_symlink_rejected` + `test_cli_signed_candidate_hardlink_rejected`
+
+### F-010 epoch counter rollback trust anchor (HIGH security)
+epoch counter を **signed append-only journal** に拡張:
+- `<config_dir>/migration_epoch.journal.signed.jsonl` (各 entry に previous entry hash、host_id、issued_at、writer fingerprint)
+- 最新 epoch hash を `<config_dir>/migration_epoch.head.signed` (root-signed) に書込、別 trust store または remote quorum へも書込
+- rollback negative test: `test_epoch_counter_file_rollback_detected_by_journal_hash`
+
+### F-011 source host identity binding (HIGH design)
+`ActiveMarker` + `CutoverApprovalClaim` に必須追加:
+- `source_host_id`、`source_previous_active_chain_hash`、`cutover_id` (UUID)
+- source_decommission_marker 内の `host_id` と exact match (別 source decommission hash の replay 排除)
+- negative test: `test_cutover_with_different_source_host_id_rejected`
+
+### F-012 bootstrap transition policy (HIGH design)
+§3.C.1 KeyringRotationApprovalClaim 5 variants の `bootstrap` を transition policy にも統合:
+- bootstrap は previous_manifest absent 限定、legacy_key_fingerprint + expected_legacy_path + expected_root_fingerprint + initial_expires_at 計算を **bootstrap 専用 policy** として定義
+- bootstrap fixture: `test_keyring_bootstrap_success` + `test_keyring_bootstrap_with_existing_manifest_rejected` + `test_keyring_bootstrap_with_root_fingerprint_mismatch_rejected`
+
+### F-013 decommission active proof (HIGH design)
+`DecommissionMarker` に **`prev_active_chain_hash` を必須化**:
+- decommission verify で previous ActiveMarker の domain / host_id / migration_epoch / signature / allowlist freshness を検証
+- source が本当に active だった証明 (retired state を勝手に作れない)
+- negative tests: `test_decommission_without_previous_active_rejected` + `test_decommission_prev_active_chain_hash_mismatch_rejected`
+
+### F-014 fleet membership signed complete set (HIGH security)
+`<config_dir>/active_registry_fleet.signed.json` を導入:
+- `host_id`、`endpoint`、`valid_from` / `valid_to`、`membership_generation` を root-signed で管理
+- split-brain check は **fleet 全件**を対象にし、omitted host / stale membership / unreachable required host を fail-closed
+- negative tests: `test_split_brain_check_omitted_host_rejected` + `test_fleet_membership_stale_generation_rejected` + `test_fleet_membership_unreachable_required_host_rejected`
+
+### MEDIUM 4 件 (F-015〜F-018) は次 session の Phase 2 R2 polish で確定
+
+ReasonCode 拡張は **16 件 → 24 件** に増加 (R1 採用後):
+- `taskhub_signed_approval_keyring_initialized_marker_violated` (F-005)
+- `taskhub_signed_approval_keyring_generation_replay_or_lower` (F-007)
+- `taskhub_signed_approval_keyring_candidate_hash_envelope_mismatch` (F-008)
+- `taskhub_signed_approval_cli_path_traversal_rejected` (F-009)
+- `taskhub_active_registry_epoch_journal_hash_mismatch` (F-010)
+- `taskhub_cutover_source_host_id_mismatch` (F-011)
+- `taskhub_active_registry_decommission_prev_active_chain_hash_mismatch` (F-013)
+- `taskhub_active_registry_fleet_membership_violation` (F-014)
+
+fixture 拡張は **46 → 65 件** に増加 (新規 19 件、Batch D 拡張)。
+
+---
+
 ## §10 PR 後の SP-022 task progress (post-本 PR)
 
 | Task | status |
