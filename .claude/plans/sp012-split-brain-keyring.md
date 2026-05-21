@@ -731,6 +731,96 @@ R3 起動時に Phase 2 R1 result.json の MEDIUM 4 件 + 本 R2 採用後の新
 
 ---
 
+## §9.5 ADV2 Phase 2 R3 CRITICAL 3 件 adopt (R2 採用後の deep invariant fix)
+
+R3 で検出された 3 件 CRITICAL すべて adopt。R2 で残った security/race invariant、特に rollback resurrection + signer-host ownership + lease-commit binding を解消する hardening contract。
+
+### F-001 (R3) rollback でも revoked key を live verify path で reject (CRITICAL security、resurrection 防御)
+
+**問題**: §7 rollback SOP が verifier を `approval-verify-key.pub` single key に戻し、revoked 済み legacy key が live verify path で再有効化、compromised key で destructive approval が通過可能。R1 F-005 downgrade 防御 (`approval_keyring_initialized.signed` marker) を rollback SOP が明示的に破壊している。
+
+**fix**:
+- bootstrap 後の rollback では single-key fallback を **復活させない**:
+  - `approval_keyring_initialized.signed` marker は **rollback でも remove しない** (live path で常に enforce)
+  - root-pinned revocation tombstone / denylist (`<config_dir>/approval_keyring_revocation_tombstone.signed.jsonl`、append-only) を live path に維持
+  - revoked fingerprint は legacy verifier (single-key fallback mode) でも **無条件 reject** (denylist check が verifier の前段で実行)
+- compromise 済 key 含む rollback は **revert ではなく append-only 新 manifest generation で rotate/revoke** 運用に変更:
+  - rollback SOP の §7 改訂: 「PR #80 以前への完全な revert」ではなく「新 generation を作成し compromised key を `status=revoked` に move、tombstone を append」
+  - emergency single-key fallback は **bootstrap 未実行環境のみ許可** (`approval_keyring_initialized.signed` 不在時のみ)
+- 変更ファイル追加 (本 plan §5):
+  - `<config_dir>/approval_keyring_revocation_tombstone.signed.jsonl` (新規、append-only revocation tombstone)
+  - `scripts/taskhub_signed_approval.py` の rollback path で tombstone を verifier 前段に load
+- negative tests:
+  - `test_rollback_does_not_reactivate_revoked_legacy_key`
+  - `test_revocation_tombstone_persists_across_rollback`
+  - `test_compromised_key_rollback_requires_new_generation_not_revert`
+  - `test_single_key_fallback_blocked_when_keyring_initialized_marker_present`
+
+### F-002 (R3) signer-host ownership binding (CRITICAL security、cross-host impersonation 防御)
+
+**問題**: `active_registry_fleet.signed.json` が `host_id` / `endpoint` / validity しか持たず、host_id と marker signer fingerprint の所有関係が署名済みデータにない。任意の allowlisted signer が別 host_id の ActiveMarker / DecommissionMarker / PrepareMarker / CommitMarker confirmation を署名でき、target host なりすまし + split-brain 成立可能。
+
+**fix**:
+- `active_registry_fleet.signed.json` schema 拡張 (必須 field 追加):
+  - `host_id -> allowed_marker_signer_fingerprints` mapping (各 host_id に対して許可された signer fingerprint set、root-signed)
+  - `host_id -> role` (`source` / `target` / `observer` の enum、role-based scope enforcement)
+  - `host_id -> allowed_marker_kinds` (例: source = ActiveMarker/DecommissionMarker/PrepareMarker、target = ActiveMarker/CommitMarker confirmation)
+- verify path で all marker types に対して **`marker.host_id` と signer fingerprint ownership を exact match**:
+  - ActiveMarker: `marker.host_id ∈ fleet AND marker.signer_fingerprint ∈ fleet[marker.host_id].allowed_marker_signer_fingerprints`
+  - DecommissionMarker: same
+  - PrepareMarker: source role 限定、source host の allowed signer fingerprint のみ
+  - CommitMarker source confirmation: source role 限定
+  - CommitMarker target confirmation: target role 限定
+- negative tests:
+  - `test_active_marker_signed_by_other_host_allowlisted_key_rejected` (allowlist には居るが host_id ownership 違反)
+  - `test_source_signer_cannot_activate_target_host`
+  - `test_commit_confirmation_wrong_host_signer_rejected`
+  - `test_decommission_signed_by_target_role_signer_rejected` (decommission は source role 限定)
+  - `test_prepare_marker_signed_by_observer_role_rejected`
+
+### F-003 (R3) lease-commit cryptographic binding (CRITICAL design、procedural-only enforcement 排除)
+
+**問題**: R2 F-003 で導入した fleet-wide lease (`cutover_lease.signed.json`) を CommitMarker signature root に含めてない (PrepareMarker も同様)。read path は CommitMarker の prepare hash / confirmation signature / approval hash のみで active 扱いを決定、lease 未取得 / 期限切れ / stale membership の commit artifact が cryptographic verify を通過、同時 cutover 排除が手続き依存に regress。
+
+**fix**:
+- PrepareMarker / CommitMarker canonical payload に **lease binding fields を必須化** (signature root に含める):
+  - `cutover_lease_hash` (sha256 of `cutover_lease.signed.json` canonical payload at acquisition time)
+  - `fleet_membership_generation` (lease 取得時の `active_registry_fleet.signed.json` generation)
+  - `required_host_ids_hash` (sha256 of sorted required_host_ids array)
+  - `lease_acquired_at` / `lease_expires_at` (UTC iso8601)
+- source/target host confirmation signature も **同じ lease-bound payload** に対して署名 (lease 不在の confirmation signature を生成不能化)
+- read path: CommitMarker 検証時に lease artifact + fleet membership snapshot を **再検証**:
+  - `cutover_lease.signed.json` を load (lease_hash mismatch なら reject)
+  - `active_registry_fleet.signed.json` を load (membership_generation mismatch なら reject)
+  - 現在時刻 vs lease_expires_at (期限切れなら reject)
+  - required_host_ids exact match (lease の required set と membership current snapshot の comparison)
+  - lease の prepared_host_ids 全件が confirmation signature を持つ (partial confirmation reject)
+- ReasonCode 追加: `taskhub_cutover_lease_hash_mismatch` / `taskhub_cutover_fleet_membership_generation_drift` / `taskhub_cutover_required_host_ids_hash_mismatch` / `taskhub_cutover_lease_expired_at_verify_time` / `taskhub_cutover_lease_required_host_partial_confirmation`
+- negative tests:
+  - `test_commit_marker_without_lease_hash_field_rejected`
+  - `test_commit_marker_with_expired_lease_rejected_at_verify_time`
+  - `test_commit_marker_with_stale_fleet_membership_generation_rejected`
+  - `test_commit_marker_with_required_host_ids_hash_mismatch_rejected`
+  - `test_commit_marker_with_partial_host_confirmation_rejected`
+
+### R3 adopt 累計値更新
+
+- ReasonCode: **26 → 31 件** (R3 F-003 で 5 件追加)
+  - `taskhub_cutover_lease_hash_mismatch`
+  - `taskhub_cutover_fleet_membership_generation_drift`
+  - `taskhub_cutover_required_host_ids_hash_mismatch`
+  - `taskhub_cutover_lease_expired_at_verify_time`
+  - `taskhub_cutover_lease_required_host_partial_confirmation`
+- fixture: **約 77 → 約 91 件** (R3 で 14 件追加、Batch D で確定)
+- 変更ファイル: 18 → **19 file** (revocation_tombstone path 追加、rollback path edit は既存 file 内)
+- 累計 R1+R2+R3 adopt: CRITICAL 6 + HIGH 18 = **24/28 件** (残 4 件は R1 MEDIUM、R4 で確定)
+
+### critical_zero gate 判定
+
+R3 で 3 件 CRITICAL adopt 反映後、R4 起動時に新規 CRITICAL ゼロ + HIGH ≤ 2 が期待値。R4 が clean なら Phase 2 完遂、Batch A-D 実装着手可能。
+
+---
+
 ## §10 PR 後の SP-022 task progress (post-本 PR)
 
 | Task | status |
