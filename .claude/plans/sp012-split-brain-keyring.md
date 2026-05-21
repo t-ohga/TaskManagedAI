@@ -899,6 +899,83 @@ R3 で 3 件 CRITICAL adopt 反映後、R4 起動時に新規 CRITICAL ゼロ + 
 
 ---
 
+## §9.6 ADV2 Phase 2 R5 CRITICAL 1 件 adopt (R3 F-003 lease binding の durability lifecycle overshoot fix)
+
+### F-001 (R5) lease/fleet snapshot immutability + commit durability invariant (CRITICAL durability、R3 F-003 overshoot fix)
+
+**問題**: R3 F-003 で「CommitMarker に lease binding + verify 時に current lease + current fleet membership を再検証」と adopt した結果、**正常 commit 済み active state が時間経過や正規 fleet 更新だけで後から invalid 化**する。具体的には:
+- `cutover_lease.signed.json` が単一 mutable current path に保持されるため、lease 自然失効後 / 次回 cutover lease 再取得後に過去 CommitMarker の verify が `lease_expires_at` 期限切れ or `cutover_lease_hash` mismatch で fail
+- `active_registry_fleet.signed.json` を current generation で再読込するため、fleet membership 正規更新後に過去 CommitMarker の `fleet_membership_generation` が drift しているとして reject
+- active-registry gate / startup gate がこの read path に依存すると、target host が無関係な操作 (lease 期限切れ / fleet 更新) で write 不可化、host migration 後の active state が durable でなくなる
+
+**R3 F-003 の問題本質**: 「commit-time の相互排他証明 (lease + fleet snapshot)」と「長期検証される committed active state」を **同じ mutable current artifact に結合してしまった**。
+
+**fix (R3 F-003 を本 §9.6 で update)**:
+
+#### (1) signed lease snapshot を `cutover_id` 単位で **immutable archive**
+
+- 新 path: `<config_dir>/active_registry/cutover_lease_snapshots/<cutover_id>.signed.json`
+- lease 取得時に snapshot を atomic write + parent fsync、以後 **read-only**
+- CommitMarker canonical payload に `cutover_lease_snapshot_content_sha256` を bind (current path の `cutover_lease.signed.json` ではなく archive snapshot を参照)
+- current path `cutover_lease.signed.json` は **operator visibility 用 view のみ** (verify path で参照しない、archive snapshot が真のソース)
+
+#### (2) signed fleet membership snapshot を `generation` 単位で **immutable archive**
+
+- 新 path: `<config_dir>/active_registry/fleet_membership_snapshots/<generation>.signed.json`
+- 各 generation の fleet membership を archive write + parent fsync、以後 read-only
+- CommitMarker canonical payload に `fleet_membership_snapshot_content_sha256` を bind (current path ではなく archive snapshot を参照)
+
+#### (3) 長期検証 (active state durability) は archived snapshot で実施
+
+CommitMarker 長期検証 path で:
+- archived lease snapshot を `cutover_lease_snapshots/<cutover_id>.signed.json` から load + signature verify + content hash exact match
+- archived fleet membership snapshot を `fleet_membership_snapshots/<generation>.signed.json` から load + signature verify + content hash exact match
+- `lease_expires_at` は **commit issuance / commit finalization 時点のみで判定** (commit-time が lease validity window 内であった過去事実を archive で証明)
+- 現在時刻と lease_expires_at の比較は **使わない** (commit 後の lease 自然失効は durability に影響しない)
+- archived fleet membership snapshot の `required_host_ids` + confirmation signature 完備性のみ verify (current generation との比較は別 gate)
+
+#### (4) current fleet membership との比較は別 reconciliation gate に分離
+
+- active-registry gate / startup gate は CommitMarker の archived snapshot verify を実施 (long-term durability)
+- 別途 `taskhub_active_registry_reconciliation_gate.py` (新規 module、本 plan §5 file list に追加) で current fleet generation と過去 CommitMarker の generation を比較
+- generation drift 検出時の対応: **正規の successor transition を要求** (新 CutoverApprovalClaim + 新 PrepareMarker + 新 CommitMarker で fleet generation 更新を反映、既存 CommitMarker は archive 化されて keep)
+- 「current fleet generation > CommitMarker generation」というだけで既存 active state を invalid 化する経路は **物理削除**
+
+#### (5) ReasonCode 追加 (31 → 34 件)
+
+- `taskhub_cutover_lease_snapshot_archive_missing` (cutover_id 対応 archive snapshot 不在)
+- `taskhub_cutover_fleet_membership_snapshot_archive_missing` (generation 対応 archive snapshot 不在)
+- `taskhub_active_registry_fleet_successor_transition_required` (current generation > marker generation、reconciliation 必要)
+
+#### (6) negative / positive tests
+
+- `test_committed_marker_remains_valid_after_lease_expiry` (R5 F-001 直接 fixture)
+- `test_committed_marker_remains_valid_after_new_cutover_lease_replaces_current_path` (R5 F-001 直接)
+- `test_fleet_membership_rotation_requires_signed_successor_not_historical_commit_reject` (R5 F-001 直接)
+- `test_active_registry_gate_uses_archived_snapshot_not_current_lease`
+- `test_active_registry_reconciliation_gate_drift_returns_successor_required_not_invalidates_marker`
+- `test_lease_expires_at_judged_only_at_commit_time_not_verify_time`
+
+### §9.5 F-003 update note
+
+§9.5 F-003 の「read path: CommitMarker 検証時に lease artifact と fleet membership snapshot を **再検証**」記述は、本 §9.6 (1)+(2)+(3) で更新:
+- 「**現在時刻と lease_expires_at の比較**」を **廃止** (commit-time のみ判定)
+- 「**current fleet membership generation との exact match**」を **archived snapshot との exact match** に変更 (current 比較は reconciliation gate へ分離)
+- 「lease 期限切れ / fleet generation drift で fail-closed」を「**archived snapshot signature + content hash verify pass + commit-time に validity 過去証明 + reconciliation gate は別 path**」に書き換え
+
+### R5 adopt 累計値更新
+
+- ReasonCode: **31 → 34 件** (R5 で 3 件追加: lease_snapshot_archive_missing + fleet_membership_snapshot_archive_missing + fleet_successor_transition_required)
+- fixture: 約 91 → **約 97 件** (R5 で 6 件追加)
+- 変更ファイル: 19 → **20 file** (`scripts/taskhub_active_registry_reconciliation_gate.py` 新規追加)
+- 累計 R1+R2+R3+R4+R5 adopt: CRITICAL 10 + HIGH 20 = **30/34 件** (残 4 件は R1 MEDIUM、R6 で確定)
+
+### critical_zero gate 判定
+
+R5 で 1 件 CRITICAL adopt 反映後、R6 で新規 CRITICAL ゼロ + HIGH ≤ 2 が期待値。R6 clean で Phase 2 完遂。本 R5 finding は R3 F-003 adopt 自体の overshoot 修正であり、R3 F-003 の core invariant (CommitMarker に lease 暗号学的 binding) は維持、verify 時の re-fetch lifecycle のみ修正。
+
+---
+
 ## §10 PR 後の SP-022 task progress (post-本 PR)
 
 | Task | status |
