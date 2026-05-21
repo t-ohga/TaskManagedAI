@@ -569,6 +569,12 @@ class CommitMarker:
         committed_at + cutover_lease_snapshot hash + fleet_membership_snapshot hash +
         source/target prepare marker hashes + cutover/commit approval claim hashes +
         required_host_ids_hash + domain。
+
+        Codex PR #84 R1 F-001 fix (P1、L579): domain field は CommitMarker domain (canonical
+        schema) と整合する。preimage は CommitMarker 自体の signature root に相当する subset
+        のため、`taskhub.active_registry.cutover_commit.v1` を使う (旧 .finalization_preimage.v1
+        suffix は documentation で別 schema として扱われたが、cross-language verifier との byte-
+        exact 一致のため canonical schema に合わせる)。
         """
         return {
             "commit_approval_claim_hash": self.commit_approval_claim_hash,
@@ -576,7 +582,7 @@ class CommitMarker:
             "cutover_approval_claim_hash": self.cutover_approval_claim_hash,
             "cutover_approval_id": self.cutover_approval_id,
             "cutover_lease_snapshot_content_sha256": self.cutover_lease_snapshot_content_sha256,
-            "domain": DOMAIN_CUTOVER_COMMIT_V1 + ".finalization_preimage.v1",
+            "domain": DOMAIN_CUTOVER_COMMIT_V1,
             "fleet_membership_snapshot_content_sha256": self.fleet_membership_snapshot_content_sha256,
             "required_host_ids_hash": self.required_host_ids_hash,
             "source_prepare_marker_hash": self.source_prepare_marker_hash,
@@ -584,6 +590,9 @@ class CommitMarker:
         }
 
     def canonical_payload(self) -> dict[str, Any]:
+        """Codex PR #84 R1 F-003 fix (P1、L609): undocumented constant
+        target_prepare_marker_signature_present を削除 (documented schema に無い field を
+        injection することで cross-language verifier が byte mismatch する)."""
         return {
             "commit_approval_claim_hash": self.commit_approval_claim_hash,
             "commit_finalization_preimage_hash": self.commit_finalization_preimage_hash,
@@ -606,7 +615,6 @@ class CommitMarker:
             "required_host_ids_hash": self.required_host_ids_hash,
             "source_prepare_marker_hash": self.source_prepare_marker_hash,
             "target_prepare_marker_hash": self.target_prepare_marker_hash,
-            "target_prepare_marker_signature_present": True,  # explicit invariant
         }
 
 
@@ -620,11 +628,26 @@ def verify_commit_marker_invariants(
 ) -> tuple[bool, str]:
     """Verify §9.7 R6 F-001 + §9.9 R9 F-001 commit-time invariants.
 
+    Codex PR #84 R1 F-002 fix (P1、L628): marker.required_host_ids_hash と
+    compute_required_host_ids_hash(required_host_ids) を exact match で verify (lease-binding
+    guarantee enforcement)。
+    Codex PR #84 R1 F-004 fix (P2、L650): empty required_host_ids + host_finalization_signatures
+    pair の場合 set equality は pass するが max()/min() で ValueError → fail-closed reason に変換。
+
     Returns: (ok, reason_code or "")
     """
+    # Codex PR #84 R1 F-002 fix (P1、L628): required_host_ids_hash binding verify
+    expected_hash = compute_required_host_ids_hash(required_host_ids)
+    if marker.required_host_ids_hash != expected_hash:
+        return False, "taskhub_cutover_required_host_ids_hash_mismatch"
+
     # (1) host_finalization_signatures は required_host_ids 全件分の signature を持つ
     signed_host_ids = {hfs.host_id for hfs in marker.host_finalization_signatures}
     if signed_host_ids != set(required_host_ids):
+        return False, "taskhub_cutover_lease_required_host_partial_confirmation"
+
+    # Codex PR #84 R1 F-004 fix (P2、L650): empty case 早期 reject (max/min ValueError 回避)
+    if not marker.host_finalization_signatures:
         return False, "taskhub_cutover_lease_required_host_partial_confirmation"
 
     # parse timestamps
@@ -639,9 +662,15 @@ def verify_commit_marker_invariants(
     except ValueError:
         return False, "taskhub_cutover_commit_confirmed_at_outside_lease_window"
 
-    # (2) all host_commit_confirmed_at ∈ [lease_acquired_at, lease_expires_at)
+    from datetime import timedelta  # noqa: PLC0415
+    skew_threshold = timedelta(seconds=clock_skew_tolerance_seconds)
+
+    # (2) all host_commit_confirmed_at ∈ [lease_acquired_at - ε, lease_expires_at)
+    # Codex PR #84 R1 F-006 fix (P2、L645): lower-bound にも ε tolerance を apply、
+    # negative clock drift の正常範囲 (ε 以内) を accept。strict `lease_acquired <= conf_at` は
+    # step 7 (min(host_confirmed) >= lease_acquired - ε) と矛盾するため、ここで先に許容。
     for host_id, conf_at in confirmations:
-        if not (lease_acquired <= conf_at < lease_expires):
+        if conf_at < (lease_acquired - skew_threshold) or conf_at >= lease_expires:
             return False, "taskhub_cutover_commit_confirmed_at_outside_lease_window"
         # silence unused host_id
         _ = host_id
@@ -654,8 +683,6 @@ def verify_commit_marker_invariants(
         return False, "taskhub_cutover_commit_confirmed_at_outside_lease_window"
 
     # (4) clock skew tolerance ε = 60s default (§9.9 R9 F-001 (c) condition)
-    from datetime import timedelta  # noqa: PLC0415
-    skew_threshold = timedelta(seconds=clock_skew_tolerance_seconds)
     if committed - max_confirmed > skew_threshold:
         return False, "taskhub_cutover_committed_at_after_confirmation_window_rejected"
 
@@ -672,8 +699,21 @@ def compute_required_host_ids_hash(required_host_ids: tuple[str, ...]) -> str:
 
     §9.5 R3 F-003 cutover_required_host_ids_hash の計算で、host_id list の順序非依存
     deterministic hash を保証する。
+
+    Codex PR #84 R1 F-005 fix (P2、L676): duplicate host_id を silent dedupe しない。
+    distinct inputs (e.g., ['host-a','host-a','host-b']) と ['host-a','host-b'] が同 hash に
+    collapse すると malformed/tampered lease membership array を masking する。
+    duplicate 検出時は ValueError で fail-closed (caller responsibility で正規化させる)。
     """
-    sorted_ids = sorted(set(required_host_ids))  # dedupe + sort for canonical
+    seen: set[str] = set()
+    for hid in required_host_ids:
+        if hid in seen:
+            raise ValueError(
+                f"taskhub_cutover_required_host_ids_hash_mismatch: "
+                f"duplicate host_id detected: {hid!r}"
+            )
+        seen.add(hid)
+    sorted_ids = sorted(required_host_ids)  # sort only (no dedupe — already verified unique)
     canonical_bytes = _rfc8785_canonical_bytes(sorted_ids)
     return _sha256_hex(canonical_bytes)
 

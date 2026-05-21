@@ -1163,7 +1163,13 @@ def _make_commit_marker(
         ("host-source", "2026-05-21T10:00:30Z"),
         ("host-target", "2026-05-21T10:01:00Z"),  # max confirmed = 10:01:00
     ),
+    required_host_ids: tuple[str, ...] | None = None,
 ) -> ar.CommitMarker:
+    """Helper: build a CommitMarker test fixture.
+
+    `required_host_ids` defaults to the host_confirmations' host ids (matching scenario).
+    Tests can override to simulate partial confirmation or tampered hash scenarios.
+    """
     finalization_sigs = tuple(
         ar.HostFinalizationSignature(
             host_id=hid,
@@ -1173,6 +1179,7 @@ def _make_commit_marker(
         )
         for hid, ts in host_confirmations
     )
+    actual_required = required_host_ids if required_host_ids is not None else tuple(h for h, _ in host_confirmations)
     return ar.CommitMarker(
         cutover_id="cutover-test",
         committed_at=committed_at,
@@ -1180,7 +1187,7 @@ def _make_commit_marker(
         target_prepare_marker_hash="p2" * 32,
         cutover_lease_snapshot_content_sha256="a" * 64,
         fleet_membership_snapshot_content_sha256="b" * 64,
-        required_host_ids_hash=ar.compute_required_host_ids_hash(tuple(h for h, _ in host_confirmations)),
+        required_host_ids_hash=ar.compute_required_host_ids_hash(actual_required),
         lease_acquired_at=lease_acquired_at,
         lease_expires_at=lease_expires_at,
         cutover_approval_id="approval-1",
@@ -1227,11 +1234,48 @@ def test_verify_commit_marker_pass_for_valid_invariants() -> None:
 
 def test_verify_commit_marker_rejects_partial_host_confirmation() -> None:
     """§9.5 R3 F-003: required host 全件分の signature がないと partial_confirmation で reject."""
-    cm = _make_commit_marker(host_confirmations=(
-        ("host-source", "2026-05-21T10:00:00Z"),
-        # missing host-target
-    ))
+    # marker は required_host_ids_hash を ("host-source", "host-target") で計算するが、
+    # host_finalization_signatures は host-source 1 件のみ → partial confirmation。
+    cm = _make_commit_marker(
+        host_confirmations=(
+            ("host-source", "2026-05-21T10:00:00Z"),
+            # missing host-target
+        ),
+        required_host_ids=("host-source", "host-target"),  # hash consistent with caller's expectation
+    )
     ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"))
+    assert ok is False
+    assert reason == "taskhub_cutover_lease_required_host_partial_confirmation"
+
+
+def test_verify_commit_marker_rejects_required_host_ids_hash_mismatch() -> None:
+    """Codex PR #84 R1 F-002 fix (P1、L628): marker.required_host_ids_hash が caller's required_host_ids hash と
+    mismatch なら lease binding 違反として fail-closed."""
+    # marker uses default required = host_confirmations hosts (source + target)
+    cm = _make_commit_marker()  # required = ("host-source", "host-target")
+    # caller passes a different set (extra host)
+    ok, reason = ar.verify_commit_marker_invariants(
+        cm, ("host-source", "host-target", "host-extra"),
+    )
+    assert ok is False
+    assert reason == "taskhub_cutover_required_host_ids_hash_mismatch"
+
+
+def test_compute_required_host_ids_hash_rejects_duplicates() -> None:
+    """Codex PR #84 R1 F-005 fix (P2、L676): duplicate host_id は ValueError で reject."""
+    with pytest.raises(ValueError, match="duplicate host_id detected"):
+        ar.compute_required_host_ids_hash(("host-a", "host-a", "host-b"))
+
+
+def test_verify_commit_marker_rejects_empty_required_hosts() -> None:
+    """Codex PR #84 R1 F-004 fix (P2、L650): empty required + empty signatures は partial_confirmation で
+    fail-closed (max/min ValueError 回避)."""
+    # 空 required_host_ids、空 host_confirmations
+    cm = _make_commit_marker(
+        host_confirmations=(),
+        required_host_ids=(),
+    )
+    ok, reason = ar.verify_commit_marker_invariants(cm, ())
     assert ok is False
     assert reason == "taskhub_cutover_lease_required_host_partial_confirmation"
 
