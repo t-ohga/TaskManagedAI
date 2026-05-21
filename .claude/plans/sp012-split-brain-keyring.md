@@ -976,6 +976,127 @@ R5 で 1 件 CRITICAL adopt 反映後、R6 で新規 CRITICAL ゼロ + HIGH ≤ 
 
 ---
 
+## §9.7 ADV2 Phase 2 R6 CRITICAL 2 件 adopt (R5 副作用 fix: commit-time 証明 + compromise 即時失効経路)
+
+### F-001 (R6) commit-time cryptographic proof + finalization signature 必須化 (CRITICAL security、backdate 攻撃防御)
+
+**問題**: §9.6 (R5) で `lease_expires_at` の verify 時現在時刻比較を廃止し commit-time 判定に置き換えたが、commit-time (`committed_at`) を **暗号学的に証明する schema と検証条件が未定義**。`committed_at` が CommitMarker 内の自己申告値に留まり、source/target confirmation signature が `committed_at` と full commit preimage を cover する必須条件がない → fleet-wide lease が procedural control に regress、攻撃者が古い prepare / confirmation artifact + 有効 approval を保持して `committed_at` を lease window 内へ **backdate** した CommitMarker を組み立て可能。
+
+**fix**:
+
+#### (1) `commit_finalization_preimage_hash` の定義 + canonical schema
+
+CommitMarker に `commit_finalization_preimage_hash` (sha256) を必須 field 追加、preimage は以下の **canonical 全体構造**:
+
+```
+commit_finalization_preimage = NFC(JCS({
+  "committed_at": "<UTC iso8601>",
+  "cutover_lease_snapshot_content_sha256": "<sha>",
+  "fleet_membership_snapshot_content_sha256": "<sha>",
+  "source_prepare_marker_hash": "<sha>",
+  "target_prepare_marker_hash": "<sha>",
+  "cutover_approval_id": "<uuid>",
+  "cutover_approval_claim_hash": "<sha>",
+  "commit_approval_claim_hash": "<sha>",
+  "required_host_ids_hash": "<sha>",
+  "domain": "taskhub.active_registry.cutover_commit.v1"
+}))
+
+commit_finalization_preimage_hash = SHA-256(commit_finalization_preimage)
+```
+
+#### (2) required host 全員の `commit_confirmed_at` 必須署名
+
+CommitMarker 必須 field 追加:
+- `host_finalization_signatures: [{host_id, signer_fingerprint, commit_confirmed_at (UTC iso8601), signature (Ed25519 over commit_finalization_preimage_hash + commit_confirmed_at)}]`
+- required_host_ids 全件分 (full set 必須、partial → reject)
+- 各 host の signature が `commit_finalization_preimage_hash || commit_confirmed_at` を cover (committed_at を含む preimage に対する署名)
+
+#### (3) verify path: backdate 攻撃防御
+
+CommitMarker 長期検証で:
+- 全 host の `commit_confirmed_at` を抽出
+- 全 host の `commit_confirmed_at` ∈ `[lease_acquired_at, lease_expires_at)` (lease window 内必須、host が backdate しても自分の signature window 範囲を改ざんできない)
+- CommitMarker の `committed_at` も `[lease_acquired_at, lease_expires_at)` に入る
+- `committed_at <= max(host_commit_confirmed_at)` (host confirmation 後の commit を許容、逆順は reject)
+- confirmation signature 全件が `commit_finalization_preimage_hash` を cover
+- いずれか不一致なら fail-closed reject (`taskhub_cutover_commit_finalization_signature_invalid` / `taskhub_cutover_commit_confirmed_at_outside_lease_window` / `taskhub_cutover_committed_at_after_confirmation_window_rejected`)
+
+#### (4) negative tests
+
+- `test_commit_marker_backdated_after_lease_expiry_rejected`
+- `test_confirmation_signature_must_cover_committed_at`
+- `test_host_confirmation_timestamp_after_lease_expiry_rejected`
+- `test_partial_host_finalization_signatures_rejected`
+- `test_commit_preimage_field_tampering_rejected`
+
+### F-002 (R6) current fleet policy check 必須化 (CRITICAL security、compromise 即時失効経路)
+
+**問題**: §9.6 (R5) で「current fleet membership 比較は reconciliation gate へ分離、既存 CommitMarker invalidate しない」と決めた結果、**security-relevant drift と benign generation drift を区別する enforcement point がない**。current fleet で active host / signer が compromise 対応として削除・期限切れ・role 剥奪されても、active-registry write gate が古い archived fleet snapshot に基づく CommitMarker を引き続き受理 → **失効済 host が write 権限を保持**。
+
+**fix**:
+
+#### (1) Long-term durability vs current write authority の分離
+
+| 検証対象 | 使用 snapshot | 判定 | 失敗時 |
+|---|---|---|---|
+| CommitMarker 過去事実 (long-term durability) | archived snapshot | signature + content hash + finalization (§9.7 F-001) | `taskhub_cutover_commit_finalization_signature_invalid` 等 |
+| 現在 write 権限 (active-registry write gate / startup gate) | **current** `active_registry_fleet.signed.json` | 下記 (2) policy check | 503 fail-closed |
+| benign generation drift (current > marker generation、security-non-revocation 変更) | both compared | successor transition required | `taskhub_active_registry_fleet_successor_transition_required` (R5 R5 既存 reason) |
+
+#### (2) current fleet policy check 必須項目 (active-registry write gate / startup gate)
+
+local host が write を行うため、**current** `active_registry_fleet.signed.json` で以下を全件 fail-closed verify:
+- `local_host_id ∈ current_fleet.required_host_ids` (host が fleet 内に存在)
+- `current_fleet.hosts[local_host_id].valid_from <= now() < current_fleet.hosts[local_host_id].valid_to` (lifecycle window 内)
+- `current_fleet.hosts[local_host_id].status != revoked AND != retired` (compromise revocation / role 剥奪チェック)
+- `current_fleet.hosts[local_host_id].allowed_marker_signer_fingerprints` が空ではない
+- `current_fleet.hosts[local_host_id].role` が write 可能 role (例: `source` / `target` / `active`、`observer` / `retired` は reject)
+- 過去 CommitMarker の `signer_fingerprint` が current fleet の `allowed_marker_signer_fingerprints` に依然存在 (個別 signer の compromise revocation も検出)
+
+#### (3) Drift 種別判定 (benign vs security-relevant)
+
+current fleet を load + 過去 CommitMarker と diff:
+- **security-relevant drift** (新規 fail-closed reject、503):
+  - `host_id` が current fleet から消えた → `taskhub_active_registry_host_removed_from_current_fleet` (新 ReasonCode、R6 追加)
+  - `host_id` の `status = revoked` または `retired` → `taskhub_active_registry_host_revoked_or_retired` (新 ReasonCode、R6 追加)
+  - `host_id.valid_to <= now()` → `taskhub_active_registry_host_lifecycle_expired` (新 ReasonCode、R6 追加)
+  - `signer_fingerprint` が current `allowed_marker_signer_fingerprints` から除外 → `taskhub_active_registry_signer_revoked_in_current_fleet` (新 ReasonCode、R6 追加)
+  - `role` が write 可能 → write 不可に変更 → `taskhub_active_registry_role_demoted_in_current_fleet` (新 ReasonCode、R6 追加)
+- **benign drift** (R5 既存 reason: `taskhub_active_registry_fleet_successor_transition_required`、503 にせず successor transition で対応):
+  - 新規 host 追加 / 既存 host の非 security-relevant metadata 更新 (endpoint url 等)
+  - generation increment のみで本質的 policy 変更なし
+
+#### (4) negative tests
+
+- `test_current_fleet_revokes_active_host_write_gate_rejects` (R6 F-002 直接)
+- `test_current_fleet_valid_to_expired_active_host_startup_rejects` (R6 F-002 直接)
+- `test_benign_fleet_addition_returns_successor_required_without_invalidating_marker` (R6 F-002 直接)
+- `test_signer_fingerprint_revoked_in_current_fleet_write_rejects`
+- `test_role_demoted_to_observer_write_rejects`
+- `test_host_status_retired_startup_rejects`
+
+### R6 adopt 累計値更新
+
+- ReasonCode: **34 → 42 件** (R6 で 8 件追加):
+  - F-001: `taskhub_cutover_commit_finalization_signature_invalid`
+  - F-001: `taskhub_cutover_commit_confirmed_at_outside_lease_window`
+  - F-001: `taskhub_cutover_committed_at_after_confirmation_window_rejected`
+  - F-002: `taskhub_active_registry_host_removed_from_current_fleet`
+  - F-002: `taskhub_active_registry_host_revoked_or_retired`
+  - F-002: `taskhub_active_registry_host_lifecycle_expired`
+  - F-002: `taskhub_active_registry_signer_revoked_in_current_fleet`
+  - F-002: `taskhub_active_registry_role_demoted_in_current_fleet`
+- fixture: **約 97 → 約 108 件** (R6 で 11 件追加)
+- 変更ファイル: 20 file (R6 は既存 `taskhub_active_registry_reconciliation_gate.py` と `taskhub_active_registry_gate.py` の責務拡張、新規 file 追加なし)
+- 累計 R1+R2+R3+R4+R5+R6 adopt: CRITICAL 12 + HIGH 20 = **32/36 件** (残 4 件は R1 MEDIUM、R7 で確定)
+
+### critical_zero gate 判定
+
+R6 で 2 件 CRITICAL adopt 反映後、R7 で新規 CRITICAL ゼロ + HIGH ≤ 2 が期待値。R7 clean で Phase 2 完遂、Batch A-D 実装着手可能。
+
+---
+
 ## §10 PR 後の SP-022 task progress (post-本 PR)
 
 | Task | status |
