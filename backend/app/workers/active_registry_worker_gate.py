@@ -12,12 +12,14 @@ invariants:
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import sys
-from collections.abc import Callable, MutableMapping
+from collections.abc import Awaitable, Callable, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from scripts import taskhub_active_registry_gate as gate_helper
 
@@ -162,6 +164,48 @@ def verify_worker_dequeue_if_configured(ctx: MutableMapping[str, object]) -> Non
     if not isinstance(cfg, WorkerGateConfig):
         return  # gate disabled / not configured → no-op
     verify_worker_dequeue(ctx)
+
+
+def with_active_registry_gate(
+    task_fn: Callable[..., Awaitable[Any]],
+) -> Callable[..., Awaitable[Any]]:
+    """ARQ task function を gate check + Retry handling で wrap する decorator。
+
+    Codex PR #85 R5 F-R5-001 fix (P1): `on_job_start` から `ArqRetry` を raise する
+    ことは ARQ worker job-execution try/except の外側で発生するため、worker loop
+    が retry を認識できず terminate するリスクがある。task function 内で
+    verify + Retry raise する pattern に rewrite (ARQ の `Retry` exception は
+    task function 内で raise された場合のみ job-execution try/except で正しく
+    handle される)。
+
+    使い方:
+        @with_active_registry_gate
+        async def my_task(ctx, ...):
+            ...
+
+    または WorkerSettings.functions list で wrap:
+        functions = [with_active_registry_gate(my_task)]
+    """
+    # 遅延 import (arq.worker.Retry の循環依存防止 + test 環境での optional import)
+    from arq.worker import Retry as ArqRetry
+
+    @functools.wraps(task_fn)
+    async def _wrapped(
+        ctx: MutableMapping[str, object],
+        *args: object,
+        **kwargs: object,
+    ) -> Any:  # noqa: ANN401 - ARQ task function は任意の戻り値型を許可
+        try:
+            verify_worker_dequeue_if_configured(ctx)
+        except WorkerDequeueRejected as exc:
+            logger.warning(
+                "worker_dequeue_rejected_retry_scheduled",
+                extra={"reason_code": exc.reason_code, "defer_seconds": 60},
+            )
+            raise ArqRetry(defer=60) from exc
+        return await task_fn(ctx, *args, **kwargs)
+
+    return _wrapped
 
 
 def configure_worker_gate_from_settings(

@@ -24,6 +24,7 @@ from backend.app.workers.active_registry_worker_gate import (
     verify_worker_dequeue,
     verify_worker_dequeue_if_configured,
     verify_worker_startup,
+    with_active_registry_gate,
 )
 from scripts import taskhub_active_registry as ar
 from scripts import taskhub_active_registry_gate as gate_helper
@@ -222,6 +223,66 @@ def test_verify_worker_dequeue_if_configured_is_noop_when_disabled() -> None:
     """
     ctx: dict[str, object] = {}
     verify_worker_dequeue_if_configured(ctx)  # no exception expected
+
+
+def test_with_active_registry_gate_passes_when_gate_ok(tmp_path: Path) -> None:
+    """Codex R5 F-R5-001 fix (P1): wrapped task が gate pass 時に通過 + 結果を返す."""
+    import asyncio
+
+    config_dir, priv, fp = _setup_active(tmp_path)
+
+    async def _real_task(ctx: dict[str, object], x: int) -> int:
+        return x * 2
+
+    wrapped = with_active_registry_gate(_real_task)
+    ctx: dict[str, object] = {}
+    _attach(ctx, config_dir, priv, fp)
+    result = asyncio.run(wrapped(ctx, 5))
+    assert result == 10
+
+
+def test_with_active_registry_gate_raises_arq_retry_when_gate_fails(tmp_path: Path) -> None:
+    """Codex R5 F-R5-001 fix (P1): wrapped task が gate fail 時に `ArqRetry(defer=60)` を raise.
+
+    `on_job_start` から raise する代わりに task body 内で raise することで、
+    ARQ job-execution try/except が Retry を正しく handle (job re-queue) する。
+    """
+    import asyncio
+
+    from arq.worker import Retry as ArqRetry
+
+    config_dir, priv, fp = _setup_active(tmp_path)
+    # freeze marker 配置 → gate fail
+    (config_dir / gate_helper.ACTIVE_REGISTRY_DIRNAME / gate_helper.FREEZE_MARKER_FILENAME).write_text(
+        json.dumps({"host_id": "host-target", "frozen_at": "2026-05-21T11:00:00Z"}),
+        encoding="utf-8",
+    )
+
+    async def _real_task(ctx: dict[str, object]) -> str:
+        return "executed"  # 到達しないはず
+
+    wrapped = with_active_registry_gate(_real_task)
+    ctx: dict[str, object] = {}
+    _attach(ctx, config_dir, priv, fp)
+    with pytest.raises(ArqRetry) as excinfo:
+        asyncio.run(wrapped(ctx))
+    # `ArqRetry.defer` は timedelta or int seconds、defer=60 で初期化済み
+    assert excinfo.value.defer_score is not None  # ArqRetry 内部 attribute (再投入予定)
+
+
+def test_with_active_registry_gate_passes_when_gate_disabled(tmp_path: Path) -> None:
+    """Codex R5 F-R5-001 fix (P1): gate 未 config (config_dir 未 attach) なら通過."""
+    import asyncio
+
+    _ = tmp_path
+
+    async def _real_task(ctx: dict[str, object]) -> str:
+        return "ok"
+
+    wrapped = with_active_registry_gate(_real_task)
+    ctx: dict[str, object] = {}  # gate not configured
+    result = asyncio.run(wrapped(ctx))
+    assert result == "ok"
 
 
 def test_verify_worker_dequeue_if_configured_enforces_when_attached(tmp_path: Path) -> None:

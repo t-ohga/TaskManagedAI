@@ -62,7 +62,12 @@ def clear_settings_cache() -> Iterator[None]:
 
 
 def test_worker_settings_exports_noop_task() -> None:
-    assert WorkerSettings.functions == [noop_task]
+    # SP-012 §9.10 R10 F-001 + Codex PR #85 R5 F-R5-001 fix: noop_task は
+    # `with_active_registry_gate(...)` でラップされる。functools.wraps が
+    # `__wrapped__` 属性で元 task を保持するため、それで identity を確認。
+    assert len(WorkerSettings.functions) == 1
+    wrapped = WorkerSettings.functions[0]
+    assert getattr(wrapped, "__wrapped__", None) is noop_task
     assert WorkerSettings.queue_name == "taskmanagedai:jobs"
     assert WorkerSettings.job_timeout == 300
     assert WorkerSettings.max_jobs == 10
