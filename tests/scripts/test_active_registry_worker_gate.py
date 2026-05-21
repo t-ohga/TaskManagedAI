@@ -22,6 +22,7 @@ from backend.app.workers.active_registry_worker_gate import (
     WorkerStartupAbort,
     attach_worker_gate_config,
     verify_worker_dequeue,
+    verify_worker_dequeue_if_configured,
     verify_worker_startup,
 )
 from scripts import taskhub_active_registry as ar
@@ -211,3 +212,29 @@ def test_worker_dequeue_aborted_when_gate_not_configured() -> None:
     ctx: dict[str, object] = {}
     with pytest.raises(WorkerStartupAbort):
         verify_worker_dequeue(ctx)
+
+
+def test_verify_worker_dequeue_if_configured_is_noop_when_disabled() -> None:
+    """Codex R2 F-R2-002 (P1) fix: gate disabled (config 未 attach) なら no-op (raise しない).
+
+    ARQ `on_job_start` から呼ばれるため、test / development では gate 未設定でも
+    job 実行が止まらないことを保証する。
+    """
+    ctx: dict[str, object] = {}
+    verify_worker_dequeue_if_configured(ctx)  # no exception expected
+
+
+def test_verify_worker_dequeue_if_configured_enforces_when_attached(tmp_path: Path) -> None:
+    """Codex R2 F-R2-002 (P1) fix: gate enabled + attach 済みなら verify_worker_dequeue 経由 reject."""
+    config_dir, priv, fp = _setup_active(tmp_path)
+    ctx: dict[str, object] = {}
+    _attach(ctx, config_dir, priv, fp)
+    # gate pass
+    verify_worker_dequeue_if_configured(ctx)  # no exception
+    # freeze marker 出現
+    (config_dir / gate_helper.ACTIVE_REGISTRY_DIRNAME / gate_helper.FREEZE_MARKER_FILENAME).write_text(
+        json.dumps({"host_id": "host-target", "frozen_at": "2026-05-21T11:00:00Z"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(WorkerDequeueRejected):
+        verify_worker_dequeue_if_configured(ctx)

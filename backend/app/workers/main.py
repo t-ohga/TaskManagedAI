@@ -14,6 +14,7 @@ from backend.app.config import Settings, get_settings
 from backend.app.observability import setup_logging, setup_otel
 from backend.app.workers.active_registry_worker_gate import (
     configure_worker_gate_from_settings,
+    verify_worker_dequeue_if_configured,
 )
 from backend.app.workers.tasks import noop_task
 
@@ -153,6 +154,17 @@ async def on_shutdown(ctx: WorkerContext) -> None:
     logger.info("worker_shutdown")
 
 
+async def on_job_start(ctx: WorkerContext) -> None:
+    """ARQ on_job_start hook: 各 job dequeue 直前に active-registry gate verify。
+
+    Codex PR #85 R2 F-R2-002 fix (P1): startup gate のみでは freeze/decommission が
+    後から出現した場合に runtime で job consumption が継続するため、各 job の
+    開始時に gate verify を強制 (fail-closed)。
+    `WorkerDequeueRejected` を raise すると ARQ は job を retry queue に戻す。
+    """
+    verify_worker_dequeue_if_configured(ctx)
+
+
 class WorkerSettings:
     settings: ClassVar[Settings] = get_settings()
     functions: ClassVar[list[WorkerFunction]] = [noop_task]
@@ -160,6 +172,7 @@ class WorkerSettings:
     queue_name: ClassVar[str] = settings.arq_queue_name
     on_startup: ClassVar[Callable[[WorkerContext], Awaitable[None]]] = on_startup
     on_shutdown: ClassVar[Callable[[WorkerContext], Awaitable[None]]] = on_shutdown
+    on_job_start: ClassVar[Callable[[WorkerContext], Awaitable[None]]] = on_job_start
     max_jobs: ClassVar[int] = 10
     job_timeout: ClassVar[int] = 300
     keep_result: ClassVar[int] = 3600

@@ -150,6 +150,20 @@ def exit_with_startup_abort(reason_code: str) -> None:
     os._exit(1)
 
 
+def verify_worker_dequeue_if_configured(ctx: MutableMapping[str, object]) -> None:
+    """gate config が attach されていれば dequeue verify、未 attach なら no-op。
+
+    Codex PR #85 R2 F-R2-002 fix (P1): ARQ `on_job_start` hook から呼ぶ。
+    gate disabled (default) では何もせず通過、enabled なら verify_worker_dequeue。
+
+    test 環境では gate config が attach されないため、本関数は no-op 経路を提供。
+    """
+    cfg = ctx.get(_GATE_CTX_KEY)
+    if not isinstance(cfg, WorkerGateConfig):
+        return  # gate disabled / not configured → no-op
+    verify_worker_dequeue(ctx)
+
+
 def configure_worker_gate_from_settings(
     ctx: MutableMapping[str, object],
 ) -> bool:

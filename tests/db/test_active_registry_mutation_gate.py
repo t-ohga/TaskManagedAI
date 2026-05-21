@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from sqlalchemy import Column, Engine, Integer, String, create_engine
+from sqlalchemy import Column, Engine, Integer, String, create_engine, update
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from backend.app.db.active_registry_mutation_gate import (
@@ -258,6 +258,69 @@ def test_db_commit_skips_gate_when_dirty_set_has_no_net_change(tmp_path: Path) -
             obj.name = "changed"  # 値変更 → is_modified=True
             with pytest.raises(ActiveRegistryGateRejectedCommit):
                 session.commit()
+    finally:
+        detach_db_mutation_gate(SessionLocal.class_, listener)
+        engine.dispose()
+
+
+def test_db_commit_detects_statement_dml_update(tmp_path: Path) -> None:
+    """Codex R2 F-R2-006 (P1) fix: `session.execute(update(...))` も mutation として detect.
+
+    repositories/base.py の `update` / `delete` は ORM session.new/dirty に entry を
+    残さないため、`do_orm_execute` listener で session.info に flag を set している。
+    """
+    config_dir, priv, fp = _setup_active_registry(tmp_path)
+    engine, SessionLocal, listener = _make_engine_and_session(config_dir, priv, fp)
+    try:
+        # 先に seed (active marker 在りで pass)
+        with SessionLocal() as session:
+            session.add(_Sample(id=20, name="seed"))
+            session.commit()
+        # active marker を削除
+        (
+            config_dir
+            / gate_helper.ACTIVE_REGISTRY_DIRNAME
+            / gate_helper.ACTIVE_MARKER_FILENAME
+        ).unlink()
+        # session.execute(update(...)) は dirty に entry を残さないが gate で reject されるべき
+        with SessionLocal() as session:
+            session.execute(update(_Sample).where(_Sample.id == 20).values(name="dml_updated"))
+            with pytest.raises(ActiveRegistryGateRejectedCommit) as excinfo:
+                session.commit()
+            assert (
+                excinfo.value.reason_code
+                == "taskhub_active_registry_db_commit_rejected_by_gate"
+            )
+    finally:
+        detach_db_mutation_gate(SessionLocal.class_, listener)
+        engine.dispose()
+
+
+def test_db_commit_dml_flag_cleared_after_commit(tmp_path: Path) -> None:
+    """Codex R2 F-R2-006 (P1) fix: DML flag が transaction 終了で clear される.
+
+    `after_commit` / `after_rollback` listener で session.info[_DML_EXECUTED_KEY] を
+    pop することで、次の transaction に持ち越さない。
+    """
+    config_dir, priv, fp = _setup_active_registry(tmp_path)
+    engine, SessionLocal, listener = _make_engine_and_session(config_dir, priv, fp)
+    try:
+        with SessionLocal() as session:
+            session.add(_Sample(id=30, name="seed"))
+            session.commit()
+            # 同 session で execute DML
+            session.execute(update(_Sample).where(_Sample.id == 30).values(name="updated"))
+            session.commit()  # gate pass (active marker 在り)
+        # active marker を削除
+        (
+            config_dir
+            / gate_helper.ACTIVE_REGISTRY_DIRNAME
+            / gate_helper.ACTIVE_MARKER_FILENAME
+        ).unlink()
+        # 新 session で no-op commit (DML flag は前 transaction で clear 済み、
+        # 新 session は新 session.info を持つので別物)
+        with SessionLocal() as session:
+            session.commit()  # mutation なし、gate skip で no exception
     finally:
         detach_db_mutation_gate(SessionLocal.class_, listener)
         engine.dispose()

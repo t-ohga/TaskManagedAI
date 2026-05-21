@@ -18,6 +18,7 @@ Layout (`<config_dir>/active_registry/`):
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -44,7 +45,12 @@ __all__ = [
 ]
 
 SIGNERS_DIRNAME: Final[str] = "signers"
-_SIGNER_FINGERPRINT_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9+/=_-]+$")
+# Codex PR #85 R2 F-R2-001 fix (P1): path separator (`/` / `\`) と `..` / NUL を
+# 含む fingerprint を regex で reject (path traversal 防御の第 1 段)。
+# 既存 fingerprint encoding (base64 first 32 chars) で `/` / `+` / `=` が出るが、
+# operator runbook §13 で url-safe base64 encoding (`-` / `_`) への移行を規定する。
+# 移行期間中の backward compat は `+`, `=` のみ許可 (`/` は禁止)。
+_SIGNER_FINGERPRINT_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9+=_-]{1,128}$")
 _ED25519_RAW_KEY_LEN: Final[int] = 32
 
 ACTIVE_REGISTRY_DIRNAME: Final[str] = "active_registry"
@@ -183,28 +189,45 @@ def build_file_based_public_key_resolver(
 ) -> Callable[[str], bytes | None]:
     """`<config_dir>/active_registry/signers/<fingerprint>.pub` から Ed25519 raw 32 bytes を load。
 
-    fingerprint は base64 / url-safe base64 / hex 等を許容するが、path traversal
-    防止のため `_SIGNER_FINGERPRINT_RE` で sanitize する。malformed key file
-    (size != 32 bytes) は None を返す → gate は `signer_public_key_unavailable` で
-    fail-closed reject。
+    Codex PR #85 R2 F-R2-001 fix (P1) + F-R2-005 fix (P2):
+    - regex で `/` / `\\` / `..` / NUL を reject (path traversal 第 1 段)
+    - 文字列レベルで explicit に `..` / `/` / `\\` / NUL 検査 (第 2 段、defense-in-depth)
+    - `os.open(O_NOFOLLOW)` で atomic symlink reject (third stage、key store の confinement)
+    - `path.resolve()` が signers_dir 直下になることを fourth stage で confirm
 
     operator deployment:
-        1. fingerprint = base64 のうち先頭 32 chars (`_signer_fingerprint(pub)` で計算)
+        1. fingerprint = url-safe base64 raw key (`-_` no `/`)、operator runbook §13-§21
         2. <config_dir>/active_registry/signers/<fingerprint>.pub に raw 32 bytes 書込
-        3. file permission 0400 (operator runbook §13-§21 で規定予定)
+        3. file permission 0400、symlink 禁止 (`O_NOFOLLOW` で atomic 検出)
     """
     signers_dir = _config_dir_active_registry(config_dir) / SIGNERS_DIRNAME
 
     def _resolve(fingerprint: str) -> bytes | None:
+        # Layer 1: 型 check + regex (path separator / NUL を含む文字列を reject)
         if not isinstance(fingerprint, str) or not _SIGNER_FINGERPRINT_RE.match(fingerprint):
             return None
-        # path traversal 防御: fingerprint を basename だけに使う + safe regex
+        # Layer 2: explicit string-level path traversal check (regex の取りこぼし防御)
+        if "/" in fingerprint or "\\" in fingerprint or ".." in fingerprint or "\x00" in fingerprint:
+            return None
         path = signers_dir / f"{fingerprint}.pub"
+        # Layer 3: resolve confinement (path traversal が regex 突破した場合の最終防衛)
         try:
-            # symlink 不許可 (operator runbook §17 で `O_NOFOLLOW` 推奨)
-            data = path.read_bytes()
+            resolved = path.resolve(strict=False)
+            base_resolved = signers_dir.resolve(strict=False)
+            # Python 3.9+ Path.is_relative_to を使用 (mypy / 3.12 compat)
+            if not str(resolved).startswith(str(base_resolved) + os.sep) and resolved != base_resolved:
+                return None
+        except (OSError, RuntimeError):
+            return None
+        # Layer 4: O_NOFOLLOW で atomic symlink reject + read
+        try:
+            fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
         except OSError:
             return None
+        try:
+            data = os.read(fd, _ED25519_RAW_KEY_LEN + 1)
+        finally:
+            os.close(fd)
         if len(data) != _ED25519_RAW_KEY_LEN:
             return None
         return data

@@ -56,6 +56,9 @@ class ActiveRegistryGateRejectedCommit(IntegrityError):
         self.reason_code = reason_code
 
 
+_DML_EXECUTED_KEY: str = "_active_registry_dml_executed"
+
+
 def _session_has_mutations(session: Session) -> bool:
     """session に pending INSERT/UPDATE/DELETE が含まれているかを確認。
 
@@ -63,7 +66,15 @@ def _session_has_mutations(session: Session) -> bool:
     に同値を再代入しただけでも entry が乗ることがある (SQLAlchemy 公式 docs)。
     `is_modified()` で net column change を per-instance に確認することで
     read-only / no-op commit を gate から確実に exempt する。
+
+    Codex PR #85 R2 F-R2-006 fix (P1): SQL `execute(update(...))` /
+    `execute(delete(...))` などの statement-based DML は session.new / dirty /
+    deleted に entry を作らない (`backend/app/repositories/base.py` 経由)。
+    `do_orm_execute` listener で session.info に `_DML_EXECUTED_KEY` を set
+    することで、これらの DML も mutation として確実に detect する。
     """
+    if session.info.get(_DML_EXECUTED_KEY, False):
+        return True
     if session.new or session.deleted:
         return True
     # `session.dirty` の各 instance に対し net change を確認
@@ -74,6 +85,27 @@ def _session_has_mutations(session: Session) -> bool:
         except Exception:  # noqa: BLE001 - 検査失敗時は fail-closed (mutation あり扱い)
             return True
     return False
+
+
+def _on_orm_execute(orm_execute_state: object) -> None:
+    """SQLAlchemy `do_orm_execute` listener: UPDATE/DELETE/INSERT 検出時に flag set。
+
+    Codex PR #85 R2 F-R2-006 fix (P1): statement-based DML (Core-level execute) を
+    capture するため、ORM execute event hook で is_update / is_delete / is_insert
+    属性を確認し、該当 session.info に flag を set する。
+    """
+    is_update = bool(getattr(orm_execute_state, "is_update", False))
+    is_delete = bool(getattr(orm_execute_state, "is_delete", False))
+    is_insert = bool(getattr(orm_execute_state, "is_insert", False))
+    if is_update or is_delete or is_insert:
+        session = getattr(orm_execute_state, "session", None)
+        if session is not None:
+            session.info[_DML_EXECUTED_KEY] = True
+
+
+def _on_after_commit_or_rollback(session: Session) -> None:
+    """commit / rollback 後に DML flag を clear (次の transaction に持ち越さない)。"""
+    session.info.pop(_DML_EXECUTED_KEY, None)
 
 
 def _build_before_commit_listener(
@@ -121,9 +153,12 @@ def attach_db_mutation_gate(
     host_id: str,
     public_key_resolver: Callable[[str], bytes | None],
 ) -> Callable[[Session], None]:
-    """`session_class` (例: `sessionmaker.class_`) に `before_commit` listener を attach。
+    """`session_class` (例: `sessionmaker.class_`) に gate listeners を attach。
 
-    返り値は listener handle (test で `event.remove()` 経由 detach 用)。
+    Codex PR #85 R2 F-R2-006 fix (P1): `before_commit` に加えて
+    `do_orm_execute` (DML 検出) + `after_commit` / `after_rollback` (flag clear) も attach。
+
+    返り値は `before_commit` listener handle (test で `event.remove()` 経由 detach 用)。
     本関数は idempotent ではないので、同一 session class に複数回呼ばない。
     """
     cfg = DbGateConfig(
@@ -133,6 +168,10 @@ def attach_db_mutation_gate(
     )
     listener = _build_before_commit_listener(cfg)
     event.listen(session_class, "before_commit", listener)
+    # F-R2-006 fix: DML execute detection + transaction-scope flag clear
+    event.listen(session_class, "do_orm_execute", _on_orm_execute)
+    event.listen(session_class, "after_commit", _on_after_commit_or_rollback)
+    event.listen(session_class, "after_rollback", _on_after_commit_or_rollback)
     return listener
 
 
@@ -141,6 +180,20 @@ def detach_db_mutation_gate(
 ) -> None:
     """test 用: listener detach。production runtime では使わない。"""
     event.remove(session_class, "before_commit", listener)
+    # F-R2-006 fix: 同 attach した auxiliary listeners も detach (既に remove 済みは
+    # debug log のみ、production runtime では呼ばれない経路のため log で十分)。
+    for event_name, aux_listener in (
+        ("do_orm_execute", _on_orm_execute),
+        ("after_commit", _on_after_commit_or_rollback),
+        ("after_rollback", _on_after_commit_or_rollback),
+    ):
+        try:
+            event.remove(session_class, event_name, aux_listener)
+        except Exception as exc:  # noqa: BLE001 - 既に remove 済みなら OK (test 用 detach)
+            logger.debug(
+                "active_registry_db_mutation_gate_detach_skipped",
+                extra={"event_name": event_name, "exc": str(exc)},
+            )
 
 
 def configure_db_mutation_gate_from_settings(

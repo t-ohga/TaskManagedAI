@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.api.dependencies.active_registry_gate import (
     configure_active_registry_gate,
+    install_active_registry_gate_middleware,
     require_active_registry_write_authority,
 )
 from scripts import taskhub_active_registry as ar
@@ -253,6 +254,109 @@ def test_api_write_rejected_on_malformed_gate_config(tmp_path: Path) -> None:
     assert body["detail"]["reason_code"] == (
         "taskhub_active_registry_gate_malformed_config"
     )
+
+
+def test_middleware_blocks_write_methods_when_gate_fails(tmp_path: Path) -> None:
+    """Codex R2 F-R2-003 (P2) fix: POST/PUT/PATCH/DELETE が gate fail で 503 になる."""
+    config_dir, priv, fp = _setup_fleet_and_active(tmp_path)
+    # decommission marker 配置 → gate fail
+    (
+        config_dir / gate_helper.ACTIVE_REGISTRY_DIRNAME / gate_helper.DECOMMISSION_MARKER_FILENAME
+    ).write_text(
+        json.dumps({"host_id": "host-target", "decommissioned_at": "2026-05-21T12:00:00Z"}),
+        encoding="utf-8",
+    )
+    pub_bytes = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+
+    def resolver(query_fp: str) -> bytes | None:
+        return pub_bytes if query_fp == fp else None
+
+    app = FastAPI()
+    configure_active_registry_gate(
+        app.state,
+        config_dir=config_dir,
+        host_id="host-target",
+        public_key_resolver=resolver,
+    )
+    install_active_registry_gate_middleware(app)
+
+    @app.post("/api/write")
+    async def _write() -> dict[str, str]:
+        return {"status": "written"}
+
+    @app.get("/api/read")
+    async def _read() -> dict[str, str]:
+        return {"status": "ok"}
+
+    with TestClient(app) as client:
+        # write は middleware で 503 (endpoint 自体に dependency 不要)
+        response = client.post("/api/write")
+        assert response.status_code == 503
+        assert response.json()["detail"]["reason_code"] == (
+            "taskhub_active_registry_write_rejected_by_gate"
+        )
+        # read は middleware で通過
+        response = client.get("/api/read")
+        assert response.status_code == 200
+
+
+def test_middleware_skips_when_gate_not_configured(tmp_path: Path) -> None:
+    """Codex R2 F-R2-003 (P2) fix: gate disabled (config 未 attach) なら middleware も no-op."""
+    _ = tmp_path
+    app = FastAPI()
+    # gate config を attach しない (default disabled)
+    install_active_registry_gate_middleware(app)
+
+    @app.post("/api/write")
+    async def _write() -> dict[str, str]:
+        return {"status": "written"}
+
+    with TestClient(app) as client:
+        response = client.post("/api/write")
+    assert response.status_code == 200
+    assert response.json() == {"status": "written"}
+
+
+def test_middleware_exempts_health_metrics_auth(tmp_path: Path) -> None:
+    """Codex R2 F-R2-003 (P2) fix: /health, /metrics, /auth/* は gate 経路を bypass."""
+    config_dir, priv, fp = _setup_fleet_and_active(tmp_path)
+    # 完全 gate fail 条件 (active marker 削除)
+    (
+        config_dir / gate_helper.ACTIVE_REGISTRY_DIRNAME / gate_helper.ACTIVE_MARKER_FILENAME
+    ).unlink()
+    pub_bytes = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+
+    def resolver(query_fp: str) -> bytes | None:
+        return pub_bytes if query_fp == fp else None
+
+    app = FastAPI()
+    configure_active_registry_gate(
+        app.state,
+        config_dir=config_dir,
+        host_id="host-target",
+        public_key_resolver=resolver,
+    )
+    install_active_registry_gate_middleware(app)
+
+    @app.post("/auth/dev-login")
+    async def _auth() -> dict[str, str]:
+        return {"status": "logged-in"}
+
+    @app.post("/api/write")
+    async def _write() -> dict[str, str]:
+        return {"status": "written"}
+
+    with TestClient(app) as client:
+        # /auth/* は exempt → 200
+        assert client.post("/auth/dev-login").status_code == 200
+        # /api/write は middleware で reject
+        assert client.post("/api/write").status_code == 503
 
 
 def test_configure_active_registry_gate_is_idempotent(tmp_path: Path) -> None:
