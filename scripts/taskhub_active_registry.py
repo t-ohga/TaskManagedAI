@@ -625,6 +625,7 @@ def verify_commit_marker_invariants(
     marker: CommitMarker,
     required_host_ids: tuple[str, ...],
     clock_skew_tolerance_seconds: int = COMMIT_TIME_CLOCK_SKEW_TOLERANCE_SECONDS,
+    host_signer_public_key_resolver: Callable[[str, str], bytes | None] | None = None,
 ) -> tuple[bool, str]:
     """Verify §9.7 R6 F-001 + §9.9 R9 F-001 commit-time invariants.
 
@@ -633,13 +634,40 @@ def verify_commit_marker_invariants(
     guarantee enforcement)。
     Codex PR #84 R1 F-004 fix (P2、L650): empty required_host_ids + host_finalization_signatures
     pair の場合 set equality は pass するが max()/min() で ValueError → fail-closed reason に変換。
+    Codex PR #84 R2 F-001 fix (P1、L640): compute_required_host_ids_hash が duplicate で ValueError
+    raise するため、caller responsibility で normalize させる代わりに、verify 内で例外 catch
+    して fail-closed reason に変換 (verify API 契約 (bool, reason_code) を保つ).
+    Codex PR #84 R2 F-002 fix (P2、L646): host_finalization_signatures の duplicate host_id を
+    exclusion (set で multiplicity が drop し ambiguous confirmation を許す問題)。
+    Codex PR #84 R2 F-003 fix (P1、L660): host_signer_public_key_resolver kwarg を導入、
+    HostFinalizationSignature.signature を cryptographically verify (commit_finalization_preimage_hash
+    + commit_confirmed_at を canonical bytes として Ed25519 verify)。None なら structural-only
+    weak verify (test/genesis 専用)、production deployment では必ず resolver を渡す。
+
+    Args:
+        host_signer_public_key_resolver: Optional callable (host_id, signer_fingerprint) -> pub_key_bytes | None。
+            None を返したら that host の signature を skip (unknown signer)、bytes を返したら verify。
+            None (callable 自体が None) は legacy weak structural-only verify (foot-gun、test only)。
 
     Returns: (ok, reason_code or "")
     """
     # Codex PR #84 R1 F-002 fix (P1、L628): required_host_ids_hash binding verify
-    expected_hash = compute_required_host_ids_hash(required_host_ids)
+    try:
+        expected_hash = compute_required_host_ids_hash(required_host_ids)
+    except ValueError:
+        # Codex PR #84 R2 F-001 fix (P1、L640): duplicate host_ids in caller-supplied
+        # required_host_ids → fail-closed instead of propagating ValueError
+        return False, "taskhub_cutover_required_host_ids_hash_mismatch"
     if marker.required_host_ids_hash != expected_hash:
         return False, "taskhub_cutover_required_host_ids_hash_mismatch"
+
+    # Codex PR #84 R2 F-002 fix (P2、L646): host_finalization_signatures に duplicate host_id があれば
+    # reject (set conversion で multiplicity drop し ambiguous confirmation を許す問題)
+    seen_host_ids: set[str] = set()
+    for hfs in marker.host_finalization_signatures:
+        if hfs.host_id in seen_host_ids:
+            return False, "taskhub_cutover_lease_required_host_partial_confirmation"
+        seen_host_ids.add(hfs.host_id)
 
     # (1) host_finalization_signatures は required_host_ids 全件分の signature を持つ
     signed_host_ids = {hfs.host_id for hfs in marker.host_finalization_signatures}
@@ -649,6 +677,23 @@ def verify_commit_marker_invariants(
     # Codex PR #84 R1 F-004 fix (P2、L650): empty case 早期 reject (max/min ValueError 回避)
     if not marker.host_finalization_signatures:
         return False, "taskhub_cutover_lease_required_host_partial_confirmation"
+
+    # Codex PR #84 R2 F-003 fix (P1、L660): cryptographically verify each host signature
+    # signature は Ed25519(commit_finalization_preimage_hash || commit_confirmed_at) over canonical bytes
+    if host_signer_public_key_resolver is not None:
+        for hfs in marker.host_finalization_signatures:
+            pub = host_signer_public_key_resolver(hfs.host_id, hfs.signer_fingerprint)
+            if pub is None:
+                return False, "taskhub_cutover_commit_finalization_signature_invalid"
+            # canonical bytes: preimage_hash || "|" || commit_confirmed_at (deterministic)
+            sig_payload = _rfc8785_canonical_bytes({
+                "commit_confirmed_at": hfs.commit_confirmed_at,
+                "commit_finalization_preimage_hash": marker.commit_finalization_preimage_hash,
+                "host_id": hfs.host_id,
+                "signer_fingerprint": hfs.signer_fingerprint,
+            })
+            if not verify_ed25519_signature(pub, hfs.signature, sig_payload):
+                return False, "taskhub_cutover_commit_finalization_signature_invalid"
 
     # parse timestamps
     try:
