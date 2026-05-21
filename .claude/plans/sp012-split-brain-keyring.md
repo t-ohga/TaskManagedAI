@@ -345,6 +345,19 @@ ReasonCode 拡張は **正本 16 件** (ADV R6 F-005 MEDIUM adopt 集計同期: 
 - `taskhub_cutover_lease_expired_at_verify_time` (R3 F-003、§9.5)
 - `taskhub_cutover_lease_required_host_partial_confirmation` (R3 F-003、§9.5)
 
+**ADV2 R5 + R6 hardening adopt で追加 11 件 (31 → 42 件正本化、§9.6 + §9.7 final spec)**:
+- `taskhub_cutover_lease_snapshot_archive_missing` (R5 F-001、§9.6、cutover_id 単位 immutable archive)
+- `taskhub_cutover_fleet_membership_snapshot_archive_missing` (R5 F-001、§9.6、generation 単位 immutable archive)
+- `taskhub_active_registry_fleet_successor_transition_required` (R5 F-001、§9.6、benign drift → successor)
+- `taskhub_cutover_commit_finalization_signature_invalid` (R6 F-001、§9.7、commit-time cryptographic proof)
+- `taskhub_cutover_commit_confirmed_at_outside_lease_window` (R6 F-001、§9.7、host confirmation timestamp window check)
+- `taskhub_cutover_committed_at_after_confirmation_window_rejected` (R6 F-001、§9.7、committed_at <= max(host_commit_confirmed_at))
+- `taskhub_active_registry_host_removed_from_current_fleet` (R6 F-002、§9.7、compromise 即時失効)
+- `taskhub_active_registry_host_revoked_or_retired` (R6 F-002、§9.7、status revoked/retired check)
+- `taskhub_active_registry_host_lifecycle_expired` (R6 F-002、§9.7、valid_to expired check)
+- `taskhub_active_registry_signer_revoked_in_current_fleet` (R6 F-002、§9.7、個別 signer revocation)
+- `taskhub_active_registry_role_demoted_in_current_fleet` (R6 F-002、§9.7、role write 不可化)
+
 **追加 hardening (count に含めない、enforcement field-level changes)**:
 - ADV R3 F-002 (signer-host ownership binding): 既存 `taskhub_active_registry_signer_not_in_allowlist` の verify path を `host_id -> allowed_marker_signer_fingerprints` exact match + role + allowed_marker_kinds 必須に拡張 (§9.5 F-002)、新 ReasonCode は追加せず既存 reason に condition 追加
 - ADV R2 F-002 (PrepareMarker / CommitMarker 別 domain): `taskhub_active_registry_signature_verify_failed` の cause を `prepare_marker_in_active_path_rejected` / `commit_certificate_missing` 等の sub-cause で詳細化 (operator-runbook §15 reason table で sub-cause expansion)
@@ -353,11 +366,13 @@ ReasonCode 拡張は **正本 16 件** (ADV R6 F-005 MEDIUM adopt 集計同期: 
 
 ### 4.5 testing.md §3 弱 assertion 禁止 遵守
 
-全 **約 91 test fixture** (ADV2 R1 + R2 + R3 hardening adopt 後正本値、base 46 + R1 +19 + R2 +12 + R3 +14 = 91。実 fixture 名は §6.4 fixture table + §9.3/§9.4/§9.5 negative test list で確定、Batch D 実装時に最終 count 同期):
+全 **約 108 test fixture** (ADV2 R1 + R2 + R3 + R5 + R6 hardening adopt 後正本値、base 46 + R1 +19 + R2 +12 + R3 +14 + R5 +6 + R6 +11 = 108。実 fixture 名は §6.4 fixture table + §9.3/§9.4/§9.5/§9.6/§9.7 negative test list で確定、Batch D 実装時に最終 count 同期):
 - base 46 件 (keyring 22 + active-registry 24): §3.D.1 / §3.D.2 fixture name table 参照 (本 plan 当初設計)
 - R1 +19 件 (§9.3 各 F-005〜F-014 の negative test list)
 - R2 +12 件 (§9.4 F-001〜F-007 の各 fixture 追加分)
 - R3 +14 件 (§9.5 F-001〜F-003 の各 fixture 追加分)
+- R5 +6 件 (§9.6 F-001 durability fix の各 fixture)
+- R6 +11 件 (§9.7 F-001/F-002 commit finalization + current fleet policy の各 fixture)
 - 全 fixture で:
   - argv exact match
   - file mode `stat.S_IMODE(...) == 0o<mode>` exact
@@ -366,9 +381,9 @@ ReasonCode 拡張は **正本 16 件** (ADV R6 F-005 MEDIUM adopt 集計同期: 
 
 ## §5 ファイル変更一覧
 
-### ⚠️ ADV2 R1+R2+R3 hardening adopt で本文 base spec から §9.3-§9.5 final spec へ contract drift fix bridging
+### ⚠️ ADV2 R1+R2+R3+R5+R6 hardening adopt で本文 base spec から §9.3-§9.7 final spec へ contract drift fix bridging
 
-**§3 marker schema (ActiveMarker / DecommissionMarker / PrepareMarker / CommitMarker)** + **§3.B.3 CutoverApprovalClaim** + **§3.C.1 KeyringRotationApprovalClaim 5 variants** + **§9 rollback SOP** + **§6.1 state machine semantics** に対し、ADV2 Phase 2 R1+R2+R3 で以下の hardening contract が adopt 済み (canonical = §9.3 + §9.4 + §9.5):
+**§3 marker schema (ActiveMarker / DecommissionMarker / PrepareMarker / CommitMarker)** + **§3.B.3 CutoverApprovalClaim** + **§3.C.1 KeyringRotationApprovalClaim 5 variants** + **§9 rollback SOP** + **§6.1 state machine semantics** に対し、ADV2 Phase 2 R1+R2+R3+R5+R6 で以下の hardening contract が adopt 済み (canonical = §9.3 + §9.4 + §9.5 + §9.6 + §9.7):
 
 - R1 F-011 source host identity binding (ActiveMarker + CutoverApprovalClaim)
 - R1 F-013 prev_active_chain_hash 必須 (DecommissionMarker)
@@ -380,10 +395,13 @@ ReasonCode 拡張は **正本 16 件** (ADV R6 F-005 MEDIUM adopt 集計同期: 
 - R3 F-001 rollback でも revoked key を live verify path で reject + tombstone denylist
 - R3 F-002 signer-host ownership binding (host_id -> allowed_marker_signer_fingerprints)
 - R3 F-003 lease-bound commit invariant (PrepareMarker / CommitMarker signature root に lease binding)
+- R5 F-001 lease/fleet snapshot immutability + commit durability (archived snapshot + reconciliation gate 分離 + `lease_expires_at` の verify 時現在時刻比較廃止)
+- R6 F-001 commit-time cryptographic proof + finalization signature 必須化 (backdate 攻撃防御)
+- R6 F-002 current fleet policy check (active-registry write gate / startup gate、compromise 即時失効経路)
 
-**Batch 1 commit gate**: Batch A 着手時の最初の commit で、本文 §3.B / §3.B.3 / §3.C.1 / §6.1 / §9 を §9.3-§9.5 final spec に完全 sync (drift fix を 1 commit にまとめる、本文と §9.3-§9.5 の duplication 解消)。同 commit で §6.3 ReasonCode 表 + §6.4 fixture 表 + §7 受け入れ条件 も同時 sync。`uv run pytest tests/scripts/test_signed_approval_keyring_invariants.py` が §6.3 base 31 + R2/R3 追加 field-level enforcement で PASS することを Batch 1 完了条件とする。
+**Batch 1 commit gate**: Batch A 着手時の最初の commit で、本文 §3.B / §3.B.3 / §3.C.1 / §6.1 / §9 を §9.3-§9.7 final spec に完全 sync (drift fix を 1 commit にまとめる、本文と §9.3-§9.7 の duplication 解消)。同 commit で §6.3 ReasonCode 表 + §6.4 fixture 表 + §7 受け入れ条件 も同時 sync。`uv run pytest tests/scripts/test_signed_approval_keyring_invariants.py` が §6.3 base 42 + R2/R3/R5/R6 追加 field-level enforcement で PASS することを Batch 1 完了条件とする。
 
-### 修正 (7 scripts + 2 tests + 2 docs + 2 ADR + 1 CI script + ADV2 R2/R3 hardening 5 file = **19 file**、§9.4 F-007 + §9.5 F-001 追加)
+### 修正 (7 scripts + 2 tests + 2 docs + 2 ADR + 1 CI script + ADV2 R2/R3 hardening 5 file + R5 reconciliation gate 1 file = **20 file**、§9.4 F-007 + §9.5 F-001 + §9.6 R5 F-001 追加)
 
 | path | 影響範囲 | 行数 |
 |---|---|---|
@@ -407,8 +425,11 @@ ReasonCode 拡張は **正本 16 件** (ADV R6 F-005 MEDIUM adopt 集計同期: 
 | `docker-compose.yml` (§9.4 F-007 entrypoint) | entrypoint script で active marker verify pre-check、失敗時 exit 1 | +20 |
 | `scripts/taskhub_entrypoint_active_registry_check.sh` (新規、§9.4 F-007) | Docker entrypoint pre-check: active marker + fleet membership + signature verify | +80 |
 | `<config_dir>/approval_keyring_revocation_tombstone.signed.jsonl` (新規 runtime artifact、§9.5 F-001) | append-only revocation tombstone、live verifier 前段 denylist (revoked fingerprint 無条件 reject) | (runtime 生成) |
+| `scripts/taskhub_active_registry_reconciliation_gate.py` (新規、§9.6 R5 F-001) | current fleet generation drift 検出 + benign vs security-relevant 判定 + successor transition required (R6 §9.7 F-002 で security-relevant drift 詳細化、5 ReasonCode 追加) | +180 |
+| `<config_dir>/active_registry/cutover_lease_snapshots/<cutover_id>.signed.json` (新規 runtime artifact、§9.6 R5 F-001) | cutover_id 単位 immutable archived lease snapshot、CommitMarker 長期検証 source | (runtime 生成) |
+| `<config_dir>/active_registry/fleet_membership_snapshots/<generation>.signed.json` (新規 runtime artifact、§9.6 R5 F-001) | generation 単位 immutable archived fleet membership snapshot、長期検証 source | (runtime 生成) |
 
-合計: +3,170 → 約 **+3,800 / -10 (19 file)** (ADV2 R2/R3 hardening 5 file 追加)
+合計: +3,170 → 約 **+3,980 / -10 (20 file)** (ADV2 R2/R3/R5 hardening 6 file 追加、R6 は既存 `taskhub_active_registry_gate.py` + `taskhub_active_registry_reconciliation_gate.py` の責務拡張のみ、新規 file なし)
 
 ## §6 verification 順序 (ADV R1 F-015 LOW adopt: mypy で全変更 file カバー)
 
@@ -448,7 +469,7 @@ cutover phase は **atomic**: source `decommission.signed` 書込 + target `acti
 
 ## §6.3 ReasonCode source manifest (ADV R1 F-012 MEDIUM adopt)
 
-新 **31 ReasonCode** (base 16 + ADV2 R1+R2+R3 hardening 追加 15、§4.5 ReasonCode 表参照) の 5 source 整合 (cross-source-enum-integrity.md §1 準拠、ADV R6 F-005 集計同期、Batch 1 commit gate で本文 §4.5 と本表を同時 sync):
+新 **42 ReasonCode** (base 16 + ADV2 R1+R2+R3 hardening 追加 15 + R5 +3 + R6 +8 = 42、§4.5 ReasonCode 表参照) の 5 source 整合 (cross-source-enum-integrity.md §1 準拠、ADV R6 F-005 集計同期、Batch 1 commit gate で本文 §4.5 と本表を同時 sync):
 
 | source | location | enforcement |
 |---|---|---|
@@ -543,7 +564,7 @@ verify path (再掲、§3.A.2 と同一):
 
 ## §7 受け入れ条件
 
-- [ ] `uv run pytest tests/scripts/` **410+ test PASS** (base 319 + 新 91 fixture、ADV2 R1+R2+R3 hardening adopt 後正本 = base 46 + R1 +19 + R2 +12 + R3 +14、Batch D 実装時に最終 count 確定)
+- [ ] `uv run pytest tests/scripts/` **425+ test PASS** (base 319 + 新 108 fixture、ADV2 R1+R2+R3+R5+R6 hardening adopt 後正本 = base 46 + R1 +19 + R2 +12 + R3 +14 + R5 +6 + R6 +11、Batch D 実装時に最終 count 確定)
 - [ ] keyring add-key + remove-key + revoke-key + commit-manifest + bootstrap (5 variants) が 2-party-control + 0o400 permission verify で成功
 - [ ] active.signed marker write/read が migration_epoch 整合 + signature verify + signer-host ownership exact match (§9.5 F-002 fleet binding) PASS
 - [ ] split-brain negative test (same epoch source+target active) で reject、`taskhub_active_registry_split_brain_detected` reason
@@ -566,7 +587,10 @@ verify path (再掲、§3.A.2 と同一):
   - [ ] R3 F-001 rollback でも revoked key を live verify path で reject (tombstone denylist 維持)
   - [ ] R3 F-002 signer-host ownership binding (host_id -> allowed_marker_signer_fingerprints exact match + role + allowed_marker_kinds enforcement)
   - [ ] R3 F-003 lease-bound commit invariant (PrepareMarker / CommitMarker signature root に `cutover_lease_hash` + `fleet_membership_generation` + `required_host_ids_hash` 必須)
-- [ ] **Batch 1 commit gate**: 本文 §3.B / §3.B.3 / §3.C.1 / §6.1 / §9 を §9.3-§9.5 final spec に完全 sync 済 (drift 0 件 verify)
+  - [ ] R5 F-001 lease/fleet snapshot immutability + commit durability (cutover_id 単位 archived lease + generation 単位 archived fleet membership、長期検証は archived snapshot のみ、`lease_expires_at` の verify 時現在時刻比較廃止、current fleet 比較は reconciliation gate へ分離)
+  - [ ] R6 F-001 commit-time cryptographic proof (CommitMarker に `commit_finalization_preimage_hash` + required host 全員の `commit_confirmed_at` 署名、backdate 攻撃防御、partial signatures reject)
+  - [ ] R6 F-002 current fleet policy check (active-registry write gate / startup gate で current fleet の host status / valid_to / signer fingerprint / role を必須 verify、security-relevant drift は 503 fail-closed、benign drift のみ successor transition)
+- [ ] **Batch 1 commit gate**: 本文 §3.B / §3.B.3 / §3.C.1 / §6.1 / §9 を §9.3-§9.7 final spec に完全 sync 済 (drift 0 件 verify)
 
 ## §8 ADR 必須
 
