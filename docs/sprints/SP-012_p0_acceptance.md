@@ -10,7 +10,7 @@ type: "heavy"
 status: "partial_completed_with_carry_over"
 sprint_no: 12
 created_at: "2026-05-10"
-updated_at: "2026-05-18"
+updated_at: "2026-05-22"
 target_days: 5
 max_days: 7
 # F-PR67-010/013 P2 adopt (PR #67 R4、R3 partial reject を撤回): ADR-00021
@@ -305,6 +305,82 @@ SignedJournalChain (final_hash + previous_hash linking、verify_signed_journal_c
 - 実 DB write integration が未配備のため、4-stage pipeline は pure function path のみで P0 Exit の signed proof は **artifact-level に留まる** (実 audit_events row 永続化 + BL-0149 sign-off endpoint + AuditEventRepository.append 経由 audit chain は **SP-022 / pre-P0.1** で完成、F-PR67-028 P2 adopt: SP022-T08 carry-over の一部、P0.1 routing は誤り)
 - AC-HARD-01/02/05/06/07 evaluator は **pure path のみ**、real corpus + programmatic SUT 連結が無いと P0 Exit 判定の auto-evaluator は未稼働 (人手判定継続)
 - CI billing infrastructure failure が continuous、admin merge bypass は user 物理 approval を要する運用 (Sprint 12 は session で全 PR 単一 admin merge で対処)
+
+### Sprint 12 Exit Addendum — SP-012 must_ship 完遂 (2026-05-22 session)
+
+#### Sprint status (再確認): **partial_completed_with_carry_over** (継続)
+
+SP-012 must_ship 2 件 (split-brain second line of defense + approval keyring rotation) は **実装完遂**。ただし frontmatter status は `partial_completed_with_carry_over` を **維持**:
+- ADR-00021 acceptance (host migration drill PASS) は SP-022 T09 実機 drill (Mac→VPS、RTO≤4h) 未達のため proposed 継続
+- T09 PASS + ADR-00021/00007 accepted 化 が P0.1 unblock 前提 (`docs/設計検討/2026-05-13_p0_exit_master_plan.md:106` 明示)
+- P0 Sealed CI guard 解除 / P0.1 着手判断の誤 unblock を防ぐため status は SP-022 T09 完了まで保持
+
+#### SP-012 must_ship 実装完遂 (PR #76-#86、累計 19 PR merged)
+
+**ADR Gate accepted (2026-05-21、Batch 1 commit gate)**:
+- ADR-00028 (split-brain second line of defense): proposed → **accepted** (PR #76 で昇格)
+- ADR-00029 (approval keyring rotation): proposed → **accepted** (PR #76 で昇格)
+- 本文 §3.B/§3.C/§6.1 を §9.3-§9.10 canonical sync (must_ship 2 件 co-accepted prerequisite)
+
+**Phase 1 plan deep-hardening (12 round review-loop / 53 findings 100% adopt)**:
+- §9.3 R1-R12 canonical fixture 確立 (cutover approval marker binding + 2PC + signed manifest + bootstrap + tombstone denylist + signer-host ownership + lease-bound commit + archived snapshot immutability + commit-time finalization signature + current fleet policy check + approval artifact immutable archive + config_dir snapshot rollback defense)
+
+**Phase 2 plan adversarial-loop (11 round / 39 findings = CRITICAL 19 + HIGH 20 100% adopt + R11 critical_zero gate PASS)**:
+- §9.4-§9.10 hardening contract finalized (60 ReasonCode 正本化、7 ApprovalClaim variants、142 fixture target)
+
+**実装 PRs**:
+- PR #81 (Batch A skeleton): 60 ReasonCode 正本化 + active_registry/keyring/approval_issuance 3 module skeleton + Codex R1 7 findings 100% adopt + R2 CLEAN
+- PR #82 (Batch B keyring): SignedManifestEntry + SignedKeyringManifest + KeyringStateHead + RevocationTombstoneEntry + authorization_verify vs audit_verify predicate 分離 + Codex 32 findings 100% adopt
+- PR #83 (Batch C approval issuance + clock attestation): MonotonicClockAttestation + IssuanceJournalEntry + verify_issuance_chain_invariants + Codex 6 findings 100% adopt + R2 CLEAN
+- PR #84 (Batch D 2PC PrepareMarker/CommitMarker): PrepareMarker + CommitMarker + lease binding + commit-time finalization signature + 87 fixture + Codex R1-R4 13 findings 100% adopt + R4 CLEAN
+- PR #85 (backend gate L1+L2+L3): FastAPI dependency + ARQ worker hook + SQLAlchemy before_commit listener + 4 層 defense + 65 fixture + 3841 regression PASS + Codex R1-R7 19 findings 100% adopt + R7 CLEAN
+- PR #86 (operator runbook §13-§22): 10 sections / +951 行 / 1253 行 total + Codex R1-R6 43 findings 100% adopt + R6 CLEAN
+
+**累計 Codex multi-round review polish (Phase 1 + 2 + 6 PR)**:
+- review-loop: 12 round / 53 findings
+- adversarial-loop: 11 round / 39 findings
+- PR auto-review: PR #81 R1 + PR #82 32 + PR #83 6 + PR #84 13 + PR #85 19 + PR #86 43 = **120 findings 100% adopt across 6 PR**
+- **総 round 数**: 12 + 11 + 24 PR rounds = **47 rounds**
+- **総 findings**: 53 + 39 + 120 = **212 findings 100% adopt**
+- CRITICAL=0、HIGH≤2 (critical_zero gate PASS for all)
+
+**SP-012 must_ship 完遂内訳**:
+
+1. **split-brain second line of defense (ADR-00028)**:
+   - 4 marker chain: freeze.signed → decommission.signed → prepare.pending → active.signed/commit.signed (atomic 2PC)
+   - 60 ReasonCode 正本化 + 7 ApprovalClaim variants + clock skew tolerance ε (60s) + monotonic clock attestation 3 mode
+   - backend gate L1 (FastAPI middleware) + L2 (ARQ worker) + L3 (SQLAlchemy before_commit) で全 write surface fail-closed
+   - operator runbook §14 partial commit recovery + §22 production deployment SOP
+
+2. **approval keyring rotation (ADR-00029)**:
+   - SignedKeyringManifest + multi-key entries (active / deprecated / revoked) + root-signed (`approval_keyring_root.pub` config_dir 外 pin)
+   - revocation tombstone (append-only JSONL denylist) + authorization_verify vs audit_verify predicate 分離 (deprecated key の historical record verify 継続)
+   - approval issuance journal (server-owned + monotonic_sequence + previous_entry_hash chain + clock attestation)
+   - operator runbook §13 lifecycle expiry / emergency revocation SOP + §15 60 ReasonCode reason table + §17 incident response SOP
+
+#### Verified (SP-012 must_ship Sprint Exit DoD)
+
+- **ADR Gate Criteria 11 種**: ADR-00028 + ADR-00029 **accepted** (must_ship co-accepted、`.claude/rules/sprint-pack-adr-gate.md §12` ADR accepted promotion 準拠)
+- **AI 出力境界**: 全 batch pure function / dataclass + helper / no AI-direct mutation
+- **deny-by-default**: L1+L2+L3 backend gate で全 write surface fail-closed、`taskhub freeze`/`thaw` destructive subcommand 全件 approval 必須
+- **Provider Compliance Matrix v2**: 影響なし (本 SP は active-registry / keyring rotation スコープ)
+- **SecretBroker atomic claim**: 影響なし (本 SP は別 sub-system)
+- **AgentRun 16 状態 + blocked サブ 3**: 不変
+- **ContextSnapshot 必須 10 カラム**: 不変
+- **5+ source enum integrity**: 60 ReasonCode 5 source (DB CHECK / ORM CheckConstraint / Python Literal / Pydantic / pytest EXPECTED_*) 整合は `.claude/scripts/check_reason_code_coverage.sh` で gate (SP-013 で本格運用)
+- **Hard Gates 7 / Quality KPIs 5**: 不変
+- **raw secret invariant**: all `assert_no_raw_secret` audit fixture PASS、key generation snippet で private key を絶対 print しない (PEM encrypted + SOPS encrypt + shred)
+- **local verification**: ruff / mypy / pytest backend 全 PR clean、frontend は本 SP scope 外
+
+#### Sprint 12 Exit Addendum Deferred (SP-022 T09 / pre-P0.1 引継ぎ)
+
+依然として SP-022 carry-over (本 SP-012 must_ship 完遂後の T09 残作業):
+
+- **T09 実機 host migration drill (Mac→VPS、RTO≤4h)**: P0 Exit declaration の hard gate、SP-022 で実機 drill PASS 後 ADR-00021/00007 accepted 化 + frontmatter `partial_completed_with_carry_over` → `completed` 切替
+- **SP-022 T08 batch 5+6**: signed journal verification CLI / real corpus + programmatic SUT wiring (SP-012 batch 10 で pure path 完成、real I/O wiring を SP-022 T08 で継続)
+- **SP-022 T06 KPI baseline 3 host**: Mac 単独可、light task
+- **ADR-00021/00007 accepted**: SP-022 T09 PASS が必須 (master plan line 106)
+- **TASKHUB_P0_1_OPENED=1 + SP-013 着手判断**: 上記全 PASS 後
 
 ### batch 10 (audit_events ORM 構築 + signed journal hash chain pure function / 2026-05-18 session)
 
