@@ -962,3 +962,67 @@ regression: pytest **290/290 PASS**、mypy clean、ruff clean.
 | SP022-T09 実機 host migration drill | ⛔ deferred (blocked_by: SP022-T02 Phase 5 + SP-012 split-brain second line + SP-012 keyring rotation) |
 
 (後続: SP-022 完了時に T02 / T04-T09 全体 Review を追記)
+
+
+### SP022-T02 Phase 5 completion (2026-05-21、PR #80)
+
+#### codex-all-loops mode=plan max-rounds=14 record
+
+`codex-all-loops mode=plan max-rounds=14` で **Phase 1 review-loop 10 round + Phase 2 adversarial-loop 14 round = 24 rounds / 75 findings 100% adopt / critical_zero gate READY** 達成後、Batch A+B+C+D 実装完了。
+
+##### Phase 1 review-loop (10 rounds / 31 findings 100% adopt)
+- R1 (15) + R2 (4) + R3 (2) + R4 (2) + R5 (2) + R6 (2) + R7 (1) + R8 (0 clean) + R9 (3) + R10 (0 full clean)
+- CRITICAL=0 / HIGH=0 達成
+- Evidence: `~/.claude/local/codex-review-loops/sp022-t02p5-backup-compose-exec-plan-20260521-093917-phase1-review-loop/final-clean-evidence.md`
+
+##### Phase 2 adversarial-loop (14 rounds / 44 findings 100% adopt)
+- R1 (10) + R2 (5) + R3 (2) + R4 (2) + R5 (2) + R6 (3) + R7 (3) + R8 (2) + R9 (2) + R10 (2) + R11 (2) + R12 (1) + R13 (4) + R14 (4)
+- CRITICAL=0 / HIGH=1 (≤2) → critical_zero gate PASS
+- Evidence: `~/.claude/local/codex-adversarial-loops/sp022-t02p5-backup-compose-exec-plan-20260521-093917-phase2-adversarial-loop/final-clean-evidence.md`
+
+#### Architectural changes (6 file / +2978 / -88)
+
+1. **docker compose exec 経路**: host TCP + PGPASSFILE → container 内 unix socket + trust auth
+2. **consistency boundary** (ADR-00021 §11.2 完全実装): stop_app_services_via_compose_exec → backup → start_app_services_wait_healthy。Service field primary key (`Name` ではなく `Service`) healthy polling、stop/restart 失敗は致命的 (warning 流用禁止)
+3. **verified copy 4 種** (compose / env_file / sops_env / artifacts_staging): O_NOFOLLOW + O_EXCL + 0o400 + metadata snapshot (dev/ino/uid/mode/sha256) で各 docker compose 呼出前に再検証 (same-UID unlink/rename swap 検知)
+4. **artifacts_dir staging tree**: no-follow walk + chunked sha256 + per-file 256 MiB + tree 4 GiB limit + symlink/FIFO/socket/device 全面 reject + reserved-name (`_artifacts_source_mode.json`) reject + source mode sidecar (staging tree の **外** = `verified_temp_dir/artifacts_source_mode.json`)
+5. **BackupApprovalClaim 6 field 化**: `backup_runtime_binding_fingerprint` 追加 (PR #77 legacy 5-field record は signed_approval level で互換維持、_cmd_backup Phase 5 で常時 reject + 再 issue 必須)
+6. **canonical fingerprint 15 field schema**: target_compose_project_name + target_compose_file_realpath + target_compose_file_sha256 + target_compose_project_directory + artifacts_dir_realpath + artifacts_dir_manifest_sha256 + sops_env_path_realpath + sops_env_sha256 + env_file_realpath + env_file_sha256 + compose_config_canonical_sha256 + pg_user + pg_db + postgres_service_name + redis_service_name
+7. **single full-helper `compute_full_backup_runtime_binding_fingerprint(mode=issue|redeem)`**: server-owned 再計算保証、private helper `compute_backup_runtime_binding_fingerprint` 直接呼出禁止 (broker / CLI / redeem 3 経路で同 algorithm 維持)
+8. **_cmd_backup destructive_lock + post-stop 順序**: (1) lock acquire → (2) age fingerprint TOCTOU verify → (3) age recipient regex validate + immutable bind → (4) verified_temp_dir 0o700 → (5-7) verified copy 4 種 + metadata snapshot bind → (8) backup_options 一括 dataclasses.replace → (9) run_backup(phase_5_mode=True) で post-stop artifacts staging + fingerprint verify + claim exact match + archive。restart 失敗時は primary_exc 優先 + 両 reason stderr/audit 記録 (consistency boundary 維持)
+
+#### ReasonCode 19 件追加 + WarningCode 不変
+
+新規 ReasonCode 19 件 (`backup_payload_source_mismatch` は R13 F-003 で `backup_claim_mismatch` に統一削除):
+backup_age_key_toctou_mismatch / backup_age_recipient_invalid / backup_service_stop_failed / backup_service_start_failed / backup_claim_legacy_runtime_binding_unsupported / backup_compose_file_unreadable / backup_compose_binding_not_initialized / backup_compose_verified_copy_tampered / backup_compose_config_failed / backup_redis_rdb_tmp_not_regular_file / backup_compose_env_file_unreadable / backup_payload_source_unreadable / backup_env_file_verified_copy_tampered / backup_payload_source_tampered / backup_artifacts_staging_tampered / backup_artifacts_source_unsupported_file_type / backup_artifacts_file_too_large / backup_artifacts_tree_too_large / backup_artifacts_source_reserved_name + backup_claim_mismatch (R13 F-003 統一).
+
+#### verification
+
+- ruff check: All passed (scripts/taskhub_backup_orchestrator.py + scripts/taskhub_subprocess_runner.py + scripts/taskhub_admin.py + scripts/taskhub_signed_approval.py + tests/scripts/test_taskhub_backup_orchestrator.py + tests/scripts/test_taskhub_subprocess_runner.py)
+- pytest tests/scripts/: 319 passed (元 297 + Phase 5 新規 22)
+- PR #77 backward compat: phase_5_mode=False (legacy host TCP + PGPASSFILE 経路) で既存 30 test 全 PASS
+- Phase 5 unit tests 22 件: age recipient validation / compose argv prefix / artifacts manifest / verified copy tree / fingerprint canonical / Phase 5 legacy reject / Service field primary key / redact / from_environment allowlist
+- integration tests (実 docker compose 環境必要): SP022-T09 host migration drill で実機検証予定
+
+#### Carry-over (本 PR 対象外、SP-022 完遂 / SP-013 着手前)
+
+- **SP022-T09 実機 host migration drill (Mac→VPS、RTO≤4h)**: 残条件 = SP-012 must_ship 2 件のみ (split-brain second line + keyring rotation)。Phase 5 unblock 済
+- **SP-012 split-brain second line of defense**: active.signed marker chain + thaw 2-party-control + 同 migration_epoch reject negative test
+- **SP-012 keyring rotation**: `approval-verify-keys.d/<fingerprint>.pub` keyring + old+new overlap 期間 dual-trust
+- destructive lock cross-subcommand 拡張: backup は本 PR で統合済、migrate / freeze / thaw は carry-over
+
+#### Phase 5 後の SP-022 task progress (post-本 PR)
+
+| Task | status |
+|---|---|
+| SP022-T01 framework intake CI 機械化 | ✅ 完了 (PR #70) |
+| SP022-T02 `taskhub migrate` 自動化 | ✅ **全 Phase 完遂** (Phase 1 PR #75 + Phase 2 PR #77 + Phase 3 PR #78 + Phase 4 PR #79 + **Phase 5 PR #80 本 PR**) |
+| SP022-T03 半年 drill SOP | ✅ 完了 (PR #71) |
+| SP022-T04 Phase E trace audit | ✅ 完了 (PR #72) |
+| SP022-T05 AC-HARD multi-agent re-verify | ⛔ deferred (blocked_by: SP-013) |
+| SP022-T06 KPI baseline 3 host | 🟨 light (Mac 単独可) |
+| SP022-T07 production checklist skeleton | ✅ 完了 (PR #73) |
+| SP022-T08 SP-012 carry-over 9 件 | 🟥 heavy: batch 1-4 ✅ (PR #76/#77/#78/#79) / batch 5-6 carry-over |
+| SP022-T09 実機 host migration drill | ⛔ deferred (blocked_by: **SP-012 split-brain second line + SP-012 keyring rotation のみ、SP022-T02 Phase 5 unblock 済**) |
+
+(後続: SP-022 全 must_ship 完了 → P0 Exit declaration → TASKHUB_P0_1_OPENED=1 + SP-013 着手)
