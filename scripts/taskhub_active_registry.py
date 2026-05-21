@@ -446,6 +446,238 @@ class CutoverLease:
         }
 
 
+# === PrepareMarker (§9.4 R2 F-002 2PC Phase α、別 signature domain) ===
+
+
+@dataclass(frozen=True, slots=True)
+class PrepareMarker:
+    """`cutover_prepare/<cutover_id>.signed`: 2PC Phase α、cross-host staging artifact.
+
+    §9.4 R2 F-002: PrepareMarker と CommitMarker を別 signature domain で分離
+    (DOMAIN_CUTOVER_PREPARE_V1)、prepare phase の marker と commit phase の marker を暗号学的に区別。
+    §9.5 R3 F-003 / §9.6 R5 F-001 / §9.7 R6 F-001: lease binding + archived snapshot hashes 必須化。
+    """
+
+    cutover_id: str  # UUID
+    host_id: str  # prepare 実行 host (source or target)
+    role: str  # "source" / "target"
+    migration_epoch: int
+    prepared_at: str  # UTC iso8601
+    signer_fingerprint: str
+    # §9.6 R5 F-001 + §9.7 R6 F-001 lease binding (immutable archive snapshot hashes)
+    cutover_lease_snapshot_content_sha256: str  # 64-char hex
+    fleet_membership_snapshot_content_sha256: str  # 64-char hex
+    required_host_ids_hash: str  # 64-char hex of canonical sorted required_host_ids
+    lease_acquired_at: str  # UTC iso8601 (from lease snapshot)
+    lease_expires_at: str  # UTC iso8601 (from lease snapshot)
+    # cutover approval binding (§9.3 R1 F-001)
+    cutover_approval_id: str
+    cutover_approval_claim_hash: str
+    signature: str  # base64 Ed25519
+
+    @property
+    def domain(self) -> str:
+        return DOMAIN_CUTOVER_PREPARE_V1
+
+    def canonical_payload(self) -> dict[str, Any]:
+        return {
+            "cutover_approval_claim_hash": self.cutover_approval_claim_hash,
+            "cutover_approval_id": self.cutover_approval_id,
+            "cutover_id": self.cutover_id,
+            "cutover_lease_snapshot_content_sha256": self.cutover_lease_snapshot_content_sha256,
+            "domain": self.domain,
+            "fleet_membership_snapshot_content_sha256": self.fleet_membership_snapshot_content_sha256,
+            "host_id": self.host_id,
+            "lease_acquired_at": self.lease_acquired_at,
+            "lease_expires_at": self.lease_expires_at,
+            "migration_epoch": self.migration_epoch,
+            "prepared_at": self.prepared_at,
+            "required_host_ids_hash": self.required_host_ids_hash,
+            "role": self.role,
+            "signer_fingerprint": self.signer_fingerprint,
+        }
+
+
+# === HostFinalizationSignature (§9.7 R6 F-001 + §9.9 R9 F-001 commit-time signature) ===
+
+
+@dataclass(frozen=True, slots=True)
+class HostFinalizationSignature:
+    """各 host の commit_confirmed_at + signature over commit_finalization_preimage.
+
+    §9.7 R6 F-001: required host 全員の commit_confirmed_at 必須署名で backdate 攻撃防御。
+    §9.9 R9 F-001 logic correction: commit_confirmed_at は lease window 内 + max(host_confirmed)
+    <= committed_at < lease_expires_at の invariant を満たす。
+    """
+
+    host_id: str
+    signer_fingerprint: str
+    commit_confirmed_at: str  # UTC iso8601
+    signature: str  # base64 Ed25519 over commit_finalization_preimage_hash || commit_confirmed_at
+
+    def canonical_payload(self) -> dict[str, Any]:
+        # signature 自体は含めず、verifier 側で reconstruct する canonical
+        return {
+            "commit_confirmed_at": self.commit_confirmed_at,
+            "host_id": self.host_id,
+            "signer_fingerprint": self.signer_fingerprint,
+        }
+
+
+# === CommitMarker (§9.4 R2 F-002 2PC Phase β、commit certificate) ===
+
+
+@dataclass(frozen=True, slots=True)
+class CommitMarker:
+    """`cutover_commit/<cutover_id>.signed`: 2PC Phase β、commit certificate.
+
+    §9.7 R6 F-001 + §9.9 R9 F-001 logic correction: commit_finalization_preimage_hash の構造を
+    必須化 (committed_at + lease snapshot + fleet snapshot + prepare hashes + approval hashes +
+    required_host_ids_hash + domain canonical hash)、required host 全員の commit_confirmed_at
+    signature 必須。
+
+    verify path invariant:
+    (a) lease_acquired_at <= min(host_commit_confirmed_at)
+    (b) max(host_commit_confirmed_at) <= committed_at < lease_expires_at
+    (c) committed_at - max(host_commit_confirmed_at) <= ε (clock skew tolerance、default 60s)
+    """
+
+    cutover_id: str
+    committed_at: str  # UTC iso8601
+    source_prepare_marker_hash: str  # 64-char hex sha256 of source PrepareMarker canonical
+    target_prepare_marker_hash: str  # 64-char hex sha256 of target PrepareMarker canonical
+    cutover_lease_snapshot_content_sha256: str
+    fleet_membership_snapshot_content_sha256: str
+    required_host_ids_hash: str
+    lease_acquired_at: str
+    lease_expires_at: str
+    cutover_approval_id: str
+    cutover_approval_claim_hash: str
+    commit_approval_claim_hash: str  # separate commit approval claim
+    host_finalization_signatures: tuple[HostFinalizationSignature, ...]  # required hosts 全員
+    commit_finalization_preimage_hash: str  # sha256 of canonical preimage
+    signature: str  # base64 Ed25519 (CommitMarker self-signature)
+
+    @property
+    def domain(self) -> str:
+        return DOMAIN_CUTOVER_COMMIT_V1
+
+    def commit_finalization_preimage(self) -> dict[str, Any]:
+        """commit_finalization_preimage_hash の計算対象 (signature root の重要部分).
+
+        §9.7 R6 F-001 canonical schema:
+        committed_at + cutover_lease_snapshot hash + fleet_membership_snapshot hash +
+        source/target prepare marker hashes + cutover/commit approval claim hashes +
+        required_host_ids_hash + domain。
+        """
+        return {
+            "commit_approval_claim_hash": self.commit_approval_claim_hash,
+            "committed_at": self.committed_at,
+            "cutover_approval_claim_hash": self.cutover_approval_claim_hash,
+            "cutover_approval_id": self.cutover_approval_id,
+            "cutover_lease_snapshot_content_sha256": self.cutover_lease_snapshot_content_sha256,
+            "domain": DOMAIN_CUTOVER_COMMIT_V1 + ".finalization_preimage.v1",
+            "fleet_membership_snapshot_content_sha256": self.fleet_membership_snapshot_content_sha256,
+            "required_host_ids_hash": self.required_host_ids_hash,
+            "source_prepare_marker_hash": self.source_prepare_marker_hash,
+            "target_prepare_marker_hash": self.target_prepare_marker_hash,
+        }
+
+    def canonical_payload(self) -> dict[str, Any]:
+        return {
+            "commit_approval_claim_hash": self.commit_approval_claim_hash,
+            "commit_finalization_preimage_hash": self.commit_finalization_preimage_hash,
+            "committed_at": self.committed_at,
+            "cutover_approval_claim_hash": self.cutover_approval_claim_hash,
+            "cutover_approval_id": self.cutover_approval_id,
+            "cutover_id": self.cutover_id,
+            "cutover_lease_snapshot_content_sha256": self.cutover_lease_snapshot_content_sha256,
+            "domain": self.domain,
+            "fleet_membership_snapshot_content_sha256": self.fleet_membership_snapshot_content_sha256,
+            "host_finalization_signatures": [
+                {
+                    **hfs.canonical_payload(),
+                    "signature": hfs.signature,  # signature は canonical に含める (collection-level)
+                }
+                for hfs in sorted(self.host_finalization_signatures, key=lambda h: h.host_id)
+            ],
+            "lease_acquired_at": self.lease_acquired_at,
+            "lease_expires_at": self.lease_expires_at,
+            "required_host_ids_hash": self.required_host_ids_hash,
+            "source_prepare_marker_hash": self.source_prepare_marker_hash,
+            "target_prepare_marker_hash": self.target_prepare_marker_hash,
+            "target_prepare_marker_signature_present": True,  # explicit invariant
+        }
+
+
+# === CommitMarker verify helpers (§9.7 R6 F-001 + §9.9 R9 F-001 logic correction) ===
+
+
+def verify_commit_marker_invariants(
+    marker: CommitMarker,
+    required_host_ids: tuple[str, ...],
+    clock_skew_tolerance_seconds: int = COMMIT_TIME_CLOCK_SKEW_TOLERANCE_SECONDS,
+) -> tuple[bool, str]:
+    """Verify §9.7 R6 F-001 + §9.9 R9 F-001 commit-time invariants.
+
+    Returns: (ok, reason_code or "")
+    """
+    # (1) host_finalization_signatures は required_host_ids 全件分の signature を持つ
+    signed_host_ids = {hfs.host_id for hfs in marker.host_finalization_signatures}
+    if signed_host_ids != set(required_host_ids):
+        return False, "taskhub_cutover_lease_required_host_partial_confirmation"
+
+    # parse timestamps
+    try:
+        lease_acquired = validate_iso8601_utc(marker.lease_acquired_at)
+        lease_expires = validate_iso8601_utc(marker.lease_expires_at)
+        committed = validate_iso8601_utc(marker.committed_at)
+        confirmations = [
+            (hfs.host_id, validate_iso8601_utc(hfs.commit_confirmed_at))
+            for hfs in marker.host_finalization_signatures
+        ]
+    except ValueError:
+        return False, "taskhub_cutover_commit_confirmed_at_outside_lease_window"
+
+    # (2) all host_commit_confirmed_at ∈ [lease_acquired_at, lease_expires_at)
+    for host_id, conf_at in confirmations:
+        if not (lease_acquired <= conf_at < lease_expires):
+            return False, "taskhub_cutover_commit_confirmed_at_outside_lease_window"
+        # silence unused host_id
+        _ = host_id
+
+    # (3) §9.9 R9 F-001 logic correction: max(host_commit_confirmed_at) <= committed_at < lease_expires_at
+    max_confirmed = max(c for _, c in confirmations)
+    if committed < max_confirmed:
+        return False, "taskhub_cutover_committed_at_after_confirmation_window_rejected"
+    if not (committed < lease_expires):
+        return False, "taskhub_cutover_commit_confirmed_at_outside_lease_window"
+
+    # (4) clock skew tolerance ε = 60s default (§9.9 R9 F-001 (c) condition)
+    from datetime import timedelta  # noqa: PLC0415
+    skew_threshold = timedelta(seconds=clock_skew_tolerance_seconds)
+    if committed - max_confirmed > skew_threshold:
+        return False, "taskhub_cutover_committed_at_after_confirmation_window_rejected"
+
+    # (5) min(host_commit_confirmed_at) >= lease_acquired_at - ε (negative drift tolerance)
+    min_confirmed = min(c for _, c in confirmations)
+    if lease_acquired - min_confirmed > skew_threshold:
+        return False, "taskhub_cutover_commit_confirmed_at_outside_lease_window"
+
+    return True, ""
+
+
+def compute_required_host_ids_hash(required_host_ids: tuple[str, ...]) -> str:
+    """canonical sort + RFC 8785 + sha256 hex (64 chars).
+
+    §9.5 R3 F-003 cutover_required_host_ids_hash の計算で、host_id list の順序非依存
+    deterministic hash を保証する。
+    """
+    sorted_ids = sorted(set(required_host_ids))  # dedupe + sort for canonical
+    canonical_bytes = _rfc8785_canonical_bytes(sorted_ids)
+    return _sha256_hex(canonical_bytes)
+
+
 # === Fleet membership signed complete set (§9.3 R1 F-014 + §9.5 R3 F-002 ownership) ===
 
 

@@ -1104,6 +1104,202 @@ def test_structural_validation_rejects_negative_epoch() -> None:
     assert ar._is_structurally_valid_journal_entry(entry) is False
 
 
+# === Batch D: 2PC PrepareMarker + CommitMarker + lease binding (§9.4-§9.7) ===
+
+
+def _make_prepare_marker(
+    *,
+    cutover_id: str = "cutover-test",
+    role: str = "source",
+    host_id: str = "host-source",
+) -> ar.PrepareMarker:
+    return ar.PrepareMarker(
+        cutover_id=cutover_id,
+        host_id=host_id,
+        role=role,
+        migration_epoch=10,
+        prepared_at="2026-05-21T10:00:00Z",
+        signer_fingerprint="sig-fp",
+        cutover_lease_snapshot_content_sha256="a" * 64,
+        fleet_membership_snapshot_content_sha256="b" * 64,
+        required_host_ids_hash=ar.compute_required_host_ids_hash(("host-source", "host-target")),
+        lease_acquired_at="2026-05-21T09:55:00Z",
+        lease_expires_at="2026-05-21T11:55:00Z",
+        cutover_approval_id="approval-1",
+        cutover_approval_claim_hash="c" * 64,
+        signature="",
+    )
+
+
+def test_prepare_marker_canonical_includes_lease_binding() -> None:
+    """§9.4 R2 F-002 + §9.5 R3 F-003: PrepareMarker は lease/fleet snapshot + required_host_ids
+    hash を canonical に含む."""
+    pm = _make_prepare_marker()
+    payload = pm.canonical_payload()
+    assert payload["domain"] == ar.DOMAIN_CUTOVER_PREPARE_V1
+    assert "cutover_lease_snapshot_content_sha256" in payload
+    assert "fleet_membership_snapshot_content_sha256" in payload
+    assert "required_host_ids_hash" in payload
+    assert "lease_acquired_at" in payload
+    assert "lease_expires_at" in payload
+
+
+def test_compute_required_host_ids_hash_canonical_order() -> None:
+    """compute_required_host_ids_hash は順序非依存 deterministic hash (canonical sort)."""
+    h1 = ar.compute_required_host_ids_hash(("host-1", "host-2", "host-3"))
+    h2 = ar.compute_required_host_ids_hash(("host-3", "host-1", "host-2"))
+    assert h1 == h2
+    # different membership → different hash
+    h3 = ar.compute_required_host_ids_hash(("host-1", "host-2"))
+    assert h3 != h1
+
+
+def _make_commit_marker(
+    *,
+    committed_at: str = "2026-05-21T10:01:30Z",
+    lease_acquired_at: str = "2026-05-21T09:55:00Z",
+    lease_expires_at: str = "2026-05-21T11:55:00Z",
+    host_confirmations: tuple[tuple[str, str], ...] = (
+        ("host-source", "2026-05-21T10:00:30Z"),
+        ("host-target", "2026-05-21T10:01:00Z"),  # max confirmed = 10:01:00
+    ),
+) -> ar.CommitMarker:
+    finalization_sigs = tuple(
+        ar.HostFinalizationSignature(
+            host_id=hid,
+            signer_fingerprint=f"{hid}-fp",
+            commit_confirmed_at=ts,
+            signature=f"sig-{hid}",
+        )
+        for hid, ts in host_confirmations
+    )
+    return ar.CommitMarker(
+        cutover_id="cutover-test",
+        committed_at=committed_at,
+        source_prepare_marker_hash="p1" * 32,
+        target_prepare_marker_hash="p2" * 32,
+        cutover_lease_snapshot_content_sha256="a" * 64,
+        fleet_membership_snapshot_content_sha256="b" * 64,
+        required_host_ids_hash=ar.compute_required_host_ids_hash(tuple(h for h, _ in host_confirmations)),
+        lease_acquired_at=lease_acquired_at,
+        lease_expires_at=lease_expires_at,
+        cutover_approval_id="approval-1",
+        cutover_approval_claim_hash="c" * 64,
+        commit_approval_claim_hash="d" * 64,
+        host_finalization_signatures=finalization_sigs,
+        commit_finalization_preimage_hash="e" * 64,
+        signature="",
+    )
+
+
+def test_commit_marker_canonical_sorts_host_signatures() -> None:
+    """commit marker canonical で host_finalization_signatures は host_id 昇順 sort."""
+    cm = _make_commit_marker(host_confirmations=(
+        ("host-z", "2026-05-21T10:00:00Z"),
+        ("host-a", "2026-05-21T10:01:00Z"),
+    ))
+    payload = cm.canonical_payload()
+    sigs = payload["host_finalization_signatures"]
+    assert sigs[0]["host_id"] == "host-a"
+    assert sigs[1]["host_id"] == "host-z"
+
+
+def test_commit_marker_finalization_preimage_includes_required_fields() -> None:
+    """commit_finalization_preimage() は §9.7 R6 F-001 で specified canonical schema 全 fields を含む."""
+    cm = _make_commit_marker()
+    preimage = cm.commit_finalization_preimage()
+    expected_keys = sorted([
+        "commit_approval_claim_hash", "committed_at", "cutover_approval_claim_hash",
+        "cutover_approval_id", "cutover_lease_snapshot_content_sha256", "domain",
+        "fleet_membership_snapshot_content_sha256", "required_host_ids_hash",
+        "source_prepare_marker_hash", "target_prepare_marker_hash",
+    ])
+    assert sorted(preimage.keys()) == expected_keys
+
+
+def test_verify_commit_marker_pass_for_valid_invariants() -> None:
+    """§9.7 R6 F-001 + §9.9 R9 F-001 logic correction: 全 host confirmation + committed_at が正しい順序."""
+    cm = _make_commit_marker()  # committed_at=10:05, max(confirmed)=10:01, lease=09:55-11:55
+    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"))
+    assert ok is True
+    assert reason == ""
+
+
+def test_verify_commit_marker_rejects_partial_host_confirmation() -> None:
+    """§9.5 R3 F-003: required host 全件分の signature がないと partial_confirmation で reject."""
+    cm = _make_commit_marker(host_confirmations=(
+        ("host-source", "2026-05-21T10:00:00Z"),
+        # missing host-target
+    ))
+    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"))
+    assert ok is False
+    assert reason == "taskhub_cutover_lease_required_host_partial_confirmation"
+
+
+def test_verify_commit_marker_rejects_confirmed_at_before_lease_acquired() -> None:
+    """§9.7 R6 F-001: confirm_at が lease window 外 (acquired より前) → outside_lease_window."""
+    cm = _make_commit_marker(host_confirmations=(
+        ("host-source", "2026-05-21T09:50:00Z"),  # before lease_acquired_at 09:55
+        ("host-target", "2026-05-21T10:01:00Z"),
+    ))
+    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"))
+    assert ok is False
+    assert reason == "taskhub_cutover_commit_confirmed_at_outside_lease_window"
+
+
+def test_verify_commit_marker_rejects_confirmed_at_after_lease_expires() -> None:
+    """confirm_at が lease_expires_at より後 → outside_lease_window."""
+    cm = _make_commit_marker(host_confirmations=(
+        ("host-source", "2026-05-21T10:00:00Z"),
+        ("host-target", "2026-05-21T12:00:00Z"),  # after lease_expires_at 11:55
+    ))
+    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"))
+    assert ok is False
+    assert reason == "taskhub_cutover_commit_confirmed_at_outside_lease_window"
+
+
+def test_verify_commit_marker_rejects_committed_before_max_confirmed() -> None:
+    """§9.9 R9 F-001 logic correction: committed_at < max(host_confirmed) → backdate_attack reject."""
+    cm = _make_commit_marker(
+        committed_at="2026-05-21T09:59:00Z",  # before max confirmed 10:01
+        host_confirmations=(
+            ("host-source", "2026-05-21T10:00:00Z"),
+            ("host-target", "2026-05-21T10:01:00Z"),
+        ),
+    )
+    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"))
+    assert ok is False
+    assert reason == "taskhub_cutover_committed_at_after_confirmation_window_rejected"
+
+
+def test_verify_commit_marker_rejects_committed_at_after_lease_expires() -> None:
+    """committed_at >= lease_expires_at → outside_lease_window."""
+    cm = _make_commit_marker(
+        committed_at="2026-05-21T12:00:00Z",  # after lease_expires_at 11:55
+        host_confirmations=(
+            ("host-source", "2026-05-21T10:00:00Z"),
+            ("host-target", "2026-05-21T10:01:00Z"),
+        ),
+    )
+    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"))
+    assert ok is False
+    assert reason == "taskhub_cutover_commit_confirmed_at_outside_lease_window"
+
+
+def test_verify_commit_marker_rejects_committed_at_exceeds_skew_tolerance() -> None:
+    """§9.9 R9 F-001 (c): committed_at - max(confirmed) > ε → backdate or excessive skew reject."""
+    cm = _make_commit_marker(
+        committed_at="2026-05-21T11:50:00Z",  # max confirmed 10:01、diff = 109min > 60s default ε
+        host_confirmations=(
+            ("host-source", "2026-05-21T10:00:00Z"),
+            ("host-target", "2026-05-21T10:01:00Z"),
+        ),
+    )
+    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"))
+    assert ok is False
+    assert reason == "taskhub_cutover_committed_at_after_confirmation_window_rejected"
+
+
 def test_find_journal_tail_verifier_exception_fail_soft(tmp_path: Path) -> None:
     """Codex PR #82 R5 F-002 fix (P1): verifier が exception raise しても backward scan を継続
     (fail-soft skip)、allocation を block しない."""
