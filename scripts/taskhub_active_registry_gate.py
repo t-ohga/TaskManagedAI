@@ -18,6 +18,7 @@ Layout (`<config_dir>/active_registry/`):
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from collections.abc import Callable
@@ -45,12 +46,11 @@ __all__ = [
 ]
 
 SIGNERS_DIRNAME: Final[str] = "signers"
-# Codex PR #85 R2 F-R2-001 fix (P1): path separator (`/` / `\`) と `..` / NUL を
-# 含む fingerprint を regex で reject (path traversal 防御の第 1 段)。
-# 既存 fingerprint encoding (base64 first 32 chars) で `/` / `+` / `=` が出るが、
-# operator runbook §13 で url-safe base64 encoding (`-` / `_`) への移行を規定する。
-# 移行期間中の backward compat は `+`, `=` のみ許可 (`/` は禁止)。
-_SIGNER_FINGERPRINT_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9+=_-]{1,128}$")
+# Codex PR #85 R4 F-R4-002 fix (P1): 既存 fingerprint encoding (base64 first 32
+# chars) で `/`, `+`, `=` が出るため、これを backward compat で許可。
+# path traversal 防御は filename encoding (sha256 hash) + resolve confinement +
+# O_NOFOLLOW で行う (4 層 defense は維持)。
+_SIGNER_FINGERPRINT_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9+/=_-]{1,128}$")
 _ED25519_RAW_KEY_LEN: Final[int] = 32
 
 ACTIVE_REGISTRY_DIRNAME: Final[str] = "active_registry"
@@ -58,7 +58,10 @@ ACTIVE_MARKER_FILENAME: Final[str] = "active.signed"
 FREEZE_MARKER_FILENAME: Final[str] = "freeze.signed"
 DECOMMISSION_MARKER_FILENAME: Final[str] = "decommission.signed"
 FLEET_MEMBERSHIP_FILENAME: Final[str] = "active_registry_fleet.signed.json"
-FLEET_MEMBERSHIP_DOMAIN: Final[str] = "taskhub.active_registry_fleet_membership.v1"
+# Codex PR #85 R4 F-R4-001 fix (P1): canonical producer/validator
+# `scripts/taskhub_active_registry.py:DOMAIN_FLEET_MEMBERSHIP_V1` を import で参照
+# (hard-coded string で drift していた)。
+FLEET_MEMBERSHIP_DOMAIN: Final[str] = ar.DOMAIN_FLEET_MEMBERSHIP_V1
 
 GateKind = str  # "api_write" | "worker_startup" | "worker_dequeue" | "db_commit"
 PublicKeyResolver = Callable[[str], bytes | None]
@@ -184,37 +187,54 @@ def _marker_file_exists(config_dir: Path, filename: str) -> bool:
     return (_config_dir_active_registry(config_dir) / filename).exists()
 
 
+def _safe_filename_for_fingerprint(fingerprint: str) -> str:
+    """Codex PR #85 R4 F-R4-002 fix (P1): fingerprint -> safe filename mapping.
+
+    既存 fingerprint encoding (base64 first 32 chars) は `/`, `+`, `=` を含み得るため、
+    sha256 hash の hex を filename として使用 (path traversal を構造的に排除)。
+    operator deployment: `taskhub-genkey <fingerprint>` (Sprint 13) で sha256 を計算して
+    `<config_dir>/active_registry/signers/<sha256hex>.pub` に key を配置する。
+    backward compat: 同一 fingerprint は同一 sha256 を再現するため、operator が
+    手動で計算した hash と一致する。
+    """
+    digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
+    return f"{digest}.pub"
+
+
 def build_file_based_public_key_resolver(
     config_dir: Path,
 ) -> Callable[[str], bytes | None]:
-    """`<config_dir>/active_registry/signers/<fingerprint>.pub` から Ed25519 raw 32 bytes を load。
+    """`<config_dir>/active_registry/signers/<sha256(fingerprint)>.pub` から Ed25519 raw 32 bytes を load。
 
-    Codex PR #85 R2 F-R2-001 fix (P1) + F-R2-005 fix (P2):
-    - regex で `/` / `\\` / `..` / NUL を reject (path traversal 第 1 段)
-    - 文字列レベルで explicit に `..` / `/` / `\\` / NUL 検査 (第 2 段、defense-in-depth)
-    - `os.open(O_NOFOLLOW)` で atomic symlink reject (third stage、key store の confinement)
-    - `path.resolve()` が signers_dir 直下になることを fourth stage で confirm
+    Codex PR #85 R2 F-R2-001/F-R2-005 fix + R4 F-R4-002 fix:
+    - Layer 1: 型 check + regex (`/`/`\\`/NUL を弾く)
+    - Layer 2: fingerprint -> sha256 filename mapping (path traversal 構造的排除、
+      R4 F-R4-002 で `/` 等含む fingerprint も safe filename に変換)
+    - Layer 3: `path.resolve()` confinement (signers_dir 直下保証)
+    - Layer 4: `os.open(O_NOFOLLOW)` で atomic symlink reject + size check
 
     operator deployment:
-        1. fingerprint = url-safe base64 raw key (`-_` no `/`)、operator runbook §13-§21
-        2. <config_dir>/active_registry/signers/<fingerprint>.pub に raw 32 bytes 書込
-        3. file permission 0400、symlink 禁止 (`O_NOFOLLOW` で atomic 検出)
+        1. fingerprint = base64 first 32 chars (既存 producer / verify_signer_host_ownership 経由)
+        2. filename = sha256(fingerprint).hexdigest() + ".pub" (本 helper 内で計算)
+        3. <config_dir>/active_registry/signers/<sha256hex>.pub に raw 32 bytes 書込
+        4. file permission 0400、symlink 禁止 (`O_NOFOLLOW` で atomic 検出)
     """
     signers_dir = _config_dir_active_registry(config_dir) / SIGNERS_DIRNAME
 
     def _resolve(fingerprint: str) -> bytes | None:
-        # Layer 1: 型 check + regex (path separator / NUL を含む文字列を reject)
+        # Layer 1: 型 check + regex (existing fingerprint format を accept、NUL は弾く)
         if not isinstance(fingerprint, str) or not _SIGNER_FINGERPRINT_RE.match(fingerprint):
             return None
-        # Layer 2: explicit string-level path traversal check (regex の取りこぼし防御)
-        if "/" in fingerprint or "\\" in fingerprint or ".." in fingerprint or "\x00" in fingerprint:
+        # NUL bytes は regex で弾けない場合があるため explicit check
+        if "\x00" in fingerprint:
             return None
-        path = signers_dir / f"{fingerprint}.pub"
-        # Layer 3: resolve confinement (path traversal が regex 突破した場合の最終防衛)
+        # Layer 2: sha256 hash で filename を確実に safe な hex 文字列に変換
+        safe_filename = _safe_filename_for_fingerprint(fingerprint)
+        path = signers_dir / safe_filename
+        # Layer 3: resolve confinement (path traversal 構造的に排除済みだが defense-in-depth)
         try:
             resolved = path.resolve(strict=False)
             base_resolved = signers_dir.resolve(strict=False)
-            # Python 3.9+ Path.is_relative_to を使用 (mypy / 3.12 compat)
             if not str(resolved).startswith(str(base_resolved) + os.sep) and resolved != base_resolved:
                 return None
         except (OSError, RuntimeError):

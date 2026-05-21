@@ -48,7 +48,7 @@ def _setup_active(
     ar_dir.mkdir(parents=True)
 
     fleet_doc = {
-        "domain": "taskhub.active_registry_fleet_membership.v1",
+        "domain": "taskhub.active_registry.fleet_membership.v1",
         "generation": 1,
         "hosts": [
             {

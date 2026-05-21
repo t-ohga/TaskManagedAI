@@ -9,10 +9,12 @@ from typing import Any, ClassVar, Protocol, cast
 from urllib.parse import unquote, urlparse
 
 from arq.connections import RedisSettings
+from arq.worker import Retry as ArqRetry
 
 from backend.app.config import Settings, get_settings
 from backend.app.observability import setup_logging, setup_otel
 from backend.app.workers.active_registry_worker_gate import (
+    WorkerDequeueRejected,
     configure_worker_gate_from_settings,
     verify_worker_dequeue_if_configured,
 )
@@ -157,12 +159,22 @@ async def on_shutdown(ctx: WorkerContext) -> None:
 async def on_job_start(ctx: WorkerContext) -> None:
     """ARQ on_job_start hook: 各 job dequeue 直前に active-registry gate verify。
 
-    Codex PR #85 R2 F-R2-002 fix (P1): startup gate のみでは freeze/decommission が
-    後から出現した場合に runtime で job consumption が継続するため、各 job の
-    開始時に gate verify を強制 (fail-closed)。
-    `WorkerDequeueRejected` を raise すると ARQ は job を retry queue に戻す。
+    Codex PR #85 R2 F-R2-002 fix (P1) + R4 F-R4-003 fix (P1):
+    - startup gate のみでは freeze/decommission が後から出現した場合に runtime で
+      job consumption が継続するため、各 job 開始時に gate verify を強制 (fail-closed)
+    - `WorkerDequeueRejected` を直接 raise すると ARQ worker loop が落ちる場合があるため、
+      catch + `arq.worker.Retry(defer=60)` に変換して job を retry queue に戻す
+      (60s 後再試行、operator が gate を修復するまで再試行を継続)
     """
-    verify_worker_dequeue_if_configured(ctx)
+    try:
+        verify_worker_dequeue_if_configured(ctx)
+    except WorkerDequeueRejected as exc:
+        logger.warning(
+            "worker_dequeue_rejected_retry_scheduled",
+            extra={"reason_code": exc.reason_code, "defer_seconds": 60},
+        )
+        # ARQ Retry exception で job を re-queue (worker loop は継続)
+        raise ArqRetry(defer=60) from exc
 
 
 class WorkerSettings:

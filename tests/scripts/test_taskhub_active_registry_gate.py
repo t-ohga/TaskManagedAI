@@ -82,7 +82,7 @@ def _make_fleet_doc(
     valid_to: str = "2027-01-01T00:00:00Z",
 ) -> dict[str, object]:
     return {
-        "domain": "taskhub.active_registry_fleet_membership.v1",
+        "domain": "taskhub.active_registry.fleet_membership.v1",
         "generation": 1,
         "hosts": [
             {
@@ -451,22 +451,53 @@ def test_file_based_resolver_returns_none_when_file_missing(tmp_path: Path) -> N
 
 
 def test_file_based_resolver_loads_valid_raw_key(tmp_path: Path) -> None:
-    """正しい 32 bytes raw key file → bytes 返却."""
+    """正しい 32 bytes raw key file (sha256-named) → bytes 返却.
+
+    R4 F-R4-002 fix (P1): filename は sha256(fingerprint).hexdigest()。
+    """
+    import hashlib
+
     signers_dir = tmp_path / gate_helper.ACTIVE_REGISTRY_DIRNAME / gate_helper.SIGNERS_DIRNAME
     signers_dir.mkdir(parents=True)
     raw_key = b"\x01" * 32
-    (signers_dir / "abc123.pub").write_bytes(raw_key)
+    fingerprint = "abc123"
+    safe_name = hashlib.sha256(fingerprint.encode()).hexdigest() + ".pub"
+    (signers_dir / safe_name).write_bytes(raw_key)
     resolver = gate_helper.build_file_based_public_key_resolver(tmp_path)
-    assert resolver("abc123") == raw_key
+    assert resolver(fingerprint) == raw_key
+
+
+def test_file_based_resolver_loads_key_with_legacy_base64_fingerprint(
+    tmp_path: Path,
+) -> None:
+    """R4 F-R4-002 fix (P1): 既存 base64 fingerprint (`/`, `+`, `=` 含む) も load 可能.
+
+    sha256(fingerprint) を filename にすることで `/` 等の path-unsafe 文字を構造的に排除。
+    """
+    import hashlib
+
+    signers_dir = tmp_path / gate_helper.ACTIVE_REGISTRY_DIRNAME / gate_helper.SIGNERS_DIRNAME
+    signers_dir.mkdir(parents=True)
+    raw_key = b"\x03" * 32
+    # 既存 base64 first-32-chars 形式の fingerprint (`/` 含む)
+    legacy_fingerprint = "ABC+DEF/GHI=JKL/MNO=PQR/STU=VWX="
+    safe_name = hashlib.sha256(legacy_fingerprint.encode()).hexdigest() + ".pub"
+    (signers_dir / safe_name).write_bytes(raw_key)
+    resolver = gate_helper.build_file_based_public_key_resolver(tmp_path)
+    assert resolver(legacy_fingerprint) == raw_key
 
 
 def test_file_based_resolver_rejects_wrong_size_key(tmp_path: Path) -> None:
     """size != 32 bytes → None (PEM 形式は未対応の P1 想定、本 fix では reject)."""
+    import hashlib
+
     signers_dir = tmp_path / gate_helper.ACTIVE_REGISTRY_DIRNAME / gate_helper.SIGNERS_DIRNAME
     signers_dir.mkdir(parents=True)
-    (signers_dir / "abc123.pub").write_bytes(b"\x01" * 16)  # 32 bytes 未満
+    fingerprint = "abc123"
+    safe_name = hashlib.sha256(fingerprint.encode()).hexdigest() + ".pub"
+    (signers_dir / safe_name).write_bytes(b"\x01" * 16)  # 32 bytes 未満
     resolver = gate_helper.build_file_based_public_key_resolver(tmp_path)
-    assert resolver("abc123") is None
+    assert resolver(fingerprint) is None
 
 
 def test_file_based_resolver_rejects_path_traversal(tmp_path: Path) -> None:
@@ -493,16 +524,20 @@ def test_file_based_resolver_rejects_slash_in_regex(tmp_path: Path) -> None:
 
 def test_file_based_resolver_rejects_symlink(tmp_path: Path) -> None:
     """Codex R2 F-R2-005 (P2) fix: signers/ 配下の symlink を `O_NOFOLLOW` で reject."""
+    import hashlib
+
     signers_dir = tmp_path / gate_helper.ACTIVE_REGISTRY_DIRNAME / gate_helper.SIGNERS_DIRNAME
     signers_dir.mkdir(parents=True)
-    # 別 location に real key を作って symlink を貼る
+    # 別 location に real key を作って symlink を貼る (sha256-mapped filename で)
     real_key = tmp_path / "external_key_outside_signers.pub"
     real_key.write_bytes(b"\x02" * 32)
-    symlink_path = signers_dir / "evil.pub"
+    fingerprint = "evil"
+    safe_name = hashlib.sha256(fingerprint.encode()).hexdigest() + ".pub"
+    symlink_path = signers_dir / safe_name
     symlink_path.symlink_to(real_key)
     resolver = gate_helper.build_file_based_public_key_resolver(tmp_path)
     # O_NOFOLLOW で OSError → None
-    assert resolver("evil") is None
+    assert resolver(fingerprint) is None
 
 
 def test_file_based_resolver_rejects_resolved_path_outside_signers_dir(
