@@ -1380,6 +1380,149 @@ R9 で 2 件 CRITICAL adopt 反映後、R10 で新規 CRITICAL ゼロ + HIGH ≤
 
 ---
 
+## §9.10 ADV2 Phase 2 R10 CRITICAL 2 件 adopt (write gate coverage gap + clock monotonicity)
+
+### F-001 (R10) active-registry gate を DB mutation boundary に昇格 (CRITICAL design、enforcement coverage gap)
+
+**問題**: §9.4 F-007 で導入した active-registry gate が FastAPI write endpoint / service startup / admin CLI に限定。実 repo `backend/app/workers/main.py:146` 以降の ARQ worker process / background job / service-layer direct mutation には gate が無い → freeze/decommission 後も background write で source host が状態を進められる。**split-brain second line の本質は「全 write surface の停止」**、HTTP ingress だけ止めても背後の worker 経路が漏れる。
+
+**fix**:
+
+#### (1) active-registry gate を runtime-wide write authority に昇格
+
+3 layer の defense-in-depth に拡張:
+
+| layer | enforcement point | 実装 path |
+|---|---|---|
+| L1: API ingress | FastAPI dependency (§9.4 F-007 既存) | `backend/app/api/dependencies/active_registry_gate.py` |
+| L2: worker dequeue | ARQ worker startup + job dequeue 前 | `backend/app/workers/main.py` (既存 file 拡張) + `backend/app/workers/active_registry_worker_gate.py` (新規) |
+| L3: DB mutation boundary | 共通 DB session / repository mutation gateway | `backend/app/db/active_registry_mutation_gate.py` (新規)、SQLAlchemy `before_commit` event listener で intercept |
+
+#### (2) worker gate (L2)
+
+`backend/app/workers/active_registry_worker_gate.py` に以下:
+- ARQ worker startup 時に active marker + current fleet policy verify、失敗時 `worker_startup_aborted` event log + exit 1
+- 各 job dequeue 前に同 verify、失敗時 job を `queue_paused` state に move + retry-after timer
+- freeze/decommission 検出時は実行中 job も graceful cancel (SIGTERM、ongoing transaction rollback)
+
+#### (3) DB mutation boundary gate (L3)
+
+`backend/app/db/active_registry_mutation_gate.py` に以下:
+- SQLAlchemy `before_commit` listener で session に attach
+- commit 前に local host の current fleet policy + active marker fail-closed verify
+- 失敗時は `IntegrityError("active-registry gate rejected commit")` で transaction abort + audit log
+- 注: service-layer 内の direct mutation は SQLAlchemy session を経由するため、`before_commit` で全件捕捉可能
+
+#### (4) negative tests
+
+- `test_worker_job_rejected_after_freeze_marker` (R10 F-001 直接)
+- `test_service_layer_direct_write_rejected_when_decommissioned` (R10 F-001 直接)
+- `test_db_commit_guard_rejects_without_active_marker` (R10 F-001 直接)
+- `test_worker_startup_aborted_when_active_marker_invalid`
+- `test_in_flight_job_graceful_cancel_on_freeze_marker`
+- `test_async_task_queue_paused_on_decommission`
+
+#### (5) ReasonCode 追加 (53 → 56 件)
+
+- `taskhub_active_registry_worker_dequeue_rejected_by_gate` (R10 F-001)
+- `taskhub_active_registry_db_commit_rejected_by_gate` (R10 F-001)
+- `taskhub_active_registry_worker_startup_aborted` (R10 F-001)
+
+### F-002 (R10) Server-owned clock monotonicity + rollback regression detection (CRITICAL security、clock rollback 攻撃防御)
+
+**問題**: §9.9 F-002 で server NTP-synced clock を信頼境界にしたが、**clock 自体の rollback / regression を検出する invariant が無い**。attacker / 誤操作で host clock を `key.expires_at` 前に戻すと、issuance_journal の `issued_at` は「正しい現在時刻」として記録されるが実際は期限切れ key で署名された approval が `authorization_verify` を通過。`previous_entry_hash` は順序改ざんに効くが、各 entry の wall-clock が過去へ戻ってないことを証明しない。
+
+**fix**:
+
+#### (1) Issuance journal に monotonic sequence + per-entry monotonicity 必須化
+
+issuance journal entry schema 拡張:
+```json
+{
+  "approval_id": "<uuid>",
+  "claim_hash": "<sha>",
+  "issued_at": "<UTC iso8601、server clock>",
+  "monotonic_sequence": <int>,    // 新規、必須 monotonic increment
+  "previous_issued_at": "<UTC iso8601 of previous entry>",   // 新規、必須
+  "issuer_signer_fingerprint": "<server-owned issuer key fp>",
+  "previous_entry_hash": "<sha>",
+  "key_fingerprint_at_issue": "<keyring active key fp>",
+  "key_status_at_issue": "active",
+  "monotonic_clock_attestation": {     // 新規、optional だが推奨
+    "source": "linux_clock_monotonic" | "tpm_clock" | "trusted_time_attestation",
+    "value": <int nanoseconds>,
+    "previous_value": <int nanoseconds>
+  },
+  "domain": "taskhub.approval_issuance_journal.v1"
+}
+```
+
+invariant (issue path / verify path 両方で fail-closed):
+- (a) `monotonic_sequence == previous_monotonic_sequence + 1`
+- (b) `issued_at >= previous_issued_at` (wall-clock monotonic increment、許容 skew ε = 5 seconds for NTP correction、それを超える regression は reject)
+- (c) `monotonic_clock_attestation.value > monotonic_clock_attestation.previous_value` (wall-clock とは独立な monotonic source、host clock rollback 攻撃を検出)
+- (d) (a)+(b)+(c) いずれか違反 → `taskhub_approval_issuance_journal_monotonic_regression_detected` で fail-closed reject
+
+#### (2) `/etc/taskhub/keyring_state.head.signed` に `latest_approval_issued_at` + `latest_monotonic_sequence` を追加
+
+§9.8 F-002 で導入した head の field 拡張 (config_dir snapshot rollback + clock regression 二重防御):
+- `latest_approval_issued_at: "<UTC iso8601>"` (最後の approval issue の wall-clock)
+- `latest_monotonic_sequence: <int>` (最後の approval issue の monotonic sequence)
+- `latest_monotonic_clock_attestation_value: <int nanoseconds>` (最後の monotonic clock 値)
+
+issue path で new entry を append する前に head verify:
+- new `issued_at >= head.latest_approval_issued_at - ε` (clock rollback 検出)
+- new `monotonic_sequence == head.latest_monotonic_sequence + 1`
+- new `monotonic_clock_attestation.value > head.latest_monotonic_clock_attestation_value`
+
+#### (3) Trusted time attestation の operator runbook §21 規定
+
+operator runbook §21 で 3 mode 提供:
+- **Mode A (Linux CLOCK_MONOTONIC + NTP)**: host clock_gettime(CLOCK_MONOTONIC) を `monotonic_clock_attestation.value` に記録 (host reboot で reset、reboot detection が必要)
+- **Mode B (TPM clock + signed attestation)**: TPM の monotonic counter を attestation 経由で取得 (host reboot 耐性)
+- **Mode C (Remote trusted time service)**: NTP roughtime / TLSdate などの外部 trusted time service signed attestation (network-dependent、最も robust)
+
+P0 default は Mode A (single-host VPS で十分)、本格 fleet 運用は Mode B/C 推奨。
+
+#### (4) Reboot detection (Mode A 専用)
+
+host reboot で CLOCK_MONOTONIC が reset されるため、reboot 後の最初の issue で:
+- previous monotonic value より new value が小さい場合、reboot 検出
+- `<config_dir>/active_registry/reboot_attestation.signed.jsonl` (新規 append-only) に reboot event を記録 + root signature
+- reboot 後の最初の issue は head の `latest_monotonic_sequence` reset を伴うため、operator 明示承認 (`taskhub approval issuance reboot-attest` 新規 CLI) 必須
+- reboot detection で wall-clock も verify (reboot 後の wall-clock が previous wall-clock より過去 → fail-closed reject)
+
+#### (5) negative tests
+
+- `test_clock_rollback_before_key_expires_at_rejected_via_monotonic_sequence_skip`
+- `test_clock_rollback_within_skew_tolerance_allowed`
+- `test_clock_rollback_exceeding_skew_tolerance_rejected`
+- `test_monotonic_clock_regression_detected_independent_of_wall_clock`
+- `test_reboot_without_attestation_blocks_new_approval_issue`
+- `test_reboot_with_attestation_resets_monotonic_but_preserves_wall_clock_monotonicity`
+
+#### (6) ReasonCode 追加 (56 → 60 件)
+
+- `taskhub_approval_issuance_journal_monotonic_regression_detected` (R10 F-002、wall-clock or monotonic_clock regression)
+- `taskhub_approval_issuance_journal_monotonic_sequence_skip_detected` (R10 F-002、sequence non-monotonic)
+- `taskhub_approval_issuance_reboot_not_attested` (R10 F-002、reboot 検出 + attestation 不在)
+- `taskhub_approval_issuance_monotonic_clock_source_unavailable` (R10 F-002、Mode A/B/C 全て利用不可)
+
+### R10 adopt 累計値更新
+
+- ReasonCode: **53 → 60 件** (R10 で 7 件追加: F-001 3 件 + F-002 4 件)
+- fixture: 約 130 → **約 142 件** (R10 で 12 件追加)
+- 変更ファイル: 23 → **25 file** (R10 で 2 file 追加):
+  - `backend/app/workers/active_registry_worker_gate.py` (新規、worker dequeue + startup gate、L2)
+  - `backend/app/db/active_registry_mutation_gate.py` (新規、SQLAlchemy before_commit listener、L3)
+- 累計 R1-R10 adopt: CRITICAL 19 + HIGH 20 = **39/43 件** (残 4 件は R1 MEDIUM、R11 で確定)
+
+### critical_zero gate 判定
+
+R10 で 2 件 CRITICAL adopt 反映後、R11 で新規 CRITICAL ゼロ + HIGH ≤ 2 が期待値。max-rounds 12 中 R11 + R12 残 2 round。R11 clean で Phase 2 完遂、未 clean なら R12 で全件 adopt または部分 defer 判断。
+
+---
+
 ## §10 PR 後の SP-022 task progress (post-本 PR)
 
 | Task | status |
