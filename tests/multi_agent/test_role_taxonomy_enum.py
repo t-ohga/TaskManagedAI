@@ -109,6 +109,30 @@ def test_validate_role_scope_project_is_custom_false_rejects_non_standard() -> N
         )
 
 
+# Codex PR #135 R1 P1 regression test
+def test_validate_role_scope_global_rejects_is_custom_true() -> None:
+    """role_scope='global' + is_custom=True は invariant 違反 (global は custom 非対応).
+
+    PR #135 fix で is_custom=True かつ non-standard が global で accept される invariant
+    違反を導入していた → PR #135 fix で global は always STANDARD_ROLE_IDS only、
+    is_custom=True との互換性 reject に修正。
+    """
+    # global + standard + is_custom=True: reject (global incompatible with custom)
+    with pytest.raises(ValueError, match="incompatible with is_custom"):
+        validate_role_scope_consistency("global", "implementer", is_custom=True)
+
+    # global + non-standard + is_custom=True: reject (STANDARD_ROLE_IDS only enforce が先に発火)
+    with pytest.raises(ValueError, match="STANDARD_ROLE_IDS"):
+        validate_role_scope_consistency("global", "my-custom-role", is_custom=True)
+
+
+def test_validate_role_scope_global_with_standard_and_default_is_custom_ok() -> None:
+    """role_scope='global' + standard role + is_custom=False (default) は OK."""
+    for standard_role in STANDARD_ROLE_IDS:
+        # default is_custom=False で動く
+        validate_role_scope_consistency("global", standard_role)
+
+
 def test_validate_role_scope_project_custom_rejects_standard_id() -> None:
     """role_scope='project' + is_custom=True で STANDARD_ROLE_IDS は reject (PE-F-001)."""
     for standard_role in STANDARD_ROLE_IDS:
