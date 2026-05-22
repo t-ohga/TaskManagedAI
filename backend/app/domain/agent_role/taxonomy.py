@@ -95,9 +95,12 @@ def validate_role_scope_consistency(
             f"role_scope '{role_scope}' invalid (allowed: {sorted(ALL_ROLE_SCOPES)})"
         )
 
-    if role_scope == "global" and role_id not in STANDARD_ROLE_IDS:
+    # Codex PR #133 R1 P1 fix: docstring 通り、is_custom=False は role_scope に
+    # 関係なく STANDARD_ROLE_IDS のみ許可。global 限定 enforce では project +
+    # is_custom=False で custom role_id を受け入れてしまう invariant 違反。
+    if not is_custom and role_id not in STANDARD_ROLE_IDS:
         raise ValueError(
-            f"role_scope='global' requires role_id in STANDARD_ROLE_IDS "
+            f"is_custom=False requires role_id in STANDARD_ROLE_IDS "
             f"(got '{role_id}', allowed: {sorted(STANDARD_ROLE_IDS)})"
         )
 
