@@ -93,7 +93,8 @@ post-P0.1 sprint で扱う. -->
 | ADR-00020 accepted + CI 機械検査 | ○ | - |
 | **ADR-00021 + ADR-00007 accepted** (P0.1 unblock 前提) | ○ | - |
 | **SP-012 carry-over (taskhub real I/O / 実 DB write / signed journal CLI / private staging E2E)** | ○ | - |
-| **実機 host migration drill (Mac→VPS) RTO≤4h PASS** | ○ | - |
+| **Phase 7a Mac single-host 運用立証 PASS** (Mac UI smoke + Mac local backup/restore drill = AC-HARD-04 PASS、Mac single-host で完結、PR #99 で分離訂正 + PR #100 audit doc F-PR100-R2-003 + 本 PR #102 で文言訂正) | ○ | - |
+| **Phase 7b 実機 host migration drill (Mac→VPS) RTO≤4h PASS** (ADR-00021 host-portable post-acceptance verification、P0 Exit declaration 後 or 任意 timing、P0 Exit 直接 gate ではない) | post-acceptance | post-acceptance、P0 Exit declaration 後実施 |
 | `taskhub migrate` 自動化 | ○ | rollback 自動化は phase 分割可 |
 | 半年 drill scheduling SOP | ○ | - |
 | Phase E 16 finding **audit-only trace gate** (PE-F が owning ADR/Sprint Pack に割り当て済 + 受け入れ条件 trace、SP-022 内 `## Phase E adversarial closure trace` matrix) | ○ | LOW 残存は P3+ で対応可 |
