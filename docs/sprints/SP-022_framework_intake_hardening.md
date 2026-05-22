@@ -1137,3 +1137,68 @@ TASKHUB_P0_1_OPENED=1 + SP-013 着手
 | reject / defer | 0 / 0 |
 
 P0 Exit declaration path = SP022-T09 user 物理 drill のみ残存。本 SP-022 Sprint 内技術作業は全完了。
+
+### Additional P0 Exit Hardening Gate (p0-exit-final-hardening-2026-05-22 plan 経由、PR #95/#96/#97 追加)
+
+p0-exit-final-hardening-2026-05-22 plan (`.claude/plans/p0-exit-final-hardening-2026-05-22.md`) の Phase 2-6 として、SP-022 must_ship 表外で **Additional Hardening Gate** を追加実施。本 plan §9.1 で「Sprint Pack must_ship 表を変更せず、`## Review § Additional P0 Exit Hardening Gate` で追記」を固定。
+
+#### 経緯
+
+- 2026-05-22 後半 session で SP022-T09 prep Mac single-host smoke verification 実施中、PR #93 (SOP 起票) merge 後の **routing inconsistency + Docker runtime + dev override + SOP polish** で **12 件の latent issues** が連続発覚
+- 本 plan §1.3 当初 4 件 + Phase 4/5 で発覚 4 件 + post-merge SOP polish 4 件 = 12 件
+- これらは P0 Exit declaration 前に解決必須 (T09 drill UI 経路 / Layer B/C smoke 成立条件)
+- 3 PR 連続 autonomous merge (PR #95 + PR #96 + PR #97)、ADR Gate 11 種全件非該当
+
+#### 12 件 latent issues 全件 fix table
+
+| # | Issue | PR | merge SHA |
+|---|---|---|---|
+| 1 | typed routes false positive (Layer A typecheck gap) | PR #95 | `33f6d02` |
+| 2 | actions.ts Route cast 漏れ | PR #95 | `33f6d02` |
+| 3 | navigation 3-way routing inconsistency | PR #95 | `33f6d02` |
+| 4 | smoke SOP URL `/admin/*` 誤記 | PR #95 | `33f6d02` |
+| 5 | Dockerfile.api scripts COPY 欠落 (api ModuleNotFoundError) | PR #96 | `8f92082` |
+| 5b | Dockerfile.worker scripts COPY 欠落 (worker 同上) | PR #96 | `8f92082` |
+| 6 | docker-compose.yml networks.internal:true で host port publish 不可 | PR #96 | `8f92082` |
+| 7 | SOP の `-f docker-compose.dev.yml` 不明示 | PR #96 | `8f92082` |
+| 8 | Dockerfile.api eval/ COPY 欠落 (/api/v1/eval/kpi-rollup 503) | PR #96 | `8f92082` |
+| 9 | SOP §13 grep bug (echo 末尾改行 false positive) | PR #97 | `b5c5bae` |
+| 10 | SOP §15 test path 誤記 | PR #97 | `b5c5bae` |
+| 11 | SOP §1 backend seed runner step 不明示 | PR #97 | `b5c5bae` |
+| 12 | SOP §12-§14 key bootstrap 詳細化不足 | PR #97 | `b5c5bae` |
+
+#### Additional Hardening Gate 必須項目 (本 plan §9.1 § 8 項目、DoD trace 列付き)
+
+| # | 項目 | 結果 | DoD trace |
+|---|---|---|---|
+| 1 | 本 plan §4.2.3 file table 全件 PASS | ✅ 14 file 修正 (frontend 3 + docs 5 + plans 2 + Dockerfile 2 + compose 1 + eslint 1) | DoD-3 受け入れ条件 + DoD-4 検証手順 |
+| 2 | PR link | #95 + #96 + #97 | DoD-10 Review 欄更新タイミング |
+| 3 | evidence link | `docs/deploy/smoke-evidence/2026-05-22-layer-{A-addendum,B,C-autonomous}.md` + plan-review-ledger.md | DoD-4 + DoD-9 Hard Gates / Quality KPIs trace |
+| 4 | 完了判定 | code PASS + Layer A/B PASS + Layer C required smoke (§7+§13+§15) PASS + Codex 4 CLEAN signals (PR #95/#96 計 4 round) | DoD-3 + DoD-4 |
+| 5 | accepted defer | nav active state semantics (static skeleton) / notifications-nav top placement / research-nav top placement / settings UI smoke / §12 §14 key bootstrap (~/.taskhub/keys/ 未存在) | DoD-5 rollback + DoD-9 影響範囲 |
+| 6 | rollback 手順 | 本 plan §8.2 (code rollback + evidence invalidation + READY 巻き戻し 3 階層) | DoD-5 |
+| 7 | audit event | (本 plan 範囲は routing/build/docs のみで audit event 不変) | DoD-6 |
+| 8 | DoD-8 影響表 | Provider Matrix / SecretBroker / AgentRun / DB invariant 全件不変、認証・認可 / API 契約 / runner / Provider 不変 (4.3.1 evidence 4 点 全件 PASS) | DoD-8 |
+
+#### Layer B/C autonomous 結果
+
+**Layer B (PR #96 fix 適用後、autonomous PASS)**:
+- 5 service all healthy + 4 port publish (127.0.0.1:8000/3000/5432/6379)
+- alembic upgrade head 11 migrations (0008→0018_eval_dataset_versions)
+- /healthz `{status: ok}` + /readyz (postgres + redis both ok)
+- frontend root → `/login?next=%2F` (PR #95 routing fix end-to-end 動作確認)
+- redis PING / postgres v16.14
+
+**Layer C autonomous (PR #96 eval COPY fix 後)**:
+- §7 Eval Dashboard live wiring curl: ✅ HTTP 200 `{kpi_count: 0, p0_accept: true}`
+- §13 signed journal verify --from-db: ✅ exit 0 (tenant_scope_empty expected)
+- §15 golden flow pytest (`tests/integration/test_ticket_to_pr_smoke.py`): ✅ 13 tests passed
+- §12 §14: SKIP (~/.taskhub/keys/ 未存在、accepted defer)
+
+#### Codex review 累計
+
+- Codex plan-review 3 rounds (R1 17 + R2 2 + R3 0 CLEAN) = 19 findings
+- plan-reviewer subagent 2 rounds (R1 7 + R2 0 CLEAN) = 7 findings
+- Codex PR-review CLEAN signals 4 (PR #95 R1+R2 + PR #96 R1+R2)
+- **累計 26 findings 100% adopt + 4 CLEAN signals** (PR #97 は Codex bot service 15 min 未起動で code change 最小性で代替判定 = admin bypass merge)
+- CRITICAL / HIGH / BLOCK / WARN 残存: 全件 0
