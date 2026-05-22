@@ -887,6 +887,154 @@ def test_phase5_compute_full_fingerprint_changes_with_compose_sha(tmp_path: Path
     assert fp_a != fp_b
 
 
+def test_phase5_sops_env_missing_can_be_fingerprinted_as_skipped(tmp_path: Path) -> None:
+    """SP-022-1: include_sops_env + missing .env.encrypted fingerprints as optional skip."""
+    monkeypatch_env_for_phase5(tmp_path)
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "out.tar.age",
+        repo_root=tmp_path,
+        include_sops_env=True,
+    )
+    assert not options.sops_env_path.exists()
+
+    fp = bo.compute_backup_runtime_binding_fingerprint(
+        options,
+        compose_file_sha256="aa" * 32,
+        sops_env_sha256=None,
+        compose_config_canonical_sha256="bb" * 32,
+        env_file_sha256="cc" * 32,
+        artifacts_dir_manifest_sha256="dd" * 32,
+    )
+
+    assert len(fp) == 64
+
+
+def test_phase5_issue_full_fingerprint_skips_missing_sops_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """SP-022-1: issue full-helper treats absent optional SOPS source as sha=None."""
+    monkeypatch_env_for_phase5(tmp_path)
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "out.tar.age",
+        repo_root=tmp_path,
+        include_sops_env=True,
+    )
+    monkeypatch.setattr(
+        bo,
+        "compute_compose_config_canonical_sha256_for_issue",
+        lambda *_args, **_kwargs: "bb" * 32,
+    )
+    monkeypatch.setattr(
+        bo,
+        "_compute_artifacts_dir_manifest_sha256",
+        lambda *_args, **_kwargs: "dd" * 32,
+    )
+
+    fp = bo.compute_full_backup_runtime_binding_fingerprint(
+        options,
+        mode="issue",
+        source_compose_path=tmp_path / "docker-compose.yml",
+        source_env_file_path=tmp_path / ".env.local",
+        source_project_dir=tmp_path,
+    )
+
+    assert len(fp) == 64
+
+
+def test_phase5_redeem_fingerprint_allows_missing_sops_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """SP-022-1: redeem accepts absent optional SOPS source only when lock marked it missing."""
+    monkeypatch_env_for_phase5(tmp_path)
+    compose_copy = tmp_path / "verified-compose.yml"
+    compose_copy.write_text("services: {}\n", encoding="utf-8")
+    env_copy = tmp_path / "verified.env"
+    env_copy.write_text("FOO=bar\n", encoding="utf-8")
+    artifacts_staging = tmp_path / "verified-artifacts"
+    artifacts_staging.mkdir()
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "out.tar.age",
+        repo_root=tmp_path,
+        include_sops_env=True,
+    )
+    options = bo.BackupOptions(**{
+        **options.__dict__,
+        "verified_compose_execution_input": compose_copy,
+        "verified_env_file_execution_input": env_copy,
+        "verified_env_file_metadata_snapshot": {
+            "dev": 1,
+            "ino": 1,
+            "uid": 1,
+            "mode": 0o400,
+            "sha256": "0" * 64,
+        },
+        "verified_artifacts_staging_dir": artifacts_staging,
+        "verified_artifacts_manifest_sha256": "dd" * 32,
+        "sops_env_missing_at_lock": True,
+    })
+    monkeypatch.setattr(
+        bo,
+        "compute_compose_config_canonical_sha256_for_redeem",
+        lambda _options: "bb" * 32,
+    )
+    monkeypatch.setattr(
+        bo,
+        "_compute_artifacts_dir_manifest_sha256",
+        lambda *_args, **_kwargs: "dd" * 32,
+    )
+
+    fp = bo.compute_full_backup_runtime_binding_fingerprint(options, mode="redeem")
+
+    assert len(fp) == 64
+
+
+def test_phase5_redeem_fingerprint_rejects_unbound_sops_without_missing_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """SP-022-1: missing marker is required; otherwise unbound SOPS verified copy fails closed."""
+    monkeypatch_env_for_phase5(tmp_path)
+    compose_copy = tmp_path / "verified-compose.yml"
+    compose_copy.write_text("services: {}\n", encoding="utf-8")
+    env_copy = tmp_path / "verified.env"
+    env_copy.write_text("FOO=bar\n", encoding="utf-8")
+    artifacts_staging = tmp_path / "verified-artifacts"
+    artifacts_staging.mkdir()
+    options = bo.BackupOptions.from_environment(
+        output_path=tmp_path / "out.tar.age",
+        repo_root=tmp_path,
+        include_sops_env=True,
+    )
+    options = bo.BackupOptions(**{
+        **options.__dict__,
+        "verified_compose_execution_input": compose_copy,
+        "verified_env_file_execution_input": env_copy,
+        "verified_env_file_metadata_snapshot": {
+            "dev": 1,
+            "ino": 1,
+            "uid": 1,
+            "mode": 0o400,
+            "sha256": "0" * 64,
+        },
+        "verified_artifacts_staging_dir": artifacts_staging,
+        "verified_artifacts_manifest_sha256": "dd" * 32,
+    })
+    monkeypatch.setattr(
+        bo,
+        "compute_compose_config_canonical_sha256_for_redeem",
+        lambda _options: "bb" * 32,
+    )
+    monkeypatch.setattr(
+        bo,
+        "_compute_artifacts_dir_manifest_sha256",
+        lambda *_args, **_kwargs: "dd" * 32,
+    )
+
+    with pytest.raises(bo.BackupRuntimeError) as exc_info:
+        bo.compute_full_backup_runtime_binding_fingerprint(options, mode="redeem")
+
+    assert exc_info.value.reason_code == "backup_compose_binding_not_initialized"
+
+
 def test_phase5_run_backup_phase_5_mode_requires_record_claim(tmp_path: Path) -> None:
     """ADV2 R13 F-001: phase_5_mode=True で record_backup_claim 必須."""
     monkeypatch_env_for_phase5(tmp_path)

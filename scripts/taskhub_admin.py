@@ -415,19 +415,24 @@ def _cmd_backup_phase_5(  # noqa: C901 — Phase 5 lock-flow は 6 step を 1 �
             # (7) verified sops_env copy + metadata snapshot (include_sops_env 時のみ)
             verified_sops_env_execution_input: Path | None = None
             verified_sops_env_metadata_snapshot: dict[str, int | str] | None = None
+            sops_env_missing_at_lock = False
             if backup_options.include_sops_env:
                 try:
                     sops_bytes_inlock = backup_options.sops_env_path.read_bytes()
+                except FileNotFoundError:
+                    # SP-022-1: `.env.encrypted` is optional; absence means plaintext env is skipped.
+                    sops_env_missing_at_lock = True
                 except OSError:
                     print("ERROR: sops_env unreadable after lock "  # noqa: T201
                           "[reason=backup_payload_source_unreadable]", file=sys.stderr)
                     return 2
-                sops_sha_inlock = sha256(sops_bytes_inlock).hexdigest()
-                verified_sops_env_execution_input = verified_temp_dir / "sops_env.bin"
-                _write_verified_copy(verified_sops_env_execution_input, sops_bytes_inlock)
-                verified_sops_env_metadata_snapshot = _metadata_snapshot(
-                    verified_sops_env_execution_input, sops_sha_inlock,
-                )
+                else:
+                    sops_sha_inlock = sha256(sops_bytes_inlock).hexdigest()
+                    verified_sops_env_execution_input = verified_temp_dir / "sops_env.bin"
+                    _write_verified_copy(verified_sops_env_execution_input, sops_bytes_inlock)
+                    verified_sops_env_metadata_snapshot = _metadata_snapshot(
+                        verified_sops_env_execution_input, sops_sha_inlock,
+                    )
 
             # (8) backup_options 一括 bind (run_backup 内 post-stop で artifacts staging を実行)
             backup_options = dataclasses.replace(
@@ -440,6 +445,7 @@ def _cmd_backup_phase_5(  # noqa: C901 — Phase 5 lock-flow は 6 step を 1 �
                 verified_env_file_metadata_snapshot=verified_env_file_metadata_snapshot,
                 verified_sops_env_execution_input=verified_sops_env_execution_input,
                 verified_sops_env_metadata_snapshot=verified_sops_env_metadata_snapshot,
+                sops_env_missing_at_lock=sops_env_missing_at_lock,
             )
 
             # (9) run_backup phase_5_mode=True で post-stop staging + fingerprint verify + archive
