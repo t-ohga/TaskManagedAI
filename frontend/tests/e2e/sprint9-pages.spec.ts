@@ -143,17 +143,18 @@ test("Sprint 9: tickets list page renders with ARIA + heading", async ({
   await page.goto("/tickets");
 
   const ticketsRegion = page.getByRole("region", {
-    name: "Tickets",
+    name: "チケット一覧",
     exact: true
   });
 
   await expect(ticketsRegion).toHaveCount(1);
   await expect(ticketsRegion).toBeVisible();
   await expect(
-    ticketsRegion.getByRole("heading", { name: "Tickets", exact: true })
+    ticketsRegion.getByRole("heading", { name: "チケット一覧", exact: true })
   ).toBeVisible();
-  // Sprint 9 batch 1 skeleton 文言の verify
-  await expect(ticketsRegion).toContainText(/Sprint 9 batch 1 進捗/u);
+  await expect(
+    ticketsRegion.getByRole("button", { name: "+ 新規チケット" })
+  ).toBeVisible();
 });
 
 test("Sprint 9: agent runs list page renders 16 states + 3 blocked reasons", async ({
@@ -297,7 +298,7 @@ test("Sprint 9: ticket detail dynamic route renders", async ({ page }) => {
   await page.goto("/tickets/00000000-0000-4000-8000-000000000001");
 
   const ticketDetailRegion = page.getByRole("region", {
-    name: "Ticket detail",
+    name: "チケット詳細",
     exact: true
   });
 

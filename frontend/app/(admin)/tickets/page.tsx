@@ -13,6 +13,7 @@
  */
 
 import { BackendApiError } from "@/lib/api/client";
+import { formatTicketPriority, formatTicketStatus } from "@/lib/i18n/ticket-labels";
 import { getCurrentProjectId } from "@/lib/api/session";
 import { listTickets, type TicketRead } from "@/lib/api/tickets";
 
@@ -40,10 +41,11 @@ async function readTickets(): Promise<TicketsState> {
     if (error instanceof BackendApiError) {
       return {
         kind: "error",
-        message: `Backend returned ${error.status}: ${error.message}`,
+        message: `バックエンドが ${error.status} を返しました: ${error.message}`,
       };
     }
-    const message = error instanceof Error ? error.message : "Tickets fetch failed.";
+    const message =
+      error instanceof Error ? error.message : "チケット一覧の取得に失敗しました。";
     return { kind: "error", message };
   }
 }
@@ -60,14 +62,14 @@ export default async function TicketsListPage() {
   const state = await readTickets();
 
   return (
-    <section aria-label="Tickets" className="grid gap-4">
+    <section aria-label="チケット一覧" className="grid gap-4">
       <header>
-        <p className="text-sm font-medium text-accent">Admin</p>
-        <h1 className="text-3xl font-semibold tracking-normal">Tickets</h1>
+        <p className="text-sm font-medium text-accent">管理</p>
+        <h1 className="text-3xl font-semibold tracking-normal">チケット一覧</h1>
         <p className="mt-2 text-sm text-muted">
           {state.kind === "ok"
             ? `${state.total} 件 (project: ${state.projectId})`
-            : "tickets fetch failed"}
+            : "チケット一覧の取得に失敗しました"}
         </p>
       </header>
 
@@ -75,12 +77,14 @@ export default async function TicketsListPage() {
 
       {state.kind === "error" ? (
         <article role="status" className="rounded-md border border-attention bg-amber-50 p-4">
-          <h2 className="text-base font-semibold text-attention">Tickets unavailable</h2>
+          <h2 className="text-base font-semibold text-attention">
+            チケット一覧を表示できません
+          </h2>
           <p className="mt-1 text-sm text-muted">{state.message}</p>
         </article>
       ) : state.tickets.length === 0 ? (
         <article className="rounded-md border border-base p-4 text-sm text-muted">
-          tickets 0 件 (dogfooding seed が未投入の可能性、SP-012-10 CLI で seed apply)。
+          チケットはありません (dogfooding seed が未投入の可能性、SP-012-10 CLI で seed apply)。
         </article>
       ) : (
         <article className="overflow-x-auto rounded-lg border border-line bg-panel shadow-sm">
@@ -88,10 +92,10 @@ export default async function TicketsListPage() {
             <thead className="bg-panel-muted text-xs uppercase tracking-wide text-muted">
               <tr>
                 <th scope="col" className="px-4 py-3 text-left font-medium">Slug</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium">Title</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium">Status</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium">Priority</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium">Updated</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium">タイトル</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium">状態</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium">優先度</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium">更新日時</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
@@ -103,11 +107,11 @@ export default async function TicketsListPage() {
                   <td className="px-4 py-3">{ticket.title}</td>
                   <td className="px-4 py-3">
                     <span className="rounded-md bg-panel-muted px-2 py-1 text-xs font-medium">
-                      {ticket.status}
+                      {formatTicketStatus(ticket.status)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-xs text-muted">
-                    {ticket.priority ?? "-"}
+                    {formatTicketPriority(ticket.priority)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-muted">
                     {formatDate(ticket.updated_at)}

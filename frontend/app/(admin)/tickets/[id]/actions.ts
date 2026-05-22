@@ -17,7 +17,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 // 修正: form value `""` を `null` として backend に送る (explicit clear)、
 // field key 不存在は `undefined` で send 不要を表現。
 const TicketUpdateFormSchema = z.object({
-  ticket_id: z.string().regex(UUID_PATTERN, "ticket id format invalid"),
+  ticket_id: z.string().regex(UUID_PATTERN, "ticket_id の形式が不正です"),
   title: z.string().trim().min(1).optional(),
   description: z.string().trim().nullable().optional(),
   status: z
@@ -105,7 +105,7 @@ export async function updateTicketAction(
     return { kind: "ok", ticket_id: updated.id };
   } catch (error: unknown) {
     const message =
-      error instanceof Error ? error.message : "Ticket update failed.";
+      error instanceof Error ? error.message : "チケット更新に失敗しました。";
     return { kind: "error", message };
   }
 }

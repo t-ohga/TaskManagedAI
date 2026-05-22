@@ -15,6 +15,7 @@
 import { notFound } from "next/navigation";
 
 import { BackendApiError } from "@/lib/api/client";
+import { formatTicketPriority, formatTicketStatus } from "@/lib/i18n/ticket-labels";
 import { getCurrentProjectId } from "@/lib/api/session";
 import { getTicket, type TicketRead } from "@/lib/api/tickets";
 
@@ -46,11 +47,11 @@ async function readTicket(ticketId: string): Promise<TicketDetailState> {
     if (error instanceof BackendApiError) {
       return {
         kind: "error",
-        message: `Backend returned ${error.status}: ${error.message}`
+        message: `バックエンドが ${error.status} を返しました: ${error.message}`
       };
     }
     const message =
-      error instanceof Error ? error.message : "ticket fetch failed";
+      error instanceof Error ? error.message : "チケットの取得に失敗しました。";
     return { kind: "error", message };
   }
 }
@@ -78,16 +79,18 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   }
 
   return (
-    <section aria-label="Ticket detail" className="grid gap-4">
+    <section aria-label="チケット詳細" className="grid gap-4">
       <header>
-        <p className="text-sm font-medium text-accent">Admin / Ticket</p>
-        <h1 className="text-3xl font-semibold tracking-normal">Ticket 詳細</h1>
+        <p className="text-sm font-medium text-accent">管理 / チケット</p>
+        <h1 className="text-3xl font-semibold tracking-normal">チケット詳細</h1>
         <p className="mt-2 font-mono text-xs text-muted">{id}</p>
       </header>
 
       {state.kind === "error" ? (
         <article role="status" className="rounded-md border border-attention bg-amber-50 p-4">
-          <h2 className="text-base font-semibold text-attention">Ticket unavailable</h2>
+          <h2 className="text-base font-semibold text-attention">
+            チケットを表示できません
+          </h2>
           <p className="mt-1 text-sm text-muted">{state.message}</p>
         </article>
       ) : (
@@ -100,28 +103,28 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
                 <dd className="font-mono">{state.ticket.slug}</dd>
               </div>
               <div className="flex justify-between gap-4 border-t border-line pt-3">
-                <dt className="text-muted">Status</dt>
+                <dt className="text-muted">状態</dt>
                 <dd>
                   <span className="rounded-md bg-panel-muted px-2 py-1 text-xs font-medium">
-                    {state.ticket.status}
+                    {formatTicketStatus(state.ticket.status)}
                   </span>
                 </dd>
               </div>
               <div className="flex justify-between gap-4 border-t border-line pt-3">
-                <dt className="text-muted">Priority</dt>
-                <dd>{state.ticket.priority ?? "(未指定)"}</dd>
+                <dt className="text-muted">優先度</dt>
+                <dd>{formatTicketPriority(state.ticket.priority)}</dd>
               </div>
               <div className="flex justify-between gap-4 border-t border-line pt-3">
-                <dt className="text-muted">Created</dt>
+                <dt className="text-muted">作成日時</dt>
                 <dd className="font-mono text-xs">{formatDate(state.ticket.created_at)}</dd>
               </div>
               <div className="flex justify-between gap-4 border-t border-line pt-3">
-                <dt className="text-muted">Updated</dt>
+                <dt className="text-muted">更新日時</dt>
                 <dd className="font-mono text-xs">{formatDate(state.ticket.updated_at)}</dd>
               </div>
               {state.ticket.description ? (
                 <div className="border-t border-line pt-3">
-                  <dt className="text-muted">Description</dt>
+                  <dt className="text-muted">説明</dt>
                   <dd className="mt-2 whitespace-pre-wrap text-sm">
                     {state.ticket.description}
                   </dd>
