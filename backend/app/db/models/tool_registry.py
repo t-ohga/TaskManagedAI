@@ -17,6 +17,7 @@ from backend.app.db.models.base import (
 from backend.app.domain.tool_registry.network_policy import (
     NetworkAccessMode,
     PayloadDataClass,
+    ToolAllowedAction,
     ToolAuthMode,
     ToolTransport,
     ToolTrustTier,
@@ -41,6 +42,24 @@ class ToolRegistry(TenantIdMixin, CreatedAtMixin, Base):
         sa.CheckConstraint(
             "trust_tier in ('official','self_hosted','third_party','experimental')",
             name="tool_registry_ck_trust_tier",
+        ),
+        sa.CheckConstraint(
+            "length(registry_version) > 0",
+            name="tool_registry_ck_registry_version_non_empty",
+        ),
+        sa.CheckConstraint(
+            "jsonb_typeof(allowed_actions) = 'array' "
+            "and jsonb_array_length(allowed_actions) > 0 "
+            "and not jsonb_path_exists("
+            "allowed_actions, "
+            "'$[*] ? (@ != \"web_fetch\" && @ != \"docs_search\" "
+            "&& @ != \"code_grep\" && @ != \"filesystem_read\")'::jsonpath"
+            ")",
+            name="tool_registry_ck_allowed_actions",
+        ),
+        sa.CheckConstraint(
+            "max_outgoing_data_class in ('public','internal','confidential','pii')",
+            name="tool_registry_ck_max_outgoing_data_class",
         ),
         sa.ForeignKeyConstraint(
             ["tenant_id"],
@@ -69,6 +88,12 @@ class ToolRegistry(TenantIdMixin, CreatedAtMixin, Base):
         server_default=sa.text("'none'"),
     )
     trust_tier: Mapped[ToolTrustTier] = mapped_column(sa.Text, nullable=False)
+    registry_version: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    allowed_actions: Mapped[list[ToolAllowedAction]] = mapped_column(JSONB, nullable=False)
+    max_outgoing_data_class: Mapped[PayloadDataClass] = mapped_column(
+        sa.Text,
+        nullable=False,
+    )
     manifest: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
     metadata_: Mapped[JsonDict] = mapped_column(
         "metadata",
@@ -134,4 +159,64 @@ class ToolNetworkPolicy(TenantIdMixin, CreatedAtMixin, Base):
     )
 
 
-__all__ = ["ToolNetworkPolicy", "ToolRegistry"]
+class ToolVersion(TenantIdMixin, CreatedAtMixin, Base):
+    __tablename__ = "tool_versions"
+    __table_args__ = (
+        sa.CheckConstraint(
+            "length(registry_version) > 0",
+            name="tool_versions_ck_registry_version_non_empty",
+        ),
+        sa.CheckConstraint(
+            "allowlist_hash ~ '^[a-f0-9]{64}$'",
+            name="tool_versions_ck_allowlist_hash_sha256_hex",
+        ),
+        sa.CheckConstraint(
+            "jsonb_typeof(manifest) = 'object'",
+            name="tool_versions_ck_manifest_object",
+        ),
+        sa.ForeignKeyConstraint(
+            ["tenant_id"],
+            ["tenants.id"],
+            name="tool_versions_tenant_id_fkey",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "tool_id"],
+            ["tool_registry.tenant_id", "tool_registry.id"],
+            name="tool_versions_tool_fkey",
+            ondelete="RESTRICT",
+        ),
+        sa.UniqueConstraint("tenant_id", "id", name="tool_versions_uq_tenant_id"),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "tool_id",
+            "registry_version",
+            name="tool_versions_uq_tool_registry_version",
+        ),
+        sa.Index(
+            "tool_versions_idx_tenant_registry_version",
+            "tenant_id",
+            "registry_version",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+        server_default=sa.text("uuid_generate_v4()"),
+    )
+    tool_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    registry_version: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    allowlist_hash: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    manifest: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
+    metadata_: Mapped[JsonDict] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        default=rls_ready_metadata,
+        server_default=sa.text("'{}'::jsonb || '{\"rls_ready\": true}'::jsonb"),
+    )
+
+
+__all__ = ["ToolNetworkPolicy", "ToolRegistry", "ToolVersion"]

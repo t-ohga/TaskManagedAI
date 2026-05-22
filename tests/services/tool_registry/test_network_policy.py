@@ -137,7 +137,9 @@ async def test_default_web_fetch_and_docs_search_are_seeded_deny_only(
             await session.execute(
                 text(
                     """
-                    select tool_key, network_access, manifest->>'deny_only' as deny_only
+                    select tool_key, network_access, registry_version,
+                           allowed_actions, max_outgoing_data_class,
+                           manifest->>'deny_only' as deny_only
                       from tool_registry
                      where tenant_id = 1
                        and tool_key in ('web_fetch', 'docs_search')
@@ -147,9 +149,19 @@ async def test_default_web_fetch_and_docs_search_are_seeded_deny_only(
             )
         ).all()
 
-    assert [(row.tool_key, row.network_access, row.deny_only) for row in rows] == [
-        ("docs_search", "none", "true"),
-        ("web_fetch", "none", "true"),
+    assert [
+        (
+            row.tool_key,
+            row.network_access,
+            row.registry_version,
+            row.allowed_actions,
+            row.max_outgoing_data_class,
+            row.deny_only,
+        )
+        for row in rows
+    ] == [
+        ("docs_search", "none", "sp0045-v1", ["docs_search"], "public", "true"),
+        ("web_fetch", "none", "sp0045-v1", ["web_fetch"], "public", "true"),
     ]
 
 
@@ -186,7 +198,7 @@ async def test_new_tenant_insert_seeds_default_deny_only_tools(
             await session.execute(
                 text(
                     """
-                    select tool_key, network_access
+                    select tool_key, network_access, registry_version, allowed_actions
                       from tool_registry
                      where tenant_id = :tenant_id
                      order by tool_key
@@ -196,9 +208,12 @@ async def test_new_tenant_insert_seeds_default_deny_only_tools(
             )
         ).all()
 
-    assert [(row.tool_key, row.network_access) for row in rows] == [
-        ("docs_search", "none"),
-        ("web_fetch", "none"),
+    assert [
+        (row.tool_key, row.network_access, row.registry_version, row.allowed_actions)
+        for row in rows
+    ] == [
+        ("docs_search", "none", "sp0045-v1", ["docs_search"]),
+        ("web_fetch", "none", "sp0045-v1", ["web_fetch"]),
     ]
 
 
@@ -232,11 +247,13 @@ async def test_allowlist_policy_allows_only_matching_domain_payload_and_provider
                     """
                     insert into tool_registry (
                       id, tenant_id, tool_key, transport, auth_mode, network_access,
-                      trust_tier, manifest, metadata
+                      trust_tier, registry_version, allowed_actions,
+                      max_outgoing_data_class, manifest, metadata
                     )
                     values (
                       :tool_id, 1, 'allowlisted_fetch', 'local', 'none', 'allowlist',
-                      'official', '{"allowed_actions":["web_fetch"]}'::jsonb,
+                      'official', 'sp0045-test', '["web_fetch"]'::jsonb, 'internal',
+                      '{"allowed_actions":["web_fetch"]}'::jsonb,
                       '{"rls_ready": true}'::jsonb
                     )
                     """
@@ -310,11 +327,13 @@ async def test_internet_mode_is_registered_but_denied_in_p0(
                     """
                     insert into tool_registry (
                       id, tenant_id, tool_key, transport, auth_mode, network_access,
-                      trust_tier, manifest, metadata
+                      trust_tier, registry_version, allowed_actions,
+                      max_outgoing_data_class, manifest, metadata
                     )
                     values (
                       :tool_id, 1, 'internet_fetch', 'local', 'none', 'internet',
-                      'official', '{"allowed_actions":["web_fetch"]}'::jsonb,
+                      'official', 'sp0045-test', '["web_fetch"]'::jsonb, 'public',
+                      '{"allowed_actions":["web_fetch"]}'::jsonb,
                       '{"rls_ready": true}'::jsonb
                     )
                     """
@@ -348,13 +367,88 @@ async def test_db_rejects_unknown_network_access(
                     """
                     insert into tool_registry (
                       tenant_id, tool_key, transport, auth_mode, network_access,
-                      trust_tier, manifest, metadata
+                      trust_tier, registry_version, allowed_actions,
+                      max_outgoing_data_class, manifest, metadata
                     )
                     values (
                       1, 'bad_network_tool', 'local', 'none', 'external',
-                      'official', '{}'::jsonb, '{"rls_ready": true}'::jsonb
+                      'official', 'sp0045-test', '["web_fetch"]'::jsonb, 'public',
+                      '{}'::jsonb, '{"rls_ready": true}'::jsonb
                     )
                     """
                 )
+            )
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_db_rejects_unknown_allowed_action(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _reset_test_tools(session)
+
+        with pytest.raises(DBAPIError, match="tool_registry_ck_allowed_actions"):
+            await session.execute(
+                text(
+                    """
+                    insert into tool_registry (
+                      tenant_id, tool_key, transport, auth_mode, network_access,
+                      trust_tier, registry_version, allowed_actions,
+                      max_outgoing_data_class, manifest, metadata
+                    )
+                    values (
+                      1, 'bad_action_tool', 'local', 'none', 'none',
+                      'official', 'sp0045-test', '["repo_write"]'::jsonb, 'public',
+                      '{}'::jsonb, '{"rls_ready": true}'::jsonb
+                    )
+                    """
+                )
+            )
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_tool_versions_rejects_non_sha_allowlist_hash(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _reset_test_tools(session)
+            await session.execute(
+                text(
+                    """
+                    insert into tool_registry (
+                      id, tenant_id, tool_key, transport, auth_mode, network_access,
+                      trust_tier, registry_version, allowed_actions,
+                      max_outgoing_data_class, manifest, metadata
+                    )
+                    values (
+                      :tool_id, 1, 'allowlisted_fetch', 'local', 'none', 'none',
+                      'official', 'sp0045-test', '["web_fetch"]'::jsonb, 'public',
+                      '{"allowed_actions":["web_fetch"]}'::jsonb,
+                      '{"rls_ready": true}'::jsonb
+                    )
+                    """
+                ),
+                {"tool_id": ALLOWLIST_TOOL_ID},
+            )
+
+        with pytest.raises(DBAPIError, match="tool_versions_ck_allowlist_hash"):
+            await session.execute(
+                text(
+                    """
+                    insert into tool_versions (
+                      tenant_id, tool_id, registry_version, allowlist_hash,
+                      manifest, metadata
+                    )
+                    values (
+                      1, :tool_id, 'sp0045-test', 'not-a-sha',
+                      '{}'::jsonb, '{"rls_ready": true}'::jsonb
+                    )
+                    """
+                ),
+                {"tool_id": ALLOWLIST_TOOL_ID},
             )
             await session.commit()
