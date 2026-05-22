@@ -10,6 +10,7 @@ status: "completed"
 sprint_no: 22
 created_at: "2026-05-10"
 updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 target_days: 3
 max_days: 5
 # F-PR67-019 P2 adopt (PR #67 R4): ADR-00021 acceptance は SP-022 で実機 host

@@ -11,6 +11,7 @@ status: "completed"
 sprint_no: 12
 created_at: "2026-05-10"
 updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 target_days: 5
 max_days: 7
 # F-PR67-010/013 P2 adopt → Phase 8 PR で adr_refs に正式 promotion 反映.

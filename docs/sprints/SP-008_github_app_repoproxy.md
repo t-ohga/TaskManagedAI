@@ -12,9 +12,9 @@ adr_refs:
   - "[ADR-00006](../adr/00006_secrets_management.md) # accepted、installation token を SecretBroker capability token 経由で扱う"
   - "[ADR-00007](../adr/00007_external_exposure.md) # accepted、GitHub webhook は Tailscale 内 endpoint のみ受信、Funnel/Cloudflare 不使用"
   - "[ADR-00009](../adr/00009_action_class_taxonomy.md) # accepted、repo_write / pr_open / merge / deploy action_class enforcement"
-planned_adr_refs:
-  - "[ADR-00011](../adr/00011_github_app_permission_matrix.md) # Sprint 8 で proposed 化、Criteria #11 GitHub App permission 変更"
-  - "[ADR-00003](../adr/00003_api_contract.md) # Sprint 8 batch 5 で proposed 化、Draft PR / webhook API contract (Criteria #3)"
+  - "[ADR-00011](../adr/00011_github_app_permission_matrix.md) # accepted、Criteria #11 GitHub App permission 変更"
+  - "[ADR-00003](../adr/00003_api_contract.md) # accepted、Draft PR / webhook API contract (Criteria #3)"
+planned_adr_refs: []
 related_sprints:
   - "SP-007_runner_sandbox # 実在、runner_mutation_gateway → RepoProxy 経由 push"
   - "SP-009_p0_ui_pack # 実在、Approval Inbox + AI Runs で repo_write/pr_open 表示"
