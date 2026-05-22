@@ -157,18 +157,90 @@ describe("eval-dashboard API client", () => {
     expect(result.fallbackReason).toBe("backend response schema mismatch");
   });
 
-  it("fetchKpiRollupOrFallback does NOT leak raw exception text in fallbackReason", async () => {
+  it("fetchKpiRollupOrFallback rethrows on 401 (auth failure not silent-fallback)", async () => {
+    // Codex PR #91 R1 F-001 fix (P1): 401 auth error は operator が認識する必要があるため rethrow
+    vi.stubEnv("INTERNAL_API_URL", "http://backend.test");
+    cookieMocks.get.mockReturnValue(undefined); // no session cookie
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("Unauthorized", { status: 401 }),
+    );
+    await expect(fetchKpiRollupOrFallback(SKELETON_FALLBACK)).rejects.toThrow(/401/);
+  });
+
+  it("fetchKpiRollupOrFallback rethrows on 403 (permission failure not silent-fallback)", async () => {
+    // Codex PR #91 R1 F-001 fix (P1): 403 forbidden も同様 rethrow (auth context invalid)
     vi.stubEnv("INTERNAL_API_URL", "http://backend.test");
     cookieMocks.get.mockReturnValue({ value: "session-cookie-value" });
-    // network error simulation (raw exception with sensitive message)
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("Forbidden", { status: 403 }),
+    );
+    await expect(fetchKpiRollupOrFallback(SKELETON_FALLBACK)).rejects.toThrow(/403/);
+  });
+
+  it("fetchKpiRollupOrFallback rethrows on raw exception (env misconfig)", async () => {
+    // Codex PR #91 R1 F-004 fix (P2): config / runtime / env error は hidden しない rethrow
+    vi.stubEnv("INTERNAL_API_URL", "http://backend.test");
+    cookieMocks.get.mockReturnValue({ value: "session-cookie-value" });
     vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(
-      new Error("postgresql://user:supersecret@host/db connection refused"),
+      new Error("INTERNAL_API_URL must be configured"),
+    );
+    await expect(fetchKpiRollupOrFallback(SKELETON_FALLBACK)).rejects.toThrow(
+      "INTERNAL_API_URL must be configured",
+    );
+  });
+
+  it("Zod schema rejects truncated entries (4 instead of 5)", async () => {
+    // Codex PR #91 R1 F-002 fix (P2): cardinality enforce (length === 5)
+    vi.stubEnv("INTERNAL_API_URL", "http://backend.test");
+    cookieMocks.get.mockReturnValue({ value: "session-cookie-value" });
+    const truncated = { ...VALID_RESPONSE, entries: VALID_RESPONSE.entries.slice(0, 4) };
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify(truncated), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
     );
     const result = await fetchKpiRollupOrFallback(SKELETON_FALLBACK);
     expect(result.source).toBe("skeleton_fallback");
-    // sanitized: raw exception text (with credentials) NOT included
-    expect(result.fallbackReason).toBe("backend fetch failed");
-    expect(result.fallbackReason).not.toContain("supersecret");
-    expect(result.fallbackReason).not.toContain("postgresql://");
+    expect(result.fallbackReason).toBe("backend response schema mismatch");
+  });
+
+  it("Zod schema rejects duplicate KPI ids (e.g., AC-KPI-01 twice)", async () => {
+    // Codex PR #91 R1 F-002 fix (P2): ID coverage invariant (each AC-KPI-01〜05 once)
+    vi.stubEnv("INTERNAL_API_URL", "http://backend.test");
+    cookieMocks.get.mockReturnValue({ value: "session-cookie-value" });
+    const dup = {
+      ...VALID_RESPONSE,
+      entries: [
+        VALID_RESPONSE.entries[0],
+        VALID_RESPONSE.entries[0], // duplicate AC-KPI-01
+        ...VALID_RESPONSE.entries.slice(2),
+      ],
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify(dup), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const result = await fetchKpiRollupOrFallback(SKELETON_FALLBACK);
+    expect(result.source).toBe("skeleton_fallback");
+    expect(result.fallbackReason).toBe("backend response schema mismatch");
+  });
+
+  it("Zod schema rejects sum invariant violation (met + failed != kpi_count)", async () => {
+    // Codex PR #91 R1 F-002 fix (P2): sum invariant from KpiRollupSummary contract
+    vi.stubEnv("INTERNAL_API_URL", "http://backend.test");
+    cookieMocks.get.mockReturnValue({ value: "session-cookie-value" });
+    const invalid = { ...VALID_RESPONSE, met_count: 3, failed_count: 1 }; // sum=4 != kpi_count=5
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify(invalid), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const result = await fetchKpiRollupOrFallback(SKELETON_FALLBACK);
+    expect(result.source).toBe("skeleton_fallback");
+    expect(result.fallbackReason).toBe("backend response schema mismatch");
   });
 });

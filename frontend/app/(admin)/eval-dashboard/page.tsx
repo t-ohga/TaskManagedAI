@@ -352,23 +352,66 @@ const GATED_ACCEPTANCE_ROWS: readonly GatedAcceptanceRowEntry[] = [
   },
 ];
 
-const P0_EXIT_VERDICT = {
-  p0_exit_decision: true,
+// Codex PR #91 R1 F-003 fix (P2): verdict summary を live KPI rollup から derive
+// (static `P0_EXIT_VERDICT.kpis_pass_count=5` のままだと KPI table が live で fail でも
+// verdict は READY と矛盾、data-integrity regression)。
+// Hard Gates / Drills / Smoke / Private staging / Gated rows は依然 static (live endpoint は
+// SP-013+ BL-0149 sign-off で追加予定)、本 derive は KPI 部分のみ live data 反映。
+const STATIC_VERDICT_BASE = {
   hard_gates_pass_count: 7,
-  kpis_pass_count: 5,
   drills_pass_count: 2,
   smoke_success: true,
   private_staging_passed: true,
   gated_rows_satisfied: true,
-  deficiency_reasons: [] as readonly string[],
 } as const;
+
+function deriveVerdict(
+  kpiRollup: KpiRollupResponse,
+): {
+  readonly p0_exit_decision: boolean;
+  readonly hard_gates_pass_count: number;
+  readonly kpis_pass_count: number;
+  readonly drills_pass_count: number;
+  readonly smoke_success: boolean;
+  readonly private_staging_passed: boolean;
+  readonly gated_rows_satisfied: boolean;
+  readonly deficiency_reasons: readonly string[];
+} {
+  const deficiencies: string[] = [];
+  if (!kpiRollup.p0_accept) {
+    deficiencies.push(
+      `kpis_pass: ${kpiRollup.met_count}/${kpiRollup.kpi_count} (fail_tolerance=${kpiRollup.fail_tolerance})`,
+    );
+  }
+  // 他 source は static の間は不変、live endpoint 追加後 deficiency 検出ロジック拡張
+  const allGreen =
+    kpiRollup.p0_accept &&
+    STATIC_VERDICT_BASE.hard_gates_pass_count === 7 &&
+    STATIC_VERDICT_BASE.drills_pass_count === 2 &&
+    STATIC_VERDICT_BASE.smoke_success &&
+    STATIC_VERDICT_BASE.private_staging_passed &&
+    STATIC_VERDICT_BASE.gated_rows_satisfied;
+  return {
+    p0_exit_decision: allGreen,
+    hard_gates_pass_count: STATIC_VERDICT_BASE.hard_gates_pass_count,
+    kpis_pass_count: kpiRollup.met_count,
+    drills_pass_count: STATIC_VERDICT_BASE.drills_pass_count,
+    smoke_success: STATIC_VERDICT_BASE.smoke_success,
+    private_staging_passed: STATIC_VERDICT_BASE.private_staging_passed,
+    gated_rows_satisfied: STATIC_VERDICT_BASE.gated_rows_satisfied,
+    deficiency_reasons: deficiencies,
+  };
+}
 
 export default async function EvalDashboardPage() {
   // SP-022 T08 batch 6: live fetch KPI rollup from backend with skeleton fallback
+  // (outage-only: 5xx / Zod mismatch、4xx auth / config は rethrow)
   const kpiRollupResult = await fetchKpiRollupOrFallback(KPI_SKELETON_FALLBACK);
   const kpiRollup = kpiRollupResult.data;
   const kpiSource: KpiRollupSource = kpiRollupResult.source;
   const kpiFallbackReason = kpiRollupResult.fallbackReason;
+  // Codex PR #91 R1 F-003 fix (P2): verdict を live KPI rollup から derive
+  const P0_EXIT_VERDICT = deriveVerdict(kpiRollup);
 
   return (
     <AdminPageShell

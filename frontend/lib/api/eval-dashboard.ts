@@ -7,8 +7,8 @@
  *
  * Implementation contract:
  * - Server Component only (uses `next/headers` cookie via `fetchBackendJson`)
- * - Zod schema validation at boundary (drop invalid responses)
- * - Graceful fallback on BackendApiError (caller can render skeleton view)
+ * - Zod schema validation at boundary (exact 5-KPI cardinality + ID coverage)
+ * - Outage-only fallback (BackendApiError 5xx + ZodError); auth/config errors rethrow
  * - No raw secret / token / DSN credential in error messages
  */
 import { z } from "zod";
@@ -40,15 +40,40 @@ export const corpusLoadResponseSchema = z.object({
   fixture_count: z.number().int().nonnegative(),
 });
 
-export const kpiRollupResponseSchema = z.object({
-  kpi_count: z.number().int().nonnegative(),
-  met_count: z.number().int().nonnegative(),
-  failed_count: z.number().int().nonnegative(),
-  p0_accept: z.boolean(),
-  fail_tolerance: z.number().int().nonnegative(),
-  entries: z.array(kpiEntryResponseSchema),
-  corpus_loads: z.array(corpusLoadResponseSchema),
-});
+// Codex PR #91 R1 F-002 fix (P2): backend は 5 KPI 固定 + 各 ID 一意の cardinality
+// invariant を Zod で enforce。truncated / duplicated 200-response が live と誤認
+// されると pass-looking fallback の代わりに misleading data が表示される。
+export const kpiRollupResponseSchema = z
+  .object({
+    kpi_count: z.number().int().nonnegative(),
+    met_count: z.number().int().nonnegative(),
+    failed_count: z.number().int().nonnegative(),
+    p0_accept: z.boolean(),
+    fail_tolerance: z.number().int().nonnegative(),
+    entries: z.array(kpiEntryResponseSchema).length(5),
+    corpus_loads: z.array(corpusLoadResponseSchema),
+  })
+  .superRefine((data, ctx) => {
+    // entries 5 件の kpi_id が AC-KPI-01〜05 を coverage (unique + complete)
+    const ids = new Set(data.entries.map((e) => e.kpi_id));
+    if (ids.size !== 5 || !KPI_ID_VALUES.every((id) => ids.has(id))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `entries must contain exactly one of each KPI ID (AC-KPI-01〜05); got ${[
+          ...ids,
+        ]
+          .sort()
+          .join(",")}`,
+      });
+    }
+    // sum invariant: met_count + failed_count == kpi_count (backend KpiRollupSummary contract)
+    if (data.met_count + data.failed_count !== data.kpi_count) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `met_count + failed_count must equal kpi_count; got ${data.met_count}+${data.failed_count}!==${data.kpi_count}`,
+      });
+    }
+  });
 
 export type KpiEntryResponse = z.infer<typeof kpiEntryResponseSchema>;
 export type CorpusLoadResponse = z.infer<typeof corpusLoadResponseSchema>;
@@ -71,12 +96,15 @@ export async function fetchKpiRollup(): Promise<KpiRollupResponse> {
 
 /**
  * Live-or-skeleton wrapper: fetch live KPI rollup, fall back to skeleton
- * data when backend returns 503 (corpus load fail) or 501 (endpoint skeleton).
+ * **only on backend outage** (5xx / Zod schema mismatch).
  *
- * SP-022 T08 batch 6: dashboard wires this to display live data when backend
- * is available, otherwise shows the static skeleton from Sprint 12 batch 9.
+ * Codex PR #91 R1 F-001 + F-004 fix (P1/P2):
+ * - 4xx (auth/permission/validation) → **rethrow** (operator が access failure を認識)
+ * - 5xx (outage / endpoint skeleton 501 / corpus load fail 503) → skeleton fallback
+ * - ZodError (schema mismatch) → skeleton fallback (sanitized reason)
+ * - Other Error (config / runtime / env misconfig 等) → **rethrow** (env misconfig を hidden しない)
  *
- * @param skeletonFallback - static data shown when backend unavailable
+ * @param skeletonFallback - static data shown when backend unavailable (outage only)
  * @returns `{ source: "live" | "skeleton_fallback", data: KpiRollupResponse, fallbackReason?: string }`
  */
 export type KpiRollupSource = "live" | "skeleton_fallback";
@@ -94,20 +122,31 @@ export async function fetchKpiRollupOrFallback(
     const live = await fetchKpiRollup();
     return { source: "live", data: live };
   } catch (err) {
-    let reason: string;
+    // Codex PR #91 R1 F-001 fix (P1): outage-only fallback。4xx (auth/permission/
+    // 400 validation) は operator が access failure を認識する必要があるため rethrow。
     if (err instanceof BackendApiError) {
-      // Sanitize: only embed status code, not full message (may include URL/DSN)
-      reason = `backend returned status=${err.status}`;
-    } else if (err instanceof z.ZodError) {
-      reason = "backend response schema mismatch";
-    } else {
-      // Don't leak raw exception text (may include DSN/credentials)
-      reason = "backend fetch failed";
+      if (err.status >= 500 || err.status === 501) {
+        return {
+          source: "skeleton_fallback",
+          data: skeletonFallback,
+          fallbackReason: `backend returned status=${err.status}`,
+        };
+      }
+      // 4xx → rethrow (auth/permission failure を hidden しない)
+      throw err;
     }
-    return {
-      source: "skeleton_fallback",
-      data: skeletonFallback,
-      fallbackReason: reason,
-    };
+    // Zod schema mismatch → fallback (backend が schema 違反 response、outage 扱い)
+    if (err instanceof z.ZodError) {
+      return {
+        source: "skeleton_fallback",
+        data: skeletonFallback,
+        fallbackReason: "backend response schema mismatch",
+      };
+    }
+    // Codex PR #91 R1 F-004 fix (P2): config / runtime / env misconfig (missing
+    // INTERNAL_API_URL 等) は env error を hidden しないため rethrow。
+    // raw exception text (DSN / credentials) を message に embed しない invariant は
+    // fetchBackendJson 層で担保 (caller には rethrow される Error object のみ)。
+    throw err;
   }
 }
