@@ -335,7 +335,7 @@ curl -s http://localhost:3000/api/datasources | jq
 
 # a11y / responsive
 cd frontend && pnpm exec playwright test --grep '@a11y|@responsive'
-cd frontend && pnpm exec axe http://localhost:3000/admin/tickets --rules wcag2aa,wcag21aa
+cd frontend && pnpm exec axe http://localhost:3000/tickets --rules wcag2aa,wcag21aa
 
 # secret rotation drill
 uv run python -m backend.scripts.secret_rotation_drill --dry-run

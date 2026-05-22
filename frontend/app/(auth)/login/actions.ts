@@ -1,5 +1,6 @@
 "use server";
 
+import type { Route } from "next";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -33,11 +34,11 @@ function stringFromFormData(formData: FormData, key: string): string | undefined
   return typeof value === "string" ? value : undefined;
 }
 
-function safeRedirectPath(value: string | undefined): string {
+function safeRedirectPath(value: string | undefined): Route {
   if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
-    return "/dashboard";
+    return "/dashboard" as Route;
   }
-  return value;
+  return value as Route;
 }
 
 function readInternalApiUrl(): string {

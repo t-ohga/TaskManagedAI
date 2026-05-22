@@ -195,29 +195,52 @@ echo "LAYER_B_DONE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> ~/.taskhub/drills/mac-sing
 
 ## §6 dev login flow (C-1、5 min)
 
-```bash
-# Mac browser で開く
-open http://127.0.0.1:3000
+実装は `frontend/middleware.ts` で `PUBLIC_PATHS = ["/login", "/api/healthz"]` 以外への未認証アクセスを `/login?next=<original-path>` に redirect、login action 完了後に `next` query param 経由で元 URL に戻す構造 (route group `(admin)` / `(auth)` は URL prefix に含まれない、`/admin` route は存在しない)。`frontend/tests/e2e/login.spec.ts` の dev login flow が正本。
 
-# 別 terminal で login token 取得 (dev login 用)
+```bash
+# 別 terminal で login token 取得 (dev login 用、ブラウザ操作前)
 grep TASKMANAGEDAI_DEV_LOGIN_TOKEN .env.local | cut -d= -f2
 ```
 
-ブラウザ:
-1. `/` → login page redirect
-2. dev login token 入力 → cookie set → `/admin` redirect
-3. cookie の `Secure` attribute は development では false (ADR-00022 spec)
+### Primary path (推奨、E2E test 正本と同経路)
 
-**確認項目**:
-- [ ] login form が表示
-- [ ] token 入力後 `/admin` へ redirect
-- [ ] DevTools → Application → Cookies で `taskmanagedai_session` cookie 存在
+```
+Mac browser で開く: http://127.0.0.1:3000/dashboard
+```
+
+ブラウザ:
+1. middleware で未認証検知 → `http://127.0.0.1:3000/login?next=%2Fdashboard` に redirect
+2. login form 表示 (`/login?next=%2Fdashboard`、dev login token 入力 form)
+3. dev login token を入力 → "Sign in" click → login action 実行 + `taskmanagedai_session` cookie 発行
+4. `next` query param 経由で `/dashboard` に戻る + admin navigation 表示
+5. cookie の `Secure` attribute は development では false (ADR-00022 spec)
+
+### Alternative path (root landing 経由)
+
+```
+Mac browser で開く: http://127.0.0.1:3000/
+```
+
+ブラウザ:
+1. root landing page 表示 (Login link + Dashboard link 含む landing page)
+2. "Dashboard" link click (未認証) → middleware で未認証検知 → `/login?next=%2Fdashboard` redirect
+3. 以降は Primary path step 2-5 と同じ
+
+**確認項目** (両 path 共通):
+- [ ] `/dashboard` 未認証アクセス時 (Primary) または Dashboard link click 時 (Alternative)、`/login?next=%2Fdashboard` redirect 確認
+- [ ] login form (`/login?next=%2Fdashboard`) が表示
+- [ ] token 入力後 `/dashboard` に戻る (admin navigation header 表示 + `Dashboard` link が `aria-current=page`)
+- [ ] DevTools → Application → Cookies で `taskmanagedai_session` cookie 存在 (HttpOnly + SameSite=Lax)
 
 **失敗時**: dev login mode が enabled でない → `.env.local` の `TASKMANAGEDAI_ENVIRONMENT=development` 再確認
 
+**E2E test との同期化** (routing fix 2026-05-22 で hardening):
+- 上記 Primary path は `frontend/tests/e2e/login.spec.ts:28-46` ("dev login proxies through the backend...") と完全一致
+- URL pattern `/\/login\?next=%2Fdashboard$/u` (E2E line 28) が SOP §6 と同じ regex で表現される
+
 ## §7 Eval Dashboard 実表示 + live KPI rollup (C-2、5-10 min)
 
-ブラウザ: `http://127.0.0.1:3000/admin/eval-dashboard`
+ブラウザ: `http://127.0.0.1:3000/eval-dashboard` (route group `(admin)` は URL prefix に含まれない)
 
 **確認項目** (PR #91 で実装、live wiring):
 - [ ] P0 Exit verdict panel 表示 (BLOCKED or READY)
@@ -243,7 +266,7 @@ grep TASKMANAGEDAI_DEV_LOGIN_TOKEN .env.local | cut -d= -f2
 
 ## §8 Ticket 一覧 / 詳細 (C-3、10 min)
 
-ブラウザ: `http://127.0.0.1:3000/admin/tickets`
+ブラウザ: `http://127.0.0.1:3000/tickets`
 
 **確認項目**:
 - [ ] Ticket 一覧表示 (空 list でも layout 正常)
@@ -259,7 +282,7 @@ DevTools Network tab で:
 
 ## §9 Approval Inbox (C-4、10 min)
 
-ブラウザ: `http://127.0.0.1:3000/admin/approvals`
+ブラウザ: `http://127.0.0.1:3000/approvals`
 
 **確認項目**:
 - [ ] Approval 一覧表示 (`pending` / `approved` / `rejected` / `expired` / `invalidated` 状態区別表示)
@@ -268,7 +291,7 @@ DevTools Network tab で:
 
 ## §10 Agent Runs 一覧 (C-5、5 min)
 
-ブラウザ: `http://127.0.0.1:3000/admin/agent-runs`
+ブラウザ: `http://127.0.0.1:3000/runs` (実 route name は `runs`、SOP の旧 `/admin/agent-runs` は誤記)
 
 **確認項目**:
 - [ ] Agent Runs 一覧表示
@@ -277,7 +300,7 @@ DevTools Network tab で:
 
 ## §11 Audit Log (C-6、5 min)
 
-ブラウザ: `http://127.0.0.1:3000/admin/audit-log`
+ブラウザ: `http://127.0.0.1:3000/audit` (実 route name は `audit`、SOP の旧 `/admin/audit-log` は誤記)
 
 **確認項目**:
 - [ ] AuditEvent 一覧表示 (append-only)
