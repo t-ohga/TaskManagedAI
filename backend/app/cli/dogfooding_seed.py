@@ -372,6 +372,7 @@ class SeedReport:
     rows_added: int = 0
     rows_updated: int = 0
     rows_unchanged: int = 0
+    rows_preserved: int = 0  # SP-012-11.1 BL-TCU-011: user_edited で上書き skip した件数
     failures: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -379,8 +380,23 @@ class SeedReport:
             "rows_added": self.rows_added,
             "rows_updated": self.rows_updated,
             "rows_unchanged": self.rows_unchanged,
+            "rows_preserved": self.rows_preserved,
             "failures": self.failures or [],
         }
+
+
+def _is_user_edited(ticket: Ticket) -> bool:
+    """SP-012-11.1 BL-TCU-011: user 編集 ticket 判定.
+
+    `metadata.user_edited=true` が立っている場合、user が UI 経由で
+    status / title / description を編集済 = dogfooding seed re-apply で
+    上書きせず preserve する。
+
+    backend POST/PATCH endpoint (PR #119/#125) が新規作成 + 編集で
+    `metadata.user_edited=true` を自動立て。
+    """
+    metadata = ticket.metadata_ or {}
+    return bool(metadata.get("user_edited"))
 
 
 async def seed_sprint_packs(
@@ -415,6 +431,9 @@ async def seed_sprint_packs(
                     )
                     session.add(new_ticket)
                 report.rows_added += 1
+            elif _is_user_edited(existing_ticket):
+                # SP-012-11.1 BL-TCU-011: user 編集 ticket は上書き skip + preserve count
+                report.rows_preserved += 1
             else:
                 # status / title / description / metadata の delta を確認
                 changed = (
@@ -471,6 +490,9 @@ async def seed_adrs(
                     )
                     session.add(new_ticket)
                 report.rows_added += 1
+            elif _is_user_edited(existing_ticket):
+                # SP-012-11.1 BL-TCU-011: user 編集 ticket は preserve
+                report.rows_preserved += 1
             else:
                 changed = (
                     existing_ticket.status != adr.ticket_status
@@ -526,6 +548,9 @@ async def seed_bls(
                     )
                     session.add(new_ticket)
                 report.rows_added += 1
+            elif _is_user_edited(existing_ticket):
+                # SP-012-11.1 BL-TCU-011: user 編集 ticket は preserve
+                report.rows_preserved += 1
             else:
                 changed = (
                     existing_ticket.status != bl.ticket_status
