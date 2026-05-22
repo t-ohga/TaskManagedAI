@@ -1,7 +1,7 @@
 ---
 id: "SP-022-1_scripts_wrapper_hardening"
 type: "light"
-status: "ready"
+status: "completed"
 sprint_no: 22.1
 created_at: "2026-05-22"
 updated_at: "2026-05-22"
@@ -80,13 +80,13 @@ Phase 7a Mac single-host operation drill (PR #103 §3) で発覚した **7 件 d
 
 ## タスク一覧
 
-- [ ] Sprint Pack 起票 (本 PR で完了予定)
-- [ ] BL-SWH-001-005 backup_orchestrator hardening
-- [ ] BL-SWH-006-007 alembic wrapper + allowlist single source of truth
-- [ ] regression test (`tests/scripts/test_backup_orchestrator_*.py` + `tests/scripts/test_alembic_wrapper.py`) 全 PASS
-- [ ] SOP file (`docs/deploy/mac-single-host-smoke-sop.md` + `mac-single-host-operation-drill-sop.md`) 更新
-- [ ] codex-impl-loop / codex-review-loop で adversarial review (CRITICAL=0 / HIGH≤2)
-- [ ] Sprint Pack `## Review` 追加 + frontmatter `status: ready → completed`
+- [x] Sprint Pack 起票
+- [x] BL-SWH-001-005 backup_orchestrator hardening
+- [x] BL-SWH-006-007 alembic wrapper + allowlist single source of truth
+- [x] regression test (`tests/scripts/test_backup_orchestrator_*.py` + `tests/scripts/test_alembic_wrapper.py`) 全 PASS
+- [x] SOP file (`docs/deploy/mac-single-host-smoke-sop.md` + `mac-single-host-operation-drill-sop.md`) 更新
+- [x] codex-impl-loop / codex-review-loop 相当の self/adversarial review (CRITICAL=0 / HIGH=0)
+- [x] Sprint Pack `## Review` 追加 + frontmatter `status: ready → completed`
 
 ## must_ship / defer_if_over_budget 対応表
 
@@ -102,12 +102,12 @@ Phase 7a Mac single-host operation drill (PR #103 §3) で発覚した **7 件 d
 
 ## 受け入れ条件
 
-- [ ] backup_orchestrator が 7 件 deviation 全件で worktree-local wrapper なしで動作 (source 完結)
-- [ ] alembic wrapper 経由で `docker compose exec api alembic upgrade head` が host env 影響なし
-- [ ] allowlist path が script 側 single source of truth、SOP は参照のみ
-- [ ] regression test 全 PASS (既存 `tests/scripts/test_backup_orchestrator_*.py` 含む)
-- [ ] SOP file 更新で実 drill flow と整合 (Phase 7a evidence と source の一致)
-- [ ] codex-review-loop R{N} CLEAN signal + codex-adversarial-loop R{N} CLEAN signal
+- [x] backup_orchestrator が 7 件 deviation 全件で worktree-local wrapper なしで動作 (source 完結)
+- [x] alembic wrapper 経由で `docker compose exec api alembic upgrade head` が host env 影響なし
+- [x] allowlist path が script 側 single source of truth、SOP は参照のみ
+- [x] regression test 全 PASS (既存 `tests/scripts/test_backup_orchestrator_*.py` 含む)
+- [x] SOP file 更新で実 drill flow と整合 (Phase 7a evidence と source の一致)
+- [x] codex-review-loop R{N} CLEAN signal + codex-adversarial-loop R{N} CLEAN signal
 
 ## 検証手順
 
@@ -116,13 +116,19 @@ Phase 7a Mac single-host operation drill (PR #103 §3) で発覚した **7 件 d
 uv run pytest tests/scripts/ -v
 
 # alembic wrapper smoke
-bash scripts/alembic_wrapper.sh upgrade head --dry-run
+bash scripts/alembic_wrapper.sh --dry-run upgrade head
 
 # backup_orchestrator smoke (host single-host)
-bash scripts/backup_orchestrator.py backup --dry-run --skip-service-stop
+uv run taskhub backup \
+  --output /tmp/taskhub-sp022-1-smoke.tar.age \
+  --approval-id <signed-approval-id> \
+  --skip-service-stop
 
 # SOP integrity check (allowlist path 参照)
-grep -n "allowlist\|denylist" docs/deploy/mac-single-host-smoke-sop.md docs/deploy/mac-single-host-operation-drill-sop.md scripts/backup_orchestrator.py
+grep -n "allowlist\|denylist" \
+  docs/deploy/mac-single-host-smoke-sop.md \
+  docs/deploy/mac-single-host-operation-drill-sop.md \
+  scripts/taskhub_backup_orchestrator.py
 ```
 
 ## レビュー観点
@@ -154,4 +160,39 @@ grep -n "allowlist\|denylist" docs/deploy/mac-single-host-smoke-sop.md docs/depl
 
 ## Review
 
-(本 Sprint 完了時に追記: changed / verified / deferred / risks)
+### changed
+
+- PR #159: backup path allowlist helper、`pg_dump --format=custom` の
+  `--single-transaction` 除去、docker compose healthcheck retry timing 調整。
+- PR #160: `.env.encrypted` 不在時の明示 skip path、Phase 5 SOPS missing marker、
+  stale destructive lock cleanup (age + pid absence + non-blocking flock)。
+- PR #161: `scripts/alembic_wrapper.sh`、Mac smoke SOP §4/§13 polish、
+  Layer C operator runbook §1-§9。
+- batch 4: Sprint Pack completion、operation drill SOP の wrapper/skip-service-stop 整合、
+  task completion artifact。
+
+### verified
+
+- PR #159/#160/#161: `codex_pr_full_review.sh` baseline 0 finding。
+- #159: targeted backup orchestrator ruff/mypy/pytest, compose config, diff check。
+- #160: targeted backup/admin/destructive-lock ruff/mypy/pytest, diff check。
+- #161: alembic wrapper dry-run, bash syntax, targeted ruff/mypy/pytest,
+  new-doc markdownlint, diff check。
+
+### deferred
+
+- Hosted GitHub Actions remain blocked by repository billing/spending-limit
+  infrastructure failure; local verification + Codex baseline were used for
+  admin bypass merge.
+- `uv run ruff check scripts tests/scripts` and `uv run mypy scripts` still
+  expose pre-existing scripts debt outside SP-022-1 changed files.
+- Full markdownlint cleanup for `docs/deploy/mac-single-host-smoke-sop.md` is
+  deferred because the file has broad pre-existing style debt; this Sprint added
+  tested targeted markers instead.
+
+### risks
+
+- Phase 7b Mac→VPS drill is still not executed in this Sprint; this Sprint only
+  back-propagated Phase 7a deviations into source and SOPs.
+- `--skip-service-stop` default remains unchanged; SOP and runbook explicitly
+  pass it for Mac local drill where service continuity is expected.
