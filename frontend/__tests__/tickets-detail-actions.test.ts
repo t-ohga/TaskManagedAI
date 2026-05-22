@@ -117,4 +117,52 @@ describe("updateTicketAction (SP-012-11 BL-TCU-005)", () => {
       expect(result.message).toMatch(/404/);
     }
   });
+
+  // Codex PR #121 R1 F-PR121-001 (P1) fix regression test
+  it("sends null for cleared description / priority (explicit clear via empty string)", async () => {
+    vi.stubEnv("INTERNAL_API_URL", "http://backend.test");
+
+    const ticketId = "00000000-0000-4000-8000-000000099002";
+    const backendResponse = {
+      id: ticketId,
+      tenant_id: 1,
+      project_id: "00000000-0000-4000-8000-000000000004",
+      repository_id: null,
+      slug: "test",
+      title: "Test",
+      description: null,
+      status: "open",
+      priority: null,
+      assignee_actor_id: null,
+      created_by_actor_id: "00000000-0000-4000-8000-000000000001",
+      metadata: { rls_ready: true, user_edited: true },
+      created_at: "2026-05-22T20:00:00+00:00",
+      updated_at: "2026-05-22T21:00:00+00:00",
+    };
+
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(backendResponse), { status: 200 }),
+      );
+
+    const formData = buildForm({
+      ticket_id: ticketId,
+      // user が UI で "" を入力 = explicit clear 意図
+      description: "",
+      priority: "",
+    });
+    const result = await updateTicketAction(idle, formData);
+    expect(result.kind).toBe("ok");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const call = fetchMock.mock.calls[0];
+    if (call === undefined) {
+      throw new Error("fetch was not called");
+    }
+    const body = JSON.parse(String(call[1]?.body));
+    // null として送られていることを verify (undefined ではない)
+    expect(body.description).toBeNull();
+    expect(body.priority).toBeNull();
+  });
 });

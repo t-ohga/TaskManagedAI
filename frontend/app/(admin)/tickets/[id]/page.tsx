@@ -33,6 +33,10 @@ type TicketDetailState =
 
 async function readTicket(ticketId: string): Promise<TicketDetailState> {
   try {
+    // Codex PR #121 R1 F-PR121-003 (P1) defer: DEFAULT_PROJECT_ID hardcode は
+    // single-project mode current 実装。multi-project は SP-013 multi-agent
+    // foundation 完成後の別 Sprint Pack (SP-012-12 候補) で session 経由
+    // project resolve に置換。
     const ticket = await getTicket(DEFAULT_PROJECT_ID, ticketId);
     return { kind: "ok", ticket };
   } catch (error: unknown) {
