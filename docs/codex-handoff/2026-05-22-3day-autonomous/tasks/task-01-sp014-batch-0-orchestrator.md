@@ -6,7 +6,7 @@
 
 ## 1. 目的
 
-SP-014 orchestrator agent (司令塔) の **batch 0 core 実装**。SP-013 batch 0 で完成した Multi-Agent Foundation core schema の上に、orchestrator service + lease/heartbeat/failover/kill-switch + policy_profile + Tool Registry network enum + remote_agent_gateway deny-only stub + KPI rollup + SecretBroker multi-agent negative + event_type 22→31 拡張 を実装。
+SP-014 orchestrator agent (司令塔) の **batch 0 core 実装**。SP-013 batch 0 で完成した Multi-Agent Foundation core schema の上に、orchestrator service + lease/heartbeat/failover/kill-switch + policy_profile + Tool Registry network enum + remote_agent_gateway deny-only stub + KPI rollup + SecretBroker multi-agent negative + event_type 28→37 拡張 を実装。
 
 ## 2. 起動 protocol (必須順序)
 
@@ -20,7 +20,7 @@ SP-014 orchestrator agent (司令塔) の **batch 0 core 実装**。SP-013 batch
 6. `docs/sprints/SP-014_orchestrator_agent.md` (Sprint Pack 本体、9 tickets + must_ship + 検証手順)
 7. `docs/adr/00014_multi_agent_orchestration.md` (accepted、設計判断詳細)
 8. `docs/adr/00019_role_taxonomy.md` (accepted、role 分類)
-9. `.claude/rules/agentrun-state-machine.md` (event_type 22→31 拡張範囲)
+9. `.claude/rules/agentrun-state-machine.md` (event_type 28→37 拡張範囲)
 10. `.claude/rules/secretbroker-boundary.md` (multi-agent negative 6 case)
 11. `.claude/rules/server-owned-boundary.md` (caller-supplied 経路禁止)
 12. `.claude/rules/cross-source-enum-integrity.md` (5+ source enum 整合)
@@ -57,7 +57,7 @@ export TASKMANAGEDAI_RUN_DB_TESTS=1
 - cascade pattern (policy_profile 14 rows seed の 1 行追加で別 invariant 違反)
 - AgentRun status 拡張 (16 + 9 = 25 状態の transition 漏れ)
 - SecretBroker multi-agent 6 negative case の reason_code 5+ source 整合
-- event_type 22→31 拡張で既存 audit ledger との互換性
+- event_type 28→37 拡張で既存 audit ledger との互換性
 
 **Readiness Gate (Codex 自己判定)**: 採否判定 (adopt/reject/defer) を実施し plan file に反映、残存 CRITICAL=0/HIGH≤2 で `READY`、それ以外は `STOPPED.md` 起票。
 
@@ -66,7 +66,7 @@ export TASKMANAGEDAI_RUN_DB_TESTS=1
 - [ ] SP014-T01〜T09 9 tickets の依存順序 (T01 → T02 → ... or 並行) 確定
 - [ ] migration 順序 (`00NN_p0_1_orchestrator.py` + `00NN_p0_1_policy_profile.py`) 確定
 - [ ] policy_profile_action_effects 14 rows seed 設計確定 (default + low_risk_auto_allow × 7 action_class)
-- [ ] event_type 22→31 拡張 (orchestrator_dispatched + 5 件 等) 確定
+- [x] event_type 28→37 拡張 (orchestrator/inter-agent/tool 9 件) 確定
 - [ ] orchestrator_lease atomic claim SQL pattern 確定 (SP-012 lease pattern 参考、SecretBroker と同様)
 - [ ] tier 2 human-only invariant 4 重防御 設計確定 (DB CHECK + service guard + Pydantic + test)
 - [ ] ADR-00009 update + Tool Registry network ADR (新規) 起票 path 確定
@@ -161,7 +161,7 @@ P0.1 stub:
 - audit payload: `{reason: 'p0_1_stub', tenant_id, actor_id, role_id, requested_remote_role}`
 - contract test で stub deny 動作確認
 
-### 4.6 batch 0f: KPI rollup query (T07) + SecretBroker multi-agent negative (T08) + event_type 22→31 (T09)
+### 4.6 batch 0f: KPI rollup query (T07) + SecretBroker multi-agent negative (T08) + event_type 28→37 (T09)
 
 **scope**: metrics query + SecretBroker test + agent_run_events.event_type 拡張
 
@@ -184,11 +184,11 @@ PE-F-014 SecretBroker 6 negative case (個別 reason_code):
 5. lease expired → `lease_expired_no_secret_access`
 6. progress lease 違反 (no-progress 30 min) → `progress_lease_violated`
 
-event_type 22→31 拡張 (`agentrun-state-machine.md` §6.1 P0.1+ extension):
+event_type 28→37 拡張 (`agentrun-state-machine.md` §6.1 P0.1+ extension):
 - 29 `orchestrator_dispatched` / 30 `orchestrator_lease_renewed` / 31 `orchestrator_lease_expired` / 32 `orchestrator_failover_triggered` / 33 `orchestrator_kill_engaged` / 34 `inter_agent_message_sent_ref` / 35 `inter_agent_message_consumed_ref` / 36 `tool_web_fetch_executed` / 37 `tool_docs_search_executed`
-- (28 + 9 = 37 統合は SP-014 で実装、29-31 は P0.1 sealed 解除後)
-- migration: `00NN_p0_1_event_type_37.py` で `agent_run_events.event_type` CHECK 拡張
-- 5+ source 整合: `backend/app/domain/agent_run/event_types.py` の `EVENT_TYPES: frozenset` 28 + 9 = 37 化
+- (28 + 9 = 37 統合は SP-014 batch 0a で実装済み)
+- migration: `0025_sp014_event_type_37.py` で `agent_run_events.event_type` CHECK 拡張
+- 5+ source 整合: `backend/app/domain/agent_runtime/event_type.py` の `AgentRunEventType` / `ALL_AGENT_RUN_EVENT_TYPES` 28 + 9 = 37 化
 
 ## 5. 検証手順 (各 batch 完了時)
 
@@ -280,7 +280,7 @@ sleep 60  # Codex auto-review trigger 待ち
 - [ ] AC-HARD-01 fixture (multi-agent 文脈) 全件 deny
 - [ ] ADR-00009 update accepted (`status: accepted`, `updated_at: 2026-05-NN`)
 - [ ] Tool Registry network ADR 新規 accepted (`docs/adr/00021_tool_registry_network_enum.md`)
-- [ ] event_type 22→31 拡張 5+ source 整合確認
+- [x] event_type 28→37 拡張 5+ source 整合確認
 - [ ] migration `00NN_p0_1_*.py` 2 件 Mac local apply + downgrade 動作確認
 - [ ] Sprint Pack frontmatter `status: ready → completed` + Review 章追加
 - [ ] 完了報告 `completion/task-01-completed.md` 起票
@@ -300,7 +300,7 @@ sleep 60  # Codex auto-review trigger 待ち
 - `docs/adr/00014_multi_agent_orchestration.md` (accepted)
 - `docs/adr/00019_role_taxonomy.md` (accepted)
 - `docs/adr/00004_*.md` (event_type 更新 contract)
-- `.claude/rules/agentrun-state-machine.md` §6.1 (event_type 22→31 拡張)
+- `.claude/rules/agentrun-state-machine.md` §6.1 (event_type 28→37 拡張)
 - `.claude/rules/secretbroker-boundary.md` §8 (atomic claim + actor binding)
 - `.claude/rules/server-owned-boundary.md` (caller-supplied 経路禁止)
 - `.claude/rules/cross-source-enum-integrity.md` (5+ source enum)

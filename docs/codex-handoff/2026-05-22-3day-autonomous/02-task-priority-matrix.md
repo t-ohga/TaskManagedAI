@@ -130,7 +130,7 @@ Day 3 (2026-05-25 月):
 | remote_agent_gateway deny-only stub | ○ | - |
 | KPI rollup query + contract test | ○ | adopted_artifacts link は SP-018 |
 | SecretBroker 6 negative case | ○ | - |
-| event_type 22→31 拡張 | ○ | - |
+| event_type 28→37 拡張 | ○ | - |
 | progress lease | ○ | tenant_config tuning は SP-022 |
 
 → 9 must_ship 全件、3 defer_if_over_budget 候補。

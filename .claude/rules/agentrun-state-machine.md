@@ -147,7 +147,7 @@ queued
 
 ### 6.1 P0.1+ 拡張 event_type (28 → 37、ADR-00004 update / Phase H PH-F-006 fix / Sprint 6 batch 2 update)
 
-ADR-00014 Multi-Agent Orchestration / ADR-00018 Inter-Agent Communication で導入される追加 event_type 9 種 (event_type 29〜37). P0 期間中は使用しない (P0 sealed CI guard 対象)、P0.1 SP-013/014/015 で実装。
+ADR-00014 Multi-Agent Orchestration / ADR-00018 Inter-Agent Communication で導入された追加 event_type 9 種 (event_type 29〜37)。P0 期間中は sealed guard 対象だったが、P0.1 SP-014 batch 0a で `0025_sp014_event_type_37.py` として実装済み。
 
 Sprint 6 batch 2 (2026-05-13) で event_type は 25 → 28 に拡張済 (`cli_invocation_started` / `cli_process_completed` / `cli_decision_recorded`)、本 §6.1 の P0.1+ extension はその上に重ねる:
 
@@ -165,14 +165,14 @@ Sprint 6 batch 2 (2026-05-13) で event_type は 25 → 28 に拡張済 (`cli_in
 
 **5+ source 整合 (cross-source-enum-integrity §1) 更新先**:
 
-- DB CHECK: `migrations/versions/00NN_p0_1_event_type_37.py` で `agent_run_events.event_type` CHECK 拡張
+- DB CHECK: `migrations/versions/0025_sp014_event_type_37.py` で `agent_run_events.event_type` CHECK 拡張
 - ORM CheckConstraint: `backend/app/db/models/agent_run_event.py`
-- Python Literal: `backend/app/domain/agent_run/event_types.py` の `EVENT_TYPES: frozenset` (28 + 9 = 37)
-- Pydantic: `agent_run_event/schemas.py`
-- pytest: `tests/agent_runtime/test_event_type_enum.py` の `EXPECTED_EVENT_TYPES` (37)
-- frontend: `frontend/lib/domain/agent-run-event.ts` (Sprint 17 で TypeScript enum)
+- Python Literal: `backend/app/domain/agent_runtime/event_type.py` の `AgentRunEventType` + `ALL_AGENT_RUN_EVENT_TYPES` (28 + 9 = 37)
+- Pydantic: `backend/app/schemas/agent_run_event.py`
+- pytest: `tests/runtime/test_agent_run_events.py` の `EXPECTED_AGENT_RUN_EVENT_TYPES` (37)
+- frontend: `frontend/lib/api/agent-runs.ts` の `AgentRunEventTypeEnum` (37)
 
-**P0 期間中の sealed**: P0 sealed CI guard で `migrations/versions/*event_type_37*` 等の P0.1 path 追加を禁止 (本 rules + ADR-00021 §11.6 / ADR-00014 §13 で statement 統一).
+**履歴**: P0 期間中は sealed CI guard で `*event_type_37*` 等の P0.1 path 追加を禁止していた。P0 Exit 後の SP-014 completion により current source は 37 種で固定する。
 
 ## 7. Provider Result Mapping
 
