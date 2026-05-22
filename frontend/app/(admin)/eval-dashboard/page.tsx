@@ -1,19 +1,28 @@
 /**
- * Sprint 12 batch 9: P0 Exit Dashboard (P0 UI skeleton).
+ * Sprint 12 batch 9 + SP-022 T08 batch 6: P0 Exit Dashboard with live KPI wiring.
  *
  * Read-only display of:
- * - Hard Gates 7 (AC-HARD-01〜07) with metric_value / threshold / threshold_met
- * - KPIs 5 (AC-KPI-01〜05) with metric_value / threshold
- * - Operational drills (host_migration / backup_restore) with drill_status
+ * - Hard Gates 7 (AC-HARD-01〜07) with metric_value / threshold / threshold_met (static)
+ * - KPIs 5 (AC-KPI-01〜05) — **live fetch from `/api/v1/eval/kpi-rollup`** with
+ *   skeleton fallback when backend unavailable (503/501) [SP-022 T08 batch 6]
+ * - Operational drills (host_migration / backup_restore) with drill_status (static)
  * - P0 Exit decision summary (verdict + deficiency reasons)
  *
- * **Data source**: Sprint 12 batch 6 BL-0149 `P0AcceptanceReportSummary` will
- * be wired in via backend API at a later batch. This skeleton uses static
- * sample data to establish the layout + accessibility + secret boundary.
+ * **Data source**: KPI section now wires to backend `/api/v1/eval/kpi-rollup`
+ * via `fetchKpiRollupOrFallback`, with graceful skeleton fallback for backend
+ * outage. Hard Gates / Smoke / Private staging / Drills remain static until
+ * SP-013+ backend endpoints (BL-0149 sign-off completion).
  *
  * **No live mutation**: Eval Dashboard is read-only per .claude/rules/rendering.md §5.
  * No raw secret / provider response / capability token may appear in DOM.
+ * Backend fetch errors are sanitized (status code only, no DSN/credentials leak).
  */
+
+import {
+  fetchKpiRollupOrFallback,
+  type KpiRollupResponse,
+  type KpiRollupSource,
+} from "@/lib/api/eval-dashboard";
 
 import {
   AdminPageShell,
@@ -91,57 +100,74 @@ const HARD_GATES_7 = [
   },
 ] as const;
 
-// Quality KPIs 5 (AC-KPI-01〜05). P0 Exit allows 1 unmet KPI; 2+ adds a
-// quality improvement sprint per CLAUDE.md §2.
-// F-PR65-002 P1 adopt: thresholds 値は canonical evaluator constants と整合
-// (backend/app/services/eval/kpis/*.py):
+// SP-022 T08 batch 6: skeleton fallback for KPI section (static、backend
+// 503/501/network 失敗時に表示)。canonical thresholds (backend evaluator constants):
 //   - AC_KPI_01_THRESHOLD = 0.6 (acceptance_pass_rate.py)
 //   - AC_KPI_02_THRESHOLD_HOURS = 2.0 (time_to_merge.py)
 //   - AC_KPI_03_THRESHOLD_MS = 14_400_000 (= 4h、approval_wait_ms.py)
 //   - AC_KPI_04_THRESHOLD = 0.9 (citation_coverage.py)
 //   - AC_KPI_05_THRESHOLD_USD = 0.5 (cost_per_completed_task.py)
-const QUALITY_KPIS_5 = [
-  {
-    kpi_id: "AC-KPI-01",
-    metric_key: "acceptance_pass_rate",
-    threshold: 0.6,
-    metric_value: 0.92,
-    threshold_met: true,
-    description: "受け入れ条件 pass 率 ≥ 60%",
-  },
-  {
-    kpi_id: "AC-KPI-02",
-    metric_key: "time_to_merge",
-    threshold: 2.0,
-    metric_value: 1.4,
-    threshold_met: true,
-    description: "ticket → merge median ≤ 2.0h",
-  },
-  {
-    kpi_id: "AC-KPI-03",
-    metric_key: "approval_wait_ms",
-    threshold: 14_400_000,
-    metric_value: 1_234_567,
-    threshold_met: true,
-    description: "approval request → decision median ≤ 4h (14,400,000ms)",
-  },
-  {
-    kpi_id: "AC-KPI-04",
-    metric_key: "citation_coverage",
-    threshold: 0.9,
-    metric_value: 0.95,
-    threshold_met: true,
-    description: "claim 当たり citation_count ≥ 1 比率 ≥ 90%",
-  },
-  {
-    kpi_id: "AC-KPI-05",
-    metric_key: "cost_per_completed_task",
-    threshold: 0.5,
-    metric_value: 0.23,
-    threshold_met: true,
-    description: "completed task 当たり provider cost ≤ $0.50",
-  },
-] as const;
+const KPI_SKELETON_FALLBACK: KpiRollupResponse = {
+  kpi_count: 5,
+  met_count: 5,
+  failed_count: 0,
+  p0_accept: true,
+  fail_tolerance: 1,
+  entries: [
+    {
+      kpi_id: "AC-KPI-01",
+      metric_key: "acceptance_pass_rate",
+      metric_value: 0.92,
+      threshold_met: true,
+      threshold_reason: "threshold_met",
+    },
+    {
+      kpi_id: "AC-KPI-02",
+      metric_key: "time_to_merge",
+      metric_value: 1.4,
+      threshold_met: true,
+      threshold_reason: "threshold_met",
+    },
+    {
+      kpi_id: "AC-KPI-03",
+      metric_key: "approval_wait_ms",
+      metric_value: 1_234_567,
+      threshold_met: true,
+      threshold_reason: "threshold_met",
+    },
+    {
+      kpi_id: "AC-KPI-04",
+      metric_key: "citation_coverage",
+      metric_value: 0.95,
+      threshold_met: true,
+      threshold_reason: "threshold_met",
+    },
+    {
+      kpi_id: "AC-KPI-05",
+      metric_key: "cost_per_completed_task",
+      metric_value: 0.23,
+      threshold_met: true,
+      threshold_reason: "threshold_met",
+    },
+  ],
+  corpus_loads: [],
+};
+
+const KPI_THRESHOLDS: Record<string, number> = {
+  "AC-KPI-01": 0.6,
+  "AC-KPI-02": 2.0,
+  "AC-KPI-03": 14_400_000,
+  "AC-KPI-04": 0.9,
+  "AC-KPI-05": 0.5,
+};
+
+const KPI_DESCRIPTIONS: Record<string, string> = {
+  "AC-KPI-01": "受け入れ条件 pass 率 ≥ 60%",
+  "AC-KPI-02": "ticket → merge median ≤ 2.0h",
+  "AC-KPI-03": "approval request → decision median ≤ 4h (14,400,000ms)",
+  "AC-KPI-04": "claim 当たり citation_count ≥ 1 比率 ≥ 90%",
+  "AC-KPI-05": "completed task 当たり provider cost ≤ $0.50",
+};
 
 type OperationalDrillStatus =
   | "pending"
@@ -337,7 +363,13 @@ const P0_EXIT_VERDICT = {
   deficiency_reasons: [] as readonly string[],
 } as const;
 
-export default function EvalDashboardPage() {
+export default async function EvalDashboardPage() {
+  // SP-022 T08 batch 6: live fetch KPI rollup from backend with skeleton fallback
+  const kpiRollupResult = await fetchKpiRollupOrFallback(KPI_SKELETON_FALLBACK);
+  const kpiRollup = kpiRollupResult.data;
+  const kpiSource: KpiRollupSource = kpiRollupResult.source;
+  const kpiFallbackReason = kpiRollupResult.fallbackReason;
+
   return (
     <AdminPageShell
       description="Sprint 12 BL-0149 P0 Exit Dashboard skeleton. Read-only view of Hard Gates 7 + Quality KPIs 5 + operational drills. Backend API integration is deferred to a follow-up batch."
@@ -470,15 +502,23 @@ export default function EvalDashboardPage() {
       </Panel>
 
       <Panel
-        description="AC-KPI-01〜05. Up to 1 unmet KPI is acceptable for P0 Exit; 2+ adds a quality improvement sprint."
+        description={
+          `AC-KPI-01〜05. Up to 1 unmet KPI is acceptable for P0 Exit; 2+ adds a quality improvement sprint. ` +
+          `Data source: ${kpiSource === "live" ? "live backend" : `skeleton fallback (${kpiFallbackReason ?? "unknown reason"})`}.`
+        }
         title="Quality KPIs 5"
         titleId="quality-kpis-5"
       >
+        <div className="mb-2 text-xs text-muted">
+          source: <span className="font-mono">{kpiSource}</span>
+          {" "}| p0_accept: <span className="font-mono">{kpiRollup.p0_accept ? "true" : "false"}</span>
+          {" "}| met: <span className="font-mono">{kpiRollup.met_count}/{kpiRollup.kpi_count}</span>
+        </div>
         <div className="overflow-x-auto rounded-md border border-line">
           <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
             <caption className="sr-only">
               Quality KPIs 5 with kpi_id, metric_key, metric_value, threshold,
-              threshold_met.
+              threshold_met. Data source: {kpiSource}.
             </caption>
             <thead className="bg-panel-soft">
               <tr>
@@ -503,7 +543,7 @@ export default function EvalDashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {QUALITY_KPIS_5.map((kpi) => (
+              {kpiRollup.entries.map((kpi) => (
                 <tr key={kpi.kpi_id}>
                   <td className="border-b border-line px-3 py-2 font-mono">
                     {kpi.kpi_id}
@@ -512,10 +552,10 @@ export default function EvalDashboardPage() {
                     {kpi.metric_key}
                   </td>
                   <td className="border-b border-line px-3 py-2 text-right font-mono">
-                    {kpi.metric_value}
+                    {kpi.metric_value !== null ? kpi.metric_value : "—"}
                   </td>
                   <td className="border-b border-line px-3 py-2 text-right font-mono">
-                    {kpi.threshold}
+                    {KPI_THRESHOLDS[kpi.kpi_id] ?? "—"}
                   </td>
                   <td className="border-b border-line px-3 py-2">
                     {kpi.threshold_met ? (
@@ -529,7 +569,7 @@ export default function EvalDashboardPage() {
                     )}
                   </td>
                   <td className="border-b border-line px-3 py-2 text-xs">
-                    {kpi.description}
+                    {KPI_DESCRIPTIONS[kpi.kpi_id] ?? kpi.threshold_reason ?? "—"}
                   </td>
                 </tr>
               ))}
