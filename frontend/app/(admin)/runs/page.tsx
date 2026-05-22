@@ -21,39 +21,39 @@ export const dynamic = "force-dynamic";
 export default function AgentRunsPage() {
   return (
     <AdminPageShell
-      description="Sprint 9 BL-0106 skeleton with LangSmith inspired state graph, AgentOps inspired chronological events, and server-owned ContextSnapshot metadata anchors."
-      eyebrow="Admin / Runs"
-      regionLabel="Agent Runs"
-      title="Agent Runs"
+      description="Sprint 9 BL-0106 skeleton。LangSmith inspired state graph、AgentOps inspired chronological events、server-owned ContextSnapshot metadata anchor を表示します。"
+      eyebrow="管理 / AI 実行"
+      regionLabel="AI 実行"
+      title="AI 実行"
     >
       <KeyboardReadinessStrip current="Agent Runs" />
 
       <Panel
-        description="CSS grid graph keeps the AgentRun enum at exactly 16 states while making the normal path, terminal states, and blocked node scannable."
-        title="Execution graph"
+        description="CSS grid graph で AgentRun enum を固定 16 状態のまま表示し、normal path、terminal state、blocked node を確認しやすくします。"
+        title="実行グラフ"
         titleId="agent-runs-execution-graph"
       >
         <AgentRunStateGraph />
       </Panel>
 
       <Panel
-        description="blocked_reason is rendered as a separate sub-category list, not as additional AgentRun statuses."
-        title="blocked_reason fixed set"
+        description="blocked_reason は AgentRun status に追加せず、独立したサブ分類として表示します。"
+        title="blocked_reason 固定セット"
         titleId="agent-runs-blocked-reasons"
       >
         <BlockedReasonList />
       </Panel>
 
       <Panel
-        description="Chronological event rows keep run_queued, runner_started, runner_completed, and repo_pr_opened visible for P0 observability."
-        title="AgentRunEvent timeline"
+        description="時系列 event row で run_queued、runner_started、runner_completed、repo_pr_opened を P0 observability 用に表示します。"
+        title="AgentRunEvent タイムライン"
         titleId="agent-runs-event-timeline"
       >
         <AgentRunEventTimeline />
       </Panel>
 
       <Panel
-        description="Each graph node links conceptually to the same immutable 10-column snapshot contract. Values are intentionally not expanded in this skeleton."
+        description="各 graph node は同じ immutable 10-column snapshot contract に対応します。この skeleton では値を意図的に展開しません。"
         title="ContextSnapshot metadata contract"
         titleId="agent-runs-context-snapshot"
       >

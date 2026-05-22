@@ -40,35 +40,34 @@ export default async function AgentRunDetailPage({
     <AdminPageShell
       description={
         <>
-          Sprint 9 BL-0106 detail skeleton for AgentRun <code>{id}</code>. The
-          timeline is chronological, append-only, and redacted according to
-          AC-HARD-02.
+          AgentRun <code>{id}</code> の Sprint 9 BL-0106 detail skeleton です。
+          timeline は時系列、append-only、かつ AC-HARD-02 に従って redaction 済みです。
         </>
       }
-      eyebrow="Admin / AgentRun"
-      regionLabel="Agent Run detail"
-      title="Agent Run detail"
+      eyebrow="管理 / AI 実行"
+      regionLabel="AI 実行詳細"
+      title="AI 実行詳細"
     >
       <KeyboardReadinessStrip current="Agent Runs" />
 
       <Panel
-        description="AgentOps inspired event timeline shows the important run lifecycle events in seq_no order."
-        title="Chronological AgentRunEvent timeline"
+        description="AgentOps inspired event timeline で重要な run lifecycle event を seq_no 順に表示します。"
+        title="AgentRunEvent 時系列タイムライン"
         titleId="run-detail-event-timeline"
       >
         <AgentRunEventTimeline />
       </Panel>
 
       <Panel
-        description="LangSmith inspired graph view keeps all 16 AgentRun states visible without adding a 17th status or converting blocked_reason into statuses."
-        title="Execution graph"
+        description="LangSmith inspired graph view で 17 個目の status を追加せず、blocked_reason も status 化せずに 16 状態を表示します。"
+        title="実行グラフ"
         titleId="run-detail-execution-graph"
       >
         <AgentRunStateGraph />
       </Panel>
 
       <Panel
-        description="Runner events expose bounded metadata only. Raw argv, raw stdout, raw stderr, secret values, and provider raw payloads are excluded."
+        description="Runner events は bounded metadata のみを表示します。raw argv、raw stdout、raw stderr、secret 値、provider raw payload は除外します。"
         title="Sprint 7 runner event integration"
         titleId="run-detail-runner-events"
       >
@@ -80,7 +79,7 @@ export default async function AgentRunDetailPage({
               </code>
             </dt>
             <dd className="mt-2 text-xs leading-5 text-muted">
-              workspace_id, argv_basename, argv_hash, and policy_version only.
+              workspace_id、argv_basename、argv_hash、policy_version のみ。
             </dd>
           </div>
           <div className="rounded-md border border-line bg-white p-3">
@@ -90,8 +89,8 @@ export default async function AgentRunDetailPage({
               </code>
             </dt>
             <dd className="mt-2 text-xs leading-5 text-muted">
-              exit_code, stdout_bytes, stderr_bytes, output_cap_exceeded, and
-              scrubbed_env_keys.
+              exit_code、stdout_bytes、stderr_bytes、output_cap_exceeded、
+              scrubbed_env_keys。
             </dd>
           </div>
           <div className="rounded-md border border-line bg-white p-3">
@@ -101,24 +100,24 @@ export default async function AgentRunDetailPage({
               </code>
             </dt>
             <dd className="mt-2 text-xs leading-5 text-muted">
-              deny_category and reason_code only; maps to runtime_blocked when status
-              becomes blocked.
+              deny_category と reason_code のみ。status が blocked になる場合は
+              runtime_blocked に対応します。
             </dd>
           </div>
         </dl>
       </Panel>
 
       <Panel
-        description="ContextSnapshot references are shown as a fixed 10-column definition list. This supports graph inspection without time-travel mutation."
-        title="ContextSnapshot 10 columns"
+        description="ContextSnapshot reference を固定 10-column definition list として表示します。time-travel mutation なしで graph inspection を支えます。"
+        title="ContextSnapshot 10 カラム"
         titleId="run-detail-context-snapshot"
       >
         <ContextSnapshotDefinitionList />
       </Panel>
 
       <Panel
-        description="The invariant is visible for reviewers and E2E checks while keeping all secret-bearing values out of the DOM."
-        title="No raw secret invariant"
+        description="secret-bearing value を DOM に出さず、reviewer と E2E check が invariant を確認できるようにします。"
+        title="raw secret 非表示 invariant"
         titleId="run-detail-secret-invariant"
       >
         <SecretBoundaryNotice title="AC-HARD-02 AgentRunEvent redaction" />

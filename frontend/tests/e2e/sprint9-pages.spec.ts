@@ -164,18 +164,18 @@ test("Sprint 9: agent runs list page renders 16 states + 3 blocked reasons", asy
   await page.goto("/runs");
 
   const agentRunsRegion = page.getByRole("region", {
-    name: "Agent Runs",
+    name: "AI 実行",
     exact: true
   });
 
   await expect(agentRunsRegion).toHaveCount(1);
   await expect(agentRunsRegion).toBeVisible();
   await expect(
-    agentRunsRegion.getByRole("heading", { name: "Agent Runs", exact: true })
+    agentRunsRegion.getByRole("heading", { name: "AI 実行", exact: true })
   ).toBeVisible();
 
   const stateGraph = agentRunsRegion.getByRole("list", {
-    name: "AgentRun 16 state execution graph",
+    name: "AgentRun 16 状態実行グラフ",
     exact: true
   });
 
@@ -188,7 +188,7 @@ test("Sprint 9: agent runs list page renders 16 states + 3 blocked reasons", asy
   }
 
   const blockedReasons = agentRunsRegion.getByRole("list", {
-    name: "blocked_reason fixed sub categories",
+    name: "blocked_reason 固定サブ分類",
     exact: true
   });
 
@@ -329,7 +329,7 @@ test("Sprint 9: agent run detail dynamic route renders timeline", async ({
   await page.goto("/runs/00000000-0000-4000-8000-000000000002");
 
   const agentRunDetailRegion = page.getByRole("region", {
-    name: "Agent Run detail",
+    name: "AI 実行詳細",
     exact: true
   });
 
@@ -337,7 +337,7 @@ test("Sprint 9: agent run detail dynamic route renders timeline", async ({
   await expect(agentRunDetailRegion).toBeVisible();
 
   const eventTimeline = agentRunDetailRegion.getByRole("list", {
-    name: "Chronological AgentRunEvent timeline",
+    name: "AgentRunEvent 時系列タイムライン",
     exact: true
   });
 
