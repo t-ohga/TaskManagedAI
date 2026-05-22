@@ -1,10 +1,11 @@
 ---
 id: "SP-012-11_ticket_crud_ui"
 type: "light"
-status: "ready"
+status: "partial_completed_with_carry_over"
 sprint_no: 12.11
 created_at: "2026-05-22"
 updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 target_days: 4
 max_days: 6
 adr_refs: []
@@ -170,4 +171,57 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.l
 
 ## Review
 
-(本 Sprint 完了時に追記: changed / verified / deferred / risks)
+最終更新: 2026-05-22
+
+### changed (4/5 Batch 完遂、1 carry-over)
+
+| Batch | scope | PR | merge SHA |
+|---|---|---|---|
+| A | Ticket POST + PATCH backend route + 4 contract test | #119 | 7d833982 |
+| B | Tickets list page 「+ 新規」 button + Server Action form (4 vitest) | #120 | 062acb29 |
+| C | Tickets detail page real fetch + edit form (4 vitest) | #121 | b36f044d |
+| **D (partial)** | **audit_event 記録 (ticket_created / status_changed / updated、raw secret なし)** | #122 | da6f1e65 |
+| D (defer) | ApprovalRequest auto trigger (BL-TCU-007) | 🔵 multi-user 化後 P1+ defer (理由は下記 carry-over §) |
+| E | Sprint Pack `## Review` + completed 化 | 本 PR | - |
+
+= **基本 CRUD UI 完成 + audit_event 記録完備**、ApprovalRequest auto trigger は **multi-user 化後の別 Sprint Pack で完遂**。
+
+### verified
+
+- ruff + mypy clean (237 source files、本 Sprint 全 file)
+- pytest tests/api/test_tickets_api.py: **8 PASS** (POST/PATCH contract + cross-project + self-approval boundary + audit insert regression なし) on Mac local DB
+- pnpm test: **70 PASS** (旧 62 + 新 8、Tickets actions + Tickets list rendering + Tickets detail edit form regression なし)
+- pnpm typecheck + lint clean (eslint --max-warnings=0)
+- Mac local docker compose stack で **229 Ticket visualize 可能 state** + 新規作成 + 編集 + status 変更 UI 動作確認 path 完成
+
+### deferred (carry-over)
+
+**BL-TCU-007 (ApprovalRequest auto trigger、Ticket status='review' → ApprovalRequest 自動作成)**:
+- 理由: 現状 single-user mode で `human:default` actor のみ存在、self-approval 禁止 invariant (Sprint 3、`requester != decider`) と衝突して approval 作成自体が reject される
+- defer 先: multi-actor 環境 (SP-013 multi-agent foundation で agent actor 追加、または external reviewer actor 追加) 完成後の **別 light Sprint Pack** (P0.1+ post-SP-013) で実装
+- 残実装 scope: backend service module 新規 (`backend/app/services/policy/ticket_approval_router.py`) + Ticket update_in_project hook + Approval action_class=`task_write` binding + 4 整合 (artifact_hash / policy_version / provider_request_fingerprint / action_class)
+
+**BL-TCU-009 (dogfooding seed user_edited 衝突回避)**:
+- 状況: backend side では POST/PATCH endpoint で `metadata.user_edited=true` を立て済 (PR #119/#122)
+- 必要な残実装: `backend/app/cli/dogfooding_seed.py` 側で existing ticket の `metadata.user_edited=true` 検出時に status/title/description を seed 値で **上書きせず** preserve する merge logic 追加
+- defer 先: 次 session で minor batch (10-30 行追加) で完遂可能、本 Sprint Pack `partial_completed_with_carry_over` status の trigger
+
+**BL-TCU-010 (E2E Playwright)**:
+- 状況: Mac local docker compose stack で UI 動作 path は実装完成、unit test (pnpm test) で 70 PASS verify
+- 必要な残実装: Playwright 新規 spec (`tests/e2e/ticket-crud-flow.spec.ts`)、新規 Ticket 作成 → status 変更 → audit 確認 flow
+- defer 先: 次 session で minor batch (50-100 行)
+
+### residual risks
+
+- audit_event の event_type は CHECK 制約なし (free text)、本 Sprint で `ticket_created` / `ticket_status_changed` / `ticket_updated` 3 種を追加 → P0.1+ で event_type enum 正本化 (5+ source 整合) は SP-018 + SP-022 phases で別途検討
+- ApprovalRequest auto trigger defer により、Ticket `review` 状態の Approval flow integration が UI で実現していない (`review` status 選択は可能だが ApprovalRequest 作成は起きない、status change のみ persist)
+- production deployment 前に dogfooding seed cleanup + user_edited merge logic 完成 + Playwright E2E が必要 (defer 3 件全て解消)
+
+### next sprint candidates
+
+本 Sprint で **基本 CRUD UI + audit_event** 完成、TaskManagedAI を UI で task 編集管理可能。次は:
+
+1. **SP-012-11.1 (新 light Sprint Pack)** - 本 Sprint defer 3 件完遂 (dogfooding merge logic + Playwright E2E + 必要時 Approval auto trigger)
+2. **SP-013 batch 0** Multi-Agent Foundation (heavy Sprint Pack、kickoff prerequisite 全件 satisfied)
+3. **SP-012-8 UI i18n japanese** (CRUD UI 完成後、最大価値 timing、codex-all-loops mode=code 委譲推奨)
+4. **SP-022-1** scripts wrapper hardening (Phase 7a deviation source 修正、並行可能)
