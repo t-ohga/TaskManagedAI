@@ -4,11 +4,12 @@ import { NotificationBadge } from "@/components/notification-badge";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", current: true },
-  { href: "/dashboard/tickets", label: "Tickets", current: false },
+  { href: "/tickets", label: "Tickets", current: false },
+  { href: "/eval-dashboard", label: "Eval Dashboard", current: false },
   { href: "/approvals", label: "Approvals", current: false },
-  { href: "/dashboard/agent-runs", label: "Agent Runs", current: false },
-  { href: "/dashboard/audit", label: "Audit", current: false },
-  { href: "/dashboard/settings", label: "Settings", current: false }
+  { href: "/runs", label: "Agent Runs", current: false },
+  { href: "/audit", label: "Audit", current: false },
+  { href: "/settings", label: "Settings", current: false }
 ] as const;
 
 type NavigationProps = {
