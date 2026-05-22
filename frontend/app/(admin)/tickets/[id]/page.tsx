@@ -15,7 +15,8 @@
 import { notFound } from "next/navigation";
 
 import { BackendApiError } from "@/lib/api/client";
-import { DEFAULT_PROJECT_ID, getTicket, type TicketRead } from "@/lib/api/tickets";
+import { getCurrentProjectId } from "@/lib/api/session";
+import { getTicket, type TicketRead } from "@/lib/api/tickets";
 
 import { UUID_V1_TO_V5_PATTERN } from "../../_lib/route-id";
 import { EditTicketForm } from "./_components/edit-ticket-form";
@@ -33,11 +34,10 @@ type TicketDetailState =
 
 async function readTicket(ticketId: string): Promise<TicketDetailState> {
   try {
-    // Codex PR #121 R1 F-PR121-003 (P1) defer: DEFAULT_PROJECT_ID hardcode は
-    // single-project mode current 実装。multi-project は SP-013 multi-agent
-    // foundation 完成後の別 Sprint Pack (SP-012-12 候補) で session 経由
-    // project resolve に置換。
-    const ticket = await getTicket(DEFAULT_PROJECT_ID, ticketId);
+    // SP-012-11.1 BL-TCU-014: Codex PR #121 R1 F-PR121-003 (P1) carry-over fix
+    // session 経由 project resolve (DEFAULT_PROJECT_ID hardcode 解除)
+    const projectId = await getCurrentProjectId();
+    const ticket = await getTicket(projectId, ticketId);
     return { kind: "ok", ticket };
   } catch (error: unknown) {
     if (error instanceof BackendApiError && error.status === 404) {
