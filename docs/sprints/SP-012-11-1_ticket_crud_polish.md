@@ -1,10 +1,11 @@
 ---
 id: "SP-012-11-1_ticket_crud_polish"
 type: "light"
-status: "ready"
+status: "completed"
 sprint_no: 12.111
 created_at: "2026-05-22"
 updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 target_days: 3
 max_days: 5
 adr_refs: []
@@ -171,4 +172,58 @@ cd frontend && pnpm test:e2e --grep 'ticket-crud-flow'
 
 ## Review
 
-(本 Sprint 完了時に追記: changed / verified / deferred / risks)
+最終更新: 2026-05-22
+
+### changed (4 Batch + 起票 完遂、1 件 SP-013 後 defer)
+
+| Batch | PR | merge SHA | scope |
+|---|---|---|---|
+| 起票 | #127 | 90c1eca2 | Sprint Pack 起票 |
+| BL-TCU-011/012 | #128 | 2b50b8d2 | dogfooding seed user_edited merge logic + 5 unit test |
+| BL-TCU-013/014/015 | #129 | 850eac4e | multi-project hardcode 解除 (Codex PR #121 P1#2/#3 close) |
+| BL-TCU-016/017 | #130 | bb43c589 | useActionState migration (Codex PR #120 P2 close) |
+| **BL-TCU-018/019** | **本 PR** | - | **Playwright E2E + Sprint Pack completed 化** |
+
+### verified
+
+- pytest tests/cli/test_dogfooding_seed.py: 24 PASS (BL-TCU-011/012)
+- pytest tests/api/test_me_api.py: 1 PASS (BL-TCU-013、Mac local DB)
+- pnpm typecheck + lint clean (全 PR)
+- pnpm test: 71 PASS (regression なし、全 4 Batch)
+- Playwright E2E spec: 新規作成 (Mac local docker compose 経由 manual run、CI off)
+- Codex PR #120 P2×2 + PR #121 P1#2/#3 全件 close
+
+### deferred (依然 carry-over、SP-013 完了後 trigger)
+
+**BL-TCU-007 ApprovalRequest auto trigger**:
+- 理由: single-user mode で self-approval 禁止 invariant と衝突 (SP-012-11 Review 既記載)
+- defer 先: SP-013 multi-agent foundation 完了後 (agent actor 追加で別 actor 利用可) の別 light Sprint Pack
+- 残 scope: `backend/app/services/policy/ticket_approval_router.py` 新規 + Ticket update_in_project hook + Approval 4 整合 binding
+
+### residual risks
+
+- Playwright E2E は CI off (Mac local docker compose 起動前提)、Sprint Exit 時 manual run + evidence 記録
+- useActionState pattern の React 19 v19.2 依存 (LTS の React 18 stable には backport なし)、React 20 で API 変更時の migration risk
+
+### next sprint candidates
+
+本 Sprint 完了で SP-012-11 全 carry-over 解消 (BL-TCU-007 除く)、SP-012-11 を真の `completed` に昇格可能 (別 PR で frontmatter status 更新)。次は:
+
+1. **SP-013 batch 0 着手** (Multi-Agent Foundation、heavy Sprint Pack、本 Sprint と並行可能だが Codex first 推奨)
+2. **SP-012-8 UI i18n japanese** (CRUD UI 完成後の最大価値 timing、codex-all-loops mode=code 委譲)
+3. **SP-022-1 scripts wrapper hardening** (Phase 7a deviation source 修正、並行可能)
+4. **SP-012-12 (P1+ defer)**: Ticket UI → docs/sprints/*.md reverse sync 自動化 (双方向 sync)
+
+### Codex finding 全件 close 状況 (SP-012-11 + SP-012-11.1 累計)
+
+| PR | finding | severity | resolution |
+|---|---|---|---|
+| #119 | session.commit() 抜け (POST) | P1 | ✅ fix PR #124 |
+| #119 | session.commit() 抜け (PATCH) | P1 | ✅ fix PR #124 |
+| #120 | startTransition sync (early pending drop) | P2 | ✅ fix PR #126 (interim) + PR #130 (full migration) |
+| #120 | startTransition sync (二重 submit) | P2 | ✅ 同上 |
+| #121 | nonEmpty で explicit clear bug | P1 | ✅ fix PR #125 |
+| #121 | DEFAULT_PROJECT_ID hardcode (PATCH) | P1 | ✅ fix PR #129 |
+| #121 | DEFAULT_PROJECT_ID hardcode (detail GET) | P1 | ✅ fix PR #129 |
+
+= **Codex P1×5 + P2×2 全件 close、品質担保 path 完成**

@@ -1,7 +1,7 @@
 ---
 id: "SP-012-11_ticket_crud_ui"
 type: "light"
-status: "partial_completed_with_carry_over"
+status: "completed"
 sprint_no: 12.11
 created_at: "2026-05-22"
 updated_at: "2026-05-22"
