@@ -112,12 +112,12 @@ async function loadResearchDetail(researchTaskId: string): Promise<ResearchDetai
 function ErrorPanel({ error }: { readonly error: unknown }) {
   return (
     <Panel
-      description="The read-only Research detail API did not return a renderable response."
-      title="Research detail load error"
+      description="read-only Research detail API が表示可能な response を返しませんでした。"
+      title="リサーチ詳細読込エラー"
       titleId="research-detail-load-error"
     >
       <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-danger">
-        Failed to load research detail: {error instanceof Error ? error.message : "unknown error"}
+        リサーチ詳細の読込に失敗しました: {error instanceof Error ? error.message : "不明なエラー"}
       </p>
     </Panel>
   );
@@ -146,14 +146,14 @@ export default async function ResearchDetailPage({ params }: ResearchDetailPageP
     <AdminPageShell
       description={
         <>
-          Sprint 10 BL-0120 read-only detail for ResearchTask <code>{id}</code>.
-          Claims, evidence items, evidence_set_hash, and attachment rate are rendered
-          without mutation controls.
+          ResearchTask <code>{id}</code> の read-only detail です。
+          Claim、evidence item、evidence_set_hash、attachment rate を mutation control
+          なしで表示します。
         </>
       }
-      eyebrow="Admin / Research"
-      regionLabel="Research detail"
-      title="Research detail"
+      eyebrow="管理 / リサーチ"
+      regionLabel="リサーチ詳細"
+      title="リサーチ詳細"
     >
       <KeyboardReadinessStrip current="Research" />
 
@@ -162,24 +162,24 @@ export default async function ResearchDetailPage({ params }: ResearchDetailPageP
       ) : (
         <>
           <Panel
-            description="Server-owned project boundary and ResearchTask status. P0 does not expose create, edit, or delete controls."
-            title="Research task"
+            description="Server-owned な project boundary と ResearchTask status です。P0 では create / edit / delete control を表示しません。"
+            title="リサーチ task"
             titleId="research-detail-task"
           >
             <ResearchTaskCard task={detail.task} />
           </Panel>
 
           <Panel
-            description="Server-computed evidence_set_hash and per-research_task evidence attachment source metric. This is not the Sprint 11 final citation_coverage aggregator."
-            title="Evidence metrics"
+            description="Server-computed な evidence_set_hash と per-research_task evidence attachment source metric です。Sprint 11 final citation_coverage aggregator ではありません。"
+            title="証拠 metrics"
             titleId="research-detail-metrics"
           >
             <ResearchMetricSummary task={detail.task} />
           </Panel>
 
           <Panel
-            description="PROV is rendered as a schema-validated summary only. Raw provenance_json is not expanded."
-            title="Claims"
+            description="PROV は schema-validated summary としてのみ表示し、raw provenance_json は展開しません。"
+            title="Claim (主張)"
             titleId="research-detail-claims"
           >
             <ClaimList
@@ -189,8 +189,8 @@ export default async function ResearchDetailPage({ params }: ResearchDetailPageP
           </Panel>
 
           <Panel
-            description="Evidence item rows show locator, relation, and a redacted source link. EvidenceSource query strings and credentials are stripped before rendering."
-            title="Evidence items"
+            description="Evidence item row は locator、relation、redacted source link を表示します。EvidenceSource の query string と credential は表示前に除去します。"
+            title="Evidence item (証拠 item)"
             titleId="research-detail-evidence-items"
           >
             <EvidenceItemList
@@ -200,11 +200,11 @@ export default async function ResearchDetailPage({ params }: ResearchDetailPageP
           </Panel>
 
           <Panel
-            description="SecretBroker values, capability tokens, provider raw payloads, and API keys are not part of this read-only DOM surface."
-            title="Secret boundary"
+            description="SecretBroker value、capability token、provider raw payload、API key は、この read-only DOM surface に含めません。"
+            title="Secret boundary (シークレット境界)"
             titleId="research-detail-secret-boundary"
           >
-            <SecretBoundaryNotice title="Research evidence redaction boundary" />
+            <SecretBoundaryNotice title="Research evidence redaction boundary (リサーチ証拠 redaction 境界)" />
           </Panel>
         </>
       )}

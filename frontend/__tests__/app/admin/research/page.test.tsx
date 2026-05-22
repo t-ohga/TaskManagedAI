@@ -48,14 +48,14 @@ describe("ResearchListPage", () => {
 
     render(await ResearchListPage());
 
-    expect(screen.getByRole("heading", { name: "Research" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "リサーチ" })).toBeVisible();
     expect(screen.getByText("Investigate evidence adapter drift")).toBeVisible();
-    expect(screen.getByText("completed")).toBeVisible();
+    expect(screen.getByText("完了 (completed)")).toBeVisible();
     expect(screen.getByRole("link", { name: "Investigate evidence adapter drift" })).toHaveAttribute(
       "href",
       "/research/00000000-0000-4000-8000-000000041001"
     );
-    expect(screen.getByText("total 1")).toBeVisible();
+    expect(screen.getByText("合計 1")).toBeVisible();
   });
 
   it("renders an empty state", async () => {
@@ -68,7 +68,7 @@ describe("ResearchListPage", () => {
 
     render(await ResearchListPage());
 
-    expect(screen.getByText("No research tasks yet.")).toBeVisible();
-    expect(screen.getByText("total 0")).toBeVisible();
+    expect(screen.getByText("リサーチ task はまだありません。")).toBeVisible();
+    expect(screen.getByText("合計 0")).toBeVisible();
   });
 });

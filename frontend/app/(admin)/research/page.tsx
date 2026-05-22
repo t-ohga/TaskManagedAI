@@ -11,6 +11,7 @@ import {
   type ResearchTask,
   type ResearchTaskListResponse
 } from "@/lib/api/research";
+import { formatResearchStatus } from "@/lib/i18n/research-labels";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,7 @@ function StatusBadge({ status }: { readonly status: ResearchTask["status"] }) {
 
   return (
     <span className={`rounded-md border px-2 py-1 font-mono text-xs font-semibold ${tone}`}>
-      {status}
+      {formatResearchStatus(status)}
     </span>
   );
 }
@@ -41,7 +42,7 @@ function ResearchTaskTable({ tasks }: { readonly tasks: readonly ResearchTask[] 
   if (tasks.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-line bg-white p-4 text-sm text-muted">
-        No research tasks yet.
+        リサーチ task はまだありません。
       </div>
     );
   }
@@ -50,18 +51,18 @@ function ResearchTaskTable({ tasks }: { readonly tasks: readonly ResearchTask[] 
     <div className="overflow-x-auto rounded-md border border-line">
       <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
         <caption className="sr-only">
-          Research tasks with status, title, creation time, and project boundary.
+          状態、タイトル、作成日時、project_id を含むリサーチ task 一覧。
         </caption>
         <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted">
           <tr>
             <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-              status
+              状態 (status)
             </th>
             <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-              title
+              タイトル
             </th>
             <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-              created_at
+              作成日時 (created_at)
             </th>
             <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
               project_id
@@ -100,12 +101,12 @@ function ResearchTaskTable({ tasks }: { readonly tasks: readonly ResearchTask[] 
 function ErrorPanel({ error }: { readonly error: unknown }) {
   return (
     <Panel
-      description="The read-only Research API did not return a renderable response."
-      title="Research load error"
+      description="read-only Research API が表示可能な response を返しませんでした。"
+      title="リサーチ読込エラー"
       titleId="research-load-error"
     >
       <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-danger">
-        Failed to load research tasks: {error instanceof Error ? error.message : "unknown error"}
+        リサーチ task の読込に失敗しました: {error instanceof Error ? error.message : "不明なエラー"}
       </p>
     </Panel>
   );
@@ -128,13 +129,13 @@ export default async function ResearchListPage() {
     <AdminPageShell
       description={
         <>
-          Sprint 10 BL-0120 read-only Research / Claim / Evidence surface for project{" "}
-          <code>{projectId}</code>. Mutation UI remains deferred to P1.
+          Sprint 10 BL-0120 read-only Research / Claim / Evidence surface。対象 project は{" "}
+          <code>{projectId}</code> です。Mutation UI は P1 まで defer しています。
         </>
       }
-      eyebrow="Admin / Research"
-      regionLabel="Research"
-      title="Research"
+      eyebrow="管理 / リサーチ"
+      regionLabel="リサーチ"
+      title="リサーチ"
     >
       <KeyboardReadinessStrip current="Research" />
 
@@ -143,11 +144,11 @@ export default async function ResearchListPage() {
       <Panel
         aside={
           <span className="rounded-md border border-line bg-white px-3 py-2 font-mono text-xs text-muted">
-            total {result.total}
+            合計 {result.total}
           </span>
         }
-        description="Project-scoped GET-only listing. tenant_id, project_id, and actor_id are resolved on the server side."
-        title="Research tasks"
+        description="Project-scoped な GET-only 一覧です。tenant_id、project_id、actor_id は server side で解決します。"
+        title="リサーチ task"
         titleId="research-task-list"
       >
         <ResearchTaskTable tasks={result.items} />
