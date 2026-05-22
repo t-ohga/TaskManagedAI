@@ -1,26 +1,25 @@
 ---
 id: "SP-012_p0_acceptance"
 type: "heavy"
-# F-PR67-001 P1 adopt: P0 core gates (taskhub real I/O / host migration drill /
-# private staging CI/E2E / 実 DB write integration / signed journal CLI 等) が
-# 未完のため `completed` ではなく `partial_completed_with_carry_over`. 詳細は
-# `## Review § Sprint 12 Exit § Deferred (SP-022 / pre-P0.1 引継ぎ)` 参照.
-# 機械可読 status を `completed` にすると P0 Sealed CI guard 解除 / P0.1 着手判断が
-# 誤って unblock されるため、carry-over 明示状態として保持.
-status: "partial_completed_with_carry_over"
+# F-PR67-001 P1 adopt → Phase 8 P0 Exit declaration (PR #103、2026-05-22) で completed 昇格.
+# SP-012 must_ship (taskhub real I/O / 実 DB write integration / signed journal CLI / split-brain
+# second line / approval keyring rotation) は PR #76-#88 で完遂、SP-022 carry-over (T08) は
+# PR #76,77,78,79,90,91 で完遂、Phase 7a Mac single-host 運用立証 (AC-HARD-04 PASS、RTO 4s)
+# 完了 (本 Phase 8 PR で evidence link)、Phase 7b T09 Mac→VPS は post-acceptance (P0 Exit
+# 直接 gate ではない、本 PR で分離訂正反映済 = PR #99/#100/#102).
+status: "completed"
 sprint_no: 12
 created_at: "2026-05-10"
 updated_at: "2026-05-22"
 target_days: 5
 max_days: 7
-# F-PR67-010/013 P2 adopt (PR #67 R4、R3 partial reject を撤回): ADR-00021
-# acceptance 条件 (host migration drill PASS) が master plan で明示、SP-012
-# では実機 drill 未達のため accepted 化不可. R1 で adopt した F-PR67-002 の
-# planned → adr_refs 移動を撤回、planned_adr_refs に restore.
-adr_refs: []
-planned_adr_refs:
-  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-012 batch 7/10 で skeleton 実装着手済、accepted at SP022-T00 (pre-implementation gate、実機 drill verification は SP022-T09 post-acceptance、F-PR67-046 P2 adopt)"
-  - "[ADR-00007](../adr/00007_external_exposure.md) # ADR-00021 同期 acceptance at SP022-T00 (R8/R10 T00 reinterpretation 整合)"
+# F-PR67-010/013 P2 adopt → Phase 8 PR で adr_refs に正式 promotion 反映.
+# ADR-00021 + ADR-00007 = SP022-T00 で accepted (2026-05-19)、本 SP-012 frontmatter
+# completed 化に伴い planned_adr_refs → adr_refs 移動 (P0 Exit declaration 完遂を明示).
+adr_refs:
+  - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP022-T00 accepted 2026-05-19、Phase 7a Mac single-host 運用立証 PASS (本 PR #103 で evidence link)、Phase 7b T09 Mac→VPS は post-acceptance"
+  - "[ADR-00007](../adr/00007_external_exposure.md) # ADR-00021 同期 accepted at SP022-T00 (2026-05-19)、Tailscale 閉域 invariant 維持確認"
+planned_adr_refs: []
 related_sprints:
   - "SP-001_project_foundation"
   - "SP-011_eval_harness"
