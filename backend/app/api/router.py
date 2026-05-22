@@ -11,6 +11,7 @@ from backend.app.api import (
     kpi_rollup,
     p0_acceptance_report,
     research_tasks,
+    tickets,
 )
 
 api_router = APIRouter()
@@ -22,3 +23,4 @@ api_router.include_router(claims.router)
 api_router.include_router(evidence_items.router)
 api_router.include_router(kpi_rollup.router)
 api_router.include_router(p0_acceptance_report.router)
+api_router.include_router(tickets.router)
