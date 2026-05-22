@@ -86,7 +86,6 @@ def test_baseline_document_schema_version_is_1() -> None:
             platform_release="25.5.0",
             python_version="3.12.11",
             machine="arm64",
-            uname_node="test.local",
         ),
     )
     assert doc["schema_version"] == "1"
@@ -138,13 +137,57 @@ def test_baseline_document_includes_anti_gaming_disclaimer() -> None:
 
 
 def test_baseline_document_scope_marker_for_non_mac_host() -> None:
-    """Linux/VPS host は scope=other_host (Mac 単独 light mode の区別)."""
+    """Linux/VPS host は scope=other_host (Mac 単独 light mode の区別).
+
+    Codex PR #89 R1 F-004 fix (P3): scope は platform_system ベースで derive。
+    host_id substring matching は使わない (machine-vps が mac と誤分類されない)。
+    """
     doc = build_kpi_baseline_document(
         "t-ohga-vps",
         rollup_summary=_make_summary(),
         corpus_load_results=_make_corpus_results(),
+        host_metadata=HostMetadata(
+            host_id="t-ohga-vps",
+            platform_system="Linux",
+            platform_release="6.5.0",
+            python_version="3.12.11",
+            machine="x86_64",
+        ),
     )
     assert doc["baseline_metadata"]["scope"] == "other_host"
+
+
+def test_baseline_document_scope_uses_platform_not_host_id_substring() -> None:
+    """Codex PR #89 R1 F-004 fix (P3): host_id に "mac" 含むが Linux platform なら other_host."""
+    doc = build_kpi_baseline_document(
+        "machine-vps",  # "mac" を含むが actual platform は Linux
+        rollup_summary=_make_summary(),
+        corpus_load_results=_make_corpus_results(),
+        host_metadata=HostMetadata(
+            host_id="machine-vps",
+            platform_system="Linux",  # Linux explicit
+            platform_release="6.5.0",
+            python_version="3.12.11",
+            machine="x86_64",
+        ),
+    )
+    # platform=Linux なので scope=other_host (host_id substring "mac" は無関係)
+    assert doc["baseline_metadata"]["scope"] == "other_host"
+
+
+def test_baseline_document_host_metadata_excludes_uname_node() -> None:
+    """Codex PR #89 R1 F-003 fix (P2): uname_node は collect しない (PII 排除)."""
+    doc = build_kpi_baseline_document(
+        "t-ohga-mac",
+        rollup_summary=_make_summary(),
+        corpus_load_results=_make_corpus_results(),
+    )
+    host_md = doc["host_metadata"]
+    # uname_node は schema に含まれない
+    assert "uname_node" not in host_md
+    # その他の non-PII field は含まれる
+    assert "platform_system" in host_md
+    assert "machine" in host_md
 
 
 def test_baseline_document_uses_default_computed_at_when_none(tmp_path: Path) -> None:

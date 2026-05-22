@@ -1,14 +1,13 @@
 {
   "schema_version": "1",
   "host_id": "t-ohga-mac",
-  "computed_at": "2026-05-21T23:48:15.040322Z",
+  "computed_at": "2026-05-22T00:08:56.910023Z",
   "host_metadata": {
     "host_id": "t-ohga-mac",
     "platform_system": "Darwin",
     "platform_release": "25.5.0",
     "python_version": "3.12.11",
-    "machine": "arm64",
-    "uname_node": "tinoMacBook-Pro.local"
+    "machine": "arm64"
   },
   "kpi_rollup": {
     "kpi_count": 5,

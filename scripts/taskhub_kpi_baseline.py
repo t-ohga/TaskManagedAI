@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import platform
-import socket
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -41,18 +40,34 @@ BASELINE_SCHEMA_VERSION: str = "1"
 
 @dataclass(frozen=True, slots=True)
 class HostMetadata:
-    """baseline 文書に embed する host 情報 (forensic 用、PII なし)."""
+    """baseline 文書に embed する host 情報 (forensic 用、PII redact 済).
+
+    Codex PR #89 R1 F-003 fix (P2): `uname_node` (socket.gethostname()) は実機の
+    user-assigned hostname (例: `tinoMacBook-Pro.local`) を含むため、PII レベルの
+    host-identifying metadata。baseline file は git tree に commit される想定なので
+    embed しない方針に変更 (operator は forensic 用に local memo で保持)。
+
+    現在 embed する field (PII なし、機械情報のみ):
+    - host_id: operator 指定 logical name (PII ではない、operator naming convention)
+    - platform_system: Darwin / Linux 等
+    - platform_release: kernel version
+    - python_version: 3.12.x 等
+    - machine: arm64 / x86_64 等
+    """
 
     host_id: str  # operator が指定した logical host name (t-ohga-mac / -vps / -linux)
     platform_system: str  # platform.system() = Darwin / Linux
     platform_release: str  # platform.release() = kernel version
     python_version: str  # sys.version_info ベース
     machine: str  # platform.machine() = arm64 / x86_64
-    uname_node: str  # socket.gethostname() (operator が --host と cross-check)
 
 
 def collect_host_metadata(host_id: str) -> HostMetadata:
-    """host info を inspect モジュールから収集 (no network、no shell exec)."""
+    """host info を inspect モジュールから収集 (no network、no shell exec).
+
+    Codex PR #89 R1 F-003 fix (P2): `uname_node` (socket.gethostname()) は collect
+    しない (PII レベル host-identifying metadata、git tree への commit 想定)。
+    """
     return HostMetadata(
         host_id=host_id,
         platform_system=platform.system(),
@@ -61,7 +76,6 @@ def collect_host_metadata(host_id: str) -> HostMetadata:
             f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         ),
         machine=platform.machine(),
-        uname_node=socket.gethostname(),
     )
 
 
@@ -120,7 +134,6 @@ def build_kpi_baseline_document(
             "platform_release": host_metadata.platform_release,
             "python_version": host_metadata.python_version,
             "machine": host_metadata.machine,
-            "uname_node": host_metadata.uname_node,
         },
         "kpi_rollup": {
             "kpi_count": rollup_summary.kpi_count,
@@ -139,7 +152,11 @@ def build_kpi_baseline_document(
                 "Baseline values reflect corpus fixture data only (no SUT cross-check). "
                 "SUT-cross-check baseline は SP022-T08 batch 5+6 + SP-013 SUT integration 後に取得。"
             ),
-            "scope": "mac_only" if "mac" in host_id.lower() else "other_host",
+            # Codex PR #89 R1 F-004 fix (P3): host_id substring matching では `machine-vps` 等を
+            # 誤分類するため、platform.system() ベースの explicit derivation に変更。
+            "scope": (
+                "mac_only" if host_metadata.platform_system == "Darwin" else "other_host"
+            ),
         },
     }
 
@@ -147,15 +164,38 @@ def build_kpi_baseline_document(
 def write_baseline_to_path(document: dict[str, Any], output_path: Path) -> None:
     """baseline document を JSON file に atomic write (parent dir create + 0o644).
 
+    Codex PR #89 R1 F-002 fix (P2): 並列実行 race condition 回避のため固定 `<output>.tmp`
+    ではなく `tempfile.mkstemp()` で per-run unique temp file を生成。同 parent dir で
+    atomic rename + cleanup on failure。
+
     Anti-Gaming: file content + permission のみ書込、git tree への commit は
     operator 責務 (private_holdout fixture 漏洩防止のため operator が手動 review)。
     """
+    import tempfile
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    # atomic write via tempfile + rename (partial write 防止)
-    tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(document, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp_path.replace(output_path)
-    output_path.chmod(0o644)
+    # per-run unique temp file (mkstemp の prefix/suffix + dir で同 parent 内に作成)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{output_path.name}.",
+        suffix=".tmp",
+        dir=str(output_path.parent),
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        # Write content via fd, then atomic rename
+        import os as _os
+
+        with _os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(document, indent=2, ensure_ascii=False))
+        tmp_path.replace(output_path)
+        output_path.chmod(0o644)
+    except Exception:
+        # cleanup on failure (rename 失敗時の partial temp file 残留防止)
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -185,15 +225,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # 遅延 import (循環依存防止 + test 用 monkey-patch)
+    # Codex PR #89 R1 F-001 fix (P2): direct script execution (`python scripts/taskhub_kpi_baseline.py`)
+    # 時に `sys.path` が `scripts/` 起点になり `from backend...` が ModuleNotFoundError になる
+    # ため、repo root を fallback で prepend してから retry import。
     try:
         from backend.app.services.eval.kpi_rollup_runner import (
             KpiRollupRunnerError,
             run_kpi_rollup,
         )
-    except ModuleNotFoundError as exc:
-        print(f"ERROR: import failed: {exc}", file=sys.stderr)  # noqa: T201
-        return 2
+    except ModuleNotFoundError:
+        _REPO_ROOT = Path(__file__).resolve().parent.parent
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        try:
+            from backend.app.services.eval.kpi_rollup_runner import (  # noqa: E402
+                KpiRollupRunnerError,
+                run_kpi_rollup,
+            )
+        except ModuleNotFoundError as exc:
+            print(f"ERROR: import failed (repo root fallback): {exc}", file=sys.stderr)  # noqa: T201
+            return 2
 
     try:
         rollup_summary, corpus_load_results = run_kpi_rollup()
