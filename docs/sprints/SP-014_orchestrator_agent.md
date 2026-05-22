@@ -10,8 +10,8 @@ max_days: 6
 adr_refs:
   - "[ADR-00014](../adr/00014_multi_agent_orchestration.md) # accepted 2026-05-22 (PR #109)、SP-013 batch 0 完遂で本 Sprint kickoff prerequisite satisfied"
   - "[ADR-00009 update](../adr/00009_action_class_taxonomy.md) # accepted 2026-05-22、policy_profile schema / policy_decisions trace / 14 row seed を batch 0c で実装 (Criteria #4)"
-planned_adr_refs:
-  - "[Tool Registry network ADR (新規 P0.1)](../adr/00021_tool_registry_network_enum.md) # 本 Sprint で起票 + accepted (Criteria #5)"
+  - "[ADR-00030](../adr/00030_tool_registry_network_enum.md) # accepted 2026-05-22、Tool Registry network_access enum + tool_network_policies を batch 0d で実装 (Criteria #5)"
+planned_adr_refs: []
 related_sprints:
   - "SP-013_multi_agent_orchestration"
   - "SP-015_inter_agent_communication"
@@ -32,7 +32,7 @@ kickoff_readiness:
   recommended_execution: "codex-all-loops mode=code 委譲 (heavy Sprint Pack、scope 大、Codex first 実装で品質担保)"
 ---
 
-最終更新: 2026-05-22 (task-01 batch 0c: policy_profile schema / policy_decisions trace / ADR-00009 accepted update 反映)
+最終更新: 2026-05-22 (task-01 batch 0d: Tool Registry network_access enum / tool_network_policies / ADR-00030 accepted update 反映)
 
 ## 目的
 
@@ -156,3 +156,4 @@ uv run alembic check && uv run alembic upgrade head
 - 2026-05-22 task-01 batch 0a: orchestrator lease primitives 完了、PR #145 merged。
 - 2026-05-22 task-01 batch 0b: review_artifacts 4 重防御 完了、PR #146 merged。
 - 2026-05-22 task-01 batch 0c: policy_profile schema / exact 14 seed / policy_decisions trace / ADR-00009 update 完了。`alembic check` は既存 `migrations/env.py target_metadata` debt で継続 defer。
+- 2026-05-22 task-01 batch 0d: Tool Registry network_access enum / tool_network_policies / web_fetch+docs_search deny-only seed / ADR-00030 accepted update 完了。`internet` は enum として保持するが P0 service guard では deny。
