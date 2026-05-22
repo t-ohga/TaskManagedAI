@@ -57,14 +57,16 @@ p0-exit-final-hardening-2026-05-22 plan §9.3.3 で固定した「master plan pa
  
  1. **SP-022 着手** (... 既存 detail ...)
  
- 2. **P0 Exit declaration**: SP-022 Sprint Pack must_ship 表で must_ship=○ の項目全件完了 + Additional P0 Exit Hardening Gate (p0-exit-final-hardening-2026-05-22 plan 経由、PR #95/#96/#97 で 12 latent issues 全件 fix) を満たす. ただし以下 3 件は SP-013〜020 future-sprint 依存のため post-P0.1 carry-over として P0 Exit gate から除外:
+ 2. **P0 Exit declaration**: SP-022 Sprint Pack must_ship 表で must_ship=○ の項目全件完了 + Additional P0 Exit Hardening Gate (p0-exit-final-hardening-2026-05-22 plan 経由、PR #95/#96/#97/#98/#99 で 12 latent issues + Phase 7 scope 訂正) + **Phase 7a Mac single-host 運用立証** (Mac UI smoke + Mac local backup/restore drill = AC-HARD-04 PASS、Mac single-host で完結) を満たす. ただし以下 3 件は SP-013〜020 future-sprint 依存のため post-P0.1 carry-over として P0 Exit gate から除外:
     - SP022-T05 AC-HARD multi-agent fixture: SP-013 skeleton 依存
     - Phase E 16 finding (PE-F-001〜PE-F-016) closure の "実 contract test PASS": SP-013〜016/SP-018/SP-020 contract test 依存. SP-022 must_ship では audit-only gate のみ要求.
     - Phase G PGA-F-009 inter_agent_messages consumed invariant fixture: SP-015 依存
     
-    特に T08 + T09 + p0-exit-final-hardening Additional Hardening Gate が P0.1 unblock 直接 gate.
+    特に T08 + Phase 7a Mac 運用立証 + p0-exit-final-hardening Additional Hardening Gate が P0.1 unblock 直接 gate.
 
-3. **P0.1 unblock**: TASKHUB_P0_1_OPENED=1 + P0 sealed CI guard 解除 + Phase F-0 (ADR-00009 update + DD-02 policy 3 table 同期 migration + artifacts.project_id materialize) 完了 + ADR-00014/00019 accepted promotion + SP-013 (multi-agent orchestration) 着手
+    **重要訂正 (PR #99 で適用)**: 旧記述「実機 host migration drill (Mac→VPS) RTO ≤ 4h PASS」を「**Phase 7a Mac single-host 運用立証 (Mac UI smoke + Mac local backup/restore drill PASS = AC-HARD-04 evidence)**」に変更。Mac→VPS migration drill (T09 = Phase 7b) は **ADR-00021 host-portable deployment post-acceptance verification** として位置付け直し、P0 Exit declaration の **直接 gate ではない** (post-P0.1 or 任意 timing で実施).
+
+3. **P0.1 unblock**: TASKHUB_P0_1_OPENED=1 + P0 sealed CI guard 解除 + Phase F-0 (ADR-00009 update + DD-02 policy 3 table 同期 migration + artifacts.project_id materialize) 完了 + ADR-00014/00019 accepted promotion + Phase 7b T09 Mac→VPS migration drill 実施 (ADR-00021 post-acceptance verification) + SP-013 (multi-agent orchestration) 着手
 ```
 
 ### 1.4 §11 Open Decisions Q6 close (本 plan 完了で resolved)
