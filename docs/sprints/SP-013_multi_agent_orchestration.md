@@ -1,27 +1,34 @@
 ---
 id: "SP-013_multi_agent_orchestration"
 type: "heavy"
-status: "draft"
+status: "ready"
 sprint_no: 13
 created_at: "2026-05-10"
-updated_at: "2026-05-10"
+updated_at: "2026-05-22"
 target_days: 5
 max_days: 7
-adr_refs: []
-planned_adr_refs:
-  - "[ADR-00014](../adr/00014_multi_agent_orchestration.md) # P0.1 Sprint 13 着手時に proposed → accepted (Criteria #4 主、#1/#2/#3 補助)"
-  - "[ADR-00019](../adr/00019_role_taxonomy.md) # 同上 (Criteria #2 + #4)"
+adr_refs:
+  - "[ADR-00014](../adr/00014_multi_agent_orchestration.md) # accepted 2026-05-22 (PR #109)、SP-013 kickoff prerequisite satisfied"
+  - "[ADR-00019](../adr/00019_role_taxonomy.md) # accepted 2026-05-22 (PR #109)、同上"
+planned_adr_refs: []
 related_sprints:
   - "SP-014_orchestrator_agent"
   - "SP-015_inter_agent_communication"
   - "SP-016_ui_cli_parity"
 risks:
   - "PE-F-001 (custom role が standard role_id を再利用)"
-  - "PE-F-007 (Phase F-0 artifacts.project_id migration 完了前の interim defense)"
   - "PE-F-012 (constraint trigger だけで cross-project role reference を防げない可能性)"
+kickoff_readiness:
+  prerequisite_p0_exit: "✅ satisfied (PR #103、2026-05-22)"
+  prerequisite_phase_f0: "✅ satisfied (SP-012-7 PR #106/#107/#108、action_class enum + artifacts.project_id materialize + AC-HARD-03 artifact-domain test)"
+  prerequisite_pe_f007_artifacts_project_id: "✅ satisfied (PR #107 migration 0019_artifacts_project_id apply 済)"
+  prerequisite_adr_00014_accepted: "✅ satisfied (PR #109、2026-05-22)"
+  prerequisite_adr_00019_accepted: "✅ satisfied (PR #109、2026-05-22)"
+  kickoff_blocker: "なし"
+  recommended_execution: "codex-all-loops mode=code 委譲 (heavy Sprint Pack、Claude orchestrator + Codex 実装 + adopt/reject/defer 判定 + 品質ゲート)"
 ---
 
-最終更新: 2026-05-10
+最終更新: 2026-05-22 (kickoff readiness attestation、prerequisite 全件 satisfied、draft → ready 昇格)
 
 ## 目的
 
