@@ -66,17 +66,17 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, cast
 
 # Codex PR #82 R6 fix (P1×2): rfc8785 0.1.4 (trail-of-bits) を使用して ECMAScript
 # Number.prototype.toString を含む RFC 8785 strict canonicalization を実装。
 # NFC normalization は rfc8785 lib に含まれないため、本 module で wrapper 層 (NFC + collision
 # detection) を維持する。
-import rfc8785  # type: ignore[import-not-found]
+import rfc8785
 
 # Ed25519 dependencies are validated at import-time via taskhub_signed_approval
-from cryptography.exceptions import InvalidSignature  # type: ignore[import-not-found]
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # type: ignore[import-not-found]
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
@@ -1061,7 +1061,8 @@ def _find_valid_journal_tail_entry(
                         continue  # forged signature — skip
                 except Exception:  # noqa: BLE001, S112 — fail-soft skip for verifier exceptions
                     continue
-                return candidate
+                # Cast for mypy: json.loads returns Any, but candidate is dict[str, Any] (verified above)
+                return cast("dict[str, Any]", candidate)
             if tail_size >= stat.st_size:
                 break  # already read the whole file, no valid entry exists
         return None
@@ -1334,4 +1335,4 @@ def read_marker_doc(marker_path: Path) -> dict[str, Any]:
         raw = _read_all(fd, _MARKER_MAX_BYTES)
     finally:
         os.close(fd)
-    return json.loads(raw)
+    return cast("dict[str, Any]", json.loads(raw))
