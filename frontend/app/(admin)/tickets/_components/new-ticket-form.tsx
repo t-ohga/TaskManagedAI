@@ -12,24 +12,30 @@ export function NewTicketForm() {
   const [isPending, startTransition] = useTransition();
 
   function submit(formData: FormData): void {
+    // Codex PR #120 R1 F-PR120-001/002 (P2) fix: startTransition callback を
+    // async 化し、`await` で完了まで pending 状態を保持。これにより:
+    // - isPending が POST resolve まで active (二重 submit 防止)
+    // - fields は backend 成功まで reset されない (error 時 user の入力保持)
+    //
+    // 旧実装は `() => { void promise.then(...) }` (sync callback + fire-and-forget) で
+    // startTransition は callback return 直後に終了 → pending flag が POST 完了前に drop。
     setResult({ kind: "idle" });
-    startTransition(() => {
-      void createTicketAction({ kind: "idle" }, formData)
-        .then((nextState) => {
-          setResult(nextState);
-          if (nextState.kind === "ok") {
-            router.refresh();
-            // 成功後 form 閉じる
-            setIsOpen(false);
-          }
-        })
-        .catch((error: unknown) => {
-          setResult({
-            kind: "error",
-            message:
-              error instanceof Error ? error.message : "ticket creation failed"
-          });
+    startTransition(async () => {
+      try {
+        const nextState = await createTicketAction({ kind: "idle" }, formData);
+        setResult(nextState);
+        if (nextState.kind === "ok") {
+          router.refresh();
+          // 成功後 form 閉じる
+          setIsOpen(false);
+        }
+      } catch (error: unknown) {
+        setResult({
+          kind: "error",
+          message:
+            error instanceof Error ? error.message : "ticket creation failed"
         });
+      }
     });
   }
 

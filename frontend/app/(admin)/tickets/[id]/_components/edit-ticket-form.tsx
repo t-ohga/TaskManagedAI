@@ -17,22 +17,24 @@ export function EditTicketForm({ ticket }: EditTicketFormProps) {
   const [isPending, startTransition] = useTransition();
 
   function submit(formData: FormData): void {
+    // Codex PR #120 R1 F-PR120-001/002 (P2) fix pattern を pre-emptive apply:
+    // startTransition callback を async 化し、await 完了まで isPending 保持。
+    // 二重 submit 防止 + error 時 user 入力保持。
     setResult({ kind: "idle" });
-    startTransition(() => {
-      void updateTicketAction({ kind: "idle" }, formData)
-        .then((nextState) => {
-          setResult(nextState);
-          if (nextState.kind === "ok") {
-            router.refresh();
-          }
-        })
-        .catch((error: unknown) => {
-          setResult({
-            kind: "error",
-            message:
-              error instanceof Error ? error.message : "ticket update failed"
-          });
+    startTransition(async () => {
+      try {
+        const nextState = await updateTicketAction({ kind: "idle" }, formData);
+        setResult(nextState);
+        if (nextState.kind === "ok") {
+          router.refresh();
+        }
+      } catch (error: unknown) {
+        setResult({
+          kind: "error",
+          message:
+            error instanceof Error ? error.message : "ticket update failed"
         });
+      }
     });
   }
 
