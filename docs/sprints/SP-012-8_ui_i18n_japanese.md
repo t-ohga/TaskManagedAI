@@ -5,6 +5,7 @@ status: "completed"
 sprint_no: 12.8
 created_at: "2026-05-22"
 updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 target_days: 2
 max_days: 4
 adr_refs: []

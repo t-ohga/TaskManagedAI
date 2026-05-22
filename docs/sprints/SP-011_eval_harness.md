@@ -5,6 +5,7 @@ status: "completed"
 sprint_no: 11
 created_at: "2026-05-13"
 updated_at: "2026-05-17"
+completed_at: "2026-05-17"
 target_days: 5.6
 max_days: 10
 adr_refs:
@@ -13,8 +14,8 @@ adr_refs:
   - "[ADR-00004](../adr/00004_agentrun_state_machine.md) # accepted、event_type 拡張で update"
   - "[ADR-00006](../adr/00006_secrets_management.md) # accepted、SecretBroker allowed_operations 拡張"
   - "[ADR-00009](../adr/00009_action_class_taxonomy.md) # accepted、repo.push / repo.pr_open enforcement"
-planned_adr_refs:
-  - "[ADR-00011](../adr/00011_github_app_permission_matrix.md) # Sprint 11 で 7/8 blocker 解消 review (frontmatter proposed 維持)、Sprint 11.5 BL-Permission-CLI 完了後に accepted 昇格 (F-R1-004 adopt)"
+  - "[ADR-00011](../adr/00011_github_app_permission_matrix.md) # accepted after Sprint 11.5 BL-Permission-CLI completion (F-R1-004 adopt)"
+planned_adr_refs: []
 related_sprints:
   - "SP-007_runner_sandbox # carry-over BL-0079a/0080a/0081a"
   - "SP-008_github_app_repoproxy # carry-over 7 BL"

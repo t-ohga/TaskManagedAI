@@ -7,12 +7,12 @@ created_at: "2026-05-07"
 updated_at: "2026-05-07"
 target_days: 4.7
 max_days: 6
-adr_refs: []  # Sprint 0 着手と並行で proposed 状態として作成し、accepted 後に下記 planned_adr_refs から昇格させる
-planned_adr_refs:
+adr_refs:
   - "[ADR-00001](../adr/00001_auth_rbac.md) # 認証方式 / dev login Cookie + secret token (Sprint 0-1 で proposed → accepted)"
   - "[ADR-00006](../adr/00006_secrets_management.md) # Secrets 管理方式 / SOPS + age + SecretBroker / atomic claim redeem (Sprint 0 で proposed → Sprint 4 実装前に accepted)"
   - "[ADR-00007](../adr/00007_external_exposure.md) # 外部公開設定 / Tailscale Serve + Funnel 不使用 + tag:taskhub-ci grants (Sprint 0 で proposed → accepted)"
   - "[ADR-00010](../adr/00010_provider_change.md) # Provider Compliance Matrix v2 の運用と更新 / 機械判定 enum (Sprint 0 で proposed → Sprint 5 実装前に accepted)"
+planned_adr_refs: []
 related_sprints:
   - "SP-001_project_foundation # Sprint 1 / Project Foundation"
 risks:

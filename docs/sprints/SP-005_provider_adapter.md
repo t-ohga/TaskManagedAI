@@ -5,6 +5,7 @@ status: "completed"
 sprint_no: 5
 created_at: "2026-05-08"
 updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 # F-PR100-R1-002 audit fix (PR #101): frontmatter drift 訂正、Provider Adapter foundation +
 # Compliance Gate v2 + 4 adapter + AC-HARD-01/02/AC-KPI-05 fixture 完成 (master plan §1.1).
 # 本 訂正 PR で frontmatter status を draft → completed に同期更新.
@@ -286,4 +287,3 @@ Codex multi-round adversarial review pattern (Sprint 1-4 から継続):
 - `docs/基本設計/03_AIオーケストレーション設計.md §13.1` PolicyDecision must-precede (`provider_call` action 実行前に `policy_decisions` row を outbox 経由で先行記録)
 - `docs/基本設計/03_AIオーケストレーション設計.md §13.2` BudgetGuard pre-spend gate (max token / max cost / provider call 前 estimated cost check)
 - `docs/adr/00025_autonomy_policy_profiles.md` (proposed) §不変条件 #1 `provider_call` は全 level (L0-L3) で human approval 必須
-

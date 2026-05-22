@@ -5,6 +5,7 @@ status: "completed"
 sprint_no: 3
 created_at: "2026-05-08"
 updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 # F-PR100-R1-002 audit fix (PR #101): frontmatter drift 訂正、policy / approval / AC-HARD-01 / AC-KPI-03
 # fixture skeleton 完成、SP-010-012 で本格実装 (master plan §1.1 完了 Sprint).
 # 本 訂正 PR で frontmatter status を draft → completed に同期更新.
@@ -333,4 +334,3 @@ Codex multi-round adversarial review pattern (Sprint 1/2 から継続):
 - `docs/基本設計/04_セキュリティ_権限_監査設計.md §13.3` Auto-allow ≠ approval row (effect=allow path は approval_requests row 作らない、audit metadata で applied_level 記録)
 - `docs/adr/00025_autonomy_policy_profiles.md` (proposed) autonomy L0-L3 が approval row に与える影響 (L1-L3 で auto-allow path 利用時、approval_requests 不作成 + audit-only path)
 - 本 Pack で実装済の `approval_requests.decided_by_actor_id` human-only DB CHECK は ADR-00025 §不変条件 #2 と整合
-

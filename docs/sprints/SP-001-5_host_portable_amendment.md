@@ -5,21 +5,20 @@ status: "completed"
 sprint_no: 1.5
 created_at: "2026-05-10"
 updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 # F-PR100-R1-002 audit fix (PR #101): frontmatter drift 訂正、host-portable amendment 内容は
 # ADR-00021 + ADR-00007 で確定 (SP022-T00 で accepted 2026-05-19)、本 SP-001-5 自体は
 # SP-022 への carry forward 完了。本 訂正 PR で proposed → completed に同期更新.
 target_days: 2
 max_days: 3
 # F-PR67-010/011/013 P2 adopt (PR #67 R4): ADR-00021 acceptance 条件
-# (host migration drill PASS) が master plan で明示、SP-012 では実機 drill
-# 未達のため accepted 化不可. R3 で adopt した「SP-012 で accepted 化済 + 
-# adr_refs 移動」を撤回、planned_adr_refs に restore. accepted 化 timestamp
-# (旧 09:10:00Z は誤、両 ADR 側 00:30:00Z に back-date 後さらに撤回) は ADR
-# 側 acceptance_history で記録.
-adr_refs: []
-planned_adr_refs:
+# (host migration drill PASS) は SP022-T00 design accepted + SP022-T09
+# post-acceptance verification に再解釈済み。2026-05-22 drift fix で
+# accepted 済み ADR-00021 / ADR-00007 を adr_refs に再昇格。
+adr_refs:
   - "[ADR-00021](../adr/00021_host_portable_deployment.md) # SP-012 で skeleton 実装着手済、accepted at SP022-T00 (pre-implementation gate、Criteria #2/#6/#7/#8、F-PR67-046 P2 adopt)"
   - "[ADR-00007](../adr/00007_external_exposure.md) # host-portable invariant、ADR-00021 同期 accepted at SP022-T00 (R8/R10 timing 整合)"
+planned_adr_refs: []
 related_sprints:
   - "SP-001_project_foundation (既完了、本 SP は amendment)"
   - "SP-012_p0_acceptance"

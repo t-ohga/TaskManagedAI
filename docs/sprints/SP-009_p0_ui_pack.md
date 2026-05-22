@@ -12,9 +12,9 @@ adr_refs:
   - "[ADR-00001](../adr/00001_auth_rbac.md) # accepted、dev login / actor binding"
   - "[ADR-00004](../adr/00004_agentrun_state_machine.md) # accepted、AgentRun 16 状態 + blocked_reason 3 種、UI で status / reason を分離表示"
   - "[ADR-00009](../adr/00009_action_class_taxonomy.md) # accepted、action_class 7 種、Approval UI で表示"
-  - "[ADR-00014](../adr/00014_multi_agent_orchestration.md) # proposed (P0.1 で accepted 化予定)、10 role + 4 面 UI 参照 (Symphony cross-reference 含む)"
-planned_adr_refs:
-  - "[ADR-00003](../adr/00003_api_contract.md) # ファイル未起票。AI Runs timeline / BL-0094 / BL-0092 Plan Mode Edit API 契約は実装前 proposed 起票が必要 (Criteria #3 API/event schema)"
+  - "[ADR-00014](../adr/00014_multi_agent_orchestration.md) # accepted 2026-05-22、10 role + 4 面 UI 参照 (Symphony cross-reference 含む)"
+  - "[ADR-00003](../adr/00003_api_contract.md) # accepted、AI Runs timeline / BL-0094 / BL-0092 Plan Mode Edit API 契約 (Criteria #3 API/event schema)"
+planned_adr_refs: []
 related_sprints:
   - "SP-005-5_output_validator # 実在"
   - "SP-006_cli_artifact # 実在"

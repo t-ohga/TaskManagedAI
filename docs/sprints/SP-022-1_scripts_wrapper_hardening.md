@@ -5,11 +5,12 @@ status: "completed"
 sprint_no: 22.1
 created_at: "2026-05-22"
 updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 target_days: 2
 max_days: 4
-adr_refs: []
-planned_adr_refs:
+adr_refs:
   - "[ADR-00021](../adr/00021_host_portable_deployment.md) # 既 accepted (SP022-T00 2026-05-19)、本 Sprint で scripts wrapper hardening + SOP 整合"
+planned_adr_refs: []
 related_sprints:
   - "SP-022_framework_intake_hardening"  # 補強 (post-Phase 7a deviation source fix)
   - "SP-012-7_phase_f_0_prerequisite"    # 並行進行可
