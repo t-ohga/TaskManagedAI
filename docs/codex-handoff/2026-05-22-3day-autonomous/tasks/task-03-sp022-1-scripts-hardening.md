@@ -1,6 +1,8 @@
 # task-03: SP-022-1 — scripts hardening + Layer C SOP polish
 
-**優先**: P1、**計画必須**: 推奨、**codex-all-loops mode**: code 推奨、**想定 effort**: 0.7-1 day
+**優先**: P1、**計画必須**: 推奨、**self-review**: Plan 1 round + Impl 1 round 推奨 (§3 Self-Review Protocol)、**想定 effort**: 0.7-1 day
+
+> `codex-all-loops` は Claude 専用 skill (`00-codex-behavior-guide.md` §3.0)。Codex は self-review で同等観点を確保。
 
 ## 1. 目的
 
@@ -31,10 +33,7 @@ bash scripts/worktree_setup.sh
 
 ## 3. 計画 phase (推奨、軽い)
 
-```bash
-codex-plan-review docs/sprints/SP-022-1_scripts_hardening.md
-# R1 minimum 採否判定後着手
-```
+**Self-Plan-Review (§3.1) Round 1 のみ**: 構造論点列挙 + 採否判定後着手 (敵対視点 Round 2 は scope 内 adversarial 観点少なめのため省略可)
 
 ## 4. 実装 phase (deviation 7 件 + Layer C runbook)
 

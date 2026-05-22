@@ -1,6 +1,8 @@
 # task-01: SP-014 batch 0 — orchestrator agent core
 
-**優先**: P0、**計画必須**: 必須 (heavy)、**codex-all-loops mode**: code 必須 + mode=plan 先行、**想定 effort**: 1.5-2 day
+**優先**: P0、**計画必須**: 必須 (heavy)、**self-review**: Plan 2 round + Impl 1 round 必須 (§3 Self-Review Protocol)、**想定 effort**: 1.5-2 day
+
+> **重要**: `codex-all-loops` は Claude 専用 skill であり Codex 側からは呼べない。Codex は **§3 Self-Review Protocol** (`00-codex-behavior-guide.md` §3) に従い、自身の 1 session 内で plan-review + impl + adversarial-review を直列に self-execute する。
 
 ## 1. 目的
 
@@ -43,19 +45,21 @@ export TASKMANAGEDAI_DATABASE_URL_TEST='postgresql+asyncpg://taskmanagedai:taskm
 export TASKMANAGEDAI_RUN_DB_TESTS=1
 ```
 
-## 3. 計画 phase (必須)
+## 3. 計画 phase (必須、§3.1 Self-Plan-Review)
 
-```bash
-codex-all-loops --target docs/sprints/SP-014_orchestrator_agent.md \
-  --mode=plan \
-  --max-rounds=6 \
-  --clean-criteria=critical_zero
-```
+`00-codex-behavior-guide.md` §3.1 Self-Plan-Review の手順に従う:
 
-Phase 1 (review-loop): 構造論点 + SP-013 batch 0 と整合 + invariant 矛盾検出
-Phase 2 (adversarial-loop): 敵対視点 (lease race condition / Tier 2 escape / cascade)
+**Round 1 (構造 review)**: docs/sprints/SP-014_orchestrator_agent.md + 関連 ADR + rules を Read、構造論点 (抜け漏れ / 整合性 / 曖昧さ / 依存 / 5+ source enum / cascade pattern リスク) を findings.md に列挙。
 
-**Readiness Gate READY 達成後** に batch 0a 実装着手。BLOCKED は `STOPPED.md` 起票して停止。
+**Round 2 (敵対視点)**: SP-014 固有の敵対観点で深掘り:
+- lease race condition (orchestrator が 2 instance 同時 active になる scenario)
+- Tier 2 escape (agent decider が approval_requests に潜り込む経路)
+- cascade pattern (policy_profile 14 rows seed の 1 行追加で別 invariant 違反)
+- AgentRun status 拡張 (16 + 9 = 25 状態の transition 漏れ)
+- SecretBroker multi-agent 6 negative case の reason_code 5+ source 整合
+- event_type 22→31 拡張で既存 audit ledger との互換性
+
+**Readiness Gate (Codex 自己判定)**: 採否判定 (adopt/reject/defer) を実施し plan file に反映、残存 CRITICAL=0/HIGH≤2 で `READY`、それ以外は `STOPPED.md` 起票。
 
 ### 3.1 計画 phase 確認 checklist
 
@@ -74,13 +78,11 @@ Phase 2 (adversarial-loop): 敵対視点 (lease race condition / Tier 2 escape /
 
 **scope**: backend/app/services/orchestrator/ 新規 (約 5-8 file)
 
-```bash
-codex-all-loops --mode=code \
-  --impl-target backend/app/services/orchestrator \
-  --impl-files "orchestrator.py,lease_manager.py,dispatcher.py,kill_switch.py,progress_lease.py" \
-  --max-rounds=8 \
-  --clean-criteria=critical_zero
-```
+**Self-Impl-Review (§3.2)**:
+- 実装 target: `backend/app/services/orchestrator` (files: `orchestrator.py,lease_manager.py,dispatcher.py,kill_switch.py,progress_lease.py`)
+- 実装後 Self-Adversarial-Review 1 round (§3.2 Step 2、invariant 観点全件 check + boundary edge case + regression test)
+- Readiness Gate: 残存 CRITICAL=0 で PR 起票可
+- local verify (§3.2 Step 4): ruff + mypy + pytest 該当 dir clean
 
 key invariant:
 - **lease atomic claim**: SecretBroker と同等 pattern (UPDATE WHERE tenant_id=:t AND id=:r AND lease_token=:old_token AND lease_expires_at > now() RETURNING ...、0 rows = deny)
@@ -92,12 +94,11 @@ key invariant:
 
 **scope**: migration + backend model + service guard + Pydantic + test
 
-```bash
-codex-all-loops --mode=code \
-  --impl-target backend/app/db/models \
-  --impl-files "review_artifact.py" \
-  --max-rounds=6
-```
+**Self-Impl-Review (§3.2)**:
+- 実装 target: `backend/app/db/models` (files: `review_artifact.py`)
+- 実装後 Self-Adversarial-Review 1 round (§3.2 Step 2、invariant 観点全件 check + boundary edge case + regression test)
+- Readiness Gate: 残存 CRITICAL=0 で PR 起票可
+- local verify (§3.2 Step 4): ruff + mypy + pytest 該当 dir clean
 
 4 重防御 enforcement:
 1. **DB CHECK constraint**: `ck_review_artifact_action_class IN ('task_write', 'repo_write', 'pr_open', 'secret_access')`
@@ -109,12 +110,11 @@ codex-all-loops --mode=code \
 
 **scope**: migration (policy_profile + policy_profile_action_effects table 追加) + seed (14 rows exact) + ADR-00009 update accepted
 
-```bash
-codex-all-loops --mode=code \
-  --impl-target migrations/versions \
-  --impl-files "00NN_p0_1_policy_profile.py" \
-  --max-rounds=6
-```
+**Self-Impl-Review (§3.2)**:
+- 実装 target: `migrations/versions` (files: `00NN_p0_1_policy_profile.py`)
+- 実装後 Self-Adversarial-Review 1 round (§3.2 Step 2、invariant 観点全件 check + boundary edge case + regression test)
+- Readiness Gate: 残存 CRITICAL=0 で PR 起票可
+- local verify (§3.2 Step 4): ruff + mypy + pytest 該当 dir clean
 
 14 rows exact seed:
 - profile=default × 7 action_class (task_write / repo_write / pr_open / secret_access / merge / deploy / read_only) = 7 rows
@@ -130,12 +130,11 @@ ADR-00009 update **proposed → accepted 昇格**:
 
 **scope**: 新規 ADR 起票 + accepted promotion + migration + 既存 tool_registry table の network_access enum 化
 
-```bash
-codex-all-loops --mode=code \
-  --impl-target backend/app/services/tool_registry \
-  --impl-files "network_policy.py" \
-  --max-rounds=6
-```
+**Self-Impl-Review (§3.2)**:
+- 実装 target: `backend/app/services/tool_registry` (files: `network_policy.py`)
+- 実装後 Self-Adversarial-Review 1 round (§3.2 Step 2、invariant 観点全件 check + boundary edge case + regression test)
+- Readiness Gate: 残存 CRITICAL=0 で PR 起票可
+- local verify (§3.2 Step 4): ruff + mypy + pytest 該当 dir clean
 
 network_access enum:
 - `none` (P0 default、web_fetch/docs_search 含む)
@@ -151,12 +150,11 @@ network_access enum:
 
 **scope**: backend/app/services/remote_agent_gateway/ 新規 stub
 
-```bash
-codex-all-loops --mode=code \
-  --impl-target backend/app/services/remote_agent_gateway \
-  --impl-files "gateway_stub.py" \
-  --max-rounds=4
-```
+**Self-Impl-Review (§3.2)**:
+- 実装 target: `backend/app/services/remote_agent_gateway` (files: `gateway_stub.py`)
+- 実装後 Self-Adversarial-Review 1 round (§3.2 Step 2、invariant 観点全件 check + boundary edge case + regression test)
+- Readiness Gate: 残存 CRITICAL=0 で PR 起票可
+- local verify (§3.2 Step 4): ruff + mypy + pytest 該当 dir clean
 
 P0.1 stub:
 - 全 request を `remote_agent_dispatch_denied` audit_event で deny
@@ -167,12 +165,11 @@ P0.1 stub:
 
 **scope**: metrics query + SecretBroker test + agent_run_events.event_type 拡張
 
-```bash
-codex-all-loops --mode=code \
-  --impl-target backend/app/services/metrics \
-  --impl-files "orchestrator_kpi_rollup.py" \
-  --max-rounds=6
-```
+**Self-Impl-Review (§3.2)**:
+- 実装 target: `backend/app/services/metrics` (files: `orchestrator_kpi_rollup.py`)
+- 実装後 Self-Adversarial-Review 1 round (§3.2 Step 2、invariant 観点全件 check + boundary edge case + regression test)
+- Readiness Gate: 残存 CRITICAL=0 で PR 起票可
+- local verify (§3.2 Step 4): ruff + mypy + pytest 該当 dir clean
 
 key invariant:
 - **recursive CTE**: parent_run_id traverse で orchestrator + child agents の totaled metric (time_to_merge / cost_per_completed_task / approval_wait_ms)
@@ -243,9 +240,9 @@ gh pr create --base main --head feat/sp014-batch-0a-orchestrator-lease-manager-2
 ## Summary
 SP-014 batch 0a: orchestrator service module + lease_manager / heartbeat / failover / kill_switch / progress_lease 実装
 
-## codex-all-loops verdict
-- mode=plan Phase 1+2: R{N} clean、{M} findings 100% adopt、Readiness Gate READY
-- mode=code Phase 1-3: R{N} clean、{M} findings 100% adopt
+## self-review verdict (§3 Self-Review Protocol)
+- Self-Plan-Review Round 1+2: R{N} clean、{M} findings 100% adopt、Readiness Gate READY
+- Self-Impl-Review: R{N} clean、{M} findings 100% adopt
 
 ## invariant 遵守
 - lease atomic claim: ✅ UPDATE WHERE + RETURNING、0 rows = deny audit

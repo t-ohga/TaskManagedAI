@@ -4,12 +4,12 @@
 
 ## 1. 優先順位 (P0 / P1 / P2)
 
-| 優先 | task | sprint | scope | 計画必須 | codex-all-loops | 想定 effort |
+| 優先 | task | sprint | scope | 計画必須 | self-review (§3) | 想定 effort |
 |---|---|---|---|---|---|---|
-| **P0** | task-01 | SP-014 batch 0 | orchestrator agent core (service + lease + 4 重防御 + policy_profile) | **必須** | mode=code 必須 | 1.5-2 day |
-| **P0** | task-02 | SP-012-8 batch 1-7 | UI 日本語化 (navigation + 7 page) | **必須** | mode=code 必須 | 1-1.5 day |
-| **P1** | task-03 | SP-022-1 | scripts hardening + Layer C SOP polish | 推奨 | mode=code 推奨 | 0.7-1 day |
-| **P2** | task-04 | SP-012-9 残 wiring | Approvals + Agent Runs + Audit + Settings page wiring | 推奨 | mode=code 推奨 | 0.5-1 day |
+| **P0** | task-01 | SP-014 batch 0 | orchestrator agent core (service + lease + 4 重防御 + policy_profile) | **必須** | Plan 2 round + Impl 1 round 必須 | 1.5-2 day |
+| **P0** | task-02 | SP-012-8 batch 1-7 | UI 日本語化 (navigation + 7 page) | **必須** | Plan 1-2 round + Impl 1 round 必須 | 1-1.5 day |
+| **P1** | task-03 | SP-022-1 | scripts hardening + Layer C SOP polish | 推奨 | Plan 1 round + Impl 1 round 推奨 | 0.7-1 day |
+| **P2** | task-04 | SP-012-9 残 wiring | Approvals + Agent Runs + Audit + Settings page wiring | 推奨 | Plan 1 round + Impl 1 round 推奨 | 0.5-1 day |
 
 合計想定: 3.7-5.5 day = 3 日間 (実労 24h × 3 = 72h) で完遂可能。
 
@@ -58,19 +58,22 @@
 
 ```
 Day 1 (2026-05-23 土):
-  09:00-12:00  task-01 計画 phase (codex-all-loops mode=plan、READY 達成)
+  09:00-12:00  task-01 Self-Plan-Review 2 round (§3.1、CRITICAL=0/HIGH≤2 達成)
   13:00-21:00  task-01 batch 0a 実装 (SP014-T01: orchestrator service + lease_manager)
+                + 各 batch 末で Self-Impl-Review (§3.2 Step 2-3)
                 + 並行: task-03 (scripts hardening、独立 file 多い)
 
 Day 2 (2026-05-24 日):
   09:00-21:00  task-01 batch 0b-0e 実装 (T02-T09 順次、batch ごと PR merge)
-                + 並行: task-02 計画 phase (codex-all-loops mode=plan、navigation + 1-2 page)
+                + 並行: task-02 Self-Plan-Review (navigation + 1-2 page、翻訳 glossary 確定)
 
 Day 3 (2026-05-25 月):
   09:00-15:00  task-02 batch 1-7 実装 (i18n、全 page)
   15:00-21:00  task-04 残 wiring (Approvals / AgentRuns / Audit / Settings)
                 + 完了報告 + handoff memory 起票
 ```
+
+各 phase で **§3 Self-Review Protocol** を遵守 (`codex-all-loops` は Claude 専用 skill のため Codex 側で呼べない)。
 
 ### 3.3 衝突発生時の対処
 
@@ -80,15 +83,15 @@ Day 3 (2026-05-25 月):
 
 ## 4. 計画必須判定 (`00-codex-behavior-guide.md` §2)
 
-### 4.1 計画必須 (codex-all-loops mode=plan READY 達成後着手)
+### 4.1 計画必須 (§3.1 Self-Plan-Review CRITICAL=0/HIGH≤2 達成後着手)
 
-- **task-01 (SP-014)**: heavy Sprint Pack + 新規 ADR (ADR-00009 update + Tool Registry network ADR) + 新規 migration (00NN_p0_1_orchestrator.py + 00NN_p0_1_policy_profile.py) + CRITICAL invariant 直結 (lease atomic claim + Tier 2 human-only invariant + AgentRun status 拡張)
-- **task-02 (SP-012-8)**: 25 frontend file 横断、deep translation 規律必要 (existing pattern との一貫性、accessible-name 維持)
+- **task-01 (SP-014)**: heavy Sprint Pack + 新規 ADR (ADR-00009 update + Tool Registry network ADR) + 新規 migration (00NN_p0_1_orchestrator.py + 00NN_p0_1_policy_profile.py) + CRITICAL invariant 直結 (lease atomic claim + Tier 2 human-only invariant + AgentRun status 拡張) → **Round 2 (敵対視点) 必須**
+- **task-02 (SP-012-8)**: 25 frontend file 横断、deep translation 規律必要 (existing pattern との一貫性、accessible-name 維持) → **Round 1 (構造) + glossary 確定後 Round 2 (敵対視点)**
 
-### 4.2 計画推奨 (短時間 review-loop で結構)
+### 4.2 計画推奨 (短時間 Self-Plan-Review で着手可能)
 
-- **task-03 (SP-022-1)**: scope 中、deviation 7 件で散らばっているが各々独立、軽い plan-review (3 round) で着手可能
-- **task-04 (SP-012-9 残 wiring)**: 既存 pattern (tickets page) 流用、軽い plan-review (1-2 round) で着手可能
+- **task-03 (SP-022-1)**: scope 中、deviation 7 件で散らばっているが各々独立、§3.1 Round 1 (構造) のみで着手可能 (Round 2 敵対視点は scope 内変更で発見される adversarial 観点が少ない)
+- **task-04 (SP-012-9 残 wiring)**: 既存 pattern (tickets page) 流用、§3.1 Round 1 (構造) のみで着手可能
 
 ### 4.3 計画不要
 

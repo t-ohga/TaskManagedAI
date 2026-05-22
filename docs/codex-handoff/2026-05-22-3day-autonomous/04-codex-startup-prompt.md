@@ -1,6 +1,8 @@
 # Codex Startup Prompt (Codex CLI に渡す initial prompt)
 
-本 file は Codex を **3 日間 autonomous で起動する際の initial prompt template**。`codex exec` / `codex-task` / `codex-all-loops` 各経路で本 prompt を copy-paste して使う。
+本 file は Codex を **3 日間 autonomous で起動する際の initial prompt template**。`codex exec` / `codex-task` 等で本 prompt を copy-paste して使う。
+
+> **重要**: `codex-all-loops` は Claude 専用 skill (`~/.claude/skills/codex-all-loops/SKILL.md`、Codex CLI から呼べない)。Codex 側では **§3 Self-Review Protocol** で同等観点を確保 (`00-codex-behavior-guide.md` §3.0 / §3.1 / §3.2)。
 
 ## 1. Single-task 起動 prompt (各 task 個別)
 
@@ -17,7 +19,7 @@
 5. 関連 ADR (00014 + 00019 accepted) + rules (agentrun-state-machine.md / secretbroker-boundary.md / server-owned-boundary.md / cross-source-enum-integrity.md)
 
 【計画必須】
-- 実装前に codex-all-loops --mode=plan で計画 review、Readiness Gate READY 達成後着手
+- 実装前に §3.1 Self-Plan-Review (Round 1 構造 + Round 2 敵対視点) で計画 review、Readiness Gate CRITICAL=0/HIGH≤2 達成後着手
 - BLOCKED で停止したら STOPPED.md を起票して Claude に通知
 
 【実装方針】
@@ -54,7 +56,7 @@
 5. frontend/app/(admin)/tickets/page.tsx (本格実装済、i18n 適用後 pattern として参考)
 
 【計画必須】
-- codex-all-loops --mode=plan で navigation + 1-2 page の翻訳 glossary 確定後着手
+- §3.1 Self-Plan-Review で navigation + 1-2 page の翻訳 glossary 確定後着手
 - 技術用語 untranslated 維持 (payload_data_class / role_id / tenant_id 等)
 - accessible-name 維持 (aria-label + visible text 両方翻訳)
 

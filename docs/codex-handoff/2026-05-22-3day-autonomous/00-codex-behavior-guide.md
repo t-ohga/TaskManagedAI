@@ -45,7 +45,7 @@ Mac local stack は **継続起動中** (Claude が PR #100-#141 で構築)、`d
 
 ## §2 計画必須判定
 
-### 2.1 計画必須 (実装前に `codex-all-loops mode=plan` 必須)
+### 2.1 計画必須 (実装前に **§3.1 Self-Plan-Review** 必須)
 
 以下のいずれかに該当する task:
 
@@ -56,17 +56,15 @@ Mac local stack は **継続起動中** (Claude が PR #100-#141 で構築)、`d
 5. **CRITICAL invariant 直結変更** (AgentRun 16 状態 / ContextSnapshot 10 列 / Provider Compliance 13 reason_code / SecretBroker raw secret 非保存 / Tenant boundary / actor / principal / approval 4 整合 / runner_mutation_gateway / tool_mutating_gateway_stub / PostgreSQL CHECK / 複合 FK)
 6. **複数 backend route + frontend wiring 同時** (task-04 等)
 
-### 2.2 計画必須 task の手順
+### 2.2 計画必須 task の手順 (Self-Review Protocol、§3 詳細)
 
-```bash
-# Step 1: 計画 review (codex-all-loops mode=plan、Phase A 構造磨き → Phase B 敵対視点)
-codex-all-loops --target <task-NN-*.md> --mode=plan --max-rounds=6 --clean-criteria=critical_zero
+Step 1: **§3.1 Self-Plan-Review** = Round 1 (構造論点) + Round 2 (敵対視点) を Codex 自身が 1 session 内で直列 self-execute。findings.md に列挙 + 採否判定 (adopt/reject/defer) + plan file 修正反映。
 
-# Step 2: Readiness Gate READY 達成後、実装 phase 移行
-codex-all-loops --target <impl-dir> --mode=code --impl-target <dir> --impl-files <files> --max-rounds=8
-```
+Step 2: **Readiness Gate 自己判定** = 残存 CRITICAL=0 / HIGH≤2 で `READY`、それ以外は `BLOCKED` → `STOPPED.md` 起票。
 
-`READINESS_STATUS=BLOCKED` で着手禁止、必ず READY 達成後着手。
+Step 3: **§3.2 Self-Impl-Review** = batch 実装 → 直後に Self-Adversarial-Review 1 round → Readiness Gate (CRITICAL=0) → local verify → PR 起票。
+
+`codex-all-loops` (Claude Code skill、`~/.claude/skills/codex-all-loops/SKILL.md`) は Codex CLI から呼べない (§3.0)。Claude verification 戻り時に Claude が deeper round を実施 (§3.4)。
 
 ### 2.3 計画不要 (直接実装可)
 
@@ -75,44 +73,140 @@ codex-all-loops --target <impl-dir> --mode=code --impl-target <dir> --impl-files
 - 既存 pattern 適用の定型作業 (import 追加 / type cast 等)
 - Codex finding fix で 1 行 commit (commit 抜け追加等)
 
-## §3 codex-all-loops 使用ガイド
+## §3 Self-Review Protocol (Codex 自身で同等観点を確保)
 
-### 3.1 mode=plan (計画書 review)
+### 3.0 重要: codex-all-loops は Codex CLI から呼べない
 
-scope: docs/sprints/SP-*.md / `task-NN-*.md` の構造磨き + 敵対視点深掘り。
+`codex-all-loops` / `codex-review-loop` / `codex-impl-loop` / `codex-adversarial-loop` / `codex-plan-review` は **Claude Code の Skill** (`~/.claude/skills/codex-*/SKILL.md`)。Codex CLI / Codex session からは **直接 invoke 不可**。
+
+さらに `AGENTS.md` / `.claude/rules/codex-usage-policy.md` §1 で **「Codex chain の並列起動禁止」+「Codex 自身がさらに Codex を呼ぶ chain を作らない」** が invariant (再帰禁止)。
+
+→ Codex は **自身の 1 session 内で plan-review / impl / adversarial-review を直列に self-execute** + **Readiness Gate 自己判定** で同等観点を確保する。Claude verification 戻り時に Claude が `codex-all-loops` skill で deeper round を実施 (品質担保の補強)。
+
+### 3.1 Self-Plan-Review (計画必須 task の代替経路)
+
+**目的**: codex-all-loops mode=plan の代替。Codex 自身が 1-2 round で plan を review + adversarial 観点で深掘り + Readiness Gate 自己判定。
+
+#### Round 1 (構造 review): plan file + 関連 Sprint Pack + ADR + rules を Read
+
+- 計画書 (`tasks/task-NN-*.md` + `docs/sprints/SP-NNN-*.md`) を全文 Read
+- 関連 ADR / rules / 過去類似 PR を Read (各 task ファイル §関連参照 に列挙済)
+- 以下を network 構造論点として列挙:
+  - 抜け漏れ: 必要 step / 考慮事項 / エッジケース
+  - 整合性: 既存 code / docs / 公式仕様との矛盾
+  - 曖昧さ: 複数解釈 / 判断迷う点
+  - 依存関係: ticket 順序 / migration 順序
+  - 5+ source enum drift / cascade pattern リスク
+
+→ findings.md に finding-schema (id / severity / category / symptom / recommendation) で列挙。
+
+#### Round 2 (敵対視点 review): Round 1 finding ベース + 新規 adversarial 観点
+
+- assumption 違反 (前提が崩れる scenario)
+- race condition (並行 transaction / lease)
+- boundary edge case (DB CHECK 抜け / Pydantic extra forbid 抜け / signature レベル漏れ)
+- security boundary (caller-supplied 経路 / raw secret / actor 偽装)
+- regression test cover 不足
+
+→ findings.md に追記。Round 1 findings と重複は除外 (堂々巡り防止)。
+
+#### Readiness Gate (Codex 自己判定)
+
+- 全 finding を severity (CRITICAL / HIGH / MEDIUM / LOW) で分類
+- 採否判定 (adopt / reject / defer) を実施し plan file に反映 (Edit ツールで直接修正)
+- adopt 後の **残存 CRITICAL = 0 AND 残存 HIGH ≤ 2** で `READY` (実装着手可能)
+- それ以外は `BLOCKED` → `STOPPED.md` 起票 + Claude verification 待ち
+- findings.md + Readiness Gate 結果は PR description §self-review-verdict に貼り付け
+
+#### `codex` CLI の `review` サブコマンド活用 (option)
+
+Codex CLI 自体に `codex exec review` がある場合、本 self-review の structured 出力に活用可:
 
 ```bash
-codex-all-loops --target docs/sprints/SP-014_orchestrator_agent.md --mode=plan --max-rounds=6
+codex exec review --target docs/sprints/SP-014_orchestrator_agent.md \
+  -c model_reasoning_effort=xhigh \
+  --json
 ```
 
-Phase 1 (review-loop): 構造論点 + 既存 pattern とのズレ + invariant 矛盾検出
-Phase 2 (adversarial-loop): 敵対視点 (assumption 違反 / race condition / boundary edge case)
-Readiness Gate: critical=0 AND high≤2 で READY
+ただし **このコマンドの実行は「Codex 1 session 内の sub-step」であり、Codex chain (再帰) ではない**。AGENTS.md invariant 「Codex から Codex skill を呼ぶ chain 禁止」とは別概念 (chain = 別 session を spawn する pattern を指す)。
 
-### 3.2 mode=code (実装 + adversarial committee + review-loop)
+### 3.2 Self-Impl-Review (実装 task の代替経路)
 
-scope: backend / frontend code change。
+**目的**: codex-all-loops mode=code の代替。Codex 自身が batch 実装 + 直後に self-review (敵対視点) + Readiness Gate 自己判定。
+
+#### Step 1: batch 実装 (5-10 file / 1500-3000 行)
+
+- task ファイル §4 実装 phase の batch 分割に従い、1 batch 単位で実装
+- 各 file を Read → Edit / Write で実装
+- 既存 pattern 確認 (PR #133-#140 / PR #128-#131 等の最近の merge PR を `git log -p` で参照)
+
+#### Step 2: 実装後 Self-Adversarial-Review (1 round)
+
+実装完了直後、別 「new conversation context」のつもりで自身の diff を re-read + 敵対視点で review:
+
+- **invariant 観点** (本 file §7 + §8 全項目を 1 つずつ check)
+  - server-owned-boundary §1: caller-supplied 経路 signature レベル削除?
+  - 5+ source enum integrity: Literal + frozenset + Pydantic + pytest + DB CHECK?
+  - raw secret 非保存: DB / log / artifact / audit / ContextSnapshot 漏れなし?
+  - cascade pattern: matrix-based logic で全 case 明示 enforce?
+- **regression test** が case ごと別 test function で追加されている?
+- **boundary edge case** (concurrent / null / negative / overflow / unicode)
+- **error path** (exception 握りつぶし / 弱い assertion / fallback 不適切)
+
+→ findings を列挙 + 即 adopt fix (commit に重ねる) or defer (TODO + Sprint Pack 残リスク)。
+
+#### Step 3: Readiness Gate (Codex 自己判定)
+
+- 残存 CRITICAL = 0 で `READY` (PR 起票可能)
+- それ以外 → 追加 fix or `STOPPED.md`
+
+#### Step 4: local verify
+
+§4.3 admin bypass merge 6 条件のうち §4.3 #1 を満たす:
 
 ```bash
-codex-all-loops --mode=code \
-  --impl-target backend/app/services/orchestrator \
-  --impl-files "orchestrator.py,lease_manager.py,dispatcher.py" \
-  --max-rounds=8 \
-  --clean-criteria=critical_zero
+# Backend 変更時
+uv run ruff check backend tests
+uv run mypy backend
+uv run pytest tests/<関連 dir>/ -q
+
+# Frontend 変更時
+cd frontend
+pnpm typecheck
+pnpm lint
+pnpm vitest run
+
+# Migration 含む時
+uv run alembic check
+uv run alembic upgrade head
+# downgrade テスト
+uv run alembic downgrade -1 && uv run alembic upgrade head
 ```
 
-Phase 1: impl-loop (実装 + adversarial committee で各 round invariant verify)
-Phase 2: adversarial-loop (敵対視点で実装の盲点検出)
-Phase 3: review-loop (総合磨き)
+### 3.3 PR 起票後 Codex auto-review baseline 確認 (`§6` で詳細)
 
-### 3.3 単独 sub-skill (light scope)
+PR push 後、**GitHub の Codex bot が PR trigger で auto-review** を実施する (Codex 自身が呼ぶ chain ではない、external trigger)。
 
-scope 小なら sub-skill 単独起動も可:
+```bash
+sleep 60  # Codex auto-review trigger 待ち
+.claude/scripts/codex_pr_full_review.sh <PR_NUM> 2>&1 | head -200
+```
 
-- `codex-plan-review`: 計画書 ≤ 3 round の最初 review
-- `codex-review-loop`: 既存成果物の long-loop review
-- `codex-adversarial-loop`: 敵対視点 R{N} clean
-- `codex-impl-loop`: 実装 + adversarial committee (3 phase 不要時)
+baseline 内容確認 (delta +0 = 真の 0 件 ≠ baseline 見逃し、PR #42/#44/#47 教訓) + 採否判定 + adopt fix commit。
+
+これは **Codex 自身が起動する chain ではなく**、GitHub Codex App が PR webhook で起動する独立 service なので AGENTS.md invariant に違反しない。
+
+### 3.4 Claude verification 戻り時に codex-all-loops で deeper round (品質担保補強)
+
+3 日間後に Claude が戻ったとき (`03-claude-verification-checklist.md`)、Claude が本 worktree から `codex-all-loops` skill を起動して deeper round を実施可能:
+
+```
+Skill(skill="codex-all-loops", args="docs/sprints/SP-014_orchestrator_agent.md --mode=plan --max-rounds=8")
+```
+
+これは Claude Code main session 内の Skill 起動であり、Codex chain ではない (AGENTS.md 整合)。
+
+→ Codex 側は self-review で **CRITICAL 0** を達成する責務、Claude 側で deeper adversarial round で品質担保補強。
 
 ## §4 PR 起票 protocol
 
@@ -132,9 +226,9 @@ scope 小なら sub-skill 単独起動も可:
 
 <1-3 bullet 要約 + 関連 Sprint Pack + ADR>
 
-## codex-all-loops verdict (該当時)
+## self-review verdict (§3 Self-Review Protocol)
 
-<Phase 1/2/3 round summary + findings 採否判定 + Readiness Gate 結果>
+<Round 1 (構造) + Round 2 (敵対) の findings 採否判定 + Readiness Gate 結果 + local verify 結果>
 
 ## changes (files / 行数)
 

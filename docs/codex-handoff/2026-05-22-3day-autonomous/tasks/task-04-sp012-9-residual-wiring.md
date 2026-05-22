@@ -1,6 +1,8 @@
 # task-04: SP-012-9 残 wiring — Approvals / Agent Runs / Audit / Settings
 
-**優先**: P2、**計画必須**: 推奨、**codex-all-loops mode**: code 推奨、**想定 effort**: 0.5-1 day
+**優先**: P2、**計画必須**: 推奨、**self-review**: Plan 1 round + Impl 1 round 推奨 (§3 Self-Review Protocol)、**想定 effort**: 0.5-1 day
+
+> `codex-all-loops` は Claude 専用 skill (`00-codex-behavior-guide.md` §3.0)。Codex は self-review で同等観点を確保。
 
 ## 1. 目的
 
@@ -31,10 +33,7 @@ bash scripts/worktree_setup.sh
 
 ## 3. 計画 phase (推奨、軽い)
 
-```bash
-codex-plan-review docs/sprints/SP-012-9_admin_page_wiring.md
-# 1-2 round で着手
-```
+**Self-Plan-Review (§3.1) Round 1 のみ**: 構造論点列挙 + 採否判定後着手 (敵対視点 Round 2 は scope 内 adversarial 観点少なめのため省略可)
 
 ## 4. 実装 phase
 
