@@ -190,7 +190,10 @@ async def create_ticket_endpoint(
         },
     )
     session.add(audit_event)
-    await session.flush()
+    # Codex PR #119 R1 F-PR119-001 (P1) fix: `get_session` は auto-commit なし、
+    # 既存 endpoint pattern (agent_runs/approval_inbox/claims 等) は明示 commit が
+    # 必要。flush のみだと request close で rollback され、201 返しても persist しない。
+    await session.commit()
 
     return TicketRead.model_validate(ticket)
 
@@ -274,6 +277,9 @@ async def update_ticket_endpoint(
         },
     )
     session.add(audit_event)
-    await session.flush()
+    # Codex PR #119 R1 F-PR119-002 (P1) fix: PATCH success path で commit 必須。
+    # 既存 endpoint pattern (claims/evidence_items 等) と同じく flush のみでは
+    # rollback されるため明示 commit。
+    await session.commit()
 
     return TicketRead.model_validate(ticket)
