@@ -32,10 +32,12 @@ describe("ApprovalInboxPage", () => {
 
     render(await ApprovalInboxPage());
 
-    expect(screen.getByRole("heading", { name: "Approval Inbox" })).toBeVisible();
-    expect(screen.getByText("repo_write")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "承認待ち" })).toBeVisible();
+    expect(screen.getByText("リポジトリ書込 (repo_write)")).toBeVisible();
     expect(screen.getByText("repo:taskmanagedai:path/to/file.ts")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Review" })).toHaveAttribute(
+    expect(screen.getByText(`申請者: 00000000-0000-4000-8000-000000007002`)).toBeVisible();
+    expect(screen.getByText("高 (high)")).toBeVisible();
+    expect(screen.getByRole("link", { name: "レビュー" })).toHaveAttribute(
       "href",
       `/approvals/${approvalId}`
     );
@@ -46,7 +48,6 @@ describe("ApprovalInboxPage", () => {
 
     render(await ApprovalInboxPage());
 
-    expect(screen.getByText("No pending approvals.")).toBeVisible();
+    expect(screen.getByText("承認待ちの項目はありません。")).toBeVisible();
   });
 });
-

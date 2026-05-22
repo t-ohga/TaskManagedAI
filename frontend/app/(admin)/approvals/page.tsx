@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { listPendingApprovals } from "@/lib/api/approvals";
+import { formatApprovalActionClass, formatRiskLevel } from "@/lib/i18n/approval-labels";
 
 export const dynamic = "force-dynamic";
 
@@ -10,26 +11,26 @@ export default async function ApprovalInboxPage() {
     approvals = await listPendingApprovals();
   } catch (error: unknown) {
     return (
-      <section aria-label="Approval Inbox" className="grid gap-4">
-        <h1 className="text-2xl font-semibold">Approval Inbox</h1>
+      <section aria-label="承認待ち" className="grid gap-4">
+        <h1 className="text-2xl font-semibold">承認待ち</h1>
         <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">
-          Failed to load approvals: {error instanceof Error ? error.message : "unknown error"}
+          承認一覧の取得に失敗しました: {error instanceof Error ? error.message : "不明なエラー"}
         </p>
       </section>
     );
   }
 
   return (
-    <section aria-label="Approval Inbox" className="grid gap-4">
+    <section aria-label="承認待ち" className="grid gap-4">
       <header>
-        <p className="text-sm font-medium text-accent">Admin</p>
-        <h1 className="text-3xl font-semibold tracking-normal">Approval Inbox</h1>
-        <p className="mt-2 text-sm text-muted">Pending approvals require reviewer decision.</p>
+        <p className="text-sm font-medium text-accent">管理</p>
+        <h1 className="text-3xl font-semibold tracking-normal">承認待ち</h1>
+        <p className="mt-2 text-sm text-muted">承認待ちの項目はレビュアーの判定が必要です。</p>
       </header>
 
       {approvals.length === 0 ? (
         <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
-          No pending approvals.
+          承認待ちの項目はありません。
         </p>
       ) : (
         <ul className="grid gap-3" data-testid="approval-pending-list">
@@ -41,10 +42,12 @@ export default async function ApprovalInboxPage() {
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold">{approval.action_class}</p>
+                  <p className="text-sm font-semibold">
+                    {formatApprovalActionClass(approval.action_class)}
+                  </p>
                   <p className="mt-1 break-all text-sm text-muted">{approval.resource_ref}</p>
                   <p className="mt-1 break-all font-mono text-xs text-muted">
-                    requested by {approval.requested_by_actor_id}
+                    申請者: {approval.requested_by_actor_id}
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-2">
@@ -53,14 +56,14 @@ export default async function ApprovalInboxPage() {
                       approval.risk_level
                     )}`}
                   >
-                    {approval.risk_level}
+                    {formatRiskLevel(approval.risk_level)}
                   </span>
                   <Link
                     href={`/approvals/${approval.id}`}
                     className="text-sm font-semibold text-accent outline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                     data-testid={`approval-link-${approval.id}`}
                   >
-                    Review
+                    レビュー
                   </Link>
                 </div>
               </div>
@@ -86,4 +89,3 @@ function riskBadgeClass(risk: string): string {
       return "bg-slate-100 text-slate-800";
   }
 }
-

@@ -16,7 +16,7 @@ export async function decideApprovalAction(
   const rationale = formData.get("rationale");
 
   if (action !== "approve" && action !== "reject") {
-    return { ok: false, error: "invalid action" };
+    return { ok: false, error: "不正な action です" };
   }
 
   try {
@@ -28,7 +28,6 @@ export async function decideApprovalAction(
     revalidatePath(`/approvals/${approvalId}`);
     return { ok: true, status: result.status };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "decision failed" };
+    return { ok: false, error: error instanceof Error ? error.message : "判定に失敗しました" };
   }
 }
-

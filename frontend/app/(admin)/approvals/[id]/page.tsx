@@ -1,6 +1,11 @@
 import Link from "next/link";
 
 import { getApprovalDetail, type ApprovalDetail } from "@/lib/api/approvals";
+import {
+  formatApprovalActionClass,
+  formatApprovalStatus,
+  formatRiskLevel
+} from "@/lib/i18n/approval-labels";
 
 import { ApprovalDecideForm } from "./_components/approval-decide-form";
 
@@ -20,36 +25,38 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
     approval = await getApprovalDetail(id);
   } catch (error: unknown) {
     return (
-      <section aria-label="Approval detail" className="grid gap-4">
+      <section aria-label="承認詳細" className="grid gap-4">
         <Link className="text-sm font-semibold text-accent hover:underline" href="/approvals">
-          Back to approvals
+          承認一覧へ戻る
         </Link>
-        <h1 className="text-2xl font-semibold">Approval detail</h1>
+        <h1 className="text-2xl font-semibold">承認詳細</h1>
         <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">
-          Failed to load approval: {error instanceof Error ? error.message : "unknown error"}
+          承認詳細の取得に失敗しました: {error instanceof Error ? error.message : "不明なエラー"}
         </p>
       </section>
     );
   }
 
   return (
-    <section aria-label="Approval detail" className="grid gap-5">
+    <section aria-label="承認詳細" className="grid gap-5">
       <header className="grid gap-2">
         <Link className="text-sm font-semibold text-accent hover:underline" href="/approvals">
-          Back to approvals
+          承認一覧へ戻る
         </Link>
-        <p className="text-sm font-medium text-accent">Approval Inbox</p>
+        <p className="text-sm font-medium text-accent">承認待ち</p>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-3xl font-semibold tracking-normal">{approval.action_class}</h1>
+            <h1 className="text-3xl font-semibold tracking-normal">
+              {formatApprovalActionClass(approval.action_class)}
+            </h1>
             <p className="mt-2 break-all text-sm text-muted">{approval.resource_ref}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <span className={`rounded-md px-2 py-1 text-xs font-semibold ${statusClass(approval.status)}`}>
-              {approval.status}
+              {formatApprovalStatus(approval.status)}
             </span>
             <span className={`rounded-md px-2 py-1 text-xs font-semibold ${riskClass(approval.risk_level)}`}>
-              {approval.risk_level}
+              {formatRiskLevel(approval.risk_level)}
             </span>
           </div>
         </div>
@@ -59,17 +66,17 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
 
       <div className="grid gap-4 lg:grid-cols-[1fr_22rem]">
         <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
-          <h2 className="text-base font-semibold">Request evidence</h2>
+          <h2 className="text-base font-semibold">申請エビデンス</h2>
           <dl className="mt-4 grid gap-3 text-sm">
-            <DetailRow label="Requested by" value={approval.requested_by_actor_id} mono />
-            <DetailRow label="Requested at" value={formatDateTime(approval.requested_at)} />
-            <DetailRow label="Policy version" value={approval.policy_version} mono />
-            <DetailRow label="Policy pack lock" value={approval.policy_pack_lock ?? "not locked"} mono />
-            <DetailRow label="Artifact hash" value={approval.artifact_hash ?? "not provided"} mono />
-            <DetailRow label="Diff hash" value={approval.diff_hash ?? "not provided"} mono />
+            <DetailRow label="申請者" value={approval.requested_by_actor_id} mono />
+            <DetailRow label="申請日時" value={formatDateTime(approval.requested_at)} />
+            <DetailRow label="policy_version" value={approval.policy_version} mono />
+            <DetailRow label="policy_pack_lock" value={approval.policy_pack_lock ?? "(未ロック)"} mono />
+            <DetailRow label="artifact_hash" value={approval.artifact_hash ?? "(未提供)"} mono />
+            <DetailRow label="diff_hash" value={approval.diff_hash ?? "(未提供)"} mono />
             <DetailRow
-              label="Provider fingerprint"
-              value={approval.provider_request_fingerprint ?? "not provided"}
+              label="provider_request_fingerprint"
+              value={approval.provider_request_fingerprint ?? "(未提供)"}
               mono
             />
           </dl>
@@ -77,18 +84,18 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
 
         <aside className="grid gap-4">
           <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
-            <h2 className="text-base font-semibold">Decision</h2>
+            <h2 className="text-base font-semibold">判定</h2>
             <dl className="mt-4 grid gap-3 text-sm">
               <DetailRow
-                label="Decided by"
-                value={approval.decided_by_actor_id ?? "not decided"}
+                label="判定者"
+                value={approval.decided_by_actor_id ?? "(未決定)"}
                 mono={approval.decided_by_actor_id !== null}
               />
               <DetailRow
-                label="Decided at"
-                value={approval.decided_at ? formatDateTime(approval.decided_at) : "not decided"}
+                label="判定日時"
+                value={approval.decided_at ? formatDateTime(approval.decided_at) : "(未決定)"}
               />
-              <DetailRow label="Rationale" value={approval.rationale ?? "not provided"} />
+              <DetailRow label="理由" value={approval.rationale ?? "(未提供)"} />
             </dl>
           </article>
 
@@ -122,7 +129,7 @@ function StatusNotice({ approval }: { approval: ApprovalDetail }) {
   if (approval.status === "invalidated") {
     return (
       <p className="rounded-md bg-amber-50 p-3 text-sm text-attention">
-        This approval was invalidated by a stale artifact, diff, policy, or provider fingerprint.
+        この承認は古い artifact、diff、policy、または provider fingerprint により無効化されています。
       </p>
     );
   }
@@ -130,7 +137,7 @@ function StatusNotice({ approval }: { approval: ApprovalDetail }) {
   if (approval.status === "expired") {
     return (
       <p className="rounded-md bg-slate-100 p-3 text-sm text-muted">
-        This approval expired and must be requested again before resume.
+        この承認は期限切れです。再開前に再申請が必要です。
       </p>
     );
   }
@@ -138,7 +145,7 @@ function StatusNotice({ approval }: { approval: ApprovalDetail }) {
   if (approval.status === "rejected") {
     return (
       <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">
-        This approval was rejected. Resume is blocked.
+        この承認は却下されました。再開はブロックされています。
       </p>
     );
   }
@@ -146,20 +153,20 @@ function StatusNotice({ approval }: { approval: ApprovalDetail }) {
   if (approval.status === "approved") {
     return (
       <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
-        This approval was approved. Downstream execution must still pass policy.
+        この承認は承認済みです。後続実行は引き続き policy を通過する必要があります。
       </p>
     );
   }
 
   return (
     <p className="rounded-md bg-teal-50 p-3 text-sm text-accent">
-      This approval is pending independent reviewer decision.
+      この項目は独立レビュアーの判定待ちです。
     </p>
   );
 }
 
 function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat("en", {
+  return new Intl.DateTimeFormat("ja-JP", {
     dateStyle: "medium",
     timeStyle: "short"
   }).format(new Date(value));
@@ -196,4 +203,3 @@ function statusClass(status: string): string {
       return "bg-slate-100 text-slate-800";
   }
 }
-
