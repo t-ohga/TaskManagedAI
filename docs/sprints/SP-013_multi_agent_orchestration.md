@@ -1,10 +1,11 @@
 ---
 id: "SP-013_multi_agent_orchestration"
 type: "heavy"
-status: "ready"
+status: "completed"
 sprint_no: 13
 created_at: "2026-05-10"
 updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 target_days: 5
 max_days: 7
 adr_refs:
@@ -224,3 +225,50 @@ SP-013 完了で SP-014/015/016 の DDL 前提 (agent_roles / project_agent_role
 - Phase 8 P0 Exit declaration prep: 本 PR (`prep/phase8-sp013-2026-05-22`)
 - ADR-00014 Phase A-E research: `docs/設計検討/phase-c-multi-agent-spec-draft.md` (56 finding adopt 済)
 - master plan §10.C: SP-022 完了 → P0 Exit declaration → P0.1 unblock (TASKHUB_P0_1_OPENED=1 + SP-013 着手)
+
+---
+
+## Review (2026-05-22 batch 0 完遂)
+
+最終更新: 2026-05-22
+
+### changed (batch 0 全 5 ステップ完遂)
+
+| step | scope | PR |
+|---|---|---|
+| readiness 昇格 | Sprint Pack draft → ready | #132 |
+| 0a | 10 standard role taxonomy enum + matrix validator (5+ source enum integrity) | #133 → #135 → #137 (Codex P1 cascade matrix-based fix) |
+| 0b | project_agent_roles + standard_role_ids_mirror migration + immutable seed | #134 |
+| 0c | agent_runs 8 columns 拡張 (role/lease/progress) + 2 CHECK + partial index | #136 |
+| 0d | check_project_role_link trigger function (PE-F-012 DB-level defense) | #138 → #140 (Codex P1 regression fix) |
+| 0e | sanitizer_policy_versions minimal table + v1.0.0 seed (ADR-00016 §5 PH-F-009 fix) | #139 → #140 (Codex P2 fix) |
+
+### verified
+
+- alembic head: `0024_multi_agent_foundation_e` (Mac local DB apply 確認済)
+- pytest tests/multi_agent/: **30 PASS** (累計、role taxonomy 13 + standard role seed 3 + agent_runs role columns 4 + trigger 6 + sanitizer 4)
+- 全 Codex finding close (P1×8 + P2×3、本 Sprint batch 0 関連 PR で発生した P1×4 + P2×1 全件 fix 完遂):
+  - PR #133 P1 (role_scope invariant) → #135 → #137 matrix-based fix
+  - PR #138 P1 (project + standard role regression) → #140 fix
+  - PR #139 P2 (seed test no-op assertion) → #140 fix
+
+### deferred (batch 1+、SP-014 移送、SP-018 連携)
+
+- **orchestrator agent 本体実装** (lease/dispatch/failover/kill-switch): SP-014 で実装
+- **memory_records / memory_retrieval_artifacts FK 接続** (sanitizer_policy_versions): SP-018 で hermes 取り込み後
+- **5 検証項目 backup drill** (parent/child AgentRun FK / agent_roles soft-delete / standard mirror / sanitizer / audit_events correlation): SP-018 / SP-022 で backup 整備時に実装
+
+### residual risks
+
+- check_project_role_link trigger function は `CREATE OR REPLACE` で migration 0024 で更新済、Mac local DB apply 確認済。本番 deploy 時に migration 0022 → 0024 の順序保証必要 (linear migration history で自動保証)
+- standard_role_ids_mirror の immutable seed は PostgreSQL DELETE で削除可能 = HARD DELETE 不可 trigger は P0.1+ で別途追加 (SP-018 hermes 取り込み時に検討)
+
+### kickoff path SP-014
+
+SP-013 batch 0 完遂で SP-014 prerequisite 満たす:
+- agent_runs に `orchestrator_lease_token / orchestrator_lease_expires_at / lease_renewed_at / orchestrator_kill_at / last_progress_at / progress_seq` 完備
+- check_project_role_link trigger で role reference の DB-level defense (PE-F-012 mitigation) 完備
+- 10 standard role (orchestrator 含む) と standard_role_ids_mirror で global standard role 利用可能
+- sanitizer_policy_versions v1.0.0 で memory layer の sanitizer integrity 基盤完備
+
+SP-014 batch 0 着手可能 state (codex-all-loops mode=code 委譲推奨)。
