@@ -1,10 +1,13 @@
 ---
 id: "SP-001_project_foundation"
 type: "heavy"
-status: "draft"
+status: "completed"
 sprint_no: 1
 created_at: "2026-05-08"
-updated_at: "2026-05-08"
+updated_at: "2026-05-22"
+# F-PR100-R1-002 audit fix (PR #101): frontmatter drift 訂正、actor/principal/seed runner 等の
+# project foundation 実装は SP-001 batch で完了済 (master plan §1.1 で完了 Sprint と明示).
+# 本 訂正 PR で frontmatter status を draft → completed に同期更新.
 target_days: 4.5
 max_days: 6
 adr_refs:

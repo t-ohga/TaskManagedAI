@@ -1,10 +1,13 @@
 ---
 id: "SP-005_provider_adapter"
 type: "heavy"
-status: "draft"
+status: "completed"
 sprint_no: 5
 created_at: "2026-05-08"
-updated_at: "2026-05-09"
+updated_at: "2026-05-22"
+# F-PR100-R1-002 audit fix (PR #101): frontmatter drift 訂正、Provider Adapter foundation +
+# Compliance Gate v2 + 4 adapter + AC-HARD-01/02/AC-KPI-05 fixture 完成 (master plan §1.1).
+# 本 訂正 PR で frontmatter status を draft → completed に同期更新.
 target_days: 5.1
 max_days: 7
 adr_refs:
