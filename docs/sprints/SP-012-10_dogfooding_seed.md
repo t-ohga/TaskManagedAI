@@ -1,10 +1,11 @@
 ---
 id: "SP-012-10_dogfooding_seed"
 type: "light"
-status: "ready"
+status: "completed"
 sprint_no: 12.10
 created_at: "2026-05-22"
 updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 target_days: 3
 max_days: 5
 adr_refs: []
@@ -180,4 +181,43 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.l
 
 ## Review
 
-(本 Sprint 完了時に追記: changed / verified / deferred / risks)
+最終更新: 2026-05-22
+
+### changed (3 Batch 完遂)
+
+| Batch | scope | PR | merge SHA |
+|---|---|---|---|
+| A | Sprint Pack parser + seed CLI 新規 (27 件) | #113 | 413cf10e |
+| B | ADR parser + seed 拡張 (29 件) | #114 | 152fc982 |
+| C | BL parser + seed 拡張 (211 件) | #116 | 30957519 |
+| D | 運用 SOP (`docs/deploy/dogfooding-seed-sop.md`) + Sprint Pack completed 化 | 本 PR | - |
+
+### verified
+
+- 累計 27 + 29 + 211 = **267 件 Ticket DB 投入 ready**
+- pytest 19 contract test PASS (Sprint Pack 8 + ADR 6 + BL 5)
+- 全 Sprint Pack frontmatter parse 成功 (parse failures 0 件)
+- 全 ADR frontmatter parse 成功 (parse failures 0 件)
+- 全 BL row id format `BL-NNNN[a-z]?` integrity verify
+- idempotent re-run 設計 (slug 一意性 + `metadata.dogfooding_source.id` 識別)
+- ruff + mypy clean (239 source files)
+
+### deferred
+
+- BL → Sprint Pack の `ticket_relations` parent/child link 投入 (現状は `metadata` 内表現、本格 link は P0.1+ で別 Sprint Pack)
+- Sprint Pack `## Review` 章 change-log を `audit_events` に投入 (履歴 visualize、P0.1+)
+- Ticket UI 編集 → docs/sprints/*.md reverse update 自動化 (現状は read-only seed のみ、P1+)
+- P0.1+ backlog (`docs/実装計画/00_ロードマップ.md`) 別 file から seed 投入 (P0.1+ 着手時)
+
+### risks (residual)
+
+- Sprint Pack frontmatter schema drift: 本格運用で frontmatter 変更時に parse 失敗の可能性 (fail-fast 設計、test integrity verify でカバー)
+- 267 Ticket 投入後の UI performance: pagination (limit=200) で対応、SP-012-9 BL-UIW-001 で frontend wiring 完成
+- production deployment 前の dogfooding seed cleanup: SOP §6 で SQL cleanup 手順明記
+
+### next
+
+- SP-012-10 完遂で dogfooding 運用試験完成
+- 次は SP-013 batch 0 (Multi-Agent Orchestration Foundation) 着手可能
+- 並行で SP-012-9 残 batch (Approvals は完成済確認 + Agent Runs / Audit / Settings backend route 必要時に拡張)
+- SP-012-8 UI i18n japanese は seed + wiring 完了後の最大価値 timing で着手
