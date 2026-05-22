@@ -77,7 +77,12 @@ class AgentRunEvent(TenantIdMixin, Base):
             "'runner_started','runner_completed','runner_blocked','repo_pr_opened',"
             "'run_completed','run_failed','run_cancelled',"
             "'repair_exhausted','trust_level_promoted','trust_level_promotion_denied',"
-            "'cli_invocation_started','cli_process_completed','cli_decision_recorded')",
+            "'cli_invocation_started','cli_process_completed','cli_decision_recorded',"
+            "'orchestrator_dispatched','orchestrator_lease_renewed',"
+            "'orchestrator_lease_expired','orchestrator_failover_triggered',"
+            "'orchestrator_kill_engaged','inter_agent_message_sent_ref',"
+            "'inter_agent_message_consumed_ref','tool_web_fetch_executed',"
+            "'tool_docs_search_executed')",
             name="agent_run_events_ck_event_type",
         ),
         sa.CheckConstraint(
@@ -152,4 +157,3 @@ class AgentRunEvent(TenantIdMixin, Base):
 
 
 __all__ = ["AgentRunEvent"]
-
