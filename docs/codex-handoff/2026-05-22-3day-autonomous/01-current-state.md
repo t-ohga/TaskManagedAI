@@ -33,7 +33,7 @@
 - planned_adr_refs: ADR-00009 update / Tool Registry network ADR (新規)
 - 9 tickets (SP014-T01〜T09)
 - kickoff_readiness: 全 prerequisite ✅ satisfied
-- recommended_execution: **codex-all-loops mode=code 委譲**
+- recommended_execution: **§3 Self-Review Protocol (Self-Plan-Review 2 round + Self-Impl-Review)、Codex 自身が 1 session 内で完遂**
 
 ### 2.2 SP-012-8 (medium、task-02)
 
@@ -41,7 +41,7 @@
 - scope: UI 日本語化 (frontend/app/(admin)/**/*.tsx)
 - ファイル数: ~25 frontend file
 - batch 分割推奨: batch 1-7 (navigation / tickets / approvals / agent_runs / audit / settings / common)
-- recommended_execution: codex-all-loops mode=code
+- recommended_execution: §3 Self-Review Protocol (Self-Plan + Self-Impl)
 
 ### 2.3 SP-022-1 (small-medium、task-03)
 
@@ -54,7 +54,7 @@
   5. `Dockerfile.eval` build-time COPY 順序 (Dockerfile build cache 効率)
   6. `scripts/seed_dev_login.py` のエラーハンドリング
   7. Layer C operator runbook §1-§9 (BackupApprovalClaim 6 field 化 + canonical fingerprint 15 field)
-- recommended_execution: codex-all-loops mode=code (scope 中)
+- recommended_execution: §3 Self-Review Protocol (scope 中、Self-Plan-Review Round 1 のみで着手可)
 
 ### 2.4 SP-012-9 残 (small、task-04)
 
@@ -64,7 +64,7 @@
   - Audit page wiring (現在 stub)
   - Settings page wiring (現在 stub)
 - BL-TCU-007 (ApprovalRequest auto trigger) は **multi-user 化後** に deferred (本 task scope 外)
-- recommended_execution: codex-all-loops mode=code (UI wiring 中心)
+- recommended_execution: §3 Self-Review Protocol (UI wiring 中心、Self-Plan-Review Round 1 のみで着手可)
 
 ## 3. Mac local stack 状態 (継続起動中)
 

@@ -1,6 +1,8 @@
 # task-02: SP-012-8 — UI 日本語化 (Frontend i18n)
 
-**優先**: P0、**計画必須**: 必須、**codex-all-loops mode**: code 必須、**想定 effort**: 1-1.5 day
+**優先**: P0、**計画必須**: 必須、**self-review**: Plan 1-2 round + Impl 1 round 必須 (§3 Self-Review Protocol)、**想定 effort**: 1-1.5 day
+
+> `codex-all-loops` は Claude 専用 skill (`00-codex-behavior-guide.md` §3.0)。Codex は self-review で同等観点を確保。
 
 ## 1. 目的
 
@@ -30,12 +32,11 @@ bash scripts/worktree_setup.sh
 
 ## 3. 計画 phase (必須)
 
-```bash
-codex-all-loops --target docs/sprints/SP-012-8_ui_i18n.md \
-  --mode=plan \
-  --max-rounds=4 \
-  --clean-criteria=critical_zero
-```
+**Self-Plan-Review (§3.1)**:
+- target: `docs/sprints/SP-012-8_ui_i18n.md` + 関連 ADR / rules / 過去類似 PR
+- Round 1 (構造): 抜け漏れ / 整合性 / 曖昧さ / 依存 / 5+ source enum / cascade pattern リスク
+- Round 2 (敵対視点): assumption / race / boundary / security / regression cover
+- Readiness Gate: 残存 CRITICAL=0/HIGH≤2 で実装着手可
 
 ### 3.1 計画 checklist
 
@@ -53,12 +54,11 @@ codex-all-loops --target docs/sprints/SP-012-8_ui_i18n.md \
 
 **scope**: `frontend/components/navigation.tsx` (5-10 nav item 日本語化)
 
-```bash
-codex-all-loops --mode=code \
-  --impl-target frontend/components \
-  --impl-files "navigation.tsx" \
-  --max-rounds=4
-```
+**Self-Impl-Review (§3.2)**:
+- 実装 target: `frontend/components` (files: `navigation.tsx`)
+- 実装後 Self-Adversarial-Review 1 round (§3.2 Step 2、invariant 観点全件 check + boundary edge case + regression test)
+- Readiness Gate: 残存 CRITICAL=0 で PR 起票可
+- local verify (§3.2 Step 4): ruff + mypy + pytest 該当 dir clean
 
 translation pairs:
 - `Tickets` → `チケット`
@@ -73,12 +73,11 @@ translation pairs:
 
 **scope**: `frontend/app/(admin)/tickets/` 配下全 file (page.tsx + new/page.tsx + [id]/page.tsx + [id]/edit/page.tsx + components)
 
-```bash
-codex-all-loops --mode=code \
-  --impl-target frontend/app/\(admin\)/tickets \
-  --impl-files "page.tsx,new/page.tsx,[id]/page.tsx,[id]/edit/page.tsx" \
-  --max-rounds=6
-```
+**Self-Impl-Review (§3.2)**:
+- 実装 target: `frontend/app/` (files: `page.tsx,new/page.tsx,[id]/page.tsx,[id]/edit/page.tsx`)
+- 実装後 Self-Adversarial-Review 1 round (§3.2 Step 2、invariant 観点全件 check + boundary edge case + regression test)
+- Readiness Gate: 残存 CRITICAL=0 で PR 起票可
+- local verify (§3.2 Step 4): ruff + mypy + pytest 該当 dir clean
 
 translation pairs:
 - `Tickets` → `チケット一覧`

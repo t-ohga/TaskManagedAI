@@ -19,19 +19,19 @@ Claude が **連続 42 PR merge で完成させた基盤** (P0 Exit + Multi-Agen
 
 ## 3 日間のスコープ概観
 
-| task | sprint | scope | 想定 effort | 計画必須 | codex-all-loops |
+| task | sprint | scope | 想定 effort | 計画必須 | self-review (§3) |
 |---|---|---|---|---|---|
-| **task-01** | SP-014 batch 0 | orchestrator agent (lease/dispatch/failover) | 1.5-2 day | **必須 (heavy)** | mode=code 必須 |
-| **task-02** | SP-012-8 batch 1-7 | UI 日本語化 (codex-all-loops 委譲) | 1-1.5 day | **必須** | mode=code 必須 |
-| **task-03** | SP-022-1 | scripts hardening (Phase 7a deviation 7 件) | 0.7-1 day | 推奨 | mode=code 推奨 |
-| **task-04** | SP-012-9 残 | Approvals / Agent Runs / Audit / Settings wiring | 0.5-1 day | 推奨 | mode=code 推奨 |
+| **task-01** | SP-014 batch 0 | orchestrator agent (lease/dispatch/failover) | 1.5-2 day | **必須 (heavy)** | Self-Plan-Review 2 round + Self-Impl-Review 必須 |
+| **task-02** | SP-012-8 batch 1-7 | UI 日本語化 | 1-1.5 day | **必須** | Self-Plan-Review 1-2 round + Self-Impl-Review 必須 |
+| **task-03** | SP-022-1 | scripts hardening (Phase 7a deviation 7 件) | 0.7-1 day | 推奨 | Self-Plan-Review 1 round + Self-Impl-Review 推奨 |
+| **task-04** | SP-012-9 残 | Approvals / Agent Runs / Audit / Settings wiring | 0.5-1 day | 推奨 | Self-Plan-Review 1 round + Self-Impl-Review 推奨 |
 
 合計想定: 3.7-5.5 day = 3 日間 (24h × 3 = 72h、Codex 集中作業時間) で完遂可能。
 
 ## 絶対遵守事項 (Codex 厳守)
 
 1. **`00-codex-behavior-guide.md` 全文必読 → その後 task ファイル**
-2. **計画必須 task** は実装前に `codex-all-loops mode=plan` で計画 review、Readiness Gate READY 達成後着手
+2. **計画必須 task** は実装前に **§3 Self-Plan-Review** (Codex 自身が 1-2 round で plan を review + 敵対視点 + Readiness Gate 自己判定) を実施、CRITICAL=0 / HIGH≤2 達成後着手 (`codex-all-loops` は Claude 専用 skill のため Codex 側で呼べない、§3.0 参照)
 3. **code change PR** は `codex_pr_full_review.sh <PR>` で baseline 確認 + adopt/reject/defer 判定 (`00-codex-behavior-guide.md` §6)
 4. **invariant fix は matrix-based logic** で全 case enforce (cascade pattern 防止、Claude 教訓 PR #133→#135→#137)
 5. **admin bypass merge OK** (CI billing-blocked) ただし `00-codex-behavior-guide.md` §4 の 6 条件を満たす PR のみ
