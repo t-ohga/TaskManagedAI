@@ -179,7 +179,8 @@ ADR-00014 acceptance_blocked_by #2「Phase F-0 (ADR-00009 update + DD-02 policy 
 | ADR-00009 update (action_class enum に provider_call 追加 / read/search 削除) | ❌ 未着手 (`rg "Phase F-0\|phase-f-0"` で実装 file 0 件) | SP-013 kickoff 直前 (separate light ADR + migration PR) |
 | DD-02 policy 3 table (`role_authorization` / `principal_grant` / `policy_decision`) の `read/search` → `provider_call` 同期 migration | ❌ 未着手 | 同上 |
 | artifacts.project_id materialize migration (PE-F-007 strict prerequisite) | ❌ 未着手 (`migrations/versions/*project*` 0 件) | 同上 |
-| AC-HARD-03 cross-project negative test (artifacts.project_id 追加後) | ❌ 未着手 (`tests/security/cross_project*` 0 件) | Phase F-0 migration 後 |
+| AC-HARD-03 cross-project negative test (research domain) | ✅ 既存 (`tests/security/test_research_cross_project_negative.py` 存在、SP-010 で起票) | - (本 test は research domain で完結、Phase F-0 で artifacts.project_id 追加後の **artifact-domain cross-project test** を別途 追加必要) |
+| AC-HARD-03 cross-project negative test (artifacts.project_id 追加後の artifact-domain) | ❌ 未着手 (artifacts.project_id materialize migration 完了後、`tests/security/test_artifact_cross_project_negative.py` 等の追加 test が必要) | Phase F-0 migration 後 |
 
 Phase F-0 は **SP-013 着手前の separate light Sprint Pack** として起票推奨 (SP-012.5 や SP-022.1 系の position)。本 prep では state 確認のみ、着手は本 plan §2.3 pre-P0 freeze 期間内禁止作業に該当のため P0 Exit declaration merge 後。
 

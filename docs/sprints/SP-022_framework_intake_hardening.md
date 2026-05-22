@@ -1171,9 +1171,9 @@ p0-exit-final-hardening-2026-05-22 plan (`.claude/plans/p0-exit-final-hardening-
 
 | # | 項目 | 結果 | DoD trace |
 |---|---|---|---|
-| 1 | 本 plan §4.2.3 file table 全件 PASS | ✅ 14 file 修正 (frontend 3 + docs 5 + plans 2 + Dockerfile 2 + compose 1 + eslint 1) | DoD-3 受け入れ条件 + DoD-4 検証手順 |
+| 1 | 本 plan §4.2.3 file table 全件 PASS | ✅ **13 unique file** 修正 (frontend 3: actions.ts/navigation.tsx/eslint.config.mjs / docs/deploy 4: SOP+layer-A-addendum+layer-B+layer-C-autonomous / 設計検討 1: master plan axe URL fix / .claude/plans 2: sp022-t09-prep + p0-exit-final-hardening / Dockerfile 2 / docker-compose 1 = 13) (F-PR98-004 adopt fix、PR #95/#96/#97 unique file 重複除去後 13) | DoD-3 受け入れ条件 + DoD-4 検証手順 |
 | 2 | PR link | #95 + #96 + #97 | DoD-10 Review 欄更新タイミング |
-| 3 | evidence link | `docs/deploy/smoke-evidence/2026-05-22-layer-{A-addendum,B,C-autonomous}.md` + plan-review-ledger.md | DoD-4 + DoD-9 Hard Gates / Quality KPIs trace |
+| 3 | evidence link | `docs/deploy/smoke-evidence/2026-05-22-layer-{A-addendum,B,C-autonomous}.md` (repo 内 commit 済) + user-local artifact at `~/.claude/local/codex-reviews/2026-05-22/sprint-SP-012-batch-7-taskhub-admin-cli/plan-review-ledger.md` (本 ledger は session-local audit trail、git ignore 配下、PR description で参照のみ。F-PR98-003 adopt fix で user-local 明示) | DoD-4 + DoD-9 Hard Gates / Quality KPIs trace |
 | 4 | 完了判定 | code PASS + Layer A/B PASS + Layer C required smoke (§7+§13+§15) PASS + Codex 4 CLEAN signals (PR #95/#96 計 4 round) | DoD-3 + DoD-4 |
 | 5 | accepted defer | nav active state semantics (static skeleton) / notifications-nav top placement / research-nav top placement / settings UI smoke / §12 §14 key bootstrap (~/.taskhub/keys/ 未存在) | DoD-5 rollback + DoD-9 影響範囲 |
 | 6 | rollback 手順 | 本 plan §8.2 (code rollback + evidence invalidation + READY 巻き戻し 3 階層) | DoD-5 |

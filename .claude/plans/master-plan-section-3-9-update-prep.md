@@ -45,7 +45,7 @@ p0-exit-final-hardening-2026-05-22 plan §9.3.3 で固定した「master plan pa
 +| ADR-00021 (Host-Portable Deployment) | **accepted** at SP022-T00 (2026-05-19) | design accepted、SP022-T09 で post-acceptance verification (実機 drill PASS) |
 +| ADR-00022 (Dev Login Cookie Secure Attribute) | accepted (retro at 2026-05-10) | development HTTP loopback 動作、production HTTPS 強制 |
 +| ADR-00026 (PITR WAL Archiving) | accepted | Sprint 11.5 batch 3a で実装 |
-+| ADR-00027 (Tool Registry Security Boundary) | accepted | QL-A run で起票 |
++| ADR-00027 (Tool Registry Security Boundary) | proposed | QL-A run で起票、accepted 化は P0.1 unblock 後 SP-013/014/015 着手時に評価 (F-PR98-002 adopt fix) |
 +| ADR-00028 (Split-Brain Second Line) | accepted | SP-012 must_ship plan で起票 |
 +| ADR-00029 (Approval Keyring Rotation) | accepted | SP-012 must_ship plan で起票 |
 ```
