@@ -1,7 +1,7 @@
 ---
 id: "SP-0045_tool_registry"
 type: "heavy"
-status: "ready"
+status: "completed"
 sprint_no: 4.5
 created_at: "2026-05-15"
 updated_at: "2026-05-22"
@@ -71,11 +71,11 @@ P0 / P0.1 で扱う MCP / external tool / local stdio tool を **機械可読 re
 
 ## タスク一覧
 
-- [ ] SP0045-T01〜T05 を順次実装 (Codex R1〜R{clean} multi-round)
-- [ ] `config/tool_registry.toml` schema が `config/provider_compliance.toml` と pattern 一致
-- [ ] enum 4 重防御 (Pydantic + Literal + pytest EXPECTED + docs) を全 enum (allowed_actions / trust_tier / max_outgoing_data_class) に適用
-- [ ] caller-supplied `trust_tier` test が **deny** で PASS
-- [ ] ContextSnapshot.tool_manifest hash spec が DD-03 と整合
+- [x] SP0045-T01〜T05 を順次実装 (Codex R1〜R{clean} multi-round)
+- [x] `config/tool_registry.toml` schema が `config/provider_compliance.toml` と pattern 一致
+- [x] enum 4 重防御 (Pydantic + Literal + pytest EXPECTED + docs) を全 enum (allowed_actions / trust_tier / max_outgoing_data_class) に適用
+- [x] caller-supplied `trust_tier` test が **deny** で PASS
+- [x] ContextSnapshot.tool_manifest hash spec が DD-03 と整合
 
 ## must_ship / defer_if_over_budget 対応表
 
@@ -206,4 +206,31 @@ uv run pytest tests/agent_runtime/test_context_snapshot_tool_manifest.py -q
 
 ## Review
 
-(SP-0045 完了時に追記)
+2026-05-22 Codex 実装で完了。成果物は batch A〜D に分割し、既存
+`tool_registry` table を canonical tools table として拡張した。
+
+- batch A: ADR-00027 / ADR-00012 accepted 化、canonical enum、TOML config、
+  Pydantic loader、frontend enum source、manifest lock hash。
+- batch B: `tool_registry.registry_version` / `allowed_actions` /
+  `max_outgoing_data_class`、`tool_versions`、seed trigger、DB CHECK。
+- batch C: `ContextSnapshot.tool_manifest` を server-owned に固定。
+  caller-supplied `tool_manifest` は signature レベルで削除し、resume は
+  scoped prior snapshot lookup で hash/manifest pair を継承。
+- batch D: DB 非依存 contract/adversarial tests と完了 artifact。
+
+完了時の確認:
+
+- Tool Registry config load + canonical manifest lock PASS。
+- `allowed_actions` / `trust_tier` / `max_outgoing_data_class` は backend
+  Literal、Pydantic、pytest、migration、ADR、frontend TS の 5+ source で
+  整合。
+- read-only `allowed_actions` と policy `action_class` 7 種は混入なし。
+- P0 mutating tool actions (`tool_write` / `repo_write` / `command_exec`) は
+  registry config に混入なし。
+- experimental tier は `max_outgoing_data_class='public'` のみ許可。
+- `ContextSnapshot.tool_manifest` は normal snapshot で現行 registry lock
+  を server 側算出、resume では同一 prior snapshot から
+  `evidence_set_hash` と `tool_manifest` を継承。
+- local DB-backed tests / `alembic check` はこの worktree の
+  `taskmanagedai_test` PostgreSQL 認証未準備により skip/defer。forced DB
+  mode は hard failure のまま維持。
