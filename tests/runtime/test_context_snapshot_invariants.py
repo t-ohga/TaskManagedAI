@@ -14,6 +14,7 @@ import pytest
 import pytest_asyncio
 from alembic import command
 from alembic.config import Config
+from asyncpg.exceptions import PostgresError  # type: ignore[import-untyped]
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -105,7 +106,7 @@ async def _assert_database_available(settings: Settings) -> None:
     try:
         async with engine.connect() as connection:
             await connection.execute(text("select 1"))
-    except (OSError, SQLAlchemyError, TimeoutError) as exc:
+    except (OSError, PostgresError, SQLAlchemyError, TimeoutError) as exc:
         if os.environ.get("TASKMANAGEDAI_RUN_DB_TESTS") == "1":
             raise AssertionError("ContextSnapshot tests require a reachable test database.") from exc
         pytest.skip("Set TASKMANAGEDAI_RUN_DB_TESTS=1 with test PostgreSQL running.")
@@ -449,7 +450,8 @@ async def test_context_snapshot_required_non_nullable_columns_reject_null(
         await session.commit()
 
         with pytest.raises(IntegrityError):
-            await _insert_context_snapshot(session, **{column_name: None})
+            override: dict[str, Any] = {column_name: None}
+            await _insert_context_snapshot(session, **override)
             await session.commit()
 
         await session.rollback()
@@ -517,7 +519,8 @@ async def test_db_rejects_invalid_sha256_hex_columns(
         await session.commit()
 
         with pytest.raises(IntegrityError) as exc_info:
-            await _insert_context_snapshot(session, **{column_name: "not-a-sha256"})
+            override: dict[str, Any] = {column_name: "not-a-sha256"}
+            await _insert_context_snapshot(session, **override)
             await session.commit()
 
         _assert_integrity_error(
@@ -662,6 +665,7 @@ async def test_context_snapshot_repository_rejects_raw_secret_recursively() -> N
         "safety_settings": {"nested": {"provider_key": "redacted"}},
     }
     payload.pop("evidence_set_hash")
+    payload.pop("tool_manifest")
 
     with pytest.raises(ValueError, match="prohibited key"):
         await repo.create_snapshot(
@@ -695,6 +699,7 @@ async def test_context_snapshot_repository_rejects_invalid_provider_continuation
     ref.update(override)
     payload["provider_continuation_ref"] = ref
     payload.pop("evidence_set_hash")
+    payload.pop("tool_manifest")
 
     with pytest.raises(ValueError, match=match):
         await repo.create_snapshot(

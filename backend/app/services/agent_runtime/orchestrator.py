@@ -513,11 +513,10 @@ class AgentRunOrchestrator:
     ) -> ContextSnapshot:
         """Derive a ``snapshot_kind='resume'`` snapshot from the previous one.
 
-        All reproducibility columns except ``evidence_set_hash`` are carried
-        over. ``evidence_set_hash`` remains server-owned and is recomputed by
-        ContextSnapshotRepository from a ResearchSetReference; resume retries
-        without an active research binding receive the deterministic empty set
-        hash instead of passing through caller-supplied hash material.
+        All reproducibility columns except provider_request_fingerprint are
+        carried over through repository-owned inheritance hooks. Hash and tool
+        manifest material stays server-owned instead of being passed through
+        caller-supplied parameters.
         """
 
         # F-PR22-001 P2 adopt: carry the prior server-emitted
@@ -526,7 +525,8 @@ class AgentRunOrchestrator:
         # research binding rather than collapsing to the empty-set placeholder.
         # The repository validates the previous snapshot exists in
         # (tenant_id, run_id) and loads the hash from the DB row — caller-
-        # supplied hash material remains rejected at the signature boundary.
+        # supplied hash or tool manifest material remains rejected at the
+        # signature boundary.
         return await create_snapshot(
             self._session,
             tenant_id=tenant_id,
@@ -536,9 +536,9 @@ class AgentRunOrchestrator:
             policy_version=previous_snapshot.policy_version,
             policy_pack_lock=previous_snapshot.policy_pack_lock,
             repo_state=previous_snapshot.repo_state,
-            tool_manifest=previous_snapshot.tool_manifest,
             evidence_set_reference=None,
             inherit_evidence_set_hash_from_snapshot_id=previous_snapshot.id,
+            inherit_tool_manifest_from_snapshot_id=previous_snapshot.id,
             provider_continuation_ref=previous_snapshot.provider_continuation_ref,
             provider_request_fingerprint=new_provider_request_fingerprint,
             snapshot_kind="resume",
