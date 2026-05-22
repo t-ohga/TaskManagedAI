@@ -1,0 +1,44 @@
+[meta]
+version = "sp0045-v1"
+last_updated_at = "2026-05-22"
+description = "TaskManagedAI Tool Registry v1 - P0 read-only standard tools"
+
+[[tools]]
+tool_key = "web_fetch"
+transport = "local"
+auth_mode = "none"
+network_access = "none"
+allowed_actions = ["web_fetch"]
+trust_tier = "official"
+max_outgoing_data_class = "public"
+notes = "P0 seed remains deny-only until a later ADR enables network allowlist mode."
+
+[[tools]]
+tool_key = "docs_search"
+transport = "local"
+auth_mode = "none"
+network_access = "none"
+allowed_actions = ["docs_search"]
+trust_tier = "official"
+max_outgoing_data_class = "public"
+notes = "P0 seed remains deny-only until a later ADR enables network allowlist mode."
+
+[[tools]]
+tool_key = "code_grep"
+transport = "local"
+auth_mode = "none"
+network_access = "none"
+allowed_actions = ["code_grep"]
+trust_tier = "self_hosted"
+max_outgoing_data_class = "internal"
+notes = "Local read-only repository search; mutating repo operations stay outside Tool Registry."
+
+[[tools]]
+tool_key = "filesystem_read"
+transport = "local"
+auth_mode = "none"
+network_access = "none"
+allowed_actions = ["filesystem_read"]
+trust_tier = "self_hosted"
+max_outgoing_data_class = "internal"
+notes = "Local read-only file inspection; command execution remains denied by runner boundary."

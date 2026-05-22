@@ -1,16 +1,16 @@
 ---
 id: "SP-0045_tool_registry"
 type: "heavy"
-status: "draft"
+status: "ready"
 sprint_no: 4.5
 created_at: "2026-05-15"
-updated_at: "2026-05-15"
+updated_at: "2026-05-22"
 target_days: 3
 max_days: 5
 adr_refs:
-  - "[ADR-00027](../adr/00027_tool_registry_security_boundary.md) (proposed、primary owner、QL-A R30 で同期起票、F-P2R2-002 反映、heavy Pack ADR Gate non-empty 要件満たす)"
+  - "[ADR-00027](../adr/00027_tool_registry_security_boundary.md) (accepted、primary owner、SP-0045 batch A で co-accepted)"
+  - "[ADR-00012](../adr/00012_hook_trust_boundary.md) (accepted、Hook Trust Boundary、SP-0045 Tool Registry の trust_tier server-resolved invariant prerequisite)"
 planned_adr_refs:
-  - "[ADR-00012](../adr/00012_hook_trust_boundary.md) (proposed、Hook Trust Boundary、Phase 5 完成後 accepted 化、SP-0045 Tool Registry の trust_tier server-resolved invariant の prerequisite)"
   - "[ADR-00013](../adr/00013_remote_agent_extension.md) (proposed、Remote Agent Extension Point、Tool Registry の external MCP server boundary 参照)"
 related_sprints:
   - "SP-005-5_output_validator (Output Validator core、Tool Registry とは独立 security boundary)"
@@ -23,7 +23,7 @@ risks:
   - "Tool Registry version と prompt_pack_version / policy_pack_version の lockfile drift (ContextSnapshot 10 列 lock 機構と非同期)"
 ---
 
-最終更新: 2026-05-15
+最終更新: 2026-05-22
 
 ## 目的
 
@@ -38,9 +38,8 @@ P0 / P0.1 で扱う MCP / external tool / local stdio tool を **機械可読 re
 
 ## 対象外
 
-- Tool Registry の Python implementation (本 Pack accepted → 別 Sprint で `backend/app/services/tool_registry/` 配下を実装、本 Pack は registry schema + acceptance spec のみ)
 - `tool_mutating_gateway_stub` の deny-only **本実装** (Sprint 4.5 既存 scope、本 Pack は registry definition のみ)
-- ADR-00012 Hook Trust Boundary の `accepted` 化 (Phase 5 完成後の別 ADR run、本 Pack は `planned_adr_refs` で参照のみ)
+- repo 外 trusted hook wrapper の host-level 配置 (ADR-00012 は accepted、operator 配置は別 timing)
 - 外部 MCP server 追加 path (P0.1 SP-018+ defer、本 Pack は P0 standard tool のみ registry 化)
 - voice / Realtime tool 統合 (P1+ defer、ADR-00023 InteractionGateway 経由)
 
@@ -57,18 +56,18 @@ P0 / P0.1 で扱う MCP / external tool / local stdio tool を **機械可読 re
   - SP-0045 accepted 化前に DD-02 既存 enum を本 Pack 内 spec と同期 verify、drift があれば DD-02 update + SP-0045 同期 PR を同期 merge
 - **`payload_data_class` boundary**: Tool Registry entry に `max_outgoing_data_class` (`public` / `internal` / `confidential` / `pii`) を明示、Provider Compliance Matrix 同様 ordinal 比較 (`public:0 < internal:1 < confidential:2 < pii:3`)
 - **ContextSnapshot.tool_manifest hash の正本**: `(registry_version, sha256(tool_allowlist))` を tuple で hash 化、AgentRun 開始時に snapshot 固定 (DD-03 §ContextSnapshot)
-- **registry version は lockfile pattern**: **ContextSnapshot の必須 10 列 (DD-03 / core.md §9 / agentrun-state-machine.md §11) は不変条件として固定、新規 11 列目追加なし**。`tool_manifest` 列の内部に `registry_version` + `sha256(tool_allowlist)` を tuple 保存することで lockfile pattern を実装 (実装は別 Sprint、本 Pack は spec のみ)
+- **registry version は lockfile pattern**: **ContextSnapshot の必須 10 列 (DD-03 / core.md §9 / agentrun-state-machine.md §11) は不変条件として固定、新規 11 列目追加なし**。`tool_manifest` 列の内部に `registry_version` + `sha256(tool_allowlist)` を tuple 保存することで lockfile pattern を実装
 - **tool_manifest server-owned (caller-supplied 経路禁止、F-P2R1-005 反映)**: server が `config/tool_registry.toml` から `(registry_version, sha256(tool_allowlist))` tuple を再計算し、API endpoint Pydantic schema / service layer signature / ORM の 3 layer で caller-supplied tool_manifest を受け取らない (server-owned-boundary §2 準拠、signature レベル物理削除)
 - **registry 起動前 fail-closed (F-P2R1-006 反映)**: `config/tool_registry.toml` の load / validate / version check が PASS しない限り `ToolAdapter` 起動不可、全 tool call は `tool_registry_unavailable` reason で deny、`tool_mutating_gateway_stub` は **deny-only state** のまま起動 (起動順 race を fail-closed で防ぐ)
 - **tool → runner 経路 (F-P2R1-007 反映)**: tool-originated artifact が `runner_mutation_gateway` に渡る場合、registry の `registry_decision` event と `tool_manifest hash binding` を必須化、欠落時は `runner_mutation_gateway` 側も deny。registry boundary と runner boundary の **2 重 gate** で artifact origin laundering (tool-write を runner patch として再包装) を防ぐ
 
 ## 実装チケット
 
-- SP0045-T01: `config/tool_registry.toml` schema design (Pydantic + TOML、Provider Compliance Matrix と同 pattern)、`registry_version` / `tools[]` (各 entry: `name` / `transport` / `allowed_actions` / `trust_tier` / `max_outgoing_data_class` / `mcp_endpoint?` / `notes`)
+- SP0045-T01: `config/tool_registry.toml` schema design (Pydantic + TOML、Provider Compliance Matrix と同 pattern)、`registry_version` / `tools[]` (各 entry: `tool_key` / `transport` / `allowed_actions` / `trust_tier` / `max_outgoing_data_class` / `mcp_endpoint?` / `notes`)
 - SP0045-T02: Registry loader + Pydantic validation (`backend/app/services/tool_registry/loader.py`)、enum 4 重防御 (Pydantic field validator + Python Literal + pytest EXPECTED + DB CHECK は Tool Registry table 化時)
 - SP0045-T03: `allowed_actions` enum 4 種 + `trust_tier` 4 種 (DD-02 既存 4 種同期、F-P2R1-003) + `max_outgoing_data_class` 4 種を **cross-source 5+ source 整合** で固定 (cross-source-enum-integrity §1 準拠: Pydantic + Literal + pytest + frontend TS enum + docs + **DD-02 既存 `tool_registry.trust_tier` DB CHECK 同期**)
 - SP0045-T04: `trust_tier` + `tool_manifest` server-resolved invariant の caller-supplied 経路禁止 test (`tests/services/tool_registry/test_trust_tier_server_owned.py` + `test_caller_supplied_tool_manifest_reject.py`、F-P2R1-005 反映)、signature レベル削除 verify
-- SP0045-T05: ContextSnapshot.tool_manifest hash integration spec (DD-03 §ContextSnapshot 既存 10 列の `tool_manifest` 列定義に registry version + allowlist sha256 を追記、実装は別 Sprint)
+- SP0045-T05: ContextSnapshot.tool_manifest hash integration (DD-03 §ContextSnapshot 既存 10 列の `tool_manifest` 列定義に registry version + allowlist sha256 を保存)
 
 ## タスク一覧
 
@@ -91,7 +90,7 @@ P0 / P0.1 で扱う MCP / external tool / local stdio tool を **機械可読 re
 | 外部 MCP server 追加 path | × | P0.1 SP-018+ |
 | voice / Realtime tool 統合 | × | P1+ ADR-00023 InteractionGateway 経由 |
 | Tool Registry frontend UI (admin) | × | P0.1 SP-016 carry-over |
-| Tool Registry DB table 化 (現状 TOML のみ) | × | P0.1 SP-013+ で table 化検討 |
+| Tool Registry DB hardening (`allowed_actions` / `tool_versions`) | ○ | - |
 
 ## 受け入れ条件
 
@@ -164,8 +163,8 @@ uv run pytest tests/agent_runtime/test_context_snapshot_tool_manifest.py -q
 ### Owner
 
 - area: security boundary (Tool authorization layer、SP-005-5 Output Validator とは独立)
-- responsible: backend service tier (Sprint Pack accepted 後の実装 Sprint で `backend/app/services/tool_registry/` 配下を担当)
-- review: Hard Gates / Security Council (ADR-00012 accepted 化と同期、Phase 5 Hook Trust Boundary 完成後)
+- responsible: backend service tier (`backend/app/services/tool_registry/` 配下)
+- review: Hard Gates / Security Council (ADR-00012 accepted 化と同期)
 
 ### Definition of Done (DoD)
 
@@ -177,20 +176,19 @@ uv run pytest tests/agent_runtime/test_context_snapshot_tool_manifest.py -q
 - tool-originated artifact が runner_mutation_gateway へ渡る場合の registry_decision event + tool_manifest hash binding 必須化 spec (4 quadrant verify、F-P2R1-007 反映)
 - ContextSnapshot.tool_manifest 統合 spec が DD-03 既存 10 列を変更しない方針で記述 (F-R1-003)
 - レビュー観点に SP-005-5 alias 禁止 verify 項目 (F-R1-007)
-- planned_adr_refs に存在 ADR file (`00012_hook_trust_boundary.md` / `00013_remote_agent_extension.md`) が指定 (F-R1-001)
+- planned_adr_refs に存在 ADR file (`00013_remote_agent_extension.md`) が指定 (F-R1-001)
 - **本 Pack accepted 化条件 (F-P2R1-002 + F-P2R1-017 + F-P2R2-002 + F-P2R2-008 反映、heavy Pack ADR Gate 強化)**:
   1. `docs/adr/00027_tool_registry_security_boundary.md` が **実在 file として存在し、status: `accepted`、または SP-0045 と同一 PR で co-accepted** (proposed のみでは Pack accepted 化不可、F-P2R2-008 反映で逆連動防止)
-  2. ADR-00027 が **ADR Gate Criteria #3 (API/event schema) + #5 (MCP/tool 権限) section を持ち**、**採用案 / 却下案 / rollback / enum source manifest (5+ source、DD-02 既存 trust_tier 同期 verify を含む) / server-owned boundary checklist (trust_tier + tool_manifest signature 削除 verify) / registry 起動前 fail-closed spec** を全て含む (F-P2R1-017 反映、proposed でも完備されていなければ Pack accepted 化不可)
-  3. ADR-00027 が **proposed 状態の間** は本 Pack `status: draft` を維持、SP0045-T01〜T05 / BL-0054〜0061 / BL-0157 着手禁止 (proposed 中に実装着手すると orphan Pack risk、F-P2R2-008)
-  4. **ADR-00027 が rejected / superseded / 未 accepted に戻る場合、SP-0045 status を即 `blocked` へ戻し、SP0045-T01〜T05 / BL-0054〜0061 / BL-0157 着手禁止** (逆連動、F-P2R2-008 反映)
-  5. `planned_adr_refs` だけでは Pack accepted 化不可、`adr_refs` (non-empty) に ADR-00027 が登録されている必要あり (heavy Pack frontmatter ADR Gate 非空要件、F-P2R2-002 反映)
+  2. ADR-00027 が **ADR Gate Criteria #3 (API/event schema) + #5 (MCP/tool 権限) section を持ち**、**採用案 / 却下案 / rollback / enum source manifest (5+ source、DD-02 既存 trust_tier 同期 verify を含む) / server-owned boundary checklist (trust_tier + tool_manifest signature 削除 verify) / registry 起動前 fail-closed spec** を全て含む (F-P2R1-017 反映)
+  3. ADR-00027 は SP-0045 batch A で accepted 化済み。今後 rejected / superseded / 未 accepted に戻る場合、SP-0045 status を即 `blocked` へ戻し、SP0045-T01〜T05 / BL-0054〜0061 / BL-0157 着手禁止 (逆連動、F-P2R2-008 反映)
+  4. `planned_adr_refs` だけでは Pack accepted 化不可、`adr_refs` (non-empty) に ADR-00027 が登録されている必要あり (heavy Pack frontmatter ADR Gate 非空要件、F-P2R2-002 反映)
 
 ### Rollback condition
 
 - `git diff docs/sprints/SP-0045_tool_registry.md` で単独 revert 可能 (本 Pack 新規起票分のみ)
 - README.md の registry §3.1 inventory 行と §3.3 Missing Pack creation policy も同一 PR の revert 対象に含む (`create_required` 行が registry 化されない状態へ戻る)
-- 本 Pack accepted 後の実装 Sprint が始まっていない状態 (`config/tool_registry.toml` schema / loader 未実装) でのみ rollback 可能
-- 実装 Sprint 着手後の rollback は ADR-00012 (Hook Trust Boundary) accepted 化との依存関係も考慮、別 ADR で破壊的操作 (ADR Gate Criteria #8) として扱う
+- `config/tool_registry.toml` schema / loader の rollback は同一 PR revert で可能
+- DB migration 着手後の rollback は ADR-00012 (Hook Trust Boundary) accepted 化との依存関係も考慮、別 ADR で破壊的操作 (ADR Gate Criteria #8) として扱う
 
 ### Post-rollback verification
 
@@ -200,8 +198,8 @@ uv run pytest tests/agent_runtime/test_context_snapshot_tool_manifest.py -q
 
 ## 関連 ADR
 
-- **ADR-00027 (Tool Registry Security Boundary、planned、primary owner)**: SP-0045 起票と同期で proposed 起票必須。`allowed_actions` 4 種 / `trust_tier` 4 種 (DD-02 既存同期、F-P2R1-003) / `max_outgoing_data_class` 4 種 enum / `tool_manifest` ContextSnapshot 統合 (server-owned、F-P2R1-005) / registry 起動前 fail-closed (F-P2R1-006) / tool→runner artifact origin laundering 防止 (F-P2R1-007) / `tool_payload_data_class_exceeded` `tool_payload_data_class_unset` `tool_registry_unavailable` 等 audit reason_code を primary contract として所有。ADR Gate Criteria #5 (MCP/tool 権限) + #3 (API/event schema) 該当。**本 Pack accepted 化 DoD: `docs/adr/00027_tool_registry_security_boundary.md` 実在 + status: proposed 以上 + 採用案/却下案/rollback/enum source manifest (DD-02 trust_tier 同期 verify 含む)/server-owned boundary checklist 完備 (F-P2R1-002 + F-P2R1-017 反映)**
-- ADR-00012 (Hook Trust Boundary、proposed): Tool Registry security boundary の prerequisite、Phase 5 完成後 accepted 化
+- **ADR-00027 (Tool Registry Security Boundary、accepted、primary owner)**: `allowed_actions` 4 種 / `trust_tier` 4 種 (DD-02 既存同期、F-P2R1-003) / `max_outgoing_data_class` 4 種 enum / `tool_manifest` ContextSnapshot 統合 (server-owned、F-P2R1-005) / registry 起動前 fail-closed (F-P2R1-006) / tool→runner artifact origin laundering 防止 (F-P2R1-007) / `tool_payload_data_class_exceeded` `tool_payload_data_class_unset` `tool_registry_unavailable` 等 audit reason_code を primary contract として所有。ADR Gate Criteria #5 (MCP/tool 権限) + #3 (API/event schema) 該当。
+- ADR-00012 (Hook Trust Boundary、accepted): Tool Registry security boundary の prerequisite
 - ADR-00013 (Remote Agent Extension Point、proposed): Codex app-server / Claude Agent SDK boundary、Tool Registry の external MCP server entry の reference
 - ADR-00002 (Core Data Model、proposed): ContextSnapshot 10 列の `tool_manifest` 列定義
 - ADR-00003 (AI Orchestration、proposed): AgentRun event_type に `tool_*` 系 event 追加時の 5+ source 整合
