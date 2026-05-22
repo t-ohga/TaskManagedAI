@@ -1,10 +1,11 @@
 ---
 id: "SP-012-9_ui_wiring_completion"
 type: "light"
-status: "ready"
+status: "completed"
 sprint_no: 12.9
 created_at: "2026-05-22"
 updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 target_days: 5
 max_days: 7
 adr_refs: []
@@ -184,4 +185,31 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.l
 
 ## Review
 
-(本 Sprint 完了時に追記: changed / verified / deferred / risks)
+### 2026-05-22 task-04 residual wiring completion
+
+changed:
+
+- Approvals list now supports status-filtered read-only listing.
+- Agent Runs now have backend read routes for list/detail plus frontend
+  `/runs` and `/runs/[id]` wiring.
+- Audit Log now has a backend read route plus frontend `/audit` wiring.
+- Settings now reads current project and project list from `/api/v1/me/*`.
+- AgentRunEvent and AuditEvent payloads are exposed to the UI as
+  `payload_keys` + `payload_redaction_status`, never raw payload values.
+
+verified:
+
+- `uv run ruff check` on changed backend API/tests.
+- `uv run mypy` on changed backend API/tests.
+- `uv run pytest tests/api/test_approval_inbox.py tests/api/test_agent_runs_cancel.py tests/api/test_sp012_9_ui_wiring_routes.py -q`
+  returned `7 passed, 12 skipped` (DB-backed cases skip locally when
+  PostgreSQL credentials are unavailable).
+- `pnpm typecheck`
+- `pnpm lint`
+- `pnpm test` returned `22 passed / 90 tests`.
+
+deferred:
+
+- Approval approve/reject mutation changes, AgentRun resume/cancel UI,
+  Audit export, provider config mutation, and persistent project switching
+  remain SP-018 / multi-user follow-up.

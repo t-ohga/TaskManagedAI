@@ -6,6 +6,8 @@ import type { HealthResponse } from "@/lib/api/types";
 
 const apiMocks = vi.hoisted(() => ({
   getBackendHealth: vi.fn<() => Promise<HealthResponse>>(),
+  getCurrentProject: vi.fn(),
+  listCurrentProjects: vi.fn(),
   listNotifications: vi.fn()
 }));
 
@@ -15,6 +17,11 @@ vi.mock("@/lib/api/client", () => ({
 
 vi.mock("@/lib/api/notifications", () => ({
   listNotifications: apiMocks.listNotifications
+}));
+
+vi.mock("@/lib/api/session", () => ({
+  getCurrentProject: apiMocks.getCurrentProject,
+  listCurrentProjects: apiMocks.listCurrentProjects
 }));
 
 import DashboardPage from "../app/(admin)/dashboard/page";
@@ -28,6 +35,8 @@ import HomePage from "../app/page";
 
 beforeEach(() => {
   apiMocks.getBackendHealth.mockReset();
+  apiMocks.getCurrentProject.mockReset();
+  apiMocks.listCurrentProjects.mockReset();
   apiMocks.listNotifications.mockReset();
 });
 
@@ -36,15 +45,34 @@ async function renderAsync(element: Promise<ReactElement>) {
 }
 
 describe("settings/auth/common i18n", () => {
-  it("renders Japanese labels on the settings page while preserving technical identifiers", () => {
-    render(<ProjectSettingsPage />);
+  it("renders Japanese labels on the settings page while preserving technical identifiers", async () => {
+    const currentProject = {
+      tenant_id: 1,
+      project_id: "00000000-0000-4000-8000-00000000c001",
+      workspace_id: "00000000-0000-4000-8000-00000000c002",
+      slug: "taskmanagedai",
+      name: "TaskManagedAI"
+    };
+    apiMocks.getCurrentProject.mockResolvedValueOnce(currentProject);
+    apiMocks.listCurrentProjects.mockResolvedValueOnce({
+      current_project_id: currentProject.project_id,
+      projects: [
+        {
+          ...currentProject,
+          status: "active",
+          policy_profile: "default"
+        }
+      ]
+    });
+
+    await renderAsync(ProjectSettingsPage());
 
     const region = screen.getByRole("region", { name: "設定" });
     expect(within(region).getByRole("heading", { name: "設定" })).toBeVisible();
-    expect(within(region).getByText("書込経路 (write path)")).toBeVisible();
-    expect(within(region).getByText("ブランチ方針 (branch policy)")).toBeVisible();
+    expect(within(region).getByText("Project context")).toBeVisible();
+    expect(within(region).getByText("TaskManagedAI")).toBeVisible();
     expect(within(region).getByText("allowed_data_class")).toBeVisible();
-    expect(within(region).getAllByText("merge_deny").length).toBeGreaterThan(0);
+    expect(within(region).getAllByText("default").length).toBeGreaterThan(0);
   });
 
   it("renders Japanese dashboard labels and backend unavailable state", async () => {

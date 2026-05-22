@@ -49,6 +49,37 @@ class CurrentProjectResponse(BaseModel):
     name: str
 
 
+class ProjectListItem(BaseModel):
+    """Read-only project metadata safe for Settings UI."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    tenant_id: int
+    project_id: UUID
+    workspace_id: UUID
+    slug: str
+    name: str
+    status: str
+    policy_profile: str
+
+
+class ProjectListResponse(BaseModel):
+    current_project_id: UUID
+    projects: list[ProjectListItem]
+
+
+def _to_project_item(project: Project) -> ProjectListItem:
+    return ProjectListItem(
+        tenant_id=project.tenant_id,
+        project_id=project.id,
+        workspace_id=project.workspace_id,
+        slug=project.slug,
+        name=project.name,
+        status=project.status,
+        policy_profile=project.policy_profile,
+    )
+
+
 @router.get("/current_project", response_model=CurrentProjectResponse)
 async def get_current_project_endpoint(
     actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
@@ -79,4 +110,33 @@ async def get_current_project_endpoint(
         workspace_id=project.workspace_id,
         slug=project.slug,
         name=project.name,
+    )
+
+
+@router.get("/projects", response_model=ProjectListResponse)
+async def list_current_actor_projects_endpoint(
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> ProjectListResponse:
+    """List current tenant projects for the authenticated actor.
+
+    P0.1 still uses single-tenant membership semantics. Project switching is
+    read-only in the UI until an actor-project membership table exists.
+    """
+    result = await session.execute(
+        select(Project)
+        .where(Project.tenant_id == tenant_id)
+        .order_by(Project.created_at, Project.slug)
+    )
+    projects = list(result.scalars())
+    if not projects:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="no project found for tenant",
+        )
+
+    return ProjectListResponse(
+        current_project_id=projects[0].id,
+        projects=[_to_project_item(project) for project in projects],
     )

@@ -4,21 +4,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import ApprovalInboxPage from "../app/(admin)/approvals/page";
 
 const apiMocks = vi.hoisted(() => ({
-  listPendingApprovals: vi.fn()
+  listApprovals: vi.fn()
 }));
 
 vi.mock("@/lib/api/approvals", () => ({
-  listPendingApprovals: apiMocks.listPendingApprovals
+  listApprovals: apiMocks.listApprovals
 }));
 
 afterEach(() => {
-  apiMocks.listPendingApprovals.mockReset();
+  apiMocks.listApprovals.mockReset();
 });
 
 describe("ApprovalInboxPage", () => {
   it("renders pending approvals with review links", async () => {
     const approvalId = "00000000-0000-4000-8000-000000007001";
-    apiMocks.listPendingApprovals.mockResolvedValue([
+    apiMocks.listApprovals.mockResolvedValue([
       {
         id: approvalId,
         action_class: "repo_write",
@@ -32,7 +32,8 @@ describe("ApprovalInboxPage", () => {
 
     render(await ApprovalInboxPage());
 
-    expect(screen.getByRole("heading", { name: "承認待ち" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "承認一覧" })).toBeVisible();
+    expect(screen.getAllByText("承認待ち (pending)").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("リポジトリ書込 (repo_write)")).toBeVisible();
     expect(screen.getByText("repo:taskmanagedai:path/to/file.ts")).toBeVisible();
     expect(screen.getByText(`申請者: 00000000-0000-4000-8000-000000007002`)).toBeVisible();
@@ -44,10 +45,10 @@ describe("ApprovalInboxPage", () => {
   });
 
   it("renders an empty state", async () => {
-    apiMocks.listPendingApprovals.mockResolvedValue([]);
+    apiMocks.listApprovals.mockResolvedValue([]);
 
     render(await ApprovalInboxPage());
 
-    expect(screen.getByText("承認待ちの項目はありません。")).toBeVisible();
+    expect(screen.getByText("承認待ち (pending) の承認 request はありません。")).toBeVisible();
   });
 });

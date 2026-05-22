@@ -24,6 +24,25 @@ export const CurrentProjectSchema = z.object({
 
 export type CurrentProject = z.infer<typeof CurrentProjectSchema>;
 
+export const ProjectListItemSchema = z.object({
+  tenant_id: z.number().int(),
+  project_id: z.string().uuid(),
+  workspace_id: z.string().uuid(),
+  slug: z.string(),
+  name: z.string(),
+  status: z.string(),
+  policy_profile: z.string()
+});
+
+export type ProjectListItem = z.infer<typeof ProjectListItemSchema>;
+
+export const ProjectListResponseSchema = z.object({
+  current_project_id: z.string().uuid(),
+  projects: z.array(ProjectListItemSchema)
+});
+
+export type ProjectListResponse = z.infer<typeof ProjectListResponseSchema>;
+
 /**
  * GET /api/v1/me/current_project — backend が session 経由で resolve した
  * current actor's project を返す。
@@ -47,4 +66,8 @@ export async function getCurrentProject(): Promise<CurrentProject> {
 export async function getCurrentProjectId(): Promise<string> {
   const project = await getCurrentProject();
   return project.project_id;
+}
+
+export async function listCurrentProjects(): Promise<ProjectListResponse> {
+  return fetchBackendJson("/api/v1/me/projects", ProjectListResponseSchema);
 }
