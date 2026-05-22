@@ -92,6 +92,16 @@ extend-safe-fixes = ["UP046", "UP047"]
 "tests/db/test_secret_constraints.py" = ["S107"]
 "tests/eval/test_citation_coverage_loader.py" = ["S108"]
 "tests/eval/test_secret_canary_loader.py" = ["S108"]
+# tests/scripts/ は subprocess mock の fake_run callable や approval/active-registry
+# fixture が多く、E501 (long canonical signed JSON literal) / ANN001/202 (fake_run
+# 内側 signature は monkeypatch.setattr で動的に決まる) / S108 (test artifact tmp
+# path 固定文字列) / S104 (negative test で "0.0.0.0" を claim mismatch verify) を
+# per-file ignore。production code は影響を受けない。
+# (SP022-T09 prep, 2026-05-22: latest main で latent issue 検出、CI billing-blocked
+# のため CI 上で見落とされていた。Mac single-host smoke verification の一環で fix.)
+"tests/scripts/test_taskhub_active_registry.py" = ["E501"]
+"tests/scripts/test_taskhub_destructive_lock.py" = ["E501"]
+"tests/scripts/test_taskhub_restore_orchestrator.py" = ["ANN001", "ANN202", "S104", "S108"]
 
 [tool.mypy]
 python_version = "3.12"
