@@ -28,7 +28,7 @@ test("dev login proxies through the backend and shows the authenticated actor", 
   await expect(page).toHaveURL(/\/login\?next=%2Fdashboard$/u);
 
   await page.getByLabel("Dev login token").fill(readDevLoginToken());
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "ログイン" }).click();
 
   await expect(page).toHaveURL(/\/dashboard$/u);
   await expect(page.getByText("human:default")).toBeVisible();

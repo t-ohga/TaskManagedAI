@@ -12,7 +12,7 @@ test.describe("Approval Inbox", () => {
     await page.goto("/login?next=/dashboard");
 
     await page.getByLabel("Dev login token").fill(readDevLoginToken());
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "ログイン" }).click();
 
     await expect(page).toHaveURL(/\/dashboard$/u);
     // Server Action redirect (x-action-redirect: /dashboard;push) は RSC payload で URL を
@@ -21,7 +21,7 @@ test.describe("Approval Inbox", () => {
     // page.goto("/approvals") が cookie 無しで送信されて middleware に /login redirect される。
     // dashboard の heading が visible になるまで wait することで cookie 永続化を保証する
     // (admin-shell.spec.ts が同 pattern で安定動作している実績の踏襲)。
-    await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
 
     await page.goto("/approvals");
     await expect(page.getByRole("heading", { name: "承認待ち" })).toBeVisible();

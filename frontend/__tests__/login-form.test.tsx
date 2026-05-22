@@ -73,7 +73,7 @@ describe("LoginForm", () => {
     render(<LoginForm action={action} error={null} nextPath="/dashboard" />);
 
     await user.type(screen.getByLabelText("Dev login token"), "correct-dev-login-token");
-    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await user.click(screen.getByRole("button", { name: "ログイン" }));
 
     await waitFor(() => {
       expect(cookieMocks.set).toHaveBeenCalledTimes(1);
@@ -106,14 +106,13 @@ describe("LoginForm", () => {
     render(
       <LoginForm
         action={() => undefined}
-        error="Dev login token is invalid."
+        error="Dev login token が不正です。"
         nextPath="/dashboard"
       />
     );
 
     const alert = screen.getByRole("alert");
-    expect(alert.textContent).toBe("Dev login token is invalid.");
+    expect(alert.textContent).toBe("Dev login token が不正です。");
     expect(screen.getByLabelText("Dev login token").getAttribute("name")).toBe("token");
   });
 });
-

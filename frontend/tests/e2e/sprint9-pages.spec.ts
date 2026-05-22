@@ -130,9 +130,9 @@ async function waitForDevSessionCookie(page: Page): Promise<void> {
 async function loginAsDev(page: Page) {
   await page.goto("/login?next=/dashboard");
   await page.getByLabel("Dev login token").fill(readDevLoginToken());
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "ログイン" }).click();
   await expect(page).toHaveURL(/\/dashboard$/u);
-  await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
   await waitForDevSessionCookie(page);
 }
 
@@ -257,7 +257,7 @@ test("Sprint 9: settings page renders provider matrix + policy profiles", async 
   await page.goto("/settings");
 
   const settingsRegion = page.getByRole("region", {
-    name: "Project Settings",
+    name: "設定",
     exact: true
   });
 
@@ -265,7 +265,7 @@ test("Sprint 9: settings page renders provider matrix + policy profiles", async 
   await expect(settingsRegion).toBeVisible();
   await expect(
     settingsRegion.getByRole("heading", {
-      name: "Project Settings",
+      name: "設定",
       exact: true
     })
   ).toBeVisible();

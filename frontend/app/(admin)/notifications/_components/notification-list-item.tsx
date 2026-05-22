@@ -40,7 +40,7 @@ export function NotificationListItem({ notification }: { notification: Notificat
               className="rounded-md bg-accent px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
               data-testid={`mark-read-${notification.id}`}
             >
-              {isPending ? "Marking..." : "Mark read"}
+              {isPending ? "既読化中..." : "既読にする"}
             </button>
           </form>
         ) : null}
@@ -48,4 +48,3 @@ export function NotificationListItem({ notification }: { notification: Notificat
     </li>
   );
 }
-

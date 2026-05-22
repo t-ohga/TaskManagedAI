@@ -8,15 +8,15 @@ export default async function NotificationsPage() {
   const notifications = await listNotifications();
 
   return (
-    <section aria-label="Notifications" className="grid gap-4">
+    <section aria-label="通知" className="grid gap-4">
       <header>
-        <p className="text-sm font-medium text-accent">Admin</p>
-        <h1 className="text-3xl font-semibold tracking-normal">Notifications</h1>
+        <p className="text-sm font-medium text-accent">管理</p>
+        <h1 className="text-3xl font-semibold tracking-normal">通知</h1>
       </header>
 
       {notifications.length === 0 ? (
         <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
-          No notifications.
+          通知はありません。
         </p>
       ) : (
         <ul className="grid gap-3" data-testid="notification-list">
@@ -28,4 +28,3 @@ export default async function NotificationsPage() {
     </section>
   );
 }
-

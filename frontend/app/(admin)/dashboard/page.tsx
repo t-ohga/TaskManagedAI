@@ -12,7 +12,7 @@ async function readBackendHealth(): Promise<BackendHealthState> {
   try {
     return { kind: "ok", health: await getBackendHealth() };
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Backend healthcheck failed.";
+    const message = error instanceof Error ? error.message : "Backend healthcheck に失敗しました。";
     return { kind: "error", message };
   }
 }
@@ -24,16 +24,16 @@ export default async function DashboardPage() {
   return (
     <div className="grid gap-6">
       <header className="grid gap-2">
-        <p className="text-sm font-medium text-accent">Admin</p>
-        <h1 className="text-3xl font-semibold tracking-normal">Dashboard</h1>
+        <p className="text-sm font-medium text-accent">管理</p>
+        <h1 className="text-3xl font-semibold tracking-normal">ダッシュボード</h1>
       </header>
 
-      <section aria-label="Service health" className="grid gap-4 md:grid-cols-2">
+      <section aria-label="サービス状態" className="grid gap-4 md:grid-cols-2">
         <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="text-base font-semibold">Frontend</h2>
-              <p className="mt-1 text-sm text-muted">Next.js app health endpoint</p>
+              <p className="mt-1 text-sm text-muted">Next.js アプリの health endpoint</p>
             </div>
             <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
               {frontendHealth.status}
@@ -41,15 +41,15 @@ export default async function DashboardPage() {
           </div>
           <dl className="mt-5 grid gap-3 text-sm">
             <div className="flex justify-between gap-4 border-t border-line pt-3">
-              <dt className="text-muted">Endpoint</dt>
+              <dt className="text-muted">エンドポイント</dt>
               <dd className="font-mono">/api/healthz</dd>
             </div>
             <div className="flex justify-between gap-4 border-t border-line pt-3">
-              <dt className="text-muted">Service</dt>
+              <dt className="text-muted">サービス</dt>
               <dd className="font-mono">{frontendHealth.service}</dd>
             </div>
             <div className="flex justify-between gap-4 border-t border-line pt-3">
-              <dt className="text-muted">Runtime</dt>
+              <dt className="text-muted">ランタイム</dt>
               <dd className="font-mono">{frontendHealth.runtime}</dd>
             </div>
             <div className="flex justify-between gap-4 border-t border-line pt-3">
@@ -71,7 +71,7 @@ export default async function DashboardPage() {
               </span>
             ) : (
               <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
-                unavailable
+                利用不可
               </span>
             )}
           </div>
@@ -79,11 +79,11 @@ export default async function DashboardPage() {
           {backendHealth.kind === "ok" ? (
             <dl className="mt-5 grid gap-3 text-sm">
               <div className="flex justify-between gap-4 border-t border-line pt-3">
-                <dt className="text-muted">Service</dt>
+                <dt className="text-muted">サービス</dt>
                 <dd className="font-mono">{backendHealth.health.service}</dd>
               </div>
               <div className="flex justify-between gap-4 border-t border-line pt-3">
-                <dt className="text-muted">Version</dt>
+                <dt className="text-muted">バージョン</dt>
                 <dd className="font-mono">{backendHealth.health.version}</dd>
               </div>
             </dl>
@@ -97,4 +97,3 @@ export default async function DashboardPage() {
     </div>
   );
 }
-
