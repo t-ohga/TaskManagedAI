@@ -4,7 +4,7 @@ type: "heavy"
 status: "draft"
 sprint_no: 22
 created_at: "2026-05-10"
-updated_at: "2026-05-22"
+updated_at: "2026-05-22T11:30:00Z"
 target_days: 3
 max_days: 5
 # F-PR67-019 P2 adopt (PR #67 R4): ADR-00021 acceptance は SP-022 で実機 host
@@ -1100,3 +1100,40 @@ TASKHUB_P0_1_OPENED=1 + SP-013 着手
 | reject / defer | 0 / 0 |
 
 **SP-012 must_ship 完遂で T09 unblock 技術 blocker 解消、残作業 = 物理 host drill のみ**。本 update を SP-022 Pack の Review に追記して P0.1 unblock path を明示。
+
+### SP022-T06 Mac KPI + T08 batch 5+6 completion (2026-05-22 session 後半)
+
+#### 完了 PR (本 session で merged)
+
+| PR | scope | Codex review status |
+|---|---|---|
+| PR #89 | SP022-T06 KPI baseline CLI (Mac 単独 light mode) + destructive_lock cross-subcommand 拡張 (migrate / freeze / thaw) | R1-R2 CLEAN |
+| PR #90 | SP022-T08 batch 5: signed journal CLI DB mode (`--from-db`) + 12 fixture + 3874 regression PASS | R1-R5 CLEAN (累計 12 findings 100% adopt) |
+| PR #91 | SP022-T08 batch 6: frontend Eval Dashboard backend API wiring + skeleton fallback + outage-only fallback (5xx/Zod/network/JSON SyntaxError) + cardinality enforce + page-level 4xx/config error catch | R1-R4 CLEAN (累計 10 findings 100% adopt) |
+
+#### T09 unblock 残作業 (技術 blocker は完全解消、物理作業のみ)
+
+| 残作業 | 状態 | blocker |
+|---|---|---|
+| SP022-T06 KPI baseline Mac (PR #89) | ✅ 完了 | - |
+| SP022-T08 batch 5 signed journal CLI DB mode (PR #90) | ✅ 完了 | - |
+| SP022-T08 batch 6 frontend backend wiring (PR #91) | ✅ 完了 | - |
+| 私的 staging E2E (CI workflow scaffold) | ⏳ scaffold ready (`.github/workflows/private-staging-e2e.yml`) | admin Tailscale OAuth + VPS TLS 443 listener + GitHub secrets setup (user 物理作業) |
+| SP022-T06 KPI baseline Linux/VPS | ⛔ deferred | 物理 host 取得 (user 物理作業) |
+| SP022-T05 AC-HARD multi-agent re-verify | ⛔ deferred | SP-013 着手後 (post-P0.1) |
+| SP022-T09 実機 host migration drill (Mac→VPS、RTO≤4h) PASS | ⛔ deferred | 物理 host 2 台 + user 介在 drill 実施 (user 物理作業) |
+
+**全 technical autonomous 作業完了**。残作業 = user 物理作業 (host 取得 + Tailscale OAuth setup + drill 実施) のみ。
+
+#### 累計 SP-012/SP-022 sessions / PR / findings (update)
+
+| metric | 値 |
+|---|---:|
+| 累計 PR merged (SP-012 must_ship + SP-022 implementation) | 22 (旧 19 + PR #89/#90/#91) |
+| 累計 Codex multi-round review | 58 rounds (旧 47 + PR #89 2R + PR #90 5R + PR #91 4R) |
+| 累計 findings 100% adopt | 234 (旧 212 + PR #89 4 + PR #90 12 + PR #91 10 = +22) |
+| CRITICAL=0 | ✅ all PR |
+| HIGH≤2 (critical_zero gate) | ✅ all PR |
+| reject / defer | 0 / 0 |
+
+P0 Exit declaration path = SP022-T09 user 物理 drill のみ残存。本 SP-022 Sprint 内技術作業は全完了。
