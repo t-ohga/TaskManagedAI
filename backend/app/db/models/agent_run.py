@@ -33,6 +33,16 @@ class AgentRun(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             "or (status <> 'blocked' and blocked_reason is null)",
             name="agent_runs_ck_blocked_reason_consistency",
         ),
+        sa.CheckConstraint(
+            "role_scope is null or role_scope in ('global','project')",
+            name="agent_runs_ck_role_scope",
+        ),
+        sa.CheckConstraint(
+            "(role_id is null and role_scope is null) "
+            "or (role_id is not null and role_scope is not null "
+            "and role_scope in ('global','project'))",
+            name="agent_runs_role_consistency",
+        ),
         sa.ForeignKeyConstraint(
             ["tenant_id"],
             ["tenants.id"],
@@ -67,6 +77,12 @@ class AgentRun(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             postgresql_where=sa.text("parent_run_id is not null"),
         ),
         sa.Index("agent_runs_idx_tenant_created_at", "tenant_id", "created_at"),
+        sa.Index(
+            "agent_runs_idx_lease_expires",
+            "tenant_id",
+            "orchestrator_lease_expires_at",
+            postgresql_where=sa.text("orchestrator_lease_expires_at is not null"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -93,7 +109,34 @@ class AgentRun(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         sa.DateTime(timezone=True),
         nullable=True,
     )
+    role_id: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    role_scope: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    orchestrator_lease_token: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=True,
+    )
+    orchestrator_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=True,
+    )
+    lease_renewed_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=True,
+    )
+    orchestrator_kill_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=True,
+    )
+    last_progress_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=True,
+    )
+    progress_seq: Mapped[int] = mapped_column(
+        sa.BigInteger,
+        nullable=False,
+        default=0,
+        server_default=sa.text("0"),
+    )
 
 
 __all__ = ["AgentRun"]
-

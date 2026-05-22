@@ -127,6 +127,27 @@ def test_validation_failed_to_repair_exhausted_only_accepts_repair_exhausted_eve
     ] == frozenset({"repair_exhausted"})
 
 
+def test_orchestrator_runtime_block_events_are_allowed_for_running_to_blocked() -> None:
+    assert {
+        "orchestrator_lease_expired",
+        "orchestrator_kill_engaged",
+    }.issubset(EVENT_TYPE_FOR_TRANSITION[("running", "blocked")])
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    ["orchestrator_lease_expired", "orchestrator_kill_engaged"],
+)
+def test_validate_event_type_for_orchestrator_runtime_block_events(
+    event_type: str,
+) -> None:
+    validate_event_type_for_transition(
+        "running",
+        "blocked",
+        event_type,  # type: ignore[arg-type]
+    )
+
+
 def test_validate_event_type_for_repair_exhausted_transition_accepts_dedicated_event() -> None:
     validate_event_type_for_transition(
         "validation_failed", "repair_exhausted", "repair_exhausted"
@@ -146,4 +167,3 @@ def test_validate_event_type_for_repair_exhausted_rejects_other_events(
             "repair_exhausted",
             forbidden_event,  # type: ignore[arg-type]
         )
-

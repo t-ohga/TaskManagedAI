@@ -31,6 +31,15 @@ AgentRunEventType = Literal[
     "cli_invocation_started",
     "cli_process_completed",
     "cli_decision_recorded",
+    "orchestrator_dispatched",
+    "orchestrator_lease_renewed",
+    "orchestrator_lease_expired",
+    "orchestrator_failover_triggered",
+    "orchestrator_kill_engaged",
+    "inter_agent_message_sent_ref",
+    "inter_agent_message_consumed_ref",
+    "tool_web_fetch_executed",
+    "tool_docs_search_executed",
 ]
 
 ALL_AGENT_RUN_EVENT_TYPES: tuple[AgentRunEventType, ...] = (
@@ -62,7 +71,15 @@ ALL_AGENT_RUN_EVENT_TYPES: tuple[AgentRunEventType, ...] = (
     "cli_invocation_started",
     "cli_process_completed",
     "cli_decision_recorded",
+    "orchestrator_dispatched",
+    "orchestrator_lease_renewed",
+    "orchestrator_lease_expired",
+    "orchestrator_failover_triggered",
+    "orchestrator_kill_engaged",
+    "inter_agent_message_sent_ref",
+    "inter_agent_message_consumed_ref",
+    "tool_web_fetch_executed",
+    "tool_docs_search_executed",
 )
 
 __all__ = ["ALL_AGENT_RUN_EVENT_TYPES", "AgentRunEventType"]
-
