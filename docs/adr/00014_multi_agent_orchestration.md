@@ -20,7 +20,7 @@ acceptance_resolved_by:
   - "ADR-00018/19/20 + 既存 ADR-00004/00009/00013 accepted: ADR-00020 既 accepted (SP022-T00 2026-05-19)、ADR-00004/00009 既 accepted、ADR-00019 は本 PR で同時 accepted、ADR-00018/00013 は各 owning sprint (SP-015 / P0.1+) kickoff 時 accepted で再解釈 (SP-013 着手時には未 accepted catch-22 解消)"
 ---
 
-最終更新: 2026-05-22 (accepted 昇格、SP-013 kickoff 直前 promotion)
+最終更新: 2026-05-22 (SP-014 batch 0f: SecretBroker multi-agent deny reason / KPI rollup 実装反映)
 
 ## 背景
 
@@ -217,14 +217,14 @@ create table review_artifacts (
 
 各 child run は独立に SecretBroker から token 取得 (agent 間 pass-through 禁止)。SP-014/015/016 で **6 negative case + 個別 reason_code** を must_ship:
 
-| substitution case | reason_code |
+| negative case | reason_code |
 |---|---|
-| parent token used by child | `cross_run_token_substitution` |
-| child token used by parent | 同上 |
-| inter_agent_message token payload (raw token を message に含めようとする) | `secret_in_message_payload` |
-| approval_id substitution | `approval_target_mismatch` (既存 + multi-agent 拡張) |
-| payload_hash substitution | `payload_hash_mismatch` (既存) |
-| run_id substitution | `run_binding_mismatch` |
+| orchestrator / agent が approval decider になろうとする | `agent_decider_forbidden` |
+| Tier 2 auto-allow profile を approval decider 経路へ escape しようとする | `tier_2_agent_decider_attempt` |
+| capability expectation が human なのに agent actor が redeem / secret access を試行 | `actor_type_mismatch` |
+| expected role_id と AgentRun.role_id が一致しない | `role_id_mismatch` |
+| orchestrator lease expired 状態で secret access を試行 | `lease_expired_no_secret_access` |
+| progress lease 違反で blocked になった run が secret access を試行 | `progress_lease_violated` |
 
 ### §10: KPI rollup (PD-R2-F-008 / PD-R3-F-004 / PD-R4-F-001 / PE-F-015 fix、Phase F metrics ADR で詳細化)
 
@@ -250,7 +250,7 @@ KPI source は **既存正本** に固定:
 - `test_progress_lease.py`: PE-F-004 (no-progress 30 分で blocked+runtime_blocked)
 - `test_max_limits.py`: children/depth/turns/budget 違反すべて
 - `test_action_class_3tier.py`: Tier 1 自律 / Tier 2 Policy auto-allow (decider なし) / Tier 3 human approval 必須
-- `test_secretbroker_multi_agent_negative.py`: 6 substitution case 個別 reason_code
+- `test_secretbroker_multi_agent_negative.py`: 6 multi-agent negative case 個別 reason_code
 - `test_remote_agent_gateway_p0_1_stub.py`: deny-only stub + audit
 - `test_review_artifact_4_defense.py`: PE-F-003 (reviewer != requester / role=reviewer / parent 同一 / project 同一)
 - `eval/multi_agent/role_authorization_negative/`: AC-HARD 候補

@@ -11,8 +11,16 @@ from typing import Any, Literal, TypeVar, cast
 from uuid import UUID
 
 import sqlalchemy as sa
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.db.app_role import (
+    assert_tenant_context,
+    get_tenant_context,
+    set_tenant_context,
+)
+from backend.app.db.models.actor import Actor, ActorType
+from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.approval_request import ApprovalRequest
 from backend.app.db.models.secret_capability_token import SecretCapabilityToken
 from backend.app.db.models.secret_ref import SecretRef
@@ -58,7 +66,33 @@ RedeemDenyReason = Literal[
     "name_mismatch",
     "version_mismatch",
     "consumer_mismatch",
+    "agent_decider_forbidden",
+    "tier_2_agent_decider_attempt",
+    "actor_type_mismatch",
+    "role_id_mismatch",
+    "lease_expired_no_secret_access",
+    "progress_lease_violated",
 ]
+MultiAgentSecretDenyReason = Literal[
+    "agent_decider_forbidden",
+    "tier_2_agent_decider_attempt",
+    "actor_type_mismatch",
+    "role_id_mismatch",
+    "lease_expired_no_secret_access",
+    "progress_lease_violated",
+]
+
+MULTI_AGENT_SECRET_DENY_REASON_VALUES: tuple[MultiAgentSecretDenyReason, ...] = (
+    "agent_decider_forbidden",
+    "tier_2_agent_decider_attempt",
+    "actor_type_mismatch",
+    "role_id_mismatch",
+    "lease_expired_no_secret_access",
+    "progress_lease_violated",
+)
+MULTI_AGENT_SECRET_DENY_REASONS: frozenset[MultiAgentSecretDenyReason] = frozenset(
+    MULTI_AGENT_SECRET_DENY_REASON_VALUES
+)
 
 T = TypeVar("T")
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
@@ -95,6 +129,29 @@ class BrokerRedeemResult[T]:
     secret_ref_id: UUID
     requested_operation: RequestedOperation
     operation_result: T | None
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerMultiAgentAccessDecision:
+    allowed: bool
+    requested_operation: RequestedOperation
+    actor_type: ActorType
+    role_id: str | None
+    reason_code: MultiAgentSecretDenyReason | None = None
+
+
+class SecretBrokerMultiAgentDeniedPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    reason_code: MultiAgentSecretDenyReason
+    run_id: str
+    requested_operation: RequestedOperation
+    actor_type: ActorType
+    role_id: str | None
+    expected_actor_type: ActorType | None
+    expected_role_id: str | None
+    guard: Literal["secretbroker_multi_agent"]
+    raw_secret_check_passed: Literal[True]
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,6 +439,104 @@ class SecretBroker:
             operation_result=result,
         )
 
+    async def validate_multi_agent_access(
+        self,
+        *,
+        tenant_id: int,
+        actor_id: UUID,
+        run_id: UUID,
+        requested_operation: RequestedOperation,
+        expected_actor_type: ActorType | None = None,
+        expected_role_id: str | None = None,
+        approval_decider_attempt: bool = False,
+        tier_2_decider_attempt: bool = False,
+        now: datetime | None = None,
+    ) -> BrokerMultiAgentAccessDecision:
+        """Validate SP-014 multi-agent SecretBroker boundary before secret access.
+
+        Actor type, role id, lease state, and progress-lease state are resolved
+        from server-owned DB rows. Callers may choose the policy expectation
+        they are enforcing, but they cannot supply actor/run attributes.
+        """
+
+        if expected_role_id is not None and not expected_role_id.strip():
+            raise ValueError("expected_role_id must be non-empty when provided.")
+
+        await self._ensure_tenant_context(tenant_id)
+        row = (
+            await self.session.execute(
+                sa.select(
+                    Actor.actor_type,
+                    AgentRun.role_id,
+                    AgentRun.error_code,
+                    AgentRun.orchestrator_lease_expires_at,
+                )
+                .select_from(AgentRun)
+                .join(
+                    Actor,
+                    sa.and_(
+                        Actor.tenant_id == AgentRun.tenant_id,
+                        Actor.id == actor_id,
+                    ),
+                )
+                .where(
+                    AgentRun.tenant_id == tenant_id,
+                    AgentRun.id == run_id,
+                )
+            )
+        ).one_or_none()
+        if row is None:
+            raise ValueError("actor_id and run_id must exist in the tenant boundary.")
+
+        resolved_now = now or datetime.now(tz=UTC)
+        actor_type = cast(ActorType, row.actor_type)
+        role_id = cast(str | None, row.role_id)
+        reason_code = _classify_multi_agent_secret_access(
+            actor_type=actor_type,
+            role_id=role_id,
+            expected_actor_type=expected_actor_type,
+            expected_role_id=expected_role_id,
+            approval_decider_attempt=approval_decider_attempt,
+            tier_2_decider_attempt=tier_2_decider_attempt,
+            lease_expires_at=row.orchestrator_lease_expires_at,
+            error_code=row.error_code,
+            now=resolved_now,
+        )
+        if reason_code is None:
+            return BrokerMultiAgentAccessDecision(
+                allowed=True,
+                requested_operation=requested_operation,
+                actor_type=actor_type,
+                role_id=role_id,
+            )
+
+        await self._audit_multi_agent_access_denied(
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            run_id=run_id,
+            requested_operation=requested_operation,
+            actor_type=actor_type,
+            role_id=role_id,
+            expected_actor_type=expected_actor_type,
+            expected_role_id=expected_role_id,
+            reason_code=reason_code,
+        )
+        return BrokerMultiAgentAccessDecision(
+            allowed=False,
+            requested_operation=requested_operation,
+            actor_type=actor_type,
+            role_id=role_id,
+            reason_code=reason_code,
+        )
+
+    async def _ensure_tenant_context(self, tenant_id: int) -> None:
+        if not isinstance(tenant_id, int) or isinstance(tenant_id, bool) or tenant_id < 1:
+            raise ValueError("tenant_id must be a positive integer.")
+        current = await get_tenant_context(self.session)
+        if current is None:
+            await set_tenant_context(self.session, tenant_id)
+        await assert_tenant_context(self.session, tenant_id)
+
     async def _get_secret_ref(
         self,
         *,
@@ -600,6 +755,37 @@ class SecretBroker:
             },
         )
 
+    async def _audit_multi_agent_access_denied(
+        self,
+        *,
+        tenant_id: int,
+        actor_id: UUID,
+        run_id: UUID,
+        requested_operation: RequestedOperation,
+        actor_type: ActorType,
+        role_id: str | None,
+        expected_actor_type: ActorType | None,
+        expected_role_id: str | None,
+        reason_code: MultiAgentSecretDenyReason,
+    ) -> None:
+        payload = SecretBrokerMultiAgentDeniedPayload(
+            reason_code=reason_code,
+            run_id=str(run_id),
+            requested_operation=requested_operation,
+            actor_type=actor_type,
+            role_id=role_id,
+            expected_actor_type=expected_actor_type,
+            expected_role_id=expected_role_id,
+            guard="secretbroker_multi_agent",
+            raw_secret_check_passed=True,
+        ).model_dump(mode="json")
+        await AuditEventRepository(self.session).append(
+            tenant_id=tenant_id,
+            event_type="secret_capability_denied",
+            actor_id=actor_id,
+            payload=payload,
+        )
+
 
 def _claim_denial_to_broker_denial(
     *,
@@ -635,6 +821,41 @@ def _claim_reason_to_redeem_reason(reason: ClaimDenyReason | None) -> RedeemDeny
     }:
         return reason
     return "not_found"
+
+
+def _classify_multi_agent_secret_access(
+    *,
+    actor_type: ActorType,
+    role_id: str | None,
+    expected_actor_type: ActorType | None,
+    expected_role_id: str | None,
+    approval_decider_attempt: bool,
+    tier_2_decider_attempt: bool,
+    lease_expires_at: datetime | None,
+    error_code: str | None,
+    now: datetime,
+) -> MultiAgentSecretDenyReason | None:
+    if approval_decider_attempt and actor_type == "agent":
+        return "agent_decider_forbidden"
+    if tier_2_decider_attempt and actor_type == "agent":
+        return "tier_2_agent_decider_attempt"
+    if expected_actor_type is not None and actor_type != expected_actor_type:
+        return "actor_type_mismatch"
+    if expected_role_id is not None and role_id != expected_role_id:
+        return "role_id_mismatch"
+    if _datetime_lte(lease_expires_at, now):
+        return "lease_expired_no_secret_access"
+    if error_code == "progress_lease_violated":
+        return "progress_lease_violated"
+    return None
+
+
+def _datetime_lte(left: datetime | None, right: datetime) -> bool:
+    if left is None:
+        return False
+    resolved_left = left if left.tzinfo is not None else left.replace(tzinfo=UTC)
+    resolved_right = right if right.tzinfo is not None else right.replace(tzinfo=UTC)
+    return resolved_left <= resolved_right
 
 
 def _actor_allowed(actor_id: UUID, allowed_consumers: list[str]) -> bool:
@@ -750,10 +971,14 @@ async def _maybe_await[T](value: T | Awaitable[T]) -> T:
 __all__ = [
     "BrokerIssueDenied",
     "BrokerIssueResult",
+    "BrokerMultiAgentAccessDecision",
     "BrokerOperationContext",
     "BrokerRedeemDenied",
     "BrokerRedeemResult",
+    "MULTI_AGENT_SECRET_DENY_REASONS",
+    "MULTI_AGENT_SECRET_DENY_REASON_VALUES",
+    "MultiAgentSecretDenyReason",
     "SecretBroker",
+    "SecretBrokerMultiAgentDeniedPayload",
     "SecretHandle",
 ]
-

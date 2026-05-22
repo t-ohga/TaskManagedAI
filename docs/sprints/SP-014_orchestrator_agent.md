@@ -32,7 +32,7 @@ kickoff_readiness:
   recommended_execution: "codex-all-loops mode=code 委譲 (heavy Sprint Pack、scope 大、Codex first 実装で品質担保)"
 ---
 
-最終更新: 2026-05-22 (task-01 batch 0e: remote_agent_gateway deny-only stub / audit payload 反映)
+最終更新: 2026-05-22 (task-01 batch 0f: orchestrator_kpi_rollup + SecretBroker 6 negative case 反映)
 
 ## 目的
 
@@ -82,7 +82,7 @@ orchestrator agent (司令塔) の本体実装 + lease/heartbeat/failover/kill-s
 - [ ] orchestrator lease/failover stress test (60s heartbeat 失敗 → failover)
 - [ ] max_* 違反全件 reject + 絶対上限 (children≤20/depth≤5/turns≤500/budget≤$50) DB CHECK で破れない確認
 - [ ] Tier 2 で agent decider 経路残存しない (4 重防御 negative test)
-- [ ] SecretBroker 6 negative case 個別 reason_code で deny
+- [x] SecretBroker 6 negative case 個別 reason_code で deny
 
 ## must_ship / defer_if_over_budget 対応表
 
