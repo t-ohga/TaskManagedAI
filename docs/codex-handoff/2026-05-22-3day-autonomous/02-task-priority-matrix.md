@@ -9,9 +9,29 @@
 | **P0** | task-01 | SP-014 batch 0 | orchestrator agent core (service + lease + 4 重防御 + policy_profile) | **必須** | Plan 2 round + Impl 1 round 必須 | 1.5-2 day |
 | **P0** | task-02 | SP-012-8 batch 1-7 | UI 日本語化 (navigation + 7 page) | **必須** | Plan 1-2 round + Impl 1 round 必須 | 1-1.5 day |
 | **P1** | task-03 | SP-022-1 | scripts hardening + Layer C SOP polish | 推奨 | Plan 1 round + Impl 1 round 推奨 | 0.7-1 day |
+| **P1** | task-05 | SP-0045 | Tool Registry 本体 (tools + allowed_actions + trust_tier + lockfile) | **必須** | Plan 2 round + Impl 1 round 必須 | 1.5-2 day |
 | **P2** | task-04 | SP-012-9 残 wiring | Approvals + Agent Runs + Audit + Settings page wiring | 推奨 | Plan 1 round + Impl 1 round 推奨 | 0.5-1 day |
+| **P2** | task-06 | docs/adr drift | ADR + Sprint Pack frontmatter retroactive fix | 不要 | Plan 1 round + Impl 1 round 推奨 | 0.3-0.5 day |
+| **P2** | task-07 | test coverage | Backend untested branch coverage 拡張 | 不要 | Plan 1 round + Impl 1 round 推奨 | 0.5-1 day |
+| **P3** | task-08 | docs drift | rules + reference + Sprint Pack 用語 + cross-reference 整合 | 不要 | Plan 1 round + Impl 1 round 推奨 | 0.3-0.5 day |
 
-合計想定: 3.7-5.5 day = 3 日間 (実労 24h × 3 = 72h) で完遂可能。
+合計想定: 6.4-9.5 day = 3 日間 (実労 24h × 3 = 72h) で task-01/05 直列 + 残 6 task 並行で完遂可能。
+
+**3 日間 schedule 推奨 (8 task 並行 schedule)**:
+
+```
+Day 1 (土):
+  09:00-12:00  task-01 Self-Plan-Review 2 round (CRITICAL=0/HIGH≤2 達成)
+  09:00-13:00  task-02 Self-Plan-Review + glossary 確定 (並行)
+  13:00-21:00  task-01 batch 0a 実装 + task-03 (並行) + task-06 (並行 light)
+
+Day 2 (日):
+  09:00-21:00  task-01 batch 0b-0e + task-02 batch 1-4 + task-07 (並行)
+
+Day 3 (月):
+  09:00-15:00  task-01 batch 0f + task-02 batch 5-7 + task-05 batch A-B (task-01 batch 0d 完遂後)
+  15:00-21:00  task-04 残 wiring + task-05 batch C-D + task-08 + 完了報告
+```
 
 ## 2. 依存関係 (DAG)
 

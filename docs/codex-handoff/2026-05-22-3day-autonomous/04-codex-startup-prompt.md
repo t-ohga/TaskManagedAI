@@ -120,30 +120,130 @@
 開始してください。
 ```
 
-## 2. Full 3-day autonomous 起動 prompt (1 つの Codex session で 4 task 全て)
+### task-05 (SP-0045 Tool Registry 本体、task-01 batch 0d 完遂後)
 
 ```text
-あなたは TaskManagedAI の 3 日間 (2026-05-23 / 24 / 25) autonomous 開発を担当する Codex agent です。Claude が連続 42 PR merge で完成させた基盤の上に、4 task を並行 or 順次で完遂します。
+あなたは TaskManagedAI の 3 日間 autonomous 開発を担当する Codex agent です。SP-0045 Tool Registry 本体を担当します。本 task は task-01 (SP-014 batch 0d) の完遂後着手。
+
+【絶対遵守】
+1-5. /Users/tohga/repo/TaskManagedAI/docs/codex-handoff/2026-05-22-3day-autonomous/README.md / 00 / 01 / 02 / 本 task file 順に Read
+6. docs/sprints/SP-0045_tool_registry.md (heavy Sprint Pack)
+7. docs/adr/00027_tool_registry_security_boundary.md (proposed、本 task で accepted)
+8. docs/adr/00012_hook_trust_boundary.md (proposed、本 task で accepted)
+9. .claude/rules/server-owned-boundary.md (trust_tier server-resolved only)
+
+【計画必須】
+- 実装前に §3.1 Self-Plan-Review 2 round
+- task-01 batch 0d の tool_network_policies 完遂後 rebase
+
+【完了条件】
+- tasks/task-05-sp0045-tool-registry.md §6 DoD checklist 全件 ✅
+- completion/task-05-completed.md 起票
+
+開始してください。
+```
+
+### task-06 (ADR + Sprint Pack frontmatter drift retroactive fix)
+
+```text
+あなたは TaskManagedAI の 3 日間 autonomous 開発を担当する Codex agent です。ADR + Sprint Pack frontmatter drift retroactive fix を担当します。
+
+【絶対遵守】
+1-5. handoff 共通 file (README + 00 + 01 + 02) + 本 task file
+6. .claude/rules/sprint-pack-adr-gate.md §12 ADR accepted promotion (必須要件)
+7. docs/sprints/ + docs/adr/ 全件の frontmatter status 確認
+
+【scope】
+- proposed ADR で対応 Sprint Pack 完遂分を accepted 化
+- Sprint Pack `completed_at` 補完
+- adr_refs ↔ planned_adr_refs 整合 (移送)
+- Wave 13 amendment 2 件 retroactive accepted
+
+【完了条件】
+- tasks/task-06-adr-frontmatter-drift-fix.md §8 DoD checklist 全件 ✅
+- completion/task-06-completed.md 起票
+
+開始してください。
+```
+
+### task-07 (Backend test coverage expansion)
+
+```text
+あなたは TaskManagedAI の 3 日間 autonomous 開発を担当する Codex agent です。Backend untested branch coverage 拡張を担当します。
+
+【絶対遵守】
+1-5. handoff 共通 file + 本 task file
+6. .claude/rules/testing.md 全文 (特に §3 弱い assertion 禁止 + §13 完了条件)
+7. .claude/rules/cross-source-enum-integrity.md (5+ source 整合 test pattern)
+
+【scope】
+- PR #100-#143 で新規追加された untested branch を coverage 強化
+- 100% coverage 目的ではない (弱い assertion 禁止)
+- regression test を case ごと別 test function で追加 (cascade pattern 防止)
+
+【完了条件】
+- tasks/task-07-backend-test-coverage.md §8 DoD checklist 全件 ✅
+- completion/task-07-completed.md 起票
+
+開始してください。
+```
+
+### task-08 (Documentation drift fix)
+
+```text
+あなたは TaskManagedAI の 3 日間 autonomous 開発を担当する Codex agent です。Documentation drift fix を担当します。
+
+【絶対遵守】
+1-5. handoff 共通 file + 本 task file
+6. .claude/rules/instincts.md §17 docs drift を放置しない
+7. .claude/CLAUDE.md + .claude/rules/ + .claude/reference/ 全件
+
+【scope】
+- AgentRun event_type 28→37 統一 (P0 vs P0.1+ 区別明示)
+- standard role 10 種言及統一
+- PR 番号 reference stale fix
+- rules / reference cross-reference 整合
+
+【完了条件】
+- tasks/task-08-docs-drift-fix.md §8 DoD checklist 全件 ✅
+- completion/task-08-completed.md 起票
+
+開始してください。
+```
+
+## 2. Full 3-day autonomous 起動 prompt (1 つの Codex session で 8 task 全て)
+
+```text
+あなたは TaskManagedAI の 3 日間 (2026-05-23 / 24 / 25) autonomous 開発を担当する Codex agent です。Claude が連続 44 PR merge で完成させた基盤の上に、8 task を並行 or 順次で完遂します。
 
 【絶対遵守 起動 protocol】
 1. /Users/tohga/repo/TaskManagedAI/docs/codex-handoff/2026-05-22-3day-autonomous/README.md を最初に Read (master index)
 2. 次に 00-codex-behavior-guide.md (全文必読、PR 起票 / 品質担保 / leadership 全部)
 3. 次に 01-current-state.md (現状 snapshot、SP-013 batch 0 完遂後の state)
-4. 次に 02-task-priority-matrix.md (4 task の優先順位 + 依存 + 並行可能性)
+4. 次に 02-task-priority-matrix.md (8 task の優先順位 + 依存 + 並行可能性)
 
-【4 task 概要】
+【8 task 概要】
 - P0 task-01: SP-014 batch 0 orchestrator agent (1.5-2 day、heavy、計画必須)
 - P0 task-02: SP-012-8 UI 日本語化 (1-1.5 day、計画必須)
 - P1 task-03: SP-022-1 scripts hardening (0.7-1 day、計画推奨)
+- P1 task-05: SP-0045 Tool Registry 本体 (1.5-2 day、heavy、計画必須、task-01 batch 0d 完遂後)
 - P2 task-04: SP-012-9 残 wiring (0.5-1 day、計画推奨)
+- P2 task-06: ADR + Sprint Pack frontmatter drift fix (0.3-0.5 day、light、独立並行)
+- P2 task-07: Backend test coverage expansion (0.5-1 day、light、独立並行)
+- P3 task-08: Documentation drift fix (0.3-0.5 day、light、独立並行)
 
 【推奨実行順序】
-Day 1 (土): task-01 計画 phase + batch 0a 着手 + task-03 並行
-Day 2 (日): task-01 batch 0b-0e + task-02 計画 phase
-Day 3 (月): task-02 batch 1-7 + task-04 + 完了報告
+Day 1 (土): task-01 Self-Plan-Review 2 round + batch 0a + task-03 + task-06 (並行 light)
+Day 2 (日): task-01 batch 0b-0e + task-02 Self-Plan-Review + task-07 (並行 light)
+Day 3 (月): task-02 batch 1-7 + task-05 (task-01 batch 0d 完遂後) + task-04 + task-08 + 完了報告
 
 【並行可能性】
-全 task 並行起動可能、ただし同一 file 編集衝突回避 (02-task-priority-matrix.md §3.2 参照)
+task-05 は task-01 batch 0d 完遂後着手、それ以外 7 task は独立並行可能。同一 file 編集衝突回避 (02-task-priority-matrix.md §3.2 参照)。
+
+【品質担保強化 (必須)】
+- §3.5 Codex Self-Review 品質担保 checklist (invariant 12 項目 + test 6 項目 + PR description 5 項目 + local verify 5 項目 = 28 項目) 全件 ✅ で PR 起票
+- §3.6 Codex auto-review baseline polish loop (clean まで polish、max 3 round、cascade pattern 検出時は matrix-based logic で fix)
+- Claude verification 戻り時に Sequence H (全 task 主要成果物 codex-all-loops loop) で deeper round + 必要時 fix PR
 
 【絶対遵守 invariant】
 - server-owned-boundary §1: caller-supplied 経路 signature レベル削除

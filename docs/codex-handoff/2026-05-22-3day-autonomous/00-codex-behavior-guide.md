@@ -198,15 +198,85 @@ baseline 内容確認 (delta +0 = 真の 0 件 ≠ baseline 見逃し、PR #42/#
 
 ### 3.4 Claude verification 戻り時に codex-all-loops で deeper round (品質担保補強)
 
-3 日間後に Claude が戻ったとき (`03-claude-verification-checklist.md`)、Claude が本 worktree から `codex-all-loops` skill を起動して deeper round を実施可能:
+3 日間後に Claude が戻ったとき (`03-claude-verification-checklist.md`)、Claude が本 worktree から `codex-all-loops` skill を起動して **全 task の主要成果物に対し deeper round を実施**:
 
 ```
+# 各 Sprint Pack に対し
 Skill(skill="codex-all-loops", args="docs/sprints/SP-014_orchestrator_agent.md --mode=plan --max-rounds=8")
+Skill(skill="codex-all-loops", args="docs/sprints/SP-0045_tool_registry.md --mode=plan --max-rounds=8")
+
+# 各実装 dir に対し
+Skill(skill="codex-all-loops", args="backend/app/services/orchestrator --mode=code --impl-target backend/app/services/orchestrator --impl-files orchestrator.py,lease_manager.py,dispatcher.py --max-rounds=8")
 ```
 
 これは Claude Code main session 内の Skill 起動であり、Codex chain ではない (AGENTS.md 整合)。
 
-→ Codex 側は self-review で **CRITICAL 0** を達成する責務、Claude 側で deeper adversarial round で品質担保補強。
+→ **責任分担**:
+- **Codex (3 日間 autonomous)**: §3.1-§3.3 で CRITICAL 0 達成、Self-Review Protocol 遵守
+- **Claude (戻り時)**: §3.4 + 全 PR codex-all-loops loop で品質担保補強 + 必要時 fix PR 起票 (Sequence H、`03-claude-verification-checklist.md` 参照)
+
+### 3.5 Codex Self-Review 品質担保 checklist (詳細版)
+
+§3.1 / §3.2 で実施する Self-Review の **機械的 verify checklist**。Codex は各 PR 起票前に本 checklist 全件 ✅ を確認:
+
+#### invariant verify (12 項目)
+
+- [ ] **server-owned-boundary §1**: `grep -E "tenant_id: int = Body|project_id: int = Body|actor_id: int = Body" backend/app/api/<該当 file>` → 0 hit
+- [ ] **5+ source enum integrity**: 新規 enum 追加時、Literal + frozenset + Pydantic + pytest + DB CHECK の 5 source 全て update 確認 (`cross-source-enum-integrity.md` §1)
+- [ ] **AgentRun 16 状態**: 既存 16 状態を変更していない (`grep -c '"queued"\|"gathering_context"\|...' backend/`)
+- [ ] **blocked_reason 3 種**: `policy_blocked` / `budget_blocked` / `runtime_blocked` 以外を導入していない
+- [ ] **secret_capability_tokens raw secret 非保存**: token 値 raw を DB columns / log / artifact / audit / ContextSnapshot 経路で保存していない
+- [ ] **runner_mutation_gateway / tool_mutating_gateway_stub** 混同なし
+- [ ] **Provider Compliance 13 reason_code**: `payload_data_class_*` / `effective_allowed_data_class_*` / `zdr_*` / `training_*` / `condition_*` / `retention_*` / `region_*` / `plan_*` / `provider_*` / `provider_request_preflight_*` / `budget_*` / `allow` 列挙 一貫
+- [ ] **caller-supplied 経路禁止** (`server-owned-boundary.md` §1): expected_request_fingerprint / allowed_data_class / payload_data_class / approval_target_diff_hash を caller signature に持たない
+- [ ] **atomic claim SQL pattern**: SecretBroker `redeem_capability_token` の check → execute → mark used 逐次処理がない (UPDATE WHERE + RETURNING で atomic、0 rows = deny)
+- [ ] **approval 4 整合**: artifact_hash + policy_version + provider_request_fingerprint + action_class の 4 binding (`server-owned-boundary.md` §3)
+- [ ] **self-approval 禁止**: requester ≠ decider (Pydantic + service + DB CHECK の 3 layer enforce)
+- [ ] **secret_ref opaque**: URI 解釈は SecretBroker 内に閉じる、AI / runner / artifact / log で URI parse しない
+
+#### test verify (6 項目)
+
+- [ ] **弱い assertion 禁止** (`testing.md` §3): `toBeDefined() / toBeTruthy() / expect(fn).not.toThrow()` 単独なし
+- [ ] **regression test を case ごと別 test function** で追加 (cascade pattern 防止、PR #137 教訓)
+- [ ] **negative test** (越境 / mismatch / null / overflow) を含む
+- [ ] **5+ source enum drift detection** test 追加 (`assert set(actual) == set(expected)` で exact match)
+- [ ] **DB contract test** で `tenant_id` 抜けが落ちる fixture (testing.md §6)
+- [ ] **matrix-based test** (例: `if scope == X: if not condition: raise`) で全 case 1-to-1 test
+
+#### PR description verify (5 項目)
+
+- [ ] **self-review verdict** 記載 (§3 Self-Review Protocol Round 1+2 + 採否判定 + Readiness Gate 結果)
+- [ ] **changes table** 記載 (file / operation / 行数)
+- [ ] **verification** 記載 (ruff + mypy + pytest + typecheck + lint + vitest 結果)
+- [ ] **invariant 遵守 trace** 記載 (該当 invariant 項目 explicit ✅)
+- [ ] **ADR Gate 判定** 記載 (非該当 / 該当)
+
+#### local verify (5 項目)
+
+- [ ] `uv run ruff check backend tests` clean
+- [ ] `uv run mypy backend` clean
+- [ ] `uv run pytest tests/<該当 dir>/ -q` PASS
+- [ ] `cd frontend && pnpm typecheck && pnpm lint && pnpm vitest run` clean (frontend 時)
+- [ ] `uv run alembic check && uv run alembic upgrade head && uv run alembic downgrade -1 && uv run alembic upgrade head` PASS (migration 時)
+
+### 3.6 Codex auto-review baseline polish loop (clean まで)
+
+`§6` の baseline 確認に **clean まで polish loop** 追加:
+
+```
+loop:
+  1. sleep 60 (Codex bot trigger 待ち)
+  2. .claude/scripts/codex_pr_full_review.sh <PR> 2>&1 | head -200
+  3. baseline 内容を読む (delta +0 ≠ 真の clean、必ず head -200 で確認)
+  4. findings 採否判定:
+     - adopt → fix commit + push (PR 自動 update)
+     - reject → PR comment で理由返信 + ~/.claude/local/codex-reviews/<date>/<slug>/rejected.md
+     - defer → Sprint Pack 残リスクに記録 + TODO comment
+  5. CRITICAL 0 + HIGH ≤ 2 達成 → admin bypass merge 可能
+     未達成 → loop 継続 (max 3 round、3 round 超は STOPPED.md)
+```
+
+cascade pattern 検出 (1 fix で別 invariant 違反導入) 時は **matrix-based logic** に refactor (PR #133→#135→#137 教訓)、案件全件を 1 関数 / 1 SQL で明示 enforce。
 
 ## §4 PR 起票 protocol
 
