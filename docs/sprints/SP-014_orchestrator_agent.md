@@ -32,7 +32,7 @@ kickoff_readiness:
   recommended_execution: "codex-all-loops mode=code 委譲 (heavy Sprint Pack、scope 大、Codex first 実装で品質担保)"
 ---
 
-最終更新: 2026-05-22 (task-01 batch 0d: Tool Registry network_access enum / tool_network_policies / ADR-00030 accepted update 反映)
+最終更新: 2026-05-22 (task-01 batch 0e: remote_agent_gateway deny-only stub / audit payload 反映)
 
 ## 目的
 
@@ -157,3 +157,4 @@ uv run alembic check && uv run alembic upgrade head
 - 2026-05-22 task-01 batch 0b: review_artifacts 4 重防御 完了、PR #146 merged。
 - 2026-05-22 task-01 batch 0c: policy_profile schema / exact 14 seed / policy_decisions trace / ADR-00009 update 完了。`alembic check` は既存 `migrations/env.py target_metadata` debt で継続 defer。
 - 2026-05-22 task-01 batch 0d: Tool Registry network_access enum / tool_network_policies / web_fetch+docs_search deny-only seed / ADR-00030 accepted update 完了。`internet` は enum として保持するが P0 service guard では deny。
+- 2026-05-22 task-01 batch 0e: remote_agent_gateway P0.1 deny-only stub 完了。full remote adapter/API/config は ADR-00013 proposed のまま禁止、stub は `remote_agent_dispatch_denied` audit だけを emit。
