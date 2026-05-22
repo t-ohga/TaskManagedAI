@@ -267,13 +267,13 @@ async def test_agent_run_insert_with_project_existing_custom_role_ok(
 async def test_agent_run_insert_with_project_nonexistent_role_rejects(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """role_scope='project' + project_agent_roles に存在しない role は reject (PE-F-012)."""
+    """role_scope='project' + non-standard role が project_agent_roles に存在しない場合 reject."""
     async with session_factory() as session:
         await _reset_tables(session)
         await _insert_fixtures(session)
 
     async with session_factory() as session:
-        with pytest.raises(DBAPIError, match="project_agent_roles|check_project_role_link"):
+        with pytest.raises(DBAPIError, match="project_agent_roles|check_project_role_link|project role"):
             await session.execute(
                 text(
                     """
@@ -286,3 +286,36 @@ async def test_agent_run_insert_with_project_nonexistent_role_rejects(
                 {"run_id": AGENT_RUN_ID, "project_id": PROJECT_ID},
             )
             await session.commit()
+
+
+# Codex PR #138 R1 P1 regression test (project + standard role acceptance)
+@pytest.mark.asyncio
+async def test_agent_run_insert_with_project_standard_role_ok(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """role_scope='project' + standard role (e.g., 'implementer') は accept.
+
+    Codex PR #138 R1 P1 fix: 旧 trigger は project branch で project_agent_roles 必須
+    だったため、standard role (implementer 等) を project scope で使う場合に regression
+    が発生していた。PR #140 fix で project + standard role は standard_role_ids_mirror
+    内なら accept (project_agent_roles row なくても OK)。
+    """
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        # project_agent_roles に implementer 行を投入していない状態でも、
+        # standard role なので trigger は accept する必要 (PR #138 fix の核心)
+        await session.execute(
+            text(
+                """
+                insert into agent_runs (id, tenant_id, project_id, status,
+                  role_id, role_scope)
+                values (:run_id, 1, :project_id, 'queued',
+                  'implementer', 'project')
+                """
+            ),
+            {"run_id": AGENT_RUN_ID, "project_id": PROJECT_ID},
+        )
+        await session.commit()

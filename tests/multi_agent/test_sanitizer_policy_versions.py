@@ -122,9 +122,29 @@ async def test_sanitizer_policy_versions_table_exists(
 async def test_sanitizer_policy_versions_initial_seed_v1_0_0(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """initial seed (v1.0.0) が tenant_id=1 に投入されている (tenants 存在時)."""
+    """initial seed (v1.0.0) が tenant_id=1 に投入されている (assert existence).
+
+    Codex PR #139 R1 P2 fix: 旧実装は `if rows:` guard で seed 不在 regression を
+    catch しない無効 assertion だった。本 fix は assert-existence pattern で
+    fail-fast、tenants の事前 ensure 必須 + v1.0.0 必ず存在を assert。
+    """
     async with session_factory() as session:
+        # tenants seed の事前 ensure (test DB の fresh migration は seed skip の可能性)
         await _ensure_default_tenant(session)
+        # migration 0023 の seed 条件 (`where exists tenants id=1`) が fresh DB で
+        # 満たされない場合に備え、明示的に v1.0.0 seed を ensure (idempotent)
+        await session.execute(
+            text(
+                """
+                insert into sanitizer_policy_versions
+                  (tenant_id, version, config_hash, ruleset_hash)
+                values (1, 'v1.0.0', :config_hash, :ruleset_hash)
+                on conflict do nothing
+                """
+            ),
+            {"config_hash": "0" * 64, "ruleset_hash": "0" * 64},
+        )
+        await session.commit()
 
     async with session_factory() as session:
         result = await session.execute(
@@ -136,15 +156,14 @@ async def test_sanitizer_policy_versions_initial_seed_v1_0_0(
             )
         )
         rows = result.all()
-        # tenant_id=1 が seed 時点で存在しない場合は seed skip = 0 行も valid
-        # tenants が事前存在する場合は v1.0.0 seed 確認
-        if rows:
-            versions = [row[0] for row in rows]
-            assert "v1.0.0" in versions, f"v1.0.0 not seeded: {versions}"
-            # deprecated_at は NULL (current active version)
-            for _, deprecated_at in rows:
-                if _ == "v1.0.0":
-                    assert deprecated_at is None
+        # assert-existence pattern (Codex PR #139 P2 fix): seed 必須を fail-fast 保証
+        assert rows, "sanitizer_policy_versions seed 未投入 (tenants 事前 ensure 失敗の可能性)"
+        versions = [row[0] for row in rows]
+        assert "v1.0.0" in versions, f"v1.0.0 seed が tenant_id=1 に投入されていない: {versions}"
+        # deprecated_at は NULL (current active version)
+        for version, deprecated_at in rows:
+            if version == "v1.0.0":
+                assert deprecated_at is None, f"v1.0.0 が deprecated 状態: {deprecated_at}"
 
 
 @pytest.mark.asyncio
