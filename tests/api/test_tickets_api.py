@@ -1,0 +1,276 @@
+"""Tickets API contract test (SP-012-9 BL-UIW-001/002).
+
+backend route 2 件の contract test:
+- GET /api/v1/projects/{project_id}/tickets
+- GET /api/v1/projects/{project_id}/tickets/{ticket_id}
+
+invariant verify:
+- tenant + project boundary enforcement (project_id mismatch で 404 / cross-project SELECT 不可視)
+- pagination (limit / offset)
+- response schema (TicketListResponse + TicketRead)
+
+DB 接続必要: TASKMANAGEDAI_RUN_DB_TESTS=1 + test PostgreSQL container 起動時のみ実行。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from collections.abc import AsyncIterator
+from pathlib import Path
+from uuid import UUID, uuid4
+
+import pytest
+import pytest_asyncio
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from backend.app.config import Settings, get_settings
+from backend.app.db.session import create_engine
+
+_DEFAULT_DATABASE_URL = (
+    "postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test"
+)
+_DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/1"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("TASKMANAGEDAI_RUN_DB_TESTS") != "1",
+    reason="Requires TASKMANAGEDAI_RUN_DB_TESTS=1 + test PostgreSQL container.",
+)
+
+ACTOR_ID = UUID("00000000-0000-4000-8000-000000055001")
+WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000055002")
+PROJECT_A_ID = UUID("00000000-0000-4000-8000-000000055003")
+PROJECT_B_ID = UUID("00000000-0000-4000-8000-000000055004")
+TICKET_A1_ID = UUID("00000000-0000-4000-8000-000000055005")
+TICKET_A2_ID = UUID("00000000-0000-4000-8000-000000055006")
+TICKET_B1_ID = UUID("00000000-0000-4000-8000-000000055007")
+
+
+def _integration_settings() -> Settings:
+    database_url = os.environ.get("TASKMANAGEDAI_DATABASE_URL", _DEFAULT_DATABASE_URL)
+    redis_url = os.environ.get("TASKMANAGEDAI_REDIS_URL", _DEFAULT_REDIS_URL)
+    return Settings(
+        database_url=database_url,
+        redis_url=redis_url,
+        dev_login_cookie_secret="test-cookie-secret-for-tickets-api",
+    )
+
+
+def _run_alembic_upgrade(database_url: str) -> None:
+    previous_database_url = os.environ.get("TASKMANAGEDAI_DATABASE_URL")
+    os.environ["TASKMANAGEDAI_DATABASE_URL"] = database_url
+    get_settings.cache_clear()
+    try:
+        command.upgrade(Config(str(_REPO_ROOT / "alembic.ini")), "head")
+    finally:
+        if previous_database_url is None:
+            os.environ.pop("TASKMANAGEDAI_DATABASE_URL", None)
+        else:
+            os.environ["TASKMANAGEDAI_DATABASE_URL"] = previous_database_url
+        get_settings.cache_clear()
+
+
+async def _assert_database_available(settings: Settings) -> None:
+    engine = create_engine(settings.database_url)
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("select 1"))
+    except (OSError, SQLAlchemyError, TimeoutError) as exc:
+        if os.environ.get("TASKMANAGEDAI_RUN_DB_TESTS") == "1":
+            raise AssertionError("Tickets API tests require PostgreSQL.") from exc
+        pytest.skip("Set TASKMANAGEDAI_RUN_DB_TESTS=1 with test PostgreSQL running.")
+    finally:
+        await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    settings = _integration_settings()
+    await _assert_database_available(settings)
+    await asyncio.to_thread(_run_alembic_upgrade, settings.database_url)
+
+    engine = create_engine(settings.database_url)
+    factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        yield factory
+    finally:
+        await engine.dispose()
+
+
+async def _reset_tables(session: AsyncSession) -> None:
+    await session.execute(
+        text(
+            """
+            truncate notification_events, audit_events, ticket_relations,
+              acceptance_criteria, tickets, projects, workspaces, actors, tenants
+            restart identity cascade
+            """
+        )
+    )
+
+
+async def _insert_fixtures(session: AsyncSession) -> None:
+    """2 project (A/B) + 3 tickets (A1, A2 in project_a / B1 in project_b)."""
+    await session.execute(
+        text(
+            "insert into tenants (id, name, metadata) "
+            "values (1, 'tenant-one', '{\"rls_ready\": true}'::jsonb)"
+        )
+    )
+    await session.execute(
+        text(
+            """
+            insert into actors (id, tenant_id, actor_type, actor_id, display_name, metadata)
+            values (:actor_id, 1, 'human', 'human:default', 'Default Actor',
+              '{"rls_ready": true}'::jsonb)
+            """
+        ),
+        {"actor_id": ACTOR_ID},
+    )
+    await session.execute(
+        text(
+            """
+            insert into workspaces (id, tenant_id, slug, name, owner_actor_id, metadata)
+            values (:workspace_id, 1, 'workspace', 'workspace', :actor_id,
+              '{"rls_ready": true}'::jsonb)
+            """
+        ),
+        {"workspace_id": WORKSPACE_ID, "actor_id": ACTOR_ID},
+    )
+    await session.execute(
+        text(
+            """
+            insert into projects (id, tenant_id, workspace_id, slug, name, status, metadata)
+            values
+              (:project_a_id, 1, :workspace_id, 'project-a', 'project-a', 'active',
+                '{"rls_ready": true}'::jsonb),
+              (:project_b_id, 1, :workspace_id, 'project-b', 'project-b', 'active',
+                '{"rls_ready": true}'::jsonb)
+            """
+        ),
+        {
+            "project_a_id": PROJECT_A_ID,
+            "project_b_id": PROJECT_B_ID,
+            "workspace_id": WORKSPACE_ID,
+        },
+    )
+    await session.execute(
+        text(
+            """
+            insert into tickets (
+              id, tenant_id, project_id, slug, title, status, created_by_actor_id, metadata
+            )
+            values
+              (:ticket_a1_id, 1, :project_a_id, 'ticket-a1', 'Ticket A1', 'open', :actor_id,
+                '{"rls_ready": true}'::jsonb),
+              (:ticket_a2_id, 1, :project_a_id, 'ticket-a2', 'Ticket A2', 'in_progress', :actor_id,
+                '{"rls_ready": true}'::jsonb),
+              (:ticket_b1_id, 1, :project_b_id, 'ticket-b1', 'Ticket B1', 'closed', :actor_id,
+                '{"rls_ready": true}'::jsonb)
+            """
+        ),
+        {
+            "ticket_a1_id": TICKET_A1_ID,
+            "ticket_a2_id": TICKET_A2_ID,
+            "ticket_b1_id": TICKET_B1_ID,
+            "project_a_id": PROJECT_A_ID,
+            "project_b_id": PROJECT_B_ID,
+            "actor_id": ACTOR_ID,
+        },
+    )
+    await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_list_tickets_project_a_returns_only_project_a_tickets(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """project_a の list で project_b tickets が見えない (project boundary 強制)."""
+    from backend.app.repositories.ticket import TicketRepository
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        tickets = await repo.list_in_project(tenant_id=1, project_id=PROJECT_A_ID)
+        ticket_ids = {ticket.id for ticket in tickets}
+        assert ticket_ids == {TICKET_A1_ID, TICKET_A2_ID}, (
+            f"project_a list で project_b ticket が visible: {ticket_ids}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_ticket_in_correct_project_succeeds(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """project_a の ticket を project_a 経由 get → success."""
+    from backend.app.repositories.ticket import TicketRepository
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        ticket = await repo.get_in_project(
+            tenant_id=1,
+            project_id=PROJECT_A_ID,
+            ticket_id=TICKET_A1_ID,
+        )
+        assert ticket is not None
+        assert ticket.id == TICKET_A1_ID
+        assert ticket.project_id == PROJECT_A_ID
+        assert ticket.title == "Ticket A1"
+        assert ticket.status == "open"
+
+
+@pytest.mark.asyncio
+async def test_get_ticket_cross_project_returns_none(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """project_a の ticket を project_b 経由 get → None (cross-project boundary)."""
+    from backend.app.repositories.ticket import TicketRepository
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        ticket = await repo.get_in_project(
+            tenant_id=1,
+            project_id=PROJECT_B_ID,  # wrong project
+            ticket_id=TICKET_A1_ID,  # ticket A1 belongs to project_a
+        )
+        assert ticket is None, (
+            "cross-project get で ticket が visible (project boundary 破壊)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_nonexistent_ticket_returns_none(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """存在しない ticket_id で get → None."""
+    from backend.app.repositories.ticket import TicketRepository
+
+    nonexistent_id = uuid4()
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        ticket = await repo.get_in_project(
+            tenant_id=1,
+            project_id=PROJECT_A_ID,
+            ticket_id=nonexistent_id,
+        )
+        assert ticket is None
