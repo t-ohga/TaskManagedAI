@@ -471,10 +471,71 @@ def _write_event_jsonl(tmp_path: Path, payloads: list[dict]) -> Path:
 
 
 def test_cli_verify_signed_journal_requires_input() -> None:
-    """SP022-T08 batch 1: --signed-journal 単独 → exit 2."""
+    """SP022-T08 batch 1: --signed-journal 単独 → exit 2 (mode 未指定 mutually exclusive)."""
     result = _run_cli("verify", "--signed-journal")
     assert result.returncode == 2
-    assert "requires --input" in result.stderr
+    # SP022-T08 batch 5 で DB mode 追加に伴い error message が変更
+    # (`--input` または `--from-db` のいずれか必須)
+    assert "--input" in result.stderr
+    assert "--from-db" in result.stderr
+
+
+def test_cli_verify_signed_journal_rejects_max_line_bytes_in_db_mode() -> None:
+    """Codex PR #90 R3 F-002 fix (P2): DB mode で --max-line-bytes (offline-only flag) → exit 2 fail-fast."""
+    result = _run_cli(
+        "verify", "--signed-journal", "--from-db", "--tenant-id", "1",
+        "--max-line-bytes", "1024",
+    )
+    assert result.returncode == 2
+    assert "--max-line-bytes" in result.stderr
+    assert "--input" in result.stderr
+
+
+def test_cli_verify_rejects_from_db_without_signed_journal() -> None:
+    """Codex PR #90 R3 F-003 fix (P2): --from-db を --signed-journal なしで指定 → exit 2."""
+    result = _run_cli("verify", "--from-db", "--tenant-id", "1")
+    assert result.returncode == 2
+    assert "--from-db" in result.stderr
+    assert "--signed-journal" in result.stderr
+
+
+def test_cli_verify_rejects_tenant_id_without_signed_journal() -> None:
+    """Codex PR #90 R3 F-003 fix (P2): --tenant-id を --signed-journal なしで指定 → exit 2."""
+    result = _run_cli("verify", "--tenant-id", "1")
+    assert result.returncode == 2
+    assert "--tenant-id" in result.stderr
+    assert "--signed-journal" in result.stderr
+
+
+def test_cli_verify_rejects_database_url_without_signed_journal() -> None:
+    """Codex PR #90 R3 F-003 fix (P2): --database-url を --signed-journal なしで指定 → exit 2."""
+    result = _run_cli("verify", "--database-url", "postgresql://test/db")
+    assert result.returncode == 2
+    assert "--database-url" in result.stderr
+    assert "--signed-journal" in result.stderr
+
+
+def test_cli_verify_signed_journal_rejects_tenant_id_in_offline_mode(tmp_path: Path) -> None:
+    """Codex PR #90 R2 F-002 fix (P2): offline mode で --tenant-id 指定 → exit 2 fail-fast."""
+    p = _write_event_jsonl(tmp_path, [{"k": "v"}])
+    result = _run_cli(
+        "verify", "--signed-journal", "--input", str(p), "--tenant-id", "1",
+    )
+    assert result.returncode == 2
+    assert "--tenant-id" in result.stderr
+    assert "--from-db" in result.stderr
+
+
+def test_cli_verify_signed_journal_rejects_database_url_in_offline_mode(tmp_path: Path) -> None:
+    """Codex PR #90 R2 F-002 fix (P2): offline mode で --database-url 指定 → exit 2 fail-fast."""
+    p = _write_event_jsonl(tmp_path, [{"k": "v"}])
+    result = _run_cli(
+        "verify", "--signed-journal", "--input", str(p),
+        "--database-url", "postgresql://test/db",
+    )
+    assert result.returncode == 2
+    assert "--database-url" in result.stderr
+    assert "--from-db" in result.stderr
 
 
 def test_cli_verify_signed_journal_valid_jsonl_passes(tmp_path: Path) -> None:
