@@ -1,21 +1,24 @@
 /**
- * Sprint 9 BL-0104: Ticket detail (P0 UI skeleton).
+ * Ticket detail page (SP-012-11 BL-TCU-005 wiring 完成版).
  *
- * Acceptance Criteria, evidence, AgentRun mapping, and ContextSnapshot metadata
- * are rendered as server-owned display surfaces. AI output remains candidate
- * artifact material until approval flow accepts it.
+ * Sprint 9 BL-0104 で skeleton として実装、SP-012-11 で実 backend route
+ * (`GET /api/v1/projects/{project_id}/tickets/{ticket_id}`、PR #111) と接続し
+ * **実データ表示 + edit form** に拡張。dogfooding seed (PR #113-#117) で
+ * 投入された Ticket の status / title / description / priority を UI 経由で更新可能。
+ *
+ * server-owned-boundary §1:
+ * - project_id は session 経由 resolve、default は DEFAULT_PROJECT_ID
+ * - PATCH endpoint で created_by_actor_id / project_id / tenant_id は更新不可
+ *   (caller-supplied 排除、`extra="forbid"` Pydantic)
  */
 
 import { notFound } from "next/navigation";
 
+import { BackendApiError } from "@/lib/api/client";
+import { DEFAULT_PROJECT_ID, getTicket, type TicketRead } from "@/lib/api/tickets";
+
 import { UUID_V1_TO_V5_PATTERN } from "../../_lib/route-id";
-import {
-  AdminPageShell,
-  ContextSnapshotDefinitionList,
-  KeyboardReadinessStrip,
-  Panel,
-  SecretBoundaryNotice
-} from "../../_components/sprint9-admin-ui";
+import { EditTicketForm } from "./_components/edit-ticket-form";
 
 export const dynamic = "force-dynamic";
 
@@ -23,139 +26,109 @@ type TicketDetailPageProps = {
   params: Promise<{ id: string }>;
 };
 
+type TicketDetailState =
+  | { kind: "ok"; ticket: TicketRead }
+  | { kind: "not-found" }
+  | { kind: "error"; message: string };
+
+async function readTicket(ticketId: string): Promise<TicketDetailState> {
+  try {
+    const ticket = await getTicket(DEFAULT_PROJECT_ID, ticketId);
+    return { kind: "ok", ticket };
+  } catch (error: unknown) {
+    if (error instanceof BackendApiError && error.status === 404) {
+      return { kind: "not-found" };
+    }
+    if (error instanceof BackendApiError) {
+      return {
+        kind: "error",
+        message: `Backend returned ${error.status}: ${error.message}`
+      };
+    }
+    const message =
+      error instanceof Error ? error.message : "ticket fetch failed";
+    return { kind: "error", message };
+  }
+}
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toISOString().slice(0, 16).replace("T", " ");
+  } catch {
+    return iso;
+  }
+}
+
 export default async function TicketDetailPage({ params }: TicketDetailPageProps) {
   const { id } = await params;
 
-  // F-P2R1-007 + F-P3R1-006: shared UUID v1-v5 guard prevents caller-supplied
-  // path values from reaching downstream layers (server-owned-boundary).
+  // server-owned-boundary: UUID v1-v5 guard で caller-supplied path 排除
   if (!id || !UUID_V1_TO_V5_PATTERN.test(id)) {
     notFound();
   }
 
+  const state = await readTicket(id);
+
+  if (state.kind === "not-found") {
+    notFound();
+  }
+
   return (
-    <AdminPageShell
-      description={
+    <section aria-label="Ticket detail" className="grid gap-4">
+      <header>
+        <p className="text-sm font-medium text-accent">Admin / Ticket</p>
+        <h1 className="text-3xl font-semibold tracking-normal">Ticket 詳細</h1>
+        <p className="mt-2 font-mono text-xs text-muted">{id}</p>
+      </header>
+
+      {state.kind === "error" ? (
+        <article role="status" className="rounded-md border border-attention bg-amber-50 p-4">
+          <h2 className="text-base font-semibold text-attention">Ticket unavailable</h2>
+          <p className="mt-1 text-sm text-muted">{state.message}</p>
+        </article>
+      ) : (
         <>
-          Sprint 9 BL-0104 skeleton for ticket <code>{id}</code>. The page keeps
-          Acceptance Criteria, evidence, AgentRun mapping, and ContextSnapshot 10
-          columns visible without exposing raw snapshot values.
+          <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+            <h2 className="text-lg font-semibold">{state.ticket.title}</h2>
+            <dl className="mt-4 grid gap-3 text-sm">
+              <div className="flex justify-between gap-4 border-t border-line pt-3">
+                <dt className="text-muted">Slug</dt>
+                <dd className="font-mono">{state.ticket.slug}</dd>
+              </div>
+              <div className="flex justify-between gap-4 border-t border-line pt-3">
+                <dt className="text-muted">Status</dt>
+                <dd>
+                  <span className="rounded-md bg-panel-muted px-2 py-1 text-xs font-medium">
+                    {state.ticket.status}
+                  </span>
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4 border-t border-line pt-3">
+                <dt className="text-muted">Priority</dt>
+                <dd>{state.ticket.priority ?? "(未指定)"}</dd>
+              </div>
+              <div className="flex justify-between gap-4 border-t border-line pt-3">
+                <dt className="text-muted">Created</dt>
+                <dd className="font-mono text-xs">{formatDate(state.ticket.created_at)}</dd>
+              </div>
+              <div className="flex justify-between gap-4 border-t border-line pt-3">
+                <dt className="text-muted">Updated</dt>
+                <dd className="font-mono text-xs">{formatDate(state.ticket.updated_at)}</dd>
+              </div>
+              {state.ticket.description ? (
+                <div className="border-t border-line pt-3">
+                  <dt className="text-muted">Description</dt>
+                  <dd className="mt-2 whitespace-pre-wrap text-sm">
+                    {state.ticket.description}
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+          </article>
+
+          <EditTicketForm ticket={state.ticket} />
         </>
-      }
-      eyebrow="Admin / Ticket"
-      regionLabel="Ticket detail"
-      title="Ticket detail"
-    >
-      <KeyboardReadinessStrip current="Tickets" />
-
-      <Panel
-        description="Acceptance Criteria are operator-facing requirements. EvalResult and approval binding remain server-side."
-        title="Acceptance Criteria"
-        titleId="ticket-detail-acceptance-criteria"
-      >
-        <ol className="grid gap-2 text-sm text-muted">
-          <li className="rounded-md border border-line bg-white p-3">
-            AC-001: Ticket scope, action class, and reviewer-visible risk summary are
-            resolved inside the project boundary.
-          </li>
-          <li className="rounded-md border border-line bg-white p-3">
-            AC-002: AI generated artifact stays candidate output until approval binding
-            succeeds.
-          </li>
-          <li className="rounded-md border border-line bg-white p-3">
-            AC-HARD-02: secret values and provider raw payloads are excluded from
-            evidence display.
-          </li>
-        </ol>
-      </Panel>
-
-      <Panel
-        description="Evidence is represented through stable hashes and citation IDs. The UI does not fetch external raw source bodies in this skeleton."
-        title="Evidence / Claim / Citation"
-        titleId="ticket-detail-evidence"
-      >
-        <dl className="grid gap-2 md:grid-cols-3">
-          <div className="rounded-md border border-line bg-white p-3">
-            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
-              claim_id
-            </dt>
-            <dd className="mt-2 font-mono text-xs text-ink">claim.ticket.scope.p0</dd>
-          </div>
-          <div className="rounded-md border border-line bg-white p-3">
-            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
-              source binding
-            </dt>
-            <dd className="mt-2 font-mono text-xs text-ink">source_id + citation hash</dd>
-          </div>
-          <div className="rounded-md border border-line bg-white p-3">
-            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
-              evidence_set_hash
-            </dt>
-            <dd className="mt-2 text-sm text-muted">
-              fixed in ContextSnapshot, raw source body omitted.
-            </dd>
-          </div>
-        </dl>
-      </Panel>
-
-      <Panel
-        description="Ticket to AgentRun remains a 1:N server-owned mapping. status and blocked_reason are not collapsed into a single enum."
-        title="AgentRun Mapping"
-        titleId="ticket-detail-agentrun-mapping"
-      >
-        <div className="overflow-x-auto rounded-md border border-line">
-          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
-            <caption className="sr-only">
-              Ticket to AgentRun mapping with status and blocked_reason separated.
-            </caption>
-            <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted">
-              <tr>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  run_ref
-                </th>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  status
-                </th>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  blocked_reason
-                </th>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  approval invariant
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="align-top">
-                <th scope="row" className="border-b border-line px-3 py-2">
-                  <code className="font-mono text-xs text-ink">agent_run.latest</code>
-                </th>
-                <td className="border-b border-line px-3 py-2">
-                  <code className="font-mono text-xs text-ink">waiting_approval</code>
-                </td>
-                <td className="border-b border-line px-3 py-2 text-muted">null unless blocked</td>
-                <td className="border-b border-line px-3 py-2 text-muted">
-                  requester actor cannot approve own artifact.
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-
-      <Panel
-        description="Vault / Doppler inspired metadata layout: 10 fixed ContextSnapshot columns, structured as a definition list, with raw values omitted."
-        title="ContextSnapshot 10 columns"
-        titleId="ticket-detail-context-snapshot"
-      >
-        <ContextSnapshotDefinitionList />
-      </Panel>
-
-      <Panel
-        description="Provider continuation and request fingerprint are references for binding and replay safety, not raw provider payload display."
-        title="Secret and provider payload boundary"
-        titleId="ticket-detail-secret-boundary"
-      >
-        <SecretBoundaryNotice title="Ticket detail SecretBroker boundary" />
-      </Panel>
-    </AdminPageShell>
+      )}
+    </section>
   );
 }
