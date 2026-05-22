@@ -11,7 +11,7 @@ const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 const TicketCreateFormSchema = z.object({
   slug: z.string().trim().min(1).regex(SLUG_PATTERN, "slug は kebab-case (a-z0-9 + hyphen)"),
-  title: z.string().trim().min(1, "title 必須"),
+  title: z.string().trim().min(1, "タイトルは必須項目です"),
   description: z.string().trim().optional(),
   status: z
     .enum(["open", "in_progress", "blocked", "review", "closed", "cancelled"])
@@ -69,7 +69,7 @@ export async function createTicketAction(
     return { kind: "ok", ticket_id: created.id };
   } catch (error: unknown) {
     const message =
-      error instanceof Error ? error.message : "Ticket creation failed.";
+      error instanceof Error ? error.message : "チケット作成に失敗しました。";
     return { kind: "error", message };
   }
 }

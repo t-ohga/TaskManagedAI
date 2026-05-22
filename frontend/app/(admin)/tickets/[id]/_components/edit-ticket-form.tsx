@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect } from "react";
 
+import { formatTicketPriority, formatTicketStatus } from "@/lib/i18n/ticket-labels";
 import type { TicketRead } from "@/lib/api/tickets";
 
 import { updateTicketAction, type UpdateTicketState } from "../actions";
@@ -37,10 +38,10 @@ export function EditTicketForm({ ticket }: EditTicketFormProps) {
     >
       <input type="hidden" name="ticket_id" value={ticket.id} />
       <fieldset className="grid gap-4" disabled={isPending}>
-        <legend className="text-base font-semibold">Ticket 編集</legend>
+        <legend className="text-base font-semibold">チケット編集</legend>
 
         <label className="grid gap-2 text-sm">
-          <span className="font-medium">Title</span>
+          <span className="font-medium">タイトル</span>
           <input
             name="title"
             defaultValue={ticket.title}
@@ -49,7 +50,7 @@ export function EditTicketForm({ ticket }: EditTicketFormProps) {
         </label>
 
         <label className="grid gap-2 text-sm">
-          <span className="font-medium">Description</span>
+          <span className="font-medium">説明</span>
           <textarea
             name="description"
             rows={5}
@@ -60,33 +61,33 @@ export function EditTicketForm({ ticket }: EditTicketFormProps) {
 
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="grid gap-2 text-sm">
-            <span className="font-medium">Status</span>
+            <span className="font-medium">状態</span>
             <select
               name="status"
               defaultValue={ticket.status}
               className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
-              <option value="open">open</option>
-              <option value="in_progress">in_progress</option>
-              <option value="blocked">blocked</option>
-              <option value="review">review</option>
-              <option value="closed">closed</option>
-              <option value="cancelled">cancelled</option>
+              <option value="open">{formatTicketStatus("open")}</option>
+              <option value="in_progress">{formatTicketStatus("in_progress")}</option>
+              <option value="blocked">{formatTicketStatus("blocked")}</option>
+              <option value="review">{formatTicketStatus("review")}</option>
+              <option value="closed">{formatTicketStatus("closed")}</option>
+              <option value="cancelled">{formatTicketStatus("cancelled")}</option>
             </select>
           </label>
 
           <label className="grid gap-2 text-sm">
-            <span className="font-medium">Priority</span>
+            <span className="font-medium">優先度</span>
             <select
               name="priority"
               defaultValue={ticket.priority ?? ""}
               className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
               <option value="">(未指定)</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-              <option value="critical">critical</option>
+              <option value="low">{formatTicketPriority("low")}</option>
+              <option value="medium">{formatTicketPriority("medium")}</option>
+              <option value="high">{formatTicketPriority("high")}</option>
+              <option value="critical">{formatTicketPriority("critical")}</option>
             </select>
           </label>
         </div>
@@ -113,7 +114,7 @@ export function EditTicketForm({ ticket }: EditTicketFormProps) {
             role="status"
             className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
           >
-            Ticket 更新成功 (id: {state.ticket_id})
+            チケットを更新しました (id: {state.ticket_id})
           </p>
         ) : null}
       </fieldset>
