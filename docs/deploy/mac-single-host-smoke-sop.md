@@ -111,12 +111,27 @@ docker compose --env-file .env.local ps
 ## §4 alembic upgrade head (B-4)
 
 ```bash
+# pipefail を ON にして pipe 経由でも失敗を検知 (Codex PR #93 R1 F-004 fix:
+# `alembic ... | tail -10` のままだと pipe exit code は tail (0) になり、
+# migration 失敗を mask する。)
+set -o pipefail
+
 # api container 内で alembic upgrade head 実行
 docker compose --env-file .env.local exec api uv run alembic current
 # expected: revision id (空または未 apply の状態)
 
-docker compose --env-file .env.local exec api uv run alembic upgrade head 2>&1 | tail -10
-# expected: 18 migrations apply 成功、exit 0
+# 出力 full 保存 + pipefail で failure mask 防止
+docker compose --env-file .env.local exec api uv run alembic upgrade head 2>&1 | tee /tmp/taskhub-alembic-upgrade.log
+ALEMBIC_EXIT=$?
+echo "alembic upgrade head exit code: $ALEMBIC_EXIT"
+if [ "$ALEMBIC_EXIT" -ne 0 ]; then
+  echo "❌ alembic upgrade head FAILED. See /tmp/taskhub-alembic-upgrade.log for full output."
+  exit 1
+fi
+# 出力 tail 表示 (確認用、exit code は ALEMBIC_EXIT 経由で既に判定済)
+tail -10 /tmp/taskhub-alembic-upgrade.log
+
+# expected: 18 migrations apply 成功、ALEMBIC_EXIT=0
 
 docker compose --env-file .env.local exec api uv run alembic current
 # expected: 0018_eval_dataset_versions (head)
@@ -277,9 +292,17 @@ DevTools Network tab で:
 ```bash
 cd ~/repo/TaskManagedAI
 
-# §1 approval signing key bootstrap (初回のみ、operator-runbook §1 参照)
+# §1 approval signing key bootstrap (初回のみ)
+# Codex PR #93 R1 F-001 fix (P1): 旧版は `bash docs/deploy/operator-runbook.md`
+# で markdown を bash 実行する誤りで bootstrap 失敗。`operator-runbook.md` §1
+# の bash code block (Ed25519 key 生成 + fingerprint allowlist 登録) を **別 terminal で
+# 手動コピペ実行** してください。markdown 全体を bash に渡してはいけません。
 if [ ! -f ~/.taskhub/keys/approval-signing-key ]; then
-  bash docs/deploy/operator-runbook.md  # 手動で §1 commands を実行
+  echo "❌ approval signing key 未生成。先に operator-runbook.md §1 の bash code block を別 terminal で実行してください。"
+  echo "   open docs/deploy/operator-runbook.md  # GUI で開く"
+  echo "   または less docs/deploy/operator-runbook.md  # terminal で確認"
+  echo "   §1 の \`\`\`bash ... \`\`\` 内 commands を 1 ブロックずつコピペ実行"
+  exit 1
 fi
 
 # smoke approval issue (試行用、actual destructive op には使わない)
@@ -313,9 +336,22 @@ ls -la ~/.taskhub/approvals/${SMOKE_APPROVAL_ID}.signed
 
 ```bash
 # PR #90 で実装、--from-db mode で実 DB 上の audit_events を verify
-DATABASE_URL=$(grep TASKMANAGEDAI_DATABASE_URL .env.local | cut -d= -f2- | sed 's/postgres:/127.0.0.1:/g')
-uv run taskhub verify --signed-journal --from-db --tenant-id 1 --database-url "$DATABASE_URL" 2>&1 | tail -10
-echo "Exit code: $?"
+# Codex PR #93 R1 F-003 fix (P2): .env.local には §1 で追記された TASKMANAGEDAI_DATABASE_URL
+# と .env.example 由来の既存 line (コメント含む) の両方が match する可能性あり、
+# 改行を含む不正 URL になる。`^TASKMANAGEDAI_DATABASE_URL=` で行頭固定 + `tail -n 1`
+# で最後の未コメント行を 1 件だけ選ぶ。
+DATABASE_URL=$(grep -E '^TASKMANAGEDAI_DATABASE_URL=' .env.local | tail -n 1 | cut -d= -f2- | sed 's/postgres:/127.0.0.1:/g')
+echo "DATABASE_URL (sanitized): $(echo $DATABASE_URL | sed 's|//[^@]*@|//***@|')"
+if [ -z "$DATABASE_URL" ] || echo "$DATABASE_URL" | grep -q $'\n'; then
+  echo "❌ DATABASE_URL が空または改行を含む。.env.local を確認してください。"
+  exit 1
+fi
+
+# Codex PR #93 R1 F-004 fix の延長で pipefail を ON
+set -o pipefail
+uv run taskhub verify --signed-journal --from-db --tenant-id 1 --database-url "$DATABASE_URL" 2>&1 | tee /tmp/taskhub-verify.log
+VERIFY_EXIT=$?
+echo "Exit code: $VERIFY_EXIT"
 ```
 
 **確認項目**:
@@ -329,13 +365,43 @@ echo "Exit code: $?"
 ## §14 taskhub backup real smoke (small DB) (C-9、20 min)
 
 ```bash
+# pipefail を ON にして command 失敗を mask しない (Codex PR #93 R1 F-002/004/005 fix)
+set -o pipefail
+
+# macOS 標準 hash command の wrapper (Codex PR #93 R1 F-002 fix: macOS には sha256sum
+# 標準で含まれない、`shasum -a 256` が標準。coreutils 入れている場合は sha256sum 経由 OK)
+sha256_hex() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$@"
+  else
+    shasum -a 256 "$@"
+  fi
+}
+
+# Codex PR #93 R1 F-005 fix (P2): age key 未生成時 fail-fast (旧 `age-keygen -y ... 2>/dev/null`
+# は空入力 SHA256 を生成して進行、原因不明で backup 拒否される)
+AGE_KEY_PATH="$HOME/.taskhub/keys/age.key.txt"
+if [ ! -f "$AGE_KEY_PATH" ]; then
+  echo "❌ age key 未生成: $AGE_KEY_PATH が存在しません。"
+  echo "   先に SOPS 用 age key を生成してください:"
+  echo "   mkdir -p ~/.taskhub/keys && chmod 0700 ~/.taskhub/keys"
+  echo "   age-keygen -o ~/.taskhub/keys/age.key.txt && chmod 0600 ~/.taskhub/keys/age.key.txt"
+  exit 1
+fi
+
 # §2.1 backup approval issue (operator-runbook §2.1)
 BACKUP_APPROVAL_ID="mac-smoke-backup-$(date +%Y%m%d-%H%M%S)"
 BACKUP_OUTPUT="$HOME/.taskhub/backups/mac-smoke-$(date +%Y-%m-%d).tar.age"
 mkdir -p ~/.taskhub/backups
 
-# age public key fingerprint (Mac の age key を使う)
-AGE_PUB_FP=$(age-keygen -y ~/.taskhub/keys/age.key.txt 2>/dev/null | sha256sum | cut -c1-64)
+# age public key fingerprint (Mac の age key を使う、F-R1-002/005 fix で hash + key existence guard)
+AGE_PUB=$(age-keygen -y "$AGE_KEY_PATH" 2>&1)
+AGE_KEYGEN_EXIT=$?
+if [ "$AGE_KEYGEN_EXIT" -ne 0 ] || [ -z "$AGE_PUB" ]; then
+  echo "❌ age-keygen -y 失敗 (exit=$AGE_KEYGEN_EXIT)、$AGE_KEY_PATH が読めない or 形式不正"
+  exit 1
+fi
+AGE_PUB_FP=$(printf '%s' "$AGE_PUB" | sha256_hex | cut -c1-64)
 echo "AGE_PUB_FP=$AGE_PUB_FP"
 
 uv run taskhub approval issue \
@@ -356,11 +422,11 @@ echo "Exit code: $?"
 
 # T09 mandatory checklist 7 項目 verify
 ls -la "$BACKUP_OUTPUT"
-ARCHIVE_SHA256=$(sha256sum "$BACKUP_OUTPUT" | cut -d' ' -f1)
+ARCHIVE_SHA256=$(sha256_hex "$BACKUP_OUTPUT" | cut -d' ' -f1)
 echo "ARCHIVE_SHA256=$ARCHIVE_SHA256"
 
 mkdir -p /tmp/mac-smoke-extract && cd /tmp/mac-smoke-extract
-age -d -i ~/.taskhub/keys/age.key.txt "$BACKUP_OUTPUT" > decrypted.tar
+age -d -i "$AGE_KEY_PATH" "$BACKUP_OUTPUT" > decrypted.tar
 tar -tf decrypted.tar | tee tar-listing.txt
 # expected: meta.json / checksums.txt / postgres/pg_dump.dump / postgres/alembic_version.txt / redis/dump.rdb / artifacts/
 
@@ -379,7 +445,7 @@ cd ~/repo/TaskManagedAI
 - [ ] backup exit 0、output file 存在
 - [ ] age decrypt 成功
 - [ ] tar listing 全 file 構造存在 (ADR-00021 §4)
-- [ ] checksums verify (`cd extract && sha256sum -c checksums.txt`)
+- [ ] checksums verify (`cd extract && shasum -a 256 -c checksums.txt` on macOS、または coreutils 入れて `sha256sum -c`)
 - [ ] private key 非混入
 - [ ] pg_restore --list parse 成功
 - [ ] /tmp/taskhub-backup-* cleanup verified (`ls /tmp/taskhub-backup-* 2>&1`、0 件 expected)
