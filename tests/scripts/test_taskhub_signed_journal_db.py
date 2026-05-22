@@ -232,8 +232,9 @@ def test_db_connection_error_redacts_raw_exception_text() -> None:
     assert exc_info.value.error_code == "db_connection_error"
     # password を summary に含まない (raw exception text leak 防止)
     assert "supersecretpassword" not in exc_info.value.summary
-    # user-facing summary は exception class name のみ embed
-    assert "check internal log" in exc_info.value.summary
+    # user-facing summary は exception class name + redact marker のみ embed
+    # (R4 F-002 fix: logger.debug(exc_info=True) 削除に伴い "raw exc text redacted")
+    assert "redacted" in exc_info.value.summary
 
 
 def test_async_result_has_serializable_dict() -> None:

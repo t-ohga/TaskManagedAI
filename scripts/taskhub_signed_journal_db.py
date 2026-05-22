@@ -223,18 +223,23 @@ def verify_db_signed_journal(
     except SignedJournalDbUsageError:
         raise
     except Exception as exc:
-        # Codex PR #90 R2 F-001 fix (P2): DB exception text には DSN / credentials
-        # (e.g., `postgresql://user:password@host/db`) が含まれる可能性があるため、
-        # sanitized summary (exception class name のみ) を user-facing error に embed。
-        # 詳細は logger.debug() で internal log にのみ記録 (operator が debug 必要時参照)。
+        # Codex PR #90 R2 F-001 fix (P2) + R4 F-002 fix (P2): DB exception text には
+        # DSN / credentials (e.g., `postgresql://user:password@host/db`) が含まれる可能性。
+        # R2 fix で stderr 経由は sanitized したが、R4 fix では logger.debug(exc_info=True)
+        # も削除 (full traceback が log file に embed されると credentials leak)。
+        # 代わりに class name + len(str(exc)) のみ structured warning で記録 (forensic 用)。
         import logging as _logging
-        _logging.getLogger(__name__).debug(
-            "verify_db_signed_journal DB error (raw)", exc_info=True,
+        _logging.getLogger(__name__).warning(
+            "verify_db_signed_journal failed",
+            extra={
+                "exc_class": type(exc).__name__,
+                "exc_str_len": len(str(exc)),  # 内容は log しない (credentials leak 防止)
+            },
         )
         raise SignedJournalDbUsageError(
             "db_connection_error",
             f"failed to fetch audit_events from DB ({type(exc).__name__}); "
-            "check internal log (DEBUG) for sanitized details",
+            "exc class logged via structured warning (raw exc text redacted)",
         ) from exc
 
 

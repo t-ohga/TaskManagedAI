@@ -1391,7 +1391,10 @@ def _cmd_verify_signed_journal(args: argparse.Namespace) -> int:
     両方指定 / 両方未指定: usage error (mutually exclusive)。
     """
     from_db = getattr(args, "from_db", False)
-    has_input = args.input is not None and args.input != ""
+    # Codex PR #90 R4 F-001 fix (P3): empty string `--input ""` も "present" 扱い。
+    # `args.input != ""` で skip すると `--signed-journal --from-db --input ""` が
+    # mutual exclusion check を通過し、offline mode に意図せず fallback する経路を生む。
+    has_input = args.input is not None
     if from_db and has_input:
         print(  # noqa: T201
             "ERROR: --from-db and --input are mutually exclusive",
