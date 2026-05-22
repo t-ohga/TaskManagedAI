@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -157,11 +157,12 @@ def _to_detail(approval: ApprovalRequest) -> ApprovalDetail:
 
 @router.get("", response_model=list[ApprovalListItem])
 async def list_pending_approvals(
+    status_filter: ApprovalStatusLiteral = Query(default="pending", alias="status"),
     tenant_id: int = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[ApprovalListItem]:
     repo = ApprovalRequestRepository(session)
-    approvals = await repo.list_by_status(tenant_id=tenant_id, status="pending")
+    approvals = await repo.list_by_status(tenant_id=tenant_id, status=status_filter)
     return [_to_list_item(approval) for approval in approvals]
 
 
@@ -226,4 +227,3 @@ __all__ = [
     "get_tenant_id",
     "router",
 ]
-

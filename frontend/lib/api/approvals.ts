@@ -54,10 +54,24 @@ export const DecideRequestSchema = z.object({
 
 export type DecideRequest = z.infer<typeof DecideRequestSchema>;
 
-export async function listPendingApprovals(): Promise<ApprovalListItem[]> {
-  return fetchBackendJson("/api/v1/approvals", z.array(ApprovalListItemSchema), {
+export type ApprovalStatus = z.infer<typeof ApprovalStatusEnum>;
+
+export async function listApprovals(
+  options: { status?: ApprovalStatus } = {}
+): Promise<ApprovalListItem[]> {
+  const params = new URLSearchParams();
+  if (options.status) {
+    params.set("status", options.status);
+  }
+  const query = params.toString();
+  const path = query ? `/api/v1/approvals?${query}` : "/api/v1/approvals";
+  return fetchBackendJson(path as `/${string}`, z.array(ApprovalListItemSchema), {
     headers: { accept: "application/json" }
   });
+}
+
+export async function listPendingApprovals(): Promise<ApprovalListItem[]> {
+  return listApprovals({ status: "pending" });
 }
 
 export async function getApprovalDetail(approvalId: string): Promise<ApprovalDetail> {
@@ -79,4 +93,3 @@ export async function decideApproval(
     body: JSON.stringify(DecideRequestSchema.parse(body))
   });
 }
-

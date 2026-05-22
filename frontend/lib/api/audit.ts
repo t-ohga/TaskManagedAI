@@ -1,19 +1,8 @@
 /**
- * Sprint 9 BL-0107: Audit Log API client (PENDING BACKEND + REDACTION SCHEMA).
+ * Audit Log API client (SP-012-9 residual wiring).
  *
- * **PENDING SPRINT 11** (Codex audit F-004 + F-008 adopt、2026-05-13):
- * - 対応 backend route (`GET /api/v1/audit_events`) は **未実装**。本 module は
- *   schema draft + cursor pagination interface のみ。Sprint 11 で backend
- *   route 実装 + tenant boundary integration test と一緒に enable。
- * - **AC-HARD-02 raw secret 非露出 enforcement (F-008)**: 現状
- *   `payload: z.record(z.string(), z.unknown())` は arbitrary value を許可。
- *   backend `_payload_secret_scan.py` の recursive secret scanner を frontend
- *   側にも `RedactedAuditPayloadSchema` として port し、prohibited key set +
- *   raw secret regex で parse 時 reject する設計を Sprint 11 で追加予定。
- * - 現状は backend が key 名 + hash + reason_code のみ送る前提に依存、schema
- *   側で enforce していない。
- *
- * append-only audit_event を Server Component で fetch。
+ * Backend returns redacted audit metadata only. Raw `event_payload` values are
+ * intentionally not part of the response shape.
  */
 
 import { z } from "zod";
@@ -67,6 +56,10 @@ export const AuditEventTypeEnum = z.enum([
   "webhook_hmac_failed",
   // future / orchestration
   "orchestrator_failover",
+  "orchestrator_failover_triggered",
+  "orchestrator_lease_expired",
+  "orchestrator_lease_renewed",
+  "orchestrator_kill_engaged",
   "tenant_isolation_negative",
   "forbidden_path_block",
   "dangerous_command_block"
@@ -76,16 +69,15 @@ export type AuditEventType = z.infer<typeof AuditEventTypeEnum>;
 
 export const AuditEventSchema = z.object({
   id: z.string().uuid(),
-  event_type: AuditEventTypeEnum,
-  actor_id: z.string().uuid(),
-  run_id: z.string().uuid().nullable(),
+  event_type: z.string(),
+  actor_id: z.string().uuid().nullable(),
+  principal_id: z.string().uuid().nullable(),
   tenant_id: z.number().int().positive(),
-  project_id: z.string().uuid().nullable(),
-  trace_id: z.string(),
-  correlation_id: z.string(),
+  trace_id: z.string().nullable(),
+  correlation_id: z.string().nullable(),
   reason_code: z.string().nullable(),
-  /** payload key 名のみ、raw value は含めない */
-  payload: z.record(z.string(), z.unknown()),
+  payload_keys: z.array(z.string()),
+  payload_redaction_status: z.enum(["keys_only", "blocked_by_secret_scan"]),
   created_at: z.string()
 });
 
@@ -93,23 +85,26 @@ export type AuditEvent = z.infer<typeof AuditEventSchema>;
 
 export const AuditListResponseSchema = z.object({
   events: z.array(AuditEventSchema),
-  next_cursor: z.string().nullable()
+  total: z.number().int().nonnegative(),
+  limit: z.number().int(),
+  offset: z.number().int()
 });
 
 export type AuditListResponse = z.infer<typeof AuditListResponseSchema>;
 
-/**
- * **DRAFT** GET /api/v1/audit_events (Codex audit F-004 adopt: backend route
- * 未実装、Sprint 9 では client draft のみ、Sprint 11 で backend route +
- * tenant boundary integration test 結線)。
- */
-export async function _listAuditEventsDraft(
-  cursor?: string,
-  eventType?: AuditEventType
+export async function listAuditEvents(
+  options: {
+    eventType?: string;
+    actorId?: string;
+    limit?: number;
+    offset?: number;
+  } = {}
 ): Promise<AuditListResponse> {
   const params = new URLSearchParams();
-  if (cursor) params.set("cursor", cursor);
-  if (eventType) params.set("event_type", eventType);
+  if (options.eventType) params.set("event_type", options.eventType);
+  if (options.actorId) params.set("actor_id", options.actorId);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
   const qs = params.toString();
   const path: `/${string}` = qs
     ? (`/api/v1/audit_events?${qs}` as `/${string}`)

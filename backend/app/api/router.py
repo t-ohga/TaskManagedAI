@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from backend.app.api import (
+    audit,
     auth,
     claims,
     evidence_items,
@@ -26,3 +27,4 @@ api_router.include_router(kpi_rollup.router)
 api_router.include_router(p0_acceptance_report.router)
 api_router.include_router(tickets.router)
 api_router.include_router(me.router)
+api_router.include_router(audit.router)

@@ -10,6 +10,7 @@ import pytest
 import pytest_asyncio
 from alembic import command
 from alembic.config import Config
+from asyncpg.exceptions import PostgresError  # type: ignore[import-untyped]
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -61,7 +62,7 @@ async def _assert_database_available(settings: Settings) -> None:
     try:
         async with engine.connect() as connection:
             await connection.execute(text("select 1"))
-    except (OSError, SQLAlchemyError, TimeoutError) as exc:
+    except (OSError, PostgresError, SQLAlchemyError, TimeoutError) as exc:
         if os.environ.get("TASKMANAGEDAI_RUN_DB_TESTS") == "1":
             raise AssertionError("AgentRun cancel API tests require PostgreSQL.") from exc
         pytest.skip("Set TASKMANAGEDAI_RUN_DB_TESTS=1 with test PostgreSQL running.")
@@ -210,4 +211,3 @@ async def test_cancel_agent_run_endpoint_returns_404_for_missing_run(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "agent run not found"
-
