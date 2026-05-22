@@ -1,26 +1,25 @@
 /**
- * Sprint 9 BL-0104: Ticket API client (Zod schema + Server Component fetch helper).
+ * Tickets API client (SP-012-9 BL-UIW-003/004 wiring 完成版).
  *
- * **PENDING BACKEND INTEGRATION** (Codex audit F-004 adopt、2026-05-13):
- * - 本 module は Sprint 9 で **schema draft** として整備したが、対応 backend
- *   route (`GET /api/v1/tickets`, `GET /api/v1/tickets/{id}`) は **未実装**。
- * - Sprint 9 page は `loadTicketDraft()` を呼ばず skeleton 文言のみ render。
- * - 実 backend route 実装 + integration test 結線は Sprint 11 で扱う。
- * - status / payload_data_class enum は backend ticket.py / DB CHECK と
- *   drift する可能性 (Codex audit F-006 adopt、Sprint 11 contract test 追加予定)。
+ * Backend route (`GET /api/v1/projects/{project_id}/tickets`) は PR #111 で
+ * 実装済。本 module は実 fetch + Zod strict validate で wiring 完成。
  *
  * server-owned-boundary §1:
  * - tenant_id / project_id は Server Component で session から resolve、
- *   caller-supplied 経路なし (Sprint 11 で backend route 実装時に enforcement)
+ *   caller-supplied 経路なし (default は DEFAULT_PROJECT_ID で seeds と整合)
  * - response schema は Zod で strict validate、unknown field は drop
+ *
+ * sync target: backend/app/schemas/ticket.py TicketRead Pydantic schema。
  */
 
 import { z } from "zod";
 
 import { fetchBackendJson } from "@/lib/api/client";
 
-// Codex audit F-006 adopt: backend ticket.py Literal + DB CHECK と integrity 維持
-// backend/app/db/models/ticket.py:20 と完全一致 (Sprint 11 contract test で drift 検証)
+/** Default project id seeded by `backend/app/seeds/initial.py` (`DEFAULT_PROJECT_ID`). */
+export const DEFAULT_PROJECT_ID = "00000000-0000-4000-8000-000000000004";
+
+// backend ticket.py Literal + DB CHECK と完全一致 (Sprint 11 contract test で drift 検証)
 export const TicketStatusEnum = z.enum([
   "open",
   "in_progress",
@@ -32,84 +31,83 @@ export const TicketStatusEnum = z.enum([
 
 export type TicketStatus = z.infer<typeof TicketStatusEnum>;
 
-export const PayloadDataClassEnum = z.enum([
-  "public",
-  "internal",
-  "confidential",
-  "pii"
-]);
+export const TicketPriorityEnum = z.enum(["low", "medium", "high", "critical"]);
 
-export type PayloadDataClass = z.infer<typeof PayloadDataClassEnum>;
+export type TicketPriority = z.infer<typeof TicketPriorityEnum>;
 
-export const TicketListItemSchema = z.object({
+/** Backend `TicketRead` Pydantic schema と整合 (sync via repository contract test). */
+export const TicketReadSchema = z.object({
   id: z.string().uuid(),
-  title: z.string(),
-  status: TicketStatusEnum,
+  tenant_id: z.number().int(),
   project_id: z.string().uuid(),
-  created_at: z.string(),
-  updated_at: z.string(),
-  agent_run_count: z.number().int().nonnegative()
-});
-
-export type TicketListItem = z.infer<typeof TicketListItemSchema>;
-
-export const AcceptanceCriterionSchema = z.object({
-  id: z.string(),
-  description: z.string(),
-  eval_fixture_ref: z.string().nullable()
-});
-
-export type AcceptanceCriterion = z.infer<typeof AcceptanceCriterionSchema>;
-
-export const EvidenceCitationSchema = z.object({
-  claim_id: z.string(),
-  source_id: z.string(),
-  url: z.string().url().nullable()
-});
-
-export type EvidenceCitation = z.infer<typeof EvidenceCitationSchema>;
-
-export const TicketDetailSchema = TicketListItemSchema.extend({
+  repository_id: z.string().uuid().nullable(),
+  slug: z.string(),
+  title: z.string(),
   description: z.string().nullable(),
-  acceptance_criteria: z.array(AcceptanceCriterionSchema),
-  evidence_set_hash: z.string().nullable(),
-  citations: z.array(EvidenceCitationSchema),
-  latest_agent_run_id: z.string().uuid().nullable(),
-  payload_data_class: PayloadDataClassEnum
+  status: TicketStatusEnum,
+  priority: TicketPriorityEnum.nullable(),
+  assignee_actor_id: z.string().uuid().nullable(),
+  created_by_actor_id: z.string().uuid(),
+  metadata: z.record(z.string(), z.unknown()),
+  created_at: z.string(),
+  updated_at: z.string()
 });
 
-export type TicketDetail = z.infer<typeof TicketDetailSchema>;
+export type TicketRead = z.infer<typeof TicketReadSchema>;
 
-export const TicketsListResponseSchema = z.object({
-  tickets: z.array(TicketListItemSchema),
-  total: z.number().int().nonnegative()
+/** Backend `TicketListResponse` Pydantic schema と整合. */
+export const TicketListResponseSchema = z.object({
+  items: z.array(TicketReadSchema),
+  total: z.number().int().nonnegative(),
+  limit: z.number().int(),
+  offset: z.number().int()
 });
 
-export type TicketsListResponse = z.infer<typeof TicketsListResponseSchema>;
+export type TicketListResponse = z.infer<typeof TicketListResponseSchema>;
 
 /**
- * **DRAFT** GET /api/v1/tickets — Sprint 9 では client draft、Sprint 11 で
- * backend route を実装してから enable する。
+ * GET /api/v1/projects/{project_id}/tickets (list、pagination).
  *
- * NOTE: `_listTicketsDraft` prefix で「未本実装」を signal、production code path
- * から呼ばれないようにする (Codex audit F-004 adopt)。
+ * @param projectId - project UUID (session 経由 resolve、default は DEFAULT_PROJECT_ID)
+ * @param limit - 1〜200 (default 50)
+ * @param offset - >= 0 (default 0)
  */
-export async function _listTicketsDraft(): Promise<TicketsListResponse> {
-  return fetchBackendJson<TicketsListResponse>(
-    "/api/v1/tickets",
-    TicketsListResponseSchema
-  );
+export async function listTickets(
+  projectId: string,
+  options: { limit?: number; offset?: number } = {}
+): Promise<TicketListResponse> {
+  if (!/^[0-9a-f-]{36}$/i.test(projectId)) {
+    throw new Error("invalid project id format");
+  }
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  if (options.offset !== undefined) {
+    params.set("offset", String(options.offset));
+  }
+  const query = params.toString();
+  const path = query
+    ? (`/api/v1/projects/${projectId}/tickets?${query}` as `/${string}`)
+    : (`/api/v1/projects/${projectId}/tickets` as `/${string}`);
+  return fetchBackendJson<TicketListResponse>(path, TicketListResponseSchema);
 }
 
 /**
- * **DRAFT** GET /api/v1/tickets/{id} (同上)
+ * GET /api/v1/projects/{project_id}/tickets/{ticket_id} (detail).
  */
-export async function _getTicketDraft(id: string): Promise<TicketDetail> {
-  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+export async function getTicket(
+  projectId: string,
+  ticketId: string
+): Promise<TicketRead> {
+  if (!/^[0-9a-f-]{36}$/i.test(projectId)) {
+    throw new Error("invalid project id format");
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(ticketId)) {
     throw new Error("invalid ticket id format");
   }
-  return fetchBackendJson<TicketDetail>(
-    `/api/v1/tickets/${id}` as `/${string}`,
-    TicketDetailSchema
+  return fetchBackendJson<TicketRead>(
+    `/api/v1/projects/${projectId}/tickets/${ticketId}` as `/${string}`,
+    TicketReadSchema
   );
 }
