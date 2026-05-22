@@ -143,6 +143,16 @@ async def verify_db_signed_journal_async(
             f"adjust --max-entries or paginate (got >{max_entries})",
         )
 
+    # Codex PR #90 R3 F-001 fix (P1): empty result set を silent success にしない。
+    # operator が tenant_id を mistype すると audit_events なしの tenant に対して
+    # tamper_detected=false で OK 判定する事故が起きるため fail-closed (usage error)。
+    if len(audit_events) == 0:
+        raise SignedJournalDbUsageError(
+            "tenant_scope_empty",
+            f"audit_events table is empty for tenant_id={tenant_id}; "
+            "verify tenant_id is correct (typo / data not yet inserted)",
+        )
+
     # build chain (pure function、no I/O)
     chain = build_signed_journal_chain(audit_events)
 

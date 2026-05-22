@@ -64,17 +64,17 @@ def _build_mock_session(audit_events: list[_FakeAuditEvent]) -> MagicMock:
 # === verify_db_signed_journal_async tests ===
 
 
-def test_async_empty_chain_returns_initial_hash() -> None:
-    """audit_events 空 → final_hash = SIGNED_JOURNAL_INITIAL_HASH ('0'*64)."""
+def test_async_empty_chain_raises_tenant_scope_empty() -> None:
+    """Codex PR #90 R3 F-001 fix (P1): audit_events 空 → SignedJournalDbUsageError('tenant_scope_empty').
+
+    旧挙動 (silent tamper_detected=false) は operator が tenant_id をミスタイプして
+    存在しない tenant に対して "verified OK" と誤判定する事故を生むため fail-closed。
+    """
     session = _build_mock_session([])
-    result = asyncio.run(verify_db_signed_journal_async(session, tenant_id=1))
-    assert result["mode"] == "db"
-    assert result["tenant_id"] == 1
-    assert result["entry_count"] == 0
-    assert result["final_hash"] == "0" * 64
-    assert result["initial_hash"] == "0" * 64
-    assert result["tamper_detected"] is False
-    assert result["expected_final_hash_match"] is None
+    with pytest.raises(SignedJournalDbUsageError) as exc_info:
+        asyncio.run(verify_db_signed_journal_async(session, tenant_id=1))
+    assert exc_info.value.error_code == "tenant_scope_empty"
+    assert "tenant_id=1" in exc_info.value.summary
 
 
 def test_async_with_events_computes_non_initial_hash() -> None:
@@ -220,11 +220,14 @@ def test_db_connection_error_redacts_raw_exception_text() -> None:
     """
     from scripts.taskhub_signed_journal_db import verify_db_signed_journal
 
-    # invalid database_url で connection error をトリガー
+    # Codex PR #90 R3 F-004 fix (P3): network-free invalid URL でも raw exc text を verify。
+    # 旧 `nonexistent.example` は DNS lookup に依存 (CI resolver settings で flaky)、
+    # SQLAlchemy が parse できない garbage scheme で create_async_engine が即時 fail する経路に置換。
+    sensitive_url = "garbage-scheme://user:supersecretpassword@host/db"
     with pytest.raises(SignedJournalDbUsageError) as exc_info:
         verify_db_signed_journal(
             tenant_id=1,
-            database_url="postgresql+asyncpg://user:supersecretpassword@nonexistent.example/db",
+            database_url=sensitive_url,
         )
     assert exc_info.value.error_code == "db_connection_error"
     # password を summary に含まない (raw exception text leak 防止)

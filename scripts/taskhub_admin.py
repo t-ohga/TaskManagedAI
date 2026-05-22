@@ -1432,6 +1432,14 @@ def _cmd_verify_signed_journal(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
+        # Codex PR #90 R3 F-002 fix (P2): offline-only flag (`--max-line-bytes`) を
+        # DB mode で silent ignore せず fail-fast reject (operator misleading 防止)。
+        if args.max_line_bytes is not None:
+            print(  # noqa: T201
+                "ERROR: --max-line-bytes is only valid with --input (offline mode)",
+                file=sys.stderr,
+            )
+            return 2
         try:
             result = verify_db_signed_journal(
                 tenant_id=args.tenant_id,
@@ -1511,6 +1519,30 @@ def _cmd_verify(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+
+    # Codex PR #90 R3 F-003 fix (P2): DB mode 専用 flag を --signed-journal なしで
+    # 指定された場合は silent ignore せず fail-fast (operator が DB verify 想定なのに
+    # skeleton mode に落ちる事故を防ぐ)。
+    if not args.signed_journal:
+        from_db = getattr(args, "from_db", False)
+        if from_db:
+            print(  # noqa: T201
+                "ERROR: --from-db requires --signed-journal",
+                file=sys.stderr,
+            )
+            return 2
+        if args.tenant_id is not None:
+            print(  # noqa: T201
+                "ERROR: --tenant-id requires --signed-journal --from-db",
+                file=sys.stderr,
+            )
+            return 2
+        if getattr(args, "database_url", None) is not None:
+            print(  # noqa: T201
+                "ERROR: --database-url requires --signed-journal --from-db",
+                file=sys.stderr,
+            )
+            return 2
 
     # SP022-T08 batch 1: signed-journal offline mode (real I/O)
     if args.signed_journal:
