@@ -13,20 +13,29 @@
  */
 
 import { BackendApiError } from "@/lib/api/client";
-import { DEFAULT_PROJECT_ID, listTickets, type TicketRead } from "@/lib/api/tickets";
+import { getCurrentProjectId } from "@/lib/api/session";
+import { listTickets, type TicketRead } from "@/lib/api/tickets";
 
 import { NewTicketForm } from "./_components/new-ticket-form";
 
 export const dynamic = "force-dynamic";
 
+// SP-012-11.1 BL-TCU-014: Codex PR #121 R1 F-PR121-003 (P1) carry-over fix
+// DEFAULT_PROJECT_ID hardcode を session 経由 resolve に置換 (server-owned-boundary §1)。
 type TicketsState =
-  | { kind: "ok"; tickets: TicketRead[]; total: number }
+  | { kind: "ok"; tickets: TicketRead[]; total: number; projectId: string }
   | { kind: "error"; message: string };
 
 async function readTickets(): Promise<TicketsState> {
   try {
-    const response = await listTickets(DEFAULT_PROJECT_ID, { limit: 200, offset: 0 });
-    return { kind: "ok", tickets: response.items, total: response.total };
+    const projectId = await getCurrentProjectId();
+    const response = await listTickets(projectId, { limit: 200, offset: 0 });
+    return {
+      kind: "ok",
+      tickets: response.items,
+      total: response.total,
+      projectId,
+    };
   } catch (error: unknown) {
     if (error instanceof BackendApiError) {
       return {
@@ -57,7 +66,7 @@ export default async function TicketsListPage() {
         <h1 className="text-3xl font-semibold tracking-normal">Tickets</h1>
         <p className="mt-2 text-sm text-muted">
           {state.kind === "ok"
-            ? `${state.total} 件 (project: ${DEFAULT_PROJECT_ID})`
+            ? `${state.total} 件 (project: ${state.projectId})`
             : "tickets fetch failed"}
         </p>
       </header>

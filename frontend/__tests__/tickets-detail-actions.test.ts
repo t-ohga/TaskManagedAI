@@ -15,6 +15,11 @@ vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
 }));
 
+// SP-012-11.1 BL-TCU-014: Server Action 内で getCurrentProjectId() を call、test では mock
+vi.mock("@/lib/api/session", () => ({
+  getCurrentProjectId: vi.fn(async () => "00000000-0000-4000-8000-000000000004"),
+}));
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();

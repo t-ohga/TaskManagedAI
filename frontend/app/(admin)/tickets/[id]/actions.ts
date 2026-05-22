@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { fetchBackendJson } from "@/lib/api/client";
-import { DEFAULT_PROJECT_ID, TicketReadSchema } from "@/lib/api/tickets";
+import { getCurrentProjectId } from "@/lib/api/session";
+import { TicketReadSchema } from "@/lib/api/tickets";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -87,13 +88,11 @@ export async function updateTicketAction(
   }
 
   try {
-    // Codex PR #121 R1 F-PR121-002 (P1) defer: DEFAULT_PROJECT_ID hardcode は
-    // single-project mode (P0 + P0.1 single-tenant single-project) で current
-    // 実装。multi-project 対応は SP-013 multi-agent foundation 完成後
-    // (project_agent_roles 追加) の別 light Sprint Pack (SP-012-12 候補) で
-    // session 経由 project resolve に置換。本 release では comment で意図明示。
+    // SP-012-11.1 BL-TCU-014: Codex PR #121 R1 F-PR121-002 (P1) carry-over fix
+    // session 経由 project resolve (DEFAULT_PROJECT_ID hardcode 解除)
+    const projectId = await getCurrentProjectId();
     const updated = await fetchBackendJson(
-      `/api/v1/projects/${DEFAULT_PROJECT_ID}/tickets/${ticket_id}` as `/${string}`,
+      `/api/v1/projects/${projectId}/tickets/${ticket_id}` as `/${string}`,
       TicketReadSchema,
       {
         method: "PATCH",

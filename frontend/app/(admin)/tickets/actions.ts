@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { fetchBackendJson } from "@/lib/api/client";
-import { DEFAULT_PROJECT_ID, TicketReadSchema } from "@/lib/api/tickets";
+import { getCurrentProjectId } from "@/lib/api/session";
+import { TicketReadSchema } from "@/lib/api/tickets";
 
 const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
@@ -53,8 +54,10 @@ export async function createTicketAction(
   }
 
   try {
+    // SP-012-11.1 BL-TCU-014: session 経由 project resolve (DEFAULT_PROJECT_ID hardcode 解除)
+    const projectId = await getCurrentProjectId();
     const created = await fetchBackendJson(
-      `/api/v1/projects/${DEFAULT_PROJECT_ID}/tickets` as `/${string}`,
+      `/api/v1/projects/${projectId}/tickets` as `/${string}`,
       TicketReadSchema,
       {
         method: "POST",
