@@ -9,12 +9,15 @@ DB integration test (idempotent re-run + actual seed apply) は
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 from backend.app.cli.dogfooding_seed import (
     _ADR_STATUS_TO_TICKET_STATUS,
     _SPRINT_STATUS_TO_TICKET_STATUS,
     AdrMeta,
     BlMeta,
     SprintPackMeta,
+    _is_user_edited,
     discover_adrs,
     discover_bls,
     discover_sprint_packs,
@@ -312,3 +315,36 @@ def test_parse_bl_all_rows_have_valid_id_format() -> None:
     for bl in bls:
         assert bl_id_pattern.match(bl.id), f"BL id format invalid: {bl.id}"
         assert bl.ticket_status == "open"  # BL default は open
+
+
+# SP-012-11.1 BL-TCU-011/012: user_edited merge logic regression tests
+
+
+def test_is_user_edited_true_when_metadata_flag_set() -> None:
+    ticket = MagicMock()
+    ticket.metadata_ = {"rls_ready": True, "user_edited": True}
+    assert _is_user_edited(ticket) is True
+
+
+def test_is_user_edited_false_when_flag_missing() -> None:
+    ticket = MagicMock()
+    ticket.metadata_ = {"rls_ready": True, "dogfooding_source": {"type": "sprint_pack"}}
+    assert _is_user_edited(ticket) is False
+
+
+def test_is_user_edited_false_when_flag_explicitly_false() -> None:
+    ticket = MagicMock()
+    ticket.metadata_ = {"rls_ready": True, "user_edited": False}
+    assert _is_user_edited(ticket) is False
+
+
+def test_is_user_edited_false_when_metadata_none() -> None:
+    ticket = MagicMock()
+    ticket.metadata_ = None
+    assert _is_user_edited(ticket) is False
+
+
+def test_is_user_edited_false_when_metadata_empty_dict() -> None:
+    ticket = MagicMock()
+    ticket.metadata_ = {}
+    assert _is_user_edited(ticket) is False
