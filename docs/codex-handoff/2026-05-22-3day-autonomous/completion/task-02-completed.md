@@ -7,7 +7,7 @@
 - end: 2026-05-23 JST
 - 完了 BL / ticket: BL-UII-001 から BL-UII-007
 - scope: navigation、Ticket、Approval、AgentRun、Audit、Eval Dashboard outer shell、Settings、login、Dashboard、notifications、root/common states、Research list/detail
-- 累計 PR: #151 から #156 merged、batch 7 PR pending at report creation
+- 累計 PR: #151 から #157 merged
 
 ## PR list
 
@@ -19,7 +19,7 @@
 | #154 | 79012528de8757c3d9f076248da31c7768b7fc7e | agent runs + state machine viewer | baseline 0 |
 | #155 | ec2a231cf1c3ca436ec674321a0647cf9a2f95f6 | audit + eval dashboard outer shell | baseline 0 |
 | #156 | 87f88f236526366f5f637bdc9265de027936aae2 | settings/auth/dashboard/notifications/common states | baseline 0 |
-| pending | pending | research list/detail + Sprint Pack completion | local Self-Impl findings adopted |
+| #157 | fc7eb0e921c1ad5c238b986ff41a223144e5341a | research list/detail + Sprint Pack completion | baseline 0 |
 
 ## Codex finding 採否判定
 
@@ -52,7 +52,7 @@
 - [x] `git diff --check` clean
 - [x] Sprint Pack frontmatter `status: ready → completed` + Review 章追加
 - [x] batch 1-6 codex_pr_full_review.sh baseline clean
-- [ ] batch 7 PR codex_pr_full_review.sh baseline 確認 + admin bypass merge
+- [x] batch 7 PR codex_pr_full_review.sh baseline 確認 + admin bypass merge
 
 ## Claude verification 依頼項目
 
