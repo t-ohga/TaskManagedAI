@@ -140,3 +140,80 @@ uv run alembic downgrade -1 && uv run alembic upgrade head  # rollback round-tri
 ## Review
 
 (SP-013 完了時に追記: changed / verified / deferred / risks)
+
+## P0.1 Unblock 前提 prerequisite status (2026-05-22 prep、prep/phase8-sp013-2026-05-22 PR)
+
+SP-013 着手前に **以下 prerequisite が全件 accepted / completed であること**。本表は p0-exit-final-hardening-2026-05-22 plan の Phase 8 P0 Exit declaration 完了後、SP-013 kickoff 直前に再 verify。
+
+### 1. P0 完了 prerequisite (SP-022 完遂)
+
+| 項目 | 状態 (2026-05-22 prep 時点) | unblock 条件 |
+|---|---|---|
+| SP-022 T01-T07 完了 | ✅ PR #69-#80 全 merged | - |
+| SP-022 T08 batch 1-6 完了 | ✅ PR #76,#77,#78,#79,#90,#91 全 merged | - |
+| SP-022 T06 Mac KPI baseline | ✅ PR #89 merged | - |
+| Additional Hardening Gate (p0-exit-final-hardening 12 latent fix) | ✅ PR #95+#96+#97 全 merged | - |
+| SP-022 T09 host migration drill (Mac→VPS、RTO≤4h) PASS | ⏳ user 物理作業待ち | 物理 host 2 台 + Tailscale 閉域 + age key + signed approval |
+| SP-022 frontmatter `status: → completed` | ⏳ T09 drill 完了後 | T09 completion evidence |
+| SP-012 frontmatter `status: → completed` (partial_completed_with_carry_over から昇格) | ⏳ T09 drill 完了後 | T09 completion evidence |
+
+### 2. ADR acceptance prerequisite (SP-013 kickoff 直前に proposed → accepted 化)
+
+ADR-00014 frontmatter `acceptance_blocked_by` の全件解消条件:
+
+| ADR | 現状 status | acceptance_blocked_by | 解消方法 |
+|---|---|---|---|
+| ADR-00014 (Multi-Agent Orchestration Foundation) | proposed | P0 完了 + Phase F-0 完了 + ADR-00018/19/20 + 00004/00009/00013 update accepted | SP-013 kickoff 直前 |
+| ADR-00019 (Role Taxonomy) | proposed | ADR-00014 accepted + P0 完了 | ADR-00014 と同 timing |
+| ADR-00018 (Inter-Agent Communication) | proposed | (要確認、SP-015 prerequisite) | SP-015 着手時 |
+| ADR-00009 (Action Class Taxonomy) | accepted ✅ | - (update 要、Phase F-0 で) | Phase F-0 で update |
+| ADR-00020 (Framework Intake Checklist) | accepted ✅ | - | - (SP022-T00 で accepted 済) |
+| ADR-00016 (Hermes Agent Integration) | proposed | (要確認、SP-013 直結ではない) | - |
+
+### 3. Phase F-0 prerequisite (SP-013 kickoff 前 must_ship)
+
+ADR-00014 acceptance_blocked_by #2「Phase F-0 (ADR-00009 update + DD-02 policy 3 table の read/search → provider_call 同期 migration) 完了」:
+
+| 項目 | 状態 (2026-05-22 prep 時点) | 着手予定 |
+|---|---|---|
+| ADR-00009 update (action_class enum に provider_call 追加 / read/search 削除) | ❌ 未着手 (`rg "Phase F-0\|phase-f-0"` で実装 file 0 件) | SP-013 kickoff 直前 (separate light ADR + migration PR) |
+| DD-02 policy 3 table (`role_authorization` / `principal_grant` / `policy_decision`) の `read/search` → `provider_call` 同期 migration | ❌ 未着手 | 同上 |
+| artifacts.project_id materialize migration (PE-F-007 strict prerequisite) | ❌ 未着手 (`migrations/versions/*project*` 0 件) | 同上 |
+| AC-HARD-03 cross-project negative test (research domain) | ✅ 既存 (`tests/security/test_research_cross_project_negative.py` 存在、SP-010 で起票) | - (本 test は research domain で完結、Phase F-0 で artifacts.project_id 追加後の **artifact-domain cross-project test** を別途 追加必要) |
+| AC-HARD-03 cross-project negative test (artifacts.project_id 追加後の artifact-domain) | ❌ 未着手 (artifacts.project_id materialize migration 完了後、`tests/security/test_artifact_cross_project_negative.py` 等の追加 test が必要) | Phase F-0 migration 後 |
+
+Phase F-0 は **SP-013 着手前の separate light Sprint Pack** として起票推奨 (SP-012.5 や SP-022.1 系の position)。本 prep では state 確認のみ、着手は本 plan §2.3 pre-P0 freeze 期間内禁止作業に該当のため P0 Exit declaration merge 後。
+
+### 4. P0.1 unblock 完了判定 (TASKHUB_P0_1_OPENED=1 解禁条件)
+
+P0 Exit declaration PR 起票時 (Phase 8) に以下を verify:
+
+- [ ] Hard Gates 7 全件 PASS (AC-HARD-01〜07)
+- [ ] Quality KPIs 5 未達 ≤ 1 個 (AC-KPI-01〜05)
+- [ ] backup/restore drill PASS (AC-HARD-04、T09 drill 7 mandatory checklist 経由)
+- [ ] 実機 host migration drill (Mac→VPS) RTO ≤ 4h PASS (T09)
+- [ ] SP-022 frontmatter `status: completed`
+- [ ] SP-012 frontmatter `status: completed` (partial_completed_with_carry_over から昇格)
+- [ ] `docs/release/p0_exit_2026_MM_DD.md` commit + master plan §3-§9 update + TASKHUB_P0_1_OPENED=1 env 解禁
+- [ ] sealed CI guard 解除 (P0.1 path 追加禁止 lift = migration `*event_type_37*` 等)
+
+### 5. SP-013 着手後の sub-Sprint dependency tree
+
+```
+SP-013 (Multi-Agent Orchestration Foundation)
+├─ SP-014 (Orchestrator Agent: lease/dispatch/failover)
+├─ SP-015 (Inter-Agent Communication: inter_agent_messages table)
+├─ SP-016 (UI/CLI Parity)
+├─ SP-017 (AI Society Visualization、optional P1)
+├─ SP-018 (Memory backend、ADR 別途)
+└─ SP-019/020 (P1 後段、未起票)
+```
+
+SP-013 完了で SP-014/015/016 の DDL 前提 (agent_roles / project_agent_roles / agent_runs.role_id+role_scope / parent/child / project boundary) が確立。
+
+### Related links
+
+- p0-exit-final-hardening-2026-05-22 plan: `.claude/plans/p0-exit-final-hardening-2026-05-22.md`
+- Phase 8 P0 Exit declaration prep: 本 PR (`prep/phase8-sp013-2026-05-22`)
+- ADR-00014 Phase A-E research: `docs/設計検討/phase-c-multi-agent-spec-draft.md` (56 finding adopt 済)
+- master plan §10.C: SP-022 完了 → P0 Exit declaration → P0.1 unblock (TASKHUB_P0_1_OPENED=1 + SP-013 着手)
