@@ -40,7 +40,13 @@ __all__ = [
 
 DEFAULT_MAX_ENTRIES: int = 100000
 
-EXPECTED_FINAL_HASH_REGEX = re.compile(r"^[0-9a-f]{64}$")
+# Codex PR #90 R1 F-004 fix (P2): `$` は Python regex で trailing newline を許可するため、
+# `\Z` (end-of-string anchor、改行も含めて文字列終端) を使う。
+EXPECTED_FINAL_HASH_REGEX = re.compile(r"\A[0-9a-f]{64}\Z")
+
+# Codex PR #90 R1 F-003 fix (P2): DB mode は offline mode と同 100k 上限を enforce
+# (`limit max_entries + 1` で memory / latency 抑止)。
+MAX_ALLOWED_MAX_ENTRIES: int = DEFAULT_MAX_ENTRIES
 
 
 class SignedJournalDbUsageError(Exception):
@@ -91,22 +97,32 @@ async def verify_db_signed_journal_async(
 
     from backend.app.db.models.audit_event import AuditEvent
 
-    if not isinstance(tenant_id, int) or tenant_id <= 0:
+    # Codex PR #90 R1 F-001 fix (P2): bool は int 部分型のため `isinstance(True, int)` が True
+    # を返す。`type(...) is int` で strict type check (`int(True)` accidental call を防ぐ)。
+    if type(tenant_id) is not int or tenant_id <= 0:
         raise SignedJournalDbUsageError(
             "invalid_tenant_id",
-            f"tenant_id must be positive integer, got {tenant_id!r}",
+            f"tenant_id must be positive integer (not bool), got {tenant_id!r}",
         )
-    if not isinstance(max_entries, int) or max_entries < 1:
+    # Codex PR #90 R1 F-002 (P3) + F-003 (P2) fix: bool reject + upper bound enforce
+    if type(max_entries) is not int or max_entries < 1:
         raise SignedJournalDbUsageError(
             "invalid_max_entries",
-            f"max_entries must be >= 1, got {max_entries!r}",
+            f"max_entries must be positive integer (not bool), got {max_entries!r}",
+        )
+    if max_entries > MAX_ALLOWED_MAX_ENTRIES:
+        raise SignedJournalDbUsageError(
+            "max_entries_out_of_range",
+            f"max_entries must be <= {MAX_ALLOWED_MAX_ENTRIES} (DoS defense), "
+            f"got {max_entries}",
         )
     if expected_final_hash is not None and not EXPECTED_FINAL_HASH_REGEX.match(
         expected_final_hash
     ):
         raise SignedJournalDbUsageError(
             "invalid_expected_final_hash",
-            f"expected_final_hash must be 64 chars hex, got {expected_final_hash!r}",
+            f"expected_final_hash must be 64 chars hex (no trailing newline), "
+            f"got {expected_final_hash!r}",
         )
 
     # tenant-scoped fetch with stable ordering

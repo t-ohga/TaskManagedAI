@@ -172,6 +172,45 @@ def test_default_max_entries_constant_is_100k() -> None:
     assert DEFAULT_MAX_ENTRIES == 100000
 
 
+def test_async_rejects_bool_tenant_id() -> None:
+    """Codex PR #90 R1 F-001 fix (P2): tenant_id=True (bool) は invalid_tenant_id."""
+    session = _build_mock_session([])
+    with pytest.raises(SignedJournalDbUsageError) as exc_info:
+        asyncio.run(verify_db_signed_journal_async(session, tenant_id=True))  # type: ignore[arg-type]
+    assert exc_info.value.error_code == "invalid_tenant_id"
+
+
+def test_async_rejects_bool_max_entries() -> None:
+    """Codex PR #90 R1 F-002 fix (P3): max_entries=True (bool) は invalid_max_entries."""
+    session = _build_mock_session([])
+    with pytest.raises(SignedJournalDbUsageError) as exc_info:
+        asyncio.run(verify_db_signed_journal_async(
+            session, tenant_id=1, max_entries=True,  # type: ignore[arg-type]
+        ))
+    assert exc_info.value.error_code == "invalid_max_entries"
+
+
+def test_async_rejects_max_entries_exceeding_upper_bound() -> None:
+    """Codex PR #90 R1 F-003 fix (P2): max_entries > 100k は max_entries_out_of_range fail-closed."""
+    session = _build_mock_session([])
+    with pytest.raises(SignedJournalDbUsageError) as exc_info:
+        asyncio.run(verify_db_signed_journal_async(
+            session, tenant_id=1, max_entries=100_001,
+        ))
+    assert exc_info.value.error_code == "max_entries_out_of_range"
+
+
+def test_async_rejects_expected_final_hash_with_trailing_newline() -> None:
+    """Codex PR #90 R1 F-004 fix (P2): 末尾改行付き hash は \\Z anchor で reject."""
+    session = _build_mock_session([])
+    hash_with_newline = ("a" * 64) + "\n"
+    with pytest.raises(SignedJournalDbUsageError) as exc_info:
+        asyncio.run(verify_db_signed_journal_async(
+            session, tenant_id=1, expected_final_hash=hash_with_newline,
+        ))
+    assert exc_info.value.error_code == "invalid_expected_final_hash"
+
+
 def test_async_result_has_serializable_dict() -> None:
     """output dict は json.dumps できる (CLI JSON output 前提)."""
     session = _build_mock_session([_make_event()])
