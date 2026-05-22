@@ -367,6 +367,7 @@ const STATIC_VERDICT_BASE = {
 
 function deriveVerdict(
   kpiRollup: KpiRollupResponse,
+  kpiSource: KpiRollupSource,
 ): {
   readonly p0_exit_decision: boolean;
   readonly hard_gates_pass_count: number;
@@ -378,6 +379,15 @@ function deriveVerdict(
   readonly deficiency_reasons: readonly string[];
 } {
   const deficiencies: string[] = [];
+  // Codex PR #91 R2 F-003 fix (P1): KPI data が skeleton fallback (backend outage)
+  // の場合、live KPI 真値が未取得なので p0_exit_decision=true を主張してはならない。
+  // 「KPI source unavailable」を deficiency reason として明示し、BLOCKED として表示。
+  // 旧実装は kpiRollup.p0_accept=true (skeleton 既定値) で常に p0_exit_decision=true
+  // を返していた → 実態 (backend down) と矛盾する verdict が DOM に出る regression。
+  const kpiLive = kpiSource === "live";
+  if (!kpiLive) {
+    deficiencies.push("kpi_source_unavailable: skeleton fallback in use, live KPI verdict unverifiable");
+  }
   if (!kpiRollup.p0_accept) {
     deficiencies.push(
       `kpis_pass: ${kpiRollup.met_count}/${kpiRollup.kpi_count} (fail_tolerance=${kpiRollup.fail_tolerance})`,
@@ -385,6 +395,7 @@ function deriveVerdict(
   }
   // 他 source は static の間は不変、live endpoint 追加後 deficiency 検出ロジック拡張
   const allGreen =
+    kpiLive &&
     kpiRollup.p0_accept &&
     STATIC_VERDICT_BASE.hard_gates_pass_count === 7 &&
     STATIC_VERDICT_BASE.drills_pass_count === 2 &&
@@ -410,8 +421,9 @@ export default async function EvalDashboardPage() {
   const kpiRollup = kpiRollupResult.data;
   const kpiSource: KpiRollupSource = kpiRollupResult.source;
   const kpiFallbackReason = kpiRollupResult.fallbackReason;
-  // Codex PR #91 R1 F-003 fix (P2): verdict を live KPI rollup から derive
-  const P0_EXIT_VERDICT = deriveVerdict(kpiRollup);
+  // Codex PR #91 R1 F-003 fix (P2) + R2 F-003 fix (P1): verdict を live KPI rollup
+  // から derive、ただし source=skeleton_fallback の場合は p0_exit_decision=false 強制。
+  const P0_EXIT_VERDICT = deriveVerdict(kpiRollup, kpiSource);
 
   return (
     <AdminPageShell

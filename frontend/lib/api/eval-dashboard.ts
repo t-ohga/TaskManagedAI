@@ -40,12 +40,12 @@ export const corpusLoadResponseSchema = z.object({
   fixture_count: z.number().int().nonnegative(),
 });
 
-// Codex PR #91 R1 F-002 fix (P2): backend は 5 KPI 固定 + 各 ID 一意の cardinality
-// invariant を Zod で enforce。truncated / duplicated 200-response が live と誤認
-// されると pass-looking fallback の代わりに misleading data が表示される。
+// Codex PR #91 R1 F-002 fix (P2) + R2 F-002 fix (P2): backend は 5 KPI 固定。
+// R2 fix で kpi_count を literal(5) で enforce (kpi_count=N が entries.length=5 と
+// 一貫しない invariant violation を fail-closed)。
 export const kpiRollupResponseSchema = z
   .object({
-    kpi_count: z.number().int().nonnegative(),
+    kpi_count: z.literal(5),  // Codex PR #91 R2 F-002 fix (P2): backend KpiRollupSummary contract で常に 5
     met_count: z.number().int().nonnegative(),
     failed_count: z.number().int().nonnegative(),
     p0_accept: z.boolean(),
@@ -71,6 +71,16 @@ export const kpiRollupResponseSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `met_count + failed_count must equal kpi_count; got ${data.met_count}+${data.failed_count}!==${data.kpi_count}`,
+      });
+    }
+    // Codex PR #91 R2 F-005 fix (P2): met_count / failed_count が entries[].threshold_met
+    // と一貫しているか cross-check (data tampering / aggregation bug 検出)。
+    const actualMet = data.entries.filter((e) => e.threshold_met).length;
+    const actualFailed = data.entries.length - actualMet;
+    if (data.met_count !== actualMet || data.failed_count !== actualFailed) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `met_count/failed_count must match entries threshold_met counts; declared=${data.met_count}/${data.failed_count}, actual=${actualMet}/${actualFailed}`,
       });
     }
   });
@@ -141,6 +151,27 @@ export async function fetchKpiRollupOrFallback(
         source: "skeleton_fallback",
         data: skeletonFallback,
         fallbackReason: "backend response schema mismatch",
+      };
+    }
+    // Codex PR #91 R2 F-004 fix (P2): malformed JSON (SyntaxError) も outage 扱い
+    // (backend が non-JSON response を返す = outage / proxy 障害)。
+    if (err instanceof SyntaxError) {
+      return {
+        source: "skeleton_fallback",
+        data: skeletonFallback,
+        fallbackReason: "backend returned malformed JSON",
+      };
+    }
+    // Codex PR #91 R2 F-001 fix (P1): network-level failure (DNS timeout /
+    // ECONN refused / fetch failed) も outage。Node 18+ undici は `TypeError:
+    // fetch failed` を投げ、原因は err.cause に格納される (ENOTFOUND /
+    // ECONNREFUSED / ETIMEDOUT 等)。env misconfig (INTERNAL_API_URL undefined)
+    // と区別するため、TypeError + cause 経路のみ fallback、他は rethrow。
+    if (err instanceof TypeError && "cause" in err) {
+      return {
+        source: "skeleton_fallback",
+        data: skeletonFallback,
+        fallbackReason: "backend network unreachable",
       };
     }
     // Codex PR #91 R1 F-004 fix (P2): config / runtime / env misconfig (missing

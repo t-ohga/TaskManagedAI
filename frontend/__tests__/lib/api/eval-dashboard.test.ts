@@ -243,4 +243,88 @@ describe("eval-dashboard API client", () => {
     expect(result.source).toBe("skeleton_fallback");
     expect(result.fallbackReason).toBe("backend response schema mismatch");
   });
+
+  it("Zod schema rejects kpi_count != 5 (literal contract、R2 F-002)", async () => {
+    // Codex PR #91 R2 F-002 fix (P2): backend KpiRollupSummary is fixed-5 contract、
+    // kpi_count=4 等は backend bug / API drift で reject 必要。
+    vi.stubEnv("INTERNAL_API_URL", "http://backend.test");
+    cookieMocks.get.mockReturnValue({ value: "session-cookie-value" });
+    // kpi_count=4 だが entries は 5 件 (literal mismatch、superRefine sum violation も発生)
+    const invalid = { ...VALID_RESPONSE, kpi_count: 4 };
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify(invalid), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const result = await fetchKpiRollupOrFallback(SKELETON_FALLBACK);
+    expect(result.source).toBe("skeleton_fallback");
+    expect(result.fallbackReason).toBe("backend response schema mismatch");
+  });
+
+  it("Zod schema rejects met_count/failed_count not matching entries threshold_met (R2 F-005)", async () => {
+    // Codex PR #91 R2 F-005 fix (P2): met_count が entries[].threshold_met と一貫しない
+    // 場合は backend aggregation bug / data tampering として reject。
+    vi.stubEnv("INTERNAL_API_URL", "http://backend.test");
+    cookieMocks.get.mockReturnValue({ value: "session-cookie-value" });
+    // VALID_RESPONSE は entries 4 件 threshold_met=true, 1 件 false → actual met=4 / failed=1
+    // declared met_count=5 / failed_count=0 にすると sum invariant (5+0=5=kpi_count) は満たすが
+    // entries の actual cross-check で reject 期待。
+    const tampered = { ...VALID_RESPONSE, met_count: 5, failed_count: 0 };
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify(tampered), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const result = await fetchKpiRollupOrFallback(SKELETON_FALLBACK);
+    expect(result.source).toBe("skeleton_fallback");
+    expect(result.fallbackReason).toBe("backend response schema mismatch");
+  });
+
+  it("fetchKpiRollupOrFallback falls back on malformed JSON (SyntaxError、R2 F-004)", async () => {
+    // Codex PR #91 R2 F-004 fix (P2): backend が non-JSON response (proxy 障害 / HTML
+    // error page) を返した場合は outage 扱いで fallback (env misconfig と区別)。
+    vi.stubEnv("INTERNAL_API_URL", "http://backend.test");
+    cookieMocks.get.mockReturnValue({ value: "session-cookie-value" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("<html>502 Bad Gateway</html>", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const result = await fetchKpiRollupOrFallback(SKELETON_FALLBACK);
+    expect(result.source).toBe("skeleton_fallback");
+    expect(result.fallbackReason).toBe("backend returned malformed JSON");
+  });
+
+  it("fetchKpiRollupOrFallback falls back on TypeError with cause (network failure、R2 F-001)", async () => {
+    // Codex PR #91 R2 F-001 fix (P1): Node 18+ undici は network failure (DNS timeout /
+    // ECONN refused / ETIMEDOUT) を TypeError("fetch failed") + err.cause で投げる。
+    // env misconfig (cause なしの plain Error) と区別して fallback。
+    vi.stubEnv("INTERNAL_API_URL", "http://backend.test");
+    cookieMocks.get.mockReturnValue({ value: "session-cookie-value" });
+    const networkError = new TypeError("fetch failed");
+    Object.defineProperty(networkError, "cause", {
+      value: new Error("ECONNREFUSED 127.0.0.1:8000"),
+      enumerable: true,
+    });
+    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(networkError);
+    const result = await fetchKpiRollupOrFallback(SKELETON_FALLBACK);
+    expect(result.source).toBe("skeleton_fallback");
+    expect(result.fallbackReason).toBe("backend network unreachable");
+  });
+
+  it("fetchKpiRollupOrFallback rethrows on TypeError without cause (env misconfig、R2 F-001 boundary)", async () => {
+    // Codex PR #91 R2 F-001 fix (P1): TypeError でも cause を持たない場合は plain
+    // runtime error (env misconfig / null deref 等) として rethrow。silent fallback しない。
+    vi.stubEnv("INTERNAL_API_URL", "http://backend.test");
+    cookieMocks.get.mockReturnValue({ value: "session-cookie-value" });
+    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(
+      new TypeError("Cannot read properties of undefined"),
+    );
+    await expect(fetchKpiRollupOrFallback(SKELETON_FALLBACK)).rejects.toThrow(
+      /Cannot read properties of undefined/,
+    );
+  });
 });
