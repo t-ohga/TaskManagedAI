@@ -10,23 +10,14 @@ services:
     environment:
       TASKMANAGEDAI_ENVIRONMENT: development
 
-  frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
-      target: deps
-    volumes:
-      - ./frontend:/app/frontend
-      - frontend_node_modules:/app/frontend/node_modules
-      - frontend_next:/app/frontend/.next
-    command: ["pnpm", "dev", "--hostname", "0.0.0.0", "--port", "3000"]
-    environment:
-      NODE_ENV: development
-      TASKMANAGEDAI_ENVIRONMENT: development
-      NEXT_TELEMETRY_DISABLED: "1"
-      INTERNAL_API_URL: "http://api:8000"
-      DEV_LOGIN_COOKIE_SECRET: "${TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET:?must be set in .env.local}"
-      TASKMANAGEDAI_DEV_LOGIN_TOKEN: "${TASKMANAGEDAI_DEV_LOGIN_TOKEN:?must be set in .env.local}"
+  # NOTE: frontend service の dev override は削除済 (Mac single-host smoke で
+  # `pnpm dev` mode + node_modules named volume init 不整合により container 起動失敗
+  # = `sh: next: not found` 反復 restart)。smoke / dev 共通で base docker-compose.yml
+  # の production frontend build を使う (next build → next start)。frontend hot reload
+  # が必要な developer は別 mechanism (host 直接 `cd frontend && pnpm dev`) を使う.
+  #
+  # 関連: p0-exit-final-hardening-2026-05-22 plan §1.3 (Layer B smoke 前提条件)、
+  # ADR-00022 (dev_login cookie secure attribute、development は HTTP loopback).
 
   worker:
     volumes:
@@ -39,6 +30,21 @@ services:
     environment:
       TASKMANAGEDAI_ENVIRONMENT: development
 
-volumes:
-  frontend_node_modules:
-  frontend_next:
+# frontend_node_modules / frontend_next named volumes は frontend dev override 削除に
+# 伴い不要 (Mac smoke は base compose の production build を使う、dev developer は host
+# 直接 `pnpm dev` 起動)
+
+# Development mode override: allow host (Mac single-host smoke verification) access
+# to containers via 127.0.0.1 port publish. Base docker-compose.yml sets
+# `internal: true` for deny-by-default production security (Tailscale 閉域、
+# Tailscale Serve TLS 終端で external access)、本 override は development /
+# Mac single-host smoke 用に 127.0.0.1 限定で host access を許可する.
+#
+# ADR Gate 該当性: 非該当 (development environment override、production の
+# `internal: true` 設定は不変、外部公開設定変更なし、127.0.0.1 bind で localhost only).
+# 関連: ADR-00007 (external exposure、production は Tailscale Serve)、
+# ADR-00022 (dev_login cookie secure attribute、development は HTTP loopback で動作)、
+# p0-exit-final-hardening-2026-05-22 plan §1.3 (Layer B smoke 前提条件).
+networks:
+  taskmanagedai_internal:
+    internal: false
