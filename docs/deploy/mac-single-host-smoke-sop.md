@@ -146,11 +146,13 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.l
 set -o pipefail
 
 # api container 内で alembic upgrade head 実行
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local exec api uv run alembic current
+# scripts/alembic_wrapper.sh は host/container の TASKMANAGEDAI_DATABASE_URL / DATABASE_URL
+# override を Alembic process から strip し、.env.local + container 内設定を正本にする。
+bash scripts/alembic_wrapper.sh current
 # expected: revision id (空または未 apply の状態)
 
 # 出力 full 保存 + pipefail で failure mask 防止
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local exec api uv run alembic upgrade head 2>&1 | tee /tmp/taskhub-alembic-upgrade.log
+bash scripts/alembic_wrapper.sh upgrade head 2>&1 | tee /tmp/taskhub-alembic-upgrade.log
 ALEMBIC_EXIT=$?
 echo "alembic upgrade head exit code: $ALEMBIC_EXIT"
 if [ "$ALEMBIC_EXIT" -ne 0 ]; then
@@ -162,7 +164,7 @@ tail -10 /tmp/taskhub-alembic-upgrade.log
 
 # expected: 18 migrations apply 成功、ALEMBIC_EXIT=0
 
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local exec api uv run alembic current
+bash scripts/alembic_wrapper.sh current
 # expected: 0018_eval_dataset_versions (head)
 ```
 
@@ -406,14 +408,29 @@ ls -la ~/.taskhub/approvals/${SMOKE_APPROVAL_ID}.signed
 
 ## §13 signed journal verify CLI (C-8、5 min)
 
+### §13.1 DATABASE_URL extraction
+
+Pattern:
+
+- source line: `^TASKMANAGEDAI_DATABASE_URL=`
+- selector: `tail -n 1`
+- host rewrite: `sed 's/postgres:/127.0.0.1:/g'`
+
 ```bash
 # PR #90 で実装、--from-db mode で実 DB 上の audit_events を verify
 # Codex PR #93 R1 F-003 fix (P2): .env.local には §1 で追記された TASKMANAGEDAI_DATABASE_URL
 # と .env.example 由来の既存 line (コメント含む) の両方が match する可能性あり、
 # 改行を含む不正 URL になる。`^TASKMANAGEDAI_DATABASE_URL=` で行頭固定 + `tail -n 1`
 # で最後の未コメント行を 1 件だけ選ぶ。
-DATABASE_URL=$(grep -E '^TASKMANAGEDAI_DATABASE_URL=' .env.local | tail -n 1 | cut -d= -f2- | sed 's/postgres:/127.0.0.1:/g')
-echo "DATABASE_URL (sanitized): $(printf '%s' "$DATABASE_URL" | sed 's|//[^@]*@|//***@|')"
+DATABASE_URL=$(
+  grep -E '^TASKMANAGEDAI_DATABASE_URL=' .env.local \
+    | tail -n 1 \
+    | cut -d= -f2- \
+    | sed 's/postgres:/127.0.0.1:/g'
+)
+echo "DATABASE_URL (sanitized): $(
+  printf '%s' "$DATABASE_URL" | sed 's|//[^@]*@|//***@|'
+)"
 # Codex PR #93 R1 F-003 fix の補正 (post-merge SOP polish 2026-05-22):
 # `echo "$X" | grep -q $'\n'` は echo の末尾改行で常 match して常時 ERROR exit 1 になる
 # bug 。`printf '%s'` で末尾改行を含めない pure value check に修正.
@@ -421,21 +438,138 @@ if [ -z "$DATABASE_URL" ] || printf '%s' "$DATABASE_URL" | grep -q $'\n'; then
   echo "❌ DATABASE_URL が空または改行を含む。.env.local を確認してください。"
   exit 1
 fi
+```
+
+Expected output:
+
+- sanitized DSN が `//***@` 形式で表示される
+- 空文字または改行混入時は `❌ DATABASE_URL` で即 exit 1
+
+### §13.2 Verify command and exit code
+
+Pattern:
+
+- command: `uv run taskhub verify --signed-journal --from-db`
+- exit capture: `VERIFY_EXIT=$?`
+
+```bash
 
 # Codex PR #93 R1 F-004 fix の延長で pipefail を ON
 set -o pipefail
-uv run taskhub verify --signed-journal --from-db --tenant-id 1 --database-url "$DATABASE_URL" 2>&1 | tee /tmp/taskhub-verify.log
+uv run taskhub verify \
+  --signed-journal \
+  --from-db \
+  --tenant-id 1 \
+  --database-url "$DATABASE_URL" \
+  2>&1 | tee /tmp/taskhub-verify.log
 VERIFY_EXIT=$?
 echo "Exit code: $VERIFY_EXIT"
+```
+
+Expected output:
+
+- `Exit code: 0`
+- `/tmp/taskhub-verify.log` が生成される
+
+### §13.3 Failure grep coverage
+
+Pattern:
+
+- hard failures:
+  `ERROR|FAILED|signature_verify_failed|journal_chain_gap|tenant_scope_violation|integrity_failed`
+- DSN failures: `database_url|dsn|connection refused|connection timed out`
+
+```bash
+VERIFY_FAILURE_PATTERN='ERROR|FAILED|signature_verify_failed'
+VERIFY_FAILURE_PATTERN="${VERIFY_FAILURE_PATTERN}|journal_chain_gap"
+VERIFY_FAILURE_PATTERN="${VERIFY_FAILURE_PATTERN}|tenant_scope_violation"
+VERIFY_FAILURE_PATTERN="${VERIFY_FAILURE_PATTERN}|integrity_failed"
+VERIFY_FAILURE_PATTERN="${VERIFY_FAILURE_PATTERN}|database_url|dsn"
+VERIFY_FAILURE_PATTERN="${VERIFY_FAILURE_PATTERN}|connection refused|connection timed out"
+if grep -Eiq "$VERIFY_FAILURE_PATTERN" /tmp/taskhub-verify.log; then
+  echo "❌ signed journal verify failure pattern detected:"
+  grep -Ein "$VERIFY_FAILURE_PATTERN" /tmp/taskhub-verify.log
+  exit 1
+fi
+if [ "$VERIFY_EXIT" -ne 0 ]; then
+  echo "❌ signed journal verify exited non-zero: $VERIFY_EXIT"
+  exit 1
+fi
+```
+
+Expected output:
+
+- failure pattern がなければ無出力で通過
+- failure pattern があれば該当行番号を出して exit 1
+
+### §13.4 Expected pass output grep
+
+Pattern:
+
+- empty chain acceptable: `tenant_scope_empty`
+- non-empty chain acceptable: `signed_journal_verify_ok|journal_integrity_ok|verify_completed`
+
+```bash
+VERIFY_PASS_PATTERN='tenant_scope_empty|signed_journal_verify_ok|journal_integrity_ok|verify_completed'
+if grep -Eiq "$VERIFY_PASS_PATTERN" /tmp/taskhub-verify.log; then
+  echo "✅ signed journal verify emitted expected pass marker"
+else
+  echo "⚠️ signed journal verify exit 0 but no known pass marker was found; inspect /tmp/taskhub-verify.log"
+fi
+```
+
+Expected output:
+
+- 空 chain の場合 `tenant_scope_empty`
+- populated chain の場合 `signed_journal_verify_ok` /
+  `journal_integrity_ok` / `verify_completed` のいずれか
+
+### §13.5 SSH / remote diagnostic grep
+
+Pattern:
+
+- SSH diagnostics:
+  `ssh:|Permission denied|Host key verification failed|Connection refused|Connection timed out|Could not resolve hostname`
+
+```bash
+VERIFY_SSH_PATTERN='ssh:|Permission denied|Host key verification failed'
+VERIFY_SSH_PATTERN="${VERIFY_SSH_PATTERN}|Connection refused"
+VERIFY_SSH_PATTERN="${VERIFY_SSH_PATTERN}|Connection timed out"
+VERIFY_SSH_PATTERN="${VERIFY_SSH_PATTERN}|Could not resolve hostname"
+if grep -Eiq "$VERIFY_SSH_PATTERN" /tmp/taskhub-verify.log; then
+  echo "❌ SSH / remote diagnostic pattern detected:"
+  grep -Ein "$VERIFY_SSH_PATTERN" /tmp/taskhub-verify.log
+  exit 1
+fi
+```
+
+Expected output:
+
+- local DB verify では SSH pattern は 0 件
+- remote mode に切り替えた場合も SSH diagnostic は operator action として明示確認
+
+### §13.6 Evidence capture
+
+Pattern:
+
+- evidence file: `/tmp/taskhub-verify.log`
+- command echo: `Exit code: 0`
+
+```bash
+tail -50 /tmp/taskhub-verify.log
+echo "Evidence: /tmp/taskhub-verify.log"
 ```
 
 **確認項目**:
 - [ ] exit 0 (audit_events が空でも tenant_scope check + chain integrity OK で PASS)
 - [ ] 空 chain の場合 `tenant_scope_empty` 含む明示 message
+- [ ] §13.3 hard failure grep 0 件
+- [ ] §13.5 SSH / remote diagnostic grep 0 件
 
 **失敗時**:
 - `tenant_scope_empty` raise → backend 未動作 or tenant_id mismatch
 - DSN error (sanitized) → `.env.local` の URL を再確認
+- SSH diagnostic → local DB verify なのに remote path を踏んでいないか、`DATABASE_URL` と CLI option を再確認
 
 ## §14 taskhub backup real smoke (small DB) (C-9、20 min)
 
