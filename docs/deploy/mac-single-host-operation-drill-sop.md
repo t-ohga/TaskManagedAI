@@ -1,6 +1,6 @@
 # Mac single-host 運用立証 drill SOP (Phase 7a、P0 Exit declaration 直接 gate)
 
-最終更新: 2026-05-22 (PR #99、user 明示「Mac で運用優先、VPS の前」反映)
+最終更新: 2026-05-22 (PR #99、SP-022-1 batch 4 wrapper/backup drill 整合反映)
 
 status: ready
 
@@ -33,7 +33,8 @@ status: ready
 - `.env.local` 設定済 (smoke SOP §1)
 - docker compose up 済 (`docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local ps` で 5 service all healthy)
 - backend seed runner 実行済 (smoke SOP §1b、actors / tenants / workspaces / projects seed)
-- alembic upgrade head 完了 (smoke SOP §4、0018_eval_dataset_versions head)
+- alembic upgrade head 完了 (smoke SOP §4、`scripts/alembic_wrapper.sh` 経由、
+  0018_eval_dataset_versions head)
 
 ---
 
@@ -230,7 +231,10 @@ ls -la ~/.taskhub/approvals/${BACKUP_APPROVAL_ID}.signed
 BACKUP_START=$(date +%s)
 echo "BACKUP_START=$BACKUP_START ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
 
-uv run taskhub backup --output "$BACKUP_OUTPUT" --approval-id "$BACKUP_APPROVAL_ID"
+uv run taskhub backup \
+  --output "$BACKUP_OUTPUT" \
+  --approval-id "$BACKUP_APPROVAL_ID" \
+  --skip-service-stop
 echo "backup exit=$?"
 
 BACKUP_END=$(date +%s)
