@@ -26,6 +26,7 @@ from backend.app.db.models.principal import Principal, PrincipalType
 from backend.app.db.models.project import Project
 from backend.app.db.models.repository import Repository
 from backend.app.db.models.research_task import ResearchTask, ResearchTaskStatus
+from backend.app.db.models.review_artifact import ReviewArtifact
 from backend.app.db.models.secret_capability_token import (
     SecretCapabilityToken,
     SecretCapabilityTokenStatus,
@@ -60,6 +61,7 @@ __all__ = [
     "PrincipalType",
     "Project",
     "Repository",
+    "ReviewArtifact",
     "ResearchTask",
     "ResearchTaskStatus",
     "RiskLevel",

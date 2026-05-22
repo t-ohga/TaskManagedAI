@@ -16,6 +16,7 @@ from backend.app.schemas.notification_event import NotificationEventCreate, Noti
 from backend.app.schemas.principal import PrincipalCreate, PrincipalRead, PrincipalType
 from backend.app.schemas.project import ProjectCreate, ProjectRead, ProjectStatus
 from backend.app.schemas.repository import RepositoryCreate, RepositoryProvider, RepositoryRead
+from backend.app.schemas.review_artifact import ReviewArtifactCreate
 from backend.app.schemas.tenant import TenantCreate, TenantRead
 from backend.app.schemas.ticket import (
     TicketCreate,
@@ -59,6 +60,7 @@ __all__ = [
     "RepositoryCreate",
     "RepositoryProvider",
     "RepositoryRead",
+    "ReviewArtifactCreate",
     "TenantCreate",
     "TenantRead",
     "TicketCreate",
