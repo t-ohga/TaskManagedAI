@@ -10,9 +10,13 @@ DB integration test (idempotent re-run + actual seed apply) は
 from __future__ import annotations
 
 from backend.app.cli.dogfooding_seed import (
+    _ADR_STATUS_TO_TICKET_STATUS,
     _SPRINT_STATUS_TO_TICKET_STATUS,
+    AdrMeta,
     SprintPackMeta,
+    discover_adrs,
     discover_sprint_packs,
+    parse_adr,
     parse_sprint_pack,
 )
 
@@ -146,4 +150,92 @@ def test_parse_sprint_pack_all_existing_files() -> None:
             }, f"{path.name}: ticket_status invalid: {meta.ticket_status}"
 
     assert not failures, f"frontmatter parse 失敗: {failures}"
+    assert parsed_count == len(paths)
+
+
+def test_discover_adrs_finds_at_least_25_files() -> None:
+    """docs/adr/ には少なくとも 25 件 ADR が存在 (ADR-00001 〜 ADR-00029、README 除外)."""
+    paths = discover_adrs()
+    assert len(paths) >= 25, f"ADR 件数が少なすぎる: {len(paths)}"
+
+    for path in paths:
+        assert path.name != "README.md", f"README.md が discover に含まれる: {path.name}"
+        assert not path.name.startswith("_template"), f"_template_* が含まれる: {path.name}"
+
+
+def test_parse_adr_00014_accepted() -> None:
+    """ADR-00014 (本日 accepted 化) の frontmatter parse."""
+    paths = discover_adrs()
+    target = next(
+        (p for p in paths if "00014" in p.name),
+        None,
+    )
+    assert target is not None
+    meta = parse_adr(target)
+    assert meta is not None
+    assert meta.id == "ADR-00014"
+    assert meta.status == "accepted"
+    assert meta.ticket_status == "closed"  # accepted → closed
+    assert meta.accepted_at == "2026-05-22"
+
+
+def test_parse_adr_00013_proposed() -> None:
+    """ADR-00013 (proposed のまま) の frontmatter parse."""
+    paths = discover_adrs()
+    target = next(
+        (p for p in paths if "00013" in p.name),
+        None,
+    )
+    assert target is not None
+    meta = parse_adr(target)
+    assert meta is not None
+    assert meta.id == "ADR-00013"
+    assert meta.status == "proposed"
+    assert meta.ticket_status == "open"  # proposed → open
+
+
+def test_adr_meta_slug_is_kebab_dogfooding_prefix() -> None:
+    """AdrMeta.slug = `dogfooding-adr-<id-kebab>` format."""
+    meta = AdrMeta(
+        file_name="00014_multi_agent_orchestration.md",
+        id="ADR-00014",
+        title="Multi-Agent Orchestration Foundation",
+        status="accepted",
+        date="2026-05-10",
+        accepted_at="2026-05-22",
+    )
+    assert meta.slug == "dogfooding-adr-adr-00014"
+    assert meta.slug.startswith("dogfooding-adr-")
+    import re
+    assert re.match(r"^[a-z0-9]+(-[a-z0-9]+)*$", meta.slug)
+
+
+def test_adr_status_mapping_covers_known_states() -> None:
+    """全 known ADR status が ticket status enum (6 種) に map."""
+    valid_ticket_statuses = {
+        "open", "in_progress", "blocked", "review", "closed", "cancelled"
+    }
+    for adr_status, ticket_status in _ADR_STATUS_TO_TICKET_STATUS.items():
+        assert ticket_status in valid_ticket_statuses, (
+            f"ADR status '{adr_status}' maps to invalid ticket status '{ticket_status}'"
+        )
+
+
+def test_parse_adr_all_existing_files() -> None:
+    """全 ADR ファイルが parse 成功 (frontmatter 不在 0 件)."""
+    paths = discover_adrs()
+    parsed_count = 0
+    failures: list[str] = []
+    for path in paths:
+        meta = parse_adr(path)
+        if meta is None:
+            failures.append(path.name)
+        else:
+            parsed_count += 1
+            assert meta.id.startswith("ADR-"), f"{path.name}: id format invalid: {meta.id}"
+            assert meta.ticket_status in {
+                "open", "in_progress", "blocked", "review", "closed", "cancelled"
+            }, f"{path.name}: ticket_status invalid: {meta.ticket_status}"
+
+    assert not failures, f"ADR parse 失敗: {failures}"
     assert parsed_count == len(paths)
