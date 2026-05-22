@@ -18,6 +18,7 @@
  * Backend fetch errors are sanitized (status code only, no DSN/credentials leak).
  */
 
+import { BackendApiError } from "@/lib/api/client";
 import {
   fetchKpiRollupOrFallback,
   type KpiRollupResponse,
@@ -365,9 +366,12 @@ const STATIC_VERDICT_BASE = {
   gated_rows_satisfied: true,
 } as const;
 
+// Codex PR #91 R3 F-001 fix (P1): kpiSource includes "fetch_error" (4xx auth /
+// config error) in addition to "live" / "skeleton_fallback"。両 fallback state は
+// 共に p0_exit_decision=false 強制。
 function deriveVerdict(
   kpiRollup: KpiRollupResponse,
-  kpiSource: KpiRollupSource,
+  kpiSource: KpiRollupSource | "fetch_error",
 ): {
   readonly p0_exit_decision: boolean;
   readonly hard_gates_pass_count: number;
@@ -379,14 +383,19 @@ function deriveVerdict(
   readonly deficiency_reasons: readonly string[];
 } {
   const deficiencies: string[] = [];
-  // Codex PR #91 R2 F-003 fix (P1): KPI data が skeleton fallback (backend outage)
-  // の場合、live KPI 真値が未取得なので p0_exit_decision=true を主張してはならない。
-  // 「KPI source unavailable」を deficiency reason として明示し、BLOCKED として表示。
+  // Codex PR #91 R2 F-003 fix (P1) + R3 F-001 fix (P1): KPI data が
+  // skeleton_fallback (outage) or fetch_error (auth/config) の場合、live KPI 真値
+  // が未取得なので p0_exit_decision=true を主張してはならない。両 fallback state を
+  // 「KPI source unavailable」として deficiency reason に明示し、BLOCKED として表示。
   // 旧実装は kpiRollup.p0_accept=true (skeleton 既定値) で常に p0_exit_decision=true
-  // を返していた → 実態 (backend down) と矛盾する verdict が DOM に出る regression。
+  // を返していた → 実態 (backend down / auth fail) と矛盾する verdict が DOM に出る regression。
   const kpiLive = kpiSource === "live";
   if (!kpiLive) {
-    deficiencies.push("kpi_source_unavailable: skeleton fallback in use, live KPI verdict unverifiable");
+    const reason =
+      kpiSource === "fetch_error"
+        ? "kpi_fetch_error: live KPI rollup unreachable (auth/config error)"
+        : "kpi_source_unavailable: skeleton fallback in use, live KPI verdict unverifiable";
+    deficiencies.push(reason);
   }
   if (!kpiRollup.p0_accept) {
     deficiencies.push(
@@ -414,15 +423,61 @@ function deriveVerdict(
   };
 }
 
+// Codex PR #91 R3 F-001 fix (P1): fetchKpiRollupOrFallback は 4xx (auth/permission)
+// と config/runtime error を rethrow するため、page 側で catch して explicit error
+// state を render する。catch なしだと 401/403 (session 期限切れ) で route 全体が
+// unhandled server error になり、他 panel (Hard Gates / Drills / Smoke / Gated rows
+// = static data) すら表示されない regression が発生する。
+type KpiFetchError = "auth_error" | "config_error";
+
+async function fetchKpiSafely(): Promise<
+  | {
+      readonly source: KpiRollupSource;
+      readonly data: KpiRollupResponse;
+      readonly fallbackReason?: string;
+      readonly errorCategory?: undefined;
+    }
+  | {
+      readonly source: "fetch_error";
+      readonly data: KpiRollupResponse;
+      readonly fallbackReason: string;
+      readonly errorCategory: KpiFetchError;
+    }
+> {
+  try {
+    return await fetchKpiRollupOrFallback(KPI_SKELETON_FALLBACK);
+  } catch (err) {
+    // sanitize: status code / error class のみを reason に出す。raw exception text
+    // (DSN / credentials / stack) を DOM に漏らさない invariant。
+    if (err instanceof BackendApiError) {
+      return {
+        source: "fetch_error",
+        data: KPI_SKELETON_FALLBACK,
+        fallbackReason: `backend returned status=${err.status}`,
+        errorCategory: "auth_error",
+      };
+    }
+    // config/runtime/env misconfig: error class 名のみ出す (message を embed しない)
+    const errClass = err instanceof Error ? err.constructor.name : "UnknownError";
+    return {
+      source: "fetch_error",
+      data: KPI_SKELETON_FALLBACK,
+      fallbackReason: `kpi fetch failed: ${errClass}`,
+      errorCategory: "config_error",
+    };
+  }
+}
+
 export default async function EvalDashboardPage() {
   // SP-022 T08 batch 6: live fetch KPI rollup from backend with skeleton fallback
-  // (outage-only: 5xx / Zod mismatch、4xx auth / config は rethrow)
-  const kpiRollupResult = await fetchKpiRollupOrFallback(KPI_SKELETON_FALLBACK);
+  // (outage-only: 5xx / Zod mismatch、4xx auth / config は fetchKpiSafely で catch)
+  const kpiRollupResult = await fetchKpiSafely();
   const kpiRollup = kpiRollupResult.data;
-  const kpiSource: KpiRollupSource = kpiRollupResult.source;
+  const kpiSource: KpiRollupSource | "fetch_error" = kpiRollupResult.source;
   const kpiFallbackReason = kpiRollupResult.fallbackReason;
-  // Codex PR #91 R1 F-003 fix (P2) + R2 F-003 fix (P1): verdict を live KPI rollup
-  // から derive、ただし source=skeleton_fallback の場合は p0_exit_decision=false 強制。
+  // Codex PR #91 R1 F-003 fix (P2) + R2 F-003 fix (P1) + R3 F-001 fix (P1):
+  // verdict を live KPI rollup から derive。source != "live" (skeleton_fallback /
+  // fetch_error) はすべて p0_exit_decision=false 強制。
   const P0_EXIT_VERDICT = deriveVerdict(kpiRollup, kpiSource);
 
   return (
@@ -559,7 +614,13 @@ export default async function EvalDashboardPage() {
       <Panel
         description={
           `AC-KPI-01〜05. Up to 1 unmet KPI is acceptable for P0 Exit; 2+ adds a quality improvement sprint. ` +
-          `Data source: ${kpiSource === "live" ? "live backend" : `skeleton fallback (${kpiFallbackReason ?? "unknown reason"})`}.`
+          `Data source: ${
+            kpiSource === "live"
+              ? "live backend"
+              : kpiSource === "fetch_error"
+                ? `error fallback (${kpiFallbackReason ?? "unknown reason"})`
+                : `skeleton fallback (${kpiFallbackReason ?? "unknown reason"})`
+          }.`
         }
         title="Quality KPIs 5"
         titleId="quality-kpis-5"

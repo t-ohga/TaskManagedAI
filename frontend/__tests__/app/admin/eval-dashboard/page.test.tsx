@@ -234,6 +234,38 @@ describe("EvalDashboardPage (Sprint 12 batch 9 skeleton + SP-022 T08 batch 6 liv
     expect(screen.getByText("verification:")).toBeInTheDocument();
   });
 
+  it("R3 F-001: handles 401 auth error without crashing route (renders BLOCKED verdict + error reason)", async () => {
+    // Codex PR #91 R3 F-001 fix (P1): fetchKpiRollupOrFallback rethrows 4xx (auth)、
+    // page は fetchKpiSafely で catch して error state を render する。
+    const { BackendApiError } = await import("@/lib/api/client");
+    const { fetchKpiRollupOrFallback } = await import("@/lib/api/eval-dashboard");
+    const mockFetch = vi.mocked(fetchKpiRollupOrFallback);
+    mockFetch.mockRejectedValueOnce(new BackendApiError(401, "Unauthorized"));
+    await renderAsync();
+    // route が crash しないこと
+    expect(screen.getByRole("heading", { name: "P0 Exit verdict" })).toBeInTheDocument();
+    // verdict は BLOCKED (kpi source unavailable)
+    expect(screen.getByText(/BLOCKED\./)).toBeInTheDocument();
+    // deficiency_reasons に kpi_fetch_error が含まれる
+    expect(screen.getByText(/kpi_fetch_error/)).toBeInTheDocument();
+    // raw exception text が DOM に漏れない invariant (Codex PR #91 R3 boundary)
+    expect(screen.queryByText(/Unauthorized\b/)).not.toBeInTheDocument();
+  });
+
+  it("R3 F-001: handles config error (Error class) without crashing route", async () => {
+    // Codex PR #91 R3 F-001 fix (P1): config / runtime error も catch して error state
+    const { fetchKpiRollupOrFallback } = await import("@/lib/api/eval-dashboard");
+    const mockFetch = vi.mocked(fetchKpiRollupOrFallback);
+    mockFetch.mockRejectedValueOnce(new Error("INTERNAL_API_URL must be configured"));
+    await renderAsync();
+    expect(screen.getByRole("heading", { name: "P0 Exit verdict" })).toBeInTheDocument();
+    expect(screen.getByText(/BLOCKED\./)).toBeInTheDocument();
+    // error class 名のみ (Error) で raw message を embed しない
+    expect(screen.getByText(/kpi fetch failed: Error/)).toBeInTheDocument();
+    // raw exception message は出ない
+    expect(screen.queryByText(/INTERNAL_API_URL must be configured/)).not.toBeInTheDocument();
+  });
+
   it("AC-KPI-03 description uses 'median' not 'p95' (F-PR65-003 P2 adopt)", async () => {
     const { container } = await renderAsync();
     // textContent-based assertion: DOM 全体に "decision median" が含まれることを確認、
