@@ -32,6 +32,7 @@ from backend.app.api.approval_inbox import (
     get_db_session,
     get_tenant_id,
 )
+from backend.app.db.models.audit_event import AuditEvent
 from backend.app.repositories.ticket import TicketRepository
 from backend.app.schemas.ticket import TicketPriority, TicketRead, TicketStatus
 
@@ -172,6 +173,25 @@ async def create_ticket_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+
+    # SP-012-11 BL-TCU-008: ticket_created audit event 記録
+    # raw secret なし、ticket id / slug / status / actor のみ
+    audit_event = AuditEvent(
+        tenant_id=tenant_id,
+        event_type="ticket_created",
+        actor_id=actor_id,
+        event_payload={
+            "rls_ready": True,
+            "ticket_id": str(ticket.id),
+            "project_id": str(project_id),
+            "slug": ticket.slug,
+            "status": ticket.status,
+            "priority": ticket.priority,
+        },
+    )
+    session.add(audit_event)
+    await session.flush()
+
     return TicketRead.model_validate(ticket)
 
 
@@ -212,6 +232,11 @@ async def update_ticket_endpoint(
     merged_metadata = dict(existing.metadata_ or {})
     merged_metadata["user_edited"] = True
     update_data["metadata"] = merged_metadata
+
+    # status 変更検出 (audit event 詳細用)
+    previous_status = existing.status
+    new_status = update_data.get("status", previous_status)
+
     try:
         ticket = await repo.update_in_project(
             tenant_id=tenant_id,
@@ -229,4 +254,26 @@ async def update_ticket_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="ticket not found",
         )
+
+    # SP-012-11 BL-TCU-008: ticket_status_changed (or ticket_updated) audit event 記録
+    event_type = (
+        "ticket_status_changed" if previous_status != new_status else "ticket_updated"
+    )
+    audit_event = AuditEvent(
+        tenant_id=tenant_id,
+        event_type=event_type,
+        actor_id=actor_id,
+        event_payload={
+            "rls_ready": True,
+            "ticket_id": str(ticket.id),
+            "project_id": str(project_id),
+            "slug": ticket.slug,
+            "previous_status": previous_status,
+            "new_status": new_status,
+            "updated_fields": sorted(payload.model_dump(exclude_unset=True).keys()),
+        },
+    )
+    session.add(audit_event)
+    await session.flush()
+
     return TicketRead.model_validate(ticket)
