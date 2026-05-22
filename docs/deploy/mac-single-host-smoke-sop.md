@@ -70,6 +70,26 @@ grep TASKMANAGEDAI_ENVIRONMENT .env.local
 # expected: TASKMANAGEDAI_ENVIRONMENT=development
 ```
 
+### B-1b: backend seed runner 実行 (initial default actor seed、§4 alembic upgrade 後に必要)
+
+新規 fresh DB では `actors` table が空のため、Layer C §6 dev login flow / §7 Eval Dashboard API curl が **HTTP 401 `actor not found`** で失敗する。`backend/app/seeds/runner.py` を実行して default `human:default` actor + tenant + workspace + project 等を seed する (post-merge SOP polish 2026-05-22 追加):
+
+```bash
+# Layer B §4 alembic upgrade head 完了後に実行
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local exec -T api uv run --no-sync python -m backend.app.seeds.runner
+echo "seed runner exit=$?"
+# expected: exit=0 (`actors` / `tenants` / `workspaces` / `projects` / `repositories` / `tickets` / `acceptance_criteria` / `audit_events` table に default record seed)
+```
+
+**確認**:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local exec -T postgres \
+  psql -U taskmanagedai -d taskmanagedai -c "SELECT id, actor_type, actor_id FROM actors LIMIT 5;"
+# expected: 1 row (`human:default`, type=human)
+```
+
+**失敗時**: api container がまだ healthy でない → `docker compose ps` で確認、Layer B §4 alembic upgrade head 完了を再確認
+
 **所要**: 2-5 min
 
 **失敗時**: `.env.example` が存在しない → `git pull origin main`、existing `.env.local` ある → 上書き or 別名 backup
@@ -319,21 +339,41 @@ DevTools Network tab で:
 
 ## §12 taskhub approval issue smoke (C-7、10 min)
 
+### 12.0 key bootstrap 早見表 (operator-runbook §1 への参照、post-merge SOP polish 2026-05-22 追加)
+
+§12 / §14 で必要な key の bootstrap 仕様 (詳細手順は `docs/deploy/operator-runbook.md` §1 を参照):
+
+| key | 用途 | path | mode | 生成 command 概要 |
+|---|---|---|---|---|
+| approval signing key (Ed25519) | `taskhub approval issue` の signed record 生成 (§12) | `~/.taskhub/keys/approval-signing-key` | 0600 | `openssl genpkey -algorithm Ed25519 -out <path>` + fingerprint allowlist 登録 (operator-runbook §1 step 2-4) |
+| age private key | `taskhub backup` の archive 暗号化 / decrypt (§14) | `~/.taskhub/keys/age.key.txt` | 0600 | `mkdir -p ~/.taskhub/keys && chmod 0700 ~/.taskhub/keys && age-keygen -o ~/.taskhub/keys/age.key.txt && chmod 0600 ~/.taskhub/keys/age.key.txt` |
+
+**重要**:
+- `~/.taskhub/keys/` directory mode は `0700`、各 key file mode は `0600` (T09 drill 7 mandatory checklist の private key 漏洩防止 invariant)
+- key 未生成のまま §12 / §14 を実行すると下記 fail-fast check が deny する
+- bootstrap は **本 SOP 実行前に operator-runbook §1 を手動コピペ実行** してください (markdown 全体を bash に渡さない、Codex PR #93 R1 F-001 fix 反映済)
+
+### 12.1 approval issue 実行 (key bootstrap 済前提)
+
 別 terminal で:
 
 ```bash
 cd ~/repo/TaskManagedAI
 
-# §1 approval signing key bootstrap (初回のみ)
-# Codex PR #93 R1 F-001 fix (P1): 旧版は `bash docs/deploy/operator-runbook.md`
-# で markdown を bash 実行する誤りで bootstrap 失敗。`operator-runbook.md` §1
-# の bash code block (Ed25519 key 生成 + fingerprint allowlist 登録) を **別 terminal で
-# 手動コピペ実行** してください。markdown 全体を bash に渡してはいけません。
+# §12.0 早見表参照: approval signing key 存在 + mode 確認
 if [ ! -f ~/.taskhub/keys/approval-signing-key ]; then
-  echo "❌ approval signing key 未生成。先に operator-runbook.md §1 の bash code block を別 terminal で実行してください。"
+  echo "❌ approval signing key 未生成 (~/.taskhub/keys/approval-signing-key)。"
+  echo "   先に operator-runbook.md §1 step 2-4 (Ed25519 key 生成 + fingerprint allowlist 登録) を別 terminal で実行してください。"
   echo "   open docs/deploy/operator-runbook.md  # GUI で開く"
   echo "   または less docs/deploy/operator-runbook.md  # terminal で確認"
   echo "   §1 の \`\`\`bash ... \`\`\` 内 commands を 1 ブロックずつコピペ実行"
+  exit 1
+fi
+# mode check (0600 必須、T09 drill private key 漏洩防止 invariant)
+ACTUAL_MODE=$(stat -f "%Mp%Lp" ~/.taskhub/keys/approval-signing-key 2>/dev/null || stat -c "%a" ~/.taskhub/keys/approval-signing-key 2>/dev/null)
+if [ "$ACTUAL_MODE" != "600" ]; then
+  echo "❌ approval signing key mode は 0600 必須。現状 mode=$ACTUAL_MODE"
+  echo "   修正: chmod 0600 ~/.taskhub/keys/approval-signing-key"
   exit 1
 fi
 
@@ -373,8 +413,11 @@ ls -la ~/.taskhub/approvals/${SMOKE_APPROVAL_ID}.signed
 # 改行を含む不正 URL になる。`^TASKMANAGEDAI_DATABASE_URL=` で行頭固定 + `tail -n 1`
 # で最後の未コメント行を 1 件だけ選ぶ。
 DATABASE_URL=$(grep -E '^TASKMANAGEDAI_DATABASE_URL=' .env.local | tail -n 1 | cut -d= -f2- | sed 's/postgres:/127.0.0.1:/g')
-echo "DATABASE_URL (sanitized): $(echo $DATABASE_URL | sed 's|//[^@]*@|//***@|')"
-if [ -z "$DATABASE_URL" ] || echo "$DATABASE_URL" | grep -q $'\n'; then
+echo "DATABASE_URL (sanitized): $(printf '%s' "$DATABASE_URL" | sed 's|//[^@]*@|//***@|')"
+# Codex PR #93 R1 F-003 fix の補正 (post-merge SOP polish 2026-05-22):
+# `echo "$X" | grep -q $'\n'` は echo の末尾改行で常 match して常時 ERROR exit 1 になる
+# bug 。`printf '%s'` で末尾改行を含めない pure value check に修正.
+if [ -z "$DATABASE_URL" ] || printf '%s' "$DATABASE_URL" | grep -q $'\n'; then
   echo "❌ DATABASE_URL が空または改行を含む。.env.local を確認してください。"
   exit 1
 fi
@@ -491,9 +534,12 @@ cd ~/repo/TaskManagedAI
 BL-0140a の Research → Ticket → Plan → Approval → Runner → Draft PR の 12 step flow。本 SOP では skeleton smoke として:
 
 ```bash
-# 12 step gold flow eval test を実行
-uv run pytest tests/eval/ticket_to_pr_smoke -v 2>&1 | tail -20
+# 12 step gold flow eval test を実行 (post-merge SOP polish 2026-05-22:
+# 実 path は tests/integration/test_ticket_to_pr_smoke.py、SOP の旧 path
+# tests/eval/ticket_to_pr_smoke は誤記)
+uv run pytest tests/integration/test_ticket_to_pr_smoke.py -v 2>&1 | tail -20
 echo "Exit code: $?"
+# expected: 13 tests passed (0.02s 程度)
 ```
 
 または ブラウザで:
