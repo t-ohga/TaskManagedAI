@@ -41,6 +41,13 @@ from backend.app.seeds.initial import (
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SPRINTS_DIR = _REPO_ROOT / "docs" / "sprints"
 _ADR_DIR = _REPO_ROOT / "docs" / "adr"
+_P0_BACKLOG_PATH = _REPO_ROOT / "docs" / "実装計画" / "P0_バックログ.md"
+
+# BL row regex: `| BL-NNNN[a-z]? | title | sprint_no | type | trace | priority | days | depends_on | sprint_pack |`
+_BL_ROW_REGEX = re.compile(
+    r"^\|\s*(BL-\d{4}[a-z]?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|"
+    r"\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|"
+)
 
 # Sprint Pack frontmatter status -> Ticket status mapping
 _SPRINT_STATUS_TO_TICKET_STATUS: dict[str, str] = {
@@ -274,6 +281,92 @@ async def _query_existing_dogfooding_tickets(
     return {ticket.slug: ticket for ticket in result.scalars().all()}
 
 
+@dataclass(frozen=True)
+class BlMeta:
+    """BL (P0 バックログ) row から抽出した meta info."""
+
+    id: str          # BL-NNNN[a-z]?
+    title: str
+    sprint_no: str
+    bl_type: str     # doc / foundation / feature / test / runtime / research / 等
+    trace: str       # F-NNN, AC-HARD-NN, NF-NNN 等 (multi-comma OK)
+    priority: str    # P0-A / P0-B / P0-C / P1
+    days: str        # target_days
+    depends_on: str  # BL-NNNN OR `-`
+    sprint_pack: str  # SP-NNN_xxx
+
+    @property
+    def ticket_status(self) -> str:
+        """BL は status field なし、default は open。
+
+        将来 (P0.1+) で BL 単位 status track 追加時に拡張。
+        """
+        return "open"
+
+    @property
+    def slug(self) -> str:
+        """Ticket slug = `dogfooding-bl-<id-kebab>`."""
+        kebab = self.id.lower().replace("_", "-")
+        return f"dogfooding-bl-{kebab}"
+
+    @property
+    def title_full(self) -> str:
+        truncated = self.title[:80] + "..." if len(self.title) > 80 else self.title
+        return f"BL: {self.id} - {truncated}"
+
+    @property
+    def description(self) -> str:
+        return (
+            f"[BL] sprint={self.sprint_no}, type={self.bl_type}, priority={self.priority}, "
+            f"days={self.days}\n\n"
+            f"trace: {self.trace}\n"
+            f"depends_on: {self.depends_on}\n"
+            f"sprint_pack: {self.sprint_pack}\n\n"
+            f"## title\n{self.title}"
+        )
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "rls_ready": True,
+            "dogfooding_source": {
+                "type": "bl",
+                "id": self.id,
+                "sprint_no": self.sprint_no,
+                "bl_type": self.bl_type,
+                "trace": self.trace,
+                "priority": self.priority,
+                "sprint_pack": self.sprint_pack,
+            },
+        }
+
+
+def discover_bls() -> list[BlMeta]:
+    """docs/実装計画/P0_バックログ.md から BL row を抽出."""
+    if not _P0_BACKLOG_PATH.exists():
+        return []
+    content = _P0_BACKLOG_PATH.read_text(encoding="utf-8")
+    bls: list[BlMeta] = []
+    for line in content.splitlines():
+        match = _BL_ROW_REGEX.match(line)
+        if not match:
+            continue
+        bls.append(
+            BlMeta(
+                id=match.group(1).strip(),
+                title=match.group(2).strip(),
+                sprint_no=match.group(3).strip(),
+                bl_type=match.group(4).strip(),
+                trace=match.group(5).strip(),
+                priority=match.group(6).strip(),
+                days=match.group(7).strip(),
+                depends_on=match.group(8).strip(),
+                sprint_pack=match.group(9).strip(),
+            )
+        )
+    return bls
+
+
 @dataclass
 class SeedReport:
     rows_added: int = 0
@@ -404,6 +497,61 @@ async def seed_adrs(
     return report
 
 
+async def seed_bls(
+    session: AsyncSession,
+    *,
+    bls: Iterable[BlMeta],
+    dry_run: bool,
+) -> SeedReport:
+    """BL (P0 バックログ) を Ticket として idempotent seed 投入."""
+    report = SeedReport(failures=[])
+    existing = await _query_existing_dogfooding_tickets(
+        session, slug_prefix="dogfooding-bl-"
+    )
+
+    for bl in bls:
+        existing_ticket = existing.get(bl.slug)
+        try:
+            if existing_ticket is None:
+                if not dry_run:
+                    new_ticket = Ticket(
+                        tenant_id=DEFAULT_TENANT_ID,
+                        project_id=DEFAULT_PROJECT_ID,
+                        slug=bl.slug,
+                        title=bl.title_full,
+                        description=bl.description,
+                        status=cast(TicketStatus, bl.ticket_status),
+                        created_by_actor_id=DEFAULT_ACTOR_ID,
+                        metadata_=bl.metadata,
+                    )
+                    session.add(new_ticket)
+                report.rows_added += 1
+            else:
+                changed = (
+                    existing_ticket.status != bl.ticket_status
+                    or existing_ticket.title != bl.title_full
+                    or existing_ticket.description != bl.description
+                    or existing_ticket.metadata_ != bl.metadata
+                )
+                if changed:
+                    if not dry_run:
+                        existing_ticket.title = bl.title_full
+                        existing_ticket.description = bl.description
+                        existing_ticket.status = cast(TicketStatus, bl.ticket_status)
+                        existing_ticket.metadata_ = bl.metadata
+                    report.rows_updated += 1
+                else:
+                    report.rows_unchanged += 1
+        except Exception as exc:  # noqa: BLE001  # CLI surface
+            if report.failures is None:
+                report.failures = []
+            report.failures.append(f"{bl.id}: {type(exc).__name__}: {exc}")
+
+    if not dry_run:
+        await session.flush()
+    return report
+
+
 async def _run(dry_run: bool) -> int:  # noqa: PLR0912, PLR0915  # CLI surface
     # Sprint Pack discover + parse
     sprint_paths = discover_sprint_packs()
@@ -430,9 +578,13 @@ async def _run(dry_run: bool) -> int:  # noqa: PLR0912, PLR0915  # CLI surface
         else:
             adr_parsed.append(adr)
 
+    # BL discover + parse (from `docs/実装計画/P0_バックログ.md`)
+    bls_parsed = discover_bls()
+
     print(  # noqa: T201
         f"Discovered {len(sprint_paths)} Sprint Pack files ({len(sprint_parsed)} parsed), "
-        f"{len(adr_paths)} ADR files ({len(adr_parsed)} parsed)."
+        f"{len(adr_paths)} ADR files ({len(adr_parsed)} parsed), "
+        f"{len(bls_parsed)} BL rows parsed from P0 backlog."
     )
     if sprint_parse_failures:
         print(  # noqa: T201
@@ -463,13 +615,23 @@ async def _run(dry_run: bool) -> int:  # noqa: PLR0912, PLR0915  # CLI surface
                 adrs=adr_parsed,
                 dry_run=dry_run,
             )
+            bl_report = await seed_bls(
+                session,
+                bls=bls_parsed,
+                dry_run=dry_run,
+            )
     finally:
         await engine.dispose()
 
     mode = "DRY-RUN" if dry_run else "APPLIED"
     print(f"{mode} Sprint Pack: {sprint_report.to_dict()}")  # noqa: T201
     print(f"{mode} ADR: {adr_report.to_dict()}")  # noqa: T201
-    all_failures = (sprint_report.failures or []) + (adr_report.failures or [])
+    print(f"{mode} BL: {bl_report.to_dict()}")  # noqa: T201
+    all_failures = (
+        (sprint_report.failures or [])
+        + (adr_report.failures or [])
+        + (bl_report.failures or [])
+    )
     if all_failures:
         print(f"FAILURES: {all_failures}", file=sys.stderr)  # noqa: T201
         return 1

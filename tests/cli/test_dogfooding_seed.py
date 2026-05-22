@@ -13,8 +13,10 @@ from backend.app.cli.dogfooding_seed import (
     _ADR_STATUS_TO_TICKET_STATUS,
     _SPRINT_STATUS_TO_TICKET_STATUS,
     AdrMeta,
+    BlMeta,
     SprintPackMeta,
     discover_adrs,
+    discover_bls,
     discover_sprint_packs,
     parse_adr,
     parse_sprint_pack,
@@ -239,3 +241,74 @@ def test_parse_adr_all_existing_files() -> None:
 
     assert not failures, f"ADR parse 失敗: {failures}"
     assert parsed_count == len(paths)
+
+
+def test_discover_bls_finds_at_least_150_rows() -> None:
+    """docs/実装計画/P0_バックログ.md には少なくとも 150 件 BL row が存在."""
+    bls = discover_bls()
+    assert len(bls) >= 150, f"BL 件数が少なすぎる: {len(bls)}"
+    # 主要 BL の存在確認
+    bl_ids = {bl.id for bl in bls}
+    assert "BL-0001" in bl_ids, "BL-0001 が discover に含まれない"
+
+
+def test_bl_meta_basic_fields_parsed() -> None:
+    """BL row の主要 fields (id, title, sprint_no, type, trace, priority, days) が抽出される."""
+    bls = discover_bls()
+    target = next((bl for bl in bls if bl.id == "BL-0001"), None)
+    assert target is not None
+    assert target.title  # title 空でない
+    assert target.sprint_no == "0"  # Sprint 0
+    assert target.bl_type == "doc"
+    # trace は F-001 等を含むはず
+    assert "F-" in target.trace or "NF-" in target.trace or "AC-" in target.trace
+    assert target.priority.startswith("P0-") or target.priority == "P1"
+    assert target.sprint_pack.startswith("SP-")
+
+
+def test_bl_meta_slug_is_kebab_dogfooding_prefix() -> None:
+    """BlMeta.slug = `dogfooding-bl-<id-kebab>` format."""
+    meta = BlMeta(
+        id="BL-0145",
+        title="Test BL",
+        sprint_no="12",
+        bl_type="feature",
+        trace="F-014",
+        priority="P0-A",
+        days="0.5",
+        depends_on="-",
+        sprint_pack="SP-012_p0_acceptance",
+    )
+    assert meta.slug == "dogfooding-bl-bl-0145"
+    import re
+    assert re.match(r"^[a-z0-9]+(-[a-z0-9]+)*$", meta.slug)
+
+
+def test_bl_meta_metadata_includes_dogfooding_source() -> None:
+    """BlMeta.metadata に dogfooding_source.type=bl + sprint_no / sprint_pack を含む."""
+    meta = BlMeta(
+        id="BL-0145",
+        title="Test BL",
+        sprint_no="12",
+        bl_type="feature",
+        trace="F-014",
+        priority="P0-A",
+        days="0.5",
+        depends_on="-",
+        sprint_pack="SP-012_p0_acceptance",
+    )
+    assert meta.metadata["dogfooding_source"]["type"] == "bl"
+    assert meta.metadata["dogfooding_source"]["id"] == "BL-0145"
+    assert meta.metadata["dogfooding_source"]["sprint_no"] == "12"
+    assert meta.metadata["dogfooding_source"]["sprint_pack"] == "SP-012_p0_acceptance"
+    assert meta.metadata["rls_ready"] is True
+
+
+def test_parse_bl_all_rows_have_valid_id_format() -> None:
+    """全 BL row が `BL-NNNN[a-z]?` id format に整合."""
+    bls = discover_bls()
+    import re
+    bl_id_pattern = re.compile(r"^BL-\d{4}[a-z]?$")
+    for bl in bls:
+        assert bl_id_pattern.match(bl.id), f"BL id format invalid: {bl.id}"
+        assert bl.ticket_status == "open"  # BL default は open
