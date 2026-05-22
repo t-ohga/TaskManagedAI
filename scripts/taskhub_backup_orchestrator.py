@@ -104,6 +104,7 @@ _ARCHIVE_DENY_CONTENT_PREFIXES = (
 )
 
 _CONTENT_SNIFF_SIZE = 4096  # first 4 KB
+_BACKUP_PATH_ALLOWED_ROOT_LABEL = "repo_root / /etc / /var/lib"
 
 
 ReasonCode = Literal[
@@ -189,6 +190,35 @@ class BackupRuntimeError(Exception):
 
 class BackupToolNotFoundError(BackupUsageError):
     """exit 2 (required CLI tool not installed)."""
+
+
+def backup_path_allowed_roots(repo_root: Path) -> tuple[Path, ...]:
+    """Return the source path allowlist roots used by backup binding resolution."""
+    return (
+        repo_root.expanduser().resolve(strict=False),
+        Path("/etc"),
+        Path("/var/lib"),
+    )
+
+
+def validate_backup_source_path_allowed(
+    *,
+    path: Path,
+    repo_root: Path,
+    field_name: str,
+    reason_code: ReasonCode = "backup_output_path_invalid",
+) -> None:
+    """Validate backup source path against the shared repo_root/etc/var/lib allowlist."""
+    allowed_roots = backup_path_allowed_roots(repo_root)
+    if any(path.is_relative_to(root) for root in allowed_roots):
+        return
+    raise BackupUsageError(
+        reason_code,
+        detail=(
+            f"{field_name} not in allowed root "
+            f"({_BACKUP_PATH_ALLOWED_ROOT_LABEL}): {path}"
+        ),
+    )
 
 
 def _sanitize_token(s: str, max_len: int = 200) -> str:
@@ -304,15 +334,11 @@ class BackupOptions:
         )
         target_compose_file = Path(target_compose_file_raw).expanduser().resolve(strict=False)
         repo_root_resolved = repo_root.expanduser().resolve(strict=False)
-        allowed_roots = [repo_root_resolved, Path("/etc"), Path("/var/lib")]
-        if not any(target_compose_file.is_relative_to(root) for root in allowed_roots):
-            raise BackupUsageError(
-                "backup_output_path_invalid",
-                detail=(
-                    f"target_compose_file_path not in allowed root "
-                    f"(repo_root / /etc / /var/lib): {target_compose_file}"
-                ),
-            )
+        validate_backup_source_path_allowed(
+            path=target_compose_file,
+            repo_root=repo_root_resolved,
+            field_name="target_compose_file_path",
+        )
 
         # ADV2 R9 F-001 adopt: env_file_path を server-owned 解決 + allowlist + 存在確認 (Phase 5 用)
         # PR #77 backward compat: env が unset で .env.local が存在しない場合は None (legacy host TCP path 維持)
@@ -321,14 +347,11 @@ class BackupOptions:
         if env_file_raw is not None:
             # 明示指定された場合のみ allowlist + 存在 strict 検証
             env_file_path = Path(env_file_raw).expanduser().resolve(strict=False)
-            if not any(env_file_path.is_relative_to(root) for root in allowed_roots):
-                raise BackupUsageError(
-                    "backup_output_path_invalid",
-                    detail=(
-                        f"env_file_path not in allowed root (repo_root / /etc / /var/lib): "
-                        f"{env_file_path}"
-                    ),
-                )
+            validate_backup_source_path_allowed(
+                path=env_file_path,
+                repo_root=repo_root_resolved,
+                field_name="env_file_path",
+            )
             if not env_file_path.is_file():
                 raise BackupUsageError(
                     "backup_compose_env_file_unreadable",
@@ -580,7 +603,6 @@ def invoke_pg_dump(
         "--format=custom",
         "--no-acl",
         "--no-owner",
-        "--single-transaction",
         "-h", pg_host,
         "-p", str(pg_port),
         "-U", pg_user,
@@ -806,7 +828,7 @@ def invoke_pg_dump_via_compose_exec(
     argv = (
         _compose_argv_prefix(options)
         + ["exec", "-T", "postgres", "pg_dump"]
-        + ["--format=custom", "--no-acl", "--no-owner", "--single-transaction"]
+        + ["--format=custom", "--no-acl", "--no-owner"]
         + [f"--username={options.pg_user}", f"--dbname={options.pg_db}"]
         + ["-h", "/var/run/postgresql", "--no-password"]
     )
@@ -2094,6 +2116,7 @@ def run_backup(
         # Codex PR #80 R2 F-007/F-008 adopt: cleanup failure signal を primary/restart exception と
         # 組み合わせて **必ず stderr/audit に記録** (silent suppress 排除)。
         # F-002: cleanup OSError は audit + raise (silent ignore 廃止)
+        cleanup_failure_exc: BackupRuntimeError | None
         try:
             shutil.rmtree(tmp_dir, ignore_errors=False)
         except OSError as exc:

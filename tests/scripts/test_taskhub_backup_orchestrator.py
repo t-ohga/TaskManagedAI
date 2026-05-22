@@ -291,6 +291,106 @@ def test_invoke_pg_dump_tool_not_found_raises(tmp_path: Path) -> None:
         assert exc_info.value.reason_code == "backup_pg_dump_tool_not_found"
 
 
+def test_invoke_pg_dump_custom_format_omits_single_transaction(tmp_path: Path) -> None:
+    """SP-022-1: pg_dump custom format must not pass --single-transaction."""
+    with patch.object(
+        bo,
+        "_run_subprocess_with_tool_check",
+        return_value=_mock_subprocess_result(),
+    ) as mock_run:
+        bo.invoke_pg_dump(
+            pg_host="localhost",
+            pg_port=5432,
+            pg_user="u",
+            pg_db="d",
+            output_path=tmp_path / "x.dump",
+            pgpassfile=None,
+            timeout_sec=60,
+        )
+
+    argv = mock_run.call_args.args[0]
+    assert "--format=custom" in argv
+    assert "--single-transaction" not in argv
+
+
+def test_invoke_pg_dump_via_compose_exec_omits_single_transaction(tmp_path: Path) -> None:
+    """SP-022-1: compose-exec pg_dump custom format omits --single-transaction too."""
+    options = bo.BackupOptions(
+        output_path=tmp_path / "out.tar.age",
+        host_name="host",
+        include_sops_env=False,
+        skip_service_stop=False,
+        overwrite=False,
+        age_public_key_path=tmp_path / "age.pub",
+        pg_host="localhost",
+        pg_port=5432,
+        pg_user="taskmanagedai",
+        pg_db="taskmanagedai",
+        redis_host="localhost",
+        redis_port=6379,
+        artifacts_dir=tmp_path / "artifacts",
+        sops_env_path=tmp_path / ".env.local",
+    )
+    with (
+        patch.object(bo, "_compose_argv_prefix", return_value=["docker", "compose"]),
+        patch.object(
+            bo,
+            "_run_subprocess_with_tool_check",
+            return_value=_mock_subprocess_result(),
+        ) as mock_run,
+    ):
+        bo.invoke_pg_dump_via_compose_exec(
+            options,
+            output_path=tmp_path / "x.dump",
+            timeout_sec=60,
+        )
+
+    argv = mock_run.call_args.args[0]
+    assert "--format=custom" in argv
+    assert "--single-transaction" not in argv
+
+
+def test_backup_source_path_allowlist_accepts_repo_etc_var_lib(tmp_path: Path) -> None:
+    """SP-022-1: backup source binding allowlist is shared and explicit."""
+    repo_root = tmp_path / "repo"
+    expected_repo_root = repo_root.resolve(strict=False)
+    assert bo.backup_path_allowed_roots(repo_root) == (
+        expected_repo_root,
+        Path("/etc"),
+        Path("/var/lib"),
+    )
+
+    bo.validate_backup_source_path_allowed(
+        path=expected_repo_root / "docker-compose.yml",
+        repo_root=repo_root,
+        field_name="target_compose_file_path",
+    )
+    bo.validate_backup_source_path_allowed(
+        path=Path("/etc/taskmanagedai/.env.local"),
+        repo_root=repo_root,
+        field_name="env_file_path",
+    )
+    bo.validate_backup_source_path_allowed(
+        path=Path("/var/lib/taskmanagedai/.env.local"),
+        repo_root=repo_root,
+        field_name="env_file_path",
+    )
+
+
+def test_backup_source_path_allowlist_rejects_unlisted_root(tmp_path: Path) -> None:
+    """SP-022-1: backup source binding rejects roots outside repo_root/etc/var/lib."""
+    with pytest.raises(bo.BackupUsageError) as exc_info:
+        bo.validate_backup_source_path_allowed(
+            path=Path("/srv/evil/docker-compose.yml"),
+            repo_root=tmp_path,
+            field_name="target_compose_file_path",
+        )
+
+    assert exc_info.value.reason_code == "backup_output_path_invalid"
+    detail = exc_info.value.detail or ""
+    assert "repo_root / /etc / /var/lib" in detail
+
+
 # --- Layer 3: orchestration with full mocks ---
 
 
