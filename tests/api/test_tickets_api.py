@@ -274,3 +274,137 @@ async def test_get_nonexistent_ticket_returns_none(
             ticket_id=nonexistent_id,
         )
         assert ticket is None
+
+
+# SP-012-11 BL-TCU-003: POST / PATCH contract test
+
+
+@pytest.mark.asyncio
+async def test_create_in_project_inserts_ticket(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """create_in_project: 新規 Ticket 追加が成功 + project_id binding 維持."""
+    from backend.app.repositories.ticket import TicketRepository
+
+    new_slug = "ticket-a3-created"
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        created = await repo.create_in_project(
+            tenant_id=1,
+            project_id=PROJECT_A_ID,
+            payload={
+                "slug": new_slug,
+                "title": "Created Ticket A3",
+                "status": "open",
+                "created_by_actor_id": ACTOR_ID,
+                "metadata_": {"rls_ready": True, "user_edited": True},
+            },
+        )
+        await session.commit()
+        assert created.slug == new_slug
+        assert created.project_id == PROJECT_A_ID
+        assert created.title == "Created Ticket A3"
+
+    # 再 fetch で persist 確認
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        tickets = await repo.list_in_project(tenant_id=1, project_id=PROJECT_A_ID)
+        slugs = [t.slug for t in tickets]
+        assert new_slug in slugs
+
+
+@pytest.mark.asyncio
+async def test_create_in_project_payload_project_id_mismatch_rejects(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """create_in_project payload に異 project_id を含めると ValueError reject (server-owned-boundary §1)."""
+    from backend.app.repositories.ticket import TicketRepository
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        with pytest.raises(ValueError, match="project_id"):
+            await repo.create_in_project(
+                tenant_id=1,
+                project_id=PROJECT_A_ID,
+                payload={
+                    "slug": "should-reject",
+                    "title": "Should Reject",
+                    "status": "open",
+                    "created_by_actor_id": ACTOR_ID,
+                    # caller-supplied project_id mismatch
+                    "project_id": PROJECT_B_ID,
+                },
+            )
+
+
+@pytest.mark.asyncio
+async def test_update_in_project_changes_status(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """update_in_project: status 'open' → 'in_progress' 変更が persist."""
+    from backend.app.repositories.ticket import TicketRepository
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        updated = await repo.update_in_project(
+            tenant_id=1,
+            project_id=PROJECT_A_ID,
+            ticket_id=TICKET_A1_ID,
+            payload={"status": "in_progress"},
+        )
+        await session.commit()
+        assert updated is not None
+        assert updated.status == "in_progress"
+        assert updated.id == TICKET_A1_ID
+
+    # 再 fetch で persist 確認
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        ticket = await repo.get_in_project(
+            tenant_id=1, project_id=PROJECT_A_ID, ticket_id=TICKET_A1_ID
+        )
+        assert ticket is not None
+        assert ticket.status == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_update_in_project_cross_project_returns_none(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """cross-project update は None (project boundary 強制、project_b で project_a の ticket 編集試行 → None)."""
+    from backend.app.repositories.ticket import TicketRepository
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        result = await repo.update_in_project(
+            tenant_id=1,
+            project_id=PROJECT_B_ID,  # wrong project
+            ticket_id=TICKET_A1_ID,  # belongs to project_a
+            payload={"status": "in_progress"},
+        )
+        assert result is None, "cross-project update が成功した (project boundary 破壊)"
+
+    # project_a 経由で再 fetch、status が open のままであることを確認
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        ticket = await repo.get_in_project(
+            tenant_id=1, project_id=PROJECT_A_ID, ticket_id=TICKET_A1_ID
+        )
+        assert ticket is not None
+        assert ticket.status == "open", "cross-project update で project_a ticket が変更された"
