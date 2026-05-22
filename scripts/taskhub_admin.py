@@ -1384,8 +1384,72 @@ def _cmd_age_rotate(args: argparse.Namespace) -> int:
 
 
 def _cmd_verify_signed_journal(args: argparse.Namespace) -> int:
-    """SP022-T08 batch 1: signed journal offline JSONL verification mode."""
-    # dual import (direct-script + console_script)、R2-F-001 adopt scope
+    """SP022-T08 batch 1 (offline JSONL) + batch 5 (DB mode) dispatcher.
+
+    --input <path> 指定: offline JSONL mode (batch 1 既存)
+    --from-db --tenant-id <int>: DB mode (batch 5 新規、audit_events table fetch)
+    両方指定 / 両方未指定: usage error (mutually exclusive)。
+    """
+    from_db = getattr(args, "from_db", False)
+    has_input = args.input is not None and args.input != ""
+    if from_db and has_input:
+        print(  # noqa: T201
+            "ERROR: --from-db and --input are mutually exclusive",
+            file=sys.stderr,
+        )
+        return 2
+    if not from_db and not has_input:
+        print(  # noqa: T201
+            "ERROR: --signed-journal requires either --input <path>.jsonl or --from-db",
+            file=sys.stderr,
+        )
+        return 2
+
+    if from_db:
+        # SP022-T08 batch 5: DB mode dispatch
+        try:
+            from scripts.taskhub_signed_journal_db import (
+                DEFAULT_MAX_ENTRIES as DB_DEFAULT_MAX_ENTRIES,
+            )
+            from scripts.taskhub_signed_journal_db import (
+                SignedJournalDbUsageError,
+                verify_db_signed_journal,
+            )
+        except ModuleNotFoundError:
+            _REPO_ROOT = Path(__file__).resolve().parent.parent
+            if str(_REPO_ROOT) not in sys.path:
+                sys.path.insert(0, str(_REPO_ROOT))
+            from scripts.taskhub_signed_journal_db import (  # noqa: E402
+                DEFAULT_MAX_ENTRIES as DB_DEFAULT_MAX_ENTRIES,
+            )
+            from scripts.taskhub_signed_journal_db import (
+                SignedJournalDbUsageError,
+                verify_db_signed_journal,
+            )
+        if args.tenant_id is None:
+            print(  # noqa: T201
+                "ERROR: --from-db requires --tenant-id <int>",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            result = verify_db_signed_journal(
+                tenant_id=args.tenant_id,
+                database_url=getattr(args, "database_url", None),
+                expected_final_hash=args.expected_final_hash,
+                max_entries=(
+                    args.max_entries
+                    if args.max_entries is not None
+                    else DB_DEFAULT_MAX_ENTRIES
+                ),
+            )
+        except SignedJournalDbUsageError as exc:
+            print(exc.stderr_message(), file=sys.stderr)  # noqa: T201
+            return 2
+        print(json.dumps(result, sort_keys=True))  # noqa: T201
+        return 1 if result.get("tamper_detected") else 0
+
+    # SP022-T08 batch 1: offline JSONL mode (既存)
     try:
         from scripts.taskhub_signed_journal_offline import (
             DEFAULT_MAX_ENTRIES,
@@ -1403,12 +1467,6 @@ def _cmd_verify_signed_journal(args: argparse.Namespace) -> int:
             SignedJournalUsageError,
             verify_jsonl_signed_journal,
         )
-    if not args.input:
-        print(  # noqa: T201
-            "ERROR: --signed-journal requires --input <path>.jsonl (or '-' for stdin)",
-            file=sys.stderr,
-        )
-        return 2
     try:
         result = verify_jsonl_signed_journal(
             args.input,
@@ -1780,6 +1838,27 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="JSONL 1 行最大バイト数 (default 65536、range 1024-1048576、DoS 防御)",
+    )
+    # SP022-T08 batch 5: signed journal DB mode (real I/O、audit_events table fetch)
+    sub_verify.add_argument(
+        "--from-db",
+        action="store_true",
+        help=(
+            "signed journal を DB (audit_events table) から fetch + verify (SP-022 T08 batch 5)。"
+            "--input と mutually exclusive。--tenant-id 必須。"
+        ),
+    )
+    sub_verify.add_argument(
+        "--tenant-id",
+        type=int,
+        default=None,
+        help="--from-db 指定時に必須 (multi-tenant invariant)",
+    )
+    sub_verify.add_argument(
+        "--database-url",
+        type=str,
+        default=None,
+        help="--from-db 指定時の SQLAlchemy URL override (default: Settings.database_url)",
     )
     sub_verify.set_defaults(func=_cmd_verify)
 

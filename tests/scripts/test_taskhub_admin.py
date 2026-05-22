@@ -471,10 +471,13 @@ def _write_event_jsonl(tmp_path: Path, payloads: list[dict]) -> Path:
 
 
 def test_cli_verify_signed_journal_requires_input() -> None:
-    """SP022-T08 batch 1: --signed-journal 単独 → exit 2."""
+    """SP022-T08 batch 1: --signed-journal 単独 → exit 2 (mode 未指定 mutually exclusive)."""
     result = _run_cli("verify", "--signed-journal")
     assert result.returncode == 2
-    assert "requires --input" in result.stderr
+    # SP022-T08 batch 5 で DB mode 追加に伴い error message が変更
+    # (`--input` または `--from-db` のいずれか必須)
+    assert "--input" in result.stderr
+    assert "--from-db" in result.stderr
 
 
 def test_cli_verify_signed_journal_valid_jsonl_passes(tmp_path: Path) -> None:
