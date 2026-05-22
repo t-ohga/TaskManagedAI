@@ -1,5 +1,6 @@
 import { getBackendHealth } from "@/lib/api/client";
 import type { HealthResponse } from "@/lib/api/types";
+import { getFrontendHealth } from "@/lib/health";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,7 @@ async function readBackendHealth(): Promise<BackendHealthState> {
 
 export default async function DashboardPage() {
   const backendHealth = await readBackendHealth();
+  const frontendHealth = getFrontendHealth();
 
   return (
     <div className="grid gap-6">
@@ -34,7 +36,7 @@ export default async function DashboardPage() {
               <p className="mt-1 text-sm text-muted">Next.js app health endpoint</p>
             </div>
             <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
-              ok
+              {frontendHealth.status}
             </span>
           </div>
           <dl className="mt-5 grid gap-3 text-sm">
@@ -44,7 +46,15 @@ export default async function DashboardPage() {
             </div>
             <div className="flex justify-between gap-4 border-t border-line pt-3">
               <dt className="text-muted">Service</dt>
-              <dd className="font-mono">frontend</dd>
+              <dd className="font-mono">{frontendHealth.service}</dd>
+            </div>
+            <div className="flex justify-between gap-4 border-t border-line pt-3">
+              <dt className="text-muted">Runtime</dt>
+              <dd className="font-mono">{frontendHealth.runtime}</dd>
+            </div>
+            <div className="flex justify-between gap-4 border-t border-line pt-3">
+              <dt className="text-muted">Node env</dt>
+              <dd className="font-mono">{frontendHealth.node_env}</dd>
             </div>
           </dl>
         </article>
