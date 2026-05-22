@@ -482,10 +482,10 @@ export default async function EvalDashboardPage() {
 
   return (
     <AdminPageShell
-      description="Sprint 12 BL-0149 P0 Exit Dashboard skeleton. Read-only view of Hard Gates 7 + Quality KPIs 5 + operational drills. Backend API integration is deferred to a follow-up batch."
-      eyebrow="Admin / Eval"
-      regionLabel="P0 Exit Dashboard"
-      title="P0 Exit Dashboard"
+      description="Sprint 12 BL-0149 P0 Exit Dashboard skeleton。Hard Gates 7、Quality KPIs 5、operational drills を read-only で表示します。Backend API integration は follow-up batch に defer しています。"
+      eyebrow="管理 / 評価"
+      regionLabel="P0 Exit ダッシュボード"
+      title="P0 Exit ダッシュボード"
     >
       <SecretBoundaryNotice title="No secret / token / raw provider response is rendered" />
 

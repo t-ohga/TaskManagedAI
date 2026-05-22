@@ -208,18 +208,18 @@ test("Sprint 9: audit log page renders event types + no raw secret notice", asyn
   await page.goto("/audit");
 
   const auditRegion = page.getByRole("region", {
-    name: "Audit Log",
+    name: "監査ログ",
     exact: true
   });
 
   await expect(auditRegion).toHaveCount(1);
   await expect(auditRegion).toBeVisible();
   await expect(
-    auditRegion.getByRole("heading", { name: "Audit Log", exact: true })
+    auditRegion.getByRole("heading", { name: "監査ログ", exact: true })
   ).toBeVisible();
 
   const auditTable = auditRegion.getByRole("table", {
-    name: /Audit events with event_type/u
+    name: /event_type、actor_id、reason_code/u
   });
 
   await expect(auditTable).toHaveCount(1);

@@ -28,7 +28,7 @@ const AUDIT_EVENT_ROWS = [
     blocked_reason: null,
     payload_data_class: "internal",
     allowed_data_class: "confidential",
-    redaction: "hash references only"
+    redaction: "hash reference のみ"
   },
   {
     event_type: "secret_canary_detected",
@@ -37,7 +37,7 @@ const AUDIT_EVENT_ROWS = [
     blocked_reason: null,
     payload_data_class: "confidential",
     allowed_data_class: "confidential",
-    redaction: "pattern_hit only"
+    redaction: "pattern_hit のみ"
   },
   {
     event_type: "runner_blocked",
@@ -46,7 +46,7 @@ const AUDIT_EVENT_ROWS = [
     blocked_reason: "runtime_blocked",
     payload_data_class: "internal",
     allowed_data_class: "internal",
-    redaction: "argv_hash and deny_category only"
+    redaction: "argv_hash と deny_category のみ"
   },
   {
     event_type: "repo_pr_opened",
@@ -55,30 +55,30 @@ const AUDIT_EVENT_ROWS = [
     blocked_reason: null,
     payload_data_class: "internal",
     allowed_data_class: "confidential",
-    redaction: "branch and pr number metadata only"
+    redaction: "branch と PR number metadata のみ"
   }
 ] as const;
 
 export default function AuditLogPage() {
   return (
     <AdminPageShell
-      description="Sprint 9 BL-0107 skeleton for append-only audit rows with reason_code, actor_id, data-class separation, and SecretBroker redaction markers."
-      eyebrow="Admin / Audit"
-      regionLabel="Audit Log"
-      title="Audit Log"
+      description="Sprint 9 BL-0107 skeleton。append-only audit row に reason_code、actor_id、data-class separation、SecretBroker redaction marker を表示します。"
+      eyebrow="管理 / 監査ログ"
+      regionLabel="監査ログ"
+      title="監査ログ"
     >
       <KeyboardReadinessStrip current="Audit Log" />
 
       <Panel
-        description="Event types are visible for CI and operators, while payload content remains redacted."
-        title="Audit event stream"
+        description="CI と operator が event_type を確認できる一方、payload content は redaction 済みのままです。"
+        title="監査 event stream"
         titleId="audit-event-stream"
       >
         <div className="overflow-x-auto rounded-md border border-line">
           <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
             <caption className="sr-only">
-              Audit events with event_type, actor_id, reason_code, blocked_reason,
-              payload_data_class, allowed_data_class, and redaction status.
+              event_type、actor_id、reason_code、blocked_reason、
+              payload_data_class、allowed_data_class、redaction status を含む監査 event。
             </caption>
             <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted">
               <tr>
@@ -121,7 +121,7 @@ export default function AuditLogPage() {
                   </td>
                   <td className="border-b border-line px-3 py-2 text-muted">
                     {event.blocked_reason === null ? (
-                      <span aria-label="not applicable" className="text-muted">
+                      <span aria-label="該当なし" className="text-muted">
                         —
                       </span>
                     ) : (
@@ -147,27 +147,27 @@ export default function AuditLogPage() {
       </Panel>
 
       <Panel
-        description="The notice keeps AC-HARD-02 visible without exposing any secret or token value."
-        title="No raw secret invariant"
+        description="secret や token の値を露出せず、AC-HARD-02 を確認できるようにします。"
+        title="raw secret 非表示 invariant"
         titleId="audit-secret-boundary"
       >
         <SecretBoundaryNotice title="AC-HARD-02 audit redaction" />
       </Panel>
 
       <Panel
-        description="Audit rows remain display-only in this skeleton. No AI output, shortcut, or UI action can mutate audit history."
+        description="この skeleton では audit row は表示専用です。AI output、shortcut、UI action のいずれも audit history を変更できません。"
         title="Append-only behavior"
         titleId="audit-append-only"
       >
         <ul className="grid gap-2 text-sm text-muted md:grid-cols-3">
           <li className="rounded-md border border-line bg-white p-3">
-            event_type and actor_id are required for every row.
+            すべての row で event_type と actor_id が必須です。
           </li>
           <li className="rounded-md border border-line bg-white p-3">
-            policy_decision_created records policy outcomes without becoming a policy source.
+            policy_decision_created は policy source にならず、policy outcome だけを記録します。
           </li>
           <li className="rounded-md border border-line bg-white p-3">
-            runner_blocked records deny_category and reason_code, not raw command input.
+            runner_blocked は raw command input ではなく deny_category と reason_code を記録します。
           </li>
         </ul>
       </Panel>
