@@ -6,6 +6,7 @@ import type {
   EvidenceSource,
   ResearchTaskDetail
 } from "@/lib/api/research";
+import { formatEvidenceRelation, formatResearchStatus } from "@/lib/i18n/research-labels";
 
 function formatDate(value: string): string {
   const date = new Date(value);
@@ -48,16 +49,16 @@ function safeEvidenceSourceUrl(value: string): string | null {
 
 function relationSummary(items: readonly EvidenceItem[]): string {
   if (items.length === 0) {
-    return "no evidence relation";
+    return "evidence relation なし";
   }
 
-  const counts = new Map<string, number>();
+  const counts = new Map<EvidenceItem["relation"], number>();
   for (const item of items) {
     counts.set(item.relation, (counts.get(item.relation) ?? 0) + 1);
   }
 
   return Array.from(counts.entries())
-    .map(([relation, count]) => `${relation}:${count}`)
+    .map(([relation, count]) => `${formatEvidenceRelation(relation)}:${count}`)
     .join(" / ");
 }
 
@@ -101,14 +102,14 @@ export function ResearchTaskCard({ task }: { readonly task: ResearchTaskDetail }
   return (
     <dl className="grid gap-3 md:grid-cols-2">
       <div className="rounded-md border border-line bg-white p-3">
-        <dt className="text-xs font-semibold uppercase tracking-normal text-muted">title</dt>
+        <dt className="text-xs font-semibold uppercase tracking-normal text-muted">タイトル</dt>
         <dd className="mt-2 text-sm font-medium text-ink">{task.title}</dd>
       </div>
       <div className="rounded-md border border-line bg-white p-3">
-        <dt className="text-xs font-semibold uppercase tracking-normal text-muted">status</dt>
+        <dt className="text-xs font-semibold uppercase tracking-normal text-muted">状態 (status)</dt>
         <dd className="mt-2">
           <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-ink">
-            {task.status}
+            {formatResearchStatus(task.status)}
           </code>
         </dd>
       </div>
@@ -117,7 +118,9 @@ export function ResearchTaskCard({ task }: { readonly task: ResearchTaskDetail }
         <dd className="mt-2 break-all font-mono text-xs text-ink">{task.project_id}</dd>
       </div>
       <div className="rounded-md border border-line bg-white p-3">
-        <dt className="text-xs font-semibold uppercase tracking-normal text-muted">created_at</dt>
+        <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+          作成日時 (created_at)
+        </dt>
         <dd className="mt-2 text-sm text-muted">
           <time dateTime={task.created_at}>{formatDate(task.created_at)}</time>
         </dd>
@@ -169,7 +172,7 @@ export function ClaimList({
   if (claims.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-line bg-white p-4 text-sm text-muted">
-        No claims attached to this research task.
+        このリサーチ task に紐づく claim はありません。
       </div>
     );
   }
@@ -205,13 +208,13 @@ export function EvidenceSourceLink({
   readonly source: EvidenceSource | undefined;
 }) {
   if (!source) {
-    return <span className="text-xs text-muted">source unavailable</span>;
+    return <span className="text-xs text-muted">source 未解決 (source unavailable)</span>;
   }
 
   const href = safeEvidenceSourceUrl(source.canonical_url);
 
   if (!href) {
-    return <span className="text-xs text-muted">redacted source</span>;
+    return <span className="text-xs text-muted">source 非表示 (redacted source)</span>;
   }
 
   return (
@@ -236,7 +239,7 @@ export function EvidenceItemList({
   if (items.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-line bg-white p-4 text-sm text-muted">
-        No evidence items attached to this research task.
+        このリサーチ task に紐づく evidence item はありません。
       </div>
     );
   }
@@ -245,7 +248,7 @@ export function EvidenceItemList({
     <div className="overflow-x-auto rounded-md border border-line">
       <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
         <caption className="sr-only">
-          Evidence items with locator, relation, relevance score, and source link.
+          locator、relation、relevance score、source link を含む evidence item 一覧。
         </caption>
         <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted">
           <tr>
@@ -256,7 +259,7 @@ export function EvidenceItemList({
               relation
             </th>
             <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-              relevance
+              関連度 (relevance)
             </th>
             <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
               source
@@ -271,7 +274,7 @@ export function EvidenceItemList({
               </th>
               <td className="border-b border-line px-3 py-2">
                 <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-ink">
-                  {item.relation}
+                  {formatEvidenceRelation(item.relation)}
                 </code>
               </td>
               <td className="border-b border-line px-3 py-2 text-muted">

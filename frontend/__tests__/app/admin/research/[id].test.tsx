@@ -115,11 +115,12 @@ describe("ResearchDetailPage", () => {
 
     render(await ResearchDetailPage({ params: Promise.resolve({ id: researchTaskId }) }));
 
-    expect(screen.getByRole("heading", { name: "Research detail" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "リサーチ詳細" })).toBeVisible();
     expect(screen.getByText("Research UI detail")).toBeVisible();
+    expect(screen.getByText("完了 (completed)")).toBeVisible();
     expect(screen.getByText("Claim with attached evidence")).toBeVisible();
     expect(screen.getByText("paragraph 4")).toBeVisible();
-    expect(screen.getAllByText("supports").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("支持 (supports)").length).toBeGreaterThan(0);
     expect(screen.getByText("a".repeat(64))).toBeVisible();
     expect(screen.getByText("100%")).toBeVisible();
     expect(screen.getByRole("link", { name: "https://example.com/source" })).toHaveAttribute(
