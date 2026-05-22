@@ -128,6 +128,87 @@ cascade pattern (PR #133→#135→#137 教訓) が再発していないか:
 - [ ] Wave 13 amendment 2 件 accepted 化 (2026-05-22 deadline 既経過、retroactive accepted 起票必要か確認)
 - [ ] P0.1 sealed CI guard 状態確認 (`TASKHUB_P0_1_OPENED` env と sealed path 整合)
 
+### Sequence H: 全 task 主要成果物の codex-all-loops loop (3-6 hour、品質担保補強)
+
+3 日間 Codex work の **全 task 主要成果物** に対し `codex-all-loops` skill で deeper round を実施。Claude Code main session で起動するため AGENTS.md「Codex chain 禁止」整合。
+
+#### H.1 計画書 (plan / Sprint Pack) loop
+
+完遂 Sprint Pack を順次:
+
+```
+Skill(skill="codex-all-loops", args="docs/sprints/SP-014_orchestrator_agent.md --mode=plan --max-rounds=8 --clean-criteria=critical_zero")
+Skill(skill="codex-all-loops", args="docs/sprints/SP-0045_tool_registry.md --mode=plan --max-rounds=8 --clean-criteria=critical_zero")
+Skill(skill="codex-all-loops", args="docs/sprints/SP-012-8_ui_i18n_japanese.md --mode=plan --max-rounds=6")
+Skill(skill="codex-all-loops", args="docs/sprints/SP-012-9_ui_wiring_completion.md --mode=plan --max-rounds=6")
+Skill(skill="codex-all-loops", args="docs/sprints/SP-022-1_scripts_wrapper_hardening.md --mode=plan --max-rounds=6")
+```
+
+各 Sprint Pack で Phase 1 (構造 review) + Phase 2 (敵対視点) を 8 round 程度回す。Codex Self-Review (Round 1+2) で見落とした論点を補強。
+
+#### H.2 実装 dir loop
+
+主要実装 dir で:
+
+```
+Skill(skill="codex-all-loops", args="backend/app/services/orchestrator --mode=code --impl-target backend/app/services/orchestrator --impl-files orchestrator.py,lease_manager.py,dispatcher.py,kill_switch.py,progress_lease.py --max-rounds=10 --clean-criteria=critical_zero")
+
+Skill(skill="codex-all-loops", args="backend/app/services/tool_registry --mode=code --impl-target backend/app/services/tool_registry --impl-files network_policy.py,registry.py --max-rounds=8")
+
+Skill(skill="codex-all-loops", args="frontend/app/(admin)/tickets --mode=code --impl-target frontend/app/(admin)/tickets --impl-files page.tsx,new/page.tsx,[id]/page.tsx --max-rounds=6")
+```
+
+各 dir で Phase 1 (impl-loop) + Phase 2 (adversarial-loop) + Phase 3 (review-loop) を 10 round 回し、Codex Self-Impl-Review (1 round) で見落とした観点を補強。
+
+#### H.3 findings 採否判定 + fix PR 起票
+
+各 loop で出た findings を 3 分類:
+
+- **adopt**: 真の bug or invariant 違反 → fix PR 起票 (`fix/codex-loop-residual-<scope>-2026-05-25`)
+- **reject**: Codex 誤認 or 既存 pattern と意図的差異 → `~/.claude/local/codex-reviews/2026-05-25/<slug>/rejected.md` 記録
+- **defer**: 別 Sprint / 別 PR → carry-over Sprint Pack に記録
+
+fix PR の admin bypass merge:
+
+```bash
+PR_NUM=$(gh pr list --head fix/codex-loop-residual-<scope>-2026-05-25 --json number -q '.[0].number')
+HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid -q '.headRefOid')
+gh api -X PUT "repos/t-ohga/TaskManagedAI/pulls/$PR_NUM/merge" -f merge_method=squash -f sha="$HEAD_SHA" \
+  -f commit_title="fix(codex-loop-residual): <scope> 修正 (#$PR_NUM)" \
+  -f commit_message="..."
+```
+
+#### H.4 loop 完了判定
+
+全 task 主要成果物で `critical_zero` 達成 (CRITICAL=0、HIGH≤2 で全 loop close) を確認。
+
+cascade pattern 検出時は **matrix-based logic** で fix (PR #133→#135→#137 教訓、cross-source-enum-integrity §1)。
+
+### Sequence I: 残 Sprint kickoff readiness 昇格 + handoff memory 起票
+
+Sequence H 完了後、次 Sprint への kickoff readiness を確定:
+
+- SP-015 inter-agent communication: SP-014 完遂で prerequisite 充足 → `draft` → `ready` 昇格 path 検討
+- SP-016 UI CLI parity: SP-014/SP-015 完遂で 部分 prerequisite 充足
+- SP-007 phase5 残作業: SP-0045 完遂で hook trust boundary prerequisite 充足
+- SP-008 GitHub App RepoProxy: 独立着手可能 (P0.1 開始後)
+
+handoff memory 起票:
+
+```
+~/.claude/projects/-Users-tohga-repo-TaskManagedAI/memory/project_session_2026_05_25_claude_verification_with_loop_complete.md
+```
+
+内容:
+- 完了 task 数 + PR merge 累計 (PR #142 → ~#175 想定)
+- Sequence A-I 完遂結果
+- 各 task の codex-all-loops loop 結果 (findings 採否件数)
+- fix PR 数 (Sequence H で起票分)
+- 次 Sprint kickoff path
+- carry-over Sprint Pack 一覧
+
+MEMORY.md index 1 行追加。
+
 ## 3. fix PR 起票 protocol (必要時)
 
 Codex finding で `defer` 判定された case が **本来 adopt すべき** だった場合や、cascade pattern 漏れ検出時:

@@ -19,14 +19,18 @@ Claude が **連続 42 PR merge で完成させた基盤** (P0 Exit + Multi-Agen
 
 ## 3 日間のスコープ概観
 
-| task | sprint | scope | 想定 effort | 計画必須 | self-review (§3) |
+| task | sprint | scope | 想定 effort | 計画必須 | 依存 |
 |---|---|---|---|---|---|
-| **task-01** | SP-014 batch 0 | orchestrator agent (lease/dispatch/failover) | 1.5-2 day | **必須 (heavy)** | Self-Plan-Review 2 round + Self-Impl-Review 必須 |
-| **task-02** | SP-012-8 batch 1-7 | UI 日本語化 | 1-1.5 day | **必須** | Self-Plan-Review 1-2 round + Self-Impl-Review 必須 |
-| **task-03** | SP-022-1 | scripts hardening (Phase 7a deviation 7 件) | 0.7-1 day | 推奨 | Self-Plan-Review 1 round + Self-Impl-Review 推奨 |
-| **task-04** | SP-012-9 残 | Approvals / Agent Runs / Audit / Settings wiring | 0.5-1 day | 推奨 | Self-Plan-Review 1 round + Self-Impl-Review 推奨 |
+| **task-01** | SP-014 batch 0 | orchestrator agent (lease/dispatch/failover) | 1.5-2 day | **必須 (heavy)** | なし |
+| **task-02** | SP-012-8 | UI 日本語化 | 1-1.5 day | **必須** | なし |
+| **task-03** | SP-022-1 | scripts hardening (Phase 7a deviation 7 件) | 0.7-1 day | 推奨 | なし |
+| **task-04** | SP-012-9 残 | Approvals / Agent Runs / Audit / Settings wiring | 0.5-1 day | 推奨 | なし |
+| **task-05** | SP-0045 | Tool Registry 本体 (tools + allowed_actions + trust_tier + lockfile) | 1.5-2 day | **必須 (heavy)** | task-01 batch 0d 完遂後 |
+| **task-06** | docs/adr drift | ADR + Sprint Pack frontmatter retroactive fix | 0.3-0.5 day | 不要 | なし (並行) |
+| **task-07** | test coverage | Backend untested branch coverage 拡張 | 0.5-1 day | 不要 | なし (並行) |
+| **task-08** | docs drift | rules + reference + Sprint Pack 用語 + cross-reference 整合 | 0.3-0.5 day | 不要 | なし (並行) |
 
-合計想定: 3.7-5.5 day = 3 日間 (24h × 3 = 72h、Codex 集中作業時間) で完遂可能。
+合計想定: 6.4-9.5 day = 3 日間 (24h × 3 = 72h、Codex 並行作業) で完遂可能 (task-01/05 を直列 + 残 6 task を並行)。
 
 ## 絶対遵守事項 (Codex 厳守)
 
@@ -42,16 +46,24 @@ Claude が **連続 42 PR merge で完成させた基盤** (P0 Exit + Multi-Agen
 ## task 依存関係 (並行可能性)
 
 ```
-task-01 (SP-014 batch 0) ────┐
-                              ├──> Claude verification (return)
+task-01 (SP-014 batch 0) ────┬──> task-05 (SP-0045 Tool Registry、batch 0d 後)
+                              │
 task-02 (SP-012-8 i18n) ─────┤
                               │
 task-03 (SP-022-1 hardening)─┤  (並行可能)
                               │
-task-04 (SP-012-9 残 wiring)─┘
+task-04 (SP-012-9 残 wiring)─┤
+                              │
+task-06 (ADR drift fix) ─────┤    (並行可能、light、独立)
+task-07 (test coverage) ─────┤    (並行可能、light、独立)
+task-08 (docs drift fix) ────┘    (並行可能、light、独立)
+                                    ↓
+                              Claude verification (2026-05-25 戻り)
+                              + 全 PR codex-all-loops loop (§3.4 / §3.6)
 ```
 
-全 task **並行起動可能** (依存なし)、ただし **同一 file 編集衝突回避** のため `00-codex-behavior-guide.md` §5 で branch 分離戦略を遵守。
+**並行可能性**: task-05 は task-01 batch 0d 完遂後着手、それ以外は全 task 独立並行可。
+**衝突回避**: `00-codex-behavior-guide.md` §5 で branch 分離戦略を遵守。
 
 ## 完了報告 (Codex → Claude)
 
