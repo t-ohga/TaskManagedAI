@@ -1,10 +1,13 @@
 ---
 id: "SP-002_core_data_model"
 type: "heavy"
-status: "draft"
+status: "completed"
 sprint_no: 2
 created_at: "2026-05-08"
-updated_at: "2026-05-08"
+updated_at: "2026-05-22"
+# F-PR100-R1-002 audit fix (PR #101): frontmatter drift 訂正、tenant_id boundary + actors / principals
+# / secret_refs schema + AC-HARD-03 fixture loader 実装は完了済 (master plan §1.1).
+# 本 訂正 PR で frontmatter status を draft → completed に同期更新.
 target_days: 6.5
 max_days: 8
 adr_refs:

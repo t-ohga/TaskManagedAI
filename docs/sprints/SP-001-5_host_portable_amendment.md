@@ -1,10 +1,13 @@
 ---
 id: "SP-001-5_host_portable_amendment"
 type: "heavy"
-status: "proposed"
+status: "completed"
 sprint_no: 1.5
 created_at: "2026-05-10"
-updated_at: "2026-05-18"
+updated_at: "2026-05-22"
+# F-PR100-R1-002 audit fix (PR #101): frontmatter drift 訂正、host-portable amendment 内容は
+# ADR-00021 + ADR-00007 で確定 (SP022-T00 で accepted 2026-05-19)、本 SP-001-5 自体は
+# SP-022 への carry forward 完了。本 訂正 PR で proposed → completed に同期更新.
 target_days: 2
 max_days: 3
 # F-PR67-010/011/013 P2 adopt (PR #67 R4): ADR-00021 acceptance 条件
