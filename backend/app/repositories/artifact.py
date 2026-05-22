@@ -184,6 +184,7 @@ class ArtifactRepository(BaseRepository[Artifact]):
         *,
         tenant_id: int,
         run_id: UUID,
+        project_id: UUID,
         kind: ArtifactKind | str,
         content_hash: str,
         content_jsonb: dict[str, Any],
@@ -204,6 +205,7 @@ class ArtifactRepository(BaseRepository[Artifact]):
         artifact = Artifact(
             tenant_id=tenant_id,
             run_id=run_id,
+            project_id=project_id,
             kind=cast(ArtifactKind, kind),
             content_hash=content_hash,
             content_jsonb=content_jsonb,
@@ -252,6 +254,7 @@ async def create_artifact(
     *,
     tenant_id: int,
     run_id: UUID,
+    project_id: UUID,
     kind: ArtifactKind | str,
     content_hash: str,
     content_jsonb: dict[str, Any],
@@ -262,6 +265,7 @@ async def create_artifact(
     return await ArtifactRepository(session).create_artifact(
         tenant_id=tenant_id,
         run_id=run_id,
+        project_id=project_id,
         kind=kind,
         content_hash=content_hash,
         content_jsonb=content_jsonb,

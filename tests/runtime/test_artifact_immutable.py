@@ -399,6 +399,7 @@ async def test_create_artifact_rejects_content_hash_mismatch() -> None:
         await repo.create_artifact(
             tenant_id=1,
             run_id=TENANT_ONE_RUN_A_ID,
+            project_id=uuid4(),
             kind="plan",
             content_hash="0" * 64,
             content_jsonb={"summary": "redacted"},
