@@ -10,10 +10,15 @@ describe("GET /api/healthz", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
 
     const payload: unknown = await response.json();
-    expect(payload).toEqual({
+    // SP-012-9 BL-UIW-012: runtime info を含む real source 構築
+    expect(payload).toMatchObject({
       status: "ok",
-      service: "frontend"
+      service: "frontend",
+      runtime: "nodejs",
     });
+    // node_env は test 環境 (NODE_ENV=test) を反映、enum 化された値
+    const typed = payload as { node_env: string };
+    expect(typed.node_env).toMatch(/^(development|production|test|unknown)$/);
   });
 });
 
