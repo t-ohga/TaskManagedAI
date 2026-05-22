@@ -97,6 +97,18 @@ def test_validate_role_scope_project_with_standard_role_ok() -> None:
         validate_role_scope_consistency("project", standard_role, is_custom=False)
 
 
+# Codex PR #133 R1 P1 regression test
+def test_validate_role_scope_project_is_custom_false_rejects_non_standard() -> None:
+    """role_scope='project' + is_custom=False で非 STANDARD_ROLE_IDS は reject.
+
+    docstring 通り、is_custom=False は role_scope に関係なく STANDARD_ROLE_IDS のみ許可。
+    """
+    with pytest.raises(ValueError, match="STANDARD_ROLE_IDS"):
+        validate_role_scope_consistency(
+            "project", "my-custom-non-standard", is_custom=False
+        )
+
+
 def test_validate_role_scope_project_custom_rejects_standard_id() -> None:
     """role_scope='project' + is_custom=True で STANDARD_ROLE_IDS は reject (PE-F-001)."""
     for standard_role in STANDARD_ROLE_IDS:
