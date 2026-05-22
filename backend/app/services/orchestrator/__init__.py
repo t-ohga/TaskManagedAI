@@ -21,6 +21,13 @@ from backend.app.services.orchestrator.progress_lease import (
     ProgressLeaseBlockedResult,
     ProgressRecordedResult,
 )
+from backend.app.services.orchestrator.review_artifact_guard import (
+    REVIEWER_ROLE_ID,
+    REVIEWER_ROLE_SCOPE,
+    ReviewArtifactValidationError,
+    ReviewArtifactValidationResult,
+    validate_review_artifact_for_action_class,
+)
 
 __all__ = [
     "DispatchRecordedResult",
@@ -36,4 +43,9 @@ __all__ = [
     "OrchestratorService",
     "ProgressLeaseBlockedResult",
     "ProgressRecordedResult",
+    "REVIEWER_ROLE_ID",
+    "REVIEWER_ROLE_SCOPE",
+    "ReviewArtifactValidationError",
+    "ReviewArtifactValidationResult",
+    "validate_review_artifact_for_action_class",
 ]
