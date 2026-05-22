@@ -211,6 +211,28 @@ def test_async_rejects_expected_final_hash_with_trailing_newline() -> None:
     assert exc_info.value.error_code == "invalid_expected_final_hash"
 
 
+def test_db_connection_error_redacts_raw_exception_text() -> None:
+    """Codex PR #90 R2 F-001 fix (P2): DB exception の raw text (DSN credentials) を user-facing error から除外.
+
+    verify_db_signed_journal が内部で create_async_engine() を呼び connection error を
+    SignedJournalDbUsageError に変換するが、DSN URL や password が含まれる Exception text を
+    そのまま embed すると credential 漏洩リスク。type(exc).__name__ のみ embed。
+    """
+    from scripts.taskhub_signed_journal_db import verify_db_signed_journal
+
+    # invalid database_url で connection error をトリガー
+    with pytest.raises(SignedJournalDbUsageError) as exc_info:
+        verify_db_signed_journal(
+            tenant_id=1,
+            database_url="postgresql+asyncpg://user:supersecretpassword@nonexistent.example/db",
+        )
+    assert exc_info.value.error_code == "db_connection_error"
+    # password を summary に含まない (raw exception text leak 防止)
+    assert "supersecretpassword" not in exc_info.value.summary
+    # user-facing summary は exception class name のみ embed
+    assert "check internal log" in exc_info.value.summary
+
+
 def test_async_result_has_serializable_dict() -> None:
     """output dict は json.dumps できる (CLI JSON output 前提)."""
     session = _build_mock_session([_make_event()])

@@ -1450,6 +1450,20 @@ def _cmd_verify_signed_journal(args: argparse.Namespace) -> int:
         return 1 if result.get("tamper_detected") else 0
 
     # SP022-T08 batch 1: offline JSONL mode (既存)
+    # Codex PR #90 R2 F-002 fix (P2): DB-only flags が offline mode で silent ignore
+    # されると tenant scoping 適用 / DB URL 適用と operator が誤解する。fail-fast reject。
+    if args.tenant_id is not None:
+        print(  # noqa: T201
+            "ERROR: --tenant-id is only valid with --from-db (DB mode)",
+            file=sys.stderr,
+        )
+        return 2
+    if getattr(args, "database_url", None) is not None:
+        print(  # noqa: T201
+            "ERROR: --database-url is only valid with --from-db (DB mode)",
+            file=sys.stderr,
+        )
+        return 2
     try:
         from scripts.taskhub_signed_journal_offline import (
             DEFAULT_MAX_ENTRIES,

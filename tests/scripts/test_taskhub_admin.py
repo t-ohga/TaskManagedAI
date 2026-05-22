@@ -480,6 +480,29 @@ def test_cli_verify_signed_journal_requires_input() -> None:
     assert "--from-db" in result.stderr
 
 
+def test_cli_verify_signed_journal_rejects_tenant_id_in_offline_mode(tmp_path: Path) -> None:
+    """Codex PR #90 R2 F-002 fix (P2): offline mode で --tenant-id 指定 → exit 2 fail-fast."""
+    p = _write_event_jsonl(tmp_path, [{"k": "v"}])
+    result = _run_cli(
+        "verify", "--signed-journal", "--input", str(p), "--tenant-id", "1",
+    )
+    assert result.returncode == 2
+    assert "--tenant-id" in result.stderr
+    assert "--from-db" in result.stderr
+
+
+def test_cli_verify_signed_journal_rejects_database_url_in_offline_mode(tmp_path: Path) -> None:
+    """Codex PR #90 R2 F-002 fix (P2): offline mode で --database-url 指定 → exit 2 fail-fast."""
+    p = _write_event_jsonl(tmp_path, [{"k": "v"}])
+    result = _run_cli(
+        "verify", "--signed-journal", "--input", str(p),
+        "--database-url", "postgresql://test/db",
+    )
+    assert result.returncode == 2
+    assert "--database-url" in result.stderr
+    assert "--from-db" in result.stderr
+
+
 def test_cli_verify_signed_journal_valid_jsonl_passes(tmp_path: Path) -> None:
     """SP022-T08 batch 1: valid JSONL → exit 0、stdout に final_hash."""
     p = _write_event_jsonl(tmp_path, [{"k": "v"}, {"k2": "v2"}])

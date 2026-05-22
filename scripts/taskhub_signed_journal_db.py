@@ -213,9 +213,18 @@ def verify_db_signed_journal(
     except SignedJournalDbUsageError:
         raise
     except Exception as exc:
+        # Codex PR #90 R2 F-001 fix (P2): DB exception text には DSN / credentials
+        # (e.g., `postgresql://user:password@host/db`) が含まれる可能性があるため、
+        # sanitized summary (exception class name のみ) を user-facing error に embed。
+        # 詳細は logger.debug() で internal log にのみ記録 (operator が debug 必要時参照)。
+        import logging as _logging
+        _logging.getLogger(__name__).debug(
+            "verify_db_signed_journal DB error (raw)", exc_info=True,
+        )
         raise SignedJournalDbUsageError(
             "db_connection_error",
-            f"failed to fetch audit_events from DB: {exc}",
+            f"failed to fetch audit_events from DB ({type(exc).__name__}); "
+            "check internal log (DEBUG) for sanitized details",
         ) from exc
 
 
