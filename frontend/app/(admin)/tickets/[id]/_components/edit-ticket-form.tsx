@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useActionState, useEffect } from "react";
 
 import type { TicketRead } from "@/lib/api/tickets";
 
@@ -11,36 +11,27 @@ type EditTicketFormProps = {
   ticket: TicketRead;
 };
 
+const INITIAL_STATE: UpdateTicketState = { kind: "idle" };
+
 export function EditTicketForm({ ticket }: EditTicketFormProps) {
   const router = useRouter();
-  const [result, setResult] = useState<UpdateTicketState>({ kind: "idle" });
-  const [isPending, startTransition] = useTransition();
 
-  function submit(formData: FormData): void {
-    // Codex PR #120 R1 F-PR120-001/002 (P2) fix pattern を pre-emptive apply:
-    // startTransition callback を async 化し、await 完了まで isPending 保持。
-    // 二重 submit 防止 + error 時 user 入力保持。
-    setResult({ kind: "idle" });
-    startTransition(async () => {
-      try {
-        const nextState = await updateTicketAction({ kind: "idle" }, formData);
-        setResult(nextState);
-        if (nextState.kind === "ok") {
-          router.refresh();
-        }
-      } catch (error: unknown) {
-        setResult({
-          kind: "error",
-          message:
-            error instanceof Error ? error.message : "ticket update failed"
-        });
-      }
-    });
-  }
+  // SP-012-11.1 BL-TCU-016: React 19 useActionState (Codex PR #120 P2 完全 migration)
+  const [state, formAction, isPending] = useActionState(
+    updateTicketAction,
+    INITIAL_STATE
+  );
+
+  // 成功時 router.refresh で 詳細 + 一覧 再 fetch (revalidatePath 連動)
+  useEffect(() => {
+    if (state.kind === "ok") {
+      router.refresh();
+    }
+  }, [state, router]);
 
   return (
     <form
-      action={submit}
+      action={formAction}
       className="rounded-lg border border-line bg-panel p-5 shadow-sm"
       data-testid="edit-ticket-form"
     >
@@ -109,20 +100,20 @@ export function EditTicketForm({ ticket }: EditTicketFormProps) {
           </button>
         </div>
 
-        {result.kind === "error" ? (
+        {state.kind === "error" ? (
           <p
             role="status"
             className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700"
           >
-            {result.message}
+            {state.message}
           </p>
         ) : null}
-        {result.kind === "ok" ? (
+        {state.kind === "ok" ? (
           <p
             role="status"
             className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
           >
-            Ticket 更新成功 (id: {result.ticket_id})
+            Ticket 更新成功 (id: {state.ticket_id})
           </p>
         ) : null}
       </fieldset>

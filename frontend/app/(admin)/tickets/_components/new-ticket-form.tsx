@@ -1,45 +1,37 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useActionState, useEffect, useState } from "react";
 
 import { createTicketAction, type CreateTicketState } from "../actions";
+
+const INITIAL_STATE: CreateTicketState = { kind: "idle" };
 
 export function NewTicketForm() {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
-  const [result, setResult] = useState<CreateTicketState>({ kind: "idle" });
-  const [isPending, startTransition] = useTransition();
 
-  function submit(formData: FormData): void {
-    // Codex PR #120 R1 F-PR120-001/002 (P2) fix: startTransition callback を
-    // async 化し、`await` で完了まで pending 状態を保持。これにより:
-    // - isPending が POST resolve まで active (二重 submit 防止)
-    // - fields は backend 成功まで reset されない (error 時 user の入力保持)
-    //
-    // 旧実装は `() => { void promise.then(...) }` (sync callback + fire-and-forget) で
-    // startTransition は callback return 直後に終了 → pending flag が POST 完了前に drop。
-    setResult({ kind: "idle" });
-    startTransition(async () => {
-      try {
-        const nextState = await createTicketAction({ kind: "idle" }, formData);
-        setResult(nextState);
-        if (nextState.kind === "ok") {
-          router.refresh();
-          // 成功後 form 閉じる
-          setIsOpen(false);
-        }
-      } catch (error: unknown) {
-        setResult({
-          kind: "error",
-          message:
-            error instanceof Error ? error.message : "ticket creation failed"
-        });
-      }
-    });
-  }
+  // SP-012-11.1 BL-TCU-016: React 19 useActionState pattern (Codex PR #120 P2 完全 migration)
+  // - state: action 結果 (idle / ok / error)
+  // - formAction: form の action prop に直接渡す handler
+  // - isPending: action 実行中 true (POST 完了まで保持、二重 submit 防止)
+  const [state, formAction, isPending] = useActionState(
+    createTicketAction,
+    INITIAL_STATE
+  );
 
-  if (!isOpen) {
+  // 成功時の副作用 (router.refresh) は useEffect で副作用化
+  useEffect(() => {
+    if (state.kind === "ok") {
+      router.refresh();
+    }
+  }, [state, router]);
+
+  // state.kind === "ok" で form 自動 close (render-time derived、useEffect 内
+  // setIsOpen 回避 = React 19 react-hooks rule "no setState in effect" 遵守)
+  const showForm = isOpen && state.kind !== "ok";
+
+  if (!showForm) {
     return (
       <div>
         <button
@@ -55,7 +47,7 @@ export function NewTicketForm() {
 
   return (
     <form
-      action={submit}
+      action={formAction}
       className="rounded-lg border border-line bg-panel p-5 shadow-sm"
       data-testid="new-ticket-form"
     >
@@ -133,30 +125,21 @@ export function NewTicketForm() {
           </button>
           <button
             type="button"
-            onClick={() => {
-              setIsOpen(false);
-              setResult({ kind: "idle" });
-            }}
+            onClick={() => setIsOpen(false)}
             className="rounded-md border border-line bg-panel px-4 py-2 text-sm font-medium shadow-sm hover:bg-panel-muted"
           >
             キャンセル
           </button>
         </div>
 
-        {result.kind === "error" ? (
+        {/* ok 時は showForm が false で form 自体非表示、success フィードバックは
+            router.refresh による list 再表示 + new ticket 一覧出現で代替 */}
+        {state.kind === "error" ? (
           <p
             role="status"
             className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700"
           >
-            {result.message}
-          </p>
-        ) : null}
-        {result.kind === "ok" ? (
-          <p
-            role="status"
-            className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
-          >
-            Ticket created (id: {result.ticket_id})
+            {state.message}
           </p>
         ) : null}
       </fieldset>
