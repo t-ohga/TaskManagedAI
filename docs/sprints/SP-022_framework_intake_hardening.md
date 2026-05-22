@@ -1202,3 +1202,36 @@ p0-exit-final-hardening-2026-05-22 plan (`.claude/plans/p0-exit-final-hardening-
 - Codex PR-review CLEAN signals 4 (PR #95 R1+R2 + PR #96 R1+R2)
 - **累計 26 findings 100% adopt + 4 CLEAN signals** (PR #97 は Codex bot service 15 min 未起動で code change 最小性で代替判定 = admin bypass merge)
 - CRITICAL / HIGH / BLOCK / WARN 残存: 全件 0
+
+### Phase 7 scope 訂正 (PR #99、user 明示「Mac で運用優先、VPS の前」反映)
+
+#### 旧 scope (PR #92 + #98 まで)
+
+- 「実機 host migration drill (Mac→VPS) RTO≤4h PASS」を **P0 Exit declaration 直接 gate** として位置付け (master plan §10.C + SP-022 must_ship 表 line 96)
+- T09 = Mac→VPS host migration drill = SP022-T09 必須
+
+#### 新 scope (PR #99 訂正、user 明示優先順反映)
+
+user 明示「Mac で運用できることが第一、VPS の前」+ 本 plan §3.5「AC-HARD-04 計測本体は backend CLI で完結」+ ADR-00021 post-acceptance verification 解釈の整合化:
+
+| Phase | scope | host | P0 Exit declaration 関連 |
+|---|---|---|---|
+| **Phase 7a-1 Mac UI smoke** (本 plan §5.5.1 user-deferred 全件、新規 SOP `docs/deploy/mac-single-host-operation-drill-sop.md` §1) | Mac で P0 UI 機能運用立証 | Mac 1 台 (ブラウザ + terminal) | ✅ **直接 gate** (P0 UI 機能動作 evidence) |
+| **Phase 7a-2 Mac local backup/restore drill** (新規 SOP §2、Mac single-host で完結) | AC-HARD-04 (`backup_restore_rpo_rto`) PASS、7 mandatory checklist (host migration step 以外) + RTO ≤ 4h 計測 | Mac 1 台 (CLI のみ) | ✅ **直接 gate** (AC-HARD-04 evidence、本 plan §3.5「計測本体は backend CLI で完結」の証跡) |
+| **Phase 7b T09 Mac→VPS migration drill** (既存 SOP `docs/deploy/half-yearly-drill-sop.md` §11) | ADR-00021 host-portable deployment post-acceptance verification | Mac + VPS 2 台 + Tailscale | △ **post-acceptance verification** (P0 Exit declaration 直接 gate ではない、P0.1 unblock 後 or 任意 timing) |
+
+#### must_ship 表 line 96 解釈訂正 (must_ship 表自体は変更しない、本 plan §9.1 で固定)
+
+- 旧記述「実機 host migration drill (Mac→VPS) RTO≤4h PASS」 = SP-022 Sprint Pack must_ship 表上は維持
+- **新解釈**: must_ship 表 line 96 の「実機 host migration drill (Mac→VPS)」は **Phase 7a Mac single-host 運用立証 (AC-HARD-04 backup/restore drill = Mac local 完結) + Phase 7b T09 Mac→VPS migration drill (post-acceptance verification)** の合計を指す。Phase 7a は P0 Exit declaration 直接 gate、Phase 7b は ADR-00021 post-acceptance (本 PR #99 で位置付け再解釈)
+- P0 Exit declaration condition は **Phase 7a 完了で satisfy 可能** (Phase 7b は P0 Exit 後 or 任意 timing 実施)
+- master plan §10.C 同期訂正は PR #98 で起票した `master-plan-section-3-9-update-prep.md` 内 §10.C diff で対応 (本 PR #99 で update + Phase 8 PR で master plan に手動 apply)
+
+#### user 明示優先順との整合
+
+user 2026-05-22 明示: 「**Mac でできる様にするのがまず最初の目的です。VPS の前に Mac で運用できることが大事です。**」
+
+本 PR #99 訂正で:
+- Mac single-host 運用立証 (Phase 7a) を P0 Exit declaration 直接 gate に位置付け → user 優先順と整合
+- VPS migration drill (Phase 7b = T09) を post-acceptance に分離 → 「VPS の前に Mac で運用」順序と整合
+- Hard Gates 7 件中 AC-HARD-04 (`backup_restore_rpo_rto`) は **Mac single-host で satisfy 可能** = 本 plan §3.5 で既明示 (`計測本体は backend CLI で完結`)
