@@ -1,10 +1,11 @@
 ---
 id: "SP-012-7_phase_f_0_prerequisite"
 type: "light"
-status: "ready"
+status: "completed"
 sprint_no: 12.7
 created_at: "2026-05-22"
 updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 target_days: 2
 max_days: 3
 adr_refs:
@@ -157,4 +158,38 @@ uv run pytest -x
 
 ## Review
 
-(本 Sprint 完了時に追記: changed / verified / deferred / risks)
+最終更新: 2026-05-22
+
+### changed (3 件 must_ship 全件完遂)
+
+| # | must_ship | PR | merge SHA |
+|---|---|---|---|
+| 1 | DB CHECK constraint sync verify (3 CHECK × 7 種 enum parametrize test) | #106 | 788a1caa |
+| 2 | artifacts.project_id materialize migration (`0019_artifacts_project_id`) + ORM update + repository signature update | #107 | 51798507 |
+| 3 | AC-HARD-03 artifact-domain cross-project negative test (5 integration test、DB skipif で gated) | #108 | c7183393 |
+
+### verified
+
+- pytest 全件 PASS (本 Sprint 関連 tests):
+  - tests/policy/test_action_class_enum.py: 14 PASS (3 parametrize case 新規追加)
+  - tests/runtime/test_artifact_immutable.py: 1 PASS (signature update 整合)
+  - tests/security/test_artifact_cross_project_negative.py: 5 SKIPPED (DB 未設定環境)、DB 環境では 5 PASS 想定
+  - artifact 関連 offline tests: 83 PASS
+- ruff + mypy: clean (全 PR)
+- 5+ source 整合 (Literal / frozenset / DB CHECK 3 か所 / pytest fixture): action_class 7 種
+- migration apply test: `0019_artifacts_project_id` (25 chars、≤ 30 制限 ✓)
+
+### deferred
+
+- なし (全 must_ship 完遂、scope 全件 satisfy)
+
+### risks (residual)
+
+- artifacts.project_id backfill は orphan artifact なし前提 (`artifacts_run_fkey (tenant_id, run_id) NOT NULL`)、sanity check で NULL=0 fail-closed
+- DB 接続前提 integration test 5 件は Mac local docker compose または CI Smoke で実行 → Phase 7a Mac drill 同等の運用検証で actual PASS verify
+- 既存 ADR-00009 (action_class) 整合は backend code 既 update 済、本 Sprint で DB CHECK 機械検査追加で完了
+
+### next
+
+- ADR-00014/00019 proposed → accepted promotion (本 PR で実施)
+- SP-013 batch 0 着手 (Multi-Agent Orchestration Foundation table 群)

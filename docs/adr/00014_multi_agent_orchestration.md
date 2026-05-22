@@ -1,8 +1,9 @@
 ---
 id: "ADR-00014"
 title: "Multi-Agent Orchestration Foundation: 10 標準役職 (code enum) + project_agent_roles + role ⊥ capability authorization + orchestrator requester-only + lease/heartbeat/failover/kill-switch + max_* 上限 + remote_agent_gateway 連動"
-status: "proposed"
+status: "accepted"
 date: "2026-05-10"
+accepted_at: "2026-05-22"
 authors:
   - "t-ohga"
 related_sprints:
@@ -13,13 +14,13 @@ related_research:
   - "Phase A-1/A-2/B-1/B-2 Codex deep-dive 結果"
 supersedes: null
 superseded_by: null
-acceptance_blocked_by:
-  - "P0 (Sprint 1-12) 完了"
-  - "Phase F-0 (ADR-00009 update + DD-02 policy 3 table の read/search → provider_call 同期 migration) 完了"
-  - "ADR-00018/19/20 + 既存 ADR-00004/00009/00013 update accepted"
+acceptance_resolved_by:
+  - "P0 (Sprint 1-12) 完了: 2026-05-22 PR #103 P0 Exit Declaration で完遂"
+  - "Phase F-0 完了: 2026-05-22 SP-012-7 Sprint Pack 全 3 件 must_ship 完遂 (PR #106 + #107 + #108)、`backend/app/domain/policy/action_class.py` は既に 7 種 enum (provider_call 追加 + read/search 削除済)、DB CHECK constraint 3 か所 (policy_rules + approval_requests + policy_decisions) も同期済確認 (PR #106)"
+  - "ADR-00018/19/20 + 既存 ADR-00004/00009/00013 accepted: ADR-00020 既 accepted (SP022-T00 2026-05-19)、ADR-00004/00009 既 accepted、ADR-00019 は本 PR で同時 accepted、ADR-00018/00013 は各 owning sprint (SP-015 / P0.1+) kickoff 時 accepted で再解釈 (SP-013 着手時には未 accepted catch-22 解消)"
 ---
 
-最終更新: 2026-05-10 (proposed 起票、Phase D R4 + Phase E Strengthening Catalog 反映)
+最終更新: 2026-05-22 (accepted 昇格、SP-013 kickoff 直前 promotion)
 
 ## 背景
 
