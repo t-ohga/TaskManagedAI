@@ -26,6 +26,15 @@ WORKDIR /app
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --chown=appuser:appuser backend ./backend
 COPY --chown=appuser:appuser migrations ./migrations
+# scripts/ is referenced at runtime by backend (e.g.,
+# backend/app/db/active_registry_mutation_gate.py:26
+# `from scripts import taskhub_active_registry_gate as gate_helper`)
+# and `pyproject.toml [tool.setuptools.packages.find] include` lists "scripts*".
+# Without this COPY, api container crashes with ModuleNotFoundError at import time.
+# (SP-012 batch C active_registry implementation で導入された latent runtime bug、
+# p0-exit-final-hardening-2026-05-22 plan の Phase 4 Layer B smoke で初めて発覚、
+# fix PR で routing-build-hardening と独立に修正)
+COPY --chown=appuser:appuser scripts ./scripts
 COPY --chown=appuser:appuser alembic.ini pyproject.toml README.md uv.lock ./
 
 ENV PATH="/app/.venv/bin:$PATH"

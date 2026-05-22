@@ -26,6 +26,14 @@ WORKDIR /app
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --chown=appuser:appuser backend ./backend
 COPY --chown=appuser:appuser migrations ./migrations
+# scripts/ is referenced at runtime by backend (e.g.,
+# backend/app/workers/active_registry_worker_gate.py:24
+# `from scripts import taskhub_active_registry_gate as gate_helper`)
+# and `pyproject.toml [tool.setuptools.packages.find] include` lists "scripts*".
+# Without this COPY, worker container crashes with ModuleNotFoundError at import time.
+# Sibling fix in Dockerfile.api (same root cause、SP-012 batch C active_registry
+# implementation で導入された latent runtime bug).
+COPY --chown=appuser:appuser scripts ./scripts
 COPY --chown=appuser:appuser alembic.ini pyproject.toml README.md uv.lock ./
 
 ENV PATH="/app/.venv/bin:$PATH"

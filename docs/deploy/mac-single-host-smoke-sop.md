@@ -32,6 +32,15 @@ Layer A 結果は `docs/deploy/smoke-evidence/2026-05-22-layer-A.md` (本 PR で
 
 worktree (`~/repo/TaskManagedAI/.claude/worktrees/*`) ではなく **実 repo (`~/repo/TaskManagedAI`)** で実施。
 
+### 0.2 docker compose dev override 適用
+
+本 SOP の全 `docker compose` command は **`-f docker-compose.yml -f docker-compose.dev.yml`** で起動する (base `docker-compose.yml` の `networks.taskmanagedai_internal.internal: true` を dev override で `internal: false` に変更し、host から 127.0.0.1 経由で container に到達可能にするため)。
+
+- base compose: production 向け、`internal: true` で deny-by-default (Tailscale Serve TLS 終端経由のみ external access、ADR-00007 + ADR-00021)
+- dev override (`docker-compose.dev.yml`): Mac single-host smoke / development 用、`internal: false` で host (`127.0.0.1`) から port publish 経由で container 到達可能 (ADR-00022 dev_login cookie secure attribute と整合、HTTP loopback 動作)
+
+dev override を忘れて起動した場合: `docker compose ps` で services healthy になっても `docker port api` が空になり、host から `curl http://127.0.0.1:8000/healthz` が `Connection refused` で失敗する (`internal: true` 由来)。
+
 ---
 
 # Layer B: Mac docker compose smoke (所要 30-60 min)
@@ -68,7 +77,7 @@ grep TASKMANAGEDAI_ENVIRONMENT .env.local
 ## §2 docker compose build (B-2)
 
 ```bash
-docker compose --env-file .env.local build 2>&1 | tee /tmp/taskhub-build.log
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local build 2>&1 | tee /tmp/taskhub-build.log
 # expected: 全 5 service (api / worker / postgres / redis / frontend) が build 成功、exit 0
 echo "Build exit code: $?"
 ```
@@ -84,11 +93,11 @@ echo "Build exit code: $?"
 
 ```bash
 # detached mode で起動
-docker compose --env-file .env.local up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local up -d
 
 # 全 service の healthy 状態待機 (最長 2 min)
 for i in {1..24}; do
-  STATUS=$(docker compose --env-file .env.local ps --format json | jq -r '[.[] | .Health] | join(",")')
+  STATUS=$(docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local ps --format json | jq -r '[.[] | .Health] | join(",")')
   echo "[$i/24] service health: $STATUS"
   if [ "$(echo $STATUS | tr ',' '\n' | grep -c -v 'healthy')" = "0" ]; then
     echo "✅ All services healthy"
@@ -97,7 +106,7 @@ for i in {1..24}; do
   sleep 5
 done
 
-docker compose --env-file .env.local ps
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local ps
 # expected: api / worker / postgres / redis / frontend が全て Up (healthy)
 ```
 
@@ -117,11 +126,11 @@ docker compose --env-file .env.local ps
 set -o pipefail
 
 # api container 内で alembic upgrade head 実行
-docker compose --env-file .env.local exec api uv run alembic current
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local exec api uv run alembic current
 # expected: revision id (空または未 apply の状態)
 
 # 出力 full 保存 + pipefail で failure mask 防止
-docker compose --env-file .env.local exec api uv run alembic upgrade head 2>&1 | tee /tmp/taskhub-alembic-upgrade.log
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local exec api uv run alembic upgrade head 2>&1 | tee /tmp/taskhub-alembic-upgrade.log
 ALEMBIC_EXIT=$?
 echo "alembic upgrade head exit code: $ALEMBIC_EXIT"
 if [ "$ALEMBIC_EXIT" -ne 0 ]; then
@@ -133,7 +142,7 @@ tail -10 /tmp/taskhub-alembic-upgrade.log
 
 # expected: 18 migrations apply 成功、ALEMBIC_EXIT=0
 
-docker compose --env-file .env.local exec api uv run alembic current
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local exec api uv run alembic current
 # expected: 0018_eval_dataset_versions (head)
 ```
 
@@ -155,11 +164,11 @@ curl -fsS http://127.0.0.1:3000 | head -20
 # expected: HTML response、Next.js 16 marker
 
 # Redis ping
-docker compose --env-file .env.local exec redis redis-cli PING
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local exec redis redis-cli PING
 # expected: PONG
 
 # PostgreSQL connection
-docker compose --env-file .env.local exec postgres psql -U taskmanagedai -d taskmanagedai -c "select version();" | head -3
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local exec postgres psql -U taskmanagedai -d taskmanagedai -c "select version();" | head -3
 # expected: PostgreSQL 16.x
 ```
 
@@ -182,7 +191,7 @@ docker compose --env-file .env.local exec postgres psql -U taskmanagedai -d task
 完了したら以下を記録:
 ```bash
 mkdir -p ~/.taskhub/drills/mac-single-host-smoke/$(date +%Y-%m-%d)
-docker compose --env-file .env.local ps > ~/.taskhub/drills/mac-single-host-smoke/$(date +%Y-%m-%d)/B-services.txt
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local ps > ~/.taskhub/drills/mac-single-host-smoke/$(date +%Y-%m-%d)/B-services.txt
 curl -fsS http://127.0.0.1:8000/healthz > ~/.taskhub/drills/mac-single-host-smoke/$(date +%Y-%m-%d)/B-healthz.json
 echo "LAYER_B_DONE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> ~/.taskhub/drills/mac-single-host-smoke/$(date +%Y-%m-%d)/timing.txt
 ```
