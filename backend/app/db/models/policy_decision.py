@@ -29,6 +29,10 @@ class PolicyDecision(TenantIdMixin, CreatedAtMixin, Base):
             "decision in ('allow','deny','require_approval')",
             name="policy_decisions_ck_decision",
         ),
+        sa.CheckConstraint(
+            "profile_resolved_effect in ('allow','deny','require_approval')",
+            name="policy_decisions_ck_profile_resolved_effect",
+        ),
         sa.ForeignKeyConstraint(
             ["tenant_id"],
             ["tenants.id"],
@@ -47,6 +51,18 @@ class PolicyDecision(TenantIdMixin, CreatedAtMixin, Base):
             name="policy_decisions_actor_fkey",
             ondelete="RESTRICT",
         ),
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "policy_profile"],
+            ["policy_profiles.tenant_id", "policy_profiles.profile_id"],
+            name="policy_decisions_policy_profile_fkey",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "required_review_artifact_id"],
+            ["review_artifacts.tenant_id", "review_artifacts.id"],
+            name="policy_decisions_required_review_artifact_fkey",
+            ondelete="RESTRICT",
+        ),
         sa.UniqueConstraint("tenant_id", "id", name="policy_decisions_uq_tenant_id"),
         sa.Index("policy_decisions_idx_tenant_action_class", "tenant_id", "action_class"),
         sa.Index(
@@ -56,6 +72,17 @@ class PolicyDecision(TenantIdMixin, CreatedAtMixin, Base):
             postgresql_where=sa.text("approval_request_id is not null"),
         ),
         sa.Index("policy_decisions_idx_created_at", "tenant_id", "created_at"),
+        sa.Index(
+            "policy_decisions_idx_tenant_policy_profile",
+            "tenant_id",
+            "policy_profile",
+        ),
+        sa.Index(
+            "policy_decisions_idx_required_review_artifact",
+            "tenant_id",
+            "required_review_artifact_id",
+            postgresql_where=sa.text("required_review_artifact_id is not null"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -73,6 +100,12 @@ class PolicyDecision(TenantIdMixin, CreatedAtMixin, Base):
     actor_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     action_class: Mapped[ActionClass] = mapped_column(sa.Text, nullable=False)
     decision: Mapped[PolicyEffect] = mapped_column(sa.Text, nullable=False)
+    policy_profile: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    profile_resolved_effect: Mapped[PolicyEffect] = mapped_column(sa.Text, nullable=False)
+    required_review_artifact_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=True,
+    )
     reason_code: Mapped[str] = mapped_column(sa.Text, nullable=False)
     policy_version: Mapped[str] = mapped_column(sa.Text, nullable=False)
     input_hash: Mapped[str] = mapped_column(sa.Text, nullable=False)
@@ -86,4 +119,3 @@ class PolicyDecision(TenantIdMixin, CreatedAtMixin, Base):
 
 
 __all__ = ["PolicyDecision"]
-

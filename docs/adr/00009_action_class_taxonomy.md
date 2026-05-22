@@ -11,11 +11,12 @@ related_sprints:
   - "SP-005_provider_adapter"
   - "SP-008_repo_integration"
   - "SP-011_eval_harness"
+  - "SP-014_orchestrator_agent"
 supersedes: null
 superseded_by: null
 ---
 
-最終更新: 2026-05-09 (Sprint 3 Batch 4 R3 review F-010 fix で accepted 化)
+最終更新: 2026-05-22 (SP-014 batch 0c で policy_profile schema / 14 row seed / policy_decisions trace を accepted 実装へ反映)
 
 ## 背景
 
@@ -62,6 +63,31 @@ superseded_by: null
   - 本 ADR は `tool_mutating_gateway_stub` や `runner_mutation_gateway` の実装ではなく、policy action class と approval boundary の正本である。
 - テスト指針: enum 一致、初期 matrix deny (`merge` / `deploy` deny、unknown action / unknown resource_ref deny、unregistered provider deny)、`secret_access` / `provider_call` fail-closed、AC-HARD-01 policy source contract (reason_code が Sprint 5 / 11 trace と整合)、stale invalidation **5 種** (artifact_hash / diff_hash / policy_version / policy_pack_lock / provider_request_fingerprint 変化すべてを `tests/policy/test_approval_stale_invalidation.py` の fixture で検証)、self-approval / delegated actor negative、`merge` / `deploy` 実行不可、`approval_wait_ms` DB 集計、audit event の actor_id / run_id / trace_id / correlation_id / policy_version / reason_code、**schema introspection で `policy_rules` / `approval_requests` / `policy_decisions` 3 table の `tenant_id` 列 / 複合 FK / `id` 単独 FK 不在 (`tests/db/test_schema_introspection.py` 拡張) と cross-tenant negative test (`tests/security/test_tenant_isolation_negative.py` 拡張)** を確認する。
 - ADR Gate Criteria 該当: #4 AI エージェント権限を主、#3 API / event schema と #1 actor binding を補助として扱う。
+
+## SP-014 batch 0c policy_profile accepted update (2026-05-22)
+
+SP-014 batch 0c で、Phase D/E proposed だった `policy_profile` を accepted 実装へ昇格した。action_class 7 種は不変で、auto-allow は action_class 追加ではなく server-owned `policy_profile` と per-action effect matrix で表現する。
+
+### schema / seed
+
+- `policy_profiles(tenant_id, profile_id)` を追加し、許可値は `default` / `low_risk_auto_allow` の 2 種に固定する。
+- `policy_profile_action_effects(tenant_id, profile_id, action_class)` を追加し、`default + low_risk_auto_allow` × ADR-00009 7 action_class = **14 rows exact** を canonical seed とする。
+- `projects.policy_profile` は `text not null default 'default'` とし、`(tenant_id, policy_profile)` → `policy_profiles(tenant_id, profile_id)` の複合 FK で server-owned value を DB 境界へ固定する。
+- 新規 tenant でも project default FK が成立するよう、migration は既存 tenant seed に加えて `tenants_seed_policy_profiles` trigger を追加する。
+
+### policy_decisions trace
+
+`policy_decisions` に以下を追加する:
+
+- `policy_profile text not null default 'default'` (trigger default)
+- `profile_resolved_effect text not null check (profile_resolved_effect in ('allow','deny','require_approval'))`
+- `required_review_artifact_id uuid null` + `(tenant_id, required_review_artifact_id)` → `review_artifacts(tenant_id, id)` FK
+
+Tier 2 auto-allow は `approval_requests` を作らず、Policy Engine が `policy_decisions.profile_resolved_effect='allow'` と review artifact binding を残す。missing profile / missing seed row は fail-closed deny とする。
+
+### server-owned boundary
+
+`ProjectCreate` など caller-visible schema は `policy_profile` を受け取らない。repository layer も dict payload に `policy_profile` が含まれる場合は reject し、project policy profile は server / migration / policy profile resolver のみが決める。
 
 ## 却下案
 

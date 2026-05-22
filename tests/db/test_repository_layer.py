@@ -23,6 +23,7 @@ from backend.app.db.session import create_engine
 from backend.app.repositories.actor import ActorRepository
 from backend.app.repositories.project import ProjectRepository
 from backend.app.repositories.tenant import TenantRepository
+from backend.app.seeds.initial_policy_profiles import seed_initial_policy_profiles
 
 _DEFAULT_DATABASE_URL = (
     "postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test"
@@ -134,6 +135,7 @@ async def _insert_project_fixture(
         ),
         {"tenant_id": tenant_id, "tenant_name": tenant_name},
     )
+    await seed_initial_policy_profiles(session, tenant_id=tenant_id)
     await session.execute(
         text(
             """
@@ -361,7 +363,6 @@ async def test_project_repository_create_injects_matching_tenant_id(
                 "slug": "created-project",
                 "name": "created-project",
                 "status": "active",
-                "policy_profile": None,
                 "metadata": {"rls_ready": True, "source": "repository-test"},
             },
         )
@@ -370,6 +371,7 @@ async def test_project_repository_create_injects_matching_tenant_id(
     assert created.id == TENANT_ONE_CREATED_PROJECT_ID
     assert created.workspace_id == TENANT_ONE_WORKSPACE_ID
     assert created.slug == "created-project"
+    assert created.policy_profile == "default"
     assert created.metadata_["rls_ready"] is True
 
 
@@ -510,4 +512,3 @@ async def test_tenant_repository_create_duplicate_raises_integrity_error(
     assert created_kind is Tenant
     assert created_id == 1
     assert created_name == "tenant-one"
-

@@ -14,12 +14,13 @@ def _rls_ready_metadata() -> dict[str, Any]:
 
 
 class ProjectCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: UUID | None = None
     workspace_id: UUID
     slug: str = Field(min_length=1)
     name: str = Field(min_length=1)
     status: ProjectStatus = "active"
-    policy_profile: str | None = None
     metadata: dict[str, Any] = Field(default_factory=_rls_ready_metadata)
 
 
@@ -32,11 +33,10 @@ class ProjectRead(BaseModel):
     slug: str
     name: str
     status: ProjectStatus
-    policy_profile: str | None
+    policy_profile: str
     metadata: dict[str, Any] = Field(validation_alias="metadata_")
     created_at: datetime
     updated_at: datetime
 
 
 __all__ = ["ProjectCreate", "ProjectRead", "ProjectStatus"]
-

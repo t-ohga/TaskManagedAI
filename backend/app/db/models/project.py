@@ -16,6 +16,7 @@ from backend.app.db.models.base import (
     UpdatedAtMixin,
     rls_ready_metadata,
 )
+from backend.app.domain.policy.profile import PolicyProfileId
 
 ProjectStatus = Literal["active", "archived"]
 
@@ -39,6 +40,12 @@ class Project(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             name="projects_workspace_fkey",
             ondelete="RESTRICT",
         ),
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "policy_profile"],
+            ["policy_profiles.tenant_id", "policy_profiles.profile_id"],
+            name="projects_policy_profile_fkey",
+            ondelete="RESTRICT",
+        ),
         sa.UniqueConstraint("tenant_id", "id", name="projects_uq_tenant_id"),
         sa.UniqueConstraint(
             "tenant_id",
@@ -58,7 +65,12 @@ class Project(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         default="active",
         server_default=sa.text("'active'"),
     )
-    policy_profile: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    policy_profile: Mapped[PolicyProfileId] = mapped_column(
+        sa.Text,
+        nullable=False,
+        default="default",
+        server_default=sa.text("'default'"),
+    )
     metadata_: Mapped[JsonDict] = mapped_column(
         "metadata",
         JSONB,
@@ -69,4 +81,3 @@ class Project(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
 
 
 __all__ = ["Project", "ProjectStatus"]
-
