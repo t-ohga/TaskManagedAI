@@ -3,13 +3,13 @@ import Link from "next/link";
 import { NotificationBadge } from "@/components/notification-badge";
 
 const navItems = [
-  { href: "/dashboard", label: "Dashboard", current: true },
-  { href: "/tickets", label: "Tickets", current: false },
-  { href: "/eval-dashboard", label: "Eval Dashboard", current: false },
-  { href: "/approvals", label: "Approvals", current: false },
-  { href: "/runs", label: "Agent Runs", current: false },
-  { href: "/audit", label: "Audit", current: false },
-  { href: "/settings", label: "Settings", current: false }
+  { href: "/dashboard", label: "ダッシュボード", current: true },
+  { href: "/tickets", label: "チケット", current: false },
+  { href: "/eval-dashboard", label: "評価ダッシュボード", current: false },
+  { href: "/approvals", label: "承認待ち", current: false },
+  { href: "/runs", label: "AI 実行", current: false },
+  { href: "/audit", label: "監査ログ", current: false },
+  { href: "/settings", label: "設定", current: false }
 ] as const;
 
 type NavigationProps = {
@@ -35,7 +35,7 @@ export function Navigation({ actorLabel }: NavigationProps) {
           </div>
         </div>
 
-        <nav aria-label="Admin">
+        <nav aria-label="管理ナビゲーション">
           <ul className="flex flex-wrap items-center gap-1">
             {navItems.map((item) => (
               <li key={item.href}>
@@ -57,7 +57,7 @@ export function Navigation({ actorLabel }: NavigationProps) {
                 className="block rounded-md px-3 py-2 text-sm font-medium text-muted outline-offset-2 hover:bg-slate-50 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 href="/login"
               >
-                Logout
+                ログアウト
               </Link>
             </li>
           </ul>
@@ -66,4 +66,3 @@ export function Navigation({ actorLabel }: NavigationProps) {
     </header>
   );
 }
-

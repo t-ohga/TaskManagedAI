@@ -30,17 +30,17 @@ const VIEWPORTS = [
 ] as const;
 
 const PROTECTED_ROUTES = [
-  { path: "/dashboard", label: "Dashboard" },
-  { path: "/tickets", label: "Tickets" },
+  { path: "/dashboard", label: "ダッシュボード" },
+  { path: "/tickets", label: "チケット" },
   { path: "/approvals", label: "Approval Inbox" },
-  { path: "/runs", label: "Agent Runs" },
-  { path: "/audit", label: "Audit Log" },
-  { path: "/settings", label: "Project Settings" }
+  { path: "/runs", label: "AI 実行" },
+  { path: "/audit", label: "監査ログ" },
+  { path: "/settings", label: "設定" }
 ] as const;
 
 async function expectMainAndNavigationVisible(page: Page): Promise<void> {
   await expect(page.locator("main")).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Admin" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "管理ナビゲーション" })).toBeVisible();
 }
 
 async function expectNoHorizontalOverflow(page: Page): Promise<void> {

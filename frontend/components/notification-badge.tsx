@@ -19,7 +19,7 @@ export async function NotificationBadge() {
       data-testid="notification-badge-link"
     >
       <span aria-hidden="true">🔔</span>
-      <span className="sr-only">Notifications</span>
+      <span className="sr-only">通知</span>
       {count > 0 ? (
         <span
           className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-xs font-bold text-white"
@@ -31,4 +31,3 @@ export async function NotificationBadge() {
     </Link>
   );
 }
-

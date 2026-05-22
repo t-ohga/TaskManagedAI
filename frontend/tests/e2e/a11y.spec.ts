@@ -27,12 +27,12 @@ import { loginAsDev } from "./_helpers/login";
 const A11Y_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] as const;
 
 const PROTECTED_ROUTES = [
-  { path: "/dashboard", label: "Dashboard" },
-  { path: "/tickets", label: "Tickets list" },
+  { path: "/dashboard", label: "ダッシュボード" },
+  { path: "/tickets", label: "チケット一覧" },
   { path: "/approvals", label: "Approval Inbox" },
-  { path: "/runs", label: "Agent Runs" },
-  { path: "/audit", label: "Audit Log" },
-  { path: "/settings", label: "Project Settings" }
+  { path: "/runs", label: "AI 実行" },
+  { path: "/audit", label: "監査ログ" },
+  { path: "/settings", label: "設定" }
 ] as const;
 
 test("a11y BL-0110a: /login satisfies WCAG 2.1 AA (no violations)", async ({

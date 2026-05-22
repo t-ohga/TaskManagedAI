@@ -32,8 +32,8 @@ test("dev login proxies through the backend and shows the authenticated actor", 
 
   await expect(page).toHaveURL(/\/dashboard$/u);
   await expect(page.getByText("human:default")).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Admin" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Dashboard" })).toHaveAttribute(
+  await expect(page.getByRole("navigation", { name: "管理ナビゲーション" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "ダッシュボード" })).toHaveAttribute(
     "aria-current",
     "page"
   );
