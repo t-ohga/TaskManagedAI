@@ -17,7 +17,7 @@ function SubmitButton() {
       disabled={pending}
       type="submit"
     >
-      {pending ? "Checking token" : "Sign in"}
+      {pending ? "確認中..." : "ログイン"}
     </button>
   );
 }
@@ -52,4 +52,3 @@ export function LoginForm({ action, error, nextPath }: LoginFormProps) {
     </form>
   );
 }
-

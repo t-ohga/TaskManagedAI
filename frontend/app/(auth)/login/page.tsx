@@ -12,10 +12,10 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 
 function errorMessage(code: string | undefined): string | null {
   if (code === "invalid-token") {
-    return "Dev login token is invalid.";
+    return "Dev login token が不正です。";
   }
   if (code === "invalid-request") {
-    return "Login request is invalid.";
+    return "ログインリクエストが不正です。";
   }
   return null;
 }
@@ -37,11 +37,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
       <section className="w-full max-w-md rounded-lg border border-line bg-panel p-6 shadow-sm">
         <div className="mb-6">
           <p className="text-sm font-medium text-accent">TaskManagedAI</p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-normal">Dev login</h1>
+          <h1 className="mt-2 text-2xl font-semibold tracking-normal">Dev ログイン</h1>
         </div>
         <LoginForm action={devLoginAction} error={error} nextPath={nextPath} />
       </section>
     </main>
   );
 }
-

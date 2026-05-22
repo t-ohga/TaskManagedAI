@@ -8,10 +8,10 @@ test("login renders the admin dashboard shell and exposes the logout skeleton", 
   await page.goto("/login?next=/dashboard");
 
   await page.getByLabel("Dev login token").fill(readDevLoginToken());
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "ログイン" }).click();
 
   await expect(page).toHaveURL(/\/dashboard$/u);
-  await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "管理ナビゲーション" })).toBeVisible();
 
   const dashboardLink = page.getByRole("link", { name: "ダッシュボード" });
@@ -24,5 +24,5 @@ test("login renders the admin dashboard shell and exposes the logout skeleton", 
   await logoutLink.click();
 
   await expect(page).toHaveURL(/\/dashboard$/u);
-  await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
 });
