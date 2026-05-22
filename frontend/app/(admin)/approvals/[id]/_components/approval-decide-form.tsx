@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
+import { formatApprovalStatus } from "@/lib/i18n/approval-labels";
+
 import {
   decideApprovalAction,
   type DecideActionResult
@@ -36,7 +38,7 @@ export function ApprovalDecideForm({ approvalId, initialStatus }: ApprovalDecide
         .catch((error: unknown) => {
           setResult({
             ok: false,
-            error: error instanceof Error ? error.message : "decision failed"
+            error: error instanceof Error ? error.message : "判定に失敗しました"
           });
         });
     });
@@ -45,15 +47,15 @@ export function ApprovalDecideForm({ approvalId, initialStatus }: ApprovalDecide
   return (
     <form action={submitDecision} className="rounded-lg border border-line bg-panel p-5 shadow-sm">
       <fieldset className="grid gap-4" disabled={!canDecide || isPending}>
-        <legend className="text-base font-semibold">Review decision</legend>
+        <legend className="text-base font-semibold">レビュー判定</legend>
 
         <label className="grid gap-2 text-sm">
-          <span className="font-medium">Rationale</span>
+          <span className="font-medium">理由</span>
           <textarea
             className="min-h-28 resize-y rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             maxLength={2000}
             name="rationale"
-            placeholder="Reason for this decision"
+            placeholder="この判定の理由"
           />
         </label>
 
@@ -64,7 +66,7 @@ export function ApprovalDecideForm({ approvalId, initialStatus }: ApprovalDecide
             type="submit"
             value="approve"
           >
-            Approve
+            承認
           </button>
           <button
             className="rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-danger outline-offset-2 hover:bg-rose-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:text-slate-400"
@@ -72,7 +74,7 @@ export function ApprovalDecideForm({ approvalId, initialStatus }: ApprovalDecide
             type="submit"
             value="reject"
           >
-            Reject
+            却下
           </button>
         </div>
       </fieldset>
@@ -84,10 +86,9 @@ export function ApprovalDecideForm({ approvalId, initialStatus }: ApprovalDecide
           }`}
           role="status"
         >
-          {result.ok ? `Decision saved: ${result.status}` : result.error}
+          {result.ok ? `判定を保存しました: ${formatApprovalStatus(result.status)}` : result.error}
         </p>
       ) : null}
     </form>
   );
 }
-

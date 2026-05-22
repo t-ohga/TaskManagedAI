@@ -32,7 +32,7 @@ const VIEWPORTS = [
 const PROTECTED_ROUTES = [
   { path: "/dashboard", label: "ダッシュボード" },
   { path: "/tickets", label: "チケット" },
-  { path: "/approvals", label: "Approval Inbox" },
+  { path: "/approvals", label: "承認待ち" },
   { path: "/runs", label: "AI 実行" },
   { path: "/audit", label: "監査ログ" },
   { path: "/settings", label: "設定" }
