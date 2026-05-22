@@ -12,12 +12,12 @@ test("login renders the admin dashboard shell and exposes the logout skeleton", 
 
   await expect(page).toHaveURL(/\/dashboard$/u);
   await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Admin" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "管理ナビゲーション" })).toBeVisible();
 
-  const dashboardLink = page.getByRole("link", { name: "Dashboard" });
+  const dashboardLink = page.getByRole("link", { name: "ダッシュボード" });
   await expect(dashboardLink).toHaveAttribute("aria-current", "page");
 
-  const logoutLink = page.getByRole("link", { name: "Logout" });
+  const logoutLink = page.getByRole("link", { name: "ログアウト" });
   await expect(logoutLink).toBeVisible();
   await expect(logoutLink).toHaveAttribute("href", "/login");
 
@@ -26,4 +26,3 @@ test("login renders the admin dashboard shell and exposes the logout skeleton", 
   await expect(page).toHaveURL(/\/dashboard$/u);
   await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible();
 });
-
