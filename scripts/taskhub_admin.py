@@ -1068,6 +1068,9 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
     SP022-T02 Phase 1: signed approval pre-execution gate (default deny) with
     target_host claim 厳密化 (R2-F-003 adopt: CLI --target と record.target_host 両方
     non-empty + strip 後 exact match).
+
+    SP022-T08 carry-over (destructive_lock 拡張): backup と同 pattern で
+    destructive_lock を取得 (migrate も backup/restore と並列実行不可)。
     """
     # gate は --target argparse 必須 check 前に走る (signature check 統合)
     allowed, reason = _run_approval_gate("migrate", args, target_host=args.target)
@@ -1080,18 +1083,55 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
     if not args.target:
         print("ERROR: --target <hostname> is required", file=sys.stderr)  # noqa: T201
         return 2
-    print(  # noqa: T201
-        _skeleton_message(
-            "migrate",
-            details=(
-                f"Would migrate to {args.target} (via {args.via}). "
-                "Real flow: backup -> closed-network transfer -> "
-                "target host で taskhub restore -> 旧 host backup 別 path 保管 "
-                "(6 ヶ月 rollback)."
-            ),
+
+    # SP022-T08 carry-over: destructive_lock 取得 (backup/restore/migrate mutual exclusion)
+    try:
+        from scripts.taskhub_destructive_lock import acquire_destructive_lock
+    except ModuleNotFoundError:
+        _REPO_ROOT = Path(__file__).resolve().parent.parent
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.taskhub_destructive_lock import acquire_destructive_lock  # noqa: E402
+
+    with acquire_destructive_lock("migrate", args.approval_id) as (acquired, _lock_reason, blocker):
+        if not acquired:
+            print(  # noqa: T201
+                f"ERROR: destructive_lock not acquired (blocker={blocker!r})",
+                file=sys.stderr,
+            )
+            return 2
+
+        print(  # noqa: T201
+            _skeleton_message(
+                "migrate",
+                details=(
+                    f"Would migrate to {args.target} (via {args.via}). "
+                    "Real flow: backup -> closed-network transfer -> "
+                    "target host で taskhub restore -> 旧 host backup 別 path 保管 "
+                    "(6 ヶ月 rollback). destructive_lock acquired (SP022-T08 carry-over)."
+                ),
+            )
         )
-    )
-    return 1  # skeleton mode
+        return 1  # skeleton mode
+
+
+def _cmd_kpi_baseline(args: argparse.Namespace) -> int:
+    """`taskhub kpi-baseline --host <hostname> --output <path>` (SP022-T06).
+
+    Mac 単独 light mode (Linux/VPS は物理 host 取得後 SP-022 T09 implementation 着手)。
+    """
+    try:
+        from scripts.taskhub_kpi_baseline import main as kpi_baseline_main
+    except ModuleNotFoundError:
+        _REPO_ROOT = Path(__file__).resolve().parent.parent
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.taskhub_kpi_baseline import main as kpi_baseline_main  # noqa: E402
+
+    return kpi_baseline_main([
+        "--host", args.host,
+        "--output", args.output,
+    ])
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
@@ -1198,6 +1238,8 @@ def _cmd_freeze(args: argparse.Namespace) -> int:
     """`taskhub freeze --reason <text>` skeleton (split-brain prevention、§11.2).
 
     SP022-T02 Phase 1: signed approval pre-execution gate (default deny).
+    SP022-T08 carry-over (destructive_lock 拡張): backup と同 pattern で
+    destructive_lock を取得 (freeze は service stop を伴う destructive operation)。
     """
     allowed, reason_code = _run_approval_gate("freeze", args)
     if not allowed:
@@ -1209,23 +1251,44 @@ def _cmd_freeze(args: argparse.Namespace) -> int:
     if not args.reason:
         print("ERROR: --reason <text> is required", file=sys.stderr)  # noqa: T201
         return 2
-    print(  # noqa: T201
-        _skeleton_message(
-            "freeze",
-            details=(
-                f"Would create signed freeze marker (reason: {args.reason!r}). "
-                "Real flow: service stop + signed freeze marker file 生成 -> "
-                "再活性化は明示の `taskhub thaw` のみ (auto thaw なし、§11.2)."
-            ),
+
+    # SP022-T08 carry-over: destructive_lock 取得
+    try:
+        from scripts.taskhub_destructive_lock import acquire_destructive_lock
+    except ModuleNotFoundError:
+        _REPO_ROOT = Path(__file__).resolve().parent.parent
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.taskhub_destructive_lock import acquire_destructive_lock  # noqa: E402
+
+    with acquire_destructive_lock("freeze", args.approval_id) as (acquired, _lock_reason, blocker):
+        if not acquired:
+            print(  # noqa: T201
+                f"ERROR: destructive_lock not acquired (blocker={blocker!r})",
+                file=sys.stderr,
+            )
+            return 2
+
+        print(  # noqa: T201
+            _skeleton_message(
+                "freeze",
+                details=(
+                    f"Would create signed freeze marker (reason: {args.reason!r}). "
+                    "Real flow: service stop + signed freeze marker file 生成 -> "
+                    "再活性化は明示の `taskhub thaw` のみ (auto thaw なし、§11.2). "
+                    "destructive_lock acquired (SP022-T08 carry-over)."
+                ),
+            )
         )
-    )
-    return 1  # skeleton mode
+        return 1  # skeleton mode
 
 
 def _cmd_thaw(args: argparse.Namespace) -> int:
     """`taskhub thaw [--decommission-target]` skeleton (§670 2-party-control).
 
     SP022-T02 Phase 1: signed approval pre-execution gate (default deny).
+    SP022-T08 carry-over (destructive_lock 拡張): backup と同 pattern で
+    destructive_lock を取得 (thaw は service up を伴う state mutation operation)。
     """
     allowed, reason_code = _run_approval_gate("thaw", args)
     if not allowed:
@@ -1234,24 +1297,43 @@ def _cmd_thaw(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    flag = (
-        " (--decommission-target に伴う target active marker 削除)"
-        if args.decommission_target
-        else ""
-    )
-    print(  # noqa: T201
-        _skeleton_message(
-            "thaw",
-            details=(
-                f"Would verify thaw preflight{flag}. "
-                "Real flow: target active.signed marker + migration_epoch + "
-                "source_host_id + decommission marker verify -> 同時 active なら "
-                "default deny (再活性化は --decommission-target + 別 actor approval 必要)、"
-                "OK なら freeze marker 解除 + service up."
-            ),
+
+    # SP022-T08 carry-over: destructive_lock 取得
+    try:
+        from scripts.taskhub_destructive_lock import acquire_destructive_lock
+    except ModuleNotFoundError:
+        _REPO_ROOT = Path(__file__).resolve().parent.parent
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.taskhub_destructive_lock import acquire_destructive_lock  # noqa: E402
+
+    with acquire_destructive_lock("thaw", args.approval_id) as (acquired, _lock_reason, blocker):
+        if not acquired:
+            print(  # noqa: T201
+                f"ERROR: destructive_lock not acquired (blocker={blocker!r})",
+                file=sys.stderr,
+            )
+            return 2
+
+        flag = (
+            " (--decommission-target に伴う target active marker 削除)"
+            if args.decommission_target
+            else ""
         )
-    )
-    return 1  # skeleton mode
+        print(  # noqa: T201
+            _skeleton_message(
+                "thaw",
+                details=(
+                    f"Would verify thaw preflight{flag}. "
+                    "Real flow: target active.signed marker + migration_epoch + "
+                    "source_host_id + decommission marker verify -> 同時 active なら "
+                    "default deny (再活性化は --decommission-target + 別 actor approval 必要)、"
+                    "OK なら freeze marker 解除 + service up. "
+                    "destructive_lock acquired (SP022-T08 carry-over)."
+                ),
+            )
+        )
+        return 1  # skeleton mode
 
 
 def _cmd_active_registry(args: argparse.Namespace) -> int:
@@ -1624,6 +1706,21 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub_age_rotate.set_defaults(func=_cmd_age_rotate)
     _add_signed_approval_args(sub_age_rotate)
+
+    # SP022-T06 KPI baseline (Mac 単独 light mode)
+    sub_kpi_baseline = subparsers.add_parser(
+        "kpi-baseline",
+        help="compute KPI baseline for local host (SP-022 T06、Mac 単独 light mode)",
+    )
+    sub_kpi_baseline.add_argument(
+        "--host", type=str, required=True,
+        help="logical host id (e.g. t-ohga-mac / -vps / -linux)",
+    )
+    sub_kpi_baseline.add_argument(
+        "--output", type=str, required=True,
+        help="output JSON path (e.g. baselines/mac.json)",
+    )
+    sub_kpi_baseline.set_defaults(func=_cmd_kpi_baseline)
 
     sub_verify = subparsers.add_parser(
         "verify",

@@ -1,0 +1,88 @@
+{
+  "schema_version": "1",
+  "host_id": "t-ohga-mac",
+  "computed_at": "2026-05-22T00:08:56.910023Z",
+  "host_metadata": {
+    "host_id": "t-ohga-mac",
+    "platform_system": "Darwin",
+    "platform_release": "25.5.0",
+    "python_version": "3.12.11",
+    "machine": "arm64"
+  },
+  "kpi_rollup": {
+    "kpi_count": 5,
+    "met_count": 4,
+    "failed_count": 1,
+    "p0_accept": true,
+    "fail_tolerance": 1,
+    "entries": [
+      {
+        "kpi_id": "AC-KPI-01",
+        "metric_value": 0.75,
+        "threshold_met": true,
+        "threshold_reason": "threshold_met"
+      },
+      {
+        "kpi_id": "AC-KPI-02",
+        "metric_value": 1.0,
+        "threshold_met": true,
+        "threshold_reason": "threshold_met"
+      },
+      {
+        "kpi_id": "AC-KPI-03",
+        "metric_value": 7200000.0,
+        "threshold_met": true,
+        "threshold_reason": "threshold_met"
+      },
+      {
+        "kpi_id": "AC-KPI-04",
+        "metric_value": 0.6,
+        "threshold_met": false,
+        "threshold_reason": "below_threshold"
+      },
+      {
+        "kpi_id": "AC-KPI-05",
+        "metric_value": 0.19999999999999998,
+        "threshold_met": true,
+        "threshold_reason": "threshold_met"
+      }
+    ]
+  },
+  "corpus_load_results": [
+    {
+      "kpi_id": "AC-KPI-01",
+      "dataset_key": "acceptance_pass_rate",
+      "dataset_version": "v2026.05.17-skeleton",
+      "fixture_count": 1
+    },
+    {
+      "kpi_id": "AC-KPI-02",
+      "dataset_key": "time_to_merge",
+      "dataset_version": "v2026.05.17-skeleton",
+      "fixture_count": 1
+    },
+    {
+      "kpi_id": "AC-KPI-03",
+      "dataset_key": "approval_wait_ms",
+      "dataset_version": "v2026.05.08-skeleton",
+      "fixture_count": 1
+    },
+    {
+      "kpi_id": "AC-KPI-04",
+      "dataset_key": "citation_coverage",
+      "dataset_version": "v2026.05.09-skeleton",
+      "fixture_count": 1
+    },
+    {
+      "kpi_id": "AC-KPI-05",
+      "dataset_key": "cost_per_completed_task",
+      "dataset_version": "ac-kpi-05-v2026.05.09-skeleton",
+      "fixture_count": 1
+    }
+  ],
+  "baseline_metadata": {
+    "sut_results_provided": false,
+    "anti_gaming_disclaimer": "Baseline values reflect corpus fixture data only (no SUT cross-check). SUT-cross-check baseline は SP022-T08 batch 5+6 + SP-013 SUT integration 後に取得。",
+    "scope": "mac_only"
+  }
+}
