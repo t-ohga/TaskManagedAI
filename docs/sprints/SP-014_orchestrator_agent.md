@@ -1,15 +1,15 @@
 ---
 id: "SP-014_orchestrator_agent"
 type: "heavy"
-status: "draft"
+status: "ready"
 sprint_no: 14
 created_at: "2026-05-10"
-updated_at: "2026-05-10"
+updated_at: "2026-05-22"
 target_days: 4
 max_days: 6
-adr_refs: []
+adr_refs:
+  - "[ADR-00014](../adr/00014_multi_agent_orchestration.md) # accepted 2026-05-22 (PR #109)、SP-013 batch 0 完遂で本 Sprint kickoff prerequisite satisfied"
 planned_adr_refs:
-  - "[ADR-00014](../adr/00014_multi_agent_orchestration.md) # SP-013 で accepted、本 Sprint で実装拡張"
   - "[ADR-00009 update](../adr/00009_action_class_taxonomy.md) # policy_profile schema を本 Sprint で追加 (Criteria #4)"
   - "[Tool Registry network ADR (新規 P0.1)](../adr/00021_tool_registry_network_enum.md) # 本 Sprint で起票 + accepted (Criteria #5)"
 related_sprints:
@@ -23,9 +23,16 @@ risks:
   - "PE-F-014 (SecretBroker 6 case 個別 reason_code)"
   - "PE-F-015 (KPI rollup の recursive CTE / dedupe)"
   - "PE-F-016 (policy_profile_action_effects seed の網羅性)"
+kickoff_readiness:
+  prerequisite_sp013_batch_0: "✅ satisfied (PR #133-#140、Multi-Agent Foundation core schema 完成、2026-05-22)"
+  prerequisite_agent_runs_lease_columns: "✅ satisfied (PR #136、orchestrator_lease_* 8 columns 完備)"
+  prerequisite_check_project_role_trigger: "✅ satisfied (PR #138 → #140、PE-F-012 DB-level defense + project + standard role accept)"
+  prerequisite_standard_role_taxonomy: "✅ satisfied (10 standard role + matrix validator + immutable seed、PR #133-#137/#134)"
+  kickoff_blocker: "なし"
+  recommended_execution: "codex-all-loops mode=code 委譲 (heavy Sprint Pack、scope 大、Codex first 実装で品質担保)"
 ---
 
-最終更新: 2026-05-10
+最終更新: 2026-05-22 (kickoff readiness attestation、SP-013 batch 0 完遂で prerequisite 全件 satisfied、draft → ready 昇格)
 
 ## 目的
 
