@@ -58,7 +58,7 @@ key invariant:
 - list endpoint: `GET /api/v1/agent-runs?status=*&role=*`
 - detail endpoint: `GET /api/v1/agent-runs/{id}` (status + role + lease + last_progress_at 表示)
 - AgentRun 16 状態 全件表示対応 (`agentrun-state-machine.md` §1)
-- AgentRunEvent timeline 表示 (`event_type` 22 件、後の P0.1 で 37 件へ)
+- AgentRunEvent timeline 表示 (`event_type` は SP-014 完遂後の current 37 件に対応)
 - resume/cancel mutation は **defer** (SP-018)
 
 ### 4.3 batch 3: Audit page wiring

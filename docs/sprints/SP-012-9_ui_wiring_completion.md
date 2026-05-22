@@ -12,11 +12,11 @@ adr_refs: []
 planned_adr_refs: []
 related_sprints:
   - "SP-009_p0_ui_pack"         # Sprint 9 carry-over (batch 2-5) 完遂
-  - "SP-011_eval_harness"       # Sprint 11 BL-0163 (Ticket detail API) carry-over
-  - "SP-012-10_dogfooding_seed" # 後続: seed 投入で初期 visualize 完成
-  - "SP-012-8_ui_i18n_japanese" # 後続: wiring + seed 完了後の i18n 実装
+  - "SP-011_eval_harness"       # Sprint 11 BL-0163 (Ticket detail API) carry-over closure source
+  - "SP-012-10_dogfooding_seed" # seed 投入で初期 visualize 完成
+  - "SP-012-8_ui_i18n_japanese" # wiring + seed 完了後の i18n 実装
 risks:
-  - "Tickets backend API endpoint 未実装 (Sprint 9 / 11 carry-over)、新規実装必要"
+  - "Historical Tickets backend API carry-over は closure 済み。残 drift は Review 章で current state を正本化"
   - "Server Component で session 経由 tenant_id / project_id resolve (caller-supplied 禁止 invariant 維持)"
   - "Zod schema (frontend) と Pydantic schema (backend) の drift 検証"
   - "P0 UI Pack (SP-009) の skeleton path は force-dynamic + no-cache、wiring 後の SSR cache 整合"
@@ -34,14 +34,14 @@ P0 UI Pack (SP-009、Sprint 9 batch 1) で skeleton として実装された Tic
 
 - P0 UI Pack (SP-009) では route 構造 + layout + Zod schema draft のみ実装、実 API wiring は **Sprint 9 batch 2-5 で carry-over** 設計
 - 実 P0 期間中 (Sprint 9-12) は backend Hard Gate + KPI + Eval に focus、UI wiring は P0 Exit gate 外で defer
-- 現状 (PR #109 P0 Exit declaration 後):
+- 着手時 snapshot (PR #109 P0 Exit declaration 後、後続 task-04 Review で closure 済み):
   - **Dashboard**: backend health real fetch ✅、frontend health は固定 placeholder ❌
-  - **Tickets**: 完全 static skeleton (`listTickets` API call なし)、backend route も未実装 (Sprint 9 batch 2 + Sprint 11 BL-0163 carry-over)
+  - **Tickets**: 着手時は static skeleton / backend route 未実装だったが、後続 SP-012 batch で project-bound route + frontend wiring を closure 済み
   - **Approvals**: skeleton 想定、backend `approval_inbox.py` 既存 → frontend wiring のみ必要
   - **Agent Runs**: skeleton 想定、backend `agent_runs.py` 既存 → frontend wiring のみ必要
-  - **Audit Log**: skeleton 想定、backend (audit endpoint) 既存 → frontend wiring 必要
+  - **Audit Log**: 着手時は skeleton 想定、task-04 で read-only audit endpoint + frontend wiring を closure 済み
   - **Project Settings**: skeleton 想定、backend (projects) 部分実装 → frontend wiring 必要
-- 本 Sprint で 5 page 全件 wiring 完成 + Dashboard frontend health real fetch fix
+- 本 Sprint で 5 page 全件 wiring 完成 + Dashboard frontend health real fetch fix。Tickets / health 系は先行 SP-012 batch で閉じ、task-04 は残 Approvals / Agent Runs / Audit / Settings を close した。
 
 ## 対象外
 
@@ -57,8 +57,8 @@ P0 UI Pack (SP-009、Sprint 9 batch 1) で skeleton として実装された Tic
 - **Codex-first 実装経路** (`.claude/rules/codex-usage-policy.md` §14): UI 実装は **codex-all-loops mode=code 委譲**、Claude は batch 分割 + adopt/reject/defer 判定 + 品質ゲート
 - **Server Component default** (Next.js 16 App Router): tenant_id / project_id は session から resolve、caller-supplied 経路なし (`.claude/rules/server-owned-boundary.md` §1 遵守)
 - **Zod schema strict validation**: backend Pydantic response を frontend で再 validate、unknown field drop、Sprint 11 で予告された drift 検証も同 batch 内で実施
-- **Tickets backend route 新規実装**: Sprint 9 carry-over の最大 gap、`GET /api/v1/tickets` + `GET /api/v1/tickets/{id}` を新規実装 (既存 ticket ORM / repository / schema 活用)
-- **既存 backend API の frontend wiring**: Approvals / Agent Runs / Audit / Notifications は backend 完備 → frontend listXxx() call + page render 実装で完遂
+- **Tickets backend route 新規実装**: Sprint 9 carry-over の最大 gap、`GET /api/v1/projects/{project_id}/tickets` + `GET /api/v1/projects/{project_id}/tickets/{ticket_id}` を実装済み (既存 ticket ORM / repository / schema 活用)
+- **backend API の frontend wiring**: Approvals は既存 backend を利用、Agent Runs / Audit / Settings project list は task-04 で read-only backend route を追加して frontend listXxx() call + page render 実装で完遂
 - **Dashboard frontend health real fetch**: 現状 hardcoded "ok" 表示を `/api/healthz` (Next.js own route) 実 fetch で置換
 - **AgentRun 16 状態 + blocked_reason 3 種分離表示**: status と blocked_reason は別 dimension 表示 (SP-009 §scope 既規定)
 - **payload_data_class / allowed_data_class 別 dimension**: caller 入力でなく Server Component 内 resolve、表示も別 dimension (SP-009 §scope 既規定)
@@ -69,8 +69,8 @@ P0 UI Pack (SP-009、Sprint 9 batch 1) で skeleton として実装された Tic
 
 | BL | 内容 | 想定 effort |
 |---|---|---|
-| BL-UIW-001 | `GET /api/v1/tickets` backend route 新規 (listing、tenant_id + project_id binding + pagination) | 0.6 day |
-| BL-UIW-002 | `GET /api/v1/tickets/{id}` backend route 新規 (detail、Acceptance Criteria + Evidence + AgentRun status 含む) | 0.6 day |
+| BL-UIW-001 | `GET /api/v1/projects/{project_id}/tickets` backend route 新規 (listing、tenant_id + project_id binding + pagination) | 0.6 day |
+| BL-UIW-002 | `GET /api/v1/projects/{project_id}/tickets/{ticket_id}` backend route 新規 (detail、Acceptance Criteria + Evidence + AgentRun status 含む) | 0.6 day |
 | BL-UIW-003 | `frontend/lib/api/tickets.ts` の `loadTicketDraft()` (現 pending) を実 fetch + Zod validate に実装 | 0.3 day |
 | BL-UIW-004 | `frontend/app/(admin)/tickets/page.tsx` + `[id]/page.tsx` を実データ表示に置換 | 0.5 day |
 
@@ -86,7 +86,7 @@ P0 UI Pack (SP-009、Sprint 9 batch 1) で skeleton として実装された Tic
 | BL | 内容 | 想定 effort |
 |---|---|---|
 | BL-UIW-007 | `frontend/lib/api/agent-runs.ts` を実 fetch (backend `agent_runs.py` 既存)、AgentRun 16 状態 + blocked_reason 3 種分離 | 0.3 day |
-| BL-UIW-008 | `frontend/app/(admin)/agent-runs/page.tsx` + `[id]/page.tsx` を timeline 表示 + ContextSnapshot 10 列 view に wiring | 0.5 day |
+| BL-UIW-008 | `frontend/app/(admin)/runs/page.tsx` + `[id]/page.tsx` を timeline 表示 + ContextSnapshot metadata view に wiring | 0.5 day |
 
 ### must_ship 4: Audit Log frontend wiring (backend 既存)
 
@@ -126,7 +126,7 @@ P0 UI Pack (SP-009、Sprint 9 batch 1) で skeleton として実装された Tic
 
 - [ ] 全 5 page (Tickets / Approvals / Agent Runs / Audit / Settings) が実 backend API から data fetch + 表示
 - [ ] Dashboard frontend health card が `/api/healthz` 実 fetch (hardcoded "ok" 排除)
-- [ ] Tickets backend route 2 件 (`GET /api/v1/tickets` + `GET /api/v1/tickets/{id}`) 新規実装 + contract test PASS
+- [x] Tickets backend route 2 件 (`GET /api/v1/projects/{project_id}/tickets` + `GET /api/v1/projects/{project_id}/tickets/{ticket_id}`) 新規実装 + contract test PASS
 - [ ] Zod schema strict validation で unknown field reject、type mismatch reject
 - [ ] Server Component で tenant_id / project_id を session 経由 resolve (caller-supplied なし)
 - [ ] AgentRun 16 状態 + blocked_reason 3 種 + payload_data_class / allowed_data_class が別 dimension 表示

@@ -267,7 +267,7 @@ policy_decisions 列拡張は **行わない** (Sprint 5.5 で additive only 維
 
 ### 関連 ADR (Sprint 5.5)
 
-- ADR-00004 update §Sprint 5.5: event_type 22 → 25 拡張 (`repair_exhausted` / `trust_level_promoted` / `trust_level_promotion_denied`)、`repair_exhausted` terminal 強制、artifacts.trust_level 列追加、event_type numbering 整合 (Phase D-E は 26-34 にシフト)
+- ADR-00004 update §Sprint 5.5: event_type 22 → 25 拡張 (`repair_exhausted` / `trust_level_promoted` / `trust_level_promotion_denied`)、`repair_exhausted` terminal 強制、artifacts.trust_level 列追加。current final numbering は Sprint 6 batch 2 と SP-014 を経て 28 → 37 に同期済み。
 - ADR-00006 (SecretBroker): repair retry context redaction で `assert_no_raw_secret` を retry prompt builder で必須実行 (Sprint 5.5 で延長)
 - ADR-00010 (Provider Compliance Matrix v2): payload_data_class 算出を Input Trust Layer 側に集約 (Sprint 5.5 で延長、Sprint 5 で確立した caller-supplied 禁止 invariant 継続)
 - ADR-00002 (DB schema): artifacts.trust_level 列追加は ADR-00002 の延長として扱う (de facto accepted via Sprint 2 完了)
@@ -323,7 +323,7 @@ ADR-00025 の **accepted 化は Phase 5 Hook Trust Boundary 完成 + ADR-00012 a
 
 | # | source | path | enforcement |
 |---:|---|---|---|
-| 1 | DB CHECK constraint | `migrations/versions/0005_policy_rules.py` (policy_rules、Sprint 3) + `migrations/versions/0006_approval_policy_decisions.py` (approval_requests + policy_decisions、Sprint 3) + future `migrations/versions/00NN_p0_1_event_type_37.py` (P0.1 SP-013 prerequisite Phase F-0) | `policy_rules.action_class` / `approval_requests.action_class` / `policy_decisions.action_class` の CHECK constraint で 7 種に限定 |
+| 1 | DB CHECK constraint | `migrations/versions/0005_policy_rules.py` (policy_rules、Sprint 3) + `migrations/versions/0006_approval_policy_decisions.py` (approval_requests + policy_decisions、Sprint 3) | `policy_rules.action_class` / `approval_requests.action_class` / `policy_decisions.action_class` の CHECK constraint で 7 種に限定 |
 | 2 | SQLAlchemy CheckConstraint | `backend/app/db/models/policy_rule.py` / `approval_request.py` / `policy_decision.py` | ORM レベルで再 enforce |
 | 3 | Python Literal | `backend/app/domain/policy/action_class.py` | `ACTION_CLASSES: Final[frozenset[str]]` で型レベル enforce |
 | 4 | Pydantic Field validator | **P0 完成時に追加予定** (`backend/app/schemas/policy_rule.py` / `approval_request.py` / `policy_decision.py` を新規起票、現状 `backend/app/schemas/` 配下に該当 schema 未実装、F-PR12-003 反映) | API request body validation で reject、P0 完成時に SP-003 acceptance spec として追加 |

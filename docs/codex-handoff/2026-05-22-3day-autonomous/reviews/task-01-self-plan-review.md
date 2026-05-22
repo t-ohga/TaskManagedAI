@@ -33,7 +33,7 @@
 | SP014-PLAN-R2-F003 | MEDIUM | role boundary | Existing DB trigger permits project-scoped standard roles. If orchestrator lease code accepts any `role_scope` without checking `role_id`, non-orchestrator agent runs could renew/kill leases. | adopt | Lease/progress services must require `AgentRun.role_id == "orchestrator"` for orchestrator-owned operations. |
 | SP014-PLAN-R2-F004 | MEDIUM | terminal mutation | Failover/progress/kill logic could mutate terminal child runs if queries do not exclude terminal statuses. | adopt | All state mutation queries must exclude terminal states (`completed/failed/cancelled/provider_refused/repair_exhausted`). |
 | SP014-PLAN-R2-F005 | MEDIUM | idempotency / event duplication | Lease renew retry can append duplicate events if the retry happens after a successful update but before client observes success. | adopt | Use deterministic idempotency keys for service operations (`orchestrator-lease-renew:<run_id>:<new_token_hash>` etc.) where operation identity is known. |
-| SP014-PLAN-R2-F006 | LOW | handoff wording drift | Several docs still say `event_type 22 -> 31`; current implementation has 28 event types and SP-014 adds 9 more. | adopt | Implementation and tests use 28 -> 37; completion report notes the wording drift. |
+| SP014-PLAN-R2-F006 | LOW | handoff wording drift | Several docs still used the old 31-type target; current implementation has 28 event types and SP-014 adds 9 more. | adopt | Implementation and tests use 28 -> 37; completion report notes the wording drift. |
 
 ## readiness gate
 

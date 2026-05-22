@@ -52,7 +52,7 @@ gh pr list --state merged --search "merged:>=2026-05-23" --json number,title,hea
 # docker compose 5 services healthy
 docker compose ps
 
-# alembic head (task-01 完了で 00NN_p0_1_orchestrator.py + 00NN_p0_1_policy_profile.py + 00NN_p0_1_event_type_37.py まで進んでいるはず)
+# alembic head (task-01 完了で 0025_sp014_event_type_37.py + 0026/0027/0028 SP-014 migrations まで進んでいるはず)
 docker compose exec postgres psql -U taskmanagedai -d taskmanagedai -c \
   "SELECT version_num FROM alembic_version"
 
@@ -76,7 +76,7 @@ cd frontend && pnpm vitest run
 - [ ] orchestrator lease/failover stress test PASS
 - [ ] Tier 2 で agent decider 経路残存しない (4 重防御 test PASS)
 - [ ] SecretBroker 6 negative case 個別 reason_code (cross-source-enum-integrity §1 5+ source 整合)
-- [ ] event_type 22→31 拡張 5+ source 整合確認 (`SELECT COUNT(DISTINCT event_type) FROM agent_run_events` ≤ 37)
+- [ ] event_type 28→37 拡張 5+ source 整合確認 (`SELECT COUNT(DISTINCT event_type) FROM agent_run_events` ≤ 37)
 - [ ] ADR-00009 update accepted + Tool Registry network ADR 新規 accepted
 - [ ] Sprint Pack SP-014 frontmatter `status: completed` + Review 章
 

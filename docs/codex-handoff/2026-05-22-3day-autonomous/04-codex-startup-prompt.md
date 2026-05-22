@@ -23,7 +23,7 @@
 - BLOCKED で停止したら STOPPED.md を起票して Claude に通知
 
 【実装方針】
-- batch 0a (T01 orchestrator service) → batch 0b (T02 review_artifacts 4 重防御) → batch 0c (T03+T04 policy_profile + ADR-00009 update accepted) → batch 0d (T05 Tool Registry network enum + 新規 ADR) → batch 0e (T06 remote_agent_gateway stub) → batch 0f (T07+T08+T09 KPI rollup + SecretBroker negative + event_type 22→31)
+- batch 0a (T01 orchestrator service + event_type 28→37) → batch 0b (T02 review_artifacts 4 重防御) → batch 0c (T03+T04 policy_profile + ADR-00009 update accepted) → batch 0d (T05 Tool Registry network enum + 新規 ADR) → batch 0e (T06 remote_agent_gateway stub) → batch 0f (T07+T08 KPI rollup + SecretBroker negative)
 - 各 batch ごと PR 起票 + admin bypass merge (CI billing-blocked、00-codex-behavior-guide.md §4.3 6 条件 fulfill 必須)
 - code change PR は codex_pr_full_review.sh で baseline 内容確認後、findings 採否判定 (adopt/reject/defer)
 
