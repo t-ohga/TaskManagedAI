@@ -22,6 +22,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import stat
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -37,6 +38,9 @@ LockReasonCode = Literal[
     "destructive_lock_payload_error",
 ]
 
+_LOCK_FILE_NAME = "destructive-operation.lock"
+_STALE_LOCK_MAX_AGE_SEC = 60 * 60
+
 
 def _lock_dir() -> Path:
     """ADV R1 F-002 adopt: env override で multi-user host 対応."""
@@ -44,6 +48,94 @@ def _lock_dir() -> Path:
     if lock_dir_str:
         return Path(lock_dir_str)
     return Path.home() / ".taskhub" / "locks"
+
+
+def _pid_exists(pid: int) -> bool:
+    """Return whether pid currently exists; permission-denied means it may exist."""
+    if pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _read_lock_payload_from_fd(fd: int) -> dict[str, object] | None:
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        data = os.read(fd, 4096).decode("utf-8")
+        payload = json.loads(data) if data.strip() else None
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _payload_process_absent(payload: dict[str, object] | None) -> bool:
+    if payload is None:
+        return False
+    pid = payload.get("pid")
+    if not isinstance(pid, int):
+        return False
+    return not _pid_exists(pid)
+
+
+def cleanup_stale_destructive_lock(
+    lock_path: Path,
+    *,
+    max_age_sec: int = _STALE_LOCK_MAX_AGE_SEC,
+    now: float | None = None,
+) -> bool:
+    """Remove an old unlocked destructive lock only when its recorded pid is absent.
+
+    This intentionally does nothing for recent files, active pids, unreadable payloads,
+    symlinks, non-regular files, or files that are still flock-held.
+    """
+    current_time = time.time() if now is None else now
+    try:
+        st = os.lstat(str(lock_path))
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+    if not stat.S_ISREG(st.st_mode):
+        return False
+    if current_time - st.st_mtime < max_age_sec:
+        return False
+
+    try:
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_NOFOLLOW)
+    except OSError:
+        return False
+    locked = False
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        except OSError:
+            return False
+        locked = True
+        payload = _read_lock_payload_from_fd(fd)
+        if not _payload_process_absent(payload):
+            return False
+        try:
+            os.unlink(lock_path)
+        except OSError:
+            return False
+        return True
+    finally:
+        if locked:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 @contextmanager
@@ -77,7 +169,8 @@ def acquire_destructive_lock(
         yield False, "destructive_lock_dir_permission", None
         return
 
-    lock_path = lock_dir / "destructive-operation.lock"
+    lock_path = lock_dir / _LOCK_FILE_NAME
+    cleanup_stale_destructive_lock(lock_path)
     flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
     try:
         fd = os.open(str(lock_path), flags, 0o600)
@@ -103,13 +196,7 @@ def acquire_destructive_lock(
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             # busy — payload を read してから caller に返す
-            blocker: dict[str, object] | None
-            try:
-                os.lseek(fd, 0, os.SEEK_SET)
-                data = os.read(fd, 4096).decode("utf-8")
-                blocker = json.loads(data) if data.strip() else None
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                blocker = None
+            blocker = _read_lock_payload_from_fd(fd)
             yield False, "destructive_lock_busy", blocker
             return
 
@@ -154,4 +241,5 @@ def acquire_destructive_lock(
 __all__ = [
     "LockReasonCode",
     "acquire_destructive_lock",
+    "cleanup_stale_destructive_lock",
 ]

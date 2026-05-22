@@ -272,6 +272,8 @@ class BackupOptions:
     # ADV2 R5 F-002 + R6 F-001 adopt: payload source TOCTOU 防御 (sops_env + artifacts_dir)
     verified_sops_env_execution_input: Path | None = None
     verified_sops_env_metadata_snapshot: dict[str, int | str] | None = None
+    # SP-022-1 batch 2: include requested but source was absent during destructive lock.
+    sops_env_missing_at_lock: bool = False
     verified_artifacts_staging_dir: Path | None = None
     verified_artifacts_manifest_sha256: str | None = None
     # ADV2 R6 F-002 adopt: source artifacts_dir realpath snapshot (immutable bind)
@@ -1355,6 +1357,7 @@ def compute_backup_runtime_binding_fingerprint(
     private helper、外部から直接呼出禁止 (compute_full_backup_runtime_binding_fingerprint 経由のみ)。
     """
     realpath = options.target_compose_file_path.resolve(strict=True)
+    sops_env_included = options.include_sops_env and sops_env_sha256 is not None
     context = {
         "target_compose_project_name": options.target_compose_project_name,
         "target_compose_file_realpath": str(realpath),
@@ -1368,9 +1371,9 @@ def compute_backup_runtime_binding_fingerprint(
         ),
         "artifacts_dir_manifest_sha256": artifacts_dir_manifest_sha256,
         "sops_env_path_realpath": (
-            str(options.sops_env_path.resolve(strict=True)) if options.include_sops_env else None
+            str(options.sops_env_path.resolve(strict=True)) if sops_env_included else None
         ),
-        "sops_env_sha256": sops_env_sha256 if options.include_sops_env else None,
+        "sops_env_sha256": sops_env_sha256 if sops_env_included else None,
         # ADV2 R5 F-001: env_file canonical 必須化
         "env_file_realpath": (
             str(options.env_file_path.resolve(strict=True)) if options.env_file_path is not None else None
@@ -1384,6 +1387,21 @@ def compute_backup_runtime_binding_fingerprint(
     }
     canonical = json.dumps(context, separators=(",", ":"), sort_keys=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _optional_sops_env_sha256_for_issue(options: BackupOptions) -> str | None:
+    """Return SOPS env sha256 for issue fingerprint, or None when optional source is absent."""
+    if not options.include_sops_env:
+        return None
+    try:
+        return hashlib.sha256(options.sops_env_path.read_bytes()).hexdigest()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise BackupRuntimeError(
+            "backup_payload_source_unreadable",
+            detail=f"sops_env read failed during issue fingerprint: {type(exc).__name__}",
+        ) from None
 
 
 def _redact_compose_env_values(yaml_text: str) -> str:
@@ -1485,10 +1503,7 @@ def compute_full_backup_runtime_binding_fingerprint(
                 detail="source_env_file_path passed but options.env_file_path is None (invariant violation)",
             )
         compose_file_sha256 = hashlib.sha256(source_compose_path.read_bytes()).hexdigest()
-        sops_env_sha256 = (
-            hashlib.sha256(options.sops_env_path.read_bytes()).hexdigest()
-            if options.include_sops_env else None
-        )
+        sops_env_sha256 = _optional_sops_env_sha256_for_issue(options)
         env_file_sha256 = (
             hashlib.sha256(source_env_file_path.read_bytes()).hexdigest()
             if source_env_file_path is not None else None
@@ -1514,18 +1529,22 @@ def compute_full_backup_runtime_binding_fingerprint(
         # ADV2 R6 F-001: verified sops_env copy から計算 (source path 再読込禁止)
         if options.include_sops_env:
             if options.verified_sops_env_execution_input is None:
-                raise BackupRuntimeError(
-                    "backup_compose_binding_not_initialized",
-                    detail="verified_sops_env_execution_input must be bound before redeem fingerprint",
+                if options.sops_env_missing_at_lock:
+                    sops_env_sha256 = None
+                else:
+                    raise BackupRuntimeError(
+                        "backup_compose_binding_not_initialized",
+                        detail="verified_sops_env_execution_input must be bound before redeem fingerprint",
+                    )
+            else:
+                _verify_metadata_snapshot(
+                    options.verified_sops_env_execution_input,
+                    options.verified_sops_env_metadata_snapshot,
+                    tamper_reason="backup_payload_source_tampered",
                 )
-            _verify_metadata_snapshot(
-                options.verified_sops_env_execution_input,
-                options.verified_sops_env_metadata_snapshot,
-                tamper_reason="backup_payload_source_tampered",
-            )
-            sops_env_sha256 = hashlib.sha256(
-                options.verified_sops_env_execution_input.read_bytes()
-            ).hexdigest()
+                sops_env_sha256 = hashlib.sha256(
+                    options.verified_sops_env_execution_input.read_bytes()
+                ).hexdigest()
         else:
             sops_env_sha256 = None
         # ADV2 R9 F-002 cross-field invariant (redeem)
@@ -2012,17 +2031,21 @@ def run_backup(
         if options.include_sops_env:
             if phase_5_mode:
                 if options.verified_sops_env_execution_input is None:
-                    raise BackupRuntimeError(
-                        "backup_compose_binding_not_initialized",
-                        detail="phase_5_mode + include_sops_env requires verified_sops_env_execution_input",
+                    if options.sops_env_missing_at_lock:
+                        warnings_list.append("backup_sops_env_skipped")
+                    else:
+                        raise BackupRuntimeError(
+                            "backup_compose_binding_not_initialized",
+                            detail="phase_5_mode + include_sops_env requires verified_sops_env_execution_input",
+                        )
+                else:
+                    # metadata snapshot 再検証 (R5 F-002 same-UID swap 検知) 後に verified copy から archive
+                    _verify_metadata_snapshot(
+                        options.verified_sops_env_execution_input,
+                        options.verified_sops_env_metadata_snapshot,
+                        tamper_reason="backup_payload_source_tampered",
                     )
-                # metadata snapshot 再検証 (R5 F-002 same-UID swap 検知) 後に verified copy から archive
-                _verify_metadata_snapshot(
-                    options.verified_sops_env_execution_input,
-                    options.verified_sops_env_metadata_snapshot,
-                    tamper_reason="backup_payload_source_tampered",
-                )
-                shutil.copy2(options.verified_sops_env_execution_input, tmp_dir / "env.encrypted")
+                    shutil.copy2(options.verified_sops_env_execution_input, tmp_dir / "env.encrypted")
             elif options.sops_env_path.exists():
                 # legacy PR #77 mode (phase_5_mode=False) は従来通り source 直接 copy
                 shutil.copy2(options.sops_env_path, tmp_dir / "env.encrypted")

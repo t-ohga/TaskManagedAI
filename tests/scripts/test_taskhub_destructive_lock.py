@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import taskhub_destructive_lock as dl
 from scripts.taskhub_destructive_lock import acquire_destructive_lock
 
 
@@ -144,3 +145,69 @@ def test_acquire_destructive_lock_symlink_rejected(
     with acquire_destructive_lock("restore", None) as (acquired, reason, _):
         assert acquired is False
         assert reason == "destructive_lock_file_permission"
+
+
+def test_cleanup_stale_destructive_lock_removes_old_dead_pid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """SP-022-1: stale lock auto-cleanup requires old file + absent pid + unlocked file."""
+    lock_dir = tmp_path / "locks"
+    lock_dir.mkdir(parents=True, mode=0o700)
+    lock_path = lock_dir / "destructive-operation.lock"
+    lock_path.write_text(
+        json.dumps({
+            "subcommand": "backup",
+            "approval_id": "stale",
+            "pid": 424242,
+            "started_at_utc": "2026-05-20T10:00:00Z",
+        }),
+        encoding="utf-8",
+    )
+    stale_time = time.time() - 7200
+    os.utime(lock_path, (stale_time, stale_time))
+    monkeypatch.setattr(dl, "_pid_exists", lambda _pid: False)
+
+    removed = dl.cleanup_stale_destructive_lock(lock_path, max_age_sec=3600)
+
+    assert removed is True
+    assert not lock_path.exists()
+
+
+def test_cleanup_stale_destructive_lock_keeps_recent_dead_pid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """SP-022-1: dead pid alone is insufficient; age threshold must also be met."""
+    lock_dir = tmp_path / "locks"
+    lock_dir.mkdir(parents=True, mode=0o700)
+    lock_path = lock_dir / "destructive-operation.lock"
+    lock_path.write_text(
+        json.dumps({"subcommand": "backup", "approval_id": None, "pid": 424242}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dl, "_pid_exists", lambda _pid: False)
+
+    removed = dl.cleanup_stale_destructive_lock(lock_path, max_age_sec=3600)
+
+    assert removed is False
+    assert lock_path.exists()
+
+
+def test_cleanup_stale_destructive_lock_keeps_active_pid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """SP-022-1: old lock is not removed when the recorded pid still exists."""
+    lock_dir = tmp_path / "locks"
+    lock_dir.mkdir(parents=True, mode=0o700)
+    lock_path = lock_dir / "destructive-operation.lock"
+    lock_path.write_text(
+        json.dumps({"subcommand": "backup", "approval_id": None, "pid": os.getpid()}),
+        encoding="utf-8",
+    )
+    stale_time = time.time() - 7200
+    os.utime(lock_path, (stale_time, stale_time))
+    monkeypatch.setattr(dl, "_pid_exists", lambda _pid: True)
+
+    removed = dl.cleanup_stale_destructive_lock(lock_path, max_age_sec=3600)
+
+    assert removed is False
+    assert lock_path.exists()
