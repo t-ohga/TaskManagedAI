@@ -251,7 +251,7 @@ async def test_seed_initial_creates_default_core_records(
     assert project.slug == DEFAULT_PROJECT_SLUG
     assert project.name == DEFAULT_PROJECT_NAME
     assert project.status == DEFAULT_PROJECT_STATUS
-    assert project.policy_profile is None
+    assert project.policy_profile == "default"
     assert project.metadata_["rls_ready"] is True
 
     assert repository is not None
@@ -266,4 +266,3 @@ async def test_seed_initial_creates_default_core_records(
     assert repository.metadata_["rls_ready"] is True
     assert repository.metadata_["placeholder"] is True
     assert repository.metadata_["integration_target"] == "repo_proxy_github_app_sprint8"
-

@@ -21,6 +21,7 @@ from backend.app.db.models.evidence_item import EvidenceItem
 from backend.app.db.models.evidence_source import EvidenceSource
 from backend.app.db.models.notification_event import NotificationEvent
 from backend.app.db.models.policy_decision import PolicyDecision
+from backend.app.db.models.policy_profile import PolicyProfile, PolicyProfileActionEffect
 from backend.app.db.models.policy_rule import PolicyRule
 from backend.app.db.models.principal import Principal, PrincipalType
 from backend.app.db.models.project import Project
@@ -56,6 +57,8 @@ __all__ = [
     "FixtureKind",
     "NotificationEvent",
     "PolicyDecision",
+    "PolicyProfile",
+    "PolicyProfileActionEffect",
     "PolicyRule",
     "Principal",
     "PrincipalType",
