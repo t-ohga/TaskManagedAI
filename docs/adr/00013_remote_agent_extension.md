@@ -24,7 +24,7 @@ superseded_by: null
 
 このテンプレの使い方: ADR Gate Criteria #4 (AI エージェント権限)、#5 (MCP / tool 権限)、#6 (Secrets 管理)、#7 (外部公開)、#10 (Provider 追加 / 切替) に同時該当する Remote Agent Integration の **extension point** を P0 では deny / proposed で固定し、P0.1 / P1 で accepted 化して実装するための ADR。SP-006 §「対象外」line 47 で「Codex App Server / Claude Remote Control adapter は P0.1 / P1 へ defer、この Sprint では設計 note と extension point に止める」と既に書かれているが、正式仕様化されていないため本 ADR で固定する。
 
-最終更新: 2026-05-10 (Sprint 5 完了後、Sprint 5.5 着手前に proposed として起票)
+最終更新: 2026-05-22 (SP-014 batch 0e で P0.1 deny-only `remote_agent_gateway` stub 例外を明記。full remote integration は proposed 維持)
 
 ## 背景
 
@@ -67,7 +67,7 @@ superseded_by: null
 
 **P0 で作成禁止 (proposed の間の物理的禁止)**:
 - `backend/app/adapters/remote_agent/*.py` (codex_app_server_adapter / claude_agent_sdk_adapter / 任意 stub)
-- `backend/app/services/remote_agent_gateway.py` (deny-only stub も含む)
+- `backend/app/services/remote_agent_gateway.py` (full gateway 実装)
 - `backend/app/api/remote_agent_router.py`
 - `frontend/app/remote-agent/*`
 - `config/remote_agent_compliance.toml` (Provider Compliance Matrix 独立 entry の追記も含む)
@@ -75,6 +75,14 @@ superseded_by: null
 - 既存 `provider_compliance.toml` への `codex_app_server` / `claude_agent_sdk` 行追加
 
 これらは **本 ADR が accepted に昇格するまで** 一切作成しない。proposed のまま PR が立った場合は reject。CI lint で path allowlist enforce することを accepted 化時の追加要件にする。
+
+**SP-014 batch 0e 例外 (accepted via ADR-00014 / SP-014)**:
+
+- `backend/app/services/remote_agent_gateway/deny_only.py` は P0.1 deny-only stub として作成可。
+- adapter、API router、external listener、remote compliance config、provider matrix entry は引き続き禁止。
+- deny-only stub は dispatch を実行せず、`audit_events.event_type='remote_agent_dispatch_denied'` を書いて `decision='deny'` を返すだけに限定する。
+- payload は `gateway_kind='remote_agent'`、`reason_code='p0_1_stub'`、tenant / actor / role / requested_remote_role / capability_class / run_id? / project_id? を含め、raw secret / raw token / provider raw response を含めない。
+- 本例外は full remote integration の accepted 化ではない。Codex app-server / Claude Agent SDK adapter は本 ADR の `acceptance_blocked_by` 全件が satisfied になるまで引き続き prohibited。
 
 ### 実装対象ファイル (P0.1 / P1 で、accepted 化後に作成)
   - `backend/app/adapters/remote_agent/codex_app_server_adapter.py` (新規)
