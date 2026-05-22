@@ -142,14 +142,19 @@ def test_tool_registry_enum_constants_cover_config_and_frontend_source() -> None
     adr_source = (
         _REPO_ROOT / "docs/adr/00027_tool_registry_security_boundary.md"
     ).read_text(encoding="utf-8")
+    migration_source = (
+        _REPO_ROOT / "migrations/versions/0029_sp0045_tool_registry_core.py"
+    ).read_text(encoding="utf-8")
 
     assert configured_actions == ALL_TOOL_ALLOWED_ACTIONS
     for value in ALL_TOOL_ALLOWED_ACTIONS:
         assert f'"{value}"' in frontend_source
         assert f"`{value}`" in adr_source
+        assert value in migration_source
     for value in ALL_TOOL_TRUST_TIERS:
         assert f'"{value}"' in frontend_source
         assert f"`{value}`" in adr_source
     for value in ALL_PAYLOAD_DATA_CLASSES:
         assert f'"{value}"' in frontend_source
         assert f"`{value}`" in adr_source
+        assert value in migration_source

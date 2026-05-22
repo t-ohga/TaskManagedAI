@@ -36,7 +36,7 @@ from backend.app.db.models.secret_ref import SecretRef, SecretRefScope, SecretRe
 from backend.app.db.models.tenant import Tenant
 from backend.app.db.models.ticket import Ticket, TicketPriority, TicketStatus
 from backend.app.db.models.ticket_relation import TicketRelation, TicketRelationType
-from backend.app.db.models.tool_registry import ToolNetworkPolicy, ToolRegistry
+from backend.app.db.models.tool_registry import ToolNetworkPolicy, ToolRegistry, ToolVersion
 from backend.app.db.models.workspace import Workspace
 
 __all__ = [
@@ -83,5 +83,6 @@ __all__ = [
     "TicketStatus",
     "ToolNetworkPolicy",
     "ToolRegistry",
+    "ToolVersion",
     "Workspace",
 ]
