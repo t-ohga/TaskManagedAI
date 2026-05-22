@@ -15,6 +15,8 @@
 import { BackendApiError } from "@/lib/api/client";
 import { DEFAULT_PROJECT_ID, listTickets, type TicketRead } from "@/lib/api/tickets";
 
+import { NewTicketForm } from "./_components/new-ticket-form";
+
 export const dynamic = "force-dynamic";
 
 type TicketsState =
@@ -59,6 +61,8 @@ export default async function TicketsListPage() {
             : "tickets fetch failed"}
         </p>
       </header>
+
+      <NewTicketForm />
 
       {state.kind === "error" ? (
         <article role="status" className="rounded-md border border-attention bg-amber-50 p-4">
