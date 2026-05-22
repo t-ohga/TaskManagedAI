@@ -7,12 +7,14 @@ import os
 import re
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import pytest
 import pytest_asyncio
 from alembic import command
 from alembic.config import Config
+from asyncpg.exceptions import PostgresError  # type: ignore[import-untyped]
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -25,6 +27,7 @@ from backend.app.services.research.evidence_set_hash import (
     EMPTY_EVIDENCE_SET_HASH,
     compute_evidence_set_hash,
 )
+from backend.app.services.tool_registry.loader import current_tool_manifest
 
 _DEFAULT_DATABASE_URL = (
     "postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test"
@@ -48,6 +51,16 @@ VALID_HASH = "c" * 64
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
+class _ScalarSession:
+    def __init__(self, result: object) -> None:
+        self.result = result
+        self.statement: object | None = None
+
+    async def scalar(self, statement: object) -> object:
+        self.statement = statement
+        return self.result
+
+
 def _valid_prov() -> dict[str, object]:
     return {
         "activities": [{"id": "activity:research", "type": "prov:Activity"}],
@@ -56,7 +69,7 @@ def _valid_prov() -> dict[str, object]:
     }
 
 
-def _snapshot_payload() -> dict[str, object]:
+def _snapshot_payload() -> dict[str, Any]:
     return {
         "prompt_pack_version": "prompt-pack-v1",
         "prompt_pack_lock": "a" * 64,
@@ -67,10 +80,6 @@ def _snapshot_payload() -> dict[str, object]:
             "branch": "main",
             "dirty": False,
             "diff_hash": "d" * 64,
-        },
-        "tool_manifest": {
-            "registry_version": "tool-registry-v1",
-            "allowlist_hash": "e" * 64,
         },
         "provider_continuation_ref": None,
         "provider_request_fingerprint": {"model_resolved": "mock-model"},
@@ -107,7 +116,7 @@ async def _assert_database_available(settings: Settings) -> None:
     try:
         async with engine.connect() as connection:
             await connection.execute(text("select 1"))
-    except (OSError, SQLAlchemyError, TimeoutError) as exc:
+    except (OSError, PostgresError, SQLAlchemyError, TimeoutError) as exc:
         if os.environ.get("TASKMANAGEDAI_RUN_DB_TESTS") == "1":
             raise AssertionError("ContextSnapshot evidence hash tests require PostgreSQL.") from exc
         pytest.skip("Set TASKMANAGEDAI_RUN_DB_TESTS=1 with test PostgreSQL running.")
@@ -296,7 +305,9 @@ def test_context_snapshot_repository_signature_has_no_caller_supplied_hash() -> 
     signature = inspect.signature(ContextSnapshotRepository.create_snapshot)
 
     assert "evidence_set_hash" not in signature.parameters
+    assert "tool_manifest" not in signature.parameters
     assert "evidence_set_reference" in signature.parameters
+    assert "inherit_tool_manifest_from_snapshot_id" in signature.parameters
 
 
 @pytest.mark.asyncio
@@ -309,6 +320,75 @@ async def test_caller_supplied_evidence_set_hash_keyword_is_rejected() -> None:
             run_id=RUN_A_ID,
             evidence_set_hash="f" * 64,  # type: ignore[call-arg]
             **_snapshot_payload(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_caller_supplied_tool_manifest_keyword_is_rejected() -> None:
+    repo = ContextSnapshotRepository(object())  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError):
+        await repo.create_snapshot(
+            tenant_id=1,
+            run_id=RUN_A_ID,
+            tool_manifest={  # type: ignore[call-arg]
+                "registry_version": "caller",
+                "allowlist_hash": "f" * 64,
+            },
+            **_snapshot_payload(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_resume_inheritance_requires_same_snapshot_id_for_server_owned_locks() -> None:
+    repo = ContextSnapshotRepository(object())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="must reference the same"):
+        await repo.create_snapshot(
+            tenant_id=1,
+            run_id=RUN_A_ID,
+            inherit_evidence_set_hash_from_snapshot_id=UUID(
+                "00000000-0000-4000-8000-000000035101"
+            ),
+            inherit_tool_manifest_from_snapshot_id=UUID(
+                "00000000-0000-4000-8000-000000035102"
+            ),
+            **(_snapshot_payload() | {"snapshot_kind": "resume"}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_inherit_tool_manifest_loads_prior_manifest_from_scoped_snapshot() -> None:
+    manifest = {
+        "registry_version": "sp0045-v1",
+        "allowlist_hash": "e" * 64,
+    }
+    session = _ScalarSession(manifest)
+    repo = ContextSnapshotRepository(session)  # type: ignore[arg-type]
+
+    inherited = await repo._inherit_tool_manifest(
+        1,
+        RUN_A_ID,
+        UUID("00000000-0000-4000-8000-000000035103"),
+    )
+
+    assert inherited == manifest
+    assert session.statement is not None
+    statement_text = str(session.statement)
+    assert "context_snapshots.tenant_id" in statement_text
+    assert "context_snapshots.run_id" in statement_text
+    assert "context_snapshots.id" in statement_text
+
+
+@pytest.mark.asyncio
+async def test_inherit_tool_manifest_rejects_missing_prior_snapshot() -> None:
+    repo = ContextSnapshotRepository(_ScalarSession(None))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="inherit_tool_manifest_from_snapshot_id"):
+        await repo._inherit_tool_manifest(
+            1,
+            RUN_A_ID,
+            UUID("00000000-0000-4000-8000-000000035104"),
         )
 
 
@@ -400,6 +480,7 @@ async def test_none_evidence_set_reference_uses_valid_empty_hash(
 
     assert snapshot.evidence_set_hash == EMPTY_EVIDENCE_SET_HASH
     assert _SHA256_RE.fullmatch(snapshot.evidence_set_hash)
+    assert snapshot.tool_manifest == current_tool_manifest()
 
 
 @pytest.mark.asyncio
