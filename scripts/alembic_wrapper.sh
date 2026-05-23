@@ -36,7 +36,7 @@ compose_cmd=(
   docker compose
   "${compose_files[@]}"
   --env-file "$env_file"
-  exec api
+  exec -T api
   env -u TASKMANAGEDAI_DATABASE_URL -u DATABASE_URL
   uv run alembic
   "${alembic_args[@]}"

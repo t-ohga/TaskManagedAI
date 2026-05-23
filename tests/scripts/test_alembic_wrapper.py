@@ -29,6 +29,7 @@ def test_alembic_wrapper_dry_run_strips_host_database_env() -> None:
     assert result.returncode == 0
     assert "env -u TASKMANAGEDAI_DATABASE_URL -u DATABASE_URL" in result.stdout
     assert "docker compose" in result.stdout
+    assert "exec -T api" in result.stdout
     assert "uv run alembic upgrade head" in result.stdout
     assert "secret@example" not in result.stdout
     assert "secret2@example" not in result.stdout
@@ -75,3 +76,12 @@ def test_layer_c_operator_runbook_sections_one_to_nine_exist() -> None:
     assert "BackupApprovalClaim" in text
     assert "RestoreApprovalClaim" in text
     assert "backup_runtime_binding_fingerprint" in text
+
+
+def test_layer_c_operator_runbook_defines_drill_path_variables() -> None:
+    text = LAYER_C_RUNBOOK.read_text(encoding="utf-8")
+
+    assert 'export DATABASE_URL="' in text
+    assert 'export BACKUP_APPROVAL_ID="' in text
+    assert 'export BACKUP_PATH="' in text
+    assert 'export TARGET_HOST="' in text

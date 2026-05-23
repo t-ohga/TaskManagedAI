@@ -91,7 +91,14 @@ def upgrade() -> None:
     _seed_policy_profile_action_effects()
     _create_policy_profile_seed_trigger()
 
-    op.execute("update projects set policy_profile = 'default' where policy_profile is null")
+    op.execute(
+        """
+        update projects
+           set policy_profile = 'default'
+         where policy_profile is null
+            or policy_profile not in ('default', 'low_risk_auto_allow')
+        """
+    )
     op.alter_column(
         "projects",
         "policy_profile",

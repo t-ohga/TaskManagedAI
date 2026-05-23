@@ -413,6 +413,39 @@ async def test_orchestrator_kpi_rollup_aggregates_descendant_runs_with_dedupe_so
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_kpi_rollup_guards_recursive_parent_cycles(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _seed_rollup_fixture(session)
+        await session.execute(
+            text(
+                """
+                update agent_runs
+                   set parent_run_id = :failed_child_run_id
+                 where tenant_id = :tenant_id
+                   and id = :root_run_id
+                """
+            ),
+            {
+                "tenant_id": TENANT_ID,
+                "root_run_id": ROOT_RUN_ID,
+                "failed_child_run_id": FAILED_CHILD_RUN_ID,
+            },
+        )
+        await session.commit()
+
+        result = await OrchestratorKpiRollupService(session).fetch(
+            tenant_id=TENANT_ID,
+            root_run_id=ROOT_RUN_ID,
+        )
+
+    assert result is not None
+    assert result.lineage_run_count == 3
+    assert result.completed_run_count == 2
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_kpi_rollup_returns_none_for_missing_root_run(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

@@ -18,6 +18,7 @@ PR="${1:?usage: $0 <PR-number>}"
 REPO="${REPO:-t-ohga/TaskManagedAI}"
 BOT="chatgpt-codex-connector[bot]"
 REVIEWER="chatgpt-codex-connector"
+CODEX_CLEAN_COMMENT_PATTERN="Didn't find any major issues"
 
 echo "==================================================================="
 echo "PR #${PR} — Codex full review check (ALL endpoints, paginated)"
@@ -40,12 +41,19 @@ echo "(total inline Codex findings: ${INLINE_COUNT})"
 echo ""
 echo "=== 2) Conversation comments (paginated + slurped, Codex bot only) ==="
 CONV_JSON=$(gh api --paginate "repos/${REPO}/issues/${PR}/comments" | jq -s 'flatten')
-CONV_COUNT=$(jq --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length' <<<"$CONV_JSON")
+CONV_ACTIONABLE_JSON=$(jq --arg bot "$BOT" --arg clean "$CODEX_CLEAN_COMMENT_PATTERN" '
+  [.[] | select(.user.login == $bot) | select(((.body // "") | contains($clean)) | not)]
+' <<<"$CONV_JSON")
+CONV_INFO_COUNT=$(jq --arg bot "$BOT" --arg clean "$CODEX_CLEAN_COMMENT_PATTERN" '
+  [.[] | select(.user.login == $bot) | select((.body // "") | contains($clean))] | length
+' <<<"$CONV_JSON")
+CONV_COUNT=$(jq 'length' <<<"$CONV_ACTIONABLE_JSON")
 jq -r --arg bot "$BOT" '
   .[] | select(.user.login == $bot)
   | "[\(.created_at)]\n  \(.body | gsub("[\r\n]+"; " "))\n"
-' <<<"$CONV_JSON"
-echo "(total conversation Codex comments: ${CONV_COUNT})"
+' <<<"$CONV_ACTIONABLE_JSON"
+echo "(total actionable conversation Codex comments: ${CONV_COUNT})"
+echo "(ignored informational clean Codex comments: ${CONV_INFO_COUNT})"
 
 echo ""
 echo "=== 3) Top-level reviews (Codex reviewer only) ==="
@@ -61,7 +69,14 @@ gh pr view "${PR}" --repo "${REPO}" --json reviewDecision,mergeStateStatus,merge
 
 # Codex PR #7 R5 F-PR7-021 P2 adopt: top-level Codex review も TOTAL に含める
 # (Codex が inline / conv なしで top-level review body にのみ書く scenario の検出)
-REVIEW_COUNT=$(gh pr view "${PR}" --repo "${REPO}" --json reviews -q '[.reviews[] | select(.author.login == "chatgpt-codex-connector" or .author.login == "chatgpt-codex-connector[bot]")] | length')
+REVIEW_COUNT=$(gh pr view "${PR}" --repo "${REPO}" --json reviews -q '.reviews' \
+  | jq --arg author "$REVIEWER" --arg clean "$CODEX_CLEAN_COMMENT_PATTERN" '
+    [
+      .[]
+      | select(.author.login == $author or .author.login == ($author + "[bot]"))
+      | select(((.body // "") | contains($clean)) | not)
+    ] | length
+  ')
 
 echo ""
 echo "=== Summary ==="

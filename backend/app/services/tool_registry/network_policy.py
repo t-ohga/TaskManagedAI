@@ -92,7 +92,14 @@ async def evaluate_tool_network_policy(
             reason_code="tool_network_policy_missing_denied",
         )
 
-    allowlist = {_normalize_domain(str(item)) for item in policy.domain_allowlist}
+    allowlist = _normalize_domain_allowlist(policy.domain_allowlist)
+    if allowlist is None:
+        return ToolNetworkDecision(
+            tool_key=normalized_tool_key,
+            network_access=tool.network_access,
+            decision="deny",
+            reason_code="tool_network_allowlist_invalid_denied",
+        )
     if normalized_domain not in allowlist:
         return ToolNetworkDecision(
             tool_key=normalized_tool_key,
@@ -101,6 +108,20 @@ async def evaluate_tool_network_policy(
             reason_code="tool_network_domain_not_allowlisted",
         )
 
+    if payload_data_class not in DATA_CLASS_ORDER:
+        return ToolNetworkDecision(
+            tool_key=normalized_tool_key,
+            network_access=tool.network_access,
+            decision="deny",
+            reason_code="tool_network_payload_data_class_invalid_denied",
+        )
+    if policy.payload_data_class_max not in DATA_CLASS_ORDER:
+        return ToolNetworkDecision(
+            tool_key=normalized_tool_key,
+            network_access=tool.network_access,
+            decision="deny",
+            reason_code="tool_network_policy_payload_data_class_invalid_denied",
+        )
     if DATA_CLASS_ORDER[payload_data_class] > DATA_CLASS_ORDER[policy.payload_data_class_max]:
         return ToolNetworkDecision(
             tool_key=normalized_tool_key,
@@ -109,7 +130,8 @@ async def evaluate_tool_network_policy(
             reason_code="tool_network_payload_data_class_exceeded",
         )
 
-    if policy.provider_required and not provider:
+    normalized_provider = provider.strip() if provider is not None else None
+    if policy.provider_required and not normalized_provider:
         return ToolNetworkDecision(
             tool_key=normalized_tool_key,
             network_access=tool.network_access,
@@ -145,6 +167,21 @@ def _normalize_domain(value: str) -> str:
     normalized = value.strip().lower().rstrip(".")
     if not normalized or "/" in normalized or ":" in normalized:
         raise ValueError("domain must be a bare DNS name.")
+    return normalized
+
+
+def _normalize_domain_allowlist(value: object) -> set[str] | None:
+    if not isinstance(value, list):
+        return None
+
+    normalized: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            return None
+        try:
+            normalized.add(_normalize_domain(item))
+        except ValueError:
+            return None
     return normalized
 
 

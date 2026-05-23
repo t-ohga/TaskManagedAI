@@ -133,6 +133,10 @@ tail -200 /tmp/taskhub-verify.log 2>/dev/null || true
 Mac local path:
 
 ```bash
+export DATABASE_URL="postgresql://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai"
+export BACKUP_APPROVAL_ID="<issued-backup-approval-id>"
+export BACKUP_PATH="/tmp/taskhub-backup-$(date +%Y%m%d-%H%M%S).tar"
+
 bash scripts/alembic_wrapper.sh current
 uv run taskhub verify \
   --signed-journal \
@@ -148,6 +152,8 @@ uv run taskhub backup \
 Linux/VPS path:
 
 ```bash
+export TARGET_HOST="taskhub-vps"
+
 ssh "$TARGET_HOST" \
   'cd /var/lib/taskhub/TaskManagedAI && bash scripts/alembic_wrapper.sh current'
 ssh "$TARGET_HOST" 'cd /var/lib/taskhub/TaskManagedAI && uv run taskhub status'

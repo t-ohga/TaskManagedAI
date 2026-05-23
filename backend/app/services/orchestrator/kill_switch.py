@@ -7,12 +7,12 @@ from uuid import UUID
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.db.models.actor import Actor
 from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.agent_run_event import AgentRunEvent
 from backend.app.repositories.agent_run_event import append_event
 from backend.app.services.orchestrator._shared import (
     ORCHESTRATOR_ROLE_ID,
-    TERMINAL_STATUS_VALUES,
     ensure_tenant_context,
     lease_token_hash,
     utc_now,
@@ -41,11 +41,20 @@ class OrchestratorKillSwitch:
         now: datetime | None = None,
         idempotency_key: str | None = None,
     ) -> KillSwitchResult | None:
-        """Engage the orchestrator kill switch for a non-terminal run."""
+        """Engage the orchestrator kill switch for a running run."""
 
         await ensure_tenant_context(self._session, tenant_id)
         if not reason.strip():
             raise ValueError("kill switch reason must be non-empty.")
+
+        actor_type = await self._session.scalar(
+            sa.select(Actor.actor_type).where(
+                Actor.tenant_id == tenant_id,
+                Actor.id == actor_id,
+            )
+        )
+        if actor_type != "human":
+            raise ValueError("kill switch actor_id must reference a human actor.")
 
         resolved_now = now or utc_now()
         result = await self._session.execute(
@@ -54,7 +63,7 @@ class OrchestratorKillSwitch:
                 AgentRun.tenant_id == tenant_id,
                 AgentRun.id == run_id,
                 AgentRun.role_id == ORCHESTRATOR_ROLE_ID,
-                AgentRun.status.not_in(TERMINAL_STATUS_VALUES),
+                AgentRun.status == "running",
             )
             .values(
                 status="blocked",

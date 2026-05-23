@@ -119,6 +119,7 @@ async def _insert_fixture_run(
     role_id: str = "orchestrator",
     role_scope: str = "global",
     status: str = "running",
+    actor_type: str = "human",
     lease_token: UUID | None = None,
     lease_expires_at: datetime | None = None,
     last_progress_at: datetime | None = None,
@@ -136,11 +137,15 @@ async def _insert_fixture_run(
         text(
             """
             insert into actors (id, tenant_id, actor_type, actor_id, display_name, metadata)
-            values (:actor_id, 1, 'human', 'human:orchestrator-test',
+            values (:actor_id, 1, :actor_type, :actor_ref,
                     'Orchestrator Test Actor', '{"rls_ready": true}'::jsonb)
             """
         ),
-        {"actor_id": ACTOR_ID},
+        {
+            "actor_id": ACTOR_ID,
+            "actor_type": actor_type,
+            "actor_ref": f"{actor_type}:orchestrator-test",
+        },
     )
     await session.execute(
         text(
@@ -312,6 +317,37 @@ async def test_renew_lease_rejects_wrong_token_without_event(
 
 
 @pytest.mark.asyncio
+async def test_renew_lease_rejects_non_running_run_without_event(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    now = datetime(2026, 5, 22, 12, 0, tzinfo=UTC)
+    old_token = uuid4()
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture_run(
+                session,
+                status="queued",
+                lease_token=old_token,
+                lease_expires_at=now + timedelta(minutes=5),
+            )
+
+        async with session.begin():
+            result = await OrchestratorLeaseManager(session).renew_lease(
+                tenant_id=TENANT_ID,
+                run_id=RUN_ID,
+                actor_id=ACTOR_ID,
+                current_lease_token=old_token,
+                now=now,
+            )
+
+        assert result is None
+        run = await _load_run(session)
+        assert run.status == "queued"
+        assert run.orchestrator_lease_token == old_token
+        assert await _event_count(session) == 0
+
+
+@pytest.mark.asyncio
 async def test_non_orchestrator_run_cannot_renew_lease(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -456,6 +492,29 @@ async def test_progress_lease_blocks_no_progress_run(
 
 
 @pytest.mark.asyncio
+async def test_record_progress_rejects_non_running_run(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    now = datetime(2026, 5, 22, 12, 0, tzinfo=UTC)
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture_run(session, status="waiting_approval")
+
+        async with session.begin():
+            result = await OrchestratorProgressLease(session).record_progress(
+                tenant_id=TENANT_ID,
+                run_id=RUN_ID,
+                now=now,
+            )
+
+        assert result is None
+        run = await _load_run(session)
+        assert run.status == "waiting_approval"
+        assert run.last_progress_at is None
+        assert run.progress_seq == 0
+
+
+@pytest.mark.asyncio
 async def test_kill_switch_does_not_mutate_terminal_run(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -474,6 +533,50 @@ async def test_kill_switch_does_not_mutate_terminal_run(
         assert result is None
         run = await _load_run(session)
         assert run.status == "completed"
+        assert await _event_count(session) == 0
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_rejects_non_running_run_without_event(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture_run(session, status="queued")
+
+        async with session.begin():
+            result = await OrchestratorKillSwitch(session).engage(
+                tenant_id=TENANT_ID,
+                run_id=RUN_ID,
+                actor_id=ACTOR_ID,
+                reason="manual stop",
+            )
+
+        assert result is None
+        run = await _load_run(session)
+        assert run.status == "queued"
+        assert await _event_count(session) == 0
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_requires_human_actor_without_mutation(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture_run(session, actor_type="service")
+
+        with pytest.raises(ValueError, match="human actor"):
+            async with session.begin():
+                await OrchestratorKillSwitch(session).engage(
+                    tenant_id=TENANT_ID,
+                    run_id=RUN_ID,
+                    actor_id=ACTOR_ID,
+                    reason="manual stop",
+                )
+
+        run = await _load_run(session)
+        assert run.status == "running"
         assert await _event_count(session) == 0
 
 
@@ -502,3 +605,26 @@ async def test_record_local_dispatch_requires_existing_orchestrator_parent_and_c
         assert event.event_type == "orchestrator_dispatched"
         assert event.event_payload["child_run_id"] == str(CHILD_RUN_ID)
         assert event.event_payload["role_id"] == "implementer"
+
+
+@pytest.mark.asyncio
+async def test_record_local_dispatch_rejects_non_running_parent(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture_run(session, status="waiting_approval")
+            await _insert_child_run(session)
+
+        with pytest.raises(ValueError, match="running orchestrator"):
+            async with session.begin():
+                await OrchestratorDispatcher(session).record_local_dispatch(
+                    tenant_id=TENANT_ID,
+                    parent_run_id=RUN_ID,
+                    child_run_id=CHILD_RUN_ID,
+                    actor_id=ACTOR_ID,
+                    dispatch_reason="split implementation task",
+                    recommended_provider="balanced",
+                )
+
+        assert await _event_count(session) == 0

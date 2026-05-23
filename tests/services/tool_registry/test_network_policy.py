@@ -6,6 +6,7 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import cast
 from uuid import UUID
 
 import pytest
@@ -22,6 +23,7 @@ from backend.app.domain.tool_registry.network_policy import (
     ALL_NETWORK_ACCESS_MODES,
     ALL_PAYLOAD_DATA_CLASSES,
     DEFAULT_DENY_ONLY_TOOL_KEYS,
+    PayloadDataClass,
 )
 from backend.app.services.tool_registry.network_policy import evaluate_tool_network_policy
 
@@ -118,6 +120,52 @@ async def _reset_test_tools(session: AsyncSession) -> None:
         {
             "allowlist_tool_id": ALLOWLIST_TOOL_ID,
             "internet_tool_id": INTERNET_TOOL_ID,
+        },
+    )
+
+
+async def _insert_allowlisted_fetch(
+    session: AsyncSession,
+    *,
+    domain_allowlist: str = '["docs.example.com"]',
+    provider_required: bool = True,
+) -> None:
+    await _reset_test_tools(session)
+    await session.execute(
+        text(
+            """
+            insert into tool_registry (
+              id, tenant_id, tool_key, transport, auth_mode, network_access,
+              trust_tier, registry_version, allowed_actions,
+              max_outgoing_data_class, manifest, metadata
+            )
+            values (
+              :tool_id, 1, 'allowlisted_fetch', 'local', 'none', 'allowlist',
+              'official', 'sp0045-test', '["web_fetch"]'::jsonb, 'internal',
+              '{"allowed_actions":["web_fetch"]}'::jsonb,
+              '{"rls_ready": true}'::jsonb
+            )
+            """
+        ),
+        {"tool_id": ALLOWLIST_TOOL_ID},
+    )
+    await session.execute(
+        text(
+            """
+            insert into tool_network_policies (
+              tenant_id, tool_id, domain_allowlist, payload_data_class_max,
+              provider_required, metadata
+            )
+            values (
+              1, :tool_id, cast(:domain_allowlist as jsonb), 'internal',
+              :provider_required, '{"rls_ready": true}'::jsonb
+            )
+            """
+        ),
+        {
+            "tool_id": ALLOWLIST_TOOL_ID,
+            "domain_allowlist": domain_allowlist,
+            "provider_required": provider_required,
         },
     )
 
@@ -316,6 +364,72 @@ async def test_allowlist_policy_allows_only_matching_domain_payload_and_provider
 
 
 @pytest.mark.asyncio
+async def test_allowlist_policy_denies_malformed_allowlist_without_raising(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_allowlisted_fetch(
+                session,
+                domain_allowlist='["docs.example.com","https://bad.example.com/path"]',
+            )
+
+        decision = await evaluate_tool_network_policy(
+            session,
+            tenant_id=TENANT_ID,
+            tool_key="allowlisted_fetch",
+            domain="docs.example.com",
+            payload_data_class="internal",
+            provider="docs-provider",
+        )
+
+    assert decision.decision == "deny"
+    assert decision.reason_code == "tool_network_allowlist_invalid_denied"
+
+
+@pytest.mark.asyncio
+async def test_allowlist_policy_denies_invalid_payload_data_class_without_raising(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_allowlisted_fetch(session)
+
+        decision = await evaluate_tool_network_policy(
+            session,
+            tenant_id=TENANT_ID,
+            tool_key="allowlisted_fetch",
+            domain="docs.example.com",
+            payload_data_class=cast(PayloadDataClass, "restricted"),
+            provider="docs-provider",
+        )
+
+    assert decision.decision == "deny"
+    assert decision.reason_code == "tool_network_payload_data_class_invalid_denied"
+
+
+@pytest.mark.asyncio
+async def test_allowlist_policy_denies_blank_required_provider(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_allowlisted_fetch(session)
+
+        decision = await evaluate_tool_network_policy(
+            session,
+            tenant_id=TENANT_ID,
+            tool_key="allowlisted_fetch",
+            domain="docs.example.com",
+            payload_data_class="internal",
+            provider="   ",
+        )
+
+    assert decision.decision == "deny"
+    assert decision.reason_code == "tool_network_provider_required"
+
+
+@pytest.mark.asyncio
 async def test_internet_mode_is_registered_but_denied_in_p0(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -410,6 +524,34 @@ async def test_db_rejects_unknown_allowed_action(
 
 
 @pytest.mark.asyncio
+async def test_db_rejects_non_string_allowed_action(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _reset_test_tools(session)
+
+        with pytest.raises(DBAPIError, match="tool_registry_ck_allowed_actions"):
+            await session.execute(
+                text(
+                    """
+                    insert into tool_registry (
+                      tenant_id, tool_key, transport, auth_mode, network_access,
+                      trust_tier, registry_version, allowed_actions,
+                      max_outgoing_data_class, manifest, metadata
+                    )
+                    values (
+                      1, 'bad_action_type_tool', 'local', 'none', 'none',
+                      'official', 'sp0045-test', '["web_fetch", 123]'::jsonb, 'public',
+                      '{}'::jsonb, '{"rls_ready": true}'::jsonb
+                    )
+                    """
+                )
+            )
+            await session.commit()
+
+
+@pytest.mark.asyncio
 async def test_tool_versions_rejects_non_sha_allowlist_hash(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -452,3 +594,61 @@ async def test_tool_versions_rejects_non_sha_allowlist_hash(
                 {"tool_id": ALLOWLIST_TOOL_ID},
             )
             await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_tool_versions_defaults_tenant_id_for_default_tool(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _reset_test_tools(session)
+            await session.execute(
+                text(
+                    """
+                    insert into tool_registry (
+                      id, tenant_id, tool_key, transport, auth_mode, network_access,
+                      trust_tier, registry_version, allowed_actions,
+                      max_outgoing_data_class, manifest, metadata
+                    )
+                    values (
+                      :tool_id, 1, 'allowlisted_fetch', 'local', 'none', 'none',
+                      'official', 'sp0045-test', '["web_fetch"]'::jsonb, 'public',
+                      '{"allowed_actions":["web_fetch"]}'::jsonb,
+                      '{"rls_ready": true}'::jsonb
+                    )
+                    """
+                ),
+                {"tool_id": ALLOWLIST_TOOL_ID},
+            )
+            await session.execute(
+                text(
+                    """
+                    insert into tool_versions (
+                      tool_id, registry_version, allowlist_hash, manifest, metadata
+                    )
+                    values (
+                      :tool_id, 'sp0045-test', :allowlist_hash,
+                      '{}'::jsonb, '{"rls_ready": true}'::jsonb
+                    )
+                    """
+                ),
+                {
+                    "tool_id": ALLOWLIST_TOOL_ID,
+                    "allowlist_hash": "a" * 64,
+                },
+            )
+
+        tenant_id = await session.scalar(
+            text(
+                """
+                select tenant_id
+                  from tool_versions
+                 where tool_id = :tool_id
+                   and registry_version = 'sp0045-test'
+                """
+            ),
+            {"tool_id": ALLOWLIST_TOOL_ID},
+        )
+
+    assert tenant_id == TENANT_ID

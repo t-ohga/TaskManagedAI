@@ -12,7 +12,6 @@ from backend.app.db.models.agent_run_event import AgentRunEvent
 from backend.app.repositories.agent_run_event import append_event
 from backend.app.services.orchestrator._shared import (
     ORCHESTRATOR_ROLE_ID,
-    TERMINAL_STATUS_VALUES,
     ensure_tenant_context,
     lease_token_hash,
     utc_now,
@@ -59,7 +58,7 @@ class OrchestratorLeaseManager:
         """Renew an active orchestrator lease with one conditional UPDATE.
 
         Returns None when the predicate fails: wrong token, expired lease,
-        terminal run, tenant mismatch, or non-orchestrator role.
+        non-running run, tenant mismatch, or non-orchestrator role.
         """
 
         await ensure_tenant_context(self._session, tenant_id)
@@ -81,7 +80,7 @@ class OrchestratorLeaseManager:
                 AgentRun.role_id == ORCHESTRATOR_ROLE_ID,
                 AgentRun.orchestrator_lease_token == current_lease_token,
                 AgentRun.orchestrator_lease_expires_at > resolved_now,
-                AgentRun.status.not_in(TERMINAL_STATUS_VALUES),
+                AgentRun.status == "running",
             )
             .values(
                 orchestrator_lease_token=new_token,

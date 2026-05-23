@@ -43,6 +43,8 @@ ACTOR_ID = UUID("00000000-0000-4000-8000-000000027001")
 WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000027002")
 PROJECT_ID = UUID("00000000-0000-4000-8000-000000027003")
 TRIGGER_TENANT_ID = 77
+MISSING_TENANT_A_ID = 7701
+MISSING_TENANT_B_ID = 7702
 
 
 def _integration_settings() -> Settings:
@@ -168,6 +170,69 @@ async def test_policy_profiles_seed_exact_two_profiles(
         ).scalars().all()
 
     assert rows == ["default", "low_risk_auto_allow"]
+
+
+@pytest.mark.asyncio
+async def test_seed_initial_policy_profiles_uses_unique_names_for_missing_tenants(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    tenant_params = {
+        "tenant_a_id": MISSING_TENANT_A_ID,
+        "tenant_b_id": MISSING_TENANT_B_ID,
+    }
+    async with session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                text("delete from tool_versions where tenant_id in (:tenant_a_id, :tenant_b_id)"),
+                tenant_params,
+            )
+            await session.execute(
+                text("delete from tool_network_policies where tenant_id in (:tenant_a_id, :tenant_b_id)"),
+                tenant_params,
+            )
+            await session.execute(
+                text("delete from tool_registry where tenant_id in (:tenant_a_id, :tenant_b_id)"),
+                tenant_params,
+            )
+            await session.execute(
+                text("delete from policy_profile_action_effects where tenant_id in (:tenant_a_id, :tenant_b_id)"),
+                tenant_params,
+            )
+            await session.execute(
+                text("delete from policy_profiles where tenant_id in (:tenant_a_id, :tenant_b_id)"),
+                tenant_params,
+            )
+            await session.execute(
+                text(
+                    """
+                    delete from tenants
+                     where id in (:tenant_a_id, :tenant_b_id)
+                    """
+                ),
+                tenant_params,
+            )
+
+            await seed_initial_policy_profiles(session, tenant_id=MISSING_TENANT_A_ID)
+            await seed_initial_policy_profiles(session, tenant_id=MISSING_TENANT_B_ID)
+
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    select id, name
+                      from tenants
+                     where id in (:tenant_a_id, :tenant_b_id)
+                     order by id
+                    """
+                ),
+                tenant_params,
+            )
+        ).all()
+
+    assert [(row.id, row.name) for row in rows] == [
+        (MISSING_TENANT_A_ID, "default-tenant-7701"),
+        (MISSING_TENANT_B_ID, "default-tenant-7702"),
+    ]
 
 
 @pytest.mark.asyncio
