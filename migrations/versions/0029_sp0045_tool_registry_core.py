@@ -19,12 +19,16 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 NOW_DEFAULT = sa.text("now()")
+TENANT_ID_DEFAULT = sa.text("1")
 RLS_READY_DEFAULT = sa.text("'{}'::jsonb || '{\"rls_ready\": true}'::jsonb")
 UUID_V4_DEFAULT = sa.text("uuid_generate_v4()")
 
 ALLOWED_ACTIONS_CHECK = (
     "jsonb_typeof(allowed_actions) = 'array' "
     "and jsonb_array_length(allowed_actions) > 0 "
+    "and not jsonb_path_exists("
+    "allowed_actions, '$[*] ? (@.type() != \"string\")'::jsonpath"
+    ") "
     "and not jsonb_path_exists("
     "allowed_actions, "
     "'$[*] ? (@ != \"web_fetch\" && @ != \"docs_search\" "
@@ -103,7 +107,7 @@ def upgrade() -> None:
             server_default=UUID_V4_DEFAULT,
             nullable=False,
         ),
-        sa.Column("tenant_id", sa.BigInteger(), nullable=False),
+        sa.Column("tenant_id", sa.BigInteger(), server_default=TENANT_ID_DEFAULT, nullable=False),
         sa.Column("tool_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("registry_version", sa.Text(), nullable=False),
         sa.Column("allowlist_hash", sa.Text(), nullable=False),

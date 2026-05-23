@@ -11,7 +11,6 @@ from backend.app.db.models.agent_run_event import AgentRunEvent
 from backend.app.repositories.agent_run_event import append_event
 from backend.app.services.orchestrator._shared import (
     ORCHESTRATOR_ROLE_ID,
-    TERMINAL_STATUS_VALUES,
     ensure_tenant_context,
 )
 
@@ -56,11 +55,11 @@ class OrchestratorDispatcher:
                 AgentRun.tenant_id == tenant_id,
                 AgentRun.id == parent_run_id,
                 AgentRun.role_id == ORCHESTRATOR_ROLE_ID,
-                AgentRun.status.not_in(TERMINAL_STATUS_VALUES),
+                AgentRun.status == "running",
             )
         )
         if parent_exists is None:
-            raise ValueError("parent_run_id must reference a non-terminal orchestrator run.")
+            raise ValueError("parent_run_id must reference a running orchestrator run.")
 
         child = await self._session.execute(
             sa.select(AgentRun.id, AgentRun.role_id, AgentRun.role_scope).where(

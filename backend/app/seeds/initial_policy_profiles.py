@@ -65,6 +65,12 @@ _UPSERT_POLICY_PROFILE_ACTION_EFFECT = sa.text(
 )
 
 
+def _default_policy_profile_tenant_name(tenant_id: int) -> str:
+    if tenant_id == INITIAL_POLICY_PROFILE_TENANT_ID:
+        return DEFAULT_POLICY_PROFILE_TENANT_NAME
+    return f"{DEFAULT_POLICY_PROFILE_TENANT_NAME}-{tenant_id}"
+
+
 def policy_profile_insert_rows(
     *,
     tenant_id: int = INITIAL_POLICY_PROFILE_TENANT_ID,
@@ -110,7 +116,7 @@ async def seed_initial_policy_profiles(
         _ENSURE_POLICY_PROFILE_TENANT,
         {
             "tenant_id": tenant_id,
-            "tenant_name": DEFAULT_POLICY_PROFILE_TENANT_NAME,
+            "tenant_name": _default_policy_profile_tenant_name(tenant_id),
         },
     )
     await session.execute(

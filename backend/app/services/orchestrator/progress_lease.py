@@ -12,7 +12,6 @@ from backend.app.db.models.agent_run_event import AgentRunEvent
 from backend.app.repositories.agent_run_event import append_event
 from backend.app.services.orchestrator._shared import (
     ORCHESTRATOR_ROLE_ID,
-    TERMINAL_STATUS_VALUES,
     ensure_tenant_context,
     lease_token_hash,
     utc_now,
@@ -45,7 +44,7 @@ class OrchestratorProgressLease:
         run_id: UUID,
         now: datetime | None = None,
     ) -> ProgressRecordedResult | None:
-        """Update last_progress_at and progress_seq for a non-terminal orchestrator."""
+        """Update last_progress_at and progress_seq for a running orchestrator."""
 
         await ensure_tenant_context(self._session, tenant_id)
         resolved_now = now or utc_now()
@@ -55,7 +54,7 @@ class OrchestratorProgressLease:
                 AgentRun.tenant_id == tenant_id,
                 AgentRun.id == run_id,
                 AgentRun.role_id == ORCHESTRATOR_ROLE_ID,
-                AgentRun.status.not_in(TERMINAL_STATUS_VALUES),
+                AgentRun.status == "running",
             )
             .values(
                 last_progress_at=resolved_now,

@@ -130,7 +130,8 @@ _ROLLUP_SQL = sa.text(
             ar.parent_run_id,
             ar.status,
             ar.completed_at,
-            ar.created_at
+            ar.created_at,
+            array[ar.id]::uuid[] as path
           from agent_runs ar
          where ar.tenant_id = :tenant_id
            and ar.id = cast(:root_run_id as uuid)
@@ -144,12 +145,14 @@ _ROLLUP_SQL = sa.text(
             child.parent_run_id,
             child.status,
             child.completed_at,
-            child.created_at
+            child.created_at,
+            array_append(parent.path, child.id) as path
           from agent_runs child
           join run_tree parent
             on parent.tenant_id = child.tenant_id
            and parent.project_id = child.project_id
            and parent.id = child.parent_run_id
+         where not child.id = any(parent.path)
     ),
     dedup_events as (
         select distinct on (e.run_id, e.seq_no)

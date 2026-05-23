@@ -67,6 +67,12 @@ async def validate_review_artifact_for_action_class(
     requester_run = _require_run(runs, candidate.requester_run_id, "requester_run_id")
     reviewer_run = _require_run(runs, candidate.reviewer_run_id, "reviewer_run_id")
 
+    if candidate.requester_run_id == candidate.reviewer_run_id:
+        raise ReviewArtifactValidationError("reviewer_run_id must differ from requester_run_id.")
+    if candidate.review_artifact_id == candidate.review_target_artifact_id:
+        raise ReviewArtifactValidationError(
+            "review_artifact_id must differ from review_target_artifact_id."
+        )
     if parent_run.role_id != ORCHESTRATOR_ROLE_ID:
         raise ReviewArtifactValidationError("parent_run_id must be an orchestrator run.")
     if requester_run.parent_run_id != candidate.parent_run_id:
@@ -123,6 +129,11 @@ async def validate_review_artifact_for_action_class(
         action_class=candidate.action_class,
         policy_version=candidate.policy_version,
         provider_request_fingerprint_hash=candidate.provider_request_fingerprint_hash,
+    )
+    _assert_review_artifact_payload(
+        review_artifact.content_jsonb,
+        review_verdict=candidate.review_verdict,
+        findings_count=candidate.findings_count,
     )
 
     return ReviewArtifactValidationResult(
@@ -221,13 +232,32 @@ def _assert_policy_binding(
 
 
 def _lookup_policy_input(payload: dict[str, object], key: str) -> object:
-    if key in payload:
-        return payload[key]
-
     policy_input = payload.get(_POLICY_INPUT_KEY)
     if isinstance(policy_input, dict):
         return policy_input.get(key)
     return None
+
+
+def _assert_review_artifact_payload(
+    payload: dict[str, object],
+    *,
+    review_verdict: str,
+    findings_count: int,
+) -> None:
+    if payload.get("verdict") != review_verdict:
+        raise ReviewArtifactValidationError(
+            "review_verdict must match the reviewer artifact payload."
+        )
+
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        raise ReviewArtifactValidationError(
+            "review artifact payload findings must be a list."
+        )
+    if len(findings) != findings_count:
+        raise ReviewArtifactValidationError(
+            "findings_count must match the reviewer artifact payload."
+        )
 
 
 __all__ = [

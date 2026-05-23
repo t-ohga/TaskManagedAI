@@ -473,6 +473,84 @@ async def test_service_guard_rejects_action_class_policy_binding_mismatch(
 
 
 @pytest.mark.asyncio
+async def test_service_guard_uses_nested_policy_input_over_top_level_payload_fields(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture(session)
+            payload = _target_payload()
+            payload["action_class"] = "repo_write"
+            target_hash = _json_hash(payload)
+            await session.execute(
+                text(
+                    """
+                    update artifacts
+                       set content_jsonb = cast(:content_jsonb as jsonb),
+                           content_hash = :target_hash
+                     where tenant_id = 1
+                       and id = :target_artifact_id
+                    """
+                ),
+                {
+                    "content_jsonb": json.dumps(payload),
+                    "target_hash": target_hash,
+                    "target_artifact_id": TARGET_ARTIFACT_ID,
+                },
+            )
+
+        result = await validate_review_artifact_for_action_class(
+            session,
+            tenant_id=TENANT_ID,
+            project_id=PROJECT_ID,
+            candidate=_candidate(target_artifact_hash=target_hash),
+        )
+
+        assert result.action_class == "task_write"
+        assert result.target_artifact_hash == target_hash
+
+
+@pytest.mark.asyncio
+async def test_service_guard_rejects_target_without_policy_input_binding(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture(session)
+            payload: dict[str, object] = {
+                "summary": "review target patch",
+                "action_class": "task_write",
+                "policy_version": POLICY_VERSION,
+                "provider_request_fingerprint_hash": PROVIDER_FINGERPRINT_HASH,
+            }
+            target_hash = _json_hash(payload)
+            await session.execute(
+                text(
+                    """
+                    update artifacts
+                       set content_jsonb = cast(:content_jsonb as jsonb),
+                           content_hash = :target_hash
+                     where tenant_id = 1
+                       and id = :target_artifact_id
+                    """
+                ),
+                {
+                    "content_jsonb": json.dumps(payload),
+                    "target_hash": target_hash,
+                    "target_artifact_id": TARGET_ARTIFACT_ID,
+                },
+            )
+
+        with pytest.raises(ReviewArtifactValidationError, match="action_class"):
+            await validate_review_artifact_for_action_class(
+                session,
+                tenant_id=TENANT_ID,
+                project_id=PROJECT_ID,
+                candidate=_candidate(target_artifact_hash=target_hash),
+            )
+
+
+@pytest.mark.asyncio
 async def test_contract_rejects_non_reviewer_role(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -531,6 +609,92 @@ async def test_contract_rejects_requester_reviewer_identity(
         ):
             await _insert_review_artifact_row(session, direct_row)
             await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_service_guard_rejects_constructed_requester_reviewer_identity(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture(session)
+
+        direct_row = ReviewArtifactCreate.model_construct(
+            parent_run_id=PARENT_RUN_ID,
+            requester_run_id=REQUESTER_RUN_ID,
+            reviewer_run_id=REQUESTER_RUN_ID,
+            review_target_artifact_id=TARGET_ARTIFACT_ID,
+            review_artifact_id=REVIEW_ARTIFACT_ID,
+            action_class="task_write",
+            target_artifact_hash=TARGET_ARTIFACT_HASH,
+            policy_version=POLICY_VERSION,
+            provider_request_fingerprint_hash=PROVIDER_FINGERPRINT_HASH,
+            review_verdict="pass",
+            findings_count=0,
+        )
+        with pytest.raises(ReviewArtifactValidationError, match="reviewer_run_id"):
+            await validate_review_artifact_for_action_class(
+                session,
+                tenant_id=TENANT_ID,
+                project_id=PROJECT_ID,
+                candidate=direct_row,
+            )
+
+
+@pytest.mark.asyncio
+async def test_service_guard_rejects_review_artifact_verdict_mismatch(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture(session)
+            await session.execute(
+                text(
+                    """
+                    update artifacts
+                       set content_jsonb = '{"verdict":"fail","findings":[]}'::jsonb
+                     where tenant_id = 1
+                       and id = :review_artifact_id
+                    """
+                ),
+                {"review_artifact_id": REVIEW_ARTIFACT_ID},
+            )
+
+        with pytest.raises(ReviewArtifactValidationError, match="review_verdict"):
+            await validate_review_artifact_for_action_class(
+                session,
+                tenant_id=TENANT_ID,
+                project_id=PROJECT_ID,
+                candidate=_candidate(),
+            )
+
+
+@pytest.mark.asyncio
+async def test_service_guard_rejects_review_artifact_findings_count_mismatch(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture(session)
+            await session.execute(
+                text(
+                    """
+                    update artifacts
+                       set content_jsonb = '{"verdict":"pass","findings":[{"code":"F001"}]}'::jsonb
+                     where tenant_id = 1
+                       and id = :review_artifact_id
+                    """
+                ),
+                {"review_artifact_id": REVIEW_ARTIFACT_ID},
+            )
+
+        with pytest.raises(ReviewArtifactValidationError, match="findings_count"):
+            await validate_review_artifact_for_action_class(
+                session,
+                tenant_id=TENANT_ID,
+                project_id=PROJECT_ID,
+                candidate=_candidate(),
+            )
 
 
 @pytest.mark.asyncio
