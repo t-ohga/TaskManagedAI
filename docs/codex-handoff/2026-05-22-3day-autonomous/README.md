@@ -19,18 +19,18 @@ Claude が **連続 42 PR merge で完成させた基盤** (P0 Exit + Multi-Agen
 
 ## 3 日間のスコープ概観
 
-| task | sprint | scope | 想定 effort | 計画必須 | 依存 |
-|---|---|---|---|---|---|
-| **task-01** | SP-014 batch 0 | orchestrator agent (lease/dispatch/failover) | 1.5-2 day | **必須 (heavy)** | なし |
-| **task-02** | SP-012-8 | UI 日本語化 | 1-1.5 day | **必須** | なし |
-| **task-03** | SP-022-1 | scripts hardening (Phase 7a deviation 7 件) | 0.7-1 day | 推奨 | なし |
-| **task-04** | SP-012-9 残 | Approvals / Agent Runs / Audit / Settings wiring | 0.5-1 day | 推奨 | なし |
-| **task-05** | SP-0045 | Tool Registry 本体 (tools + allowed_actions + trust_tier + lockfile) | 1.5-2 day | **必須 (heavy)** | task-01 batch 0d 完遂後 |
-| **task-06** | docs/adr drift | ADR + Sprint Pack frontmatter retroactive fix | 0.3-0.5 day | 不要 | なし (並行) |
-| **task-07** | test coverage | Backend untested branch coverage 拡張 | 0.5-1 day | 不要 | なし (並行) |
-| **task-08** | docs drift | rules + reference + Sprint Pack 用語 + cross-reference 整合 | 0.3-0.5 day | 不要 | なし (並行) |
+| task | sprint | scope | status | merged PR |
+|---|---|---|---|---|
+| **task-01** | SP-014 batch 0 | orchestrator agent (lease/dispatch/failover) | completed | #145-#150, #171 |
+| **task-02** | SP-012-8 | UI 日本語化 | completed | #151-#158 |
+| **task-03** | SP-022-1 | scripts hardening (Phase 7a deviation 7 件) | completed | #159-#162, #171 |
+| **task-04** | SP-012-9 残 | Approvals / Agent Runs / Audit / Settings wiring | completed | #168 |
+| **task-05** | SP-0045 | Tool Registry 本体 (tools + allowed_actions + trust_tier + lockfile) | completed | #163-#166, #171 |
+| **task-06** | docs/adr drift | ADR + Sprint Pack frontmatter retroactive fix | completed | #167 |
+| **task-07** | test coverage | Backend untested branch coverage 拡張 | completed | #169 |
+| **task-08** | docs drift | rules + reference + Sprint Pack 用語 + cross-reference 整合 | completed | #170 |
 
-合計想定: 6.4-9.5 day = 3 日間 (24h × 3 = 72h、Codex 並行作業) で完遂可能 (task-01/05 を直列 + 残 6 task を並行)。
+合計結果: 8 task completed、27 PR merged (#145-#171)。Codex inline residual 18 件は #171 で全件 adopt fix 済み。
 
 ## 絶対遵守事項 (Codex 厳守)
 
@@ -67,16 +67,16 @@ task-08 (docs drift fix) ────┘    (並行可能、light、独立)
 
 ## 完了報告 (Codex → Claude)
 
-3 日間終了時に Codex は以下を準備:
+3 日間終了時に Codex は以下を準備済み:
 
-1. **完了 task list** (`task-NN` 単位で adopt 件数 / defer 件数 / blocker)
-2. **連続 PR merge log** (PR 番号 / merge SHA / 採否判定結果)
-3. **Codex finding close 状況** (P1 / P2 / P3 別、cascade pattern 終結確認)
-4. **Mac local stack 状態** (alembic head / Ticket 件数 / multi_agent test PASS 数)
-5. **carry-over Sprint Pack** (新規起票分 + 既存に追記分)
-6. **次 session entry** (Claude 戻り時の次着手 path 明示)
+1. **完了 task list**: `completion/task-01-completed.md` から `completion/task-08-completed.md`
+2. **連続 PR merge log**: `COMPLETION_REPORT.md` §merged PR log
+3. **Codex finding close 状況**: `COMPLETION_REPORT.md` §Codex review residual closure
+4. **verification summary**: 各 completion file と PR #171 description
+5. **carry-over**: `COMPLETION_REPORT.md` §carry-over
+6. **次 session entry**: `COMPLETION_REPORT.md` §next session entry
 
-= **本 README の §「3 日間のスコープ概観」表を更新** + handoff memory `~/.claude/projects/-Users-tohga-repo-TaskManagedAI/memory/project_session_2026_05_25_codex_3day_complete.md` 起票。
+Handoff memory: `~/.claude/projects/-Users-tohga-repo-TaskManagedAI/memory/project_session_2026_05_25_codex_3day_complete.md` 起票済み。
 
 ## Claude 戻り時の確認 path
 
