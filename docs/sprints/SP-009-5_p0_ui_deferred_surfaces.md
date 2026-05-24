@@ -48,7 +48,7 @@ max_days: 3
 | E0 | `request_revision` contract plan (completed 2026-05-24) | `revision_requested` status 追加を初期実装では拒否し、old approval invalidation + new approval row semantics を固定 |
 | E1 | `request_revision` DB/API (completed 2026-05-24) | additive `approval_revision_requests` table、human-only decider、raw-secret scan、metadata-only audit/notification、migration up/down |
 | E2 | `request_revision` Approval Detail UI (completed 2026-05-24) | no bulk action、rationale DOM non-exposure、server action validation |
-| E3 | revised artifact handoff | supersession wiring、fresh decision-packet hash negative tests |
+| E3 | revised artifact handoff (completed 2026-05-24) | supersession wiring、fresh decision-packet hash negative tests |
 | F | Newcomer Path / advanced approval refinements | P0.1 polish、P0 Exit blocker にしない |
 
 ## 受け入れ条件
@@ -74,7 +74,7 @@ max_days: 3
 
 ## Review
 
-- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、Batch A で `/today` read-only control plane + minimal KPI strip、Batch B で `/timeline` unified execution timeline、Batch C で Approval Detail decision packet hash visibility、Batch D1 で notification triage DB/API contract、Batch D2 で `/notifications` triage UI/actions、Batch E0 で `request_revision` contract plan、Batch E1 で `request_revision` DB/API、Batch E2 で Approval Detail `request_revision` UI/action を追加した。
-- verified: frontmatter / registry / backlog / handoff cross-reference、frontend typecheck/lint/Vitest、desktop/mobile browser smoke、timeline sensitive key leak check、decision packet malformed-hash DOM non-exposure、notification triage migration up/down + redacted API tests、D2 UI/action tests、request_revision migration up/down + API/schema regression tests、E2 UI/action tests を確認した。
-- deferred: `request_revision` E3 revised-artifact handoff と Newcomer Path は別 PR。
+- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、Batch A で `/today` read-only control plane + minimal KPI strip、Batch B で `/timeline` unified execution timeline、Batch C で Approval Detail decision packet hash visibility、Batch D1 で notification triage DB/API contract、Batch D2 で `/notifications` triage UI/actions、Batch E0 で `request_revision` contract plan、Batch E1 で `request_revision` DB/API、Batch E2 で Approval Detail `request_revision` UI/action、Batch E3 で revised artifact handoff supersession wiring を追加した。
+- verified: frontmatter / registry / backlog / handoff cross-reference、frontend typecheck/lint/Vitest、desktop/mobile browser smoke、timeline sensitive key leak check、decision packet malformed-hash DOM non-exposure、notification triage migration up/down + redacted API tests、D2 UI/action tests、request_revision migration up/down + API/schema regression tests、E2 UI/action tests、E3 fresh decision-packet/supersession DB tests を確認した。
+- deferred: Newcomer Path は別 PR。
 - risks: SP-009 本体の golden E2E / DOM secret scan / residual enum contract は引き続き未完。

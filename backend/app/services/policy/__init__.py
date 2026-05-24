@@ -31,6 +31,7 @@ from backend.app.services.policy.low_risk_profile import (
 )
 from backend.app.services.policy.revision_request_service import (
     ApprovalRevisionConflictError,
+    ApprovalRevisionHandoffResult,
     ApprovalRevisionRequestService,
     ApprovalRevisionResult,
     ApprovalRevisionValidationError,
@@ -40,6 +41,7 @@ from backend.app.services.policy.self_approval_guard import SelfApprovalGuardSer
 __all__ = [
     "ApprovalDecisionService",
     "ApprovalRevisionConflictError",
+    "ApprovalRevisionHandoffResult",
     "ApprovalRevisionRequestService",
     "ApprovalRevisionResult",
     "ApprovalRevisionValidationError",

@@ -20,6 +20,7 @@ from backend.app.db.app_role import (
 from backend.app.db.models.approval_request import ApprovalRequest
 from backend.app.db.models.approval_revision_request import ApprovalRevisionRequest
 from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
+from backend.app.repositories.approval_request import ApprovalRequestRepository
 from backend.app.repositories.approval_revision_request import (
     ApprovalRevisionRequestRepository,
 )
@@ -40,6 +41,13 @@ class ApprovalRevisionValidationError(ValueError):
 class ApprovalRevisionResult:
     approval: ApprovalRequest
     revision_request: ApprovalRevisionRequest
+
+
+@dataclass(frozen=True)
+class ApprovalRevisionHandoffResult:
+    approval: ApprovalRequest
+    revision_request: ApprovalRevisionRequest
+    replacement_approval: ApprovalRequest
 
 
 class ApprovalRevisionRequestService:
@@ -135,6 +143,98 @@ class ApprovalRevisionRequestService:
         await self.session.refresh(revision_request)
         return ApprovalRevisionResult(approval=approval, revision_request=revision_request)
 
+    async def create_revised_approval(
+        self,
+        *,
+        tenant_id: int,
+        revision_request: ApprovalRevisionRequest,
+        artifact_hash: str,
+        diff_hash: str,
+        policy_version: str,
+        policy_pack_lock: str | None,
+        provider_request_fingerprint: str,
+        stale_after_event_seq: int,
+    ) -> ApprovalRevisionHandoffResult:
+        await self._ensure_tenant_context(tenant_id)
+        artifact_hash = artifact_hash.strip()
+        diff_hash = diff_hash.strip()
+        policy_version = policy_version.strip()
+        if policy_pack_lock is not None:
+            policy_pack_lock = policy_pack_lock.strip() or None
+        provider_request_fingerprint = provider_request_fingerprint.strip()
+
+        self._validate_revised_decision_packet(
+            revision_request=revision_request,
+            artifact_hash=artifact_hash,
+            diff_hash=diff_hash,
+            policy_version=policy_version,
+            provider_request_fingerprint=provider_request_fingerprint,
+            stale_after_event_seq=stale_after_event_seq,
+        )
+
+        if revision_request.tenant_id != tenant_id:
+            raise ApprovalRevisionConflictError("revision request tenant mismatch")
+        if revision_request.superseded_by_approval_request_id is not None:
+            raise ApprovalRevisionConflictError(
+                f"revision request {revision_request.id} is already superseded"
+            )
+
+        approval_repo = ApprovalRequestRepository(self.session)
+        revision_repo = ApprovalRevisionRequestRepository(self.session)
+        approval = await approval_repo.get(
+            tenant_id=tenant_id,
+            id=revision_request.approval_request_id,
+        )
+        if approval is None:
+            raise ApprovalRevisionConflictError(
+                f"approval {revision_request.approval_request_id} not found"
+            )
+        if approval.status != "invalidated":
+            raise ApprovalRevisionConflictError(
+                f"approval {approval.id} must be invalidated before revised handoff; "
+                f"current status is {approval.status!r}"
+            )
+
+        replacement_approval = await approval_repo.create_pending_approval(
+            tenant_id=tenant_id,
+            action_class=approval.action_class,
+            resource_ref=approval.resource_ref,
+            risk_level=approval.risk_level,
+            requested_by_actor_id=approval.requested_by_actor_id,
+            recipient_actor_id=revision_request.requested_by_actor_id,
+            policy_version=policy_version,
+            artifact_hash=artifact_hash,
+            diff_hash=diff_hash,
+            policy_pack_lock=policy_pack_lock,
+            provider_request_fingerprint=provider_request_fingerprint,
+            stale_after_event_seq=stale_after_event_seq,
+            run_id=approval.run_id,
+            metadata={
+                "rls_ready": True,
+                "revision_request_id": str(revision_request.id),
+                "supersedes_approval_request_id": str(approval.id),
+            },
+        )
+
+        superseded_revision = await revision_repo.supersede_open_revision_request(
+            tenant_id=tenant_id,
+            id=revision_request.id,
+            superseded_by_approval_request_id=replacement_approval.id,
+        )
+        if superseded_revision is None:
+            raise ApprovalRevisionConflictError(
+                f"revision request {revision_request.id} could not be superseded"
+            )
+
+        await self.session.refresh(approval)
+        await self.session.refresh(superseded_revision)
+        await self.session.refresh(replacement_approval)
+        return ApprovalRevisionHandoffResult(
+            approval=approval,
+            revision_request=superseded_revision,
+            replacement_approval=replacement_approval,
+        )
+
     @staticmethod
     def _validate_rationale(rationale: str) -> str:
         normalized = rationale.strip()
@@ -151,6 +251,51 @@ class ApprovalRevisionRequestService:
                 "revision rationale failed raw-secret scan"
             ) from exc
         return normalized
+
+    @staticmethod
+    def _validate_revised_decision_packet(
+        *,
+        revision_request: ApprovalRevisionRequest,
+        artifact_hash: str,
+        diff_hash: str,
+        policy_version: str,
+        provider_request_fingerprint: str,
+        stale_after_event_seq: int,
+    ) -> None:
+        if not artifact_hash.strip():
+            raise ApprovalRevisionValidationError("revised artifact_hash must not be empty")
+        if not diff_hash.strip():
+            raise ApprovalRevisionValidationError("revised diff_hash must not be empty")
+        if not policy_version.strip():
+            raise ApprovalRevisionValidationError("revised policy_version must not be empty")
+        if not provider_request_fingerprint.strip():
+            raise ApprovalRevisionValidationError(
+                "revised provider_request_fingerprint must not be empty"
+            )
+        if stale_after_event_seq < 0:
+            raise ApprovalRevisionValidationError(
+                "revised stale_after_event_seq must be non-negative"
+            )
+
+        if artifact_hash == revision_request.artifact_hash:
+            raise ApprovalRevisionValidationError(
+                "revised artifact_hash must differ from the revision snapshot"
+            )
+        if diff_hash == revision_request.diff_hash:
+            raise ApprovalRevisionValidationError(
+                "revised diff_hash must differ from the revision snapshot"
+            )
+        if provider_request_fingerprint == revision_request.provider_request_fingerprint:
+            raise ApprovalRevisionValidationError(
+                "revised provider_request_fingerprint must differ from the revision snapshot"
+            )
+        if (
+            revision_request.stale_after_event_seq is not None
+            and stale_after_event_seq <= revision_request.stale_after_event_seq
+        ):
+            raise ApprovalRevisionValidationError(
+                "revised stale_after_event_seq must advance past the revision snapshot"
+            )
 
     @staticmethod
     def _audit_payload(
@@ -186,6 +331,7 @@ class ApprovalRevisionRequestService:
 
 __all__ = [
     "ApprovalRevisionConflictError",
+    "ApprovalRevisionHandoffResult",
     "ApprovalRevisionRequestService",
     "ApprovalRevisionResult",
     "ApprovalRevisionValidationError",
