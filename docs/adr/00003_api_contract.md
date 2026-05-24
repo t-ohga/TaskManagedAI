@@ -16,7 +16,7 @@ superseded_by: null
 
 このテンプレの使い方: Sprint 6 の CLI artifact orchestration を ADR Gate Criteria #3 (API 契約 / event schema) に対応する形で固定する。`codex exec` / `claude -p` 等の CLI agent を domain に密結合せず、artifact schema + subprocess launcher + AgentRunEvent 拡張 + 採否判定 API + AI 出力直結禁止 lint の 5 boundary を確立する。Sprint 6 batch 1 着手前に proposed → accepted、Sprint 6 Exit までに review 欄を最終化する。
 
-最終更新: 2026-05-24 (SP-009-5 Batch E0 で Approval `request_revision` API contract plan を append。前: 2026-05-17 Sprint 11.5 batch 0 で `/metrics` Prometheus exporter endpoint 追加 update note を append)
+最終更新: 2026-05-24 (SP-009-5 Batch F2 で Newcomer Path dry-run intake API contract plan を append。前: SP-009-5 Batch E0 で Approval `request_revision` API contract plan を append)
 
 ## 背景
 
@@ -346,6 +346,72 @@ Audit and notification payloads for `approval_revision_requested` are metadata-o
 - raw-secret canary rejection before DB insert.
 - audit and notification payload non-exposure tests.
 - migration upgrade head / downgrade -1 / upgrade head / current.
+
+## SP-009-5 Newcomer Path dry-run intake API contract extension (2026-05-24 planning note)
+
+SP-009-5 Batch F2 introduces a guided intake dry-run endpoint for first-use onboarding. This is ADR Gate Criteria #3 (API contract) and #4 (AI agent authority) because the request describes a future AI-assisted action. The first implementation is response-only and must not create execution state.
+
+### Scope
+
+- F2 endpoint: `POST /api/v1/onboarding/dry_run_plan`
+- F2 is deterministic and response-only.
+- No ticket, AgentRun, approval, approval revision, notification, audit event, repository operation, provider call, capability token, merge, deploy, CLI command, or persisted onboarding state is created.
+- F2 may mention a future approval requirement, but it cannot create an approval request.
+
+### Request contract
+
+The request uses `extra="forbid"` and accepts only:
+
+- `purpose`
+- `target_repo_ref`
+- `expected_artifact`
+- `allowed_action_class`
+- `budget_cap`
+- `due_at`
+- `reviewer_actor_id`
+- `starter_mode`
+
+Forbidden request fields include `policy_profile`, `tenant_id`, `project_id`, `actor_id`, `approval_id`, `run_id`, raw provider payloads, repository tokens, capability tokens, and runtime handoff fields.
+
+`allowed_action_class` is a requested upper bound, not the effective policy decision. F2 accepts only `read_only`, `task_write`, `repo_write`, and `pr_open`; it rejects `secret_access`, `merge`, `deploy`, and `provider_call` for first-run intake.
+
+### Effective action contract
+
+- `starter_mode=research_only` -> effective `read_only`, `approval_required=false`
+- `starter_mode=plan_only` -> effective `read_only`, `approval_required=false`
+- `starter_mode=draft_pr_requires_approval` + upper bound `read_only` -> effective `read_only`
+- `starter_mode=draft_pr_requires_approval` + upper bound `task_write|repo_write|pr_open` -> resolve through the existing autonomy policy engine with runtime disabled
+
+`read_only` is a dry-run-only sentinel and is not added to the canonical 7-value `ActionClass` enum.
+
+### Response contract
+
+The response contains a `dry_run_plan` with:
+
+- requested and effective action class
+- policy effect
+- approval requirement
+- risk level
+- estimated cost string
+- rollback plan
+- test plan
+- blocked reasons
+- next safe routes
+- `would_create` booleans, all `false` in F2
+
+The response must not include raw prompt text beyond validated user-visible fields, raw provider payloads, raw secrets, raw tokens, capability tokens, raw logs, or stack details. Raw-secret canaries in text request fields are rejected before response construction.
+
+### Verification
+
+- schema tests for `extra="forbid"` and rejected ownership/runtime fields
+- policy negative tests for mutating first-run classes under runtime disabled
+- raw-secret canary rejection for every text input field
+- no-mutation regression counts for tickets, AgentRuns, approvals, approval revisions, notifications, and audit events
+- response redaction tests for prohibited raw keys and token/log surfaces
+
+### F2b implementation note (2026-05-24)
+
+Batch F2b implemented the contract as `POST /api/v1/onboarding/dry_run_plan` with backend schema/service/API tests. The implementation remains response-only: all `would_create` fields are false, mutating candidates resolve through the autonomy policy engine with `runtime_enabled=false`, raw-secret canaries are rejected before response construction, and no migration is required.
 
 ## Sprint 11.5 batch 0 update note (2026-05-17 accepted)
 

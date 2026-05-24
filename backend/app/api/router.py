@@ -14,6 +14,7 @@ from backend.app.api import (
     kpi_rollup,
     me,
     memory,
+    onboarding,
     p0_acceptance_report,
     research_tasks,
     tickets,
@@ -33,4 +34,5 @@ api_router.include_router(p0_acceptance_report.router)
 api_router.include_router(tickets.router)
 api_router.include_router(memory.router)
 api_router.include_router(me.router)
+api_router.include_router(onboarding.router)
 api_router.include_router(audit.router)

@@ -33,10 +33,13 @@ This handoff is a safe restart package for the remaining carry-over area. It int
 | `tasks/task-15-sp0095-request-revision-handoff.md` | SP-009-5 Batch E3 revised artifact handoff |
 | `tasks/task-16-sp0095-newcomer-path-plan.md` | SP-009-5 Batch F0 Newcomer Path contract plan |
 | `tasks/task-17-sp0095-newcomer-path-ui.md` | SP-009-5 Batch F1 read-only `/onboarding` UI |
+| `tasks/task-18-sp0095-newcomer-path-f2-plan.md` | SP-009-5 Batch F2 guided intake dry-run contract plan |
+| `tasks/task-19-sp0095-newcomer-path-f2-api.md` | SP-009-5 Batch F2b guided intake dry-run backend API |
 | `plans/task-03-sp007-phase5-trust-boundary-plan.md` | SP-007 Phase 5 trust-boundary implementation sequence |
 | `plans/task-09-sp0095-notification-triage-contract-plan.md` | Notification triage DB/API/UI contract plan |
 | `plans/task-12-sp0095-request-revision-contract-plan.md` | Approval request_revision DB/API/UI/runtime contract plan |
 | `plans/task-16-sp0095-newcomer-path-contract-plan.md` | Newcomer Path read-only / dry-run / CLI onboarding split |
+| `plans/task-18-sp0095-newcomer-path-f2-contract-plan.md` | Newcomer Path F2 dry-run intake API contract |
 
 ## Operating Rule
 
@@ -53,7 +56,7 @@ Do not start SP-008 / SP-009 / SP-007 carry-over code directly from old Sprint P
 1. Run task-01 first: SP-008 residual reconciliation.
 2. If task-01 confirms the residual is still current, implement SP-008 in the smallest safe batch order: server-owned binding, broker-mediated GitHub adapter, webhook service boundary, `repo_pr_opened` event, KPI endpoint, then docs/status closeout.
 3. For SP-009-5, Batch E must use `plans/task-12-sp0095-request-revision-contract-plan.md`; E1 DB/API, E2 UI, and E3 revised-artifact handoff are implemented.
-4. For SP-009-5 Batch F, use `plans/task-16-sp0095-newcomer-path-contract-plan.md`; F1 read-only `/onboarding` is implemented, and F2+ API/schema/runtime work remains separately gated.
+4. For SP-009-5 Batch F, use `plans/task-16-sp0095-newcomer-path-contract-plan.md`; F1 read-only `/onboarding`, F2a planning, and F2b response-only backend API are implemented. Next is F3 plan-review UI, still without an approve/start execution shortcut.
 5. Run task-05 before SP-009 P0.1 UI code; it separates read-only UI surfaces from ADR/API-gated mutation surfaces.
 6. Run task-02 before any remaining SP-009 code because SP-012 / SP-016 already changed the UI and CLI surface.
 7. Run task-03 only as planning unless the user explicitly wants repo-external hook trust changes applied on this machine. The current plan artifact is `plans/task-03-sp007-phase5-trust-boundary-plan.md`.
