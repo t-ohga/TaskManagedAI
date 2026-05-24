@@ -13,7 +13,7 @@
 
 ```text
 task-01 (SP-008 reconciliation)
-  -> if READY: SP-008 implementation batch A/B/C in separate PRs
+  -> if READY: SP-008 implementation batches in separate PRs
 
 task-02 (SP-009 reconciliation)
   -> if READY: SP-009 narrow backend/API or UI PR, not both unless plan requires it
@@ -29,10 +29,11 @@ These are not coding instructions until task-01 marks them `READY`.
 | batch | tentative scope | high-risk boundary |
 |---|---|---|
 | A | residual server-owned 4-binding signature / request fingerprint refactor | API contract + SecretBroker fingerprint |
-| B | GitHubAppAdapter broker-mediated HTTP wrapper | raw token non-exposure + GitHub API boundary |
-| C | `repo_pr_opened` actual AgentRunEvent emission | append-only event contract |
-| D | AC-KPI-02 `time_to_merge` endpoint/helper | KPI source-of-truth and duplicate counting |
-| E | SP-008 status closeout + ADR/sprint docs | docs drift |
+| B | GitHubAppAdapter broker-mediated adapter boundary | raw token non-exposure + GitHub API boundary |
+| C | webhook SecretBroker/replay service boundary | raw HMAC secret redaction + replay defense |
+| D | `repo_pr_opened` actual AgentRunEvent emission | append-only event contract |
+| E | AC-KPI-02 `time_to_merge` endpoint/helper | KPI source-of-truth and duplicate counting |
+| F | SP-008 status closeout + ADR/sprint docs | docs drift |
 
 ## SP-009 Tentative Implementation Batches
 

@@ -19,10 +19,32 @@ from backend.app.services.repoproxy.github_app_adapter import (
     GitHubAppAdapter,
     GitHubDraftPRResponse,
 )
+from backend.app.services.repoproxy.webhook_service import (
+    GITHUB_WEBHOOK_DENIED_AUDIT_EVENT_TYPE,
+    GITHUB_WEBHOOK_REPLAY_WINDOW_SECONDS,
+    GITHUB_WEBHOOK_VERIFIED_AUDIT_EVENT_TYPE,
+    WEBHOOK_HMAC_FAILED_AUDIT_EVENT_TYPE,
+    GitHubWebhookReasonCode,
+    GitHubWebhookRequest,
+    GitHubWebhookVerificationResult,
+    GitHubWebhookVerifier,
+    WebhookSecretCandidate,
+    WebhookSecretCandidates,
+)
 
 __all__ = [
     "DbDraftPRRequestResolver",
     "GITHUB_API_VERSION",
+    "GITHUB_WEBHOOK_DENIED_AUDIT_EVENT_TYPE",
+    "GITHUB_WEBHOOK_REPLAY_WINDOW_SECONDS",
+    "GITHUB_WEBHOOK_VERIFIED_AUDIT_EVENT_TYPE",
+    "WEBHOOK_HMAC_FAILED_AUDIT_EVENT_TYPE",
     "GitHubAppAdapter",
     "GitHubDraftPRResponse",
+    "GitHubWebhookReasonCode",
+    "GitHubWebhookRequest",
+    "GitHubWebhookVerificationResult",
+    "GitHubWebhookVerifier",
+    "WebhookSecretCandidate",
+    "WebhookSecretCandidates",
 ]

@@ -5,7 +5,7 @@ status: "partial_skeleton"
 sprint_no: 8
 created_at: "2026-05-13"
 updated_at: "2026-05-24"
-review_summary: "2026-05-24 reconciliation + Batch A/A2/B: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup / server-owned Draft PR binding guard / DB-backed ApprovalRequest+ContextSnapshot resolver / broker-mediated GitHubAppAdapter boundary are present. Real GitHub httpx transport, live Git ref re-fetch, webhook SecretBroker+replay service layer, actual repo_pr_opened emission, and agent-runs KPI endpoint remain residual. Keep status partial_skeleton."
+review_summary: "2026-05-24 reconciliation + Batch A/A2/B/C: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup / server-owned Draft PR binding guard / DB-backed ApprovalRequest+ContextSnapshot resolver / broker-mediated GitHubAppAdapter boundary / webhook service boundary with replay protocol are present. Real GitHub httpx transport, live Git ref re-fetch, concrete SecretBroker+Redis webhook adapters and route wiring, actual repo_pr_opened emission, and agent-runs KPI endpoint remain residual. Keep status partial_skeleton."
 target_days: 5
 max_days: 7
 adr_refs:
@@ -123,7 +123,7 @@ risks:
 - [ ] `uv run pytest tests/repoproxy/test_github_app_adapter.py -q` で broker-mediated token 経由のみ動作することを確認。
 - [ ] `uv run pytest tests/repoproxy/test_repoproxy_service.py -q` で 4 整合 binding が 1 つでも mismatch なら deny されることを確認。
 - [ ] `uv run pytest tests/repoproxy/test_permission_matrix.py -q` で actions / workflows / administration が deny 明示されていることを確認。
-- [ ] `uv run pytest tests/repoproxy/test_webhook_hmac.py -q` で signature mismatch / replay / timing attack に対応していることを確認。
+- [ ] `uv run pytest tests/repoproxy/test_webhook_hmac.py tests/repoproxy/test_webhook_service.py -q` で signature mismatch / replay / rotation status / timing attack に対応していることを確認。
 - [ ] `uv run pytest tests/repoproxy/test_merge_deploy_deny.py -q` で merge / deploy が capability token / Policy Engine 両方で deny されることを確認。
 - [ ] `uv run pytest tests/repoproxy/test_agent_run_event_repo_pr_opened.py -q` で AgentRunEvent integration を確認。
 - [ ] `uv run pytest tests/repoproxy/test_canary_no_raw_token.py -q` で raw installation token が AI / runner / artifact / log / audit に漏れないことを確認。
@@ -303,7 +303,7 @@ verify で品質確認。
 
 - `backend/app/services/repoproxy/github_app_adapter.py` exists as a broker-mediated adapter boundary with no raw installation token exposure to transport. Real GitHub httpx transport and live Git ref re-fetch remain pending.
 - `RepoProxy.create_draft_pr()` now accepts only `DraftPRBinding`; the DB-backed resolver loads ApprovalRequest + latest ContextSnapshot and passes the internal `DraftPRRequest` to the transport. Live Git ref re-fetch remains pending for GitHubAppAdapter.
-- `verify_github_webhook(request, secret_ref_current, secret_ref_previous, delivery_id)` service layer with SecretBroker resolution, Redis replay nonce, status validation, and audit emission is not present.
+- `GitHubWebhookVerifier` service boundary with SecretBroker resolver protocol, Redis SETNX replay protocol, rotation status validation, and redacted audit payload is present. Concrete SecretBroker resolver, concrete Redis adapter, and FastAPI route wiring remain pending.
 - Actual AgentRun runtime path that emits `repo_pr_opened` from RepoProxy is not present.
 - `/agent-runs/{id}/kpi` endpoint is not present. Existing KPI code covers eval corpus rollup and orchestrator proxy rollup, not the SP-008 Draft PR endpoint contract.
 - Real GitHub App admin registration / private key SOPS metadata cannot be verified from repo files and remains an operator setup item unless a secret metadata fixture is added.
@@ -312,7 +312,7 @@ verify で品質確認。
 
 1. Batch A/A2: service-level RepoProxy server-owned binding refactor (`approval_id`, `agent_run_id`) + negative tests for each mismatch. **Completed 2026-05-24**: public signature now takes only `DraftPRBinding`, pure server-owned state builder exists, and DB-backed resolver loads ApprovalRequest + latest ContextSnapshot. Live Git ref re-fetch remains for Batch B transport integration.
 2. Batch B: `GitHubAppAdapter` broker-mediated boundary with raw-token non-exposure tests. **Partially completed 2026-05-24**: adapter boundary + tests exist; real httpx transport, retries/rate limit, and live Git ref re-fetch remain.
-3. Batch C: webhook service layer with SecretBroker resolution, Redis replay guard, rotation status validation, and audit payload redaction.
+3. Batch C: webhook service layer with SecretBroker resolution, Redis replay guard, rotation status validation, and audit payload redaction. **Completed 2026-05-24 at service boundary level**; concrete SecretBroker resolver / Redis adapter / FastAPI route wiring remain.
 4. Batch D: actual `repo_pr_opened` emission from the runtime path.
 5. Batch E: `/agent-runs/{id}/kpi` or explicitly superseding endpoint decision, then status closeout.
 
@@ -334,6 +334,28 @@ verify で品質確認。
 
 - Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
 - Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
+- Runtime `repo_pr_opened` emission and agent-runs KPI endpoint.
+
+### 2026-05-24 Batch C implementation (Webhook service boundary)
+
+#### changed
+
+- `backend/app/services/repoproxy/webhook_service.py`: added `GitHubWebhookVerifier`, `WebhookSecretResolver`, `WebhookReplayStore`, and redacted audit result payloads.
+- The service verifies current active secret first, then previous deprecated secret during rotation, and denies any previous secret with an invalid status.
+- Replay nonce is claimed only after HMAC validation succeeds, using a tenant + installation + delivery hash key and a 3600 second TTL.
+- Audit payload records hashes and metadata only; raw signature header, delivery id, and HMAC secret are not emitted.
+- `backend/app/services/repoproxy/webhook_hmac.py`: updated module contract to keep it as the low-level pure helper behind the service boundary.
+- `tests/repoproxy/test_webhook_service.py`: added 11 focused tests for current/previous secret acceptance, mismatch no-replay, replay duplicate deny, status validation, missing delivery id, audit redaction, JSON serializability, and replay TTL validation.
+
+#### verified
+
+- `uv run pytest tests/repoproxy/test_webhook_service.py -q`
+
+#### deferred
+
+- Concrete SecretBroker-backed secret resolver for webhook HMAC secret material.
+- Concrete Redis SETNX replay adapter.
+- FastAPI `/webhooks/github` route with Tailscale-only ingress check.
 - Runtime `repo_pr_opened` emission and agent-runs KPI endpoint.
 
 ### 2026-05-24 Batch A2 implementation (DB-backed Draft PR resolver)
