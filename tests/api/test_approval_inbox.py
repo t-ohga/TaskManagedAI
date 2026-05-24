@@ -18,7 +18,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.app.api.approval_inbox import ApprovalListItem, get_db_session
+from backend.app.api.approval_inbox import ApprovalDetail, ApprovalListItem, get_db_session
 from backend.app.config import Settings, get_settings
 from backend.app.db.models.approval_request import ApprovalRequest
 from backend.app.db.models.notification_event import NotificationEvent
@@ -311,6 +311,35 @@ def test_list_pending_approvals_rejects_unknown_action_class() -> None:
         )
 
 
+def test_approval_detail_contract_includes_decision_packet_fields() -> None:
+    detail = ApprovalDetail(
+        id=uuid4(),
+        action_class="repo_write",
+        resource_ref="repo:TaskManagedAI:decision-packet",
+        risk_level="high",
+        status="pending",
+        requested_by_actor_id=uuid4(),
+        decided_by_actor_id=None,
+        requested_at=datetime.now(tz=UTC),
+        decided_at=None,
+        rationale=None,
+        artifact_hash="a" * 64,
+        diff_hash="b" * 64,
+        policy_version="policy-v1",
+        policy_pack_lock="c" * 64,
+        provider_request_fingerprint="d" * 64,
+        stale_after_event_seq=42,
+    )
+
+    payload = detail.model_dump()
+    assert payload["artifact_hash"] == "a" * 64
+    assert payload["diff_hash"] == "b" * 64
+    assert payload["policy_version"] == "policy-v1"
+    assert payload["policy_pack_lock"] == "c" * 64
+    assert payload["provider_request_fingerprint"] == "d" * 64
+    assert payload["stale_after_event_seq"] == 42
+
+
 @pytest.mark.asyncio
 async def test_create_pending_approval_inserts_notification(
     approval_api_client: AsyncClient,
@@ -383,6 +412,27 @@ async def test_list_pending_approvals(
     assert len(payload) == 1
     assert payload[0]["id"] == str(APPROVAL_ID)
     assert payload[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_get_approval_detail_returns_decision_packet_fields(
+    approval_api_client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _setup_api_fixtures(session_factory)
+    async with session_factory.begin() as session:
+        await _insert_approval(session, approval_id=APPROVAL_ID)
+
+    response = await approval_api_client.get(f"/api/v1/approvals/{APPROVAL_ID}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["artifact_hash"] == "artifact-a"
+    assert payload["diff_hash"] == "diff-a"
+    assert payload["policy_version"] == "policy-v1"
+    assert payload["policy_pack_lock"] == "pack-a"
+    assert payload["provider_request_fingerprint"] == "provider-a"
+    assert payload["stale_after_event_seq"] == 1
 
 
 @pytest.mark.asyncio

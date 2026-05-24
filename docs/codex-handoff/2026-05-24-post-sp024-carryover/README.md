@@ -23,6 +23,7 @@ This handoff is a safe restart package for the remaining carry-over area. It int
 | `tasks/task-05-sp0095-split-docs.md` | SP-009-5 P0.1 deferred UI split |
 | `tasks/task-06-sp0095-readonly-ui.md` | SP-009-5 Batch A read-only Today/Inbox UI |
 | `tasks/task-07-sp0095-timeline-ui.md` | SP-009-5 Batch B unified timeline UI |
+| `tasks/task-08-sp0095-decision-packet.md` | SP-009-5 Batch C decision packet hash visibility |
 | `plans/task-03-sp007-phase5-trust-boundary-plan.md` | SP-007 Phase 5 trust-boundary implementation sequence |
 
 ## Operating Rule

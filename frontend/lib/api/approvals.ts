@@ -42,7 +42,8 @@ export const ApprovalDetailSchema = ApprovalListItemSchema.extend({
   diff_hash: z.string().nullable(),
   policy_version: z.string(),
   policy_pack_lock: z.string().nullable(),
-  provider_request_fingerprint: z.string().nullable()
+  provider_request_fingerprint: z.string().nullable(),
+  stale_after_event_seq: z.number().int().nullable().optional().transform((value) => value ?? null)
 });
 
 export type ApprovalDetail = z.infer<typeof ApprovalDetailSchema>;
