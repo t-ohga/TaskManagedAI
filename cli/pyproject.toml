@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=69,<70", "wheel>=0.43,<0.44"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taskmanagedai-cli"
+version = "0.1.0"
+description = "Project-user CLI for TaskManagedAI."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "httpx>=0.27,<1.0",
+]
+
+[project.scripts]
+tm = "tm.main:main"
+
+[tool.setuptools.packages.find]
+include = ["tm*"]
