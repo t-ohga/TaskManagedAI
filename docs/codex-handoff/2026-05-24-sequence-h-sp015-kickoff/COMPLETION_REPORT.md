@@ -65,3 +65,31 @@ Recommended next step:
 2. Run Codex/GitHub review helper after PR creation.
 3. If actionable findings appear, fix in this branch before merge.
 4. After merge, start a separate SP-016 implementation handoff only after ADR-00015 acceptance and CLI canonical decision.
+
+## postscript: 2026-05-24 closeout supersession
+
+The SP-016 "not started" residual above records the state at this handoff close.
+It has since been superseded by later 2026-05-24 PRs:
+
+- #174: SP-016 kickoff blockers closed.
+- #175: SP-016 API capability token schema.
+- #176: SP-015 review residuals closed.
+- #177: SP-016 CLI token lifecycle.
+- #178: SP-016 `tm` CLI foundation.
+- #179: SP-016 CLI credential sources.
+- #180: SP-016 public CLI usage guide.
+- #181: SP-016 CLI network boundary.
+- #182: SP-016 CLI token misuse / scope mismatch negatives.
+- #183: SP-016 UI/CLI parity contract.
+- #184: SP-016 CLI secret redaction.
+
+Current source of truth after this closeout:
+
+- `docs/sprints/SP-015_inter_agent_communication.md`: `status: completed`,
+  `completed_at: 2026-05-24`.
+- `docs/sprints/SP-016_ui_cli_parity.md`: `status: completed`,
+  `completed_at: 2026-05-24`.
+- `alembic check` remains a repository infrastructure debt because
+  `migrations/env.py` does not provide `target_metadata`; SP-015/SP-016
+  downgrade→upgrade on the local test DB passed and is recorded in the Sprint
+  Pack Review sections.

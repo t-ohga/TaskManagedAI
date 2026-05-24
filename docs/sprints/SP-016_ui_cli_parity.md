@@ -1,10 +1,11 @@
 ---
 id: "SP-016_ui_cli_parity"
 type: "heavy"
-status: "in_progress"
+status: "completed"
 sprint_no: 16
 created_at: "2026-05-10"
 updated_at: "2026-05-24"
+completed_at: "2026-05-24"
 target_days: 4
 max_days: 6
 adr_refs:
@@ -21,7 +22,7 @@ risks:
   - "PE-F-014 (CLI token misuse の SecretBroker negative case)"
 ---
 
-最終更新: 2026-05-24 (SP-016 kickoff blocker closure: ADR-00015 accepted、CLI canonical `tm` 確定、13 capability drift 解消、api_capability_tokens DDL / audit lifecycle 固定)
+最終更新: 2026-05-24 (batch 0a-0i 完了、13 capability contract / token misuse / Tailscale gate / secret redaction PASS、frontmatter completed 化)
 
 ## 目的
 
@@ -109,20 +110,44 @@ risks:
 ## 検証手順
 
 ```bash
-uv run pytest tests/parity/test_ui_cli_parity.py \
-              tests/cli/test_capability_token_lifecycle.py \
-              tests/cli/test_multi_profile.py \
-              tests/cli/test_output_formats.py \
-              tests/cli/test_secret_redaction.py \
-              tests/cli/test_tailscale_only.py \
-              tests/cli/test_memory_disabled.py \
-              tests/security/test_cli_token_misuse_negative.py \
-              tests/security/test_api_capability_token_scope_mismatch.py -q
+uv run ruff check cli/tm \
+                  tests/cli/test_tm_cli_foundation.py \
+                  tests/cli/test_capability_token_lifecycle.py \
+                  tests/cli/test_secret_redaction.py \
+                  tests/parity/test_ui_cli_parity.py \
+                  tests/security/test_cli_token_misuse_negative.py \
+                  tests/security/test_api_capability_token_scope_mismatch.py
 
-uv run alembic check && uv run alembic upgrade head
+PYTHONPATH=cli uv run mypy cli/tm \
+                             tests/cli/test_tm_cli_foundation.py \
+                             tests/cli/test_capability_token_lifecycle.py \
+                             tests/cli/test_secret_redaction.py \
+                             tests/parity/test_ui_cli_parity.py \
+                             tests/security/test_cli_token_misuse_negative.py \
+                             tests/security/test_api_capability_token_scope_mismatch.py
+
+PYTHONPATH=cli \
+TASKMANAGEDAI_DATABASE_URL=<local test db> \
+TASKMANAGEDAI_RUN_DB_TESTS=1 \
+uv run pytest tests/cli/test_secret_redaction.py \
+              tests/parity/test_ui_cli_parity.py \
+              tests/security/test_api_capability_token_scope_mismatch.py \
+              tests/security/test_cli_token_misuse_negative.py \
+              tests/cli/test_capability_token_lifecycle.py \
+              tests/cli/test_tm_cli_foundation.py \
+              tests/api/test_tickets_api.py -q
+
+TASKMANAGEDAI_DATABASE_URL=<local test db> uv run alembic downgrade 0030_sp015_inter_agent_messages
+TASKMANAGEDAI_DATABASE_URL=<local test db> uv run alembic upgrade head
+TASKMANAGEDAI_DATABASE_URL=<local test db> uv run alembic current
+
+# Known repository infrastructure debt until migrations/env.py provides target_metadata.
+TASKMANAGEDAI_DATABASE_URL=<local test db> uv run alembic check
 
 # CLI 自身の installation smoke
-uv tool install ./cli && tm --version && tm --profile default ticket list --json
+uv tool install --force ./cli
+tm --version
+tm --profile default ticket list --json
 ```
 
 ## レビュー観点
@@ -403,6 +428,20 @@ verified:
 - `PYTHONPATH=cli uv run mypy cli/tm tests/cli/test_secret_redaction.py`
 - `PYTHONPATH=cli uv run pytest tests/cli/test_secret_redaction.py tests/cli/test_tm_cli_foundation.py -q` (`39 passed`)
 - `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/cli/test_secret_redaction.py tests/parity/test_ui_cli_parity.py tests/security/test_api_capability_token_scope_mismatch.py tests/security/test_cli_token_misuse_negative.py tests/cli/test_capability_token_lifecycle.py tests/cli/test_tm_cli_foundation.py tests/api/test_tickets_api.py -q` (`62 passed`)
+
+### Batch 0j: SP-016 closeout verification (2026-05-24)
+
+changed:
+- `docs/sprints/SP-016_ui_cli_parity.md`
+
+verified:
+- SP016-T01-T10 checklist 全件 complete。
+- `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/cli/test_secret_redaction.py tests/parity/test_ui_cli_parity.py tests/security/test_api_capability_token_scope_mismatch.py tests/security/test_cli_token_misuse_negative.py tests/cli/test_capability_token_lifecycle.py tests/cli/test_tm_cli_foundation.py tests/api/test_tickets_api.py -q` PASS (`62 passed`)。
+- `TASKMANAGEDAI_DATABASE_URL=<local test db> uv run alembic downgrade 0029_sp0045_tool_registry_core` → `uv run alembic upgrade head` → `uv run alembic current` PASS (`0031_sp016_api_capability_tokens (head)`)。
+- `TASKMANAGEDAI_DATABASE_URL=<local test db> uv run alembic check` は既知 infrastructure debt (`migrations/env.py` が `target_metadata` を context に渡していない) で失敗。SP-016 migration 自体の downgrade→upgrade は PASS 済みのため、Sprint 完了判定では carry-over として分離する。
+
+deferred:
+- backend live endpoints for `repo_status` / `repo_push` / `pr_open` / `secret_resolve` / `provider_call` remain planned surfaces. SP-016 completion covers the 13 capability CLI command surface, token boundary, network gate, redaction, and parity drift contract; full response/DB/audit equality for those planned backend surfaces must run when the gateway/API endpoints become live.
 
 ## Kickoff Inventory (2026-05-24 task-04 plan-only)
 
