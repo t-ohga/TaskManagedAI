@@ -20,6 +20,11 @@ from backend.app.db.models.context_snapshot import ContextSnapshot
 from backend.app.domain.agent_runtime.status import AgentRunStatus, BlockedReason
 from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 from backend.app.services.agent_runtime.cancel import cancel_agent_run
+from backend.app.services.metrics.agent_run_kpi import (
+    AgentRunKpi,
+    AgentRunKpiService,
+    TimeToMergeProxySource,
+)
 
 router = APIRouter(prefix="/api/v1/agent_runs", tags=["agent_runs"])
 
@@ -89,6 +94,19 @@ class ContextSnapshotRead(BaseModel):
 class AgentRunDetailResponse(AgentRunRead):
     events: list[AgentRunEventRead]
     context_snapshot: ContextSnapshotRead | None
+
+
+class AgentRunKpiResponse(BaseModel):
+    run_id: UUID
+    tenant_id: int
+    project_id: UUID
+    status: AgentRunStatus
+    completed_at: datetime | None
+    repo_pr_opened_event_count: int
+    first_repo_pr_opened_at: datetime | None
+    time_to_merge_proxy_sample_count: int
+    time_to_merge_proxy_ms: float | None
+    time_to_merge_proxy_source: TimeToMergeProxySource
 
 
 def _to_response(run: AgentRun) -> AgentRunResponse:
@@ -176,6 +194,21 @@ def _to_context_snapshot_read(snapshot: ContextSnapshot) -> ContextSnapshotRead:
     )
 
 
+def _to_kpi_response(kpi: AgentRunKpi) -> AgentRunKpiResponse:
+    return AgentRunKpiResponse(
+        run_id=kpi.run_id,
+        tenant_id=kpi.tenant_id,
+        project_id=kpi.project_id,
+        status=kpi.status,
+        completed_at=kpi.completed_at,
+        repo_pr_opened_event_count=kpi.repo_pr_opened_event_count,
+        first_repo_pr_opened_at=kpi.first_repo_pr_opened_at,
+        time_to_merge_proxy_sample_count=kpi.time_to_merge_proxy_sample_count,
+        time_to_merge_proxy_ms=kpi.time_to_merge_proxy_ms,
+        time_to_merge_proxy_source=kpi.time_to_merge_proxy_source,
+    )
+
+
 @router.get("", response_model=AgentRunListResponse)
 async def list_agent_runs_endpoint(
     status_filter: AgentRunStatus | None = Query(default=None, alias="status"),
@@ -251,6 +284,27 @@ async def get_agent_run_endpoint(
     )
 
 
+@router.get("/{run_id}/kpi", response_model=AgentRunKpiResponse)
+async def get_agent_run_kpi_endpoint(
+    run_id: UUID,
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> AgentRunKpiResponse:
+    """Read AC-KPI-02 source metrics for one tenant-scoped AgentRun.
+
+    `actor_id` is resolved only for authentication. The response intentionally
+    exposes timestamps and counts, not raw AgentRunEvent payloads.
+    """
+    kpi = await AgentRunKpiService(session).fetch(tenant_id=tenant_id, run_id=run_id)
+    if kpi is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="agent run not found",
+        )
+    return _to_kpi_response(kpi)
+
+
 @router.post("/{run_id}/cancel", response_model=AgentRunResponse, status_code=200)
 async def cancel_agent_run_endpoint(
     run_id: UUID,
@@ -285,6 +339,7 @@ async def cancel_agent_run_endpoint(
 __all__ = [
     "AgentRunDetailResponse",
     "AgentRunEventRead",
+    "AgentRunKpiResponse",
     "AgentRunListResponse",
     "AgentRunRead",
     "AgentRunResponse",

@@ -5,7 +5,7 @@ status: "partial_skeleton"
 sprint_no: 8
 created_at: "2026-05-13"
 updated_at: "2026-05-24"
-review_summary: "2026-05-24 reconciliation + Batch A/A2/B/C/D: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup / server-owned Draft PR binding guard / DB-backed ApprovalRequest+ContextSnapshot resolver / broker-mediated GitHubAppAdapter boundary / webhook service boundary with replay protocol / repo_pr_opened event writer are present. Real GitHub httpx transport, live Git ref re-fetch, concrete SecretBroker+Redis webhook adapters and route wiring, RepoProxy runtime call-site wiring, and agent-runs KPI endpoint remain residual. Keep status partial_skeleton."
+review_summary: "2026-05-24 reconciliation + Batch A/A2/B/C/D/E: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup / server-owned Draft PR binding guard / DB-backed ApprovalRequest+ContextSnapshot resolver / broker-mediated GitHubAppAdapter boundary / webhook service boundary with replay protocol / repo_pr_opened event writer / agent_runs KPI endpoint are present. Real GitHub httpx transport, live Git ref re-fetch, concrete SecretBroker+Redis webhook adapters and route wiring, and RepoProxy runtime call-site wiring remain residual. Keep status partial_skeleton."
 target_days: 5
 max_days: 7
 adr_refs:
@@ -84,7 +84,7 @@ risks:
 - **BL-0099**: Webhook HMAC verifier (FastAPI route `/webhooks/github` Tailscale 内のみ accessible、Webhook secret SecretBroker 経由 resolve)
 - **BL-0100**: AgentRunEvent integration - `repo_pr_opened` event を RepoProxy から append、payload に `pr_number` / `branch` / `head_sha` / `draft=true` / `created_at`
 - **BL-0101**: `merge` / `deploy` deny test (capability token issue 経路で deny 確認、Policy Engine deny 確認、HARD test)
-- **BL-0102**: AC-KPI-02 `time_to_merge` 計測 helper (Draft PR created_at → merged_at の median 計算、`/agent-runs/{id}/kpi` endpoint)
+- **BL-0102**: AC-KPI-02 `time_to_merge` 計測 helper (2026-05-24 Batch E で `/api/v1/agent_runs/{run_id}/kpi` endpoint を追加。現 P0 source は `repo_pr_opened` first event → `agent_runs.completed_at` proxy、median 集計は Eval / orchestrator rollup 側で扱う)
 
 ## タスク一覧
 
@@ -130,6 +130,7 @@ risks:
 - [ ] `uv run pytest tests/repoproxy/test_branch_naming_collision.py -q` で `codex/agent-run-*` branch overwrite が deny されることを確認。
 - [ ] `uv run pytest tests/repoproxy/test_forbidden_path_dotgithub.py -q` で `.github/workflows/**` への push が forbidden_path + RepoProxy で二重 deny されることを確認。
 - [ ] `uv run pytest tests/contracts/test_kpi_time_to_merge.py -q` で AC-KPI-02 median 計算が正しいことを確認。
+- [ ] `TASKMANAGEDAI_RUN_DB_TESTS=1 TASKMANAGEDAI_DATABASE_URL='postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:55434/taskmanagedai_test' uv run pytest tests/metrics/test_agent_run_kpi.py -q` と `uv run pytest tests/api/test_agent_runs_kpi.py -q` で AgentRun KPI endpoint exposure を確認。
 - [ ] `rg -n "installation_token|GITHUB_TOKEN|GITHUB_INSTALLATION_TOKEN" backend tests --glob '!**/test_*' --glob '!**/env_scrub.py'` で raw token を保存する経路がないことを review する。
 
 ## レビュー観点
@@ -298,6 +299,7 @@ verify で品質確認。
 - `backend/app/services/secrets/broker.py`: `repo.push` / `repo.pr_open` action-class mapping, approval binding, allowed operation validation, and atomic claim fingerprint checks.
 - `backend/app/domain/agent_runtime/event_type.py`: `repo_pr_opened` event type exists.
 - `backend/app/services/metrics/orchestrator_kpi_rollup.py`: reads existing `repo_pr_opened` events for orchestrator-level proxy rollup.
+- `backend/app/services/metrics/agent_run_kpi.py` + `backend/app/api/agent_runs.py`: expose `GET /api/v1/agent_runs/{run_id}/kpi` for one tenant-scoped run without returning raw event payloads.
 
 #### not verified / still residual
 
@@ -305,7 +307,6 @@ verify で品質確認。
 - `RepoProxy.create_draft_pr()` now accepts only `DraftPRBinding`; the DB-backed resolver loads ApprovalRequest + latest ContextSnapshot and passes the internal `DraftPRRequest` to the transport. Live Git ref re-fetch remains pending for GitHubAppAdapter.
 - `GitHubWebhookVerifier` service boundary with SecretBroker resolver protocol, Redis SETNX replay protocol, rotation status validation, and redacted audit payload is present. Concrete SecretBroker resolver, concrete Redis adapter, and FastAPI route wiring remain pending.
 - `RepoPROpenedEventWriter` persists append-only `repo_pr_opened` AgentRunEvent payloads from successful Draft PR results. Automatic RepoProxy runtime call-site wiring remains pending.
-- `/agent-runs/{id}/kpi` endpoint is not present. Existing KPI code covers eval corpus rollup and orchestrator proxy rollup, not the SP-008 Draft PR endpoint contract.
 - Real GitHub App admin registration / private key SOPS metadata cannot be verified from repo files and remains an operator setup item unless a secret metadata fixture is added.
 
 #### next implementation batches
@@ -314,7 +315,7 @@ verify で品質確認。
 2. Batch B: `GitHubAppAdapter` broker-mediated boundary with raw-token non-exposure tests. **Partially completed 2026-05-24**: adapter boundary + tests exist; real httpx transport, retries/rate limit, and live Git ref re-fetch remain.
 3. Batch C: webhook service layer with SecretBroker resolution, Redis replay guard, rotation status validation, and audit payload redaction. **Completed 2026-05-24 at service boundary level**; concrete SecretBroker resolver / Redis adapter / FastAPI route wiring remain.
 4. Batch D: actual `repo_pr_opened` emission from the runtime path. **Partially completed 2026-05-24**: append-only event writer + DB persistence tests exist; automatic RepoProxy runtime call-site wiring remains.
-5. Batch E: `/agent-runs/{id}/kpi` or explicitly superseding endpoint decision, then status closeout.
+5. Batch E: `/api/v1/agent_runs/{run_id}/kpi` endpoint. **Completed 2026-05-24**: per-run AC-KPI-02 source endpoint + service tests exist. Final SP-008 status closeout waits for remaining transport/webhook/call-site residuals.
 
 ### 2026-05-24 Batch A implementation (RepoProxy binding guard)
 
@@ -334,7 +335,7 @@ verify で品質確認。
 
 - Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
 - Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
-- Runtime `repo_pr_opened` emission and agent-runs KPI endpoint.
+- Automatic call-site wiring from the final RepoProxy Draft PR execution path to `RepoPROpenedEventWriter`.
 
 ### 2026-05-24 Batch C implementation (Webhook service boundary)
 
@@ -356,7 +357,7 @@ verify で品質確認。
 - Concrete SecretBroker-backed secret resolver for webhook HMAC secret material.
 - Concrete Redis SETNX replay adapter.
 - FastAPI `/webhooks/github` route with Tailscale-only ingress check.
-- Runtime `repo_pr_opened` emission and agent-runs KPI endpoint.
+- Automatic call-site wiring from the final RepoProxy Draft PR execution path to `RepoPROpenedEventWriter`.
 
 ### 2026-05-24 Batch D implementation (repo_pr_opened event writer)
 
@@ -376,7 +377,30 @@ verify で品質確認。
 #### deferred
 
 - Automatic call-site wiring from the final RepoProxy Draft PR execution path to `RepoPROpenedEventWriter`.
-- Agent-runs KPI endpoint.
+
+### 2026-05-24 Batch E implementation (AgentRun KPI endpoint)
+
+#### changed
+
+- `backend/app/services/metrics/agent_run_kpi.py`: added `AgentRunKpiService` and `AgentRunKpi` for one tenant-scoped AgentRun.
+- The service dedupes `repo_pr_opened` events by `(run_id, seq_no)`, uses the first PR-opened event timestamp as the source, and emits a `time_to_merge_proxy_ms` sample only when the run is `completed` and `completed_at >= first_repo_pr_opened_at`.
+- `backend/app/api/agent_runs.py`: added `GET /api/v1/agent_runs/{run_id}/kpi`.
+- The endpoint returns ids, status, timestamps, counts, sample count, and proxy value only. It does not return raw `agent_run_events.event_payload`.
+- `tests/metrics/test_agent_run_kpi.py`: added DB integration tests for first-event selection, running-run no-sample, negative temporal sample rejection, and tenant/missing-run scoping.
+- `tests/api/test_agent_runs_kpi.py`: added route/response/404 tests and asserted raw payload keys are absent from API output.
+- `tests/api/test_sp012_9_ui_wiring_routes.py`: added route registration coverage.
+
+#### verified
+
+- `uv run ruff check backend/app/services/metrics/agent_run_kpi.py backend/app/services/metrics/__init__.py backend/app/api/agent_runs.py tests/metrics/test_agent_run_kpi.py tests/api/test_agent_runs_kpi.py tests/api/test_sp012_9_ui_wiring_routes.py`
+- `PYTHONPATH=cli uv run mypy backend/app/services/metrics/agent_run_kpi.py backend/app/api/agent_runs.py tests/metrics/test_agent_run_kpi.py tests/api/test_agent_runs_kpi.py`
+- `uv run pytest tests/api/test_agent_runs_kpi.py tests/api/test_sp012_9_ui_wiring_routes.py -q`
+- `TASKMANAGEDAI_RUN_DB_TESTS=1 TASKMANAGEDAI_DATABASE_URL='postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:55434/taskmanagedai_test' uv run pytest tests/metrics/test_agent_run_kpi.py -q`
+
+#### deferred
+
+- True PR merged timestamp source (`repo_pr_merged` / GitHub merge event) remains future work; current P0 source is explicitly a `repo_pr_opened` to AgentRun completion proxy.
+- Automatic call-site wiring from final RepoProxy Draft PR execution to `RepoPROpenedEventWriter`.
 
 ### 2026-05-24 Batch A2 implementation (DB-backed Draft PR resolver)
 
@@ -395,7 +419,7 @@ verify で品質確認。
 
 - Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
 - Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
-- Runtime `repo_pr_opened` emission and agent-runs KPI endpoint.
+- Automatic call-site wiring from the final RepoProxy Draft PR execution path to `RepoPROpenedEventWriter`.
 
 ### 2026-05-24 Batch B implementation (GitHubAppAdapter boundary)
 
@@ -415,7 +439,7 @@ verify で品質確認。
 
 - Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
 - Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
-- Runtime `repo_pr_opened` emission and agent-runs KPI endpoint.
+- Automatic call-site wiring from the final RepoProxy Draft PR execution path to `RepoPROpenedEventWriter`.
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
 

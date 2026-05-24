@@ -34,4 +34,4 @@ Batch D adds the append-only `repo_pr_opened` event writer and payload contract.
 ## Deferred
 
 - Automatic call-site wiring from the final RepoProxy Draft PR execution path.
-- Agent-runs KPI endpoint.
+- Agent-runs KPI endpoint was completed later in Batch E.

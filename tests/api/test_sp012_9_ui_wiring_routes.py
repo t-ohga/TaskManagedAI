@@ -23,6 +23,7 @@ def test_sp012_9_read_only_routes_are_registered() -> None:
 
     assert ("/api/v1/agent_runs", ("GET",)) in routes
     assert ("/api/v1/agent_runs/{run_id}", ("GET",)) in routes
+    assert ("/api/v1/agent_runs/{run_id}/kpi", ("GET",)) in routes
     assert ("/api/v1/audit_events", ("GET",)) in routes
     assert ("/api/v1/me/projects", ("GET",)) in routes
     assert ("/api/v1/me/projects/{project_id}/autonomy", ("PATCH",)) in routes
