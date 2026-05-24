@@ -41,6 +41,28 @@ class ApprovalNotifierService:
             recipient_actor_id=recipient_actor_id,
         )
 
+    async def notify_approval_revision_requested(
+        self,
+        *,
+        tenant_id: int,
+        approval_id: UUID,
+        revision_request_id: UUID,
+        recipient_actor_id: UUID,
+    ) -> NotificationEvent:
+        """Append a metadata-only notification for the original approval requester."""
+
+        repo = NotificationEventRepository(self.session)
+        return await repo.append(
+            tenant_id=tenant_id,
+            event_type="approval_revision_requested",
+            payload={
+                "approval_id": str(approval_id),
+                "revision_request_id": str(revision_request_id),
+            },
+            recipient_actor_id=recipient_actor_id,
+            severity="medium",
+            required_action="inspect_run",
+        )
+
 
 __all__ = ["ApprovalNotifierService"]
-

@@ -14,6 +14,7 @@ from backend.app.db.models.api_capability_token import (
     ApiCapabilityTokenStatus,
 )
 from backend.app.db.models.approval_request import ApprovalRequest, ApprovalStatus, RiskLevel
+from backend.app.db.models.approval_revision_request import ApprovalRevisionRequest
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.base import Base
 from backend.app.db.models.claim import Claim
@@ -67,6 +68,7 @@ __all__ = [
     "ActorType",
     "ApiCapabilityToken",
     "ApiCapabilityTokenStatus",
+    "ApprovalRevisionRequest",
     "ApprovalRequest",
     "ApprovalStatus",
     "AuditEvent",

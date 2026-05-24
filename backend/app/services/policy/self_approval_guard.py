@@ -76,6 +76,27 @@ class SelfApprovalGuardService:
         if approval.action_class not in INDEPENDENT_REVIEWER_REQUIRED_ACTIONS:
             return
 
+        await self.assert_not_delegated_same_human(
+            session=session,
+            approval=approval,
+            decided_by_actor_id=decided_by_actor_id,
+            action_description=(
+                "independent-reviewer-required action "
+                f"{approval.action_class!r}"
+            ),
+        )
+
+    async def assert_not_delegated_same_human(
+        self,
+        session: AsyncSession,
+        approval: ApprovalRequest,
+        decided_by_actor_id: UUID,
+        action_description: str,
+    ) -> None:
+        """Reject decisions where requester and decider resolve to the same human."""
+
+        self.assert_not_self_approval(approval=approval, decided_by_actor_id=decided_by_actor_id)
+
         # requester / decider の両 actor を一括取得 (両方向 check)
         result = await session.execute(
             select(Actor.id, Actor.impersonated_by).where(
@@ -100,8 +121,7 @@ class SelfApprovalGuardService:
         # effective human が同一なら reject (両方向)
         if requester.effective_human_actor_id == decider.effective_human_actor_id:
             raise ValueError(
-                "delegated self-approval forbidden for independent-reviewer-required action "
-                f"{approval.action_class!r}: "
+                f"delegated self-approval forbidden for {action_description}: "
                 f"requester {approval.requested_by_actor_id} (effective human "
                 f"{requester.effective_human_actor_id}) and decider {decided_by_actor_id} "
                 f"(effective human {decider.effective_human_actor_id}) share the same human; "
@@ -110,4 +130,3 @@ class SelfApprovalGuardService:
 
 
 __all__ = ["SelfApprovalGuardService", "INDEPENDENT_REVIEWER_REQUIRED_ACTIONS"]
-

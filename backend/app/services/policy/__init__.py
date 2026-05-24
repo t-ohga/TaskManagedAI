@@ -29,10 +29,20 @@ from backend.app.services.policy.low_risk_profile import (
     LowRiskProfileInput,
     evaluate_low_risk_profile,
 )
+from backend.app.services.policy.revision_request_service import (
+    ApprovalRevisionConflictError,
+    ApprovalRevisionRequestService,
+    ApprovalRevisionResult,
+    ApprovalRevisionValidationError,
+)
 from backend.app.services.policy.self_approval_guard import SelfApprovalGuardService
 
 __all__ = [
     "ApprovalDecisionService",
+    "ApprovalRevisionConflictError",
+    "ApprovalRevisionRequestService",
+    "ApprovalRevisionResult",
+    "ApprovalRevisionValidationError",
     "ApprovalStaleInvalidationService",
     "AUTONOMY_ACTION_ALLOW_MATRIX",
     "AUTONOMY_POLICY_AGENT_EVENT_TYPE",

@@ -135,7 +135,7 @@ def _assert_integrity_error(
 
 
 async def _reset_approval_tables(session: AsyncSession) -> None:
-    await session.execute(text("truncate policy_decisions, approval_requests restart identity"))
+    await session.execute(text("truncate policy_decisions, approval_requests restart identity cascade"))
 
 
 async def _insert_tenant(session: AsyncSession, tenant_id: int, name: str) -> None:
@@ -430,4 +430,3 @@ async def test_self_approval_negative_with_pending_status(
             constraint_name="approval_requests_ck_self_approval",
         )
         await session.rollback()
-
