@@ -321,7 +321,7 @@ def test_middleware_skips_when_gate_not_configured(tmp_path: Path) -> None:
 
 
 def test_middleware_exempts_health_metrics_auth(tmp_path: Path) -> None:
-    """Codex R2 F-R2-003 (P2) fix: /health, /metrics, /auth/* は gate 経路を bypass."""
+    """Auth bootstrap routes bypass the write gate."""
     config_dir, priv, fp = _setup_fleet_and_active(tmp_path)
     # 完全 gate fail 条件 (active marker 削除)
     (
@@ -348,6 +348,10 @@ def test_middleware_exempts_health_metrics_auth(tmp_path: Path) -> None:
     async def _auth() -> dict[str, str]:
         return {"status": "logged-in"}
 
+    @app.post("/api/v1/auth/cli-login")
+    async def _api_auth() -> dict[str, str]:
+        return {"status": "logged-in"}
+
     @app.post("/api/write")
     async def _write() -> dict[str, str]:
         return {"status": "written"}
@@ -355,6 +359,7 @@ def test_middleware_exempts_health_metrics_auth(tmp_path: Path) -> None:
     with TestClient(app) as client:
         # /auth/* は exempt → 200
         assert client.post("/auth/dev-login").status_code == 200
+        assert client.post("/api/v1/auth/cli-login").status_code == 200
         # /api/write は middleware で reject
         assert client.post("/api/write").status_code == 503
 

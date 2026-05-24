@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from backend.app.api import (
     audit,
     auth,
+    auth_cli,
     claims,
     evidence_items,
     evidence_sources,
@@ -19,6 +20,7 @@ from backend.app.api import (
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
+api_router.include_router(auth_cli.router)
 api_router.include_router(research_tasks.router)
 api_router.include_router(evidence_sources.router)
 api_router.include_router(claims.router)
