@@ -18,6 +18,7 @@ describe("Navigation", () => {
     const nav = screen.getByRole("navigation", { name: "管理ナビゲーション" });
     const navItems = [
       ["ダッシュボード", "/dashboard"],
+      ["導入", "/onboarding"],
       ["Today", "/today"],
       ["実行ログ", "/timeline"],
       ["チケット", "/tickets"],

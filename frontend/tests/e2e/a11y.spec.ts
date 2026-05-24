@@ -8,6 +8,7 @@
  * 検証 page (Sprint 9 BL-0103/0104/0105/0106/0107/0108 / login):
  * - /login (auth flow root)
  * - /dashboard
+ * - /onboarding
  * - /tickets
  * - /approvals
  * - /runs
@@ -28,6 +29,7 @@ const A11Y_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] as const;
 
 const PROTECTED_ROUTES = [
   { path: "/dashboard", label: "ダッシュボード" },
+  { path: "/onboarding", label: "初回導線" },
   { path: "/tickets", label: "チケット一覧" },
   { path: "/approvals", label: "承認待ち" },
   { path: "/runs", label: "AI 実行" },

@@ -50,7 +50,7 @@ max_days: 3
 | E2 | `request_revision` Approval Detail UI (completed 2026-05-24) | no bulk action、rationale DOM non-exposure、server action validation |
 | E3 | revised artifact handoff (completed 2026-05-24) | supersession wiring、fresh decision-packet hash negative tests |
 | F0 | Newcomer Path contract plan (completed 2026-05-24) | no code/schema/runtime changes、read-only first route と API/schema gate を分離 |
-| F1 | Newcomer Path read-only `/onboarding` UI | existing API only、mutation なし |
+| F1 | Newcomer Path read-only `/onboarding` UI (completed 2026-05-24) | existing API only、mutation なし、project context error でも safe choices を維持 |
 | F2 | Guided intake dry-run contract | no implicit AgentRun start、API/schema gate 必須 |
 | F3 | Plan review surface | approve/request revision/ask why は accepted backend contract 後のみ |
 | F4 | CLI onboarding parity notes/tests | `tm` canonical、ambiguous mutating command は fail-closed |
@@ -80,7 +80,7 @@ max_days: 3
 
 ## Review
 
-- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、Batch A で `/today` read-only control plane + minimal KPI strip、Batch B で `/timeline` unified execution timeline、Batch C で Approval Detail decision packet hash visibility、Batch D1 で notification triage DB/API contract、Batch D2 で `/notifications` triage UI/actions、Batch E0 で `request_revision` contract plan、Batch E1 で `request_revision` DB/API、Batch E2 で Approval Detail `request_revision` UI/action、Batch E3 で revised artifact handoff supersession wiring、Batch F0 で Newcomer Path contract plan を追加した。
-- verified: frontmatter / registry / backlog / roadmap / handoff cross-reference、frontend typecheck/lint/Vitest、desktop/mobile browser smoke、timeline sensitive key leak check、decision packet malformed-hash DOM non-exposure、notification triage migration up/down + redacted API tests、D2 UI/action tests、request_revision migration up/down + API/schema regression tests、E2 UI/action tests、E3 fresh decision-packet/supersession DB tests、F0 docs cross-reference を確認した。
-- deferred: Newcomer Path F1 `/onboarding` implementation は別 PR。
+- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、Batch A で `/today` read-only control plane + minimal KPI strip、Batch B で `/timeline` unified execution timeline、Batch C で Approval Detail decision packet hash visibility、Batch D1 で notification triage DB/API contract、Batch D2 で `/notifications` triage UI/actions、Batch E0 で `request_revision` contract plan、Batch E1 で `request_revision` DB/API、Batch E2 で Approval Detail `request_revision` UI/action、Batch E3 で revised artifact handoff supersession wiring、Batch F0 で Newcomer Path contract plan、Batch F1 で `/onboarding` read-only route を追加した。
+- verified: frontmatter / registry / backlog / roadmap / handoff cross-reference、frontend typecheck/lint/Vitest、desktop/mobile browser smoke、timeline sensitive key leak check、decision packet malformed-hash DOM non-exposure、notification triage migration up/down + redacted API tests、D2 UI/action tests、request_revision migration up/down + API/schema regression tests、E2 UI/action tests、E3 fresh decision-packet/supersession DB tests、F0 docs cross-reference、F1 `/onboarding` desktop/mobile smoke を確認した。
+- deferred: Newcomer Path F2 guided intake dry-run API/schema contract は別 PR。
 - risks: SP-009 本体の golden E2E / DOM secret scan / residual enum contract は引き続き未完。
