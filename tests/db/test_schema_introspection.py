@@ -58,12 +58,18 @@ BATCH_SP015_TENANT_SCOPED_TABLES = frozenset(
         "inter_agent_messages",
     }
 )
+BATCH_SP016_TENANT_SCOPED_TABLES = frozenset(
+    {
+        "api_capability_tokens",
+    }
+)
 TENANT_SCOPED_TABLES = (
     BATCH1_TENANT_SCOPED_TABLES
     | BATCH2_TENANT_SCOPED_TABLES
     | BATCH3_TENANT_SCOPED_TABLES
     | BATCH4_TENANT_SCOPED_TABLES
     | BATCH_SP015_TENANT_SCOPED_TABLES
+    | BATCH_SP016_TENANT_SCOPED_TABLES
 )
 METADATA_TABLES = frozenset(
     {
@@ -79,6 +85,7 @@ METADATA_TABLES = frozenset(
         "policy_rules",
         "approval_requests",
         "policy_decisions",
+        "api_capability_tokens",
     }
 )
 POLICY_ACTION_CLASSES = frozenset(
@@ -465,6 +472,19 @@ async def test_required_composite_foreign_keys_exist(
             ("tenant_id", "id"),
         ),
         ("policy_decisions", ("tenant_id", "actor_id"), "actors", ("tenant_id", "id")),
+        ("api_capability_tokens", ("tenant_id", "actor_id"), "actors", ("tenant_id", "id")),
+        (
+            "api_capability_tokens",
+            ("tenant_id", "actor_id", "principal_id"),
+            "principals",
+            ("tenant_id", "actor_id", "id"),
+        ),
+        (
+            "api_capability_tokens",
+            ("tenant_id", "project_id"),
+            "projects",
+            ("tenant_id", "id"),
+        ),
     }
 
     async with session_factory() as session:
@@ -1432,6 +1452,178 @@ async def test_evidence_items_schema_constraints_and_composite_foreign_keys(
             ("tenant_id", "id"),
         ),
     } <= foreign_keys
+
+
+@pytest.mark.asyncio
+async def test_api_capability_tokens_schema_constraints_and_indexes(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    column_names = (
+        "id",
+        "tenant_id",
+        "project_id",
+        "token_hash",
+        "actor_id",
+        "principal_id",
+        "device_id",
+        "allowed_actions",
+        "scope_constraint",
+        "audience",
+        "auth_context_hash",
+        "request_binding_hash",
+        "status",
+        "issued_at",
+        "expires_at",
+        "jti",
+        "revoked_at",
+        "last_used_at",
+        "metadata",
+    )
+
+    async with session_factory() as session:
+        columns = await _table_columns(session, "api_capability_tokens", column_names)
+        tenant_unique = await _constraint_columns(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_uq_tenant_id",
+            constraint_type="u",
+        )
+        token_hash_unique = await _constraint_columns(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_uq_tenant_token_hash",
+            constraint_type="u",
+        )
+        jti_unique = await _constraint_columns(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_uq_tenant_jti",
+            constraint_type="u",
+        )
+        status_check = await _constraint_definition(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_ck_status",
+        )
+        audience_check = await _constraint_definition(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_ck_audience",
+        )
+        token_hash_check = await _constraint_definition(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_ck_token_hash_format",
+        )
+        auth_context_hash_check = await _constraint_definition(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_ck_auth_context_hash_format",
+        )
+        request_binding_hash_check = await _constraint_definition(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_ck_request_binding_hash_format",
+        )
+        allowed_actions_check = await _constraint_definition(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_ck_allowed_actions_nonempty_array",
+        )
+        allowed_action_strings_check = await _constraint_definition(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_ck_allowed_actions_string_elements",
+        )
+        scope_constraint_check = await _constraint_definition(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_ck_scope_constraint_jsonb_object",
+        )
+        metadata_check = await _constraint_definition(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_ck_metadata_no_raw_secret",
+        )
+        ttl_check = await _constraint_definition(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_ck_expires_within_ttl_bounds",
+        )
+        revoked_check = await _constraint_definition(
+            session,
+            table_name="api_capability_tokens",
+            constraint_name="api_capability_tokens_ck_revoked_at_status",
+        )
+        foreign_keys = await _foreign_key_signatures(
+            session,
+            frozenset({"api_capability_tokens"}),
+        )
+        indexes = await _index_definitions(session, frozenset({"api_capability_tokens"}))
+
+    assert set(columns) == set(column_names)
+    assert columns["tenant_id"]["data_type"] == "bigint"
+    assert columns["tenant_id"]["is_nullable"] == "NO"
+    assert columns["project_id"]["data_type"] == "uuid"
+    assert columns["project_id"]["is_nullable"] == "YES"
+    assert columns["token_hash"]["data_type"] == "text"
+    assert columns["actor_id"]["data_type"] == "uuid"
+    assert columns["principal_id"]["data_type"] == "uuid"
+    assert columns["device_id"]["is_nullable"] == "YES"
+    assert columns["allowed_actions"]["data_type"] == "jsonb"
+    assert columns["allowed_actions"]["is_nullable"] == "NO"
+    assert columns["scope_constraint"]["data_type"] == "jsonb"
+    assert columns["scope_constraint"]["is_nullable"] == "NO"
+    assert columns["audience"]["column_default"] == "'taskmanagedai-api'::text"
+    assert columns["auth_context_hash"]["data_type"] == "text"
+    assert columns["request_binding_hash"]["data_type"] == "text"
+    assert columns["status"]["column_default"] == "'issued'::text"
+    assert columns["issued_at"]["is_nullable"] == "NO"
+    assert columns["expires_at"]["is_nullable"] == "NO"
+    assert columns["jti"]["data_type"] == "text"
+    assert columns["revoked_at"]["is_nullable"] == "YES"
+    assert columns["last_used_at"]["is_nullable"] == "YES"
+    assert columns["metadata"]["data_type"] == "jsonb"
+    assert columns["metadata"]["is_nullable"] == "NO"
+
+    assert tenant_unique == ("tenant_id", "id")
+    assert token_hash_unique == ("tenant_id", "token_hash")
+    assert jti_unique == ("tenant_id", "jti")
+    assert _check_constraint_values(status_check) == {"issued", "expired", "revoked"}
+    assert "taskmanagedai-api" in audience_check
+    assert "64" in token_hash_check
+    assert "64" in auth_context_hash_check
+    assert "64" in request_binding_hash_check
+    assert "jsonb_array_length" in allowed_actions_check
+    assert "jsonb_path_exists" in allowed_action_strings_check
+    assert "jsonb_typeof(scope_constraint)" in scope_constraint_check
+    assert "jsonb_path_exists" in metadata_check
+    assert "raw_token" in metadata_check
+    assert "capability_token" in metadata_check
+    assert "00:05:00" in ttl_check
+    assert "00:30:00" in ttl_check
+    assert "revoked_at" in revoked_check
+
+    assert {
+        ("api_capability_tokens", ("tenant_id",), "tenants", ("id",)),
+        ("api_capability_tokens", ("tenant_id", "actor_id"), "actors", ("tenant_id", "id")),
+        (
+            "api_capability_tokens",
+            ("tenant_id", "actor_id", "principal_id"),
+            "principals",
+            ("tenant_id", "actor_id", "id"),
+        ),
+        (
+            "api_capability_tokens",
+            ("tenant_id", "project_id"),
+            "projects",
+            ("tenant_id", "id"),
+        ),
+    } <= foreign_keys
+
+    assert "api_capability_tokens_idx_active" in indexes
+    assert "api_capability_tokens_idx_project" in indexes
+    assert "project_id IS NOT NULL" in indexes["api_capability_tokens_idx_project"]
 
 
 @pytest.mark.asyncio

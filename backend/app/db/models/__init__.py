@@ -5,6 +5,10 @@ from backend.app.db.models.acceptance_criteria import (
     AcceptanceCriteriaStatus,
 )
 from backend.app.db.models.actor import Actor, ActorType
+from backend.app.db.models.api_capability_token import (
+    ApiCapabilityToken,
+    ApiCapabilityTokenStatus,
+)
 from backend.app.db.models.approval_request import ApprovalRequest, ApprovalStatus, RiskLevel
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.base import Base
@@ -48,6 +52,8 @@ __all__ = [
     "AcceptanceCriteriaStatus",
     "Actor",
     "ActorType",
+    "ApiCapabilityToken",
+    "ApiCapabilityTokenStatus",
     "ApprovalRequest",
     "ApprovalStatus",
     "AuditEvent",

@@ -1,7 +1,7 @@
 ---
 id: "SP-016_ui_cli_parity"
 type: "heavy"
-status: "ready"
+status: "in_progress"
 sprint_no: 16
 created_at: "2026-05-10"
 updated_at: "2026-05-24"
@@ -63,8 +63,9 @@ risks:
 
 ## タスク一覧
 
-- [ ] SP016-T01-T10 を順次実装
-- [ ] migration `0031_sp016_api_capability_tokens.py` + `alembic check` PASS
+- [x] SP016-T01 api_capability_tokens table + migration + DDL
+- [ ] SP016-T02-T10 を順次実装
+- [x] migration `0031_sp016_api_capability_tokens.py` upgrade/downgrade PASS
 - [ ] 13 parity contract test 全件 PASS
 - [ ] CLI capability token TTL 5-30 分 + scope minimum + raw 保存 reject
 - [ ] secret redaction (CLI 出力に raw secret 出ない、SecretBroker 経由のみ)
@@ -143,7 +144,28 @@ uv tool install ./cli && tm --version && tm --profile default ticket list --json
 
 ## Review
 
-(SP-016 完了時に追記)
+### Batch 0a: api_capability_tokens schema (2026-05-24)
+
+changed:
+- `backend/app/db/models/api_capability_token.py`
+- `migrations/versions/0031_sp016_api_capability_tokens.py`
+- `tests/db/test_schema_introspection.py`
+
+verified:
+- `uv run ruff check backend/app/db/models/api_capability_token.py backend/app/db/models/__init__.py migrations/versions/0031_sp016_api_capability_tokens.py tests/db/test_schema_introspection.py`
+- `uv run mypy backend/app/db/models/api_capability_token.py tests/db/test_schema_introspection.py`
+- `uv run alembic upgrade head`
+- `uv run alembic downgrade 0030_sp015_inter_agent_messages && uv run alembic upgrade head`
+- `uv run pytest tests/db/test_schema_introspection.py -q` (`24 passed`)
+
+deferred:
+- SP016-T02 auth endpoints and token issue/revoke service.
+- SP016-T03-T06 CLI implementation.
+- SP016-T07 parity contract tests.
+- SP016-T08 CLI token misuse negative tests.
+
+risks:
+- `alembic check` remains blocked by existing repository infrastructure debt (`migrations/env.py` target metadata), not by this batch.
 
 ## Kickoff Inventory (2026-05-24 task-04 plan-only)
 
