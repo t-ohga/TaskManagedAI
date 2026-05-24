@@ -12,7 +12,7 @@ test.describe("Approval Inbox", () => {
     await page.goto("/login?next=/dashboard");
 
     await page.getByLabel("Dev login token").fill(readDevLoginToken());
-    await page.getByRole("button", { name: "ログイン" }).click();
+    await page.getByRole("button", { name: /^(ログイン|Sign in)$/u }).click();
 
     await expect(page).toHaveURL(/\/dashboard$/u);
     // Server Action redirect (x-action-redirect: /dashboard;push) は RSC payload で URL を
@@ -24,7 +24,7 @@ test.describe("Approval Inbox", () => {
     await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
 
     await page.goto("/approvals");
-    await expect(page.getByRole("heading", { name: "承認待ち" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "承認一覧" })).toBeVisible();
     await expect(page.getByText(APPROVAL_RENDER_TEXT).first()).toBeVisible();
   });
 });

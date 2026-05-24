@@ -8,6 +8,7 @@
 import { z } from "zod";
 
 import { fetchBackendJson } from "@/lib/api/client";
+import { NoRawPayloadFieldsSchema } from "@/lib/api/redaction";
 
 // AgentRun 16 状態 (Sprint 4 で確立、本 Sprint で frontend と同期)
 export const AgentRunStatusEnum = z.enum([
@@ -103,7 +104,7 @@ export const AgentRunListItemSchema = z.object({
 
 export type AgentRunListItem = z.infer<typeof AgentRunListItemSchema>;
 
-export const AgentRunEventSchema = z.object({
+export const AgentRunEventSchema = NoRawPayloadFieldsSchema.pipe(z.object({
   id: z.string().uuid(),
   run_id: z.string().uuid(),
   seq_no: z.number().int().nonnegative(),
@@ -112,11 +113,11 @@ export const AgentRunEventSchema = z.object({
   payload_keys: z.array(z.string()),
   payload_redaction_status: z.enum(["keys_only", "blocked_by_secret_scan"]),
   created_at: z.string()
-});
+}));
 
 export type AgentRunEvent = z.infer<typeof AgentRunEventSchema>;
 
-export const ContextSnapshotReadSchema = z.object({
+export const ContextSnapshotReadSchema = NoRawPayloadFieldsSchema.pipe(z.object({
   id: z.string().uuid(),
   run_id: z.string().uuid(),
   prompt_pack_version: z.string(),
@@ -136,7 +137,7 @@ export const ContextSnapshotReadSchema = z.object({
     "final"
   ]),
   created_at: z.string()
-});
+}));
 
 export type ContextSnapshotRead = z.infer<typeof ContextSnapshotReadSchema>;
 

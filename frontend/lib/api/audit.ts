@@ -8,18 +8,18 @@
 import { z } from "zod";
 
 import { fetchBackendJson } from "@/lib/api/client";
+import { NoRawPayloadFieldsSchema } from "@/lib/api/redaction";
 
 /**
- * Codex SP9 R1 F-SP9-003 adopt: backend で実際に emit される event_type を網羅。
+ * Codex SP9 R1 F-SP9-003 adopt: frequently used audit filters.
  *
  * backend `_audit_events` テーブルは `event_type: Mapped[str]` で正本 Literal
- * source なし。本 enum は backend repository / service で `event_type="..."`
- * literal として実際 emit される値を**直接 grep で列挙**したもの (2026-05-13、
- * commit `9cd542a` 時点)。
+ * source なし。本 enum は UI filter suggestion 用で、AuditEventSchema の
+ * response validation では `event_type: z.string()` を維持する。
  *
- * **将来計画 (Sprint 11)**: backend に AuditEventType Literal/registry を追加し、
+ * **将来計画**: backend に AuditEventType Literal/registry を追加し、
  * frontend Zod は自動生成 or contract test (`tests/contracts/test_frontend_backend_audit_event_drift.py`)
- * で exact set 比較。本 enum はそれまでの暫定 hardcode。
+ * で exact set 比較。本 enum はそれまでの暫定 filter list。
  */
 export const AuditEventTypeEnum = z.enum([
   // policy / approval
@@ -67,7 +67,7 @@ export const AuditEventTypeEnum = z.enum([
 
 export type AuditEventType = z.infer<typeof AuditEventTypeEnum>;
 
-export const AuditEventSchema = z.object({
+export const AuditEventSchema = NoRawPayloadFieldsSchema.pipe(z.object({
   id: z.string().uuid(),
   event_type: z.string(),
   actor_id: z.string().uuid().nullable(),
@@ -79,7 +79,7 @@ export const AuditEventSchema = z.object({
   payload_keys: z.array(z.string()),
   payload_redaction_status: z.enum(["keys_only", "blocked_by_secret_scan"]),
   created_at: z.string()
-});
+}));
 
 export type AuditEvent = z.infer<typeof AuditEventSchema>;
 

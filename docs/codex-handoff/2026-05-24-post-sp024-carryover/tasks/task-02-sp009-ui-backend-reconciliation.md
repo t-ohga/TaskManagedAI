@@ -76,3 +76,13 @@ Implement SP-009 contract/test cleanup only:
 2. Add exact-set enum drift contract for TicketStatus / AgentRunStatus / BlockedReason / AgentRunEventType.
 3. Add frontend DOM secret scan regression for the real AgentRun/Audit pages.
 4. Leave mutation expansion and Approval `request_revision` for a separate accepted plan.
+
+## 2026-05-24 Contract/Test Cleanup Result
+
+Status: implemented in follow-up branch.
+
+- Added `frontend/lib/api/redaction.ts` and wired AuditEvent / AgentRunEvent / ContextSnapshot schemas through raw payload field rejection.
+- Added frontend unit tests for AuditEvent and AgentRun redaction behavior.
+- Added `tests/contracts/test_frontend_backend_enum_drift.py` for closed backend/frontend enum exact-set checks.
+- Updated stale Sprint 9 Playwright smoke checks to current real list pages and authenticated 404 page semantics.
+- Kept AuditEvent event_type exact-set deferred because backend audit_events remains open text without a canonical registry.
