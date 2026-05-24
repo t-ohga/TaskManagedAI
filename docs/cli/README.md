@@ -62,6 +62,8 @@ CLI は raw operation token を profile file に保存しない。runtime token 
 
 `auth_method: plain` は CLI profile loader で fail-closed。`operation_token` / `raw_operation_token` / `access_token` 等の raw token field は selected profile だけでなく inactive profile 内でも reject する。
 
+Backend は CLI request の operation token を `X-TaskManagedAI-Operation-Token` として受け取り、`api_capability_tokens.allowed_actions` と project scope に照合する。action / project mismatch は `api_capability_token_scope_mismatch` として ref-only audit に残し、token を SecretBroker capability token として redeem する経路は `secret_capability_denied:not_found` で拒否する。
+
 ### 0.3 Network Boundary
 
 `backend_url` は closed-network 前提で fail-closed 検証する。CLI profile / env override で許可する host は次だけ:

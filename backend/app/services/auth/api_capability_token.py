@@ -70,6 +70,11 @@ class ApiCapabilityTokenRevokeResult:
     revoked_at: datetime
 
 
+@dataclass(frozen=True)
+class ApiCapabilityTokenAuthorizeResult:
+    token: ApiCapabilityToken
+
+
 class ApiCapabilityTokenService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -251,6 +256,43 @@ class ApiCapabilityTokenService:
             revoked_at=current.revoked_at,
         )
 
+    async def authorize_request(
+        self,
+        *,
+        tenant_id: int,
+        actor_id: UUID,
+        raw_operation_token: str,
+        required_action: ApiCapabilityAction,
+        project_id: UUID | None,
+        now: datetime | None = None,
+    ) -> ApiCapabilityTokenAuthorizeResult:
+        token = await self._get_issued_token(
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            raw_operation_token=raw_operation_token,
+            now=now,
+            mark_used=False,
+        )
+        mismatch_reason = _classify_authorization_mismatch(
+            token=token,
+            required_action=required_action,
+            project_id=project_id,
+        )
+        if mismatch_reason is not None:
+            await self._append_scope_mismatch(
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                token=token,
+                reason_code=mismatch_reason,
+                required_action=required_action,
+                requested_project_id=project_id,
+            )
+            raise ApiCapabilityTokenDenied(mismatch_reason)
+
+        token.last_used_at = _utc_now(now)
+        await self.session.flush()
+        return ApiCapabilityTokenAuthorizeResult(token=token)
+
     async def _get_issued_token(
         self,
         *,
@@ -258,6 +300,7 @@ class ApiCapabilityTokenService:
         actor_id: UUID,
         raw_operation_token: str,
         now: datetime | None,
+        mark_used: bool = True,
     ) -> ApiCapabilityToken:
         checked_at = _utc_now(now)
         token = await self._get_token_by_raw_value(
@@ -271,8 +314,9 @@ class ApiCapabilityTokenService:
         elif token.expires_at <= checked_at:
             reason_code = "expired"
         else:
-            token.last_used_at = checked_at
-            await self.session.flush()
+            if mark_used:
+                token.last_used_at = checked_at
+                await self.session.flush()
             return token
         await self._append_denied(
             tenant_id=tenant_id,
@@ -329,6 +373,11 @@ class ApiCapabilityTokenService:
             TENANT_WIDE_READ_ONLY_ACTIONS
         ):
             raise ApiCapabilityTokenDenied("tenant_wide_scope_requires_read_only")
+        scope_project_id = scope_constraint.get("project_id")
+        if scope_project_id is not None and (
+            project_id is None or str(scope_project_id) != str(project_id)
+        ):
+            raise ApiCapabilityTokenDenied("scope_constraint_project_mismatch")
         try:
             assert_no_raw_secret(scope_constraint, path="$api_capability.scope_constraint")
         except ValueError as exc:
@@ -401,6 +450,39 @@ class ApiCapabilityTokenService:
             correlation_id=f"api-capability-denied:{reason_code}",
         )
 
+    async def _append_scope_mismatch(
+        self,
+        *,
+        tenant_id: int,
+        actor_id: UUID,
+        token: ApiCapabilityToken,
+        reason_code: str,
+        required_action: ApiCapabilityAction,
+        requested_project_id: UUID | None,
+    ) -> None:
+        await AuditEventRepository(self.session).append(
+            tenant_id=tenant_id,
+            event_type="api_capability_token_scope_mismatch",
+            payload={
+                "rls_ready": True,
+                "reason_code": reason_code,
+                "api_capability_id_hash": _sha256_text(str(token.id)),
+                "principal_id": str(token.principal_id),
+                "token_project_id": str(token.project_id)
+                if token.project_id is not None
+                else None,
+                "requested_project_id": str(requested_project_id)
+                if requested_project_id is not None
+                else None,
+                "required_action": required_action,
+                "allowed_actions": list(token.allowed_actions),
+                "redaction_status": "ref_only",
+            },
+            actor_id=actor_id,
+            principal_id=token.principal_id,
+            correlation_id=f"api-capability-scope-mismatch:{_sha256_text(str(token.id))}",
+        )
+
 
 def _token_audit_payload(
     token: ApiCapabilityToken,
@@ -426,6 +508,32 @@ def _stored_actions(token: ApiCapabilityToken) -> list[ApiCapabilityAction]:
     return cast(list[ApiCapabilityAction], list(token.allowed_actions))
 
 
+def _classify_authorization_mismatch(
+    *,
+    token: ApiCapabilityToken,
+    required_action: ApiCapabilityAction,
+    project_id: UUID | None,
+) -> str | None:
+    if token.audience != AUDIENCE:
+        return "audience_mismatch"
+    if required_action not in _stored_actions(token):
+        return "action_scope_mismatch"
+    if token.project_id is not None and token.project_id != project_id:
+        return "project_scope_mismatch"
+    scope_project_id = token.scope_constraint.get("project_id")
+    if scope_project_id is not None and str(scope_project_id) != (
+        str(token.project_id) if token.project_id is not None else None
+    ):
+        return "scope_constraint_project_mismatch"
+    if (
+        token.project_id is None
+        and project_id is not None
+        and required_action not in TENANT_WIDE_READ_ONLY_ACTIONS
+    ):
+        return "tenant_wide_scope_requires_read_only"
+    return None
+
+
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -445,6 +553,7 @@ def _utc_now(value: datetime | None) -> datetime:
 
 __all__ = [
     "API_CAPABILITY_ACTIONS",
+    "ApiCapabilityTokenAuthorizeResult",
     "ApiCapabilityTokenDenied",
     "ApiCapabilityTokenIssueResult",
     "ApiCapabilityTokenRevokeResult",
