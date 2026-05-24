@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     active_registry_gate_enabled: bool = False
     taskhub_config_dir: str = "/etc/taskhub"
     taskhub_host_id: str = ""
+    memory_api_enabled: bool = False
 
     @model_validator(mode="after")
     def validate_local_boundary(self) -> Self:
@@ -116,4 +117,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

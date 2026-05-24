@@ -29,7 +29,7 @@ risks:
   - "Hermes integration is pattern adoption only; no external memory cloud, SQLite persistence, or source embed"
 ---
 
-最終更新: 2026-05-24 (batch 0g backup/restore memory drill)
+最終更新: 2026-05-24 (batch 0h disabled memory API contract)
 
 ## 目的
 
@@ -87,7 +87,7 @@ Hermes-agent 由来の memory / context pattern を TaskManagedAI 境界で再�
 - [x] SP018-T05 retrieval pipeline
 - [x] SP018-T06 ContextSnapshot read-only guard
 - [x] SP018-T07 backup/restore drill
-- [ ] SP018-T08 disabled contract / feature-flagged endpoint
+- [x] SP018-T08 disabled contract / feature-flagged endpoint
 
 ## must_ship / defer_if_over_budget 対応表
 
@@ -250,6 +250,33 @@ deferred:
 
 risks:
 - Alembic emits existing `path_separator` deprecation warning in DB-backed tests; no failure or behavioral regression observed.
+
+### 2026-05-24 batch 0h: disabled memory API contract
+
+changed:
+- `backend/app/config.py`
+- `backend/app/api/memory.py`
+- `backend/app/api/router.py`
+- `tests/api/test_memory_api.py`
+- `docs/sprints/SP-018_hermes_memory_integration.md`
+
+implemented:
+- `TASKMANAGEDAI_MEMORY_API_ENABLED` / `Settings.memory_api_enabled` default false を追加。
+- `GET /api/v1/projects/{project_id}/memory/retrievals` は default disabled で 404 `memory api disabled` を返し、service へ到達しない。
+- enabled 時は `MemoryRetrievalService` の read-only retrieval を呼び、response は `content_artifact_ref` / `content_hash` / retrieval metadata の ref-only shape に限定。
+- `stale_sanitizer` は HTTP 409 に map し、それ以外の retrieval deny は 404 に map。
+
+verified:
+- `uv run ruff check backend/app/api/memory.py backend/app/api/router.py backend/app/config.py tests/api/test_memory_api.py`
+- `PYTHONPATH=cli uv run mypy backend/app/api/memory.py backend/app/api/router.py backend/app/config.py tests/api/test_memory_api.py`
+- `uv run pytest tests/api/test_memory_api.py -q`
+- `git diff --check`
+
+deferred:
+- memory mutation UI, curator/insights automation, cron/routines remain SP-019/SP-020/P1+ as originally scoped.
+
+risks:
+- Endpoint is intentionally feature-flagged off by default. Enabling requires deployment-side explicit env opt-in and existing auth/tenant middleware.
 
 ### 2026-05-24 batch 0g: backup/restore memory drill
 
