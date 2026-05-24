@@ -4,8 +4,8 @@ type: "heavy"
 status: "partial_skeleton"
 sprint_no: 8
 created_at: "2026-05-13"
-updated_at: "2026-05-17"
-review_summary: "Sprint 11 (2026-05-17 SP-011 Exit) で carry-over 7 BL のうち **5 BL 完遂** (BL-0094 / BL-0095 / BL-0097 / BL-0101a / BL-0102 aggregator)。**未実装 3 BL** (BL-0096a 4 整合 binding signature refactor / BL-0100 repo_pr_opened actual emission / BL-0102 KPI endpoint) は Sprint 12 へ defer。Codex audit 2026-05-13 で F-001/F-005 指摘 adopt 済。Codex PR #39 R1 F-PR39-002 (P2) 反映: SP-011 PR #39 で `status: done` 昇格を試みたが、未実装 BL が残る事実が判明、`partial_skeleton` 維持。"
+updated_at: "2026-05-24"
+review_summary: "2026-05-24 reconciliation: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup are present, but GitHubAppAdapter, service-level RepoProxy 4-binding recomputation, webhook SecretBroker+replay service layer, actual repo_pr_opened emission, and agent-runs KPI endpoint are not verifiable in current tree. Keep status partial_skeleton and implement only after residual batches are confirmed."
 target_days: 5
 max_days: 7
 adr_refs:
@@ -88,13 +88,13 @@ risks:
 
 ## タスク一覧
 
-- [ ] **batch 0**: ADR-00011 起票 (proposed)、Permission Matrix draft、Sprint 11 `acceptance_blocked_by` 完了後に accepted 化 (Codex SP8 R2 R2-F-002 + R3 R3-F-001 adopt: Sprint 8 内では accepted 化しない)
+- [ ] **batch 0**: ADR-00011 起票 (proposed)、Permission Matrix draft。2026-05-24 reconciliation 以降は ADR-00011 を design decision accepted とし、implementation closeout は本 Pack の residual batches で判定する。
 - [ ] **batch 1**: BL-0094 (GitHub App 登録) + BL-0095 (SecretBroker integration) + Codex multi-round review
 - [ ] **batch 2**: BL-0096 (RepoProxy) + BL-0097 (GitHubAppAdapter) + Codex multi-round review
 - [ ] **batch 3**: BL-0098 (Permission Matrix) + BL-0101 (merge/deploy deny test) + Codex multi-round review
 - [ ] **batch 4**: BL-0099 (Webhook HMAC verifier) + Codex multi-round review
 - [ ] **batch 5**: BL-0100 (AgentRunEvent integration) + BL-0102 (AC-KPI-02 計測) + Codex multi-round review
-- [ ] **Sprint Exit**: SP-008 ## Review 章 + main ff merge (ADR-00011 は Sprint 11 acceptance_blocked_by 完了後に accepted 化、Sprint 8 内では proposed 維持)
+- [ ] **Sprint Exit**: SP-008 ## Review 章 + main merge。ADR-00011 の accepted status だけでは Exit 不可; residual batches A-E の実装証跡が必要。
 - [ ] **Hard Gate 接続**: AC-HARD-03 tenant isolation の repo permission 越境 test 追加
 
 ## must_ship / defer_if_over_budget 対応表
@@ -134,7 +134,7 @@ risks:
 
 ## レビュー観点
 
-- [ ] ADR-00011 が Sprint 8 batch 0 で proposed 化 → **Sprint 11 acceptance_blocked_by 完了後に accepted 化** (Sprint 8 partial_skeleton + Sprint 11 carry-over BL 全件完了が accepted 条件、Codex SP8 R2 R2-F-002 adopt)。
+- [ ] ADR-00011 は design decision として accepted。SP-008 completion は ADR status ではなく、2026-05-24 residual reconciliation で列挙した implementation evidence の完了で判定する。
 - [ ] GitHub App permission は最小 (contents:write + pull_requests:write + metadata:read のみ)、actions / workflows / packages / administration は明示 deny。
 - [ ] installation token は SecretBroker 内でのみ resolve、RepoProxy は broker-mediated operation 経由でのみ httpx request を投げる。
 - [ ] 4 整合 binding が all-or-nothing (1 mismatch でも invalidate)、`expected_request_fingerprint` は OperationContext canonical JCS で server-side 計算 (`server-owned-boundary §1` 違反なし)。
@@ -170,7 +170,7 @@ risks:
 - [ADR-00006](../adr/00006_secrets_management.md): accepted。installation token を SecretBroker capability token 経由で扱う前提。本 Sprint で `provider=github` / `operation=repo.push,repo.pr_open` を allowed_operations に追加。
 - [ADR-00007](../adr/00007_external_exposure.md): accepted。webhook endpoint を Tailscale 内 (`100.64.0.0/10`) のみ受信、Funnel/Cloudflare 不使用。
 - [ADR-00009](../adr/00009_action_class_taxonomy.md): accepted。action_class `repo_write` / `pr_open` / `merge` / `deploy` の enforcement 経路を本 Sprint で確立 (merge / deploy は P0 deny)。
-- [ADR-00011](../adr/00011_github_app_permission_matrix.md): Sprint 8 で proposed、Sprint 11 acceptance_blocked_by 8 件完了後に accepted (Codex SP8 R2/R3 adopt で旧「batch 5 で accepted」表現訂正)。Criteria #11 GitHub App permission 変更の正本。
+- [ADR-00011](../adr/00011_github_app_permission_matrix.md): design decision accepted。2026-05-24 reconciliation で過去の implementation completion claim を補正済み。Criteria #11 GitHub App permission 変更の正本。
 - [ADR-00003](../adr/00003_api_contract.md): Sprint 8 batch 5 で proposed 化、Draft PR / webhook API endpoint contract (Criteria #3)。
 
 ## Review
@@ -286,6 +286,35 @@ verify で品質確認。
 本 worktree branch を main へ ff merge する操作は user 直接実行を待つ
 (CLAUDE.md §6.7 destructive operation policy)。本 commit push 済、PR 作成
 または ff merge は user 判断。
+
+### 2026-05-24 residual reconciliation (post-SP024 Codex)
+
+#### verified present in current tree
+
+- `config/github_app_permissions.toml` + `backend/app/services/repoproxy/permission_matrix.py`: minimal permission matrix, explicit deny list, and static/differential checks.
+- `backend/app/services/repoproxy/repoproxy.py`: `RepoProxy` ABC, `MockRepoProxy`, branch pattern validation, branch overwrite deny, merge/deploy deny stubs.
+- `backend/app/services/repoproxy/webhook_hmac.py`: low-level HMAC SHA-256 helper with constant-time compare and rotation helper.
+- `backend/app/domain/agent_runtime/operation_context.py`: `repo.push` / `repo.pr_open` target schema, including `commit_sha` and `repo_state_commit_sha`.
+- `backend/app/services/secrets/broker.py`: `repo.push` / `repo.pr_open` action-class mapping, approval binding, allowed operation validation, and atomic claim fingerprint checks.
+- `backend/app/domain/agent_runtime/event_type.py`: `repo_pr_opened` event type exists.
+- `backend/app/services/metrics/orchestrator_kpi_rollup.py`: reads existing `repo_pr_opened` events for orchestrator-level proxy rollup.
+
+#### not verified / still residual
+
+- `backend/app/services/repoproxy/github_app_adapter.py` does not exist; no actual broker-mediated GitHub HTTP wrapper is present.
+- `RepoProxy.create_draft_pr()` still accepts caller-provided `DraftPRRequest`; `create_draft_pr(approval_id, agent_run_id)` with server-side DB / ContextSnapshot / Git ref recomputation is not implemented.
+- `verify_github_webhook(request, secret_ref_current, secret_ref_previous, delivery_id)` service layer with SecretBroker resolution, Redis replay nonce, status validation, and audit emission is not present.
+- Actual AgentRun runtime path that emits `repo_pr_opened` from RepoProxy is not present.
+- `/agent-runs/{id}/kpi` endpoint is not present. Existing KPI code covers eval corpus rollup and orchestrator proxy rollup, not the SP-008 Draft PR endpoint contract.
+- Real GitHub App admin registration / private key SOPS metadata cannot be verified from repo files and remains an operator setup item unless a secret metadata fixture is added.
+
+#### next implementation batches
+
+1. Batch A: service-level RepoProxy server-owned binding refactor (`approval_id`, `agent_run_id`) + negative tests for each mismatch.
+2. Batch B: `GitHubAppAdapter` broker-mediated HTTP wrapper with raw-token non-exposure tests.
+3. Batch C: webhook service layer with SecretBroker resolution, Redis replay guard, rotation status validation, and audit payload redaction.
+4. Batch D: actual `repo_pr_opened` emission from the runtime path.
+5. Batch E: `/agent-runs/{id}/kpi` or explicitly superseding endpoint decision, then status closeout.
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
 
