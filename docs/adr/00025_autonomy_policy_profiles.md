@@ -21,7 +21,7 @@ superseded_by: null
 - 前提 / 制約:
   - **不変条件 #2 維持**: approval を要する action では decider は依然 human only。auto-allow path は「approval を skip」であって「agent / orchestrator / service / provider が decider に昇格」ではない (ADR-00009 §Tier 2 準拠)。
   - **caller-not-allowed**: `autonomy_level` (L0-L3 project setting) は caller-visible だが、`policy_profile` (Policy Engine server-resolved effect profile) は **server-owned**、caller 指定不可 (`.claude/rules/server-owned-boundary.md:5-12`)。両者は概念分離。
-  - **Phase 5 prerequisite (Critical)**: L1-L3 auto-allow path は **Phase 5 Hook Trust Boundary 完成 + ADR-00012 accepted** が prerequisite。SP-022 Phase 5 completion (PR #80) と ADR-00012 accepted を確認済みのため、本 ADR は SP024-T01 で accepted 化した。ただし runtime effect は SP024-T02+ の regression gate 完了まで default disabled。
+  - **Phase 5 prerequisite (Critical)**: L1-L3 auto-allow path は **Phase 5 Hook Trust Boundary 完成 + ADR-00012 accepted** が prerequisite。SP-022 Phase 5 completion (PR #80) と ADR-00012 accepted を確認済みのため、本 ADR は SP024-T01 で accepted 化した。SP024-T05 で service-level Policy Engine matrix は追加済みだが、runtime trace persistence は SP024-T06、settings write surface は SP024-T07 で分けて gate する。
   - **ADR Gate Criteria 11 種**: 本 ADR は #4 (AI エージェント権限) を主、#2 (DB schema、`autonomy_level` 列追加時)、#3 (API 契約、settings endpoint)、#5 (MCP/tool 権限、low-risk profile 機械判定)、#10 (Provider 追加 / 切替、auto-allow path の provider 制約) を補助とする trigger。**break-glass 対象外** (`.claude/rules/sprint-pack-adr-gate.md` §11)。
   - **level に関わらず human approval 必須の action_class**: `secret_access` / `merge` / `deploy` / `provider_call` (L0-L3 全 level)。これは ADR-00006 (SecretBroker raw secret 非保存) / ADR-00010 (Provider Matrix) / ADR-00023 候補 (Realtime/Gemini direct 不可) の延長。
 
@@ -48,7 +48,7 @@ superseded_by: null
   - `backend/app/domain/policy/autonomy_level.py` (新規、Literal L0/L1/L2/L3 + Pydantic enum + frozenset)
   - `backend/app/db/models/project.py` (既存) または `workspace.py` の `autonomy_level` 列追加 (`migrations/versions/00NN_p0_1_autonomy_level.py`)
   - **`projects.policy_profile` compatibility decision (SP024-T01 accepted)**: `projects.policy_profile` は ADR-00009 accepted 実装の server-owned DB cache / FK として維持する。caller-visible write surface は引き続き禁止し、`ProjectCreate` / update API / CLI / UI は `autonomy_level` だけを受け取る。Policy Engine は `autonomy_level` から server-owned `policy_profile` を resolve し、必要な場合のみ server-side に `projects.policy_profile` を更新する。`policy_profiles` / `policy_profile_action_effects` / `policy_decisions_policy_profile_fkey` は削除しない。
-  - `backend/app/services/policy/engine.py` (autonomy_level → policy_profile resolve helper、Policy Engine 内部で server-owned 解決、caller 入力経路を signature レベル削除)
+  - `backend/app/services/policy/autonomy_policy_engine.py` (autonomy_level → policy_profile resolve helper、Policy Engine 内部で server-owned 解決、caller 入力経路を signature レベル削除)
   - `backend/app/services/policy/low_risk_profile.py` (新規、機械判定: payload_data_class / diff size / file count / forbidden path / dangerous command / provider_request_preflight / runner_mutation_gateway / ContextSnapshot 10 列 PASS)
   - `frontend/app/(admin)/project-settings/autonomy/` (UI、`policy_profile` 入力 field は削除、`autonomy_level` のみ表示)
   - `taskmanagedai-cli/src/settings/autonomy.ts` (`tmai settings autonomy --level L1`、`policy_profile` 指定経路は CLI からも削除)
@@ -56,7 +56,7 @@ superseded_by: null
 - 実装ガイダンス:
   - `autonomy_level` enum は **5+ source** で整合: DB CHECK / SQLAlchemy CheckConstraint / Python Literal / Pydantic Field validator / pytest EXPECTED constant (`.claude/rules/cross-source-enum-integrity.md`)
   - `policy_profile` は **caller 指定不可**、Policy Engine 内部で `autonomy_level` から解決する server-owned 値 (`.claude/rules/server-owned-boundary.md` §1)。現行 code は `ProjectCreate` で caller-supplied `policy_profile` を拒否済み。SP024-T03 で API / CLI / UI / repository / DB の全 write surface を再確認し、`test_autonomy_caller_supplied_policy_profile_reject.py` で regression 化する。
-  - **SP024-T03 resolver safety**: SP024-T03 時点では `resolve_autonomy_policy_profile()` は L0-L3 全 level を server-owned `policy_profile='default'` に解決し、`auto_allow_enabled=False` を返す。既存 `low_risk_auto_allow` は SP-014 semantics で `provider_call` allow row を持つため、ADR-00025 の「provider_call は全 level human approval 必須」不変条件を満たす T05 更新が完了するまで resolver から返してはならない。
+  - **SP024-T05 resolver safety**: `resolve_autonomy_policy_profile()` は L0-L3 全 level を server-owned `policy_profile='default'` に解決し、runtime flag が有効な L1-L3 だけ `auto_allow_enabled=True` を返す。既存 `low_risk_auto_allow` は SP-014 semantics で `provider_call` allow row を持つため、ADR-00025 の「provider_call は全 level human approval 必須」不変条件を満たす autonomy resolver から返してはならない。
   - level matrix:
 
     | Level | 名称 | auto-allow される action_class (low-risk profile 通過時) | human approval が必須の action_class | 想定用途 |
@@ -75,6 +75,7 @@ superseded_by: null
     - `runner_mutation_gateway` 通過 (Sprint 7 後の本実装)
     - ContextSnapshot 10 列 PASS + `evidence_set_hash` 既定
   - **SP024-T04 evaluator**: `evaluate_low_risk_profile()` は payload data class / change scope (diff size + file count) / forbidden path / dangerous command / provider request preflight / runner mutation gateway / ContextSnapshot の 7 axes を行う。ADR-00025 の「1 軸でも不合格なら fallback」を満たすため、各 axis は独立 negative test を持つ。
+  - **SP024-T05 Policy Engine**: `evaluate_autonomy_policy_engine_decision()` は L0-L3 action matrix、human-required action fallback、global kill switch / budget exceeded / Provider Matrix deny / Tool Registry deny override を `allow` より先に評価する。`policy_profile` seed は変更せず 14 row invariant を維持し、T06 で append-only trace persistence を接続する。
   - 不変条件 (level 切替で破ってはならない):
     1. `secret_access` / `merge` / `deploy` / `provider_call` は **全 level で human approval 必須**
     2. `approval_requests.decided_by_actor_id` は **human actor のみ** (DB CHECK + service guard + Pydantic + pytest の 4 重防御)
@@ -107,7 +108,7 @@ superseded_by: null
 | low-risk profile 機械判定漏れで confidential payload が auto-allow | `test_low_risk_profile.py` (各軸不合格 negative test) | 7 軸の **1 軸でも不合格** なら approval path に fall back、fail-closed 設計 |
 | L3 `pr_open` で SecretBroker capability 内包 path 漏れ | `test_autonomy_pr_open_secret_capability.py` (内包 path detect) | `pr_open` operation 内で SecretBroker `redeem_capability_token` を呼ぶ場合は **常に approval path**、`pr_open` auto-allow からは除外 |
 | `autonomy_level` 列 drift (5+ source) | `tests/cross_source/test_autonomy_level_drift.py` | DB CHECK / SQLAlchemy / Literal / Pydantic / pytest の 5+ source 整合 check |
-| Phase 5 prerequisite 未完で L1-L3 effect 化 | `.claude/hooks/` trusted hook 完成確認 (ADR-00012 accepted) | SP-022 Phase 5 completion + ADR-00012 accepted を SP024-T01 で確認。runtime effect は SP024-T02+ gate 完了まで default disabled |
+| Phase 5 prerequisite 未完で L1-L3 effect 化 | `.claude/hooks/` trusted hook 完成確認 (ADR-00012 accepted) | SP-022 Phase 5 completion + ADR-00012 accepted を SP024-T01 で確認。T05 は service-level matrix、T06 は append-only trace、T07 は settings write surface として分離 |
 | 3 段 kill switch override 漏れ (level 設定が kill 優先される) | `test_autonomy_kill_switch_override.py` (BudgetGuard zero / Provider blocked / Tool deny で level 無視確認) | kill switch 発火時は **level 設定を完全無視**、`effect=deny` / AgentRun blocked。approval path 切替は不可 |
 
 ## rollback 手順

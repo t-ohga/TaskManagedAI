@@ -9,7 +9,7 @@ from backend.app.domain.policy.profile import PolicyProfileId
 AutonomyPolicyProfileReason = Literal[
     "autonomy_l0_default",
     "autonomy_runtime_disabled",
-    "autonomy_runtime_not_implemented",
+    "autonomy_runtime_matrix_enabled",
 ]
 
 
@@ -28,11 +28,11 @@ def resolve_autonomy_policy_profile(
 ) -> AutonomyPolicyProfileResolution:
     """Resolve caller-visible autonomy level to a server-owned policy profile.
 
-    SP024-T03 intentionally keeps L1-L3 fail-closed. Existing
-    ``low_risk_auto_allow`` allows provider_call in SP-014 semantics, while
-    ADR-00025 requires provider_call to remain human-approval-only for every
-    autonomy level. T05 must update Policy Engine/profile semantics before this
-    resolver can return anything other than ``default``.
+    The resolver never accepts caller-supplied ``policy_profile``. SP024-T05
+    keeps the DB-backed profile cache on ``default`` and lets the Policy Engine
+    apply the L0-L3 matrix above the resolved profile effect. Existing
+    ``low_risk_auto_allow`` still contains SP-014 semantics and is intentionally
+    not returned here because it allows provider_call.
     """
 
     if autonomy_level not in ALL_AUTONOMY_LEVELS:
@@ -41,15 +41,18 @@ def resolve_autonomy_policy_profile(
     level = cast(AutonomyLevel, autonomy_level)
     if level == "L0":
         reason_code: AutonomyPolicyProfileReason = "autonomy_l0_default"
+        auto_allow_enabled = False
     elif runtime_enabled:
-        reason_code = "autonomy_runtime_not_implemented"
+        reason_code = "autonomy_runtime_matrix_enabled"
+        auto_allow_enabled = True
     else:
         reason_code = "autonomy_runtime_disabled"
+        auto_allow_enabled = False
 
     return AutonomyPolicyProfileResolution(
         autonomy_level=level,
         policy_profile="default",
-        auto_allow_enabled=False,
+        auto_allow_enabled=auto_allow_enabled,
         reason_code=reason_code,
     )
 
