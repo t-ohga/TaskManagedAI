@@ -40,4 +40,4 @@ Batch C implements the webhook service boundary only. It does not claim the conc
 - Concrete SecretBroker-backed HMAC secret resolver.
 - Concrete Redis SETNX replay adapter.
 - FastAPI `/webhooks/github` route with Tailscale-only ingress check.
-- Runtime `repo_pr_opened` automatic call-site wiring.
+- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.

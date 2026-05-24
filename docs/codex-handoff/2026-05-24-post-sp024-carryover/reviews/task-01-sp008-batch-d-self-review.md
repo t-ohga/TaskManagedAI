@@ -4,7 +4,7 @@ Date: 2026-05-24
 
 ## Scope
 
-Batch D adds the append-only `repo_pr_opened` event writer and payload contract. It does not claim final automatic call-site wiring from the eventual live RepoProxy Draft PR execution path.
+Batch D adds the append-only `repo_pr_opened` event writer and payload contract. Batch D2 later adds the `DraftPRRuntime` call-site wrapper; external API/worker adoption still waits for the real GitHub transport path.
 
 ## Findings
 
@@ -14,7 +14,7 @@ Batch D adds the append-only `repo_pr_opened` event writer and payload contract.
 | HIGH | Denied Draft PR results could still append `repo_pr_opened`. | adopt: writer returns `PR_NOT_CREATED` for any result with `deny_reason` or missing `pr_number`; tests assert no append call. |
 | MEDIUM | Event writer could bypass append-only sequencing. | adopt: writer uses `AgentRunEventRepository.append_event()` only, with `expected_previous_seq_no` passthrough and DB persistence test. |
 | MEDIUM | Duplicate PR event retry could produce duplicate timeline entries. | adopt: idempotency key is fixed to `repoproxy:repo_pr_opened:{run_id}:{pr_number}`. |
-| MEDIUM | Docs could overclaim complete runtime integration. | adopt: Sprint Pack and handoff docs state writer + DB path complete, final RepoProxy call-site wiring still residual. |
+| MEDIUM | Docs could overclaim complete runtime integration. | adopt: Sprint Pack and handoff docs state writer + DB path complete. Batch D2 updates the call-site wrapper, while external API/worker adoption remains residual. |
 
 ## Checklist
 
@@ -33,5 +33,5 @@ Batch D adds the append-only `repo_pr_opened` event writer and payload contract.
 
 ## Deferred
 
-- Automatic call-site wiring from the final RepoProxy Draft PR execution path.
+- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
 - Agent-runs KPI endpoint was completed later in Batch E.
