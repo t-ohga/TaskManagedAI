@@ -1,9 +1,9 @@
 ---
 id: "ADR-00025"
 title: "Autonomy Policy Profiles: L0-L3 4 段階で approval スキップ範囲を切替、`autonomy_level` (caller-visible) と `policy_profile` (server-owned) を概念分離"
-status: "proposed"
+status: "accepted"
 date: "2026-05-15"
-accepted_at: null
+accepted_at: "2026-05-24"
 authors:
   - "t-ohga"
 related_sprints:
@@ -12,16 +12,16 @@ supersedes: null
 superseded_by: null
 ---
 
-最終更新: 2026-05-24 (SP024-T00 plan-only gate で SP-024 実 Sprint 化、current implementation drift を T01 blocker として追記)
+最終更新: 2026-05-24 (SP024-T01 readiness gate で accepted 化、`projects.policy_profile` は server-owned DB cache として維持)
 
 ## 背景
 
 - 決定対象: `approval 不要で AI が自動実行できる範囲` を 4 段階 (L0/L1/L2/L3) で切替可能にする autonomy policy profiles を定義する。**human-only approval decider invariant (ADR-00009 §self-approval / `.claude/reference/multi-agent-orchestration-draft.md`) は維持**したまま、Policy Engine `effect=allow` で `approval_requests` row を作らない auto-allow path を level ごとに調整する。
-- 関連 Sprint: 本 ADR は **proposed のみ**、accepted 化は P0.1 (新 Sprint Pack **SP-024**)。**SP-017 は SP-016 `## P0.1 候補` で AI Society Visualization (board / role icon / dashboard) に予約済のため使用不可** (`docs/sprints/SP-016_ui_cli_parity.md:39+135` で予約)、R29 plan §10.4 「新 SP-017 候補」言及は SP-024 に override 済み。P0 期間中は L0 default のみ実 enforce、L1-L3 auto-allow path は disable。
+- 関連 Sprint: 本 ADR は **SP-024 readiness gate で accepted**。**SP-017 は SP-016 `## P0.1 候補` で AI Society Visualization (board / role icon / dashboard) に予約済のため使用不可** (`docs/sprints/SP-016_ui_cli_parity.md:39+135` で予約)、R29 plan §10.4 「新 SP-017 候補」言及は SP-024 に override 済み。SP024-T02 以降の runtime 実装までは L0 default のみ実 enforce、L1-L3 auto-allow path は disable。
 - 前提 / 制約:
   - **不変条件 #2 維持**: approval を要する action では decider は依然 human only。auto-allow path は「approval を skip」であって「agent / orchestrator / service / provider が decider に昇格」ではない (ADR-00009 §Tier 2 準拠)。
   - **caller-not-allowed**: `autonomy_level` (L0-L3 project setting) は caller-visible だが、`policy_profile` (Policy Engine server-resolved effect profile) は **server-owned**、caller 指定不可 (`.claude/rules/server-owned-boundary.md:5-12`)。両者は概念分離。
-  - **Phase 5 prerequisite (Critical)**: L1-L3 auto-allow path は **Phase 5 Hook Trust Boundary 完成 + ADR-00012 accepted** が prerequisite。trusted hook / counter / audit 基盤なしでは autonomous workflow が gate bypass を生成する可能性 (`.claude/hooks/` 改ざん攻撃) があり、本 ADR の accepted 化は Phase 5 完了後にのみ進める。
+  - **Phase 5 prerequisite (Critical)**: L1-L3 auto-allow path は **Phase 5 Hook Trust Boundary 完成 + ADR-00012 accepted** が prerequisite。SP-022 Phase 5 completion (PR #80) と ADR-00012 accepted を確認済みのため、本 ADR は SP024-T01 で accepted 化した。ただし runtime effect は SP024-T02+ の regression gate 完了まで default disabled。
   - **ADR Gate Criteria 11 種**: 本 ADR は #4 (AI エージェント権限) を主、#2 (DB schema、`autonomy_level` 列追加時)、#3 (API 契約、settings endpoint)、#5 (MCP/tool 権限、low-risk profile 機械判定)、#10 (Provider 追加 / 切替、auto-allow path の provider 制約) を補助とする trigger。**break-glass 対象外** (`.claude/rules/sprint-pack-adr-gate.md` §11)。
   - **level に関わらず human approval 必須の action_class**: `secret_access` / `merge` / `deploy` / `provider_call` (L0-L3 全 level)。これは ADR-00006 (SecretBroker raw secret 非保存) / ADR-00010 (Provider Matrix) / ADR-00023 候補 (Realtime/Gemini direct 不可) の延長。
 
@@ -43,19 +43,19 @@ superseded_by: null
   - low-risk profile (機械判定) 通過時のみ auto-allow を適用する設計で fail-closed 維持。1 軸でも不合格なら approval path に fall back。
   - `autonomy_level` (caller-visible) と `policy_profile` (server-owned) の概念分離で server-owned-boundary 不変 (`.claude/rules/server-owned-boundary.md`) を維持。
   - level upgrade (L0→L3) は **accepted ADR + accepted Sprint Pack + human approval event before effect** 必須で gate。
-- 実装 Sprint: 本 ADR は **proposed のみ**。accepted 化は P0.1 (新 Sprint Pack **SP-024**、SP-017 は AI Society Visualization 用に予約済のため使用不可)。P0 期間中は L0 default のみ実 enforce。
-- 実装対象ファイル (P0.1 accepted 後):
+- 実装 Sprint: 本 ADR は **accepted**。SP-024 (SP024-T02+) で実装する。SP-017 は AI Society Visualization 用に予約済のため使用不可。SP024-T02+ が完了するまでは L0 default のみ実 enforce。
+- 実装対象ファイル (SP024-T02+):
   - `backend/app/domain/policy/autonomy_level.py` (新規、Literal L0/L1/L2/L3 + Pydantic enum + frozenset)
   - `backend/app/db/models/project.py` (既存) または `workspace.py` の `autonomy_level` 列追加 (`migrations/versions/00NN_p0_1_autonomy_level.py`)
-  - **`projects.policy_profile` compatibility decision**: 現行 code では `ProjectCreate` が `extra="forbid"` で caller-supplied `policy_profile` を拒否し、repository payload でも `policy_profile` を server-owned として reject 済み。一方 `projects.policy_profile` は ADR-00009 accepted 実装の server-owned DB field / FK として存在するため、SP024-T01 で「server-owned cache として維持」または「derived resolver へ移行して列削除」のどちらかを明示決定してから migration へ進む。caller-visible write surface はいずれの案でも禁止。
+  - **`projects.policy_profile` compatibility decision (SP024-T01 accepted)**: `projects.policy_profile` は ADR-00009 accepted 実装の server-owned DB cache / FK として維持する。caller-visible write surface は引き続き禁止し、`ProjectCreate` / update API / CLI / UI は `autonomy_level` だけを受け取る。Policy Engine は `autonomy_level` から server-owned `policy_profile` を resolve し、必要な場合のみ server-side に `projects.policy_profile` を更新する。`policy_profiles` / `policy_profile_action_effects` / `policy_decisions_policy_profile_fkey` は削除しない。
   - `backend/app/services/policy/engine.py` (autonomy_level → policy_profile resolve helper、Policy Engine 内部で server-owned 解決、caller 入力経路を signature レベル削除)
   - `backend/app/services/policy/low_risk_profile.py` (新規、機械判定: payload_data_class / diff size / file count / forbidden path / dangerous command / provider_request_preflight / runner_mutation_gateway / ContextSnapshot 10 列 PASS)
   - `frontend/app/(admin)/project-settings/autonomy/` (UI、`policy_profile` 入力 field は削除、`autonomy_level` のみ表示)
   - `taskmanagedai-cli/src/settings/autonomy.ts` (`tmai settings autonomy --level L1`、`policy_profile` 指定経路は CLI からも削除)
-  - `tests/policy/test_autonomy_level_enum.py` / `test_autonomy_level_resolve.py` / `test_low_risk_profile.py` / `test_autonomy_upgrade_gate.py` / **`test_autonomy_caller_supplied_policy_profile_reject.py` (Pydantic schema から policy_profile 削除後の reject 経路 verify)** (5 件最小)
+  - `tests/policy/test_autonomy_level_enum.py` / `test_autonomy_level_resolve.py` / `test_low_risk_profile.py` / `test_autonomy_upgrade_gate.py` / **`test_autonomy_caller_supplied_policy_profile_reject.py` (caller-supplied `policy_profile` reject 経路 verify)** (5 件最小)
 - 実装ガイダンス:
   - `autonomy_level` enum は **5+ source** で整合: DB CHECK / SQLAlchemy CheckConstraint / Python Literal / Pydantic Field validator / pytest EXPECTED constant (`.claude/rules/cross-source-enum-integrity.md`)
-  - `policy_profile` は **caller 指定不可**、Policy Engine 内部で `autonomy_level` から解決する server-owned 値 (`.claude/rules/server-owned-boundary.md` §1)。現行 code は `ProjectCreate` で caller-supplied `policy_profile` を拒否済みだが、SP024-T01 で API / CLI / UI / repository / DB の全 write surface を再確認し、`test_autonomy_caller_supplied_policy_profile_reject.py` で regression 化する。
+  - `policy_profile` は **caller 指定不可**、Policy Engine 内部で `autonomy_level` から解決する server-owned 値 (`.claude/rules/server-owned-boundary.md` §1)。現行 code は `ProjectCreate` で caller-supplied `policy_profile` を拒否済み。SP024-T03 で API / CLI / UI / repository / DB の全 write surface を再確認し、`test_autonomy_caller_supplied_policy_profile_reject.py` で regression 化する。
   - level matrix:
 
     | Level | 名称 | auto-allow される action_class (low-risk profile 通過時) | human approval が必須の action_class | 想定用途 |
@@ -105,7 +105,7 @@ superseded_by: null
 | low-risk profile 機械判定漏れで confidential payload が auto-allow | `test_low_risk_profile.py` (各軸不合格 negative test) | 7 軸の **1 軸でも不合格** なら approval path に fall back、fail-closed 設計 |
 | L3 `pr_open` で SecretBroker capability 内包 path 漏れ | `test_autonomy_pr_open_secret_capability.py` (内包 path detect) | `pr_open` operation 内で SecretBroker `redeem_capability_token` を呼ぶ場合は **常に approval path**、`pr_open` auto-allow からは除外 |
 | `autonomy_level` 列 drift (5+ source) | `tests/cross_source/test_autonomy_level_drift.py` | DB CHECK / SQLAlchemy / Literal / Pydantic / pytest の 5+ source 整合 check |
-| Phase 5 prerequisite 未完で L1-L3 effect 化 | `.claude/hooks/` trusted hook 完成確認 (ADR-00012 accepted) | ADR-00025 accepted 化は **Phase 5 完了後にのみ** 進める。Sprint Pack の Critical prerequisite に明記 |
+| Phase 5 prerequisite 未完で L1-L3 effect 化 | `.claude/hooks/` trusted hook 完成確認 (ADR-00012 accepted) | SP-022 Phase 5 completion + ADR-00012 accepted を SP024-T01 で確認。runtime effect は SP024-T02+ gate 完了まで default disabled |
 | 3 段 kill switch override 漏れ (level 設定が kill 優先される) | `test_autonomy_kill_switch_override.py` (BudgetGuard zero / Provider blocked / Tool deny で level 無視確認) | kill switch 発火時は **level 設定を完全無視**、`effect=deny` / AgentRun blocked。approval path 切替は不可 |
 
 ## rollback 手順
@@ -127,11 +127,11 @@ superseded_by: null
 4. `uv run alembic downgrade -1` を実行する。downgrade で data loss / inconsistent state になる場合は forward-fix migration を新規作成し、staging で検証してから production 適用する。最終手段として age 暗号化 backup から restore する。
 5. rollback verification は `uv run pytest tests/policy/test_autonomy_level_enum.py tests/policy/test_autonomy_level_resolve.py tests/policy/test_low_risk_profile.py tests/policy/test_autonomy_upgrade_gate.py tests/policy/test_autonomy_caller_supplied_policy_profile.py tests/policy/test_autonomy_human_required_actions.py tests/policy/test_autonomy_kill_switch_override.py -q` で実行して確認する (P0.1 完了後に Sprint Pack 検証手順と合わせて整合確認)。
 
-### ADR-00025 自体の rollback (proposed → 取下げ)
+### ADR-00025 自体の rollback (accepted 後、runtime effect 前)
 
-1. 本 ADR が P0.1 で accepted 化されず取下げに至った場合、`status: rejected` に変更し `superseded_by` に代替 ADR を記録 (例: ADR-00009 §Tier 2 既存 `low_risk_auto_allow` semantics に巻き戻し)。
-2. L1-L3 auto-allow path 実装が始まる前であれば、code / DB schema / API 変更は発生していないため、ADR 文書のみ削除 / archive で完結。
-3. accepted 化後の取下げは、`autonomy_level` 列 migration rollback (上記 Migration rollback) + Policy Engine resolve helper の disable + L0 forced default の 3 step を Sprint Pack で計画した上で実行する。
+1. SP024-T02 以降の code / DB schema / API 変更前であれば、`status: superseded` または `rejected` に変更し `superseded_by` に代替 ADR を記録する (例: ADR-00009 §Tier 2 既存 `low_risk_auto_allow` semantics に巻き戻し)。
+2. runtime effect 前であれば、DB / API / Policy Engine の rollback は不要。SP-024 を docs-only closeout し、L0 default の現行運用を継続する。
+3. runtime 実装後の取下げは、`autonomy_level` 列 migration rollback (上記 Migration rollback) + Policy Engine resolve helper の disable + L0 forced default の 3 step を Sprint Pack で計画した上で実行する。
 
 ## 関連 ADR
 
