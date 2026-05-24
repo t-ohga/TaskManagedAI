@@ -36,6 +36,23 @@ test("Sprint 9: tickets list page renders real list shell", async ({ page }) => 
   ).toBeVisible();
 });
 
+test("SP-009-5: today control plane renders read-only lanes", async ({ page }) => {
+  await loginAndGoto(page, "/today");
+
+  const todayRegion = page.getByRole("region", {
+    name: "Today control plane",
+    exact: true
+  });
+
+  await expect(todayRegion).toBeVisible();
+  await expect(
+    todayRegion.getByRole("heading", { name: "Today / Inbox", exact: true })
+  ).toBeVisible();
+  await expect(todayRegion.getByLabel("Today KPI strip")).toBeVisible();
+  await expect(todayRegion.getByRole("region", { name: "Today lane" })).toBeVisible();
+  await expect(todayRegion.getByRole("region", { name: "Inbox lane" })).toBeVisible();
+});
+
 test("Sprint 9: approval inbox page renders real status filters", async ({ page }) => {
   await loginAndGoto(page, "/approvals");
 
