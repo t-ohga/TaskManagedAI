@@ -138,6 +138,9 @@ async def test_adapter_redeems_repo_pr_open_and_returns_draft_pr_result() -> Non
     assert result.pr_url == "https://github.com/owner/repo/pull/17"
     assert result.draft is True
     assert result.deny_reason is None
+    assert result.repo_full_name == "owner/repo"
+    assert result.branch == "codex/agent-run-abcd1234"
+    assert result.head_sha == "2" * 40
     assert broker.calls == [
         {
             "tenant_id": TENANT_ID,

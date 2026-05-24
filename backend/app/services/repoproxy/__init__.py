@@ -19,6 +19,13 @@ from backend.app.services.repoproxy.github_app_adapter import (
     GitHubAppAdapter,
     GitHubDraftPRResponse,
 )
+from backend.app.services.repoproxy.repo_pr_event import (
+    RepoPROpenedEventDenyReason,
+    RepoPROpenedEventPayload,
+    RepoPROpenedEventWriter,
+    append_repo_pr_opened_event,
+    build_repo_pr_opened_payload,
+)
 from backend.app.services.repoproxy.webhook_service import (
     GITHUB_WEBHOOK_DENIED_AUDIT_EVENT_TYPE,
     GITHUB_WEBHOOK_REPLAY_WINDOW_SECONDS,
@@ -45,6 +52,11 @@ __all__ = [
     "GitHubWebhookRequest",
     "GitHubWebhookVerificationResult",
     "GitHubWebhookVerifier",
+    "RepoPROpenedEventDenyReason",
+    "RepoPROpenedEventPayload",
+    "RepoPROpenedEventWriter",
     "WebhookSecretCandidate",
     "WebhookSecretCandidates",
+    "append_repo_pr_opened_event",
+    "build_repo_pr_opened_payload",
 ]

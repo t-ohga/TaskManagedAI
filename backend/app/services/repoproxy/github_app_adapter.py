@@ -109,6 +109,9 @@ class GitHubAppAdapter:
             pr_url=response.pr_url,
             draft=response.draft,
             deny_reason=None,
+            repo_full_name=request.repo_full_name,
+            branch=request.head_branch,
+            head_sha=request.commit_sha,
         )
 
 

@@ -31,7 +31,7 @@ These are not coding instructions until task-01 marks them `READY`.
 | A | residual server-owned 4-binding signature / request fingerprint refactor | API contract + SecretBroker fingerprint |
 | B | GitHubAppAdapter broker-mediated adapter boundary | raw token non-exposure + GitHub API boundary |
 | C | webhook SecretBroker/replay service boundary | raw HMAC secret redaction + replay defense |
-| D | `repo_pr_opened` actual AgentRunEvent emission | append-only event contract |
+| D | `repo_pr_opened` AgentRunEvent writer + runtime call-site wiring | append-only event contract |
 | E | AC-KPI-02 `time_to_merge` endpoint/helper | KPI source-of-truth and duplicate counting |
 | F | SP-008 status closeout + ADR/sprint docs | docs drift |
 

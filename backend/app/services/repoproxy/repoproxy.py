@@ -106,6 +106,9 @@ class DraftPRResult:
     pr_url: str | None  # redacted to https://github.com/owner/repo/pull/N (no token)
     draft: bool
     deny_reason: RepoProxyDenyReason | None
+    repo_full_name: str | None = None
+    branch: str | None = None
+    head_sha: str | None = None
 
 
 _BRANCH_PATTERN = re.compile(r"^codex/agent-run-[a-f0-9]{8}$")
@@ -263,6 +266,9 @@ class MockRepoProxy(RepoProxy):
             pr_url=f"https://github.com/{request.repo_full_name}/pull/{pr_number}",
             draft=True,
             deny_reason=None,
+            repo_full_name=request.repo_full_name,
+            branch=request.head_branch,
+            head_sha=request.commit_sha,
         )
 
     async def deny_merge(
