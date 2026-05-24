@@ -17,7 +17,12 @@ from backend.app.config import Settings, get_settings
 from backend.app.domain.artifact.data_class import PayloadDataClass
 from backend.app.domain.memory.record_kind import MemoryRecordKind
 from backend.app.domain.memory.redaction_status import MemoryRedactionStatus
-from backend.app.schemas.memory import MemoryRetrievalRequest
+from backend.app.schemas.memory import MemoryInsightRequest, MemoryRetrievalRequest
+from backend.app.services.memory.insights import (
+    MemoryInsightDenied,
+    MemoryInsightResult,
+    MemoryInsightService,
+)
 from backend.app.services.memory.retrieval import (
     MemoryRetrievalDenied,
     MemoryRetrievalResult,
@@ -50,6 +55,23 @@ class MemoryRetrievalResponse(BaseModel):
     retrieval_artifacts: list[MemoryRetrievalArtifactRead]
     sanitizer_policy_version: str | None
     retrieval_hash: str | None
+    trust_level: str = "untrusted_content"
+
+
+class MemoryInsightItemRead(BaseModel):
+    memory_record_id: UUID
+    record_kind: MemoryRecordKind
+    content_hash: str
+    source_artifact_ref: str | None
+    aggregate_count: int
+    score: float
+    created_at: datetime
+    trust_level: str = "untrusted_content"
+
+
+class MemoryInsightResponse(BaseModel):
+    items: list[MemoryInsightItemRead]
+    generated_at: datetime
     trust_level: str = "untrusted_content"
 
 
@@ -98,6 +120,24 @@ def _to_response(result: MemoryRetrievalResult) -> MemoryRetrievalResponse:
     )
 
 
+def _to_insight_response(result: MemoryInsightResult) -> MemoryInsightResponse:
+    return MemoryInsightResponse(
+        items=[
+            MemoryInsightItemRead(
+                memory_record_id=item.memory_record_id,
+                record_kind=item.record_kind,
+                content_hash=item.content_hash,
+                source_artifact_ref=item.source_artifact_ref,
+                aggregate_count=item.aggregate_count,
+                score=item.score,
+                created_at=item.created_at,
+            )
+            for item in result.items
+        ],
+        generated_at=result.generated_at,
+    )
+
+
 def _memory_retrieval_denied_http(exc: MemoryRetrievalDenied) -> HTTPException:
     reason = str(exc)
     if reason == "stale_sanitizer":
@@ -108,6 +148,13 @@ def _memory_retrieval_denied_http(exc: MemoryRetrievalDenied) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail="memory retrieval not found",
+    )
+
+
+def _memory_insight_denied_http(exc: MemoryInsightDenied) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="memory insight not found",
     )
 
 
@@ -140,10 +187,39 @@ async def retrieve_memory_endpoint(
     return _to_response(result)
 
 
+@router.get("/insights", response_model=MemoryInsightResponse)
+async def memory_insights_endpoint(
+    project_id: UUID,
+    record_kind: Annotated[list[MemoryRecordKind] | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    _enabled: None = Depends(require_memory_api_enabled),  # noqa: B008
+    _actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> MemoryInsightResponse:
+    request = MemoryInsightRequest(
+        project_id=project_id,
+        record_kinds=tuple(record_kind or ()),
+        limit=limit,
+    )
+    try:
+        result = await MemoryInsightService(session).summarize(
+            tenant_id=tenant_id,
+            request=request,
+        )
+    except MemoryInsightDenied as exc:
+        raise _memory_insight_denied_http(exc) from exc
+    return _to_insight_response(result)
+
+
 __all__ = [
+    "MemoryInsightItemRead",
+    "MemoryInsightResponse",
     "MemoryRetrievalArtifactRead",
     "MemoryRetrievalRecordRead",
     "MemoryRetrievalResponse",
+    "memory_insights_endpoint",
     "require_memory_api_enabled",
+    "retrieve_memory_endpoint",
     "router",
 ]

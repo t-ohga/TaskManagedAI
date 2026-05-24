@@ -9,6 +9,12 @@ from backend.app.services.memory.curator import (
     MemoryCuratorError,
     MemoryCuratorService,
 )
+from backend.app.services.memory.insights import (
+    MemoryInsightDenied,
+    MemoryInsightItem,
+    MemoryInsightResult,
+    MemoryInsightService,
+)
 from backend.app.services.memory.retrieval import (
     MemoryRetrievalDenied,
     MemoryRetrievalResult,
@@ -34,6 +40,10 @@ __all__ = [
     "MemoryArchivePolicyService",
     "MemoryCuratorError",
     "MemoryCuratorService",
+    "MemoryInsightDenied",
+    "MemoryInsightItem",
+    "MemoryInsightResult",
+    "MemoryInsightService",
     "MemoryPayloadRejectReason",
     "MemoryPayloadRejected",
     "MemoryRetrievalDenied",

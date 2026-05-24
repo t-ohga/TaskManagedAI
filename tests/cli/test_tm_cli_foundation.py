@@ -287,6 +287,23 @@ def test_memory_commands_are_disabled_without_network() -> None:
     assert json.loads(out)["error_code"] == "tm_memory_disabled"
 
 
+def test_memory_insights_is_read_only_api_surface() -> None:
+    code, out, err, requests = _run_cli(
+        ["--json", "memory", "insights", "--record-kind", "auto_completion", "--limit", "5"]
+    )
+
+    assert code == 0
+    assert err == ""
+    assert len(requests) == 1
+    assert requests[0].method == "GET"
+    assert requests[0].path == f"/api/v1/projects/{_PROJECT_ID}/memory/insights"
+    assert requests[0].capability == "memory_insights"
+    assert requests[0].mutating is False
+    assert "memory_insights" not in ALL_CAPABILITIES
+    assert requests[0].params == {"limit": "5", "record_kind": "auto_completion"}
+    assert json.loads(out)["path"] == f"/api/v1/projects/{_PROJECT_ID}/memory/insights"
+
+
 def test_auth_refresh_injects_runtime_operation_token_only_at_request_boundary() -> None:
     code, out, err, requests = _run_cli(["--json", "auth", "refresh"])
 

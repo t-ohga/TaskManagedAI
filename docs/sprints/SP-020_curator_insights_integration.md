@@ -28,7 +28,7 @@ risks:
   - "PE-F-014/015/016 closure needs cross-source tests, not only docs trace"
 ---
 
-最終更新: 2026-05-24 (SP020-T03 archive policy service completed)
+最終更新: 2026-05-24 (SP020-T04 insights read-only API / CLI completed)
 
 ## 目的
 
@@ -66,7 +66,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - SP020-T01: ADR-00032 accepted promotion + implementation batch split review (completed)。
 - SP020-T02: curator service foundation (completed)。completed/failed/review-finding source artifact から `auto_completion` / `auto_failure` / `auto_review_finding` memory を生成。
 - SP020-T03: archive policy service (completed)。manual_user default protect、auto record aging/relevance policy、`memory_archive_engaged` audit。
-- SP020-T04: insights aggregation service + read-only API / CLI surface。raw payload 非露出、feature flag disabled default。
+- SP020-T04: insights aggregation service + read-only API / CLI surface (completed)。raw payload 非露出、feature flag disabled default。
 - SP020-T05: adopted_artifacts link table + citation_coverage final-only attribution contract。
 - SP020-T06: orchestrator auto-retrieve hook。retrieval output は `untrusted_content` のまま、trusted_instruction 昇格禁止。
 - SP020-T07: Phase E closure tests。PE-F-014 6 reason_code / PE-F-015 exact query / PE-F-016 policy_profile 14 seed + review_artifact guard。
@@ -78,7 +78,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - [x] SP020-T01 ADR-00032 accepted promotion + batch split
 - [x] SP020-T02 curator service foundation
 - [x] SP020-T03 archive policy service
-- [ ] SP020-T04 insights read-only API / CLI
+- [x] SP020-T04 insights read-only API / CLI
 - [ ] SP020-T05 adopted_artifacts metric attribution
 - [ ] SP020-T06 orchestrator auto-retrieve hook
 - [ ] SP020-T07 Phase E PE-F-014/015/016 closure tests
@@ -255,7 +255,7 @@ deferred:
 
 risks:
 - T03 closed with `manual_user` default protection and retrieval exclusion separate from deletion.
-- T04 must keep insight output ref-only and feature-flag disabled by default.
+- T04 closed with insight output ref-only and feature-flag disabled by default.
 
 ### 2026-05-24 SP020-T03 archive policy service
 
@@ -289,4 +289,44 @@ deferred:
 - adopted_artifacts migration and citation_coverage final-only query (SP020-T05)。
 
 risks:
-- T04 must avoid exposing archived/raw memory content while deriving aggregate insights.
+- T04 closed with ref-only insight output and feature flag disabled default.
+
+### 2026-05-24 SP020-T04 insights read-only API / CLI
+
+changed:
+- `backend/app/schemas/memory.py`
+- `backend/app/schemas/__init__.py`
+- `backend/app/services/memory/insights.py`
+- `backend/app/services/memory/__init__.py`
+- `backend/app/api/memory.py`
+- `cli/tm/commands/memory.py`
+- `cli/tm/auth/capability_token.py`
+- `tests/memory/test_insights_service.py`
+- `tests/api/test_memory_api.py`
+- `tests/cli/test_tm_cli_foundation.py`
+- `docs/adr/00015_ui_cli_parity.md`
+- `docs/cli/README.md`
+- `docs/sprints/SP-020_curator_insights_integration.md`
+- `docs/sprints/README.md`
+
+implemented:
+- `MemoryInsightService` を追加し、active / non-archived / non-expired memory metadata だけから ref-only insight を生成。
+- insight item は `memory_record_id` / `record_kind` / `content_hash` / `source_artifact_ref` / `aggregate_count` / `score` / `created_at` のみ。raw memory body と `content_artifact_ref` は返さない。
+- `GET /api/v1/projects/{project_id}/memory/insights` を既存 `memory_api_enabled=false` default flag 配下に追加。
+- `tm memory insights` を read-only CLI helper として追加。ただし SP-016 canonical 13 capability matrix には含めず、`memory_insights` は non-parity read-only helper として文書化。
+
+self_review:
+- adopted: `memory_insights` を `ALL_CAPABILITIES` に追加すると SP-016 13 capability invariant を壊すため、read-only non-parity helper に修正。
+- adopted: DB test の raw SQL update 後に ORM identity map が stale になるため、`session.expire_all()` で実 DB 値を再読込。
+
+verified:
+- `uv run ruff check backend/app/services/memory backend/app/api/memory.py backend/app/schemas/memory.py backend/app/schemas/__init__.py cli/tm tests/memory tests/api/test_memory_api.py tests/cli/test_tm_cli_foundation.py`
+- `PYTHONPATH=cli uv run mypy backend/app/services/memory backend/app/api/memory.py backend/app/schemas/memory.py cli/tm tests/memory/test_insights_service.py tests/api/test_memory_api.py`
+- `PYTHONPATH=cli uv run pytest tests/memory tests/api/test_memory_api.py tests/cli/test_tm_cli_foundation.py -q` (`61 passed, 16 skipped`)
+- `TASKMANAGEDAI_DATABASE_URL=<isolated 127.0.0.1:55432 test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/memory -q` (`31 passed`)
+
+deferred:
+- adopted_artifacts migration and citation_coverage final-only query (SP020-T05)。
+
+risks:
+- T05 is the next DB migration batch and must include migration up/down plus cross-project negative tests.
