@@ -1,3 +1,8 @@
+from backend.app.services.memory.curator import (
+    CuratedMemoryResult,
+    MemoryCuratorError,
+    MemoryCuratorService,
+)
 from backend.app.services.memory.retrieval import (
     MemoryRetrievalDenied,
     MemoryRetrievalResult,
@@ -16,6 +21,9 @@ from backend.app.services.memory.store import (
 )
 
 __all__ = [
+    "CuratedMemoryResult",
+    "MemoryCuratorError",
+    "MemoryCuratorService",
     "MemoryPayloadRejectReason",
     "MemoryPayloadRejected",
     "MemoryRetrievalDenied",
