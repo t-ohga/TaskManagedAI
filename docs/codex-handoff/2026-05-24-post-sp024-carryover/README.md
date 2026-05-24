@@ -19,6 +19,7 @@ This handoff is a safe restart package for the remaining carry-over area. It int
 | `tasks/task-01-sp008-residual-reconciliation.md` | SP-008 residual plan |
 | `tasks/task-02-sp009-ui-backend-reconciliation.md` | SP-009 residual plan |
 | `tasks/task-03-sp007-phase5-trust-boundary.md` | SP-007 Phase 5 plan |
+| `tasks/task-04-status-hygiene.md` | current-state / backlog status hygiene after PRs #219-#227 |
 | `plans/task-03-sp007-phase5-trust-boundary-plan.md` | SP-007 Phase 5 trust-boundary implementation sequence |
 
 ## Operating Rule
