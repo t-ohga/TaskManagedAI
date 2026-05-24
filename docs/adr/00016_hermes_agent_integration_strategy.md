@@ -17,7 +17,7 @@ related_research:
   - "docs/設計検討/harness-v5-wave-19-23-roadmap.md"
 acceptance_history:
   - "2026-05-10: proposed (Hermes pattern adoption, ContextSnapshot boundary, memory_retrieval_artifacts, sanitizer_policy_versions)."
-  - "2026-05-24: accepted at SP018-T01 ADR readiness gate. ADR-00014 and ADR-00020 are accepted, SP-013 through SP-017 prerequisites are completed, and SP-018 plan-only gate exists. The old blocker 'Wave 19-22 completed' was reinterpreted as implementation completion evidence, not ADR acceptance prerequisite; Wave 19-21 are SP-018 implementation batches and Wave 22 remains SP-020."
+  - "2026-05-24: accepted at SP018-T01 ADR readiness gate. ADR-00014 and ADR-00020 are accepted, SP-013 through SP-017 prerequisites are completed, and SP-018 is now completed. The old blocker 'Wave 19-22 completed' was reinterpreted as implementation completion evidence, not ADR acceptance prerequisite; Wave 19-21 are SP-018 implementation batches and Wave 22 remains SP-020."
 ---
 
 最終更新: 2026-05-24 (SP018-T01 ADR readiness gate で accepted promotion、runtime 実装は SP-018 後続 batch)
