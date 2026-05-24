@@ -65,7 +65,14 @@ risks:
 
 - [x] SP016-T01 api_capability_tokens table + migration + DDL
 - [x] SP016-T02 backend CLI auth token service + issue / refresh / revoke endpoint
-- [ ] SP016-T03-T10 を順次実装
+- [x] SP016-T03 cli/tm Python CLI package + entry point `tm`
+- [x] SP016-T04 13 capability command surface
+- [ ] SP016-T05 keyring / SOPS profile loader (env runtime token + raw profile reject foundation landed)
+- [x] SP016-T06 JSON / YAML / human output formatter + TTY/non-interactive gate
+- [ ] SP016-T07 parity contract test
+- [ ] SP016-T08 SecretBroker CLI token misuse negative test
+- [ ] SP016-T09 ADR / Tailscale gate verification
+- [ ] SP016-T10 `docs/cli/README.md` public usage hardening
 - [x] migration `0031_sp016_api_capability_tokens.py` upgrade/downgrade PASS
 - [ ] 13 parity contract test 全件 PASS
 - [ ] CLI capability token TTL 5-30 分 + scope minimum + raw 保存 reject
@@ -201,6 +208,45 @@ deferred:
 - SP016-T05 local keyring / SOPS profile loader. This batch enforces backend `auth_method='plain'` rejection but does not create local profile storage.
 - SP016-T07 13 capability parity contract.
 - SP016-T08 scope mismatch / misuse negative expansion.
+
+### Batch 0c: `tm` CLI foundation (2026-05-24)
+
+changed:
+- `cli/pyproject.toml`
+- `cli/README.md`
+- `cli/uv.lock`
+- `cli/tm/*`
+- `tests/cli/test_tm_cli_foundation.py`
+- `pyproject.toml`
+
+implemented:
+- standalone installable `./cli` package with console script `tm`
+- root `uv run tm` developer entry point for local smoke tests
+- `ticket` / `approval` / `repo` / `pr` / `run` / `secret` / `provider` / `memory` command modules
+- 13 capability matrix command surface fixed in tests
+- project ContextResolver order: explicit arg → env → cwd git remote profile mapping → profile default → fail-closed
+- mutating command unresolved project fail-closed
+- agent-mode mutating command fail-closed
+- non-interactive approval-required command fail-closed
+- operation token sent via `X-TaskManagedAI-Operation-Token`, not bearer auth
+- runtime operation token injection for `auth refresh` / `auth revoke` only at request boundary
+- profile loader rejects raw operation token fields
+- JSON / YAML / human output formatters with secret-shaped key redaction
+- `tm memory record/search` disabled locally until SP-018
+
+verified:
+- `uv run ruff check cli/tm tests/cli/test_tm_cli_foundation.py pyproject.toml`
+- `PYTHONPATH=cli uv run mypy cli/tm tests/cli/test_tm_cli_foundation.py`
+- `PYTHONPATH=cli uv run pytest tests/cli/test_tm_cli_foundation.py -q` (`24 passed`)
+- `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/cli/test_tm_cli_foundation.py tests/cli/test_capability_token_lifecycle.py tests/api/test_active_registry_gate_dependency.py -q` (`40 passed`)
+- `uv run tm --version`
+- `uv run --project cli tm --version`
+- `uv tool install --force ./cli && tm --version`
+
+deferred:
+- full keyring / SOPS credential persistence backend; current batch only fixes env runtime token + raw profile reject boundary.
+- real backend parity contract execution for all 13 capabilities.
+- CLI scope mismatch / SecretBroker misuse negative DB-backed tests.
 
 ## Kickoff Inventory (2026-05-24 task-04 plan-only)
 

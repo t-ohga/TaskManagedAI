@@ -41,6 +41,9 @@ dependencies = [
 # `uv sync` 後に `taskhub <subcommand>` で起動可能、SP-012 §128 host migration drill
 # command (`taskhub backup --output ...`, `taskhub migrate --via tailscale`, 等) と整合
 taskhub = "scripts.taskhub_admin:main"
+# SP-016 project-user CLI. The installable package lives under ./cli; this root entry
+# point keeps local `uv run tm ...` smoke tests available before `uv tool install ./cli`.
+tm = "tm.main:main"
 
 [dependency-groups]
 dev = [
@@ -52,7 +55,8 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["backend*", "scripts*"]
+include = ["backend*", "scripts*", "tm*"]
+where = [".", "cli"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
