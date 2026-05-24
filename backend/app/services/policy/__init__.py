@@ -9,6 +9,14 @@ from backend.app.services.policy.autonomy_profile_resolver import (
     AutonomyPolicyProfileResolution,
     resolve_autonomy_policy_profile,
 )
+from backend.app.services.policy.autonomy_trace import (
+    AUTONOMY_POLICY_AGENT_EVENT_TYPE,
+    AUTONOMY_POLICY_AUDIT_EVENT_TYPE,
+    AutonomyPolicyTracePayloads,
+    AutonomyPolicyTraceRecord,
+    append_autonomy_policy_trace,
+    build_autonomy_policy_trace_payloads,
+)
 from backend.app.services.policy.decision_service import ApprovalDecisionService
 from backend.app.services.policy.invalidation import (
     ApprovalStaleInvalidationService,
@@ -26,14 +34,20 @@ __all__ = [
     "ApprovalDecisionService",
     "ApprovalStaleInvalidationService",
     "AUTONOMY_ACTION_ALLOW_MATRIX",
+    "AUTONOMY_POLICY_AGENT_EVENT_TYPE",
+    "AUTONOMY_POLICY_AUDIT_EVENT_TYPE",
     "AutonomyPolicyProfileResolution",
     "AutonomyPolicyEngineDecision",
+    "AutonomyPolicyTracePayloads",
+    "AutonomyPolicyTraceRecord",
     "HUMAN_REQUIRED_ACTION_CLASSES",
     "SelfApprovalGuardService",
     "StaleCheckPayload",
     "StaleCheckReason",
     "LowRiskProfileDecision",
     "LowRiskProfileInput",
+    "append_autonomy_policy_trace",
+    "build_autonomy_policy_trace_payloads",
     "evaluate_autonomy_policy_engine_decision",
     "evaluate_low_risk_profile",
     "resolve_autonomy_policy_action_effect",

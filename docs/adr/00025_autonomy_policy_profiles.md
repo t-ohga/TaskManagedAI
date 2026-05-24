@@ -75,7 +75,8 @@ superseded_by: null
     - `runner_mutation_gateway` 通過 (Sprint 7 後の本実装)
     - ContextSnapshot 10 列 PASS + `evidence_set_hash` 既定
   - **SP024-T04 evaluator**: `evaluate_low_risk_profile()` は payload data class / change scope (diff size + file count) / forbidden path / dangerous command / provider request preflight / runner mutation gateway / ContextSnapshot の 7 axes を行う。ADR-00025 の「1 軸でも不合格なら fallback」を満たすため、各 axis は独立 negative test を持つ。
-  - **SP024-T05 Policy Engine**: `evaluate_autonomy_policy_engine_decision()` は L0-L3 action matrix、human-required action fallback、global kill switch / budget exceeded / Provider Matrix deny / Tool Registry deny override を `allow` より先に評価する。`policy_profile` seed は変更せず 14 row invariant を維持し、T06 で append-only trace persistence を接続する。
+  - **SP024-T05 Policy Engine**: `evaluate_autonomy_policy_engine_decision()` は L0-L3 action matrix、human-required action fallback、global kill switch / budget exceeded / Provider Matrix deny / Tool Registry deny override を `allow` より先に評価する。`policy_profile` seed は変更せず 14 row invariant を維持する。
+  - **SP024-T06 trace boundary**: `append_autonomy_policy_trace()` は `policy_decisions`、AuditEvent `policy_decision_created`、AgentRunEvent `policy_linted` に redacted decision summary を append する。raw prompt / raw provider payload / raw secret / capability token は signature に存在せず、`input_hash` と server-owned decision metadata のみを記録する。
   - 不変条件 (level 切替で破ってはならない):
     1. `secret_access` / `merge` / `deploy` / `provider_call` は **全 level で human approval 必須**
     2. `approval_requests.decided_by_actor_id` は **human actor のみ** (DB CHECK + service guard + Pydantic + pytest の 4 重防御)
