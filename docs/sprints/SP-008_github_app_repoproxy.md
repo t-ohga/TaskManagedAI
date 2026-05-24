@@ -5,7 +5,7 @@ status: "partial_skeleton"
 sprint_no: 8
 created_at: "2026-05-13"
 updated_at: "2026-05-24"
-review_summary: "2026-05-24 reconciliation + Batch A/A2: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup / server-owned Draft PR binding guard / DB-backed ApprovalRequest+ContextSnapshot resolver are present. GitHubAppAdapter live Git ref re-fetch, webhook SecretBroker+replay service layer, actual repo_pr_opened emission, and agent-runs KPI endpoint remain residual. Keep status partial_skeleton."
+review_summary: "2026-05-24 reconciliation + Batch A/A2/B: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup / server-owned Draft PR binding guard / DB-backed ApprovalRequest+ContextSnapshot resolver / broker-mediated GitHubAppAdapter boundary are present. Real GitHub httpx transport, live Git ref re-fetch, webhook SecretBroker+replay service layer, actual repo_pr_opened emission, and agent-runs KPI endpoint remain residual. Keep status partial_skeleton."
 target_days: 5
 max_days: 7
 adr_refs:
@@ -247,7 +247,7 @@ risks:
   - SecretBroker repo.push / repo.pr_open allowed_operations 追加 (BL-0095):
     RequestedOperation Literal で予約済だが、`secret_refs.allowed_operations` 配列
     + capability_token issue flow との結線は未実装
-  - GitHubAppAdapter httpx wrapper (BL-0097): **完全未実装**
+  - GitHubAppAdapter httpx wrapper (BL-0097): 2026-05-13 audit 時点では boundary absent
   - AgentRunEvent `repo_pr_opened` actual emission (BL-0100): MockRepoProxy
     から AgentRuntime への結線なし、未実装
   - AC-KPI-02 time_to_merge 計測 helper / endpoint (BL-0102): KPI collector
@@ -301,7 +301,7 @@ verify で品質確認。
 
 #### not verified / still residual
 
-- `backend/app/services/repoproxy/github_app_adapter.py` does not exist; no actual broker-mediated GitHub HTTP wrapper is present.
+- `backend/app/services/repoproxy/github_app_adapter.py` exists as a broker-mediated adapter boundary with no raw installation token exposure to transport. Real GitHub httpx transport and live Git ref re-fetch remain pending.
 - `RepoProxy.create_draft_pr()` now accepts only `DraftPRBinding`; the DB-backed resolver loads ApprovalRequest + latest ContextSnapshot and passes the internal `DraftPRRequest` to the transport. Live Git ref re-fetch remains pending for GitHubAppAdapter.
 - `verify_github_webhook(request, secret_ref_current, secret_ref_previous, delivery_id)` service layer with SecretBroker resolution, Redis replay nonce, status validation, and audit emission is not present.
 - Actual AgentRun runtime path that emits `repo_pr_opened` from RepoProxy is not present.
@@ -311,7 +311,7 @@ verify で品質確認。
 #### next implementation batches
 
 1. Batch A/A2: service-level RepoProxy server-owned binding refactor (`approval_id`, `agent_run_id`) + negative tests for each mismatch. **Completed 2026-05-24**: public signature now takes only `DraftPRBinding`, pure server-owned state builder exists, and DB-backed resolver loads ApprovalRequest + latest ContextSnapshot. Live Git ref re-fetch remains for Batch B transport integration.
-2. Batch B: `GitHubAppAdapter` broker-mediated HTTP wrapper with raw-token non-exposure tests.
+2. Batch B: `GitHubAppAdapter` broker-mediated boundary with raw-token non-exposure tests. **Partially completed 2026-05-24**: adapter boundary + tests exist; real httpx transport, retries/rate limit, and live Git ref re-fetch remain.
 3. Batch C: webhook service layer with SecretBroker resolution, Redis replay guard, rotation status validation, and audit payload redaction.
 4. Batch D: actual `repo_pr_opened` emission from the runtime path.
 5. Batch E: `/agent-runs/{id}/kpi` or explicitly superseding endpoint decision, then status closeout.
@@ -332,7 +332,7 @@ verify で品質確認。
 
 #### deferred
 
-- GitHubAppAdapter transport and SecretBroker-mediated installation token call.
+- Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
 - Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
 - Runtime `repo_pr_opened` emission and agent-runs KPI endpoint.
 
@@ -351,7 +351,27 @@ verify で品質確認。
 
 #### deferred
 
-- GitHubAppAdapter transport and SecretBroker-mediated installation token call.
+- Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
+- Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
+- Runtime `repo_pr_opened` emission and agent-runs KPI endpoint.
+
+### 2026-05-24 Batch B implementation (GitHubAppAdapter boundary)
+
+#### changed
+
+- `backend/app/services/repoproxy/github_app_adapter.py`: added `GitHubAppAdapter`, `GitHubBrokeredTransport`, `GitHubDraftPRResponse`, and pinned `GITHUB_API_VERSION = "2022-11-28"`.
+- Adapter redeems only SecretBroker capability tokens for `repo.pr_open`; it never accepts or passes a raw GitHub installation token.
+- Transport receives `BrokerOperationContext.secret_handle` + internal `DraftPRRequest`, keeping raw installation token resolution inside SecretBroker / broker-owned transport internals.
+- Added tests for broker redeem arguments, pinned API version, broker-denial fail-closed behavior, invalid approval ID no-broker-call behavior, and no installation token exposure to transport.
+
+#### verified
+
+- `uv run pytest tests/repoproxy/test_github_app_adapter.py -q`
+- `TASKMANAGEDAI_RUN_DB_TESTS=1 TASKMANAGEDAI_DATABASE_URL='postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:55434/taskmanagedai_test' uv run pytest tests/repoproxy -q`
+
+#### deferred
+
+- Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
 - Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
 - Runtime `repo_pr_opened` emission and agent-runs KPI endpoint.
 

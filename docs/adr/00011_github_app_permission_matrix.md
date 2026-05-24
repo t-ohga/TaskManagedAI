@@ -14,7 +14,7 @@ acceptance_blocked_by: []
 acceptance_history:
   - "Sprint 11 BL-0094: real GitHub App registration + private key SOPS encrypt — not verifiable from current tree; reopened as operator/setup evidence item on 2026-05-24"
   - "Sprint 11 BL-0095: SecretBroker repo.push / repo.pr_open primitives — partially verified in current tree; end-to-end RepoProxy issue flow still needs implementation evidence"
-  - "Sprint 11 BL-0097: GitHubAppAdapter httpx wrapper (broker-mediated only) — not verifiable in current tree; reopened on 2026-05-24"
+  - "2026-05-24 SP-008 Batch B: GitHubAppAdapter broker-mediated boundary exists with no raw installation token exposure to transport; real httpx transport + live Git ref re-fetch still pending"
   - "Sprint 11 BL-0100: AgentRunEvent repo_pr_opened actual emission — enum exists, actual runtime emission not verifiable; reopened on 2026-05-24"
   - "Sprint 11 BL-0102: AC-KPI-02 time_to_merge endpoint + median calc test — eval/orchestrator KPI helpers exist, SP-008 agent-runs endpoint not verifiable; reopened on 2026-05-24"
   - "Sprint 11 BL-0101a: Webhook HMAC SecretBroker-mediated service layer + Redis SETNX replay — low-level helper exists, service layer not verifiable; reopened on 2026-05-24"
