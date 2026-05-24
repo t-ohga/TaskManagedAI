@@ -1,9 +1,9 @@
 ---
 id: DOC-CLI-README
-title: "TaskManagedAI CLI 設計 (ContextResolver state machine + capability matrix + tm canonical + taskhub host/admin 境界)"
+title: "TaskManagedAI CLI 使用/設計 (tm canonical + credential source + ContextResolver + capability matrix)"
 type: design_doc
 status: accepted
-revision: R1
+revision: R2
 created_at: "2026-05-15"
 updated_at: "2026-05-24"
 source_plan_section: "docs/設計検討/修正まとめ統合計画.md §5 QL-F + §3.2 P-05 + §3.2 P-06"
@@ -23,18 +23,86 @@ risks:
   - "ADR-00024 (project auto-discovery、QL-G で起票予定) と memory boundary が CLI context 経路で混入 (deny-by-default 違反)"
 ---
 
-# TaskManagedAI CLI 設計
+# TaskManagedAI CLI
 
 ## 0. このドキュメントの扱い
 
-**doc-only design doc**。本 doc 自体は CLI バイナリ実装許可ではない。CLI 実装は SP-016_ui_cli_parity ready + ADR-00015 accepted 後の別 run で行う。
+本 doc は SP-016 batch 0c/0d 以降の `tm` project-user CLI の使用手順と設計境界の source-of-truth。R1 は doc-only future spec だったが、R2 では実装済み CLI (`./cli` package + root `uv run tm`) と同期する。
 
 本 doc は:
 
-- 修正まとめ統合計画 §5 QL-F の write scope (`ADR-00015 update + SP-016 + 本 docs/cli/README.md + ADR-00024 placeholder`) の core spec
+- 修正まとめ統合計画 §5 QL-F の write scope (`ADR-00015 update + SP-016 + 本 docs/cli/README.md + ADR-00024 placeholder`) の core spec を継承
 - CLI canonical `tm`、ContextResolver state machine、13 capability matrix、mode matrix、ambiguous mutating command fail-closed acceptance を doc 化
 - **U-04 (CLI canonical 反転 `tm`→`tmai` 採否) は 2026-05-24 に A: `tm` canonical 維持で確定**。`tmai` は将来 namespace 衝突時の fallback 名としてのみ残す
+- `tm` の install smoke、profile、credential source、output format、disabled memory command を利用手順として固定
 - ADR-00024 (project auto-discovery + memory boundary) placeholder を SP-016 で reserve、QL-G run で実 ADR 起票
+
+### 0.1 Install / Smoke
+
+```bash
+uv tool install ./cli
+tm --version
+
+# repo root からの開発用 smoke
+uv run tm --version
+uv run --project cli tm --help
+```
+
+### 0.2 Runtime Token Boundary
+
+CLI は raw operation token を profile file に保存しない。runtime token は次のいずれかから実行時にのみ解決する:
+
+| source | profile / env | 備考 |
+|---|---|---|
+| explicit flag | `--operation-token <runtime-token>` | debugging / one-shot のみ。shell history 露出に注意 |
+| process env | `TASKMANAGEDAI_OPERATION_TOKEN=<runtime-token>` | default runtime source |
+| profile env ref | `auth_method: env` + `operation_token_env: TM_PROFILE_OPERATION_TOKEN` | profile には env var 名だけ保存 |
+| keyring | `auth_method: keyring` + `refresh_credential_ref: taskmanagedai/default` | `service/account` ref。CLI package は `keyring` dependency を含む |
+| SOPS | `auth_method: sops` + `refresh_credential_ref: ~/.taskmanagedai/profile.enc.json#cli.operation_token` | decrypted JSON の nested string を読む |
+
+`auth_method: plain` は CLI profile loader で fail-closed。`operation_token` / `raw_operation_token` / `access_token` 等の raw token field は selected profile だけでなく inactive profile 内でも reject する。
+
+### 0.3 Profile Examples
+
+JSON:
+
+```json
+{
+  "profiles": {
+    "default": {
+      "backend_url": "https://taskhub.example.ts.net",
+      "default_project_id": "00000000-0000-4000-8000-000000000000",
+      "auth_method": "keyring",
+      "refresh_credential_ref": "taskmanagedai/default"
+    }
+  }
+}
+```
+
+YAML:
+
+```yaml
+profiles:
+  default:
+    backend_url: https://taskhub.example.ts.net
+    default_project_id: 00000000-0000-4000-8000-000000000000
+    auth_method: sops
+    refresh_credential_ref: ~/.taskmanagedai/profile.enc.json#cli.operation_token
+```
+
+### 0.4 Command / Output Smoke
+
+```bash
+TASKMANAGEDAI_PROJECT_ID=<project_id> \
+TASKMANAGEDAI_OPERATION_TOKEN=<runtime-token> \
+tm --json ticket list
+
+tm --project <project_id> --yaml run show <agent_run_id>
+tm --agent-mode ticket create --slug example --title "Example"  # fail-closed
+tm memory search "anything"                                     # disabled until SP-018
+```
+
+Output formatters (`--json` / `--yaml` / human default) redact secret-shaped keys such as `operation_token`, `secret_value`, `api_key`, and `credential`. Identifier fields like `token_id` remain visible.
 
 ## 1. 不変条件 (本 CLI 設計で破ってはならない)
 
@@ -45,7 +113,7 @@ risks:
 | 3 | `taskhub` (host / admin) と `tm` (project user) の **CLI 境界明示**、admin CLI から project mutating command を invoke する path は restricted | R29 plan §3.2 P-05 + R5 F-R5-002 反映 |
 | 4 | CLI 経由の `secret_access` / `merge` / `deploy` / `provider_call` は **全 autonomy_level で human approval 必須** (ADR-00025 §不変条件 #1 と整合) | ADR-00025 §10.3 不変条件 #1 |
 | 5 | CLI memory backend (history / preference / cache) と project / repo context の **boundary 物理分離** (cross-project retrieval deny-by-default) | ADR-00024 候補 (QL-G で起票)、`.claude/CLAUDE.md §2 #10` |
-| 6 | 本 doc 自体は doc-only、CLI バイナリ実装は SP-016 ready + ADR-00015 accepted 後の別 run | R29 plan §5 QL-F 重要制約 |
+| 6 | R2 以降は実装済み CLI と同期する。将来の large behavior change は SP-016 / ADR-00015 / 本 doc / tests を同一 PR で更新 | R29 plan §5 QL-F 重要制約、SP-016 batch 0c/0d |
 
 ## 2. CLI canonical の決定
 
@@ -181,7 +249,9 @@ SP-016 で `<!-- ADR-00024 placeholder -->` marker を置く位置を spec:
 
 ## 10. QL-D 教訓適用
 
-本 doc は `.claude/CLAUDE.md §6.5.0` (PR #14 で追加) の **「doc-only future spec と code 変更の品質追求は別軸」教訓** を適用。本質目的 (CLI canonical `tm` + ContextResolver state machine + 13 capability matrix + mode matrix + fail-closed acceptance + taskhub host/admin 境界 + ADR-00024 placeholder spec) は達成済み。将来 `tmai` 反転を採用する場合のみ、別 Sprint Pack で再議論する。
+R1 では `.claude/CLAUDE.md §6.5.0` (PR #14 で追加) の **「doc-only future spec と code 変更の品質追求は別軸」教訓** を適用し、CLI canonical `tm` + ContextResolver state machine + 13 capability matrix + mode matrix + fail-closed acceptance + taskhub host/admin 境界 + ADR-00024 placeholder spec を固定した。
+
+R2 では SP-016 batch 0c/0d の実装を取り込み、usage docs と implementation surface を同期した。将来 `tmai` 反転を採用する場合のみ、別 Sprint Pack で再議論する。
 
 ## 11. 関連 ADR / Sprint Pack
 
@@ -195,4 +265,4 @@ SP-016 で `<!-- ADR-00024 placeholder -->` marker を置く位置を spec:
 
 - `docs/設計検討/修正まとめ統合計画.md §5 QL-F` (R29 plan、本 doc の source)
 - `docs/設計検討/修正まとめ統合計画.md §3.2 P-05 + P-06` (CLI canonical 反転 + ContextResolver state machine)
-- `.claude/CLAUDE.md §6.5.0` (doc-only spec と code 変更の品質追求は別軸、本 doc に適用)
+- `.claude/CLAUDE.md §6.5.0` (R1 doc-only spec と code 変更の品質追求は別軸、本 doc R2 では実装同期)
