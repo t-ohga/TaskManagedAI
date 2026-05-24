@@ -1,9 +1,9 @@
 """Sprint 8: GitHub App + RepoProxy + Draft PR boundary.
 
-ADR-00011 (GitHub App Permission Matrix) は Sprint 8 で `proposed`、Sprint 11
-`acceptance_blocked_by` 完了後に `accepted` 昇格予定 (本 package は
-`proposed` 段階で Matrix loader / Mock RepoProxy / Webhook HMAC helper を
-先行整備、Sprint 11 で実 GitHub App integration と一緒に accepted 化する)。
+ADR-00011 (GitHub App Permission Matrix) は design decision として
+`accepted`。SP-008 は `partial_skeleton` で、Matrix loader / Mock RepoProxy /
+Webhook HMAC helper / server-owned Draft PR binding を先行整備している。
+実 GitHub App integration は後続 batch で実装する。
 
 server-owned-boundary §1:
 - installation_token は SecretBroker 内でのみ resolve

@@ -33,7 +33,7 @@ The current repository has enough primitives to continue SP-008, but it does not
 
 ## Residual Implementation Order
 
-1. RepoProxy server-owned binding refactor.
+1. RepoProxy server-owned binding refactor: partially completed in Batch A; DB-backed resolver remains.
 2. GitHubAppAdapter broker-mediated HTTP wrapper.
 3. Webhook SecretBroker/replay service layer.
 4. Actual `repo_pr_opened` runtime emission.

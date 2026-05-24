@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 
 from backend.app.services.repoproxy.repoproxy import (
+    DraftPRBinding,
     DraftPRRequest,
     MockRepoProxy,
     RepoProxyDenyReason,
+    StaticDraftPRRequestResolver,
     validate_draft_pr_request,
 )
+
+TENANT_ID = 1
+APPROVAL_ID = UUID("00000000-0000-4000-8000-000000000001")
+RUN_ID = UUID("00000000-0000-4000-8000-000000000002")
 
 _VALID_REQUEST_KWARGS: dict[str, str] = {
     "repo_full_name": "owner/repo",
@@ -20,14 +28,34 @@ _VALID_REQUEST_KWARGS: dict[str, str] = {
     "policy_version": "v2026.05.13",
     "provider_request_fingerprint": "e" * 64,
     "repo_state_commit_sha": "1" * 40,
-    "approval_id": "00000000-0000-4000-8000-000000000001",
+    "approval_id": str(APPROVAL_ID),
 }
 
 
 def _make_request(**overrides: str) -> DraftPRRequest:
     kwargs = dict(_VALID_REQUEST_KWARGS)
     kwargs.update(overrides)
-    return DraftPRRequest(**kwargs)  # type: ignore[arg-type]
+    return DraftPRRequest(**kwargs)
+
+
+def _binding() -> DraftPRBinding:
+    return DraftPRBinding(
+        tenant_id=TENANT_ID,
+        approval_id=APPROVAL_ID,
+        agent_run_id=RUN_ID,
+    )
+
+
+def _proxy_with_request(
+    request: DraftPRRequest | RepoProxyDenyReason | None = None,
+) -> MockRepoProxy:
+    request = _make_request() if request is None else request
+    binding = _binding()
+    return MockRepoProxy(
+        StaticDraftPRRequestResolver(
+            {(binding.tenant_id, binding.approval_id, binding.agent_run_id): request}
+        )
+    )
 
 
 def test_validate_accepts_valid_branch() -> None:
@@ -66,8 +94,8 @@ def test_validate_rejects_short_suffix() -> None:
 
 @pytest.mark.asyncio
 async def test_mock_create_draft_pr_success() -> None:
-    proxy = MockRepoProxy()
-    result = await proxy.create_draft_pr(_make_request())
+    proxy = _proxy_with_request()
+    result = await proxy.create_draft_pr(_binding())
     assert result.pr_number == 1
     assert result.draft is True
     assert result.deny_reason is None
@@ -76,19 +104,19 @@ async def test_mock_create_draft_pr_success() -> None:
 
 @pytest.mark.asyncio
 async def test_mock_branch_overwrite_denied() -> None:
-    """Same head_branch second push → BRANCH_OVERWRITE_DENIED."""
-    proxy = MockRepoProxy()
-    first = await proxy.create_draft_pr(_make_request())
+    """Same head_branch second push -> BRANCH_OVERWRITE_DENIED."""
+    proxy = _proxy_with_request()
+    first = await proxy.create_draft_pr(_binding())
     assert first.pr_number == 1
-    second = await proxy.create_draft_pr(_make_request())
+    second = await proxy.create_draft_pr(_binding())
     assert second.pr_number is None
     assert second.deny_reason == RepoProxyDenyReason.BRANCH_OVERWRITE_DENIED
 
 
 @pytest.mark.asyncio
 async def test_mock_invalid_branch_denied() -> None:
-    proxy = MockRepoProxy()
-    result = await proxy.create_draft_pr(_make_request(head_branch="main"))
+    proxy = _proxy_with_request(_make_request(head_branch="main"))
+    result = await proxy.create_draft_pr(_binding())
     assert result.pr_number is None
     assert result.deny_reason == RepoProxyDenyReason.BRANCH_PATTERN_INVALID
 
@@ -112,15 +140,55 @@ async def test_mock_deploy_always_denied_p0() -> None:
 @pytest.mark.asyncio
 async def test_mock_distinct_branches_get_distinct_pr_numbers() -> None:
     """異 head_branch は新 PR number を発行。"""
-    proxy = MockRepoProxy()
-    r1 = await proxy.create_draft_pr(_make_request(head_branch="codex/agent-run-aaaaaaaa"))
-    r2 = await proxy.create_draft_pr(_make_request(head_branch="codex/agent-run-bbbbbbbb"))
+    binding_1 = _binding()
+    binding_2 = DraftPRBinding(
+        tenant_id=TENANT_ID,
+        approval_id=UUID("00000000-0000-4000-8000-000000000011"),
+        agent_run_id=UUID("00000000-0000-4000-8000-000000000012"),
+    )
+    proxy = MockRepoProxy(
+        StaticDraftPRRequestResolver(
+            {
+                (binding_1.tenant_id, binding_1.approval_id, binding_1.agent_run_id): _make_request(
+                    head_branch="codex/agent-run-aaaaaaaa"
+                ),
+                (binding_2.tenant_id, binding_2.approval_id, binding_2.agent_run_id): _make_request(
+                    head_branch="codex/agent-run-bbbbbbbb"
+                ),
+            }
+        )
+    )
+    r1 = await proxy.create_draft_pr(binding_1)
+    r2 = await proxy.create_draft_pr(binding_2)
     assert r1.pr_number == 1
     assert r2.pr_number == 2
 
 
 @pytest.mark.asyncio
-async def test_repoproxy_deny_reason_enum_5plus_source() -> None:
+async def test_mock_create_draft_pr_fails_closed_without_resolver() -> None:
+    proxy = MockRepoProxy()
+    result = await proxy.create_draft_pr(_binding())
+
+    assert result.pr_number is None
+    assert result.deny_reason == RepoProxyDenyReason.APPROVAL_NOT_GRANTED
+
+
+@pytest.mark.asyncio
+async def test_mock_create_draft_pr_fails_closed_for_unknown_binding() -> None:
+    proxy = _proxy_with_request()
+    result = await proxy.create_draft_pr(
+        DraftPRBinding(
+            tenant_id=TENANT_ID,
+            approval_id=UUID("00000000-0000-4000-8000-000000000021"),
+            agent_run_id=UUID("00000000-0000-4000-8000-000000000022"),
+        )
+    )
+
+    assert result.pr_number is None
+    assert result.deny_reason == RepoProxyDenyReason.APPROVAL_NOT_GRANTED
+
+
+def test_repoproxy_deny_reason_enum_5plus_source() -> None:
     """RepoProxyDenyReason 全 10 enum 値の完全性。"""
     expected = {
         "approval_not_granted",

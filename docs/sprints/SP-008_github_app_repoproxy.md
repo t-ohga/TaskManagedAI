@@ -5,7 +5,7 @@ status: "partial_skeleton"
 sprint_no: 8
 created_at: "2026-05-13"
 updated_at: "2026-05-24"
-review_summary: "2026-05-24 reconciliation: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup are present, but GitHubAppAdapter, service-level RepoProxy 4-binding recomputation, webhook SecretBroker+replay service layer, actual repo_pr_opened emission, and agent-runs KPI endpoint are not verifiable in current tree. Keep status partial_skeleton and implement only after residual batches are confirmed."
+review_summary: "2026-05-24 reconciliation + Batch A: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup / server-owned Draft PR binding guard are present. GitHubAppAdapter, DB-backed RepoProxy resolver, webhook SecretBroker+replay service layer, actual repo_pr_opened emission, and agent-runs KPI endpoint remain residual. Keep status partial_skeleton."
 target_days: 5
 max_days: 7
 adr_refs:
@@ -255,7 +255,7 @@ risks:
 - **partial_skeleton 達成**:
   - Permission Matrix toml hardcode + check_no_dangerous_permissions (BL-0098): ✅
   - RepoProxy ABC + MockRepoProxy + DraftPRRequest server-owned-boundary
-    pending (Codex F-002 で 4 整合 binding 未実装を指摘、Sprint 11 で
+    pending (Codex F-002 で当時の 4 整合 binding 欠落を指摘、Sprint 11 で
     refactor): ✅ interface のみ
   - Webhook HMAC low-level pure helper (BL-0099): ✅ helper のみ、
     SecretBroker mediated service layer は Sprint 11
@@ -302,7 +302,7 @@ verify で品質確認。
 #### not verified / still residual
 
 - `backend/app/services/repoproxy/github_app_adapter.py` does not exist; no actual broker-mediated GitHub HTTP wrapper is present.
-- `RepoProxy.create_draft_pr()` still accepts caller-provided `DraftPRRequest`; `create_draft_pr(approval_id, agent_run_id)` with server-side DB / ContextSnapshot / Git ref recomputation is not implemented.
+- `RepoProxy.create_draft_pr()` now accepts only `DraftPRBinding`; the DB-backed resolver that loads ApprovalRequest / ContextSnapshot / Git ref state and passes the internal `DraftPRRequest` to the transport remains pending.
 - `verify_github_webhook(request, secret_ref_current, secret_ref_previous, delivery_id)` service layer with SecretBroker resolution, Redis replay nonce, status validation, and audit emission is not present.
 - Actual AgentRun runtime path that emits `repo_pr_opened` from RepoProxy is not present.
 - `/agent-runs/{id}/kpi` endpoint is not present. Existing KPI code covers eval corpus rollup and orchestrator proxy rollup, not the SP-008 Draft PR endpoint contract.
@@ -310,11 +310,31 @@ verify で品質確認。
 
 #### next implementation batches
 
-1. Batch A: service-level RepoProxy server-owned binding refactor (`approval_id`, `agent_run_id`) + negative tests for each mismatch.
+1. Batch A: service-level RepoProxy server-owned binding refactor (`approval_id`, `agent_run_id`) + negative tests for each mismatch. **Partially completed 2026-05-24**: public signature now takes only `DraftPRBinding`, pure server-owned state builder exists, DB-backed resolver remains for Batch B/C integration.
 2. Batch B: `GitHubAppAdapter` broker-mediated HTTP wrapper with raw-token non-exposure tests.
 3. Batch C: webhook service layer with SecretBroker resolution, Redis replay guard, rotation status validation, and audit payload redaction.
 4. Batch D: actual `repo_pr_opened` emission from the runtime path.
 5. Batch E: `/agent-runs/{id}/kpi` or explicitly superseding endpoint decision, then status closeout.
+
+### 2026-05-24 Batch A implementation (RepoProxy binding guard)
+
+#### changed
+
+- `backend/app/services/repoproxy/repoproxy.py`: `RepoProxy.create_draft_pr()` now accepts only `DraftPRBinding` (`tenant_id`, `approval_id`, `agent_run_id`), not a caller-supplied `DraftPRRequest`.
+- Added `DraftPRApprovalState` / `DraftPRSnapshotState` projections and `build_draft_pr_request_from_server_state()` for server-owned 4-binding validation.
+- `MockRepoProxy` now fail-closes without a resolver and uses `StaticDraftPRRequestResolver` in tests.
+- Added regression tests for signature-level deletion, approved-only PR open, action class guard, run mismatch, policy mismatch, diff hash mismatch, provider fingerprint mismatch, repo state mismatch, invalid branch, unknown binding, and resolver-less fail-closed behavior.
+
+#### verified
+
+- `uv run pytest tests/repoproxy -q`
+- pending final PR gate: ruff + mypy + docs frontmatter + diff check.
+
+#### deferred
+
+- DB-backed resolver that loads `ApprovalRequest` + latest relevant `ContextSnapshot`.
+- GitHubAppAdapter transport and SecretBroker-mediated installation token call.
+- Runtime `repo_pr_opened` emission and agent-runs KPI endpoint.
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
 
