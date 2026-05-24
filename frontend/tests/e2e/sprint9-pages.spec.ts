@@ -69,6 +69,23 @@ test("SP-009-5: execution timeline renders unified read-only rows", async ({ pag
   await expect(timelineRegion.getByRole("region", { name: "Unified event rows" })).toBeVisible();
 });
 
+test("SP-009-5: newcomer path renders read-only first-use choices", async ({ page }) => {
+  await loginAndGoto(page, "/onboarding");
+
+  const onboardingRegion = page.getByRole("region", {
+    name: "初回導線",
+    exact: true
+  });
+
+  await expect(onboardingRegion).toBeVisible();
+  await expect(
+    onboardingRegion.getByRole("heading", { name: "初回導線", exact: true })
+  ).toBeVisible();
+  await expect(onboardingRegion.getByLabel("初回チェック")).toBeVisible();
+  await expect(onboardingRegion.getByRole("region", { name: "安全な最初の選択" })).toBeVisible();
+  await expect(onboardingRegion.getByText("tm run plan --dry-run")).toBeVisible();
+});
+
 test("Sprint 9: approval inbox page renders real status filters", async ({ page }) => {
   await loginAndGoto(page, "/approvals");
 
