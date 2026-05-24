@@ -72,7 +72,7 @@ risks:
 - [ ] SP016-T07 parity contract test
 - [ ] SP016-T08 SecretBroker CLI token misuse negative test
 - [ ] SP016-T09 ADR / Tailscale gate verification
-- [ ] SP016-T10 `docs/cli/README.md` public usage hardening
+- [x] SP016-T10 `docs/cli/README.md` public usage hardening
 - [x] migration `0031_sp016_api_capability_tokens.py` upgrade/downgrade PASS
 - [ ] 13 parity contract test 全件 PASS
 - [ ] CLI capability token TTL 5-30 分 + scope minimum + raw 保存 reject
@@ -277,6 +277,30 @@ verified:
 deferred:
 - writing refreshed operation tokens back into OS keyring / SOPS storage; current batch is read/resolve only.
 - real backend parity contract execution for all 13 capabilities.
+
+### Batch 0e: CLI public usage docs (2026-05-24)
+
+changed:
+- `docs/cli/README.md`
+- `docs/sprints/SP-016_ui_cli_parity.md`
+
+implemented:
+- converted `docs/cli/README.md` from R1 doc-only future spec to R2 implementation-synced usage/design doc
+- added install / smoke commands for `uv tool install ./cli`, root `uv run tm`, and `uv run --project cli`
+- documented runtime token boundary and supported credential sources (`--operation-token`, env, profile env ref, keyring, SOPS)
+- documented profile JSON/YAML examples without raw token persistence
+- documented command/output smoke, redaction behavior, `--agent-mode` fail-closed, and `tm memory` disabled state
+- marked SP016-T10 completed
+
+verified:
+- `rg -n "本 doc 自体は CLI バイナリ実装許可ではない|CLI 実装は SP-016" docs/cli/README.md` (no output)
+- `uv run tm --version`
+- `uv run --project cli tm --help`
+- `git diff --check`
+
+deferred:
+- T07 real parity contract execution for all 13 capabilities.
+- T08 CLI token misuse / scope mismatch DB-backed negative tests.
 
 ## Kickoff Inventory (2026-05-24 task-04 plan-only)
 
