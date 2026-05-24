@@ -18,6 +18,8 @@
 | P1 | task-15 | SP-009-5 | Request revision E3 revised artifact handoff | completed 2026-05-24 | 0.4 day |
 | P1 | task-16 | SP-009-5 | Newcomer Path F0 contract plan | completed 2026-05-24; F1 implemented, F2+ pending | 0.2 day |
 | P1 | task-17 | SP-009-5 | Newcomer Path F1 read-only `/onboarding` UI | completed 2026-05-24; F2+ pending | 0.3 day |
+| P1 | task-18 | SP-009-5 | Newcomer Path F2 guided intake dry-run contract plan | completed 2026-05-24; F2b implemented in task-19 | 0.2 day |
+| P1 | task-19 | SP-009-5 | Newcomer Path F2b response-only dry-run backend API | completed 2026-05-24; F3 UI pending | 0.4 day |
 | P2 | task-04 | SP-000 / roadmap | bootstrap/backlog status hygiene | optional docs-only (completed 2026-05-24) | 0.2 day |
 
 ## Recommended Order
@@ -67,6 +69,12 @@ task-16 (SP-009-5 Batch F0)
 
 task-17 (SP-009-5 Batch F1)
   -> completed: read-only /onboarding route, safe starter cards, navigation, Vitest, and desktop/mobile Playwright smoke; next implementation is F2 API/schema-gated dry-run plan
+
+task-18 (SP-009-5 Batch F2 plan)
+  -> completed: response-only dry-run intake API contract; F2b backend schema/service/API/tests are implemented in task-19
+
+task-19 (SP-009-5 Batch F2b)
+  -> completed: /api/v1/onboarding/dry_run_plan response-only backend contract; next implementation is F3 plan-review UI
 ```
 
 ## SP-008 Tentative Implementation Batches
@@ -111,7 +119,8 @@ These are not coding instructions until a dedicated SP-009-5 implementation PR s
 | E3 | revised artifact handoff (completed 2026-05-24) | supersession wiring and stale hash negative tests |
 | F0 | Newcomer Path contract plan (completed 2026-05-24) | read-only first route before API/schema/runtime gates; `tm` canonical CLI drift fix |
 | F1 | Newcomer Path read-only `/onboarding` UI (completed 2026-05-24) | existing APIs only; no mutating AgentRun |
-| F2 | guided intake dry-run API contract | no implicit execution; server resolves effective action/approval |
+| F2a | guided intake dry-run API contract plan (completed 2026-05-24) | response-only decision; no persistence |
+| F2b | guided intake dry-run backend contract implementation (completed 2026-05-24) | no implicit execution; server resolves effective action/approval |
 | F3 | plan-review surface | no implicit run start without approval/runtime handoff |
 | F4 | CLI onboarding parity notes/tests | `tm` canonical; ambiguous mutating command fail-closed |
 
