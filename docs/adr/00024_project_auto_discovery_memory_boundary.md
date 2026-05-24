@@ -1,24 +1,28 @@
 ---
 id: "ADR-00024"
 title: "Project Auto-Discovery + Memory Boundary: cross-project retrieval deny-by-default + ContextSnapshot 10 列 を memory が上書きしない invariant"
-status: "proposed"
+status: "accepted"
 date: "2026-05-15"
-accepted_at: null
+updated_at: "2026-05-24"
+accepted_at: "2026-05-24"
 authors:
   - "t-ohga"
 related_sprints:
-  - "SP-016"
-  - "SP-018"
+  - "SP-016_ui_cli_parity"
+  - "SP-018_hermes_memory_integration"
 supersedes: null
 superseded_by: null
+acceptance_history:
+  - "2026-05-15: proposed during QL-G Quality Loop run as the project auto-discovery + memory boundary ADR."
+  - "2026-05-24: accepted at SP018-T01 ADR readiness gate. SP-016 CLI context safety is completed, SP-018 plan-only gate exists, and the schema guidance was reconciled to artifact-bound storage (`content_artifact_ref` + `content_hash`) instead of raw `redacted_content` JSONB."
 ---
 
-最終更新: 2026-05-15 (QL-G Quality Loop run で R29 修正まとめ統合計画 §5 QL-G + P-07 + D-08 mitigation を ADR として proposed 化)
+最終更新: 2026-05-24 (SP018-T01 ADR readiness gate で accepted promotion、`content_artifact_ref` 正本へ drift 修正)
 
 ## 背景
 
 - 決定対象: CLI ContextResolver による project auto-discovery (`docs/cli/README.md §3` state machine) と memory backend (history / preference / cache / retrieval) の **boundary 物理分離** を定義する。**cross-project retrieval を deny-by-default** + **ContextSnapshot 10 列を memory が上書きしない** 2 invariant を本 ADR で固定。
-- 関連 Sprint: 本 ADR は **proposed のみ**、accepted 化は P0.1+ (memory backend 実装 Sprint Pack accepted 後)。SP-016_ui_cli_parity で CLI context safety の placeholder marker を本 ADR-00024 で解決。SP-018 (Hermes/memory sprint、予約済) で memory backend 本実装。
+- 関連 Sprint: SP-016_ui_cli_parity で CLI context safety の placeholder marker を解決済み。SP-018_hermes_memory_integration で memory backend を実装する。本 ADR の accepted は boundary decision の確定であり、DB/API/runtime 実装完了を意味しない。
 - 前提 / 制約:
   - **`.claude/CLAUDE.md §2 #10` invariant 維持**: tenant/project boundary を memory cross-project retrieval で破らない (deny-by-default)
   - **`.claude/CLAUDE.md §2 #9` invariant 維持**: ContextSnapshot 必須 10 列 を memory/realtime/provider continuation で上書きしない、supplement は別 metadata
@@ -42,8 +46,8 @@ superseded_by: null
   - `.claude/CLAUDE.md §2 #9` invariant (ContextSnapshot 10 列を memory が上書きしない) を本 ADR で明示固定
   - memory-derived prompt input を `untrusted_content` trust_level (ADR-00014 §11 / `.claude/rules/ai-output-boundary.md` 準拠) として扱い、`.claude/CLAUDE.md §2 #1` (AI 出力直結禁止) も遮断
   - memory backend を **別 table + 別 API + 別 retrieval pipeline** で物理分離、CLI ContextResolver (docs/cli/README.md §3) と memory backend は **CLI context resolution complete 後にのみ memory retrieval が走る** 順序を enforce
-- 実装 Sprint: 本 ADR は **proposed のみ**。accepted 化は P0.1+ (memory backend 実装 Sprint Pack、SP-018 と統合) + U-07 確定後。本 QL-G run では doc-only 起票 + SP-016 placeholder 解決。
-- 実装対象ファイル (P0.1 accepted 後):
+- 実装 Sprint: SP-018_hermes_memory_integration。SP018-T01 で本 ADR を accepted 化し、runtime 実装は SP-018 T02+ の別 PR で行う。
+- 実装対象ファイル (SP-018 T02+ implementation batch):
   - `backend/app/db/models/memory_record.py` (新規、memory_records table)
   - `backend/app/services/memory/retrieval.py` (新規、retrieval pipeline + cross-project deny check)
   - `backend/app/services/memory/context_snapshot_overlay_guard.py` (新規、ContextSnapshot 10 列 read-only enforcement)
@@ -60,12 +64,16 @@ superseded_by: null
       memory_record_id: uuid
       tenant_id: bigint NOT NULL DEFAULT 1
       project_id: uuid NOT NULL  # cross-project deny の DB level enforce
-      record_kind: enum {ticket_history, approval_history, run_history, user_preference, repo_cache}
-      content_hash: string  # sha256 of redacted content
-      redacted_content: jsonb  # raw secret / canary / PII redaction 必須
+      record_kind: enum {manual_user, manual_agent, auto_completion, auto_failure, auto_review_finding}
+      content_artifact_ref: string  # redacted memory content artifact reference
+      content_hash: string  # sha256 of redacted artifact content
+      data_class: enum {public, internal, confidential, pii}
+      redaction_status: enum {redacted, raw_with_canary_scan_passed}
+      sanitizer_version_id: uuid  # FK to sanitizer_policy_versions
       created_at: timestamp
+      archived_at: timestamp | null
       retention_until: timestamp  # retention policy enforcement
-      trust_level: enum {untrusted_content, validated_artifact}  # default untrusted_content
+      trust_level: enum {untrusted_content, validated_artifact}  # default untrusted_content; self-promotion forbidden
       
     # 複合 FK で project boundary を物理 enforce
     foreign key (tenant_id, project_id) references projects(tenant_id, id)
@@ -110,7 +118,7 @@ superseded_by: null
 | CLI ContextResolver ambiguous + memory retrieval が fall-through 実行 | `tests/cli/test_memory_retrieval_context_dependency.py` | CLI ContextResolver fail-closed (ambiguous / unresolved) なら memory retrieval も deny、docs/cli/README.md §3 state machine の resolve_complete check を retrieval pipeline 起動条件にする |
 | retention_until 経過後 deletion が cross-tenant に波及 | `tests/memory/test_retention_deletion_boundary.py` | scheduled deletion job は tenant_id + project_id filter で実行、cross-tenant deletion path は存在しない (DB level + service layer 2 重防御) |
 | Hermes (SP-018) との integration で memory backend 重複 | SP-018 + 本 ADR cross-reference | 本 ADR は memory_records schema + retrieval pipeline + boundary invariant を定義、Hermes integration は SP-018 implementation で別 ADR (ADR-00016 既存) と統合 |
-| ADR proposed が「次は accepted」と読まれ runtime wiring に進む | 本 ADR §13 implementation 禁止文言 | 本 ADR の status は **proposed 維持**、accepted 化は P0.1+ SP-018 implementation Sprint Pack accepted + U-07 確定後にのみ進める |
+| ADR accepted が runtime wiring 完了と誤読される | SP-018 Review / acceptance_history / implementation PR gate | 本 ADR の accepted は boundary decision のみ。DDL/API/runtime は SP-018 T02+ の別 PR で、migration round-trip + negative tests PASS 後に進める |
 
 ## rollback 手順
 
@@ -128,22 +136,22 @@ superseded_by: null
 4. `uv run alembic downgrade -1` で memory_records table drop、または forward-fix migration で boundary invariant を enforce してから production 適用
 5. rollback verification: `uv run pytest tests/memory/test_cross_project_retrieval_deny.py tests/memory/test_context_snapshot_overlay_guard.py tests/memory/test_retention_deletion_boundary.py -q`
 
-### ADR-00024 自体の rollback (proposed → 取下げ)
+### ADR-00024 自体の rollback (accepted → superseded / rejected)
 
-本 ADR が P0.1+ で accepted 化されず取下げに至った場合 (例: memory 機能を P1+ scope 外と決定):
+本 ADR の accepted boundary を取り下げる場合 (例: memory 機能を P1+ scope 外と決定):
 
 1. `status: rejected` に変更、`superseded_by` に代替 ADR を記録 (例: ADR-00030 候補 memory P1+ defer)
-2. SP-018 (Hermes/memory sprint、予約済) を P1+ 全面 defer
+2. SP-018_hermes_memory_integration を P1+ 全面 defer
 3. SP-016 `<!-- ADR-00024 placeholder -->` marker を「ADR-00024 rejected、memory backend は P1+」と更新
 4. docs/cli/README.md §1 #5 + §9 placeholder reference を rejected 状態に更新
 
 ## 関連 ADR
 
-- ADR-00014 (Multi-Agent Orchestration、proposed): 本 ADR の memory-derived prompt input の trust_level taxonomy (untrusted_content / validated_artifact / trusted_instruction) は ADR-00014 §11 と整合、ADR-00014 が P0.1 accepted 化される時に本 cross-reference が有効化
-- ADR-00016 (Hermes integration、proposed): 本 ADR は memory_records schema + retrieval pipeline + boundary invariant を定義、Hermes integration は ADR-00016 と統合 (P0.1+ SP-018 で実装)
+- ADR-00014 (Multi-Agent Orchestration、accepted): 本 ADR の memory-derived prompt input の trust_level taxonomy (untrusted_content / validated_artifact / trusted_instruction) は ADR-00014 §11 と整合
+- ADR-00016 (Hermes integration、accepted): 本 ADR は memory_records schema + retrieval pipeline + boundary invariant を定義、Hermes integration は ADR-00016 と統合 (SP-018 で実装)
 - ADR-00015 (UI/CLI parity、accepted) + QL-F update: 本 ADR の CLI ContextResolver 順序 invariant (resolve_complete 後にのみ memory retrieval) と整合
 - SP-016_ui_cli_parity: 本 ADR で `<!-- ADR-00024 placeholder -->` marker を解決
-- SP-018 (Hermes memory sprint、P0.1 予約): 本 ADR accepted 後の memory backend 実装先
+- SP-018_hermes_memory_integration: 本 ADR accepted 後の memory backend 実装先
 
 ## 関連資料
 
