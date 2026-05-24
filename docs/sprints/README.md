@@ -52,6 +52,7 @@
 | SP-014_orchestrator_agent | SP-014_orchestrator_agent.md | match | P0.1+ sealed |
 | SP-015_inter_agent_communication | SP-015_inter_agent_communication.md | match | P0.1+ sealed |
 | SP-016_ui_cli_parity | SP-016_ui_cli_parity.md | match | CLI canonical name `tm` 維持 (R29 §6 U-04) |
+| SP-017_ai_society_visualization | SP-017_ai_society_visualization.md | match | P1 read-only AI Society board + role visualization; character generation remains SP-021 |
 | SP-022_framework_intake_hardening | SP-022_framework_intake_hardening.md | match | framework intake checklist + host migration 自動化 (P0.1+) |
 | **SP-0045_tool_registry** | **SP-0045_tool_registry.md** | **create_required** | **security boundary 独立、SP-005-5 alias 禁止** (R26 T-P2R1-012-residual)、本 PR で新規起票 |
 

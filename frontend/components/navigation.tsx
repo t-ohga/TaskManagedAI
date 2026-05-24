@@ -8,6 +8,7 @@ const navItems = [
   { href: "/eval-dashboard", label: "評価ダッシュボード", current: false },
   { href: "/approvals", label: "承認待ち", current: false },
   { href: "/runs", label: "AI 実行", current: false },
+  { href: "/orchestrator/board", label: "AI 組織", current: false },
   { href: "/audit", label: "監査ログ", current: false },
   { href: "/settings", label: "設定", current: false }
 ] as const;
