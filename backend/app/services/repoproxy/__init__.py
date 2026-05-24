@@ -14,5 +14,15 @@ server-owned-boundary §1:
 from __future__ import annotations
 
 from backend.app.services.repoproxy.draft_pr_resolver import DbDraftPRRequestResolver
+from backend.app.services.repoproxy.github_app_adapter import (
+    GITHUB_API_VERSION,
+    GitHubAppAdapter,
+    GitHubDraftPRResponse,
+)
 
-__all__ = ["DbDraftPRRequestResolver"]
+__all__ = [
+    "DbDraftPRRequestResolver",
+    "GITHUB_API_VERSION",
+    "GitHubAppAdapter",
+    "GitHubDraftPRResponse",
+]
