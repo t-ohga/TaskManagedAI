@@ -12,10 +12,11 @@
 | P1 | task-07 | SP-009-5 | Unified execution timeline read-only UI | completed 2026-05-24 | 0.5 day |
 | P1 | task-10 | SP-009-5 | Notification triage D1 DB/API contract | completed 2026-05-24 | 0.5 day |
 | P1 | task-11 | SP-009-5 | Notification triage D2 UI/actions | completed 2026-05-24 | 0.5 day |
-| P1 | task-12 | SP-009-5 | Request revision contract plan | completed 2026-05-24; implementation pending | 0.2 day |
-| P1 | task-13 | SP-009-5 | Request revision E1 DB/API | completed 2026-05-24; E2/E3 pending | 0.5 day |
-| P1 | task-14 | SP-009-5 | Request revision E2 Approval Detail UI | completed 2026-05-24; E3 pending | 0.3 day |
+| P1 | task-12 | SP-009-5 | Request revision contract plan | completed 2026-05-24; E1-E3 implemented | 0.2 day |
+| P1 | task-13 | SP-009-5 | Request revision E1 DB/API | completed 2026-05-24 | 0.5 day |
+| P1 | task-14 | SP-009-5 | Request revision E2 Approval Detail UI | completed 2026-05-24 | 0.3 day |
 | P1 | task-15 | SP-009-5 | Request revision E3 revised artifact handoff | completed 2026-05-24 | 0.4 day |
+| P1 | task-16 | SP-009-5 | Newcomer Path F0 contract plan | completed 2026-05-24; F1 implementation pending | 0.2 day |
 | P2 | task-04 | SP-000 / roadmap | bootstrap/backlog status hygiene | optional docs-only (completed 2026-05-24) | 0.2 day |
 
 ## Recommended Order
@@ -49,7 +50,7 @@ task-11 (SP-009-5 Batch D2)
   -> completed: /notifications triage UI/actions using the D1 redacted API contract
 
 task-12 (SP-009-5 Batch E0)
-  -> completed: request_revision contract plan; next implementation is E1 DB/API, then E2 UI, then E3 revised-artifact handoff
+  -> completed: request_revision contract plan; E1 DB/API, E2 UI, and E3 revised-artifact handoff are implemented
 
 task-13 (SP-009-5 Batch E1)
   -> completed: additive approval_revision_requests table, request_revision API/service, audit/notification metadata-only events
@@ -59,6 +60,9 @@ task-14 (SP-009-5 Batch E2)
 
 task-15 (SP-009-5 Batch E3)
   -> completed: internal revised artifact handoff service, fresh decision-packet guard, supersession wiring
+
+task-16 (SP-009-5 Batch F0)
+  -> completed: Newcomer Path contract plan; next implementation is F1 read-only /onboarding, then F2+ API/schema-gated dry-run plan
 ```
 
 ## SP-008 Tentative Implementation Batches
@@ -101,6 +105,11 @@ These are not coding instructions until a dedicated SP-009-5 implementation PR s
 | E1 | approval `request_revision` DB/API (completed 2026-05-24) | additive table, human-only decider, raw-secret scan, migration up/down |
 | E2 | approval `request_revision` UI action (completed 2026-05-24) | no bulk action; rationale redaction and DOM non-exposure |
 | E3 | revised artifact handoff (completed 2026-05-24) | supersession wiring and stale hash negative tests |
+| F0 | Newcomer Path contract plan (completed 2026-05-24) | read-only first route before API/schema/runtime gates; `tm` canonical CLI drift fix |
+| F1 | Newcomer Path read-only `/onboarding` UI | existing APIs only; no mutating AgentRun |
+| F2 | guided intake dry-run API contract | no implicit execution; server resolves effective action/approval |
+| F3 | plan-review surface | no implicit run start without approval/runtime handoff |
+| F4 | CLI onboarding parity notes/tests | `tm` canonical; ambiguous mutating command fail-closed |
 
 ## SP-007 Phase 5 Plan
 

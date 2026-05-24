@@ -49,22 +49,28 @@ max_days: 3
 | E1 | `request_revision` DB/API (completed 2026-05-24) | additive `approval_revision_requests` table、human-only decider、raw-secret scan、metadata-only audit/notification、migration up/down |
 | E2 | `request_revision` Approval Detail UI (completed 2026-05-24) | no bulk action、rationale DOM non-exposure、server action validation |
 | E3 | revised artifact handoff (completed 2026-05-24) | supersession wiring、fresh decision-packet hash negative tests |
-| F | Newcomer Path / advanced approval refinements | P0.1 polish、P0 Exit blocker にしない |
+| F0 | Newcomer Path contract plan (completed 2026-05-24) | no code/schema/runtime changes、read-only first route と API/schema gate を分離 |
+| F1 | Newcomer Path read-only `/onboarding` UI | existing API only、mutation なし |
+| F2 | Guided intake dry-run contract | no implicit AgentRun start、API/schema gate 必須 |
+| F3 | Plan review surface | approve/request revision/ask why は accepted backend contract 後のみ |
+| F4 | CLI onboarding parity notes/tests | `tm` canonical、ambiguous mutating command は fail-closed |
+| F5 | Newcomer Path closeout | route parity、browser/Vitest/contract verification、docs sync |
 
 ## 受け入れ条件
 
-- [ ] SP-009 本体は `partial_skeleton` のまま、SP-009-5 への split と未完 residual が明記されている。
-- [ ] `docs/sprints/README.md` の canonical registry が `SP-009-5_p0_ui_deferred_surfaces.md` を解決できる。
-- [ ] `docs/実装計画/P0_バックログ.md` に P0.1 UI deferred surface の追跡項目がある。
+- [x] SP-009 本体は `partial_skeleton` のまま、SP-009-5 への split と未完 residual が明記されている。
+- [x] `docs/sprints/README.md` の canonical registry が `SP-009-5_p0_ui_deferred_surfaces.md` を解決できる。
+- [x] `docs/実装計画/P0_バックログ.md` に P0.1 UI deferred surface の追跡項目がある。
 - [x] read-only UI batch と API/state mutation batch が分離され、mutation batch は ADR/API gate を持つ。
 - [x] `request_revision` と notification triage は、人間承認・stale invalidation・raw payload redaction の invariant を満たすまで実装しない。
+- [x] Newcomer Path は F0 計画で read-only first route と F2+ API/schema/runtime gate に分割され、初回利用者が理解前に mutating run を開始できない境界を固定した。
 
 ## 検証手順
 
-- [ ] `ruby -e 'require "yaml"; require "date"; YAML.safe_load(File.read("docs/sprints/SP-009-5_p0_ui_deferred_surfaces.md"), permitted_classes: [Date], aliases: true); puts "ok"'`
-- [ ] `.claude/hooks/sprint/check-sprint-pack-frontmatter.sh` を本 Pack への PostToolUse JSON で実行
-- [ ] `rg -n "SP-009-5_p0_ui_deferred_surfaces|SP-009-5" docs/sprints docs/実装計画 docs/codex-handoff/2026-05-24-post-sp024-carryover`
-- [ ] `git diff --check`
+- [x] `ruby -e 'require "yaml"; require "date"; YAML.safe_load(File.read("docs/sprints/SP-009-5_p0_ui_deferred_surfaces.md"), permitted_classes: [Date], aliases: true); puts "ok"'`
+- [x] `.claude/hooks/sprint/check-sprint-pack-frontmatter.sh` を本 Pack への PostToolUse JSON で実行
+- [x] `rg -n "SP-009-5_p0_ui_deferred_surfaces|SP-009-5" docs/sprints docs/実装計画 docs/codex-handoff/2026-05-24-post-sp024-carryover`
+- [x] `git diff --check`
 
 ## 残リスク
 
@@ -74,7 +80,7 @@ max_days: 3
 
 ## Review
 
-- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、Batch A で `/today` read-only control plane + minimal KPI strip、Batch B で `/timeline` unified execution timeline、Batch C で Approval Detail decision packet hash visibility、Batch D1 で notification triage DB/API contract、Batch D2 で `/notifications` triage UI/actions、Batch E0 で `request_revision` contract plan、Batch E1 で `request_revision` DB/API、Batch E2 で Approval Detail `request_revision` UI/action、Batch E3 で revised artifact handoff supersession wiring を追加した。
-- verified: frontmatter / registry / backlog / handoff cross-reference、frontend typecheck/lint/Vitest、desktop/mobile browser smoke、timeline sensitive key leak check、decision packet malformed-hash DOM non-exposure、notification triage migration up/down + redacted API tests、D2 UI/action tests、request_revision migration up/down + API/schema regression tests、E2 UI/action tests、E3 fresh decision-packet/supersession DB tests を確認した。
-- deferred: Newcomer Path は別 PR。
+- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、Batch A で `/today` read-only control plane + minimal KPI strip、Batch B で `/timeline` unified execution timeline、Batch C で Approval Detail decision packet hash visibility、Batch D1 で notification triage DB/API contract、Batch D2 で `/notifications` triage UI/actions、Batch E0 で `request_revision` contract plan、Batch E1 で `request_revision` DB/API、Batch E2 で Approval Detail `request_revision` UI/action、Batch E3 で revised artifact handoff supersession wiring、Batch F0 で Newcomer Path contract plan を追加した。
+- verified: frontmatter / registry / backlog / roadmap / handoff cross-reference、frontend typecheck/lint/Vitest、desktop/mobile browser smoke、timeline sensitive key leak check、decision packet malformed-hash DOM non-exposure、notification triage migration up/down + redacted API tests、D2 UI/action tests、request_revision migration up/down + API/schema regression tests、E2 UI/action tests、E3 fresh decision-packet/supersession DB tests、F0 docs cross-reference を確認した。
+- deferred: Newcomer Path F1 `/onboarding` implementation は別 PR。
 - risks: SP-009 本体の golden E2E / DOM secret scan / residual enum contract は引き続き未完。
