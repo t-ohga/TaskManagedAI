@@ -65,7 +65,7 @@ def _run_cli(
         stderr=err,
         env={
             "TASKMANAGEDAI_PROJECT_ID": _PROJECT_ID,
-            "TASKMANAGEDAI_BACKEND_URL": "https://taskhub.test",
+            "TASKMANAGEDAI_BACKEND_URL": "https://taskhub.example.ts.net",
             "TASKMANAGEDAI_OPERATION_TOKEN": "raw-operation-token-for-runtime-only",
             **(env or {}),
         },
@@ -174,7 +174,7 @@ def test_profile_loader_rejects_raw_operation_token(tmp_path: Path) -> None:
             {
                 "profiles": {
                     "default": {
-                        "backend_url": "https://taskhub.test",
+                        "backend_url": "https://taskhub.example.ts.net",
                         "operation_token": "must-not-be-stored",
                     }
                 }
@@ -193,7 +193,7 @@ def test_profile_loader_rejects_raw_operation_token_in_inactive_profile(tmp_path
         json.dumps(
             {
                 "profiles": {
-                    "default": {"backend_url": "https://taskhub.test"},
+                    "default": {"backend_url": "https://taskhub.example.ts.net"},
                     "unused": {"access_token": "must-not-be-stored"},
                 }
             }
@@ -203,6 +203,62 @@ def test_profile_loader_rejects_raw_operation_token_in_inactive_profile(tmp_path
 
     with pytest.raises(ProfileConfigError, match="profiles.unused.access_token"):
         ProfileLoader(profile_path=profile_path).load("default", {})
+
+
+@pytest.mark.parametrize(
+    "backend_url",
+    [
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+        "https://taskhub.example.ts.net",
+        "http://100.64.0.10:8000",
+    ],
+)
+def test_profile_loader_accepts_closed_network_backend_urls(tmp_path: Path, backend_url: str) -> None:
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps({"profiles": {"default": {"backend_url": backend_url}}}),
+        encoding="utf-8",
+    )
+
+    profile = ProfileLoader(profile_path=profile_path).load("default", {})
+
+    assert profile.backend_url == backend_url
+
+
+@pytest.mark.parametrize(
+    ("backend_url", "error"),
+    [
+        ("https://taskhub.example.com", "localhost, Tailscale"),
+        ("http://8.8.8.8:8000", "public IP is rejected"),
+        ("ftp://taskhub.example.ts.net", "http"),
+    ],
+)
+def test_profile_loader_rejects_public_backend_urls(
+    tmp_path: Path,
+    backend_url: str,
+    error: str,
+) -> None:
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps({"profiles": {"default": {"backend_url": backend_url}}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ProfileConfigError, match=error):
+        ProfileLoader(profile_path=profile_path).load("default", {})
+
+
+def test_public_backend_url_env_override_fails_before_network() -> None:
+    code, out, err, requests = _run_cli(
+        ["ticket", "list"],
+        env={"TASKMANAGEDAI_BACKEND_URL": "https://taskhub.example.com"},
+    )
+
+    assert code == 2
+    assert out == ""
+    assert "tm_config_error" in err
+    assert requests == []
 
 
 def test_json_formatter_redacts_secret_shaped_output() -> None:
@@ -261,7 +317,7 @@ def test_profile_env_credential_ref_resolves_runtime_operation_token(tmp_path: P
             {
                 "profiles": {
                     "default": {
-                        "backend_url": "https://taskhub.test",
+                        "backend_url": "https://taskhub.example.ts.net",
                         "auth_method": "env",
                         "operation_token_env": "TM_PROFILE_OPERATION_TOKEN",
                     }

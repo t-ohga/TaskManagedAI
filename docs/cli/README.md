@@ -62,7 +62,17 @@ CLI は raw operation token を profile file に保存しない。runtime token 
 
 `auth_method: plain` は CLI profile loader で fail-closed。`operation_token` / `raw_operation_token` / `access_token` 等の raw token field は selected profile だけでなく inactive profile 内でも reject する。
 
-### 0.3 Profile Examples
+### 0.3 Network Boundary
+
+`backend_url` は closed-network 前提で fail-closed 検証する。CLI profile / env override で許可する host は次だけ:
+
+- `localhost` / `127.0.0.1` / loopback address
+- Tailscale CGNAT `100.64.0.0/10`
+- `*.ts.net`
+
+通常の public hostname (`example.com`) や public IP (`8.8.8.8` 等) は CLI 起動時に reject する。Tailscale grants `tag:taskhub-cli` の実 config 変更は ADR-00007 の外部公開設定 gate として別 diff / rollback 明示で扱う。
+
+### 0.4 Profile Examples
 
 JSON:
 
@@ -90,7 +100,7 @@ profiles:
     refresh_credential_ref: ~/.taskmanagedai/profile.enc.json#cli.operation_token
 ```
 
-### 0.4 Command / Output Smoke
+### 0.5 Command / Output Smoke
 
 ```bash
 TASKMANAGEDAI_PROJECT_ID=<project_id> \
