@@ -118,7 +118,7 @@ risks:
 | BL ID | 内容 |
 |---|---|
 | BL-0096a | RepoProxy 4 整合 binding server-side 再計算 refactor (`create_draft_pr(approval_id, agent_run_id)` signature + DB / ContextSnapshot / Git ref から 4 hash 再計算 + 1 mismatch per case negative test) |
-| BL-0101a | Webhook HMAC SecretBroker-mediated service layer (`verify_github_webhook(request, secret_ref_current, secret_ref_previous, delivery_id)` 公開境界 + `secret_refs.status` in `(active, deprecated)` 検証 + Redis SETNX replay) |
+| BL-0101a | Webhook HMAC SecretBroker-mediated service layer (2026-05-24 Batch C で `GitHubWebhookVerifier` service boundary + SecretBroker resolver protocol + Redis SETNX replay protocol + `secret_refs.status` 検証を追加済。残作業は concrete SecretBroker resolver / Redis adapter / FastAPI route wiring) |
 
 ### batch 4: Sprint 9 carry-over (5 BL)
 
@@ -235,7 +235,7 @@ risks:
 # 全 carry-over verify (15 BL)
 uv run pytest tests/secrets/test_repo_operations.py tests/repoproxy/test_github_app_adapter.py \
               tests/agent_runtime/test_repo_pr_opened_event.py tests/contracts/test_kpi_time_to_merge.py \
-              tests/repoproxy/test_4integrity_negative.py tests/repoproxy/test_webhook_service_layer.py \
+              tests/repoproxy/test_4integrity_negative.py tests/repoproxy/test_webhook_service.py \
               tests/api/test_tickets_route.py tests/api/test_agent_runs_list.py tests/api/test_audit_events_route.py \
               tests/contracts/test_ac_hard_02_frontend_redaction.py \
               tests/contracts/test_frontend_backend_enum_drift.py \

@@ -35,7 +35,7 @@ The current repository has enough primitives to continue SP-008, but it does not
 
 1. RepoProxy server-owned binding refactor: completed through Batch A/A2; live Git ref re-fetch remains with transport.
 2. GitHubAppAdapter broker-mediated boundary: partially completed; real httpx transport + live Git ref re-fetch remain.
-3. Webhook SecretBroker/replay service layer.
+3. Webhook SecretBroker/replay service boundary: completed through Batch C; concrete Redis adapter, concrete SecretBroker secret resolver, and FastAPI route remain.
 4. Actual `repo_pr_opened` runtime emission.
 5. Agent-runs KPI endpoint or explicit superseding endpoint decision.
 
@@ -45,3 +45,4 @@ The current repository has enough primitives to continue SP-008, but it does not
 - Do not add GitHub App permissions outside `config/github_app_permissions.toml`.
 - Do not treat `repo_pr_opened` enum presence as actual runtime emission.
 - Do not treat eval corpus `time_to_merge` helpers as the SP-008 `/agent-runs/{id}/kpi` endpoint.
+- Do not treat the Batch C webhook protocols as the concrete Redis or SecretBroker adapters; those are still residual unless a later PR wires them.
