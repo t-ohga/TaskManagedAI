@@ -117,7 +117,10 @@ async def _api_client(
 
 async def _reset_flow_tables(session: AsyncSession) -> None:
     await session.execute(
-        text("truncate notification_events, policy_decisions, approval_requests restart identity")
+        text(
+            "truncate notification_events, policy_decisions, "
+            "approval_requests restart identity cascade"
+        )
     )
 
 

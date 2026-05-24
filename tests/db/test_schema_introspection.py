@@ -74,6 +74,11 @@ BATCH_SP020_TENANT_SCOPED_TABLES = frozenset(
         "adopted_artifacts",
     }
 )
+BATCH_SP0095_TENANT_SCOPED_TABLES = frozenset(
+    {
+        "approval_revision_requests",
+    }
+)
 TENANT_SCOPED_TABLES = (
     BATCH1_TENANT_SCOPED_TABLES
     | BATCH2_TENANT_SCOPED_TABLES
@@ -83,6 +88,7 @@ TENANT_SCOPED_TABLES = (
     | BATCH_SP016_TENANT_SCOPED_TABLES
     | BATCH_SP018_TENANT_SCOPED_TABLES
     | BATCH_SP020_TENANT_SCOPED_TABLES
+    | BATCH_SP0095_TENANT_SCOPED_TABLES
 )
 METADATA_TABLES = frozenset(
     {
@@ -97,6 +103,7 @@ METADATA_TABLES = frozenset(
         "ticket_relations",
         "policy_rules",
         "approval_requests",
+        "approval_revision_requests",
         "policy_decisions",
         "adopted_artifacts",
         "api_capability_tokens",
@@ -502,6 +509,24 @@ async def test_required_composite_foreign_keys_exist(
             ("tenant_id", "id"),
         ),
         ("policy_decisions", ("tenant_id", "actor_id"), "actors", ("tenant_id", "id")),
+        (
+            "approval_revision_requests",
+            ("tenant_id", "approval_request_id"),
+            "approval_requests",
+            ("tenant_id", "id"),
+        ),
+        (
+            "approval_revision_requests",
+            ("tenant_id", "requested_by_actor_id"),
+            "actors",
+            ("tenant_id", "id"),
+        ),
+        (
+            "approval_revision_requests",
+            ("tenant_id", "superseded_by_approval_request_id"),
+            "approval_requests",
+            ("tenant_id", "id"),
+        ),
         ("api_capability_tokens", ("tenant_id", "actor_id"), "actors", ("tenant_id", "id")),
         (
             "api_capability_tokens",
@@ -1183,6 +1208,107 @@ async def test_approval_requests_self_approval_check_constraint(
     assert "<>" in self_approval_check or "!=" in self_approval_check
     assert "decided_by_actor_id" in decided_at_check
     assert "decided_at" in decided_at_check
+
+
+@pytest.mark.asyncio
+async def test_approval_revision_requests_have_additive_revision_schema(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    column_names = (
+        "id",
+        "tenant_id",
+        "approval_request_id",
+        "requested_by_actor_id",
+        "rationale",
+        "artifact_hash",
+        "diff_hash",
+        "policy_version",
+        "policy_pack_lock",
+        "provider_request_fingerprint",
+        "stale_after_event_seq",
+        "superseded_by_approval_request_id",
+        "created_at",
+        "metadata",
+    )
+
+    async with session_factory() as session:
+        columns = await _table_columns(session, "approval_revision_requests", column_names)
+        unique = await _constraint_columns(
+            session,
+            table_name="approval_revision_requests",
+            constraint_name="approval_revision_requests_uq_tenant_id",
+            constraint_type="u",
+        )
+        rationale_definition = await _constraint_definition(
+            session,
+            table_name="approval_revision_requests",
+            constraint_name="approval_revision_requests_ck_rationale",
+        )
+        actual = await _foreign_key_signatures(session, BATCH_SP0095_TENANT_SCOPED_TABLES)
+        indexes = await _index_definitions(session, BATCH_SP0095_TENANT_SCOPED_TABLES)
+
+    assert set(columns) == set(column_names)
+    assert columns["id"]["data_type"] == "uuid"
+    assert columns["id"]["is_nullable"] == "NO"
+    assert "uuid_generate_v4" in str(columns["id"]["column_default"])
+    assert columns["tenant_id"]["data_type"] == "bigint"
+    assert columns["tenant_id"]["is_nullable"] == "NO"
+    assert columns["tenant_id"]["column_default"] == "1"
+    assert columns["approval_request_id"]["data_type"] == "uuid"
+    assert columns["approval_request_id"]["is_nullable"] == "NO"
+    assert columns["requested_by_actor_id"]["data_type"] == "uuid"
+    assert columns["requested_by_actor_id"]["is_nullable"] == "NO"
+    assert columns["rationale"]["data_type"] == "text"
+    assert columns["rationale"]["is_nullable"] == "NO"
+    assert columns["artifact_hash"]["data_type"] == "text"
+    assert columns["diff_hash"]["data_type"] == "text"
+    assert columns["policy_version"]["data_type"] == "text"
+    assert columns["policy_version"]["is_nullable"] == "NO"
+    assert columns["policy_pack_lock"]["is_nullable"] == "YES"
+    assert columns["provider_request_fingerprint"]["is_nullable"] == "YES"
+    assert columns["stale_after_event_seq"]["data_type"] == "bigint"
+    assert columns["superseded_by_approval_request_id"]["data_type"] == "uuid"
+    assert columns["superseded_by_approval_request_id"]["is_nullable"] == "YES"
+    assert columns["created_at"]["is_nullable"] == "NO"
+    assert "now()" in str(columns["created_at"]["column_default"])
+    assert columns["metadata"]["data_type"] == "jsonb"
+    assert columns["metadata"]["is_nullable"] == "NO"
+    assert "rls_ready" in str(columns["metadata"]["column_default"])
+    assert unique == ("tenant_id", "id")
+
+    assert "btrim" in rationale_definition.lower()
+    assert "char_length" in rationale_definition.lower()
+    assert (
+        "approval_revision_requests",
+        ("tenant_id", "approval_request_id"),
+        "approval_requests",
+        ("tenant_id", "id"),
+    ) in actual
+    assert (
+        "approval_revision_requests",
+        ("tenant_id", "requested_by_actor_id"),
+        "actors",
+        ("tenant_id", "id"),
+    ) in actual
+    assert (
+        "approval_revision_requests",
+        ("tenant_id", "superseded_by_approval_request_id"),
+        "approval_requests",
+        ("tenant_id", "id"),
+    ) in actual
+
+    assert indexes["approval_revision_requests_uq_open_approval"].startswith(
+        "CREATE UNIQUE INDEX"
+    )
+    assert "(tenant_id, approval_request_id)" in indexes[
+        "approval_revision_requests_uq_open_approval"
+    ]
+    assert "SUPERSEDED_BY_APPROVAL_REQUEST_ID IS NULL" in indexes[
+        "approval_revision_requests_uq_open_approval"
+    ].upper()
+    assert indexes["approval_revision_requests_idx_approval"].startswith("CREATE INDEX")
+    assert indexes["approval_revision_requests_idx_requested_by"].startswith("CREATE INDEX")
+    assert indexes["approval_revision_requests_idx_superseded_by"].startswith("CREATE INDEX")
 
 
 @pytest.mark.asyncio

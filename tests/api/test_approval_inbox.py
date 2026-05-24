@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.app.api.approval_inbox import ApprovalDetail, ApprovalListItem, get_db_session
 from backend.app.config import Settings, get_settings
 from backend.app.db.models.approval_request import ApprovalRequest
+from backend.app.db.models.approval_revision_request import ApprovalRevisionRequest
+from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.notification_event import NotificationEvent
 from backend.app.db.session import create_engine
 from backend.app.main import create_app
@@ -118,7 +120,10 @@ async def approval_api_client(
 
 async def _reset_tables(session: AsyncSession) -> None:
     await session.execute(
-        text("truncate notification_events, policy_decisions, approval_requests restart identity")
+        text(
+            "truncate notification_events, audit_events, policy_decisions, "
+            "approval_revision_requests, approval_requests restart identity cascade"
+        )
     )
 
 
@@ -192,8 +197,9 @@ async def _insert_approval(
     status: str = "pending",
     requested_by_actor_id: UUID = REQUESTER_ACTOR_ID,
 ) -> None:
+    requested_at = datetime.now(tz=UTC)
     decided_by_actor_id = DEFAULT_ACTOR_ID if status in {"approved", "rejected"} else None
-    decided_at = datetime.now(tz=UTC) if decided_by_actor_id is not None else None
+    decided_at = requested_at if decided_by_actor_id is not None else None
 
     await session.execute(
         text(
@@ -212,6 +218,7 @@ async def _insert_approval(
               stale_after_event_seq,
               status,
               requested_by_actor_id,
+              requested_at,
               decided_by_actor_id,
               decided_at,
               metadata
@@ -230,6 +237,7 @@ async def _insert_approval(
               1,
               :status,
               :requested_by_actor_id,
+              :requested_at,
               :decided_by_actor_id,
               :decided_at,
               '{"rls_ready": true}'::jsonb
@@ -241,6 +249,7 @@ async def _insert_approval(
             "resource_ref": f"task:{approval_id}",
             "status": status,
             "requested_by_actor_id": requested_by_actor_id,
+            "requested_at": requested_at,
             "decided_by_actor_id": decided_by_actor_id,
             "decided_at": decided_at,
         },
@@ -295,6 +304,15 @@ async def _notification_count(
                 NotificationEvent.recipient_actor_id == recipient_actor_id,
             )
         )
+    return int(count or 0)
+
+
+async def _table_count(
+    session_factory: async_sessionmaker[AsyncSession],
+    model: type[ApprovalRevisionRequest] | type[AuditEvent] | type[NotificationEvent],
+) -> int:
+    async with session_factory() as session:
+        count = await session.scalar(select(func.count(model.id)).where(model.tenant_id == 1))
     return int(count or 0)
 
 
@@ -558,3 +576,197 @@ async def test_decide_unknown_id_returns_404(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "approval not found"
+
+
+@pytest.mark.asyncio
+async def test_request_revision_invalidates_pending_approval_and_records_metadata_only_events(
+    approval_api_client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _setup_api_fixtures(session_factory)
+    async with session_factory.begin() as session:
+        await _insert_approval(session, approval_id=APPROVAL_ID)
+
+    response = await approval_api_client.post(
+        f"/api/v1/approvals/{APPROVAL_ID}/request_revision",
+        json={"rationale": "  Please update the acceptance criteria before proceeding.  "},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["approval"]["id"] == str(APPROVAL_ID)
+    assert payload["approval"]["status"] == "invalidated"
+    assert payload["approval"]["rationale"] is None
+    assert await _approval_status(session_factory, APPROVAL_ID) == "invalidated"
+
+    revision_request_id = UUID(payload["revision_request_id"])
+    async with session_factory() as session:
+        revision = await session.scalar(
+            select(ApprovalRevisionRequest).where(
+                ApprovalRevisionRequest.tenant_id == 1,
+                ApprovalRevisionRequest.id == revision_request_id,
+            )
+        )
+        audit_event = await session.scalar(
+            select(AuditEvent).where(
+                AuditEvent.tenant_id == 1,
+                AuditEvent.event_type == "approval_revision_requested",
+            )
+        )
+        notification = await session.scalar(
+            select(NotificationEvent).where(
+                NotificationEvent.tenant_id == 1,
+                NotificationEvent.event_type == "approval_revision_requested",
+            )
+        )
+
+    assert revision is not None
+    assert revision.approval_request_id == APPROVAL_ID
+    assert revision.requested_by_actor_id == DEFAULT_ACTOR_ID
+    assert revision.rationale == "Please update the acceptance criteria before proceeding."
+    assert revision.artifact_hash == "artifact-a"
+    assert revision.diff_hash == "diff-a"
+    assert revision.policy_version == "policy-v1"
+    assert revision.policy_pack_lock == "pack-a"
+    assert revision.provider_request_fingerprint == "provider-a"
+    assert revision.stale_after_event_seq == 1
+    assert revision.superseded_by_approval_request_id is None
+
+    assert audit_event is not None
+    assert audit_event.actor_id == DEFAULT_ACTOR_ID
+    assert audit_event.event_payload["approval_id"] == str(APPROVAL_ID)
+    assert audit_event.event_payload["revision_request_id"] == str(revision_request_id)
+    assert "rationale" not in audit_event.event_payload
+
+    assert notification is not None
+    assert notification.recipient_actor_id == REQUESTER_ACTOR_ID
+    assert notification.severity == "medium"
+    assert notification.required_action == "inspect_run"
+    assert notification.payload == {
+        "approval_id": str(APPROVAL_ID),
+        "revision_request_id": str(revision_request_id),
+    }
+
+
+@pytest.mark.asyncio
+async def test_request_revision_rejects_non_pending_approval(
+    approval_api_client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _setup_api_fixtures(session_factory)
+    async with session_factory.begin() as session:
+        await _insert_approval(session, approval_id=APPROVAL_ID, status="approved")
+
+    response = await approval_api_client.post(
+        f"/api/v1/approvals/{APPROVAL_ID}/request_revision",
+        json={"rationale": "needs another change"},
+    )
+
+    assert response.status_code == 409
+    assert "expected 'pending'" in response.json()["detail"]
+    assert await _approval_status(session_factory, APPROVAL_ID) == "approved"
+    assert await _table_count(session_factory, ApprovalRevisionRequest) == 0
+    assert await _table_count(session_factory, NotificationEvent) == 0
+    assert await _table_count(session_factory, AuditEvent) == 0
+
+
+@pytest.mark.asyncio
+async def test_request_revision_rejects_self_approval_actor(
+    approval_api_client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _setup_api_fixtures(session_factory)
+    async with session_factory.begin() as session:
+        await _insert_approval(
+            session,
+            approval_id=APPROVAL_ID,
+            requested_by_actor_id=DEFAULT_ACTOR_ID,
+        )
+
+    response = await approval_api_client.post(
+        f"/api/v1/approvals/{APPROVAL_ID}/request_revision",
+        json={"rationale": "self revision request attempt"},
+    )
+
+    assert response.status_code == 409
+    assert "self-approval is forbidden" in response.json()["detail"]
+    assert await _approval_status(session_factory, APPROVAL_ID) == "pending"
+    assert await _table_count(session_factory, ApprovalRevisionRequest) == 0
+
+
+@pytest.mark.asyncio
+async def test_request_revision_rejects_raw_secret_before_db_insert(
+    approval_api_client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _setup_api_fixtures(session_factory)
+    async with session_factory.begin() as session:
+        await _insert_approval(session, approval_id=APPROVAL_ID)
+
+    response = await approval_api_client.post(
+        f"/api/v1/approvals/{APPROVAL_ID}/request_revision",
+        json={"rationale": "Do not store sk-aaaaaaaaaaaaaaaaaaaa in rationale."},
+    )
+
+    assert response.status_code == 422
+    assert "raw-secret scan" in response.json()["detail"]
+    assert await _approval_status(session_factory, APPROVAL_ID) == "pending"
+    assert await _table_count(session_factory, ApprovalRevisionRequest) == 0
+    assert await _table_count(session_factory, NotificationEvent) == 0
+    assert await _table_count(session_factory, AuditEvent) == 0
+
+
+@pytest.mark.asyncio
+async def test_request_revision_rejects_duplicate_open_revision_request(
+    approval_api_client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _setup_api_fixtures(session_factory)
+    async with session_factory.begin() as session:
+        await _insert_approval(session, approval_id=APPROVAL_ID)
+        await session.execute(
+            text(
+                """
+                insert into approval_revision_requests (
+                  tenant_id,
+                  approval_request_id,
+                  requested_by_actor_id,
+                  rationale,
+                  artifact_hash,
+                  diff_hash,
+                  policy_version,
+                  policy_pack_lock,
+                  provider_request_fingerprint,
+                  stale_after_event_seq,
+                  metadata
+                )
+                values (
+                  1,
+                  :approval_id,
+                  :requested_by_actor_id,
+                  'already open',
+                  'artifact-a',
+                  'diff-a',
+                  'policy-v1',
+                  'pack-a',
+                  'provider-a',
+                  1,
+                  '{"rls_ready": true}'::jsonb
+                )
+                """
+            ),
+            {
+                "approval_id": APPROVAL_ID,
+                "requested_by_actor_id": DEFAULT_ACTOR_ID,
+            },
+        )
+
+    response = await approval_api_client.post(
+        f"/api/v1/approvals/{APPROVAL_ID}/request_revision",
+        json={"rationale": "second request should not pass"},
+    )
+
+    assert response.status_code == 409
+    assert "already has an open revision request" in response.json()["detail"]
+    assert await _approval_status(session_factory, APPROVAL_ID) == "pending"
+    assert await _table_count(session_factory, ApprovalRevisionRequest) == 1
