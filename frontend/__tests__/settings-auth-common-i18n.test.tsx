@@ -74,6 +74,8 @@ describe("settings/auth/common i18n", () => {
     expect(within(region).getByText("TaskManagedAI")).toBeVisible();
     expect(within(region).getByText("allowed_data_class")).toBeVisible();
     expect(within(region).getAllByText("default").length).toBeGreaterThan(0);
+    expect(within(region).getByLabelText("TaskManagedAI autonomy level")).toHaveValue("L0");
+    expect(within(region).getByRole("button", { name: "保存" })).toBeVisible();
   });
 
   it("renders Japanese dashboard labels and backend unavailable state", async () => {

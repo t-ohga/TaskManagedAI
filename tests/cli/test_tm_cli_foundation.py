@@ -106,6 +106,7 @@ def test_ticket_list_uses_project_route_and_non_bearer_operation_header() -> Non
         (["run", "cancel", _RUN_ID], "run_cancel"),
         (["secret", "use", "secret/ref", "--purpose", "test"], "secret_resolve"),
         (["provider", "call", "--provider", "openai", "--feature", "chat", "--payload-json", "{}"], "provider_call"),
+        (["settings", "autonomy", "--level", "L2"], "task_write"),
     ],
 )
 def test_command_surface_matches_13_capability_matrix(argv: list[str], capability: str) -> None:
@@ -133,6 +134,17 @@ def test_all_13_capabilities_are_exercised_by_command_surface() -> None:
     }
 
     assert command_capabilities == set(ALL_CAPABILITIES)
+
+
+def test_settings_autonomy_updates_only_autonomy_level() -> None:
+    code, _out, err, requests = _run_cli(["settings", "autonomy", "--level", "L3"])
+
+    assert code == 0
+    assert err == ""
+    assert requests[0].method == "PATCH"
+    assert requests[0].path == f"/api/v1/me/projects/{_PROJECT_ID}/autonomy"
+    assert requests[0].capability == "task_write"
+    assert requests[0].json_body == {"autonomy_level": "L3"}
 
 
 def test_mutating_command_without_project_fails_closed_before_network() -> None:

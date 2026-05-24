@@ -25,6 +25,7 @@ export const CurrentProjectSchema = z.object({
 export type CurrentProject = z.infer<typeof CurrentProjectSchema>;
 
 export const AutonomyLevelSchema = z.enum(["L0", "L1", "L2", "L3"]);
+export type AutonomyLevel = z.infer<typeof AutonomyLevelSchema>;
 
 export const ProjectListItemSchema = z.object({
   tenant_id: z.number().int(),
@@ -73,4 +74,19 @@ export async function getCurrentProjectId(): Promise<string> {
 
 export async function listCurrentProjects(): Promise<ProjectListResponse> {
   return fetchBackendJson("/api/v1/me/projects", ProjectListResponseSchema);
+}
+
+export async function updateProjectAutonomyLevel(
+  projectId: string,
+  autonomyLevel: AutonomyLevel
+): Promise<ProjectListItem> {
+  return fetchBackendJson(
+    `/api/v1/me/projects/${projectId}/autonomy` as `/${string}`,
+    ProjectListItemSchema,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ autonomy_level: autonomyLevel })
+    }
+  );
 }

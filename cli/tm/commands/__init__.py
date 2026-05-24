@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from tm.commands import approval, auth, memory, pr, provider, repo, run, secret, ticket
+from tm.commands import approval, auth, memory, pr, provider, repo, run, secret, settings, ticket
 
 
 def register_commands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -13,5 +13,6 @@ def register_commands(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     pr.register(subparsers)
     run.register(subparsers)
     secret.register(subparsers)
+    settings.register(subparsers)
     provider.register(subparsers)
     memory.register(subparsers)
