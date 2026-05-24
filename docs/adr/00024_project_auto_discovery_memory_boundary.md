@@ -14,7 +14,7 @@ supersedes: null
 superseded_by: null
 acceptance_history:
   - "2026-05-15: proposed during QL-G Quality Loop run as the project auto-discovery + memory boundary ADR."
-  - "2026-05-24: accepted at SP018-T01 ADR readiness gate. SP-016 CLI context safety is completed, SP-018 plan-only gate exists, and the schema guidance was reconciled to artifact-bound storage (`content_artifact_ref` + `content_hash`) instead of raw `redacted_content` JSONB."
+  - "2026-05-24: accepted at SP018-T01 ADR readiness gate. SP-016 CLI context safety is completed, SP-018 is completed, and the schema guidance was reconciled to artifact-bound storage (`content_artifact_ref` + `content_hash`) instead of raw `redacted_content` JSONB."
 ---
 
 最終更新: 2026-05-24 (SP018-T01 ADR readiness gate で accepted promotion、`content_artifact_ref` 正本へ drift 修正)
