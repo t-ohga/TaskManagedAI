@@ -12,7 +12,7 @@ supersedes: null
 superseded_by: null
 ---
 
-最終更新: 2026-05-24 (SP024-T01 readiness gate で accepted 化、`projects.policy_profile` は server-owned DB cache として維持)
+最終更新: 2026-05-24 (SP024-T07 で `autonomy_level` only の API / UI / CLI settings surface を追加)
 
 ## 背景
 
@@ -50,8 +50,10 @@ superseded_by: null
   - **`projects.policy_profile` compatibility decision (SP024-T01 accepted)**: `projects.policy_profile` は ADR-00009 accepted 実装の server-owned DB cache / FK として維持する。caller-visible write surface は引き続き禁止し、`ProjectCreate` / update API / CLI / UI は `autonomy_level` だけを受け取る。Policy Engine は `autonomy_level` から server-owned `policy_profile` を resolve し、必要な場合のみ server-side に `projects.policy_profile` を更新する。`policy_profiles` / `policy_profile_action_effects` / `policy_decisions_policy_profile_fkey` は削除しない。
   - `backend/app/services/policy/autonomy_policy_engine.py` (autonomy_level → policy_profile resolve helper、Policy Engine 内部で server-owned 解決、caller 入力経路を signature レベル削除)
   - `backend/app/services/policy/low_risk_profile.py` (新規、機械判定: payload_data_class / diff size / file count / forbidden path / dangerous command / provider_request_preflight / runner_mutation_gateway / ContextSnapshot 10 列 PASS)
-  - `frontend/app/(admin)/project-settings/autonomy/` (UI、`policy_profile` 入力 field は削除、`autonomy_level` のみ表示)
-  - `taskmanagedai-cli/src/settings/autonomy.ts` (`tmai settings autonomy --level L1`、`policy_profile` 指定経路は CLI からも削除)
+  - `backend/app/api/me.py` (`PATCH /api/v1/me/projects/{project_id}/autonomy`、request body は `autonomy_level` のみ、extra field forbid)
+  - `backend/app/services/policy/autonomy_settings.py` (settings writer、`policy_profile` は resolver 経由で server-owned に再解決)
+  - `frontend/app/(admin)/settings/page.tsx` / `frontend/app/(admin)/settings/actions.ts` (UI、`policy_profile` 入力 field は削除、`autonomy_level` のみ表示・更新)
+  - `cli/tm/commands/settings.py` (`tm settings autonomy --level L1`、`policy_profile` 指定経路は CLI からも削除)
   - `tests/policy/test_autonomy_level_enum.py` / `test_autonomy_level_resolve.py` / `test_low_risk_profile.py` / `test_autonomy_upgrade_gate.py` / **`test_autonomy_caller_supplied_policy_profile_reject.py` (caller-supplied `policy_profile` reject 経路 verify)** (5 件最小)
 - 実装ガイダンス:
   - `autonomy_level` enum は **5+ source** で整合: DB CHECK / SQLAlchemy CheckConstraint / Python Literal / Pydantic Field validator / pytest EXPECTED constant (`.claude/rules/cross-source-enum-integrity.md`)
@@ -77,6 +79,7 @@ superseded_by: null
   - **SP024-T04 evaluator**: `evaluate_low_risk_profile()` は payload data class / change scope (diff size + file count) / forbidden path / dangerous command / provider request preflight / runner mutation gateway / ContextSnapshot の 7 axes を行う。ADR-00025 の「1 軸でも不合格なら fallback」を満たすため、各 axis は独立 negative test を持つ。
   - **SP024-T05 Policy Engine**: `evaluate_autonomy_policy_engine_decision()` は L0-L3 action matrix、human-required action fallback、global kill switch / budget exceeded / Provider Matrix deny / Tool Registry deny override を `allow` より先に評価する。`policy_profile` seed は変更せず 14 row invariant を維持する。
   - **SP024-T06 trace boundary**: `append_autonomy_policy_trace()` は `policy_decisions`、AuditEvent `policy_decision_created`、AgentRunEvent `policy_linted` に redacted decision summary を append する。raw prompt / raw provider payload / raw secret / capability token は signature に存在せず、`input_hash` と server-owned decision metadata のみを記録する。
+  - **SP024-T07 settings boundary**: caller-facing write surface は `autonomy_level` のみを受け取り、API request schema は extra field forbid、CLI request body は `{"autonomy_level": ...}` のみ、frontend server action / API client も `policy_profile` setter を持たない。`projects.policy_profile` は resolver 経由で `default` に server-owned 再解決する。
   - 不変条件 (level 切替で破ってはならない):
     1. `secret_access` / `merge` / `deploy` / `provider_call` は **全 level で human approval 必須**
     2. `approval_requests.decided_by_actor_id` は **human actor のみ** (DB CHECK + service guard + Pydantic + pytest の 4 重防御)

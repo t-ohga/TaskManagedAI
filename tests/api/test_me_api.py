@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.app.config import Settings, get_settings
 from backend.app.db.models.project import Project
 from backend.app.db.session import create_engine
+from backend.app.services.policy.autonomy_settings import ProjectAutonomySettingsService
 
 _DEFAULT_DATABASE_URL = (
     "postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test"
@@ -172,3 +173,54 @@ async def test_current_project_returns_first_project_in_tenant(
         assert project.id == PROJECT_FIRST_ID
         assert project.slug == "project-first"
         assert project.tenant_id == 1
+
+
+@pytest.mark.asyncio
+async def test_project_autonomy_settings_service_updates_only_autonomy_level(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_two_projects(session)
+
+    async with session_factory() as session:
+        service = ProjectAutonomySettingsService(session)
+        project = await service.update_autonomy_level(
+            tenant_id=1,
+            project_id=PROJECT_SECOND_ID,
+            autonomy_level="L2",
+        )
+        await session.commit()
+
+        assert project is not None
+        assert project.id == PROJECT_SECOND_ID
+        assert project.autonomy_level == "L2"
+        assert project.policy_profile == "default"
+
+    async with session_factory() as session:
+        updated = await session.scalar(
+            select(Project).where(Project.id == PROJECT_SECOND_ID, Project.tenant_id == 1)
+        )
+
+        assert updated is not None
+        assert updated.autonomy_level == "L2"
+        assert updated.policy_profile == "default"
+
+
+@pytest.mark.asyncio
+async def test_project_autonomy_settings_service_returns_none_for_missing_project(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_two_projects(session)
+
+    async with session_factory() as session:
+        service = ProjectAutonomySettingsService(session)
+        project = await service.update_autonomy_level(
+            tenant_id=1,
+            project_id=UUID("00000000-0000-4000-8000-0000000aa099"),
+            autonomy_level="L1",
+        )
+
+        assert project is None

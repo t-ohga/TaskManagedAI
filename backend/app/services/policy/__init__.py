@@ -9,6 +9,7 @@ from backend.app.services.policy.autonomy_profile_resolver import (
     AutonomyPolicyProfileResolution,
     resolve_autonomy_policy_profile,
 )
+from backend.app.services.policy.autonomy_settings import ProjectAutonomySettingsService
 from backend.app.services.policy.autonomy_trace import (
     AUTONOMY_POLICY_AGENT_EVENT_TYPE,
     AUTONOMY_POLICY_AUDIT_EVENT_TYPE,
@@ -41,6 +42,7 @@ __all__ = [
     "AutonomyPolicyTracePayloads",
     "AutonomyPolicyTraceRecord",
     "HUMAN_REQUIRED_ACTION_CLASSES",
+    "ProjectAutonomySettingsService",
     "SelfApprovalGuardService",
     "StaleCheckPayload",
     "StaleCheckReason",

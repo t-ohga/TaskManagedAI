@@ -7,6 +7,7 @@ import {
   ProviderComplianceMatrixTable,
   SecretBoundaryNotice
 } from "../_components/sprint9-admin-ui";
+import { updateProjectAutonomyLevelAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -123,6 +124,7 @@ function ProjectListPanel({
               <th scope="col" className="px-4 py-3 text-left font-medium">Workspace</th>
               <th scope="col" className="px-4 py-3 text-left font-medium">Status</th>
               <th scope="col" className="px-4 py-3 text-left font-medium">Policy profile</th>
+              <th scope="col" className="px-4 py-3 text-left font-medium">Autonomy</th>
               <th scope="col" className="px-4 py-3 text-left font-medium">Current</th>
             </tr>
           </thead>
@@ -143,6 +145,29 @@ function ProjectListPanel({
                 </td>
                 <td className="px-4 py-3 font-mono text-xs text-muted">
                   {project.policy_profile}
+                </td>
+                <td className="px-4 py-3">
+                  <form action={updateProjectAutonomyLevelAction} className="flex items-center gap-2">
+                    <input name="project_id" type="hidden" value={project.project_id} />
+                    <select
+                      aria-label={`${project.name} autonomy level`}
+                      className="rounded-md border border-line bg-panel px-2 py-1 text-xs"
+                      defaultValue={project.autonomy_level}
+                      name="autonomy_level"
+                    >
+                      {["L0", "L1", "L2", "L3"].map((level) => (
+                        <option key={level} value={level}>
+                          {level}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="rounded-md border border-line bg-panel-muted px-2 py-1 text-xs font-semibold hover:bg-line"
+                      type="submit"
+                    >
+                      保存
+                    </button>
+                  </form>
                 </td>
                 <td className="px-4 py-3 text-xs text-muted">
                   {project.project_id === currentProjectId ? "現在" : "切替は SP-018"}

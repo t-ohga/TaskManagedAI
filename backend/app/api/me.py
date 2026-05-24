@@ -28,8 +28,10 @@ from backend.app.api.approval_inbox import (
     get_db_session,
     get_tenant_id,
 )
+from backend.app.api.dependencies.api_capability_token import maybe_require_cli_capability
 from backend.app.db.models.project import Project
 from backend.app.domain.policy.autonomy_level import AutonomyLevel
+from backend.app.services.policy.autonomy_settings import ProjectAutonomySettingsService
 
 router = APIRouter(prefix="/api/v1/me", tags=["me"])
 
@@ -68,6 +70,12 @@ class ProjectListItem(BaseModel):
 class ProjectListResponse(BaseModel):
     current_project_id: UUID
     projects: list[ProjectListItem]
+
+
+class ProjectAutonomySettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    autonomy_level: AutonomyLevel
 
 
 def _to_project_item(project: Project) -> ProjectListItem:
@@ -143,3 +151,33 @@ async def list_current_actor_projects_endpoint(
         current_project_id=projects[0].id,
         projects=[_to_project_item(project) for project in projects],
     )
+
+
+@router.patch("/projects/{project_id}/autonomy", response_model=ProjectListItem)
+async def update_project_autonomy_endpoint(
+    project_id: UUID,
+    payload: ProjectAutonomySettingsUpdate,
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_write")),  # noqa: B008
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> ProjectListItem:
+    """Update caller-visible autonomy_level only.
+
+    ``policy_profile`` remains server-owned and is resolved by
+    ProjectAutonomySettingsService. The request schema forbids extra fields, so
+    callers cannot smuggle a policy_profile setter into this surface.
+    """
+
+    project = await ProjectAutonomySettingsService(session).update_autonomy_level(
+        tenant_id=tenant_id,
+        project_id=project_id,
+        autonomy_level=payload.autonomy_level,
+    )
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="project not found for tenant",
+        )
+    await session.commit()
+    return _to_project_item(project)
