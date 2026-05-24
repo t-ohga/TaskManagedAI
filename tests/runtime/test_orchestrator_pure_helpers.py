@@ -26,18 +26,23 @@ This module covers DB-less pure helpers:
 from __future__ import annotations
 
 from dataclasses import is_dataclass
-from typing import Any, get_args, get_type_hints
+from typing import Any, cast, get_args, get_type_hints
 from uuid import UUID
 
 import pytest
 from jsonschema import Draft7Validator
 
 from backend.app.db.models.agent_run import AgentRun
+from backend.app.db.models.artifact import Artifact
+from backend.app.db.models.memory_record import MemoryRecord
 from backend.app.domain.provider.compliance import ComplianceDecision
 from backend.app.domain.provider.request import ProviderMessage, ProviderRequest
 from backend.app.domain.provider.result import ProviderResult, ProviderUsage
+from backend.app.schemas.memory import MemoryRetrievalRequest
 from backend.app.services.agent_runtime.orchestrator import (
     AgentRunOrchestrator,
+    MemoryAutoRetrieveStepResult,
+    MemoryPromptSupplement,
     ProviderStepOutcome,
     ProviderStepResult,
     RepairStepResult,
@@ -58,6 +63,7 @@ from backend.app.services.agent_runtime.provider_result_mapping import (
 from backend.app.services.agent_runtime.state_machine import (
     validate_event_type_for_transition,
 )
+from backend.app.services.memory.retrieval import MemoryRetrievalResult
 
 EXPECTED_PROVIDER_STEP_OUTCOMES = (
     "generated_artifact",
@@ -87,6 +93,8 @@ def test_orchestrator_dataclasses_are_frozen() -> None:
 
     assert is_dataclass(ProviderStepResult)
     assert is_dataclass(RepairStepResult)
+    assert is_dataclass(MemoryAutoRetrieveStepResult)
+    assert is_dataclass(MemoryPromptSupplement)
 
 
 def test_agent_run_orchestrator_exposes_policy_pack_property() -> None:
@@ -95,6 +103,7 @@ def test_agent_run_orchestrator_exposes_policy_pack_property() -> None:
     assert hasattr(AgentRunOrchestrator, "policy_pack")
     assert hasattr(AgentRunOrchestrator, "execute_provider_step")
     assert hasattr(AgentRunOrchestrator, "execute_repair_decision_step")
+    assert hasattr(AgentRunOrchestrator, "execute_memory_auto_retrieve_step")
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +362,137 @@ def test_assert_run_request_boundary_rejects_run_id_mismatch() -> None:
     run = _agent_run(run_id=_OTHER_RUN_ID)
     with pytest.raises(ValueError, match="run.id"):
         _assert_run_request_boundary(run, _provider_request())
+
+
+# ---------------------------------------------------------------------------
+# SP020-T06 memory auto-retrieve hook: untrusted supplement contract.
+# ---------------------------------------------------------------------------
+
+
+class _FakeMemoryRetrievalClient:
+    def __init__(self, result: MemoryRetrievalResult) -> None:
+        self.result = result
+        self.calls: list[tuple[int, MemoryRetrievalRequest, UUID | None]] = []
+
+    async def retrieve(
+        self,
+        *,
+        tenant_id: int,
+        request: MemoryRetrievalRequest,
+        context_snapshot_id: UUID | None = None,
+    ) -> MemoryRetrievalResult:
+        self.calls.append((tenant_id, request, context_snapshot_id))
+        return self.result
+
+
+def _make_memory_orchestrator() -> AgentRunOrchestrator:
+    return AgentRunOrchestrator(
+        session=cast(Any, object()),
+        compliance_gate=cast(Any, object()),
+        provider=cast(Any, object()),
+    )
+
+
+def _memory_retrieval_result(
+    *,
+    artifact: Artifact | None = None,
+    record_count: int = 1,
+    retrieval_hash: str | None = "a" * 64,
+) -> MemoryRetrievalResult:
+    if artifact is None and retrieval_hash is not None:
+        artifact = Artifact(
+            id=UUID("00000000-0000-4000-8000-000000005501"),
+            tenant_id=1,
+            project_id=_PROJECT_ID,
+            run_id=_RUN_ID,
+            kind="other",
+            content_hash=retrieval_hash,
+            content_jsonb={"trust_level": "untrusted_content"},
+            payload_data_class="internal",
+            trust_level="untrusted_content",
+            exportable=False,
+        )
+    records = cast(tuple[MemoryRecord, ...], tuple(object() for _ in range(record_count)))
+    return MemoryRetrievalResult(
+        records=records,
+        artifact=artifact,
+        retrieval_artifacts=(),
+        payload_data_class="internal" if artifact is not None else None,
+        retrieval_hash=retrieval_hash,
+        sanitizer_policy_version="v1.0.0" if artifact is not None else None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_memory_auto_retrieve_is_disabled_without_flag() -> None:
+    client = _FakeMemoryRetrievalClient(_memory_retrieval_result())
+
+    result = await _make_memory_orchestrator().execute_memory_auto_retrieve_step(
+        run=_agent_run(),
+        enabled=False,
+        retrieval_client=client,
+    )
+
+    assert result == MemoryAutoRetrieveStepResult(
+        enabled=False,
+        retrieval=None,
+        prompt_supplement=None,
+    )
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_memory_auto_retrieve_returns_ref_only_untrusted_supplement() -> None:
+    context_snapshot_id = UUID("00000000-0000-4000-8000-000000005601")
+    client = _FakeMemoryRetrievalClient(_memory_retrieval_result(record_count=2))
+
+    result = await _make_memory_orchestrator().execute_memory_auto_retrieve_step(
+        run=_agent_run(),
+        context_snapshot_id=context_snapshot_id,
+        record_kinds=("manual_user",),
+        limit=3,
+        enabled=True,
+        retrieval_client=client,
+    )
+
+    assert result.enabled is True
+    assert result.retrieval is client.result
+    assert result.prompt_supplement == MemoryPromptSupplement(
+        artifact_ref="artifact://memory-retrieval/00000000-0000-4000-8000-000000005501",
+        retrieval_hash="a" * 64,
+        record_count=2,
+    )
+    assert result.prompt_supplement.trust_level == "untrusted_content"
+    assert result.prompt_supplement.source_type == "memory_retrieval_artifact"
+    assert result.prompt_supplement.instruction_effect == "none"
+    assert result.prompt_supplement.may_contain_instructions is True
+    assert "trusted_instruction" not in repr(result.prompt_supplement)
+
+    assert len(client.calls) == 1
+    tenant_id, request, forwarded_context_snapshot_id = client.calls[0]
+    assert tenant_id == 1
+    assert request.project_id == _PROJECT_ID
+    assert request.retrieval_run_id == _RUN_ID
+    assert request.record_kinds == ("manual_user",)
+    assert request.limit == 3
+    assert forwarded_context_snapshot_id == context_snapshot_id
+
+
+@pytest.mark.asyncio
+async def test_memory_auto_retrieve_keeps_empty_retrieval_out_of_prompt() -> None:
+    client = _FakeMemoryRetrievalClient(
+        _memory_retrieval_result(artifact=None, record_count=0, retrieval_hash=None)
+    )
+
+    result = await _make_memory_orchestrator().execute_memory_auto_retrieve_step(
+        run=_agent_run(),
+        enabled=True,
+        retrieval_client=client,
+    )
+
+    assert result.enabled is True
+    assert result.retrieval is client.result
+    assert result.prompt_supplement is None
 
 
 # ---------------------------------------------------------------------------

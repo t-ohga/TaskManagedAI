@@ -28,7 +28,7 @@ risks:
   - "PE-F-014/015/016 closure needs cross-source tests, not only docs trace"
 ---
 
-最終更新: 2026-05-24 (SP020-T05 adopted_artifacts metric attribution completed)
+最終更新: 2026-05-24 (SP020-T06 orchestrator auto-retrieve hook completed)
 
 ## 目的
 
@@ -68,7 +68,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - SP020-T03: archive policy service (completed)。manual_user default protect、auto record aging/relevance policy、`memory_archive_engaged` audit。
 - SP020-T04: insights aggregation service + read-only API / CLI surface (completed)。raw payload 非露出、feature flag disabled default。
 - SP020-T05: adopted_artifacts link table + citation_coverage final-only attribution contract (completed)。
-- SP020-T06: orchestrator auto-retrieve hook。retrieval output は `untrusted_content` のまま、trusted_instruction 昇格禁止。
+- SP020-T06: orchestrator auto-retrieve hook (completed)。retrieval output は `untrusted_content` のまま、trusted_instruction 昇格禁止。
 - SP020-T07: Phase E closure tests。PE-F-014 6 reason_code / PE-F-015 exact query / PE-F-016 policy_profile 14 seed + review_artifact guard。
 - SP020-T08: backup/restore extension。archive state / adopted_artifacts / insight source FK を verify。
 
@@ -80,7 +80,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - [x] SP020-T03 archive policy service
 - [x] SP020-T04 insights read-only API / CLI
 - [x] SP020-T05 adopted_artifacts metric attribution
-- [ ] SP020-T06 orchestrator auto-retrieve hook
+- [x] SP020-T06 orchestrator auto-retrieve hook
 - [ ] SP020-T07 Phase E PE-F-014/015/016 closure tests
 - [ ] SP020-T08 backup/restore extension
 
@@ -371,3 +371,36 @@ deferred:
 
 risks:
 - citation payload shape は `sample_claims[].citation_ids` の ref-only aggregate source に限定。将来 GroundingSupport table が入る場合は separate ADR / migration で exact query を差し替える。
+
+### 2026-05-24 SP020-T06 orchestrator auto-retrieve hook
+
+changed:
+- `backend/app/config.py`
+- `backend/app/services/agent_runtime/orchestrator.py`
+- `tests/runtime/test_orchestrator_pure_helpers.py`
+- `docs/sprints/SP-020_curator_insights_integration.md`
+- `docs/sprints/README.md`
+
+implemented:
+- `memory_auto_retrieve_enabled=false` default の fail-closed feature flag を追加。
+- `AgentRunOrchestrator.execute_memory_auto_retrieve_step` を追加し、明示 enable 時だけ `MemoryRetrievalService.retrieve` を呼び出す。
+- retrieval request は server-side の `tenant_id/project_id/run_id/context_snapshot_id` 境界で構築し、caller から trusted instruction を受け取らない。
+- prompt 連携は `artifact://memory-retrieval/<id>` と `retrieval_hash` だけの ref-only `MemoryPromptSupplement` に限定し、`trust_level='untrusted_content'` / `instruction_effect='none'` を固定。
+- `ProviderRequest.messages` は mutate せず、downstream prompt builder が untrusted supplement として扱う前提を method contract に明記。
+
+self_review:
+- adopted: disabled default path は retrieval client を呼ばない regression test を追加。
+- adopted: source type / trust level / instruction effect / trusted_instruction 非露出を unit test で固定。
+- adopted: empty retrieval は prompt supplement を生成しない negative test を追加。
+
+verified:
+- `uv run ruff check backend/app/config.py backend/app/services/agent_runtime/orchestrator.py tests/runtime/test_orchestrator_pure_helpers.py`
+- `PYTHONPATH=cli uv run mypy backend/app/config.py backend/app/services/agent_runtime/orchestrator.py tests/runtime/test_orchestrator_pure_helpers.py`
+- `uv run pytest tests/runtime/test_orchestrator_pure_helpers.py -q` (`66 passed`)
+
+deferred:
+- Phase E closure tests (SP020-T07)。
+- backup/restore extension (SP020-T08)。
+
+risks:
+- T06 intentionally stops at the orchestration hook. Prompt rendering / UI display of the memory retrieval supplement remains out of scope and must preserve `untrusted_content` semantics when implemented.

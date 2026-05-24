@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     taskhub_config_dir: str = "/etc/taskhub"
     taskhub_host_id: str = ""
     memory_api_enabled: bool = False
+    memory_auto_retrieve_enabled: bool = False
 
     @model_validator(mode="after")
     def validate_local_boundary(self) -> Self:
