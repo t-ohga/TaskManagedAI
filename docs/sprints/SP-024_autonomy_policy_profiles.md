@@ -30,7 +30,7 @@ risks:
   - "projects.policy_profile already exists as a server-owned DB field; migration must not remove or repurpose it until ADR-00009 compatibility is proven"
 ---
 
-最終更新: 2026-05-24 (SP024-T02 autonomy_level enum + migration completed)
+最終更新: 2026-05-24 (SP024-T03 server-owned resolver completed)
 
 ## 目的
 
@@ -79,7 +79,7 @@ ADR-00025 の autonomy L0-L3 を、approval / policy / audit / UI / CLI の境�
 - SP024-T00: plan-only gate (本 PR)。Sprint Pack / registry / ADR drift note を起票し、runtime 実装を分離する。
 - SP024-T01: ADR-00025 readiness gate (completed)。ADR-00025 を current implementation と同期し、accepted 化、batch split、`projects.policy_profile` compatibility decision を確定する。
 - SP024-T02: `autonomy_level` enum + DB migration (completed)。default L0、DB CHECK / SQLAlchemy / Python Literal / Pydantic / pytest / docs の 5+ source 整合を作る。
-- SP024-T03: server-owned policy resolver。caller-supplied `policy_profile` write path を引き続き reject し、`autonomy_level -> policy_profile` を Policy Engine 内部で解決する。
+- SP024-T03: server-owned policy resolver (completed)。caller-supplied `policy_profile` write path を引き続き reject し、`autonomy_level -> policy_profile` を Policy Engine 内部で解決する。
 - SP024-T04: low-risk profile evaluator。7 軸の fail-closed 判定を実装し、各軸 negative test と all-pass positive test を追加する。
 - SP024-T05: Policy Engine integration。L0-L3 matrix、human-required actions、kill switch / provider block / tool deny / budget cap override を統合する。
 - SP024-T06: audit / AgentRunEvent / policy_decisions trace。auto-allow path でも `policy_profile` / `policy_version` / `auto_allow_reason` / `effective_action_class` / `applied_level` を raw payload なしで記録する。
@@ -91,7 +91,7 @@ ADR-00025 の autonomy L0-L3 を、approval / policy / audit / UI / CLI の境�
 - [x] SP024-T00 plan-only gate
 - [x] SP024-T01 ADR-00025 readiness gate
 - [x] SP024-T02 autonomy_level enum + DB migration
-- [ ] SP024-T03 server-owned resolver + caller policy_profile reject
+- [x] SP024-T03 server-owned resolver + caller policy_profile reject
 - [ ] SP024-T04 low-risk profile evaluator
 - [ ] SP024-T05 Policy Engine L0-L3 integration
 - [ ] SP024-T06 audit / AgentRunEvent / policy_decisions trace
@@ -284,8 +284,36 @@ verified:
 - `git diff --check`
 
 deferred:
-- server-owned `autonomy_level -> policy_profile` resolver and caller-supplied `policy_profile` regression sweep remain SP024-T03.
 - low-risk evaluator, Policy Engine L0-L3 runtime integration, audit trace, UI/CLI settings remain SP024-T04+.
 
 risks:
 - Existing `/api/v1/me/projects` now exposes `autonomy_level` read-only; no caller write path exists yet. T07 must add settings UI/CLI without accepting `policy_profile`.
+
+### 2026-05-24 SP024-T03 server-owned resolver + caller reject
+
+changed:
+- `backend/app/services/policy/autonomy_profile_resolver.py`
+- `backend/app/services/policy/__init__.py`
+- `backend/app/repositories/project.py`
+- `tests/policy/test_autonomy_profile_resolver.py`
+- `docs/adr/00025_autonomy_policy_profiles.md`
+- `docs/sprints/SP-024_autonomy_policy_profiles.md`
+
+implemented:
+- `resolve_autonomy_policy_profile()` を追加し、SP024-T03 時点では L0-L3 全 level を server-owned `policy_profile='default'` / `auto_allow_enabled=False` に fail-closed 解決。
+- 既存 `low_risk_auto_allow` は `provider_call` allow row を含むため、ADR-00025 の human-required action invariant を満たす T05 更新まで resolver から返さない guard を追加。
+- generic `ProjectRepository` payload で `policy_profile` と `autonomy_level` の直書きを reject。
+
+verified:
+- `uv run ruff check backend/app/services/policy/autonomy_profile_resolver.py backend/app/services/policy/__init__.py backend/app/repositories/project.py tests/policy/test_autonomy_profile_resolver.py docs/adr/00025_autonomy_policy_profiles.md docs/sprints/SP-024_autonomy_policy_profiles.md`
+- `PYTHONPATH=cli uv run mypy backend/app/services/policy/autonomy_profile_resolver.py backend/app/services/policy/__init__.py backend/app/repositories/project.py tests/policy/test_autonomy_profile_resolver.py`
+- `uv run pytest tests/policy/test_autonomy_profile_resolver.py tests/policy/test_autonomy_level_enum.py -q`
+- `TASKMANAGEDAI_DATABASE_URL=<isolated 127.0.0.1:55434 test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/policy/test_policy_profile_seed.py::test_project_repository_rejects_policy_profile_payload -q`
+- `.claude/hooks/sprint/check-sprint-pack-frontmatter.sh docs/sprints/SP-024_autonomy_policy_profiles.md`
+- `git diff --check`
+
+deferred:
+- low-risk evaluator、Policy Engine L0-L3 runtime integration、audit trace、UI/CLI settings remain SP024-T04+.
+
+risks:
+- T05 で policy profile effect matrix を更新するまで、L1-L3 は引き続き `default` profile に解決される。

@@ -56,6 +56,7 @@ superseded_by: null
 - 実装ガイダンス:
   - `autonomy_level` enum は **5+ source** で整合: DB CHECK / SQLAlchemy CheckConstraint / Python Literal / Pydantic Field validator / pytest EXPECTED constant (`.claude/rules/cross-source-enum-integrity.md`)
   - `policy_profile` は **caller 指定不可**、Policy Engine 内部で `autonomy_level` から解決する server-owned 値 (`.claude/rules/server-owned-boundary.md` §1)。現行 code は `ProjectCreate` で caller-supplied `policy_profile` を拒否済み。SP024-T03 で API / CLI / UI / repository / DB の全 write surface を再確認し、`test_autonomy_caller_supplied_policy_profile_reject.py` で regression 化する。
+  - **SP024-T03 resolver safety**: SP024-T03 時点では `resolve_autonomy_policy_profile()` は L0-L3 全 level を server-owned `policy_profile='default'` に解決し、`auto_allow_enabled=False` を返す。既存 `low_risk_auto_allow` は SP-014 semantics で `provider_call` allow row を持つため、ADR-00025 の「provider_call は全 level human approval 必須」不変条件を満たす T05 更新が完了するまで resolver から返してはならない。
   - level matrix:
 
     | Level | 名称 | auto-allow される action_class (low-risk profile 通過時) | human approval が必須の action_class | 想定用途 |
