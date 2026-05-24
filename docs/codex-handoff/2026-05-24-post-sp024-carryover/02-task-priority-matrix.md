@@ -7,7 +7,7 @@
 | P0 | task-01 | SP-008 | GitHub App / RepoProxy residual reconciliation | required | 0.3-0.5 day |
 | P0 | task-02 | SP-009 | P0 UI backend/frontend residual reconciliation | required | 0.3-0.5 day |
 | P1 | task-03 | SP-007 | Phase 5 hook trust boundary plan | required before machine-local changes | 0.2-0.4 day |
-| P2 | task-04 | SP-000 / roadmap | bootstrap/backlog status hygiene | optional docs-only | 0.2 day |
+| P2 | task-04 | SP-000 / roadmap | bootstrap/backlog status hygiene | optional docs-only (completed 2026-05-24) | 0.2 day |
 
 ## Recommended Order
 
@@ -20,6 +20,9 @@ task-02 (SP-009 reconciliation)
 
 task-03 (SP-007 Phase 5 plan)
   -> plan artifact ready; implementation only after explicit machine-local trust-boundary approval
+
+task-04 (status hygiene)
+  -> completed after PR #227: current-state, backlog carry-over, and task index reconciled
 ```
 
 ## SP-008 Tentative Implementation Batches

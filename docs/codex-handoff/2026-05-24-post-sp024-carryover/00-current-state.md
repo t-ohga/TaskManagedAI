@@ -2,9 +2,9 @@
 
 ## Verified Repository State
 
-- Remote `main` was verified at `2cc7b6b5d5fa760ce671549efb7db7a0d54d0adc` after SP-024 closeout.
-- Open GitHub PR list was empty.
-- Root worktree was clean, and `git stash list` returned no entries.
+- Remote `main` was verified at `f44927b5b679f696ec368c2face785d0dd9e6199` after PRs #219-#227.
+- Open GitHub PR list was empty after PR #227 merge.
+- Root worktree was clean, and `git stash list` returned no entries. Root `main` was behind remote after the autonomous PR sequence and should be fast-forwarded separately, not repaired through stash.
 - The SSH remote rejected `git fetch` with `Permission denied (publickey)`. HTTPS fetch worked. Use HTTPS fetch or `gh` API when local refs are stale.
 
 ## SP-024 Result
@@ -37,11 +37,17 @@ The earlier next-candidate list named SP-014 batch 1+, SP-015 batch 0, and SP-01
 
 | Sprint | current status | current interpretation |
 |---|---|---|
-| SP-007 runner sandbox | `done_with_phase5_defer` | implementation is mostly complete; Phase 5 repo-external hook trust work remains intentionally deferred |
-| SP-008 GitHub App / RepoProxy | `partial_skeleton` | high-risk residual remains; exact residual must be reconciled before code |
-| SP-009 P0 UI Pack | `skeleton_pending_backend` | likely stale after later UI/API work; reconcile before implementation |
+| SP-007 runner sandbox | `done_with_phase5_defer` | runner/security core is complete; Phase 5 plan + repo-only helpers are ready, but external trust-root install remains approval-gated |
+| SP-008 GitHub App / RepoProxy | `partial_skeleton` | #219-#223 completed service-boundary batches; real GitHub transport, live ref re-fetch, deployment SOPS resolver, and external worker/API adoption remain |
+| SP-009 P0 UI Pack | `partial_skeleton` | #224/#225 completed route reconciliation and contract/redaction tests; golden E2E, DOM secret scan, PayloadDataClass/future AuditEventType registry drift, and SP-009-5 split remain |
 | SP-000 bootstrap | `ready` | old bootstrap metadata; treat as backlog hygiene, not feature implementation |
 
 ## Next Work Boundary
 
-The safest next work is a docs-only reconciliation PR, then a small implementation PR. Starting with SP-008 code without reconciliation risks duplicating later Sprint work or reopening GitHub App secret/repository mutation boundaries with stale assumptions.
+The safest next work is one of:
+
+- SP-009-5 split docs for Today/Inbox, unified timeline, request_revision, notification triage, and KPI strip.
+- SP-008 residual implementation that does not require new GitHub App permissions or raw token exposure.
+- SP-007 Phase 5C only after explicit machine-local trust-root approval.
+
+Do not reopen stale SP-014/SP-015/SP-016 candidate work; those Sprint Packs are completed.
