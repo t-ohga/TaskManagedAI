@@ -24,6 +24,7 @@ from backend.app.config import Settings, get_settings
 from backend.app.db.models.agent_run_event import AgentRunEvent
 from backend.app.db.session import create_engine
 from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
+from backend.app.services.repoproxy.draft_pr_runtime import DraftPRRuntime
 from backend.app.services.repoproxy.repo_pr_event import (
     RepoPREventRepository,
     RepoPROpenedEventDenyReason,
@@ -33,8 +34,11 @@ from backend.app.services.repoproxy.repo_pr_event import (
 )
 from backend.app.services.repoproxy.repoproxy import (
     DraftPRBinding,
+    DraftPRRequest,
     DraftPRResult,
+    MockRepoProxy,
     RepoProxyDenyReason,
+    StaticDraftPRRequestResolver,
 )
 
 _DEFAULT_DATABASE_URL = (
@@ -229,6 +233,28 @@ def _success_result(
     )
 
 
+def _draft_pr_request() -> DraftPRRequest:
+    return DraftPRRequest(
+        repo_full_name="owner/repo",
+        base_branch="main",
+        head_branch="codex/agent-run-abcd1234",
+        commit_sha=HEAD_SHA,
+        artifact_hash="1" * 64,
+        policy_version="policy-v1",
+        provider_request_fingerprint="3" * 64,
+        repo_state_commit_sha="4" * 40,
+        approval_id=str(APPROVAL_ID),
+    )
+
+
+def _mock_proxy() -> MockRepoProxy:
+    return MockRepoProxy(
+        resolver=StaticDraftPRRequestResolver(
+            {(TENANT_ID, APPROVAL_ID, RUN_ID): _draft_pr_request()}
+        )
+    )
+
+
 def test_build_payload_uses_canonical_redacted_pr_url() -> None:
     payload = build_repo_pr_opened_payload(
         binding=_binding(),
@@ -328,6 +354,68 @@ async def test_writer_does_not_append_for_denied_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_runtime_appends_repo_pr_opened_after_successful_draft_pr() -> None:
+    repository = _FakeEventRepository()
+    writer = RepoPROpenedEventWriter(
+        event_repository=cast(RepoPREventRepository, repository)
+    )
+    runtime = DraftPRRuntime(repo_proxy=_mock_proxy(), event_writer=writer)
+
+    execution = await runtime.create_draft_pr(
+        binding=_binding(),
+        actor_id=ACTOR_ID,
+        created_at=CREATED_AT,
+        expected_previous_seq_no=0,
+    )
+
+    assert execution.draft_pr_result.pr_number == 1
+    assert execution.draft_pr_result.deny_reason is None
+    assert execution.repo_pr_opened_event is not None
+    assert execution.event_deny_reason is None
+    assert repository.calls == [
+        {
+            "tenant_id": TENANT_ID,
+            "run_id": RUN_ID,
+            "event_type": "repo_pr_opened",
+            "event_payload": {
+                "pr_number": 1,
+                "pr_url": "https://github.com/owner/repo/pull/1",
+                "repo_full_name": "owner/repo",
+                "branch": "codex/agent-run-abcd1234",
+                "head_sha": HEAD_SHA,
+                "draft": True,
+                "created_at": "2026-05-24T18:30:00+00:00",
+                "approval_id": str(APPROVAL_ID),
+                "source": "repoproxy",
+            },
+            "actor_id": ACTOR_ID,
+            "idempotency_key": f"repoproxy:repo_pr_opened:{RUN_ID}:1",
+            "expected_previous_seq_no": 0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_does_not_append_event_for_denied_draft_pr() -> None:
+    repository = _FakeEventRepository()
+    writer = RepoPROpenedEventWriter(
+        event_repository=cast(RepoPREventRepository, repository)
+    )
+    runtime = DraftPRRuntime(repo_proxy=MockRepoProxy(), event_writer=writer)
+
+    execution = await runtime.create_draft_pr(
+        binding=_binding(),
+        actor_id=ACTOR_ID,
+        created_at=CREATED_AT,
+    )
+
+    assert execution.draft_pr_result.deny_reason == RepoProxyDenyReason.APPROVAL_NOT_GRANTED
+    assert execution.repo_pr_opened_event is None
+    assert execution.event_deny_reason is None
+    assert repository.calls == []
+
+
+@pytest.mark.asyncio
 async def test_append_repo_pr_opened_event_persists_append_only_event(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -357,3 +445,33 @@ async def test_append_repo_pr_opened_event_persists_append_only_event(
         assert persisted.event_payload["head_sha"] == HEAD_SHA
         assert persisted.event_payload["draft"] is True
         assert "ghs_leaky_token" not in repr(persisted.event_payload)
+
+
+@pytest.mark.asyncio
+async def test_runtime_persists_repo_pr_opened_event_after_mock_repoproxy_success(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _setup_runtime_fixture(session)
+        await session.commit()
+
+        runtime = DraftPRRuntime(
+            repo_proxy=_mock_proxy(),
+            event_writer=RepoPROpenedEventWriter(session),
+        )
+        execution = await runtime.create_draft_pr(
+            binding=_binding(),
+            actor_id=ACTOR_ID,
+            created_at=CREATED_AT,
+            expected_previous_seq_no=0,
+        )
+        await session.commit()
+
+        assert execution.draft_pr_result.pr_number == 1
+        assert isinstance(execution.repo_pr_opened_event, AgentRunEvent)
+        assert execution.event_deny_reason is None
+        persisted = await session.scalar(select(AgentRunEvent))
+        assert persisted is not None
+        assert persisted.event_type == "repo_pr_opened"
+        assert persisted.idempotency_key == f"repoproxy:repo_pr_opened:{RUN_ID}:1"
+        assert persisted.event_payload["pr_url"] == "https://github.com/owner/repo/pull/1"

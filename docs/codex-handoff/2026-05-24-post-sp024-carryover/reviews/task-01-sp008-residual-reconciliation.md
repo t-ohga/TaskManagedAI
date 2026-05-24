@@ -36,7 +36,7 @@ The current repository has enough primitives to continue SP-008, but it does not
 1. RepoProxy server-owned binding refactor: completed through Batch A/A2; live Git ref re-fetch remains with transport.
 2. GitHubAppAdapter broker-mediated boundary: partially completed; real httpx transport + live Git ref re-fetch remain.
 3. Webhook SecretBroker/replay service boundary: completed through Batch C; concrete Redis adapter, concrete SecretBroker secret resolver, and FastAPI route remain.
-4. `repo_pr_opened` runtime emission: event writer + DB append path completed through Batch D; automatic RepoProxy call-site wiring remains.
+4. `repo_pr_opened` runtime emission: event writer + DB append path completed through Batch D; `DraftPRRuntime` call-site wrapper completed through Batch D2. External API/worker adoption remains after real GitHub transport is enabled.
 5. Agent-runs KPI endpoint: completed through Batch E as `GET /api/v1/agent_runs/{run_id}/kpi`.
 
 ## Review Notes

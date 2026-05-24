@@ -5,7 +5,7 @@ status: "partial_skeleton"
 sprint_no: 8
 created_at: "2026-05-13"
 updated_at: "2026-05-24"
-review_summary: "2026-05-24 reconciliation + Batch A/A2/B/C/D/E: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup / server-owned Draft PR binding guard / DB-backed ApprovalRequest+ContextSnapshot resolver / broker-mediated GitHubAppAdapter boundary / webhook service boundary with replay protocol / repo_pr_opened event writer / agent_runs KPI endpoint are present. Real GitHub httpx transport, live Git ref re-fetch, concrete SecretBroker+Redis webhook adapters and route wiring, and RepoProxy runtime call-site wiring remain residual. Keep status partial_skeleton."
+review_summary: "2026-05-24 reconciliation + Batch A/A2/B/C/D/D2/E: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup / server-owned Draft PR binding guard / DB-backed ApprovalRequest+ContextSnapshot resolver / broker-mediated GitHubAppAdapter boundary / webhook service boundary with replay protocol / repo_pr_opened event writer + DraftPRRuntime call-site / agent_runs KPI endpoint are present. Real GitHub httpx transport, live Git ref re-fetch, concrete SecretBroker+Redis webhook adapters and route wiring remain residual. Keep status partial_skeleton."
 target_days: 5
 max_days: 7
 adr_refs:
@@ -300,13 +300,13 @@ verify で品質確認。
 - `backend/app/domain/agent_runtime/event_type.py`: `repo_pr_opened` event type exists.
 - `backend/app/services/metrics/orchestrator_kpi_rollup.py`: reads existing `repo_pr_opened` events for orchestrator-level proxy rollup.
 - `backend/app/services/metrics/agent_run_kpi.py` + `backend/app/api/agent_runs.py`: expose `GET /api/v1/agent_runs/{run_id}/kpi` for one tenant-scoped run without returning raw event payloads.
+- `backend/app/services/repoproxy/draft_pr_runtime.py`: standard runtime call-site calls `RepoProxy.create_draft_pr()` and appends `repo_pr_opened` through `RepoPROpenedEventWriter` after successful Draft PR creation.
 
 #### not verified / still residual
 
 - `backend/app/services/repoproxy/github_app_adapter.py` exists as a broker-mediated adapter boundary with no raw installation token exposure to transport. Real GitHub httpx transport and live Git ref re-fetch remain pending.
 - `RepoProxy.create_draft_pr()` now accepts only `DraftPRBinding`; the DB-backed resolver loads ApprovalRequest + latest ContextSnapshot and passes the internal `DraftPRRequest` to the transport. Live Git ref re-fetch remains pending for GitHubAppAdapter.
 - `GitHubWebhookVerifier` service boundary with SecretBroker resolver protocol, Redis SETNX replay protocol, rotation status validation, and redacted audit payload is present. Concrete SecretBroker resolver, concrete Redis adapter, and FastAPI route wiring remain pending.
-- `RepoPROpenedEventWriter` persists append-only `repo_pr_opened` AgentRunEvent payloads from successful Draft PR results. Automatic RepoProxy runtime call-site wiring remains pending.
 - Real GitHub App admin registration / private key SOPS metadata cannot be verified from repo files and remains an operator setup item unless a secret metadata fixture is added.
 
 #### next implementation batches
@@ -314,7 +314,7 @@ verify で品質確認。
 1. Batch A/A2: service-level RepoProxy server-owned binding refactor (`approval_id`, `agent_run_id`) + negative tests for each mismatch. **Completed 2026-05-24**: public signature now takes only `DraftPRBinding`, pure server-owned state builder exists, and DB-backed resolver loads ApprovalRequest + latest ContextSnapshot. Live Git ref re-fetch remains for Batch B transport integration.
 2. Batch B: `GitHubAppAdapter` broker-mediated boundary with raw-token non-exposure tests. **Partially completed 2026-05-24**: adapter boundary + tests exist; real httpx transport, retries/rate limit, and live Git ref re-fetch remain.
 3. Batch C: webhook service layer with SecretBroker resolution, Redis replay guard, rotation status validation, and audit payload redaction. **Completed 2026-05-24 at service boundary level**; concrete SecretBroker resolver / Redis adapter / FastAPI route wiring remain.
-4. Batch D: actual `repo_pr_opened` emission from the runtime path. **Partially completed 2026-05-24**: append-only event writer + DB persistence tests exist; automatic RepoProxy runtime call-site wiring remains.
+4. Batch D/D2: actual `repo_pr_opened` emission from the runtime path. **Completed at service boundary level 2026-05-24**: append-only event writer + DB persistence tests + `DraftPRRuntime` call-site wrapper exist.
 5. Batch E: `/api/v1/agent_runs/{run_id}/kpi` endpoint. **Completed 2026-05-24**: per-run AC-KPI-02 source endpoint + service tests exist. Final SP-008 status closeout waits for remaining transport/webhook/call-site residuals.
 
 ### 2026-05-24 Batch A implementation (RepoProxy binding guard)
@@ -335,7 +335,7 @@ verify で品質確認。
 
 - Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
 - Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
-- Automatic call-site wiring from the final RepoProxy Draft PR execution path to `RepoPROpenedEventWriter`.
+- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
 
 ### 2026-05-24 Batch C implementation (Webhook service boundary)
 
@@ -357,7 +357,7 @@ verify で品質確認。
 - Concrete SecretBroker-backed secret resolver for webhook HMAC secret material.
 - Concrete Redis SETNX replay adapter.
 - FastAPI `/webhooks/github` route with Tailscale-only ingress check.
-- Automatic call-site wiring from the final RepoProxy Draft PR execution path to `RepoPROpenedEventWriter`.
+- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
 
 ### 2026-05-24 Batch D implementation (repo_pr_opened event writer)
 
@@ -376,7 +376,27 @@ verify で品質確認。
 
 #### deferred
 
-- Automatic call-site wiring from the final RepoProxy Draft PR execution path to `RepoPROpenedEventWriter`.
+- Completed by Batch D2 below.
+
+### 2026-05-24 Batch D2 implementation (DraftPRRuntime call-site wiring)
+
+#### changed
+
+- `backend/app/services/repoproxy/draft_pr_runtime.py`: added `DraftPRRuntime` and `DraftPRRuntimeResult`.
+- `DraftPRRuntime.create_draft_pr()` calls `RepoProxy.create_draft_pr(binding)` and appends `repo_pr_opened` through `RepoPROpenedEventWriter` only after successful Draft PR creation.
+- Denied Draft PR results return without event append, preserving the invariant that `repo_pr_opened` means an actual PR exists.
+- Writer-level denial for incomplete successful results is surfaced as `event_deny_reason` instead of silently claiming event emission.
+- `tests/repoproxy/test_repo_pr_opened_event.py`: added unit tests for success and denied paths plus a DB integration test proving MockRepoProxy success persists `repo_pr_opened` through the runtime service.
+
+#### verified
+
+- `uv run ruff check backend/app/services/repoproxy/draft_pr_runtime.py backend/app/services/repoproxy/__init__.py tests/repoproxy/test_repo_pr_opened_event.py`
+- `PYTHONPATH=cli uv run mypy backend/app/services/repoproxy/draft_pr_runtime.py tests/repoproxy/test_repo_pr_opened_event.py`
+- `TASKMANAGEDAI_RUN_DB_TESTS=1 TASKMANAGEDAI_DATABASE_URL='postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:55434/taskmanagedai_test' uv run pytest tests/repoproxy/test_repo_pr_opened_event.py -q`
+
+#### deferred
+
+- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
 
 ### 2026-05-24 Batch E implementation (AgentRun KPI endpoint)
 
@@ -400,7 +420,7 @@ verify で品質確認。
 #### deferred
 
 - True PR merged timestamp source (`repo_pr_merged` / GitHub merge event) remains future work; current P0 source is explicitly a `repo_pr_opened` to AgentRun completion proxy.
-- Automatic call-site wiring from final RepoProxy Draft PR execution to `RepoPROpenedEventWriter`.
+- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
 
 ### 2026-05-24 Batch A2 implementation (DB-backed Draft PR resolver)
 
@@ -419,7 +439,7 @@ verify で品質確認。
 
 - Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
 - Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
-- Automatic call-site wiring from the final RepoProxy Draft PR execution path to `RepoPROpenedEventWriter`.
+- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
 
 ### 2026-05-24 Batch B implementation (GitHubAppAdapter boundary)
 
@@ -439,7 +459,7 @@ verify で品質確認。
 
 - Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
 - Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
-- Automatic call-site wiring from the final RepoProxy Draft PR execution path to `RepoPROpenedEventWriter`.
+- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
 
