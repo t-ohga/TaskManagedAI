@@ -12,3 +12,7 @@ server-owned-boundary §1:
 """
 
 from __future__ import annotations
+
+from backend.app.services.repoproxy.draft_pr_resolver import DbDraftPRRequestResolver
+
+__all__ = ["DbDraftPRRequestResolver"]
