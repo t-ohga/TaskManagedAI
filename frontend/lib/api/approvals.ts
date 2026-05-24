@@ -55,6 +55,19 @@ export const DecideRequestSchema = z.object({
 
 export type DecideRequest = z.infer<typeof DecideRequestSchema>;
 
+export const RequestRevisionRequestSchema = z.object({
+  rationale: z.string().trim().min(1).max(2000)
+});
+
+export type RequestRevisionRequest = z.infer<typeof RequestRevisionRequestSchema>;
+
+export const ApprovalRevisionResponseSchema = z.object({
+  approval: ApprovalDetailSchema,
+  revision_request_id: z.string().uuid()
+});
+
+export type ApprovalRevisionResponse = z.infer<typeof ApprovalRevisionResponseSchema>;
+
 export type ApprovalStatus = z.infer<typeof ApprovalStatusEnum>;
 
 export async function listApprovals(
@@ -93,4 +106,22 @@ export async function decideApproval(
     },
     body: JSON.stringify(DecideRequestSchema.parse(body))
   });
+}
+
+export async function requestApprovalRevision(
+  approvalId: string,
+  body: RequestRevisionRequest
+): Promise<ApprovalRevisionResponse> {
+  return fetchBackendJson(
+    `/api/v1/approvals/${approvalId}/request_revision`,
+    ApprovalRevisionResponseSchema,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json"
+      },
+      body: JSON.stringify(RequestRevisionRequestSchema.parse(body))
+    }
+  );
 }

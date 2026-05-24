@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { ApprovalDetailSchema } from "@/lib/api/approvals";
+import {
+  ApprovalDetailSchema,
+  ApprovalRevisionResponseSchema,
+  RequestRevisionRequestSchema
+} from "@/lib/api/approvals";
 
 const baseApprovalDetail = {
   id: "00000000-0000-4000-8000-00000000a101",
@@ -32,5 +36,27 @@ describe("approval API schemas", () => {
 
   it("treats missing stale event sequence as null for additive backend rollout", () => {
     expect(ApprovalDetailSchema.parse(baseApprovalDetail).stale_after_event_seq).toBeNull();
+  });
+
+  it("trims request revision rationale before sending it to the backend", () => {
+    expect(
+      RequestRevisionRequestSchema.parse({
+        rationale: "  Please revise the acceptance criteria.  ",
+      })
+    ).toEqual({ rationale: "Please revise the acceptance criteria." });
+  });
+
+  it("parses request revision responses without adding an approval status enum", () => {
+    const response = ApprovalRevisionResponseSchema.parse({
+      approval: {
+        ...baseApprovalDetail,
+        status: "invalidated",
+        stale_after_event_seq: 42,
+      },
+      revision_request_id: "00000000-0000-4000-8000-00000000a103",
+    });
+
+    expect(response.approval.status).toBe("invalidated");
+    expect(response.revision_request_id).toBe("00000000-0000-4000-8000-00000000a103");
   });
 });

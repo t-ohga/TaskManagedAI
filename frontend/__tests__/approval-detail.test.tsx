@@ -7,12 +7,23 @@ const apiMocks = vi.hoisted(() => ({
   getApprovalDetail: vi.fn(),
 }));
 
+const routerMocks = vi.hoisted(() => ({
+  refresh: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    refresh: routerMocks.refresh,
+  }),
+}));
+
 vi.mock("@/lib/api/approvals", () => ({
   getApprovalDetail: apiMocks.getApprovalDetail,
 }));
 
 afterEach(() => {
   apiMocks.getApprovalDetail.mockReset();
+  routerMocks.refresh.mockClear();
 });
 
 describe("ApprovalDetailPage", () => {
@@ -38,6 +49,7 @@ describe("ApprovalDetailPage", () => {
     expect(packetQueries.getByText("c".repeat(64))).toBeVisible();
     expect(packetQueries.getByText("d".repeat(64))).toBeVisible();
     expect(packetQueries.getByText("42")).toBeVisible();
+    expect(screen.queryByRole("group", { name: "修正依頼" })).not.toBeInTheDocument();
   });
 
   it("does not render non-hash decision packet values as raw text", async () => {
@@ -59,6 +71,24 @@ describe("ApprovalDetailPage", () => {
     expect(screen.queryByText("raw provider request")).not.toBeInTheDocument();
     expect(screen.getAllByText("(非 SHA-256 形式のため非表示)")).toHaveLength(4);
     expect(screen.getByText("(未設定)")).toBeVisible();
+  });
+
+  it("renders request revision action only for pending approvals", async () => {
+    apiMocks.getApprovalDetail.mockResolvedValue(
+      buildApprovalDetail({
+        status: "pending",
+        decided_by_actor_id: null,
+        decided_at: null,
+        rationale: null,
+      })
+    );
+
+    render(await ApprovalDetailPage({ params: Promise.resolve({ id: APPROVAL_ID }) }));
+
+    expect(screen.getByText("レビュー判定")).toBeVisible();
+    expect(screen.getByRole("group", { name: "修正依頼" })).toBeVisible();
+    expect(screen.getByLabelText("修正理由")).toBeVisible();
+    expect(screen.getByRole("button", { name: "修正依頼" })).toBeVisible();
   });
 });
 
