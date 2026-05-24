@@ -1,3 +1,8 @@
+from backend.app.services.memory.retrieval import (
+    MemoryRetrievalDenied,
+    MemoryRetrievalResult,
+    MemoryRetrievalService,
+)
 from backend.app.services.memory.sanitizer import (
     MemoryPayloadRejected,
     MemoryPayloadRejectReason,
@@ -13,6 +18,9 @@ from backend.app.services.memory.store import (
 __all__ = [
     "MemoryPayloadRejectReason",
     "MemoryPayloadRejected",
+    "MemoryRetrievalDenied",
+    "MemoryRetrievalResult",
+    "MemoryRetrievalService",
     "MemoryStoreError",
     "MemoryStoreResult",
     "MemoryStoreService",

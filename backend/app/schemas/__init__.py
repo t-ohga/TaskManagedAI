@@ -24,6 +24,7 @@ from backend.app.schemas.memory import (
     MemoryRecordCreate,
     MemoryRecordTrustLevel,
     MemoryRetrievalArtifactCreate,
+    MemoryRetrievalRequest,
     MemoryRetrievalTrustLevel,
     MemoryStoreRequest,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "MemoryRecordCreate",
     "MemoryRecordTrustLevel",
     "MemoryRetrievalArtifactCreate",
+    "MemoryRetrievalRequest",
     "MemoryRetrievalTrustLevel",
     "MemoryStoreRequest",
     "NotificationEventCreate",
