@@ -1,9 +1,11 @@
 import Link from "next/link";
+import type { Route } from "next";
 
 import { NotificationBadge } from "@/components/notification-badge";
 
 const navItems = [
   { href: "/dashboard", label: "ダッシュボード", current: true },
+  { href: "/today", label: "Today", current: false },
   { href: "/tickets", label: "チケット", current: false },
   { href: "/eval-dashboard", label: "評価ダッシュボード", current: false },
   { href: "/approvals", label: "承認待ち", current: false },
@@ -47,7 +49,7 @@ export function Navigation({ actorLabel }: NavigationProps) {
                       ? "block rounded-md bg-teal-50 px-3 py-2 text-sm font-semibold text-accent outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                       : "block rounded-md px-3 py-2 text-sm font-medium text-muted outline-offset-2 hover:bg-slate-50 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                   }
-                  href={item.href}
+                  href={item.href as Route}
                 >
                   {item.label}
                 </Link>

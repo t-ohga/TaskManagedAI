@@ -8,6 +8,7 @@
 | P0 | task-02 | SP-009 | P0 UI backend/frontend residual reconciliation | required | 0.3-0.5 day |
 | P1 | task-03 | SP-007 | Phase 5 hook trust boundary plan | required before machine-local changes | 0.2-0.4 day |
 | P1 | task-05 | SP-009-5 | P0.1 deferred UI surface split | required before SP-009-5 UI/code | 0.2 day |
+| P1 | task-06 | SP-009-5 | Today/Inbox + minimal KPI strip read-only UI | completed 2026-05-24 | 0.5 day |
 | P2 | task-04 | SP-000 / roadmap | bootstrap/backlog status hygiene | optional docs-only (completed 2026-05-24) | 0.2 day |
 
 ## Recommended Order
@@ -27,6 +28,9 @@ task-04 (status hygiene)
 
 task-05 (SP-009-5 split docs)
   -> completed before SP-009-5 UI/code: read-only UI and ADR/API-gated mutation surfaces separated
+
+task-06 (SP-009-5 Batch A)
+  -> completed: /today read-only Today/Inbox + minimal KPI strip using existing APIs only
 ```
 
 ## SP-008 Tentative Implementation Batches
@@ -60,7 +64,7 @@ These are not coding instructions until a dedicated SP-009-5 implementation PR s
 
 | batch | tentative scope | high-risk boundary |
 |---|---|---|
-| A | Today/Inbox + minimal KPI strip read-only UI | existing API only; no mutation |
+| A | Today/Inbox + minimal KPI strip read-only UI (completed 2026-05-24) | existing API only; no mutation |
 | B | unified execution timeline read-only UI | raw payload / secret DOM exposure |
 | C | decision packet hash visibility | API field availability; no state transition |
 | D | notification triage minimal lifecycle | ADR-00003 event schema + migration |

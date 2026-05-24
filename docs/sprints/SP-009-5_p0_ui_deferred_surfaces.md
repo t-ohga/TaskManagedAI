@@ -1,7 +1,7 @@
 ---
 id: "SP-009-5_p0_ui_deferred_surfaces"
 type: "light"
-status: "ready"
+status: "partial_skeleton"
 sprint_no: 9.5
 created_at: "2026-05-24"
 updated_at: "2026-05-24"
@@ -40,7 +40,7 @@ max_days: 3
 
 | batch | scope | boundary |
 |---|---|---|
-| A | Today/Inbox + minimal KPI strip read-only UI | existing API only、mutation なし |
+| A | Today/Inbox + minimal KPI strip read-only UI (completed 2026-05-24) | existing API only、mutation なし |
 | B | Unified execution timeline read-only UI | raw payload key/value を DOM に出さない |
 | C | Decision packet hash visibility | 不足 field は API contract PR に切り出す |
 | D | Notification triage minimal model | ADR-00003 event schema update + migration gate |
@@ -52,8 +52,8 @@ max_days: 3
 - [ ] SP-009 本体は `partial_skeleton` のまま、SP-009-5 への split と未完 residual が明記されている。
 - [ ] `docs/sprints/README.md` の canonical registry が `SP-009-5_p0_ui_deferred_surfaces.md` を解決できる。
 - [ ] `docs/実装計画/P0_バックログ.md` に P0.1 UI deferred surface の追跡項目がある。
-- [ ] read-only UI batch と API/state mutation batch が分離され、mutation batch は ADR/API gate を持つ。
-- [ ] `request_revision` と notification triage は、人間承認・stale invalidation・raw payload redaction の invariant を満たすまで実装しない。
+- [x] read-only UI batch と API/state mutation batch が分離され、mutation batch は ADR/API gate を持つ。
+- [x] `request_revision` と notification triage は、人間承認・stale invalidation・raw payload redaction の invariant を満たすまで実装しない。
 
 ## 検証手順
 
@@ -70,7 +70,7 @@ max_days: 3
 
 ## Review
 
-- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、read-only batch と mutation-gated batch を分離した。
-- verified: frontmatter / registry / backlog / handoff cross-reference を docs-only で検証する手順を定義した。
-- deferred: UI 実装、API/schema migration、`request_revision` state machine、notification triage lifecycle は別 PR。
+- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、Batch A で `/today` read-only control plane + minimal KPI strip を追加した。
+- verified: frontmatter / registry / backlog / handoff cross-reference、frontend typecheck/lint/Vitest、desktop/mobile browser smoke を確認した。
+- deferred: unified execution timeline、decision packet hash visibility、notification triage lifecycle、`request_revision` state machine は別 PR。
 - risks: SP-009 本体の golden E2E / DOM secret scan / residual enum contract は引き続き未完。

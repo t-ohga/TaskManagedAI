@@ -40,14 +40,14 @@ The earlier next-candidate list named SP-014 batch 1+, SP-015 batch 0, and SP-01
 | SP-007 runner sandbox | `done_with_phase5_defer` | runner/security core is complete; Phase 5 plan + repo-only helpers are ready, but external trust-root install remains approval-gated |
 | SP-008 GitHub App / RepoProxy | `partial_skeleton` | #219-#223 completed service-boundary batches; real GitHub transport, live ref re-fetch, deployment SOPS resolver, and external worker/API adoption remain |
 | SP-009 P0 UI Pack | `partial_skeleton` | #224/#225 completed route reconciliation and contract/redaction tests; golden E2E, DOM secret scan, PayloadDataClass/future AuditEventType registry drift, and SP-009-5 implementation remain |
-| SP-009-5 P0.1 UI deferred surfaces | `ready` | split Pack exists for Today/Inbox, unified timeline, decision packet hash visibility, notification triage, KPI strip, Newcomer Path, and `request_revision`; implementation is not started |
+| SP-009-5 P0.1 UI deferred surfaces | `partial_skeleton` | Batch A `/today` read-only Today/Inbox + minimal KPI strip is implemented with existing APIs; unified timeline, decision packet hash visibility, notification triage, Newcomer Path, and `request_revision` remain |
 | SP-000 bootstrap | `ready` | old bootstrap metadata; treat as backlog hygiene, not feature implementation |
 
 ## Next Work Boundary
 
 The safest next work is one of:
 
-- SP-009-5 read-only UI batches first: Today/Inbox + KPI strip, unified execution timeline, and decision packet hash visibility. Notification triage and `request_revision` require ADR/API contract gates.
+- SP-009-5 read-only UI continuation: unified execution timeline and decision packet hash visibility. Notification triage and `request_revision` require ADR/API contract gates.
 - SP-008 residual implementation that does not require new GitHub App permissions or raw token exposure.
 - SP-007 Phase 5C only after explicit machine-local trust-root approval.
 
