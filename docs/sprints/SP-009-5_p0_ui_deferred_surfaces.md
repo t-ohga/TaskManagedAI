@@ -44,7 +44,7 @@ max_days: 3
 | B | Unified execution timeline read-only UI (completed 2026-05-24) | raw payload key/value を DOM に出さない |
 | C | Decision packet hash visibility (completed 2026-05-24) | `stale_after_event_seq` は additive Approval Detail API field として公開、state transition なし |
 | D1 | Notification triage DB/API contract (completed 2026-05-24) | additive migration、redacted triage endpoint、actor-owned snooze/resolve、metadata-only audit |
-| D2 | Notification triage `/notifications` UI actions | D1 API を利用し、bulk action なしで actor-owned transition のみ |
+| D2 | Notification triage `/notifications` UI actions (completed 2026-05-24) | D1 API を利用し、bulk action なしで actor-owned transition のみ |
 | E | `request_revision` approval loop | ADR-00003 / ADR-00004 / ADR-00009 update + regression tests |
 | F | Newcomer Path / advanced approval refinements | P0.1 polish、P0 Exit blocker にしない |
 
@@ -71,7 +71,7 @@ max_days: 3
 
 ## Review
 
-- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、Batch A で `/today` read-only control plane + minimal KPI strip、Batch B で `/timeline` unified execution timeline、Batch C で Approval Detail decision packet hash visibility、Batch D1 で notification triage DB/API contract を追加した。
-- verified: frontmatter / registry / backlog / handoff cross-reference、frontend typecheck/lint/Vitest、desktop/mobile browser smoke、timeline sensitive key leak check、decision packet malformed-hash DOM non-exposure、notification triage migration up/down + redacted API tests を確認した。
-- deferred: notification triage D2 UI actions、`request_revision` state machine は別 PR。
+- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、Batch A で `/today` read-only control plane + minimal KPI strip、Batch B で `/timeline` unified execution timeline、Batch C で Approval Detail decision packet hash visibility、Batch D1 で notification triage DB/API contract、Batch D2 で `/notifications` triage UI/actions を追加した。
+- verified: frontmatter / registry / backlog / handoff cross-reference、frontend typecheck/lint/Vitest、desktop/mobile browser smoke、timeline sensitive key leak check、decision packet malformed-hash DOM non-exposure、notification triage migration up/down + redacted API tests、D2 UI/action tests を確認した。
+- deferred: `request_revision` state machine は別 PR。
 - risks: SP-009 本体の golden E2E / DOM secret scan / residual enum contract は引き続き未完。
