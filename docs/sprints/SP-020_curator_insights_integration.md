@@ -28,7 +28,7 @@ risks:
   - "PE-F-014/015/016 closure needs cross-source tests, not only docs trace"
 ---
 
-最終更新: 2026-05-24 (SP020-T02 curator service foundation completed)
+最終更新: 2026-05-24 (SP020-T03 archive policy service completed)
 
 ## 目的
 
@@ -65,7 +65,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - SP020-T00: plan-only gate (本 PR)。Sprint Pack / ADR-00032 proposed / registry / SP-022 trace を起票する。
 - SP020-T01: ADR-00032 accepted promotion + implementation batch split review (completed)。
 - SP020-T02: curator service foundation (completed)。completed/failed/review-finding source artifact から `auto_completion` / `auto_failure` / `auto_review_finding` memory を生成。
-- SP020-T03: archive policy service。manual_user default protect、auto record aging/relevance policy、`memory_archive_engaged` audit。
+- SP020-T03: archive policy service (completed)。manual_user default protect、auto record aging/relevance policy、`memory_archive_engaged` audit。
 - SP020-T04: insights aggregation service + read-only API / CLI surface。raw payload 非露出、feature flag disabled default。
 - SP020-T05: adopted_artifacts link table + citation_coverage final-only attribution contract。
 - SP020-T06: orchestrator auto-retrieve hook。retrieval output は `untrusted_content` のまま、trusted_instruction 昇格禁止。
@@ -77,7 +77,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - [x] SP020-T00 plan-only gate
 - [x] SP020-T01 ADR-00032 accepted promotion + batch split
 - [x] SP020-T02 curator service foundation
-- [ ] SP020-T03 archive policy service
+- [x] SP020-T03 archive policy service
 - [ ] SP020-T04 insights read-only API / CLI
 - [ ] SP020-T05 adopted_artifacts metric attribution
 - [ ] SP020-T06 orchestrator auto-retrieve hook
@@ -254,5 +254,39 @@ deferred:
 - adopted_artifacts migration and citation_coverage final-only query (SP020-T05)。
 
 risks:
-- T03 must keep `manual_user` default protected and retrieval exclusion separate from deletion.
+- T03 closed with `manual_user` default protection and retrieval exclusion separate from deletion.
 - T04 must keep insight output ref-only and feature-flag disabled by default.
+
+### 2026-05-24 SP020-T03 archive policy service
+
+changed:
+- `backend/app/schemas/memory.py`
+- `backend/app/schemas/__init__.py`
+- `backend/app/services/memory/archive_policy.py`
+- `backend/app/services/memory/__init__.py`
+- `tests/memory/test_archive_policy.py`
+- `docs/sprints/SP-020_curator_insights_integration.md`
+- `docs/sprints/README.md`
+
+implemented:
+- `MemoryArchivePolicyService` を追加し、既存 `memory_records.archived_at` を service boundary で設定。
+- `MemoryArchivePolicyRequest` は archive 候補を `auto_completion` / `auto_failure` / `auto_review_finding` に限定し、`manual_user` は schema と query の二重防御で default protect。
+- archive は hard delete せず、既存 retrieval query の `archived_at is null` 除外を利用。
+- `memory_archive_engaged` audit は record ref/hash/count/policy のみを保存し、raw memory body は保存しない。
+
+self_review:
+- adopted: 既存 compose DB は開発データを含み得るため、truncate を伴う DB test は一時 PostgreSQL (`127.0.0.1:55432`) に隔離。
+- adopted: `manual_user` は caller-supplied `record_kinds` からも弾く schema negative test を追加。
+
+verified:
+- `uv run ruff check backend/app/services/memory backend/app/schemas/memory.py backend/app/schemas/__init__.py tests/memory/test_archive_policy.py tests/memory/test_retrieval_pipeline.py`
+- `PYTHONPATH=cli uv run mypy backend/app/services/memory backend/app/schemas/memory.py tests/memory/test_archive_policy.py`
+- `uv run pytest tests/memory/test_archive_policy.py tests/memory/test_retrieval_pipeline.py -q` (`3 passed, 8 skipped`)
+- `TASKMANAGEDAI_DATABASE_URL=<isolated 127.0.0.1:55432 test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/memory/test_archive_policy.py tests/memory/test_retrieval_pipeline.py -q` (`11 passed`)
+
+deferred:
+- Insights aggregation and read-only API / CLI surface (SP020-T04)。
+- adopted_artifacts migration and citation_coverage final-only query (SP020-T05)。
+
+risks:
+- T04 must avoid exposing archived/raw memory content while deriving aggregate insights.

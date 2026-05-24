@@ -19,6 +19,17 @@ MemoryCuratorSourceKind = Literal[
     "failed_run",
     "review_finding",
 ]
+MemoryArchiveCandidateKind = Literal[
+    "auto_completion",
+    "auto_failure",
+    "auto_review_finding",
+]
+
+DEFAULT_MEMORY_ARCHIVE_CANDIDATE_KINDS: tuple[MemoryArchiveCandidateKind, ...] = (
+    "auto_completion",
+    "auto_failure",
+    "auto_review_finding",
+)
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SUMMARY_REF_RE = re.compile(r"^artifact://summary/[A-Za-z0-9._:/@+-]+$")
@@ -118,6 +129,30 @@ class MemoryCuratorRequest(BaseModel):
         return _validate_summary_ref(value)
 
 
+class MemoryArchivePolicyRequest(BaseModel):
+    """Caller-facing archive policy input with manual memory protected by schema."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    project_id: UUID
+    minimum_age_days: int = Field(default=30, ge=1, le=3650)
+    max_records: int = Field(default=100, ge=1, le=1000)
+    record_kinds: tuple[MemoryArchiveCandidateKind, ...] = Field(
+        default=DEFAULT_MEMORY_ARCHIVE_CANDIDATE_KINDS,
+        min_length=1,
+        max_length=len(DEFAULT_MEMORY_ARCHIVE_CANDIDATE_KINDS),
+    )
+
+    @field_validator("record_kinds")
+    @classmethod
+    def _record_kinds_are_unique(
+        cls, value: tuple[MemoryArchiveCandidateKind, ...]
+    ) -> tuple[MemoryArchiveCandidateKind, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("record_kinds must be unique.")
+        return value
+
+
 class MemoryRetrievalRequest(BaseModel):
     """Caller-facing memory retrieval input with ref-only output metadata."""
 
@@ -152,6 +187,9 @@ class MemoryRetrievalArtifactCreate(BaseModel):
 
 
 __all__ = [
+    "DEFAULT_MEMORY_ARCHIVE_CANDIDATE_KINDS",
+    "MemoryArchiveCandidateKind",
+    "MemoryArchivePolicyRequest",
     "MemoryCuratorRequest",
     "MemoryCuratorSourceKind",
     "MemoryRecordCreate",
