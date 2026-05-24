@@ -1,11 +1,11 @@
 ---
 id: "SP-009_p0_ui_pack"
 type: "heavy"
-status: "skeleton_pending_backend"
-review_summary: "Sprint 11 (2026-05-17 SP-011 Exit) で **carry-over 5 BL は未着手** のまま、Sprint 12 (P0 Acceptance) へ defer 移送。backend/app/api/tickets.py / audit_events.py 不在、agent_runs.py は POST cancel のみ。frontend RedactedAuditPayloadSchema + BL-EnumDrift contract test も未実装。Codex audit 2026-05-13 で F-004/F-006/F-008 指摘 adopt 済 + Sprint 11 main scope (Eval Harness 12 BL) 優先で carry-over は defer。Codex PR #39 R1 F-PR39-003 (P2) 反映: SP-011 PR #39 で `status: done` 昇格を試みたが、carry-over 未着手の事実が判明、`skeleton_pending_backend` 維持。"
+status: "partial_skeleton"
+review_summary: "2026-05-24 reconciliation: Sprint 12/16 後の main では tickets list/detail/create/update、agent_runs list/detail/kpi/cancel、audit_events list、approvals list/detail/decide は backend route と frontend client/page まで実装済み。旧 `backend pending` 前提は解消済みだが、4 面 golden E2E、frontend/backend enum drift contract、frontend redaction/DOM secret scan、SP-009-5/P0.1 split は未完のため `completed` ではなく `partial_skeleton` 維持。"
 sprint_no: 9
 created_at: "2026-05-12"
-updated_at: "2026-05-17"
+updated_at: "2026-05-24"
 target_days: 6
 max_days: 9
 adr_refs:
@@ -41,7 +41,7 @@ risks:
   - "Realtime sample 由来の raw payload / client secret response を UI へ持ち込む regression"
 ---
 
-最終更新: 2026-05-14 (light skeleton 起票、Phase A integration、Realtime UI reference 接続を追記。実装着手前に heavy 化必要)
+最終更新: 2026-05-24 (SP-012/SP-016 後の UI/backend reconciliation を反映。旧 backend pending 前提を撤回し、残差を test/contract/P0.1 split に再分類)
 
 ## 目的
 
@@ -222,6 +222,47 @@ E2E test 追加候補:
 - P0.1 SP-016 (UI/CLI parity): UI と CLI で同 operation を提供
 - P1 SP-017 (AI Society Visualization): inter-agent timeline + role dashboard 追加 (P0.1 は SP-013〜016 multi-agent foundation のみ、P1 visualization は SP-017〜020)
 
+## 2026-05-24 Reconciliation
+
+SP-012 / SP-016 / SP-024 取込後の main を現物照合し、2026-05-17 時点の
+`skeleton_pending_backend` 前提を再分類した。結論として、backend route 不在は
+主要 UI 面では解消済み。ただし SP-009 は golden flow / drift contract / redaction
+contract が未完のため `completed` へは昇格しない。
+
+### 実装済みと判定する面
+
+| 面 | 現状 | 根拠 |
+|---|---|---|
+| Ticket list/detail | real backend + real frontend | `backend/app/api/tickets.py` が list/detail/create/update を提供し、`frontend/lib/api/tickets.ts` と `/tickets` / `/tickets/[id]` が実 fetch |
+| Approval Inbox | real backend + real frontend | `backend/app/api/approval_inbox.py` が list/detail/decide を提供し、`frontend/lib/api/approvals.ts` と `/approvals` / `/approvals/[id]` が結線 |
+| Agent Runs | real backend + real frontend | `backend/app/api/agent_runs.py` が list/detail/kpi/cancel を提供し、`frontend/lib/api/agent-runs.ts` と `/runs` / `/runs/[id]` が payload key のみ表示 |
+| Audit Log | real backend + real frontend | `backend/app/api/audit.py` が `GET /api/v1/audit_events` を提供し、`frontend/lib/api/audit.ts` と `/audit` が redacted metadata のみ表示 |
+| Settings / Eval / Notifications | partial real UI | settings/eval/notifications route は存在し、一部 backend と結線済み。ただし SP-009 must_ship 4 面の外側として扱う |
+
+### 旧要件の更新
+
+- `backend/app/api/tickets.py` / `audit_events.py` 不在、`agent_runs.py` は cancel のみ、という 2026-05-17 review_summary は現行 main では古い。
+- `GET /api/v1/tickets` という旧 shorthand は採用しない。現行正本は `GET /api/v1/projects/{project_id}/tickets` で、project boundary を path + repository で強制する。
+- `GET /api/v1/audit_events` は offset pagination の read-only route として実装済み。cursor 化は P0.1 の API polish とし、現行 route の存在判定とは分離する。
+- Approval `request_revision` は P0 must_ship へ追加しない。ADR-00003/00004/00009 gate が必要な P0.1 SP-009-5 候補として維持する。
+
+### 残差
+
+| residual | 判定 | 次の扱い |
+|---|---|---|
+| 4 面 golden flow E2E | partial | 現行 `frontend/tests/e2e/sprint9-pages.spec.ts` は skeleton 前提の断片が残るため、実 backend/real page 前提へ更新 |
+| frontend/backend enum drift contract | open | TicketStatus / AgentRunStatus / AgentRunEventType / AuditEventType を exact set で比較する contract test を追加 |
+| frontend redaction / DOM secret scan | open | backend response は payload key のみだが、frontend 側の DOM secret scan regression test を追加 |
+| Execution Log unified timeline | partial | AgentRun detail は AgentRunEvent + ContextSnapshot metadata まで。Audit/Budget/Eval 統合 timeline は P0.1 |
+| validator state 表示 | partial | Eval Dashboard には gate/KPI shell があるが、Ticket detail 統合は未完 |
+| Board / Today-Inbox control plane | partial | dashboard/orchestrator board は存在。SP-009 の Portfolio Board としての最終 UX は SP-009-5 で再定義 |
+
+### 最小で安全な次 PR
+
+1. **SP-009 contract/test cleanup**: stale Playwright spec を現行 real route に合わせ、enum drift + DOM secret scan の最小 regression を追加する。
+2. **SP-009-5 split docs**: Today/Inbox、unified execution timeline、request_revision、notification triage、minimal KPI strip を P0.1 へ分離する。
+3. その後、必要なら UI の小 PR と backend/API の小 PR を分ける。mutating approval expansion は separate accepted plan なしでは着手しない。
+
 ## 関連 ADR / Sprint Pack / Doc
 
 - ADR-00001 (auth/rbac) - dev login + actor binding
@@ -321,7 +362,11 @@ E2E test 追加候補:
 - Playwright test は ARIA region / role / heading で a11y 基盤確立 (BL-0110
   の foundation)
 
-### Sprint 9 status (Codex audit F-004/F-006/F-008 adopt で訂正、2026-05-13)
+### Sprint 9 status (Codex audit F-004/F-006/F-008 adopt で訂正、2026-05-13 historical)
+
+本節は 2026-05-13 時点の audit log。backend route 未実装の記述は
+2026-05-24 Reconciliation で superseded され、現行判定は上記
+`## 2026-05-24 Reconciliation` を正とする。
 
 - target_days: 6
 - max_days: 9

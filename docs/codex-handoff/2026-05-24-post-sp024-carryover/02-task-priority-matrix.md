@@ -16,7 +16,7 @@ task-01 (SP-008 reconciliation)
   -> if READY: SP-008 implementation batches in separate PRs
 
 task-02 (SP-009 reconciliation)
-  -> if READY: SP-009 narrow backend/API or UI PR, not both unless plan requires it
+  -> READY after 2026-05-24 reconciliation: SP-009 contract/test cleanup PR first
 
 task-03 (SP-007 Phase 5 plan)
   -> implementation only after explicit machine-local trust-boundary approval
@@ -42,10 +42,10 @@ These are not coding instructions until task-02 marks them `READY`.
 
 | batch | tentative scope | high-risk boundary |
 |---|---|---|
-| A | route/API existence diff after SP-012 and SP-016 | API contract drift |
-| B | read-only UI wiring gaps only | no mutation expansion |
-| C | redaction and enum drift contract tests | raw payload non-exposure |
-| D | status closeout or new SP-009-5 split | scope control |
+| A | route/API existence diff after SP-012 and SP-016 (completed 2026-05-24 reconciliation) | API contract drift |
+| B | read-only UI wiring gaps only (no backend route gap found for core four surfaces) | no mutation expansion |
+| C | redaction and enum drift contract tests (next smallest PR) | raw payload non-exposure |
+| D | SP-009-5 split for Today/Inbox, unified timeline, request_revision, notification triage, KPI strip | scope control |
 
 ## Common Verification
 
