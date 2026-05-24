@@ -68,12 +68,13 @@ superseded_by: null
 
   - low-risk profile 機械判定軸 (1 軸でも不合格なら approval path に fall back):
     - `payload_data_class <= internal` (confidential/pii は L 問わず approval 必須)
-    - diff size <= N lines / file count <= M (level ごとに上限、本 ADR で固定)
+    - diff size <= 200 lines / file count <= 3 (SP024-T04 default threshold、level ごとの緩和は T05+ で ADR update 必須)
     - forbidden path no-hit (`.env`、`.git/config`、secrets、migrations、`.github/workflows/**`)
     - dangerous command no-hit (Runner / CLI 経路の denylist)
     - `provider_request_preflight` PASS (canary、token pattern 検出なし)
     - `runner_mutation_gateway` 通過 (Sprint 7 後の本実装)
     - ContextSnapshot 10 列 PASS + `evidence_set_hash` 既定
+  - **SP024-T04 evaluator**: `evaluate_low_risk_profile()` は payload data class / change scope (diff size + file count) / forbidden path / dangerous command / provider request preflight / runner mutation gateway / ContextSnapshot の 7 axes を行う。ADR-00025 の「1 軸でも不合格なら fallback」を満たすため、各 axis は独立 negative test を持つ。
   - 不変条件 (level 切替で破ってはならない):
     1. `secret_access` / `merge` / `deploy` / `provider_call` は **全 level で human approval 必須**
     2. `approval_requests.decided_by_actor_id` は **human actor のみ** (DB CHECK + service guard + Pydantic + pytest の 4 重防御)

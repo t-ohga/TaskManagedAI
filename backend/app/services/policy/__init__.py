@@ -8,6 +8,11 @@ from backend.app.services.policy.invalidation import (
     StaleCheckPayload,
     StaleCheckReason,
 )
+from backend.app.services.policy.low_risk_profile import (
+    LowRiskProfileDecision,
+    LowRiskProfileInput,
+    evaluate_low_risk_profile,
+)
 from backend.app.services.policy.self_approval_guard import SelfApprovalGuardService
 
 __all__ = [
@@ -17,5 +22,8 @@ __all__ = [
     "SelfApprovalGuardService",
     "StaleCheckPayload",
     "StaleCheckReason",
+    "LowRiskProfileDecision",
+    "LowRiskProfileInput",
+    "evaluate_low_risk_profile",
     "resolve_autonomy_policy_profile",
 ]
