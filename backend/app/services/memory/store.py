@@ -52,6 +52,7 @@ class MemoryStoreService:
         *,
         tenant_id: int,
         request: MemoryStoreRequest,
+        source_artifact_id: UUID | None = None,
     ) -> MemoryStoreResult:
         await ensure_tenant_context(self.session, tenant_id)
         self._assert_retention_window(request.retention_until)
@@ -60,6 +61,13 @@ class MemoryStoreService:
             project_id=request.project_id,
             run_id=request.run_id,
         )
+        if source_artifact_id is not None:
+            await self._assert_source_artifact_boundary(
+                tenant_id=tenant_id,
+                project_id=request.project_id,
+                run_id=request.run_id,
+                source_artifact_id=source_artifact_id,
+            )
         sanitizer_policy = await self._current_sanitizer_policy(tenant_id=tenant_id)
         classification = classify_payload_data_class(request.classification)
         try:
@@ -90,7 +98,7 @@ class MemoryStoreService:
             data_class=classification.payload_data_class,
             redaction_status=sanitized.redaction_status,
             sanitizer_version_id=sanitizer_policy.id,
-            source_artifact_id=artifact.id,
+            source_artifact_id=source_artifact_id or artifact.id,
             trust_level="untrusted_content",
             retention_until=request.retention_until,
         )
@@ -129,6 +137,27 @@ class MemoryStoreService:
         )
         if exists is None:
             raise MemoryStoreError("run_id not found in tenant/project boundary.")
+
+    async def _assert_source_artifact_boundary(
+        self,
+        *,
+        tenant_id: int,
+        project_id: UUID,
+        run_id: UUID,
+        source_artifact_id: UUID,
+    ) -> None:
+        exists = await self.session.scalar(
+            sa.select(Artifact.id).where(
+                Artifact.tenant_id == tenant_id,
+                Artifact.project_id == project_id,
+                Artifact.run_id == run_id,
+                Artifact.id == source_artifact_id,
+            )
+        )
+        if exists is None:
+            raise MemoryStoreError(
+                "source_artifact_id not found in tenant/project/run boundary."
+            )
 
     async def _current_sanitizer_policy(
         self,

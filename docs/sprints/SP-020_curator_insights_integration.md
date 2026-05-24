@@ -28,7 +28,7 @@ risks:
   - "PE-F-014/015/016 closure needs cross-source tests, not only docs trace"
 ---
 
-最終更新: 2026-05-24 (SP020-T01 ADR accepted; implementation not started)
+最終更新: 2026-05-24 (SP020-T02 curator service foundation completed)
 
 ## 目的
 
@@ -63,8 +63,8 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 ## 実装チケット
 
 - SP020-T00: plan-only gate (本 PR)。Sprint Pack / ADR-00032 proposed / registry / SP-022 trace を起票する。
-- SP020-T01: ADR-00032 accepted promotion + implementation batch split review (completed; implementation still not started)。
-- SP020-T02: curator service foundation。completed/failed/review-finding source artifact から `auto_completion` / `auto_failure` / `auto_review_finding` memory を生成。
+- SP020-T01: ADR-00032 accepted promotion + implementation batch split review (completed)。
+- SP020-T02: curator service foundation (completed)。completed/failed/review-finding source artifact から `auto_completion` / `auto_failure` / `auto_review_finding` memory を生成。
 - SP020-T03: archive policy service。manual_user default protect、auto record aging/relevance policy、`memory_archive_engaged` audit。
 - SP020-T04: insights aggregation service + read-only API / CLI surface。raw payload 非露出、feature flag disabled default。
 - SP020-T05: adopted_artifacts link table + citation_coverage final-only attribution contract。
@@ -76,7 +76,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 
 - [x] SP020-T00 plan-only gate
 - [x] SP020-T01 ADR-00032 accepted promotion + batch split
-- [ ] SP020-T02 curator service foundation
+- [x] SP020-T02 curator service foundation
 - [ ] SP020-T03 archive policy service
 - [ ] SP020-T04 insights read-only API / CLI
 - [ ] SP020-T05 adopted_artifacts metric attribution
@@ -152,7 +152,7 @@ Batch rule: 0b-0h must each run immediate self-review and `codex_pr_full_review.
 
 ## 残リスク
 
-- `repo_pr_merged` event_type は SP-020 で追加するか、`repo_pr_opened` proxy を継続するかを ADR-00032 acceptance 時に再判断する。
+- `repo_pr_merged` event_type は SP-020 では追加せず、future ADR-00004 update + 5+ source enum sync が必要になった場合だけ扱う。
 - UI dashboard polish は insight API/CLI contract の後に必要最小限で扱う。
 - Cron / routines は Wave 23 として別 Sprint へ送る。
 
@@ -221,3 +221,38 @@ deferred:
 
 risks:
 - SP020-T05 migration は DB schema 変更のため、dedicated PR で migration up/down と cross-project negative tests を必須にする。
+
+### 2026-05-24 SP020-T02 curator service foundation
+
+changed:
+- `backend/app/schemas/memory.py`
+- `backend/app/services/memory/curator.py`
+- `backend/app/services/memory/store.py`
+- `backend/app/services/memory/__init__.py`
+- `tests/memory/test_curator_service.py`
+- `docs/sprints/SP-020_curator_insights_integration.md`
+- `docs/sprints/README.md`
+
+implemented:
+- `MemoryCuratorService` を追加し、`completed_run` / `failed_run` / `review_finding` を `auto_completion` / `auto_failure` / `auto_review_finding` に server-side map。
+- curator memory は `MemoryStoreService` を通して保存し、source artifact は tenant/project/run/id boundary で検証。
+- source artifact body は読まず、`artifact_ref` / `artifact_kind` / `artifact_digest` / `run_ref` と `summary_ref` だけを sanitized payload に保存。
+- `MemoryCuratorRequest` は caller から `record_kind` / `content_hash` / `trust_level` など server-owned field を受け付けず、`summary_ref` は `artifact://summary/` ref-only に固定。
+
+self_review:
+- adopted: `summary_ref` が任意 text を受け取れると raw summary body が保存され得るため、schema validator と negative test を追加。
+
+verified:
+- `uv run ruff check backend/app/services/memory backend/app/schemas/memory.py tests/memory`
+- `PYTHONPATH=cli uv run mypy backend/app/services/memory backend/app/schemas/memory.py tests/memory/test_curator_service.py`
+- `uv run pytest tests/memory -q` (`14 passed, 10 skipped`)
+- `TASKMANAGEDAI_DATABASE_URL=<isolated 127.0.0.1:55432 test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/memory/test_curator_service.py tests/memory/test_store_pipeline.py -q` (`10 passed`)
+
+deferred:
+- Archive policy / retrieval exclusion (SP020-T03)。
+- Insights API / CLI surface (SP020-T04)。
+- adopted_artifacts migration and citation_coverage final-only query (SP020-T05)。
+
+risks:
+- T03 must keep `manual_user` default protected and retrieval exclusion separate from deletion.
+- T04 must keep insight output ref-only and feature-flag disabled by default.

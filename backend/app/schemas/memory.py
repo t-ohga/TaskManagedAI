@@ -14,8 +14,14 @@ from backend.app.services.input_trust.payload_classifier import PayloadClassific
 
 MemoryRecordTrustLevel = Literal["untrusted_content", "validated_artifact"]
 MemoryRetrievalTrustLevel = Literal["untrusted_content"]
+MemoryCuratorSourceKind = Literal[
+    "completed_run",
+    "failed_run",
+    "review_finding",
+]
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_SUMMARY_REF_RE = re.compile(r"^artifact://summary/[A-Za-z0-9._:/@+-]+$")
 
 
 def _validate_sha256(value: str) -> str:
@@ -27,6 +33,12 @@ def _validate_sha256(value: str) -> str:
 def _validate_timezone_aware(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("datetime must be timezone-aware.")
+    return value
+
+
+def _validate_summary_ref(value: str) -> str:
+    if not _SUMMARY_REF_RE.fullmatch(value):
+        raise ValueError("summary_ref must be an artifact://summary/ reference.")
     return value
 
 
@@ -78,6 +90,34 @@ class MemoryStoreRequest(BaseModel):
         return _validate_timezone_aware(value)
 
 
+class MemoryCuratorRequest(BaseModel):
+    """Caller-facing curator input with record kind and artifact metadata server-owned."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    project_id: UUID
+    run_id: UUID
+    source_artifact_id: UUID
+    source_kind: MemoryCuratorSourceKind
+    summary_ref: str = Field(..., min_length=1, max_length=512)
+    reason_code: str | None = Field(default=None, min_length=1, max_length=128)
+    classification: PayloadClassificationInput = Field(
+        default_factory=PayloadClassificationInput
+    )
+    schema_version: str = Field(default="memory-curator.v1", min_length=1, max_length=128)
+    retention_until: datetime
+
+    @field_validator("retention_until")
+    @classmethod
+    def _retention_until_is_timezone_aware(cls, value: datetime) -> datetime:
+        return _validate_timezone_aware(value)
+
+    @field_validator("summary_ref")
+    @classmethod
+    def _summary_ref_is_ref_only(cls, value: str) -> str:
+        return _validate_summary_ref(value)
+
+
 class MemoryRetrievalRequest(BaseModel):
     """Caller-facing memory retrieval input with ref-only output metadata."""
 
@@ -112,6 +152,8 @@ class MemoryRetrievalArtifactCreate(BaseModel):
 
 
 __all__ = [
+    "MemoryCuratorRequest",
+    "MemoryCuratorSourceKind",
     "MemoryRecordCreate",
     "MemoryRecordTrustLevel",
     "MemoryRetrievalRequest",
