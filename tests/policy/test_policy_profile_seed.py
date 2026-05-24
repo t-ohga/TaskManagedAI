@@ -22,7 +22,10 @@ from backend.app.db.session import create_engine
 from backend.app.domain.policy.profile import POLICY_PROFILE_ACTION_EFFECTS
 from backend.app.repositories.project import ProjectRepository
 from backend.app.schemas.project import ProjectCreate
-from backend.app.seeds.initial_policy_profiles import seed_initial_policy_profiles
+from backend.app.seeds.initial_policy_profiles import (
+    policy_profile_action_effect_insert_rows,
+    seed_initial_policy_profiles,
+)
 from backend.app.services.policy.profile_resolver import (
     resolve_policy_profile_action_effect,
 )
@@ -45,6 +48,15 @@ PROJECT_ID = UUID("00000000-0000-4000-8000-000000027003")
 TRIGGER_TENANT_ID = 77
 MISSING_TENANT_A_ID = 7701
 MISSING_TENANT_B_ID = 7702
+EXPECTED_ACTION_CLASSES = {
+    "task_write",
+    "repo_write",
+    "pr_open",
+    "secret_access",
+    "merge",
+    "deploy",
+    "provider_call",
+}
 
 
 def _integration_settings() -> Settings:
@@ -54,6 +66,42 @@ def _integration_settings() -> Settings:
         database_url=os.environ.get("TASKMANAGEDAI_DATABASE_URL", _DEFAULT_DATABASE_URL),
         redis_url=os.environ.get("TASKMANAGEDAI_REDIS_URL", _DEFAULT_REDIS_URL),
         dev_login_cookie_secret="test-cookie-secret-policy-profile",
+    )
+
+
+def test_phase_e_pe_f_016_policy_profile_review_artifact_seed_contract() -> None:
+    """PE-F-016: two profiles x seven action classes, with review artifact guards."""
+
+    rows = policy_profile_action_effect_insert_rows()
+    actual = {
+        (str(row["profile_id"]), str(row["action_class"])): (
+            row["effect"],
+            row["require_review_artifact"],
+        )
+        for row in rows
+    }
+
+    assert len(rows) == 14
+    assert set(POLICY_PROFILE_ACTION_EFFECTS) == {"default", "low_risk_auto_allow"}
+    assert {action for _profile, action in actual} == EXPECTED_ACTION_CLASSES
+    assert {
+        profile for profile, _action in actual
+    } == {"default", "low_risk_auto_allow"}
+
+    assert actual[("default", "task_write")] == ("require_approval", False)
+    assert actual[("default", "repo_write")] == ("require_approval", False)
+    assert actual[("default", "pr_open")] == ("require_approval", False)
+    assert actual[("default", "secret_access")] == ("deny", False)
+    assert actual[("low_risk_auto_allow", "task_write")] == ("allow", True)
+    assert actual[("low_risk_auto_allow", "provider_call")] == ("allow", True)
+
+    for action_class in EXPECTED_ACTION_CLASSES - {"task_write", "provider_call"}:
+        assert actual[("low_risk_auto_allow", action_class)] == ("deny", False)
+
+    assert all(
+        require_review_artifact is False
+        for effect, require_review_artifact in actual.values()
+        if effect != "allow"
     )
 
 

@@ -20,6 +20,7 @@ from backend.app.config import Settings, get_settings
 from backend.app.db.session import create_engine
 from backend.app.repositories.artifact import calculate_content_hash
 from backend.app.services.metrics.adopted_artifacts import (
+    _CITATION_COVERAGE_SQL,
     AdoptedArtifactAttributionService,
     AdoptedArtifactCitationCoverageService,
 )
@@ -45,6 +46,29 @@ OTHER_PROJECT_ARTIFACT_ID = UUID("00000000-0000-4000-8000-00000000f204")
 FINAL_EVENT_ID = UUID("00000000-0000-4000-8000-00000000f301")
 DRAFT_EVENT_ID = UUID("00000000-0000-4000-8000-00000000f302")
 OTHER_EVENT_ID = UUID("00000000-0000-4000-8000-00000000f303")
+
+
+def test_phase_e_pe_f_015_citation_coverage_sql_contract_is_exact() -> None:
+    """PE-F-015: citation_coverage uses recursive lineage + final adoptions only."""
+
+    sql = " ".join(_CITATION_COVERAGE_SQL.text.lower().split())
+
+    assert "with recursive run_tree as" in sql
+    assert (
+        "join run_tree parent on parent.tenant_id = child.tenant_id "
+        "and parent.project_id = child.project_id and parent.id = child.parent_run_id"
+    ) in sql
+    assert "where not child.id = any(parent.path)" in sql
+    assert "from adopted_artifacts aa" in sql
+    assert "aa.adoption_state = 'final'" in sql
+    assert sql.count("aa.adoption_state = 'final'") == 1
+    assert (
+        "join artifacts a on a.tenant_id = aa.tenant_id and a.project_id = aa.project_id "
+        "and a.run_id = aa.run_id and a.id = aa.artifact_id"
+    ) in sql
+    assert "fa.content_jsonb->'sample_claims'" in sql
+    assert "fa.content_jsonb#>'{input,sample_claims}'" in sql
+    assert "count(*) filter (where has_citation is true)::float / count(*)::float" in sql
 
 
 def _integration_settings() -> Settings:

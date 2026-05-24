@@ -282,6 +282,8 @@ def test_multi_agent_secret_deny_reason_docs_are_in_sync() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     docs = (
         repo_root / "docs/adr/00014_multi_agent_orchestration.md",
+        repo_root / "docs/sprints/SP-014_orchestrator_agent.md",
+        repo_root / "docs/sprints/SP-020_curator_insights_integration.md",
         repo_root / ".claude/rules/secretbroker-boundary.md",
     )
 
@@ -289,6 +291,20 @@ def test_multi_agent_secret_deny_reason_docs_are_in_sync() -> None:
         text_content = path.read_text(encoding="utf-8")
         for reason_code in EXPECTED_MULTI_AGENT_DENY_REASONS:
             assert reason_code in text_content
+
+
+def test_phase_e_pe_f_014_reason_matrix_has_exact_six_cases() -> None:
+    """PE-F-014 closes only when the six deny reasons stay exact."""
+
+    assert EXPECTED_MULTI_AGENT_DENY_REASONS == {
+        "agent_decider_forbidden",
+        "tier_2_agent_decider_attempt",
+        "actor_type_mismatch",
+        "role_id_mismatch",
+        "lease_expired_no_secret_access",
+        "progress_lease_violated",
+    }
+    assert len(EXPECTED_MULTI_AGENT_DENY_REASONS) == 6
 
 
 @pytest.mark.asyncio
