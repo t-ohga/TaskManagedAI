@@ -239,6 +239,13 @@ def test_publish_request_excludes_server_owned_fields() -> None:
         _request(trust_level="validated_artifact")
 
 
+def test_publish_request_rejects_naive_expires_at() -> None:
+    naive_future = datetime.now() + timedelta(minutes=30)
+
+    with pytest.raises(ValidationError, match="timezone-aware"):
+        _request(expires_at=naive_future)
+
+
 def test_publish_request_receiver_shape_is_fail_closed() -> None:
     with pytest.raises(ValidationError, match="child_run_id is required"):
         _request(child_run_id=None)
@@ -274,6 +281,59 @@ def test_sanitizer_rejects_raw_secret_key_and_value() -> None:
             schema_version="inter-agent-message.v1",
             sanitizer_policy_version="v1.0.0",
         )
+
+
+@pytest.mark.asyncio
+@db_required
+@pytest.mark.parametrize(
+    ("payload", "reason_code"),
+    [
+        ({"secret": "redacted"}, "raw_secret_or_canary"),
+        ({"sender_run_id": str(SENDER_RUN_ID)}, "server_owned_claim"),
+    ],
+)
+async def test_publish_sanitizer_denials_are_audited_for_all_reject_reasons(
+    session_factory: async_sessionmaker[AsyncSession],
+    payload: dict[str, object],
+    reason_code: str,
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture(session)
+            with pytest.raises(InterAgentPublishError, match=reason_code):
+                await InterAgentPublisherService(session).publish(
+                    tenant_id=TENANT_ID,
+                    project_id=PROJECT_ID,
+                    sender_actor_id=ACTOR_ID,
+                    request=_request(
+                        payload=payload,
+                        idempotency_key=f"inter-agent-message:denied:{reason_code}",
+                    ),
+                )
+
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    select event_type, event_payload
+                      from audit_events
+                     where tenant_id = :tenant_id
+                    """
+                ),
+                {"tenant_id": TENANT_ID},
+            )
+        ).mappings().all()
+        message_count = await session.scalar(text("select count(*) from inter_agent_messages"))
+        artifact_count = await session.scalar(text("select count(*) from artifacts"))
+
+    assert len(rows) == 1
+    assert rows[0]["event_type"] == "inter_agent_message_denied"
+    payload = dict(rows[0]["event_payload"])
+    assert payload["denial_reason"] == reason_code
+    assert payload["redaction_status"] == "ref_only"
+    assert payload["seq_no"] == 0
+    assert message_count == 0
+    assert artifact_count == 0
 
 
 @pytest.mark.asyncio

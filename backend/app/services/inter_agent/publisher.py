@@ -125,6 +125,8 @@ class InterAgentPublisherService:
             await self._assert_trusted_instruction_grant(
                 tenant_id=tenant_id,
                 project_id=project_id,
+                sender_actor_id=sender_actor_id,
+                request=request,
                 trusted_grant=trusted_grant,
             )
         sanitizer_policy_version = await self._current_sanitizer_policy_version(
@@ -138,17 +140,15 @@ class InterAgentPublisherService:
                 sanitizer_policy_version=sanitizer_policy_version,
             )
         except InterAgentPayloadRejected as exc:
-            if exc.reason_code == "inter_agent_message_token_payload":
-                await InterAgentEventWriter(self.session).append_publish_denied(
-                    tenant_id=tenant_id,
-                    project_id=project_id,
-                    parent_run_id=request.parent_run_id,
-                    idempotency_key=request.idempotency_key,
-                    denial_reason=exc.reason_code,
-                    actor_id=sender_actor_id,
-                )
-                raise InterAgentPublishError(exc.reason_code) from exc
-            raise
+            await InterAgentEventWriter(self.session).append_publish_denied(
+                tenant_id=tenant_id,
+                project_id=project_id,
+                parent_run_id=request.parent_run_id,
+                idempotency_key=request.idempotency_key,
+                denial_reason=exc.reason_code,
+                actor_id=sender_actor_id,
+            )
+            raise InterAgentPublishError(exc.reason_code) from exc
 
         await self._lock_parent_stream(
             tenant_id=tenant_id,
@@ -229,6 +229,8 @@ class InterAgentPublisherService:
         *,
         tenant_id: int,
         project_id: UUID,
+        sender_actor_id: UUID,
+        request: InterAgentPublishRequest,
         trusted_grant: TrustedInstructionGrant,
     ) -> None:
         if trusted_grant.action_class not in TRUSTED_INTER_AGENT_ACTION_CLASSES:
@@ -250,6 +252,10 @@ class InterAgentPublisherService:
         )
         if approval is None:
             raise InterAgentPublishError("approval_request_id not found.")
+        if approval.run_id != request.sender_run_id:
+            raise InterAgentPublishError("approval_request_id run boundary mismatch.")
+        if approval.requested_by_actor_id != sender_actor_id:
+            raise InterAgentPublishError("approval requester must match sender_actor_id.")
         if approval.status != "approved":
             raise InterAgentPublishError("approval_request_id must be approved.")
         if approval.decided_by_actor_id is None:
@@ -286,6 +292,7 @@ class InterAgentPublisherService:
             sa.select(Artifact).where(
                 Artifact.tenant_id == tenant_id,
                 Artifact.project_id == project_id,
+                Artifact.run_id == request.sender_run_id,
                 Artifact.id == trusted_grant.source_artifact_id,
             )
         )
@@ -296,9 +303,10 @@ class InterAgentPublisherService:
 
     @staticmethod
     def _assert_not_expired(expires_at: datetime) -> None:
+        if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+            raise InterAgentPublishError("expires_at must be timezone-aware.")
         now = datetime.now(tz=UTC)
-        comparable = expires_at if expires_at.tzinfo is not None else expires_at.replace(tzinfo=UTC)
-        if comparable <= now:
+        if expires_at <= now:
             raise InterAgentPublishError("expires_at must be in the future.")
 
     async def _assert_run_boundary(

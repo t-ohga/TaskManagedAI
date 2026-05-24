@@ -291,6 +291,68 @@ async def test_direct_consume_marks_message_once(
 
 @pytest.mark.asyncio
 @db_required
+async def test_consume_rejects_message_sanitized_under_stale_policy(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture(session)
+            message = await _publish(session)
+            await session.execute(
+                text(
+                    """
+                    update sanitizer_policy_versions
+                       set deprecated_at = now()
+                     where tenant_id = 1
+                       and version = 'v1.0.0'
+                    """
+                )
+            )
+            await session.execute(
+                text(
+                    """
+                    insert into sanitizer_policy_versions (
+                      tenant_id, version, config_hash, ruleset_hash
+                    )
+                    values (1, 'v2.0.0', :config_hash, :ruleset_hash)
+                    """
+                ),
+                {"config_hash": "8" * 64, "ruleset_hash": "9" * 64},
+            )
+
+            with pytest.raises(InterAgentConsumeDenied) as denied:
+                await InterAgentConsumerService(session).consume(
+                    tenant_id=TENANT_ID,
+                    project_id=PROJECT_ID,
+                    actor_id=ACTOR_ID,
+                    request=_consume_request(message.id, RECEIVER_RUN_ID),
+                )
+
+        consumed_by_run_id = await session.scalar(
+            select(InterAgentMessage.consumed_by_run_id).where(
+                InterAgentMessage.tenant_id == TENANT_ID,
+                InterAgentMessage.id == message.id,
+            )
+        )
+        audit_payload = await session.scalar(
+            text(
+                """
+                select event_payload
+                  from audit_events
+                 where tenant_id = :tenant_id
+                   and event_type = 'inter_agent_message_denied'
+                """
+            ),
+            {"tenant_id": TENANT_ID},
+        )
+
+    assert denied.value.reason_code == "sanitizer_policy_stale"
+    assert consumed_by_run_id is None
+    assert dict(audit_payload)["denial_reason"] == "sanitizer_policy_stale"
+
+
+@pytest.mark.asyncio
+@db_required
 async def test_role_and_broadcast_receiver_eligibility(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
