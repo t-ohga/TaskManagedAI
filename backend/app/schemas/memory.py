@@ -78,6 +78,19 @@ class MemoryStoreRequest(BaseModel):
         return _validate_timezone_aware(value)
 
 
+class MemoryRetrievalRequest(BaseModel):
+    """Caller-facing memory retrieval input with ref-only output metadata."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    project_id: UUID
+    retrieval_run_id: UUID
+    memory_record_ids: tuple[UUID, ...] = Field(default_factory=tuple, max_length=100)
+    record_kinds: tuple[MemoryRecordKind, ...] = Field(default_factory=tuple, max_length=16)
+    schema_version: str = Field(default="memory-retrieval.v1", min_length=1, max_length=128)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
 class MemoryRetrievalArtifactCreate(BaseModel):
     """Service-layer schema for recording untrusted memory retrieval metadata."""
 
@@ -101,6 +114,7 @@ class MemoryRetrievalArtifactCreate(BaseModel):
 __all__ = [
     "MemoryRecordCreate",
     "MemoryRecordTrustLevel",
+    "MemoryRetrievalRequest",
     "MemoryStoreRequest",
     "MemoryRetrievalArtifactCreate",
     "MemoryRetrievalTrustLevel",
