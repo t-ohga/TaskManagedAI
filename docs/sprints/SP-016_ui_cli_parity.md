@@ -64,7 +64,8 @@ risks:
 ## タスク一覧
 
 - [x] SP016-T01 api_capability_tokens table + migration + DDL
-- [ ] SP016-T02-T10 を順次実装
+- [x] SP016-T02 backend CLI auth token service + issue / refresh / revoke endpoint
+- [ ] SP016-T03-T10 を順次実装
 - [x] migration `0031_sp016_api_capability_tokens.py` upgrade/downgrade PASS
 - [ ] 13 parity contract test 全件 PASS
 - [ ] CLI capability token TTL 5-30 分 + scope minimum + raw 保存 reject
@@ -166,6 +167,40 @@ deferred:
 
 risks:
 - `alembic check` remains blocked by existing repository infrastructure debt (`migrations/env.py` target metadata), not by this batch.
+
+### Batch 0b: backend CLI auth token lifecycle (2026-05-24)
+
+changed:
+- `backend/app/services/auth/api_capability_token.py`
+- `backend/app/api/auth_cli.py`
+- `backend/app/schemas/api_capability_token.py`
+- `backend/app/api/router.py`
+- `backend/app/api/dependencies/active_registry_gate.py`
+- `tests/cli/test_capability_token_lifecycle.py`
+- `tests/api/test_active_registry_gate_dependency.py`
+
+implemented:
+- `/api/v1/auth/cli-login`
+- `/api/v1/auth/cli-token/refresh`
+- `/api/v1/auth/cli-token/revoke`
+- short-lived operation token issue / refresh / revoke lifecycle
+- raw operation token is returned once only; DB stores SHA-256 `token_hash`
+- `principals.principal_type='capability_token'` binding
+- `auth_method='plain'` service-layer reject with `api_capability_token_denied` audit
+- ref-only `api_capability_token_issued` / `api_capability_token_revoked` / `api_capability_token_denied` audit payloads
+- `/api/v1/auth/*` active-registry write gate exemption for auth bootstrap parity with `/auth/*`
+
+verified:
+- `uv run ruff check backend/app/api/auth_cli.py backend/app/api/router.py backend/app/api/dependencies/active_registry_gate.py backend/app/schemas/api_capability_token.py backend/app/schemas/__init__.py backend/app/services/auth tests/cli/test_capability_token_lifecycle.py tests/api/test_active_registry_gate_dependency.py`
+- `uv run mypy backend/app/api/auth_cli.py backend/app/api/router.py backend/app/api/dependencies/active_registry_gate.py backend/app/schemas/api_capability_token.py backend/app/schemas/__init__.py backend/app/services/auth tests/cli/test_capability_token_lifecycle.py tests/api/test_active_registry_gate_dependency.py`
+- `TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/cli/test_capability_token_lifecycle.py tests/api/test_active_registry_gate_dependency.py -q` (`16 passed`)
+- `uv run pytest tests/test_auth.py tests/test_dev_actor_middleware.py tests/api/test_sp012_9_ui_wiring_routes.py -q` (`25 passed`)
+
+deferred:
+- SP016-T03 CLI package / `tm` entry point.
+- SP016-T05 local keyring / SOPS profile loader. This batch enforces backend `auth_method='plain'` rejection but does not create local profile storage.
+- SP016-T07 13 capability parity contract.
+- SP016-T08 scope mismatch / misuse negative expansion.
 
 ## Kickoff Inventory (2026-05-24 task-04 plan-only)
 

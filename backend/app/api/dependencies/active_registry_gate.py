@@ -36,6 +36,7 @@ _WRITE_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _GATE_EXEMPT_PATH_PREFIXES: tuple[str, ...] = (
     "/health",
     "/metrics",
+    "/api/v1/auth/",
     "/auth/",
 )
 
@@ -202,7 +203,8 @@ class ActiveRegistryGateMiddleware(BaseHTTPMiddleware):
     HTTP method-based middleware で L1 ingress を強制。gate disabled (default) なら
     no-op (config not attached なら通過)、enabled なら全 mutation を 503 fail-closed。
 
-    exempt: `/health`, `/metrics`, `/auth/*` (gate self-loop / 修復経路を防ぐ)。
+    exempt: `/health`, `/metrics`, `/auth/*`, `/api/v1/auth/*`
+    (gate self-loop / 修復経路を防ぐ)。
     """
 
     async def dispatch(

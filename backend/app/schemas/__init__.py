@@ -4,6 +4,13 @@ from backend.app.schemas.acceptance_criteria import (
     AcceptanceCriteriaStatus,
 )
 from backend.app.schemas.actor import ActorCreate, ActorRead, ActorType
+from backend.app.schemas.api_capability_token import (
+    CliTokenIssueRequest,
+    CliTokenIssueResponse,
+    CliTokenRefreshRequest,
+    CliTokenRevokeRequest,
+    CliTokenRevokeResponse,
+)
 from backend.app.schemas.audit_event import AuditEventCreate, AuditEventRead
 from backend.app.schemas.claim import ClaimBase, ClaimCreate, ClaimRead, ClaimUpdate
 from backend.app.schemas.evidence_item import (
@@ -40,6 +47,11 @@ __all__ = [
     "ActorCreate",
     "ActorRead",
     "ActorType",
+    "CliTokenIssueRequest",
+    "CliTokenIssueResponse",
+    "CliTokenRefreshRequest",
+    "CliTokenRevokeRequest",
+    "CliTokenRevokeResponse",
     "AuditEventCreate",
     "AuditEventRead",
     "ClaimBase",
