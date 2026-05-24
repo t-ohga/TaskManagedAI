@@ -18,7 +18,7 @@ acceptance_history:
   - "Sprint 11 BL-0100: AgentRunEvent repo_pr_opened actual emission — enum exists, actual runtime emission not verifiable; reopened on 2026-05-24"
   - "Sprint 11 BL-0102: AC-KPI-02 time_to_merge endpoint + median calc test — eval/orchestrator KPI helpers exist, SP-008 agent-runs endpoint not verifiable; reopened on 2026-05-24"
   - "Sprint 11 BL-0101a: Webhook HMAC SecretBroker-mediated service layer + Redis SETNX replay — low-level helper exists, service layer not verifiable; reopened on 2026-05-24"
-  - "2026-05-24 SP-008 Batch A: RepoProxy public signature now accepts only DraftPRBinding and pure server-owned 4-binding builder exists; DB-backed resolver still pending"
+  - "2026-05-24 SP-008 Batch A/A2: RepoProxy public signature now accepts only DraftPRBinding; pure server-owned 4-binding builder and DB-backed ApprovalRequest+ContextSnapshot resolver exist; live Git ref re-fetch remains in GitHubAppAdapter"
   - "Sprint 11.5 BL-Permission-CLI: Permission Matrix CLI static check + dedicated CI workflow (permission-matrix-check.yml) — completed (本 PR、Sprint 8 既実装 `permission_matrix.py --check` を独立 workflow に integrate)"
 supersedes: null
 superseded_by: null
