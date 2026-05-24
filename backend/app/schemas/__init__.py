@@ -25,6 +25,7 @@ from backend.app.schemas.memory import (
     MemoryRecordTrustLevel,
     MemoryRetrievalArtifactCreate,
     MemoryRetrievalTrustLevel,
+    MemoryStoreRequest,
 )
 from backend.app.schemas.notification_event import NotificationEventCreate, NotificationEventRead
 from backend.app.schemas.principal import PrincipalCreate, PrincipalRead, PrincipalType
@@ -74,6 +75,7 @@ __all__ = [
     "MemoryRecordTrustLevel",
     "MemoryRetrievalArtifactCreate",
     "MemoryRetrievalTrustLevel",
+    "MemoryStoreRequest",
     "NotificationEventCreate",
     "NotificationEventRead",
     "PrincipalCreate",
