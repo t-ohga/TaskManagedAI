@@ -8,6 +8,7 @@ import {
 } from "@/lib/i18n/approval-labels";
 
 import { ApprovalDecideForm } from "./_components/approval-decide-form";
+import { ApprovalRevisionRequestForm } from "./_components/approval-revision-request-form";
 
 export const dynamic = "force-dynamic";
 
@@ -87,7 +88,10 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
           </article>
 
           {approval.status === "pending" ? (
-            <ApprovalDecideForm approvalId={approval.id} initialStatus={approval.status} />
+            <>
+              <ApprovalDecideForm approvalId={approval.id} initialStatus={approval.status} />
+              <ApprovalRevisionRequestForm approvalId={approval.id} initialStatus={approval.status} />
+            </>
           ) : null}
         </aside>
       </div>

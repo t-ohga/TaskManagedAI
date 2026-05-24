@@ -14,6 +14,7 @@
 | P1 | task-11 | SP-009-5 | Notification triage D2 UI/actions | completed 2026-05-24 | 0.5 day |
 | P1 | task-12 | SP-009-5 | Request revision contract plan | completed 2026-05-24; implementation pending | 0.2 day |
 | P1 | task-13 | SP-009-5 | Request revision E1 DB/API | completed 2026-05-24; E2/E3 pending | 0.5 day |
+| P1 | task-14 | SP-009-5 | Request revision E2 Approval Detail UI | completed 2026-05-24; E3 pending | 0.3 day |
 | P2 | task-04 | SP-000 / roadmap | bootstrap/backlog status hygiene | optional docs-only (completed 2026-05-24) | 0.2 day |
 
 ## Recommended Order
@@ -51,6 +52,9 @@ task-12 (SP-009-5 Batch E0)
 
 task-13 (SP-009-5 Batch E1)
   -> completed: additive approval_revision_requests table, request_revision API/service, audit/notification metadata-only events
+
+task-14 (SP-009-5 Batch E2)
+  -> completed: Approval Detail request_revision form/action, no bulk action, no rationale echo in UI result
 ```
 
 ## SP-008 Tentative Implementation Batches
@@ -91,7 +95,7 @@ These are not coding instructions until a dedicated SP-009-5 implementation PR s
 | D2 | notification triage `/notifications` UI actions (completed 2026-05-24) | actor-owned transitions; no bulk action |
 | E0 | approval `request_revision` contract plan (completed 2026-05-24) | no status enum expansion; old approval invalidated; replacement approval creates new row |
 | E1 | approval `request_revision` DB/API (completed 2026-05-24) | additive table, human-only decider, raw-secret scan, migration up/down |
-| E2 | approval `request_revision` UI action | no bulk action; rationale redaction and DOM non-exposure |
+| E2 | approval `request_revision` UI action (completed 2026-05-24) | no bulk action; rationale redaction and DOM non-exposure |
 | E3 | revised artifact handoff | supersession wiring and stale hash negative tests |
 
 ## SP-007 Phase 5 Plan
