@@ -53,6 +53,22 @@ test("SP-009-5: today control plane renders read-only lanes", async ({ page }) =
   await expect(todayRegion.getByRole("region", { name: "Inbox lane" })).toBeVisible();
 });
 
+test("SP-009-5: execution timeline renders unified read-only rows", async ({ page }) => {
+  await loginAndGoto(page, "/timeline");
+
+  const timelineRegion = page.getByRole("region", {
+    name: "Execution timeline",
+    exact: true
+  });
+
+  await expect(timelineRegion).toBeVisible();
+  await expect(
+    timelineRegion.getByRole("heading", { name: "実行タイムライン", exact: true })
+  ).toBeVisible();
+  await expect(timelineRegion.getByLabel("Timeline summary")).toBeVisible();
+  await expect(timelineRegion.getByRole("region", { name: "Unified event rows" })).toBeVisible();
+});
+
 test("Sprint 9: approval inbox page renders real status filters", async ({ page }) => {
   await loginAndGoto(page, "/approvals");
 

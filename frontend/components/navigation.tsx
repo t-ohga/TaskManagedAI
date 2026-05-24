@@ -6,6 +6,7 @@ import { NotificationBadge } from "@/components/notification-badge";
 const navItems = [
   { href: "/dashboard", label: "ダッシュボード", current: true },
   { href: "/today", label: "Today", current: false },
+  { href: "/timeline", label: "実行ログ", current: false },
   { href: "/tickets", label: "チケット", current: false },
   { href: "/eval-dashboard", label: "評価ダッシュボード", current: false },
   { href: "/approvals", label: "承認待ち", current: false },
