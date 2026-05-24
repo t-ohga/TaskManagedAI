@@ -13,8 +13,8 @@ adr_refs:
   - "[ADR-00009](../adr/00009_action_class_taxonomy.md) # accepted; policy_profile exact 14 rows / action_class boundary"
   - "[ADR-00020](../adr/00020_framework_intake_checklist.md) # accepted; external API / persistence / telemetry deny"
   - "[ADR-00024](../adr/00024_project_auto_discovery_memory_boundary.md) # accepted; memory project boundary"
-planned_adr_refs:
-  - "[ADR-00032](../adr/00032_curator_insights_metrics_boundary.md) # proposed; accept before SP020-T02 implementation"
+  - "[ADR-00032](../adr/00032_curator_insights_metrics_boundary.md) # accepted 2026-05-24; curator / insights / adopted_artifacts boundary"
+planned_adr_refs: []
 related_sprints:
   - "SP-014_orchestrator_agent"
   - "SP-015_inter_agent_communication"
@@ -28,7 +28,7 @@ risks:
   - "PE-F-014/015/016 closure needs cross-source tests, not only docs trace"
 ---
 
-最終更新: 2026-05-24 (plan-only gate; implementation not started)
+最終更新: 2026-05-24 (SP020-T01 ADR accepted; implementation not started)
 
 ## 目的
 
@@ -57,12 +57,13 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - **manual_user protection**: `manual_user` は default で自動 archive 対象外。auto archive は `auto_completion` / `auto_failure` / `auto_review_finding` を優先する。
 - **insights are ref-only**: insight API / CLI output は record id、record_kind、content_hash、source artifact ref、aggregate count、score だけを返す。
 - **adopted_artifacts dedicated link table**: PE-F-015 の citation_coverage final-only attribution は `artifacts` 本体に boolean を足さず、tenant/project/run/artifact scoped link table を第一候補にする。
+- **no event_type expansion in SP-020**: `repo_pr_merged` は SP-020 では追加せず、`repo_pr_opened` proxy を明示維持する。新 event_type が必要になった場合は ADR-00004 update + 5+ source enum sync を別 gate にする。
 - **Phase E closure in tests**: PE-F-014/015/016 は docs trace ではなく exact reason_code / exact query / exact seed regression で close する。
 
 ## 実装チケット
 
 - SP020-T00: plan-only gate (本 PR)。Sprint Pack / ADR-00032 proposed / registry / SP-022 trace を起票する。
-- SP020-T01: ADR-00032 accepted promotion + implementation batch split review。
+- SP020-T01: ADR-00032 accepted promotion + implementation batch split review (completed; implementation still not started)。
 - SP020-T02: curator service foundation。completed/failed/review-finding source artifact から `auto_completion` / `auto_failure` / `auto_review_finding` memory を生成。
 - SP020-T03: archive policy service。manual_user default protect、auto record aging/relevance policy、`memory_archive_engaged` audit。
 - SP020-T04: insights aggregation service + read-only API / CLI surface。raw payload 非露出、feature flag disabled default。
@@ -74,7 +75,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 ## タスク一覧
 
 - [x] SP020-T00 plan-only gate
-- [ ] SP020-T01 ADR-00032 accepted promotion + batch split
+- [x] SP020-T01 ADR-00032 accepted promotion + batch split
 - [ ] SP020-T02 curator service foundation
 - [ ] SP020-T03 archive policy service
 - [ ] SP020-T04 insights read-only API / CLI
@@ -91,7 +92,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 | curator auto memory through MemoryStoreService | ○ | - |
 | archive policy with manual_user protection | ○ | - |
 | insight aggregation ref-only response | ○ | UI polish may defer |
-| adopted_artifacts final-only attribution | ○ | repo_pr_merged event_type can defer if proxy remains explicit |
+| adopted_artifacts final-only attribution | ○ | repo_pr_merged event_type deferred; repo_pr_opened proxy must remain explicit |
 | PE-F-014 6 reason_code closure | ○ | - |
 | PE-F-015 exact query closure | ○ | - |
 | PE-F-016 policy_profile closure | ○ | - |
@@ -124,6 +125,21 @@ TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/memory tests/metrics/test_adopt
 TASKMANAGEDAI_DATABASE_URL=<test-db-url> uv run alembic downgrade -1
 TASKMANAGEDAI_DATABASE_URL=<test-db-url> uv run alembic upgrade head
 ```
+
+## SP020-T01 implementation batch split
+
+| batch | ticket | scope | risk | PR gate |
+|---|---|---|---|---|
+| 0a | SP020-T01 | ADR-00032 accepted promotion + batch split | docs / gate only | frontmatter + Phase E trace + diff check |
+| 0b | SP020-T02 | curator service foundation through `MemoryStoreService` | memory write boundary | raw payload negative tests + store pipeline regression |
+| 0c | SP020-T03 | archive policy service | retrieval exclusion / user data hiding | manual_user protect + archived retrieval exclusion |
+| 0d | SP020-T04 | insights aggregation + disabled read-only API / CLI | raw content leakage | feature flag disabled default + ref-only API/CLI tests |
+| 0e | SP020-T05 | `adopted_artifacts` link table + citation_coverage final-only query | DB / metrics | migration up/down + cross-project / non-final negatives |
+| 0f | SP020-T06 | orchestrator auto-retrieve hook | AI prompt boundary | untrusted_content no self-promotion tests |
+| 0g | SP020-T07 | PE-F-014/015/016 closure tests | cross-source invariant | exact reason_code / query / 14 seed regression |
+| 0h | SP020-T08 | backup/restore extension + Sprint closeout | restore integrity | archive/adopted/insight FK restore drill |
+
+Batch rule: 0b-0h must each run immediate self-review and `codex_pr_full_review.sh <PR>` after PR creation. Implementation must not proceed from a failed batch by widening scope; fix or defer explicitly.
 
 ## レビュー観点
 
@@ -175,8 +191,33 @@ verified:
 - `git diff --check`
 
 deferred:
-- SP020-T01+ implementation.
-- ADR-00032 accepted promotion.
+- Runtime implementation SP020-T02+.
 
 risks:
 - Implementation batches must remain feature-flagged and ref-only until API/CLI redaction and boundary tests pass.
+
+### 2026-05-24 SP020-T01 ADR readiness gate
+
+changed:
+- `docs/adr/00032_curator_insights_metrics_boundary.md`
+- `docs/sprints/SP-020_curator_insights_integration.md`
+- `docs/sprints/README.md`
+- `docs/sprints/SP-022_framework_intake_hardening.md`
+
+implemented:
+- ADR-00032 `proposed → accepted` promotion.
+- `planned_adr_refs` から `adr_refs` へ移動。
+- SP020-T02〜T08 の batch split を確定。
+- `repo_pr_merged` event_type は SP-020 では追加せず、`repo_pr_opened` proxy を明示維持する判断を記録。
+
+verified:
+- `.claude/hooks/sprint/check-sprint-pack-frontmatter.sh docs/sprints/SP-020_curator_insights_integration.md`
+- `scripts/ci/check_phase_e_trace.sh`
+- `git diff --check`
+
+deferred:
+- Runtime implementation SP020-T02+.
+- `repo_pr_merged` event_type additive expansion (future ADR-00004 update only if needed).
+
+risks:
+- SP020-T05 migration は DB schema 変更のため、dedicated PR で migration up/down と cross-project negative tests を必須にする。

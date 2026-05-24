@@ -1,8 +1,10 @@
 ---
 id: "ADR-00032"
 title: "Curator Insights + Multi-Agent Metrics Boundary"
-status: "proposed"
+status: "accepted"
 date: "2026-05-24"
+updated_at: "2026-05-24"
+accepted_at: "2026-05-24"
 authors:
   - "t-ohga"
 related_sprints:
@@ -11,12 +13,16 @@ related_adrs:
   - "ADR-00016"
   - "ADR-00014"
   - "ADR-00009"
+  - "ADR-00004"
   - "ADR-00024"
 supersedes: null
 superseded_by: null
+acceptance_history:
+  - "2026-05-24: proposed during SP020-T00 plan-only gate."
+  - "2026-05-24: accepted at SP020-T01 ADR readiness gate after self plan review. Scope remains SP-018 memory boundary reuse, ref-only insights, adopted_artifacts dedicated link table, no ContextSnapshot overlay, no external memory service, and no SP-020 event_type expansion."
 ---
 
-最終更新: 2026-05-24 (SP-020 plan-only gate)
+最終更新: 2026-05-24 (SP020-T01 ADR readiness gate で accepted promotion)
 
 ## 背景
 
@@ -42,6 +48,10 @@ superseded_by: null
 - 採用: A: SP-018 memory service 上に curator / insights / adopted_artifacts を追加。
 - 理由: SP-018 で確立した project boundary、sanitizer drift、artifact-bound content、feature flag、untrusted retrieval を壊さずに Wave 22 を進められる。
 - 実装 Sprint: SP-020。
+- accepted boundary:
+  - 本 ADR の accepted は implementation boundary の確定であり、runtime 実装完了を意味しない。
+  - SP020-T02 以降は batch ごとの PR で実装し、feature flag disabled default、ref-only response、server-owned field、raw secret/message body 非露出の regression を追加する。
+  - `repo_pr_merged` AgentRunEvent 追加は SP-020 scope から defer する。SP020-T05 は `adopted_artifacts` final-only attribution と citation_coverage denominator を固定し、time_to_merge は current `repo_pr_opened` proxy を明示維持する。将来 `repo_pr_merged` が必要になった場合は ADR-00004 update + DB/Python/Pydantic/pytest/frontend の 5+ source enum sync を別 gate にする。
 - 実装対象ファイル:
   - `backend/app/services/memory/curator.py`
   - `backend/app/services/memory/insights.py`
@@ -57,7 +67,7 @@ superseded_by: null
   - archive は `memory_records.archived_at` を service boundary で設定し、retrieval は既存通り archived record を除外する。
   - insight response は ref-only summary。raw memory content、raw artifact body、capability token、secret-shaped value は返さない。
   - adopted artifact attribution は dedicated link table (`adopted_artifacts`) を第一候補にし、`artifacts` 本体への boolean 追加は避ける。
-  - `repo_pr_merged` event_type を追加する場合は ADR-00004 update + 5+ source enum sync を別 batch gate にする。追加しない batch では `repo_pr_opened` proxy を明示する。
+  - `repo_pr_merged` event_type は SP-020 では追加しない。`repo_pr_opened` proxy 継続を docs / tests で明示し、event_type 37 exact set を drift させない。
   - PE-F-016 は policy schema を再拡張せず、SP-014 で作成済みの `policy_profile_action_effects` exact 14 rows と required review artifact guard を closure test で再検証する。
 - テスト指針:
   - curator auto-record は raw payload を保存せず、artifact ref + content_hash のみ。
@@ -85,3 +95,21 @@ superseded_by: null
 1. rollback trigger: curator / insights / adopted_artifacts migration が project boundary、secret redaction、archive exclusion、または Phase E closure test を満たさない。
 2. `uv run alembic downgrade -1` で SP-020 migration を戻す。feature flag `TASKMANAGEDAI_MEMORY_CURATOR_ENABLED=false` を維持する。
 3. `uv run pytest tests/memory tests/metrics/test_adopted_artifacts_kpi_boundary.py tests/security/test_secretbroker_multi_agent_reason_matrix.py -q` を再実行し、SP-018 retrieval path が影響を受けていないことを確認する。
+
+## SP020-T01 readiness review
+
+### Self-Plan-Review R1: structure
+
+- adopt: ADR-00032 can be accepted before implementation because it fixes the implementation boundary and does not claim runtime completion.
+- adopt: `planned_adr_refs` must move to SP-020 `adr_refs` before SP020-T02 starts.
+- adopt: batch split is mandatory because SP-020 touches DB, API/CLI, metrics, AI prompt boundary, and backup/restore.
+- adopt: `repo_pr_merged` is deferred from SP-020 to avoid unnecessary event_type 37 expansion; citation_coverage final-only attribution is still must_ship through `adopted_artifacts`.
+
+### Self-Plan-Review R2: adversarial
+
+- finding: raw summary table would bypass SP-018 ref-only storage. resolution: rejected by adopted option A and insight ref-only response tests.
+- finding: archive automation can hide user-authored memory. resolution: `manual_user` default protect remains must_ship.
+- finding: adding `repo_pr_merged` inside SP-020 would create 5+ source enum drift. resolution: defer event_type expansion and document `repo_pr_opened` proxy.
+- finding: Phase E closure could become docs-only. resolution: SP020-T07 must add exact reason_code / query / seed regression tests.
+
+Readiness Gate: CRITICAL=0 / HIGH=0. ADR-00032 accepted for SP020-T02+ implementation.
