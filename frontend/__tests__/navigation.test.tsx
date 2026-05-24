@@ -19,6 +19,7 @@ describe("Navigation", () => {
     const navItems = [
       ["ダッシュボード", "/dashboard"],
       ["Today", "/today"],
+      ["実行ログ", "/timeline"],
       ["チケット", "/tickets"],
       ["評価ダッシュボード", "/eval-dashboard"],
       ["承認待ち", "/approvals"],
