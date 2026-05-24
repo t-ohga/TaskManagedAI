@@ -21,7 +21,13 @@ from backend.app.api.approval_inbox import (
 from backend.app.api.memory import router as memory_router
 from backend.app.config import Settings
 from backend.app.db.models.memory_record import MemoryRecord, MemoryRetrievalArtifact
-from backend.app.schemas.memory import MemoryRetrievalRequest
+from backend.app.schemas.memory import MemoryInsightRequest, MemoryRetrievalRequest
+from backend.app.services.memory.insights import (
+    MemoryInsightDenied,
+    MemoryInsightItem,
+    MemoryInsightResult,
+    MemoryInsightService,
+)
 from backend.app.services.memory.retrieval import (
     MemoryRetrievalDenied,
     MemoryRetrievalResult,
@@ -100,6 +106,24 @@ async def test_memory_api_disabled_returns_404_without_service_call(
     response = await disabled_client.get(
         f"/api/v1/projects/{_PROJECT_ID}/memory/retrievals",
         params={"retrieval_run_id": str(_RUN_ID)},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "memory api disabled"
+
+
+@pytest.mark.asyncio
+async def test_memory_insights_api_disabled_returns_404_without_service_call(
+    disabled_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_if_called(*_: Any, **__: Any) -> MemoryInsightResult:
+        raise AssertionError("MemoryInsightService.summarize must not be called")
+
+    monkeypatch.setattr(MemoryInsightService, "summarize", fail_if_called)
+
+    response = await disabled_client.get(
+        f"/api/v1/projects/{_PROJECT_ID}/memory/insights",
     )
 
     assert response.status_code == 404
@@ -186,6 +210,89 @@ async def test_memory_api_enabled_returns_ref_only_retrieval_response(
     assert request.memory_record_ids == (_MEMORY_RECORD_ID,)
     assert request.record_kinds == ("manual_user",)
     assert request.limit == 10
+
+
+@pytest.mark.asyncio
+async def test_memory_api_enabled_returns_ref_only_insight_response(
+    enabled_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_summarize(
+        self: MemoryInsightService,
+        *,
+        tenant_id: int,
+        request: object,
+        generated_at: datetime | None = None,
+    ) -> MemoryInsightResult:
+        captured["tenant_id"] = tenant_id
+        captured["request"] = request
+        captured["generated_at"] = generated_at
+        return MemoryInsightResult(
+            items=(
+                MemoryInsightItem(
+                    memory_record_id=_MEMORY_RECORD_ID,
+                    record_kind="auto_completion",
+                    content_hash="c" * 64,
+                    source_artifact_ref=f"artifact://source/{_MEMORY_RECORD_ID}",
+                    aggregate_count=2,
+                    score=1.25,
+                    created_at=datetime(2026, 5, 24, 12, 0, tzinfo=UTC),
+                ),
+            ),
+            generated_at=datetime(2026, 5, 24, 12, 30, tzinfo=UTC),
+        )
+
+    monkeypatch.setattr(MemoryInsightService, "summarize", fake_summarize)
+
+    response = await enabled_client.get(
+        f"/api/v1/projects/{_PROJECT_ID}/memory/insights",
+        params=[("record_kind", "auto_completion"), ("limit", "5")],
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {
+        "items": [
+            {
+                "memory_record_id": str(_MEMORY_RECORD_ID),
+                "record_kind": "auto_completion",
+                "content_hash": "c" * 64,
+                "source_artifact_ref": f"artifact://source/{_MEMORY_RECORD_ID}",
+                "aggregate_count": 2,
+                "score": 1.25,
+                "created_at": "2026-05-24T12:00:00Z",
+                "trust_level": "untrusted_content",
+            }
+        ],
+        "generated_at": "2026-05-24T12:30:00Z",
+        "trust_level": "untrusted_content",
+    }
+    assert "content_artifact_ref" not in str(payload)
+    assert "raw memory content" not in str(payload)
+    request = cast(MemoryInsightRequest, captured["request"])
+    assert request.project_id == _PROJECT_ID
+    assert request.record_kinds == ("auto_completion",)
+    assert request.limit == 5
+
+
+@pytest.mark.asyncio
+async def test_memory_api_maps_insight_boundary_miss_to_404(
+    enabled_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_summarize(*_: Any, **__: Any) -> MemoryInsightResult:
+        raise MemoryInsightDenied("project_id not found in tenant boundary.")
+
+    monkeypatch.setattr(MemoryInsightService, "summarize", fake_summarize)
+
+    response = await enabled_client.get(
+        f"/api/v1/projects/{_PROJECT_ID}/memory/insights",
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "memory insight not found"
 
 
 @pytest.mark.asyncio

@@ -203,10 +203,11 @@ merge / deploy は P0 deny (ADR-00009 §採用案準拠)、CLI からも invoke 
 
 ### 4.1 Non-parity command policy
 
-SP-016 の parity contract は上記 13 capability のみを対象にする。過去の Sprint Pack 草案にあった `message` / `audit` / `export` / `sprint` command は次の扱いで drift を解消する。
+SP-016 の parity contract は上記 13 capability のみを対象にする。過去の Sprint Pack 草案にあった `message` / `audit` / `export` / `sprint` command と、SP-020 で追加する memory insight helper は次の扱いで drift を解消する。
 
 | command | SP-016 扱い | parity contract |
 |---|---|---|
+| `memory insights` | SP-020 read-only helper。`memory_insights` は `ALL_CAPABILITIES` に入れず、raw memory body / content artifact ref を出力しない | 含めない |
 | `message` | SP-015 backend を直接 mutate する project-user CLI は SP-016 batch 0 scope 外。将来追加する場合は別 Sprint / ADR update で 13 matrix を拡張 | 含めない |
 | `audit` | read-only helper としてのみ許可可能。raw payload / secret / message body は出力しない | 含めない |
 | `export` | read-only helper としてのみ許可可能。raw secret / capability token / audit raw body は出力しない | 含めない |
@@ -238,7 +239,7 @@ CLI 実行 mode を 3 種に分離:
 | CLI | scope | 想定 user | mutating command |
 |---|---|---|---|
 | `taskhub` | host / admin operation (Sprint Pack / ADR / tenant 設定 / SOPS rotation 等) | host admin (個人運用の場合 user 自身、tenant 運用の場合 admin role) | admin scope (`tenant_create` / `sprint_pack_admin_close` / `sops_rotate` 等)、project mutating command (`task_write` / `repo_write` 等) は **invoke 不可** |
-| `tm` | project user operation (ticket / approval / repo / agent run / provider 等) | project user | 上記 13 capability matrix のみ、admin scope は **invoke 不可** |
+| `tm` | project user operation (ticket / approval / repo / agent run / provider 等) | project user | 上記 13 capability matrix + 明示された read-only non-parity helper のみ、admin scope は **invoke 不可** |
 
 `taskhub` 経由で project mutating command を直接 invoke する path は **restricted** (本 doc §1 #3 不変条件)。
 

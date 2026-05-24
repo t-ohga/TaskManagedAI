@@ -39,9 +39,9 @@ acceptance_history:
 
 ### §2: 13 capability matrix (memory 除外、PD-F-019 fix)
 
-ADR-00014 §11.4 + Phase C §4.3 参照。memory record/search は SP-018 accepted 後に feature flag で追加。SP-016 では `tm memory` の 404/disabled contract test のみ.
+ADR-00014 §11.4 + Phase C §4.3 参照。memory record/search は SP-018 accepted 後に feature flag で追加。SP-016 では `tm memory` の 404/disabled contract test のみ. SP-020 で追加する `tm memory insights` は read-only non-parity helper とし、`ALL_CAPABILITIES` の 13 行には含めない。
 
-`message` / `audit` / `export` command は 13 capability parity matrix に含めない。実装する場合でも read-only helper として扱い、UI ↔ CLI parity contract の 13 件には数えない。`sprint` command は `taskhub` host/admin CLI scope に属し、project-user CLI (`tm`) からは expose しない。
+`memory insights` / `message` / `audit` / `export` command は 13 capability parity matrix に含めない。実装する場合でも read-only helper として扱い、UI ↔ CLI parity contract の 13 件には数えない。`sprint` command は `taskhub` host/admin CLI scope に属し、project-user CLI (`tm`) からは expose しない。
 
 ### §3: principal-bound API capability token DDL (PE-F-006 fix、CRITICAL strengthening)
 

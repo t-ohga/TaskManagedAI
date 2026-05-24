@@ -54,7 +54,7 @@
 | SP-016_ui_cli_parity | SP-016_ui_cli_parity.md | match | CLI canonical name `tm` 維持 (R29 §6 U-04) |
 | SP-017_ai_society_visualization | SP-017_ai_society_visualization.md | match | P1 read-only AI Society board + role visualization; character generation remains SP-021 |
 | SP-018_hermes_memory_integration | SP-018_hermes_memory_integration.md | match | P1 memory backend completed; read-only retrieval API remains feature-flag disabled by default |
-| SP-020_curator_insights_integration | SP-020_curator_insights_integration.md | match | P1 curator + insights; ADR-00032 accepted, SP020-T03 completed, SP020-T04 next |
+| SP-020_curator_insights_integration | SP-020_curator_insights_integration.md | match | P1 curator + insights; ADR-00032 accepted, SP020-T04 completed, SP020-T05 next |
 | SP-022_framework_intake_hardening | SP-022_framework_intake_hardening.md | match | framework intake checklist + host migration 自動化 (P0.1+) |
 | **SP-0045_tool_registry** | **SP-0045_tool_registry.md** | **create_required** | **security boundary 独立、SP-005-5 alias 禁止** (R26 T-P2R1-012-residual)、本 PR で新規起票 |
 
