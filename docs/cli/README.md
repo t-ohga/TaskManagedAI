@@ -64,6 +64,8 @@ CLI は raw operation token を profile file に保存しない。runtime token 
 
 Backend は CLI request の operation token を `X-TaskManagedAI-Operation-Token` として受け取り、`api_capability_tokens.allowed_actions` と project scope に照合する。action / project mismatch は `api_capability_token_scope_mismatch` として ref-only audit に残し、token を SecretBroker capability token として redeem する経路は `secret_capability_denied:not_found` で拒否する。
 
+13 capability の UI/CLI parity contract は `tests/parity/test_ui_cli_parity.py` が正本。CLI が生成する method / path / capability、backend live/planned route、UI reference、DB row、audit event expectation を同一 matrix で固定する。
+
 ### 0.3 Network Boundary
 
 `backend_url` は closed-network 前提で fail-closed 検証する。CLI profile / env override で許可する host は次だけ:

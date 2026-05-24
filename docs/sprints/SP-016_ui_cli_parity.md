@@ -69,12 +69,12 @@ risks:
 - [x] SP016-T04 13 capability command surface
 - [x] SP016-T05 keyring / SOPS / env profile credential source resolver
 - [x] SP016-T06 JSON / YAML / human output formatter + TTY/non-interactive gate
-- [ ] SP016-T07 parity contract test
+- [x] SP016-T07 parity contract test
 - [x] SP016-T08 SecretBroker CLI token misuse negative test
 - [x] SP016-T09 ADR / Tailscale backend_url gate verification
 - [x] SP016-T10 `docs/cli/README.md` public usage hardening
 - [x] migration `0031_sp016_api_capability_tokens.py` upgrade/downgrade PASS
-- [ ] 13 parity contract test 全件 PASS
+- [x] 13 parity contract test 全件 PASS
 - [x] CLI capability token TTL 5-30 分 + scope minimum + raw 保存 reject
 - [ ] secret redaction (CLI 出力に raw secret 出ない、SecretBroker 経由のみ)
 - [x] Tailscale-only enforcement (public IP / Funnel reject + backend_url *.ts.net 検証)
@@ -360,6 +360,30 @@ verified:
 deferred:
 - T07 real parity contract execution for all 13 capabilities.
 - wiring `X-TaskManagedAI-Operation-Token` into non-ticket project-user API endpoints is part of the T07 parity/API coverage batch.
+
+### Batch 0h: 13 capability UI/CLI parity contract test (2026-05-24)
+
+changed:
+- `tests/parity/test_ui_cli_parity.py`
+- `docs/sprints/SP-016_ui_cli_parity.md`
+
+implemented:
+- canonical 13 capability parity matrix in test code
+- CLI-generated `method` / `path` / `capability` assertion for all 13 commands
+- backend route inventory check for live routes vs planned routes
+- UI reference check for live API clients and policy-surface-only entries
+- DB row and audit event expectation recorded for every capability
+- all 13 capabilities are checked against `ALL_CAPABILITIES` to prevent command matrix drift
+
+verified:
+- `uv run ruff check tests/parity/test_ui_cli_parity.py`
+- `PYTHONPATH=cli uv run mypy cli/tm tests/parity/test_ui_cli_parity.py`
+- `PYTHONPATH=cli uv run pytest tests/parity/test_ui_cli_parity.py -q` (`5 passed`)
+- `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/parity/test_ui_cli_parity.py tests/security/test_api_capability_token_scope_mismatch.py tests/security/test_cli_token_misuse_negative.py tests/cli/test_capability_token_lifecycle.py tests/cli/test_tm_cli_foundation.py tests/api/test_tickets_api.py -q` (`60 passed`)
+
+deferred:
+- backend live endpoints for `repo_status` / `repo_push` / `pr_open` / `secret_resolve` / `provider_call` remain planned; this batch fixes their parity contract and fail-drift tests, not gateway implementation.
+- full response/DB/audit equality E2E for planned endpoints must run when those backend surfaces become live.
 
 ## Kickoff Inventory (2026-05-24 task-04 plan-only)
 
