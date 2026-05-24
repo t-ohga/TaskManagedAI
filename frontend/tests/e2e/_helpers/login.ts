@@ -42,7 +42,7 @@ async function waitForDevSessionCookie(page: Page): Promise<void> {
 export async function loginAsDev(page: Page): Promise<void> {
   await page.goto("/login?next=/dashboard");
   await page.getByLabel("Dev login token").fill(readDevLoginToken());
-  await page.getByRole("button", { name: "ログイン" }).click();
+  await page.getByRole("button", { name: /^(ログイン|Sign in)$/u }).click();
   await expect(page).toHaveURL(/\/dashboard$/u);
   await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
   await waitForDevSessionCookie(page);

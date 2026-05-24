@@ -8,7 +8,7 @@ test("login renders the admin dashboard shell and exposes the logout skeleton", 
   await page.goto("/login?next=/dashboard");
 
   await page.getByLabel("Dev login token").fill(readDevLoginToken());
-  await page.getByRole("button", { name: "ログイン" }).click();
+  await page.getByRole("button", { name: /^(ログイン|Sign in)$/u }).click();
 
   await expect(page).toHaveURL(/\/dashboard$/u);
   await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
