@@ -1,7 +1,7 @@
 ---
 id: "SP-020_curator_insights_integration"
 type: "heavy"
-status: "ready"
+status: "completed"
 sprint_no: 20
 created_at: "2026-05-24"
 updated_at: "2026-05-24"
@@ -28,7 +28,7 @@ risks:
   - "PE-F-014/015/016 closure needs cross-source tests, not only docs trace"
 ---
 
-最終更新: 2026-05-24 (SP020-T07 Phase E closure tests completed)
+最終更新: 2026-05-24 (SP-020 completed: SP020-T08 backup/restore extension completed)
 
 ## 目的
 
@@ -70,7 +70,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - SP020-T05: adopted_artifacts link table + citation_coverage final-only attribution contract (completed)。
 - SP020-T06: orchestrator auto-retrieve hook (completed)。retrieval output は `untrusted_content` のまま、trusted_instruction 昇格禁止。
 - SP020-T07: Phase E closure tests (completed)。PE-F-014 6 reason_code / PE-F-015 exact query / PE-F-016 policy_profile 14 seed + review_artifact guard。
-- SP020-T08: backup/restore extension。archive state / adopted_artifacts / insight source FK を verify。
+- SP020-T08: backup/restore extension (completed)。archive state / adopted_artifacts / insight source FK を verify。
 
 ## タスク一覧
 
@@ -82,7 +82,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - [x] SP020-T05 adopted_artifacts metric attribution
 - [x] SP020-T06 orchestrator auto-retrieve hook
 - [x] SP020-T07 Phase E PE-F-014/015/016 closure tests
-- [ ] SP020-T08 backup/restore extension
+- [x] SP020-T08 backup/restore extension
 
 ## must_ship / defer_if_over_budget 対応表
 
@@ -122,6 +122,7 @@ git diff --check
 uv run ruff check backend/app/services/memory backend/app/api/memory.py cli/tm tests/memory tests/metrics tests/security
 PYTHONPATH=cli uv run mypy backend/app/services/memory backend/app/api/memory.py cli/tm tests/memory tests/metrics tests/security
 TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/memory tests/metrics/test_adopted_artifacts_kpi_boundary.py tests/security/test_secretbroker_multi_agent_reason_matrix.py -q
+TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/db/test_backup_restore_memory.py -q
 TASKMANAGEDAI_DATABASE_URL=<test-db-url> uv run alembic downgrade -1
 TASKMANAGEDAI_DATABASE_URL=<test-db-url> uv run alembic upgrade head
 ```
@@ -442,3 +443,35 @@ deferred:
 
 risks:
 - PE-F-015 still records current `time_to_merge` source as `repo_pr_opened` proxy. Adding `repo_pr_merged` remains a future ADR-00004 / event_type expansion, not part of SP020-T07.
+
+### 2026-05-24 SP020-T08 backup/restore extension
+
+changed:
+- `tests/db/test_backup_restore_memory.py`
+- `docs/sprints/SP-020_curator_insights_integration.md`
+- `docs/sprints/README.md`
+
+implemented:
+- SP-018 memory backup/restore drill regression を拡張し、SP-020 の archive state / adopted_artifacts FK / insight source FK を同一 DB-backed restore drill で検証。
+- archived memory は `archived_at` が維持され、retrieval / insight から除外されることを確認。
+- active memory の insight output は `artifact://source/<id>` ref-only を返し、`memory_records.source_artifact_id -> artifacts` の source FK と hash 整合を確認。
+- final adopted artifact は `adopted_artifacts -> artifacts` と `adopted_artifacts -> agent_run_events` の composite FK を確認し、citation_coverage が final adopted artifact だけを集計することを確認。
+
+self_review:
+- adopted: restore drill を docs-only 完了にせず、live migrated PostgreSQL test DB 上の relation query と service output で検証した。
+- adopted: raw memory body が retrieval / insight result に混入しない negative assertion を追加した。
+
+verified:
+- `uv run ruff check tests/db/test_backup_restore_memory.py tests/memory/test_archive_policy.py tests/memory/test_insights_service.py tests/metrics/test_adopted_artifacts_kpi_boundary.py docs/sprints/SP-020_curator_insights_integration.md docs/sprints/README.md`
+- `PYTHONPATH=cli uv run mypy tests/db/test_backup_restore_memory.py tests/memory/test_archive_policy.py tests/memory/test_insights_service.py tests/metrics/test_adopted_artifacts_kpi_boundary.py`
+- `TASKMANAGEDAI_DATABASE_URL=<isolated 127.0.0.1:55434 test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/db/test_backup_restore_memory.py -q` (`3 passed`)
+- `TASKMANAGEDAI_DATABASE_URL=<isolated 127.0.0.1:55434 test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/db/test_backup_restore_memory.py tests/memory/test_archive_policy.py tests/memory/test_insights_service.py tests/metrics/test_adopted_artifacts_kpi_boundary.py -q` (`15 passed`)
+- `.claude/hooks/sprint/check-sprint-pack-frontmatter.sh docs/sprints/SP-020_curator_insights_integration.md`
+- `scripts/ci/check_phase_e_trace.sh`
+- `git diff --check`
+
+deferred:
+- production backup/restore operation の実行自体は SP-020 対象外とし、SP-022 / AC-HARD-04 operational drill materials の管理下に残す。
+
+risks:
+- T08 は production restore run ではなく DB-backed regression drill。物理 restore が維持すべき SP-020 persistence invariant を検証する。
