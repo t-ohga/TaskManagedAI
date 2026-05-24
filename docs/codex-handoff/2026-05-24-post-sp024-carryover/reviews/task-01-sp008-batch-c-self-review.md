@@ -4,7 +4,7 @@ Date: 2026-05-24
 
 ## Scope
 
-Batch C implements the webhook service boundary only. It does not claim the concrete Redis adapter, concrete SecretBroker resolver, Tailscale ingress route, `repo_pr_opened` runtime emission, or KPI endpoint.
+Batch C implements the webhook service boundary only. It does not claim the concrete Redis adapter, concrete SecretBroker resolver, Tailscale ingress route, or `repo_pr_opened` runtime emission. KPI endpoint exposure was completed later in Batch E.
 
 ## Findings
 
@@ -40,4 +40,4 @@ Batch C implements the webhook service boundary only. It does not claim the conc
 - Concrete SecretBroker-backed HMAC secret resolver.
 - Concrete Redis SETNX replay adapter.
 - FastAPI `/webhooks/github` route with Tailscale-only ingress check.
-- Runtime `repo_pr_opened` emission and agent-runs KPI endpoint.
+- Runtime `repo_pr_opened` automatic call-site wiring.

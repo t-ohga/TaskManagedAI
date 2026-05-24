@@ -32,7 +32,7 @@ These are not coding instructions until task-01 marks them `READY`.
 | B | GitHubAppAdapter broker-mediated adapter boundary | raw token non-exposure + GitHub API boundary |
 | C | webhook SecretBroker/replay service boundary | raw HMAC secret redaction + replay defense |
 | D | `repo_pr_opened` AgentRunEvent writer + runtime call-site wiring | append-only event contract |
-| E | AC-KPI-02 `time_to_merge` endpoint/helper | KPI source-of-truth and duplicate counting |
+| E | AC-KPI-02 `time_to_merge` endpoint/helper (completed 2026-05-24 Batch E) | KPI source-of-truth and duplicate counting |
 | F | SP-008 status closeout + ADR/sprint docs | docs drift |
 
 ## SP-009 Tentative Implementation Batches
