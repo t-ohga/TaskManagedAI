@@ -4,7 +4,7 @@ type: "heavy"
 status: "done_with_phase5_defer"
 sprint_no: 7
 created_at: "2026-05-08"
-updated_at: "2026-05-13"
+updated_at: "2026-05-24"
 target_days: 4.7
 max_days: 7
 adr_refs:
@@ -226,6 +226,26 @@ risks:
 - ADR-00011 は Sprint 8 の GitHub App permission 変更で扱う。この Sprint では GitHub installation token や RepoProxy permission を変更しない。
 
 ## Review
+
+### Phase 5 planning refresh (2026-05-24)
+
+#### current state
+
+- ADR-00012 is accepted as of 2026-05-22.
+- BL-0082 / BL-0083 / BL-0084 remain unimplemented: no repo-external trusted wrapper, no trusted-state migration, and no active sha256 manifest trust root is installed by this planning refresh.
+- SP-007 stays `done_with_phase5_defer`. It must not move to `done` until wrapper self-test, manifest mismatch, trusted state, settings switch, and rollback evidence exist.
+
+#### plan artifact
+
+- `docs/codex-handoff/2026-05-24-post-sp024-carryover/plans/task-03-sp007-phase5-trust-boundary-plan.md` is the current Phase 5 implementation sequence.
+- Phase 5A / 5B may prepare repository-only helper scripts and temp-home tests.
+- Phase 5C is repo-external and requires explicit implementation-time approval before writing `~/.claude-trusted`, `~/.claude-trusted-state`, or switching `.claude/settings.json`.
+
+#### verification for this refresh
+
+- Validate SP-007 frontmatter as YAML.
+- Run the sprint frontmatter hook against this file.
+- Run `git diff --check`.
 
 ### batch 0 + batch 1 完了 (2026-05-13、commit `dc573cc`)
 

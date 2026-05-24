@@ -16,10 +16,10 @@ task-01 (SP-008 reconciliation)
   -> if READY: SP-008 implementation batches in separate PRs
 
 task-02 (SP-009 reconciliation)
-  -> READY after 2026-05-24 reconciliation: SP-009 contract/test cleanup PR first
+  -> completed through SP-009 contract/test cleanup PR
 
 task-03 (SP-007 Phase 5 plan)
-  -> implementation only after explicit machine-local trust-boundary approval
+  -> plan artifact ready; implementation only after explicit machine-local trust-boundary approval
 ```
 
 ## SP-008 Tentative Implementation Batches
@@ -44,8 +44,17 @@ These are not coding instructions until task-02 marks them `READY`.
 |---|---|---|
 | A | route/API existence diff after SP-012 and SP-016 (completed 2026-05-24 reconciliation) | API contract drift |
 | B | read-only UI wiring gaps only (no backend route gap found for core four surfaces) | no mutation expansion |
-| C | redaction and enum drift contract tests (next smallest PR) | raw payload non-exposure |
+| C | redaction and enum drift contract tests (completed 2026-05-24) | raw payload non-exposure |
 | D | SP-009-5 split for Today/Inbox, unified timeline, request_revision, notification triage, KPI strip | scope control |
+
+## SP-007 Phase 5 Plan
+
+| phase | scope | write boundary |
+|---|---|---|
+| 5A | docs and temp-home tests/helper scaffolding | repository only |
+| 5B | wrapper candidate and manifest verification in temp trust root | repository only |
+| 5C | install `~/.claude-trusted` wrapper, manifest, trusted state, and settings switch | repo-external; requires explicit approval |
+| 5D | SP-007 closeout and status update | repository docs after evidence |
 
 ## Common Verification
 
