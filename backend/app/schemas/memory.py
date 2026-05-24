@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from backend.app.domain.artifact.data_class import PayloadDataClass
 from backend.app.domain.memory.record_kind import MemoryRecordKind
 from backend.app.domain.memory.redaction_status import MemoryRedactionStatus
+from backend.app.services.input_trust.payload_classifier import PayloadClassificationInput
 
 MemoryRecordTrustLevel = Literal["untrusted_content", "validated_artifact"]
 MemoryRetrievalTrustLevel = Literal["untrusted_content"]
@@ -56,6 +57,27 @@ class MemoryRecordCreate(BaseModel):
         return _validate_timezone_aware(value)
 
 
+class MemoryStoreRequest(BaseModel):
+    """Caller-facing memory store input with server-owned fields removed."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    project_id: UUID
+    run_id: UUID
+    record_kind: MemoryRecordKind
+    payload: dict[str, Any] = Field(..., min_length=1)
+    classification: PayloadClassificationInput = Field(
+        default_factory=PayloadClassificationInput
+    )
+    schema_version: str = Field(default="memory-record.v1", min_length=1, max_length=128)
+    retention_until: datetime
+
+    @field_validator("retention_until")
+    @classmethod
+    def _retention_until_is_timezone_aware(cls, value: datetime) -> datetime:
+        return _validate_timezone_aware(value)
+
+
 class MemoryRetrievalArtifactCreate(BaseModel):
     """Service-layer schema for recording untrusted memory retrieval metadata."""
 
@@ -79,6 +101,7 @@ class MemoryRetrievalArtifactCreate(BaseModel):
 __all__ = [
     "MemoryRecordCreate",
     "MemoryRecordTrustLevel",
+    "MemoryStoreRequest",
     "MemoryRetrievalArtifactCreate",
     "MemoryRetrievalTrustLevel",
 ]

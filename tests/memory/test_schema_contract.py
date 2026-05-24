@@ -12,7 +12,11 @@ from sqlalchemy import CheckConstraint
 from backend.app.db.models.memory_record import MemoryRecord, MemoryRetrievalArtifact
 from backend.app.domain.memory.record_kind import ALL_MEMORY_RECORD_KINDS
 from backend.app.domain.memory.redaction_status import ALL_MEMORY_REDACTION_STATUSES
-from backend.app.schemas.memory import MemoryRecordCreate, MemoryRetrievalArtifactCreate
+from backend.app.schemas.memory import (
+    MemoryRecordCreate,
+    MemoryRetrievalArtifactCreate,
+    MemoryStoreRequest,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MIGRATION_PATH = _REPO_ROOT / "migrations" / "versions" / "0032_sp018_memory_records.py"
@@ -111,6 +115,31 @@ def test_memory_record_schema_rejects_non_sha256_or_naive_retention() -> None:
         MemoryRecordCreate.model_validate(
             _record_payload(retention_until=datetime.now().replace(microsecond=0))
         )
+
+
+def test_memory_store_schema_rejects_caller_owned_record_metadata() -> None:
+    payload = {
+        "project_id": uuid4(),
+        "run_id": uuid4(),
+        "record_kind": "manual_user",
+        "payload": {"body": "remember this"},
+        "retention_until": datetime.now(tz=UTC) + timedelta(days=30),
+    }
+    MemoryStoreRequest.model_validate(payload)
+
+    for server_owned_field in (
+        "content_artifact_ref",
+        "content_hash",
+        "data_class",
+        "redaction_status",
+        "sanitizer_version_id",
+        "source_artifact_id",
+        "trust_level",
+    ):
+        with pytest.raises(ValidationError):
+            MemoryStoreRequest.model_validate(
+                payload | {server_owned_field: "caller-owned"}
+            )
 
 
 def test_memory_retrieval_schema_is_untrusted_only() -> None:
