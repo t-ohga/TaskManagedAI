@@ -27,8 +27,10 @@ This handoff is a safe restart package for the remaining carry-over area. It int
 | `tasks/task-09-sp0095-notification-triage-plan.md` | SP-009-5 Batch D notification triage plan |
 | `tasks/task-10-sp0095-notification-triage-api.md` | SP-009-5 Batch D1 notification triage DB/API |
 | `tasks/task-11-sp0095-notification-triage-ui.md` | SP-009-5 Batch D2 notification triage UI/actions |
+| `tasks/task-12-sp0095-request-revision-plan.md` | SP-009-5 Batch E request_revision contract plan |
 | `plans/task-03-sp007-phase5-trust-boundary-plan.md` | SP-007 Phase 5 trust-boundary implementation sequence |
 | `plans/task-09-sp0095-notification-triage-contract-plan.md` | Notification triage DB/API/UI contract plan |
+| `plans/task-12-sp0095-request-revision-contract-plan.md` | Approval request_revision DB/API/UI/runtime contract plan |
 
 ## Operating Rule
 
@@ -44,6 +46,7 @@ Do not start SP-008 / SP-009 / SP-007 carry-over code directly from old Sprint P
 
 1. Run task-01 first: SP-008 residual reconciliation.
 2. If task-01 confirms the residual is still current, implement SP-008 in the smallest safe batch order: server-owned binding, broker-mediated GitHub adapter, webhook service boundary, `repo_pr_opened` event, KPI endpoint, then docs/status closeout.
-3. Run task-05 before SP-009 P0.1 UI code; it separates read-only UI surfaces from ADR/API-gated mutation surfaces.
-4. Run task-02 before any remaining SP-009 code because SP-012 / SP-016 already changed the UI and CLI surface.
-5. Run task-03 only as planning unless the user explicitly wants repo-external hook trust changes applied on this machine. The current plan artifact is `plans/task-03-sp007-phase5-trust-boundary-plan.md`.
+3. For SP-009-5, Batch E must use `plans/task-12-sp0095-request-revision-contract-plan.md` before any migration/API/UI implementation.
+4. Run task-05 before SP-009 P0.1 UI code; it separates read-only UI surfaces from ADR/API-gated mutation surfaces.
+5. Run task-02 before any remaining SP-009 code because SP-012 / SP-016 already changed the UI and CLI surface.
+6. Run task-03 only as planning unless the user explicitly wants repo-external hook trust changes applied on this machine. The current plan artifact is `plans/task-03-sp007-phase5-trust-boundary-plan.md`.

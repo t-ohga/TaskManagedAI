@@ -27,7 +27,7 @@ max_days: 3
 | Notification triage queue | SP-009 Q-E.4 | action-required queue の minimal model を確定 | ADR-00003 event schema gate |
 | Minimal KPI strip | SP-009 Q-E.5 | header/top surface に P0 Exit KPI を read-only 表示 | SP-010 / SP-011 metric source 明示 |
 | Newcomer Path | SP-009 Q-E.5 | initial tenant onboarding の最小導線 | P0.1 only |
-| Approval `request_revision` | SP-009 Q-E.2 | revision_requested flow の採否判断と実装 | ADR-00003 / ADR-00004 / ADR-00009 update 後のみ |
+| Approval `request_revision` | SP-009 Q-E.2 | status enum expansion なしの revision request record 方式で計画固定。実装は E1/E2/E3 に分割 | ADR-00003 / ADR-00004 / ADR-00009 update 後のみ |
 
 ## 対象外
 
@@ -45,7 +45,10 @@ max_days: 3
 | C | Decision packet hash visibility (completed 2026-05-24) | `stale_after_event_seq` は additive Approval Detail API field として公開、state transition なし |
 | D1 | Notification triage DB/API contract (completed 2026-05-24) | additive migration、redacted triage endpoint、actor-owned snooze/resolve、metadata-only audit |
 | D2 | Notification triage `/notifications` UI actions (completed 2026-05-24) | D1 API を利用し、bulk action なしで actor-owned transition のみ |
-| E | `request_revision` approval loop | ADR-00003 / ADR-00004 / ADR-00009 update + regression tests |
+| E0 | `request_revision` contract plan (completed 2026-05-24) | `revision_requested` status 追加を初期実装では拒否し、old approval invalidation + new approval row semantics を固定 |
+| E1 | `request_revision` DB/API | additive `approval_revision_requests` table、human-only decider、raw-secret scan、migration up/down |
+| E2 | `request_revision` Approval Detail UI | no bulk action、rationale DOM non-exposure、server action validation |
+| E3 | revised artifact handoff | supersession wiring、fresh decision-packet hash negative tests |
 | F | Newcomer Path / advanced approval refinements | P0.1 polish、P0 Exit blocker にしない |
 
 ## 受け入れ条件
@@ -66,12 +69,12 @@ max_days: 3
 ## 残リスク
 
 - SP-009-5 は UI 面の束ね直しであり、P0 Exit へ直接必要な SP-009 golden E2E / DOM secret scan / residual enum contract を完了扱いにしない。
-- `request_revision` と notification triage は state/API/schema 変更を伴うため、実装時に ADR/API contract update と migration verification が必要。
+- `request_revision` 実装は Batch E0 plan を正本にし、status enum expansion / AgentRunEvent enum addition / caller-supplied replacement hash を別 PR なしに追加しない。
 - Today/Inbox と KPI strip は既存データの欠落が UI 上の空表示に見えやすい。実装時は empty state と source attribution を acceptance に含める。
 
 ## Review
 
-- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、Batch A で `/today` read-only control plane + minimal KPI strip、Batch B で `/timeline` unified execution timeline、Batch C で Approval Detail decision packet hash visibility、Batch D1 で notification triage DB/API contract、Batch D2 で `/notifications` triage UI/actions を追加した。
+- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、Batch A で `/today` read-only control plane + minimal KPI strip、Batch B で `/timeline` unified execution timeline、Batch C で Approval Detail decision packet hash visibility、Batch D1 で notification triage DB/API contract、Batch D2 で `/notifications` triage UI/actions、Batch E0 で `request_revision` contract plan を追加した。
 - verified: frontmatter / registry / backlog / handoff cross-reference、frontend typecheck/lint/Vitest、desktop/mobile browser smoke、timeline sensitive key leak check、decision packet malformed-hash DOM non-exposure、notification triage migration up/down + redacted API tests、D2 UI/action tests を確認した。
-- deferred: `request_revision` state machine は別 PR。
+- deferred: `request_revision` E1 DB/API、E2 UI、E3 revised-artifact handoff と Newcomer Path は別 PR。
 - risks: SP-009 本体の golden E2E / DOM secret scan / residual enum contract は引き続き未完。

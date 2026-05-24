@@ -16,7 +16,7 @@ supersedes: null
 superseded_by: null
 ---
 
-最終更新: 2026-05-22 (SP-014 batch 0c で policy_profile schema / 14 row seed / policy_decisions trace を accepted 実装へ反映)
+最終更新: 2026-05-24 (SP-009-5 Batch E0 で Approval `request_revision` human-only action boundary を append。前: 2026-05-22 SP-014 batch 0c で policy_profile schema / 14 row seed / policy_decisions trace を accepted 実装へ反映)
 
 ## 背景
 
@@ -88,6 +88,38 @@ Tier 2 auto-allow は `approval_requests` を作らず、Policy Engine が `poli
 ### server-owned boundary
 
 `ProjectCreate` など caller-visible schema は `policy_profile` を受け取らない。repository layer も dict payload に `policy_profile` が含まれる場合は reject し、project policy profile は server / migration / policy profile resolver のみが決める。
+
+## SP-009-5 request_revision human-only boundary (2026-05-24 planning note)
+
+Approval `request_revision` is a human decision action within the existing Approval boundary. It does not add an action_class and does not grant agents a new decider capability.
+
+### Decision boundary
+
+- The requester of the original approval and the actor requesting revision must satisfy the existing self-approval guard.
+- Delegated actors that resolve to the same human through impersonation are rejected.
+- Revision request is only valid for `pending` approvals.
+- The old approval becomes `invalidated`; approve/reject decisions on that row are no longer allowed.
+
+### Server-owned data
+
+Public callers cannot supply:
+
+- replacement approval request ids
+- artifact hashes
+- diff hashes
+- policy versions
+- policy pack locks
+- provider request fingerprints
+- stale event sequence values
+
+The service snapshots these fields from the current approval and records them in `approval_revision_requests`. Supersession is set only when server-owned revised artifact handoff creates a fresh approval request.
+
+### Taxonomy impact
+
+- action_class remains the accepted 7-value taxonomy.
+- no new approval status is added in E1/E2.
+- no AgentRunEvent enum value is added in E1/E2.
+- audit event `approval_revision_requested` is metadata-only and must not copy raw rationale, raw artifact content, or provider payload values.
 
 ## 却下案
 

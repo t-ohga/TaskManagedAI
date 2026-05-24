@@ -16,7 +16,7 @@ superseded_by: null
 
 このテンプレの使い方: Sprint 6 の CLI artifact orchestration を ADR Gate Criteria #3 (API 契約 / event schema) に対応する形で固定する。`codex exec` / `claude -p` 等の CLI agent を domain に密結合せず、artifact schema + subprocess launcher + AgentRunEvent 拡張 + 採否判定 API + AI 出力直結禁止 lint の 5 boundary を確立する。Sprint 6 batch 1 着手前に proposed → accepted、Sprint 6 Exit までに review 欄を最終化する。
 
-最終更新: 2026-05-17 (Sprint 11.5 batch 0 で `/metrics` Prometheus exporter endpoint 追加 update note を append、§Sprint 11.5 batch 0 update note 参照。前: 2026-05-13 Sprint 10 prep で Research-to-Ticket adapter API contract 延長 section 追加)
+最終更新: 2026-05-24 (SP-009-5 Batch E0 で Approval `request_revision` API contract plan を append。前: 2026-05-17 Sprint 11.5 batch 0 で `/metrics` Prometheus exporter endpoint 追加 update note を append)
 
 ## 背景
 
@@ -294,6 +294,58 @@ Payloads include `notification_id`, `event_type`, `severity`, `required_action`,
 - DB migration up/down/up/current.
 - API tests for open/snoozed/resolved/all filters, cross-actor 403, idempotent resolve, future-only snooze, and partial dedupe uniqueness.
 - Frontend tests that assert raw notification payload values are absent from the DOM.
+
+## SP-009-5 request_revision API contract extension (2026-05-24 planning note)
+
+SP-009-5 Batch E introduces an Approval revision-request loop. This touches ADR Gate Criteria #3 (API contract) and is planned before runtime implementation because it changes approval mutation semantics.
+
+### Scope
+
+- The first implementation does **not** add `revision_requested` to `approval_requests.status`.
+- Existing pending approval rows transition to `invalidated` when a human decider requests revision.
+- A new additive `approval_revision_requests` table records the revision request, decision-packet snapshot, requester/decider boundary, and eventual supersession.
+- Revised artifact submission creates a new approval request with fresh decision-packet hashes.
+
+### Planned API contract
+
+`POST /api/v1/approvals/{approval_id}/request_revision`
+
+Request body:
+
+```json
+{
+  "rationale": "Explain the required change without secrets."
+}
+```
+
+Response body:
+
+```json
+{
+  "approval": { "status": "invalidated" },
+  "revision_request_id": "uuid"
+}
+```
+
+Contract rules:
+
+- only `pending` approvals can receive a revision request
+- `rationale` is required, trimmed, max 2000 characters, and raw-secret scanned before persistence
+- self-approval and delegated same-human revision requests are rejected
+- callers cannot provide replacement approval ids, artifact hashes, diff hashes, policy versions, policy pack locks, provider request fingerprints, or stale event sequence values
+- duplicate open revision requests for one approval are rejected until supersession is recorded
+
+### Payload exposure boundary
+
+Audit and notification payloads for `approval_revision_requested` are metadata-only. They may include approval id, revision request id, action class, resource ref, risk level, and boolean hash-presence flags. They must not copy raw `rationale`, raw artifact content, raw provider payload, or raw notification payload values.
+
+### Verification
+
+- API tests for pending success and non-pending 409 cases.
+- self-approval / delegated same-human negative tests.
+- raw-secret canary rejection before DB insert.
+- audit and notification payload non-exposure tests.
+- migration upgrade head / downgrade -1 / upgrade head / current.
 
 ## Sprint 11.5 batch 0 update note (2026-05-17 accepted)
 

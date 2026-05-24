@@ -14,7 +14,7 @@ supersedes: null
 superseded_by: null
 ---
 
-最終更新: 2026-05-09 (Sprint 4 着手前 ADR Gate で proposed 化新規作成、Sprint 4 全 Batch clean 達成で同日 accepted 化)
+最終更新: 2026-05-24 (SP-009-5 Batch E0 で Approval `request_revision` の state-machine boundary note を append。前: 2026-05-09 Sprint 4 accepted 化)
 
 ## 背景
 
@@ -574,3 +574,28 @@ Sprint 5.5 で audit_events に追加する event_type (本 ADR の AgentRunEven
 - ADR-00006 (SecretBroker): repair retry context redaction で `assert_no_raw_secret` を retry prompt builder で必須実行
 - SP-005-5 §設計判断 + §Rollback section
 - `.claude/rules/agentrun-state-machine.md` §6 (Sprint 5.5 / Sprint 6 / SP-014 を反映し、current event_type 37 を正本化済み)
+
+## SP-009-5 request_revision state-machine boundary (2026-05-24 planning note)
+
+SP-009-5 Batch E adds an Approval revision-request loop. The initial E1/E2 implementation must not expand AgentRun status or AgentRunEvent enum values.
+
+### State semantics
+
+- A pending approval receiving `request_revision` becomes `invalidated`.
+- The related AgentRun remains in the existing blocked / waiting path until a revised artifact creates a fresh approval request.
+- The old approval row never returns to `pending`, and cannot be approved or rejected after invalidation.
+- Revised artifact handoff creates a new approval request with fresh `artifact_hash`, `diff_hash`, `policy_version`, `policy_pack_lock`, `provider_request_fingerprint`, and `stale_after_event_seq` binding.
+
+### Event boundary
+
+- E1/E2 must not add `approval_revision_requested` or similar values to `agent_run_events.event_type`.
+- The revision request itself is represented by the additive `approval_revision_requests` table plus metadata-only audit and notification events.
+- Any future AgentRunEvent enum addition for revision-request runtime flow must be a separate PR that updates DB CHECK, SQLAlchemy CheckConstraint, Python Literal, Pydantic/frontend schema, and pytest expected-set drift tests together.
+
+### Regression requirements
+
+- approving/rejecting an invalidated approval returns conflict
+- duplicate open revision requests are rejected
+- replacement approval uses fresh decision-packet hashes
+- terminal AgentRun states remain non-resumable
+- audit and notification payloads do not contain raw rationale or raw artifact content
