@@ -28,6 +28,13 @@ Produce a plan that separates:
 - Verdict: `READY_FOR_PR`
 - Boundary: no repo-external file creation, trusted-state migration, or `.claude/settings.json` switch is authorized by this planning artifact alone.
 
+## Phase 5A/5B Helper Result (2026-05-24)
+
+- Helper self-review artifact: `../reviews/task-03-sp007-phase5-helper-self-review.md`
+- Added repo-only helper scripts and temp-home harness tests.
+- `.claude/settings.json`, `.codex/hooks.json`, `~/.claude-trusted`, and `~/.claude-trusted-state` remain unchanged by this task.
+- Verdict: `READY_FOR_PR`; Phase 5C still requires explicit machine-local approval.
+
 ## Scope Rules
 
 - Repo-external wrapper changes require explicit user confirmation at implementation time.

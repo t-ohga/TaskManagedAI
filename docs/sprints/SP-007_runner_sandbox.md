@@ -247,6 +247,32 @@ risks:
 - Run the sprint frontmatter hook against this file.
 - Run `git diff --check`.
 
+### Phase 5A/5B repo-only helper completion (2026-05-24)
+
+#### changed
+
+- `scripts/regenerate-hook-manifest.sh`: deterministic `.claude/hooks/**/*.sh` sha256 manifest generation to `--stdout` or explicit `--output` only.
+- `scripts/verify-hook-trust-root.sh`: read-only trust-root verification for wrapper existence, permissions, manifest drift, trusted state writability, and wrapper `--self-test`.
+- `.claude/hooks/system/pretool-bash-snapshot.sh`: honors `TASKMANAGEDAI_HOOK_STATE_DIR` while preserving the repo-local default.
+- `.claude/hooks/system/posttool-bash-file-dispatcher.sh`: honors `TASKMANAGEDAI_HOOK_STATE_DIR` and fails closed when the selected state dir is missing or unwritable.
+- `tests/harness/test_hook_trust_boundary.py`: temp trust-root coverage for manifest generation, manifest mismatch, non-executable wrapper rejection, external state dir use, and missing state dir fail-closed.
+
+#### verified
+
+- `bash -n scripts/regenerate-hook-manifest.sh`
+- `bash -n scripts/verify-hook-trust-root.sh`
+- `bash -n .claude/hooks/system/pretool-bash-snapshot.sh`
+- `bash -n .claude/hooks/system/posttool-bash-file-dispatcher.sh`
+- `uv run pytest tests/harness/test_hook_trust_boundary.py -q`
+- `uv run ruff check tests/harness/test_hook_trust_boundary.py`
+- `PYTHONPATH=cli uv run mypy tests/harness/test_hook_trust_boundary.py`
+- `git diff --check`
+
+#### remaining
+
+- Phase 5C still requires explicit approval before creating or modifying `~/.claude-trusted`, `~/.claude-trusted-state`, dotfiles, or `.claude/settings.json`.
+- SP-007 remains `done_with_phase5_defer` until the machine-local wrapper install, mismatch drill, trusted-state drill, settings switch, and rollback drill are complete.
+
 ### batch 0 + batch 1 完了 (2026-05-13、commit `dc573cc`)
 
 #### changed (batch 0 + batch 1)
