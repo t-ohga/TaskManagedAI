@@ -6,12 +6,15 @@ import shutil
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from tm.auth.capability_token import CapabilityTokenConfigError, assert_profile_has_no_raw_token
 
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8000"
+_TAILSCALE_CGNAT = ip_network("100.64.0.0/10")
 
 
 class ProfileConfigError(ValueError):
@@ -57,6 +60,7 @@ class ProfileLoader:
             or data.get("backend_url")
             or DEFAULT_BACKEND_URL
         ).rstrip("/")
+        _validate_backend_url(backend_url)
         default_project_id = _string_or_none(
             env.get("TASKMANAGEDAI_PROJECT_ID")
             or selected.get("default_project_id")
@@ -230,6 +234,24 @@ def _string_dict(value: object) -> dict[str, str]:
     if not isinstance(value, dict):
         raise ProfileConfigError("projects_by_remote must be an object")
     return {str(key): str(item) for key, item in value.items()}
+
+
+def _validate_backend_url(backend_url: str) -> None:
+    parsed = urlparse(backend_url)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+        raise ProfileConfigError("backend_url must be an http(s) URL")
+    hostname = parsed.hostname.lower().strip("[]")
+    if hostname in {"localhost", "testserver"}:
+        return
+    try:
+        address = ip_address(hostname)
+    except ValueError:
+        if hostname.endswith(".ts.net"):
+            return
+        raise ProfileConfigError("backend_url must use localhost, Tailscale 100.64/10, or *.ts.net") from None
+    if address.is_loopback or address in _TAILSCALE_CGNAT:
+        return
+    raise ProfileConfigError("backend_url public IP is rejected; use Tailscale Serve/SSH boundary")
 
 
 def default_profile_loader_from_env(env: Mapping[str, str]) -> ProfileLoader:

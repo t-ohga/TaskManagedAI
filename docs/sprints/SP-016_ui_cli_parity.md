@@ -71,7 +71,7 @@ risks:
 - [x] SP016-T06 JSON / YAML / human output formatter + TTY/non-interactive gate
 - [ ] SP016-T07 parity contract test
 - [ ] SP016-T08 SecretBroker CLI token misuse negative test
-- [ ] SP016-T09 ADR / Tailscale gate verification
+- [x] SP016-T09 ADR / Tailscale backend_url gate verification
 - [x] SP016-T10 `docs/cli/README.md` public usage hardening
 - [x] migration `0031_sp016_api_capability_tokens.py` upgrade/downgrade PASS
 - [ ] 13 parity contract test 全件 PASS
@@ -301,6 +301,32 @@ verified:
 deferred:
 - T07 real parity contract execution for all 13 capabilities.
 - T08 CLI token misuse / scope mismatch DB-backed negative tests.
+
+### Batch 0f: CLI Tailscale backend URL gate (2026-05-24)
+
+changed:
+- `cli/tm/config/profile_loader.py`
+- `tests/cli/test_tm_cli_foundation.py`
+- `docs/cli/README.md`
+- `docs/sprints/SP-016_ui_cli_parity.md`
+
+implemented:
+- `backend_url` validation at profile/env load boundary
+- allowed: localhost / loopback / Tailscale CGNAT `100.64.0.0/10` / `*.ts.net`
+- rejected: normal public hostname and public IP backend URLs
+- documented Tailscale-only CLI network boundary
+- marked SP016-T09 completed for CLI-side backend URL gate; Tailscale grants config change remains a separate external-exposure diff
+
+verified:
+- `uv run ruff check cli/tm tests/cli/test_tm_cli_foundation.py pyproject.toml`
+- `PYTHONPATH=cli uv run mypy cli/tm tests/cli/test_tm_cli_foundation.py`
+- `PYTHONPATH=cli uv run pytest tests/cli/test_tm_cli_foundation.py -q` (`37 passed`)
+- `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/cli/test_tm_cli_foundation.py tests/cli/test_capability_token_lifecycle.py tests/api/test_active_registry_gate_dependency.py -q` (`53 passed`)
+- `git diff --check`
+
+deferred:
+- actual Tailscale grants config mutation / rollback plan diff.
+- T07 real parity contract execution for all 13 capabilities.
 
 ## Kickoff Inventory (2026-05-24 task-04 plan-only)
 
