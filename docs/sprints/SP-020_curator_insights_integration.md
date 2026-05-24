@@ -28,7 +28,7 @@ risks:
   - "PE-F-014/015/016 closure needs cross-source tests, not only docs trace"
 ---
 
-最終更新: 2026-05-24 (SP020-T04 insights read-only API / CLI completed)
+最終更新: 2026-05-24 (SP020-T05 adopted_artifacts metric attribution completed)
 
 ## 目的
 
@@ -67,7 +67,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - SP020-T02: curator service foundation (completed)。completed/failed/review-finding source artifact から `auto_completion` / `auto_failure` / `auto_review_finding` memory を生成。
 - SP020-T03: archive policy service (completed)。manual_user default protect、auto record aging/relevance policy、`memory_archive_engaged` audit。
 - SP020-T04: insights aggregation service + read-only API / CLI surface (completed)。raw payload 非露出、feature flag disabled default。
-- SP020-T05: adopted_artifacts link table + citation_coverage final-only attribution contract。
+- SP020-T05: adopted_artifacts link table + citation_coverage final-only attribution contract (completed)。
 - SP020-T06: orchestrator auto-retrieve hook。retrieval output は `untrusted_content` のまま、trusted_instruction 昇格禁止。
 - SP020-T07: Phase E closure tests。PE-F-014 6 reason_code / PE-F-015 exact query / PE-F-016 policy_profile 14 seed + review_artifact guard。
 - SP020-T08: backup/restore extension。archive state / adopted_artifacts / insight source FK を verify。
@@ -79,7 +79,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - [x] SP020-T02 curator service foundation
 - [x] SP020-T03 archive policy service
 - [x] SP020-T04 insights read-only API / CLI
-- [ ] SP020-T05 adopted_artifacts metric attribution
+- [x] SP020-T05 adopted_artifacts metric attribution
 - [ ] SP020-T06 orchestrator auto-retrieve hook
 - [ ] SP020-T07 Phase E PE-F-014/015/016 closure tests
 - [ ] SP020-T08 backup/restore extension
@@ -251,7 +251,7 @@ verified:
 deferred:
 - Archive policy / retrieval exclusion (SP020-T03)。
 - Insights API / CLI surface (SP020-T04)。
-- adopted_artifacts migration and citation_coverage final-only query (SP020-T05)。
+- orchestrator auto-retrieve hook (SP020-T06)。
 
 risks:
 - T03 closed with `manual_user` default protection and retrieval exclusion separate from deletion.
@@ -330,3 +330,44 @@ deferred:
 
 risks:
 - T05 is the next DB migration batch and must include migration up/down plus cross-project negative tests.
+
+### 2026-05-24 SP020-T05 adopted_artifacts metric attribution
+
+changed:
+- `backend/app/db/models/adopted_artifact.py`
+- `backend/app/db/models/agent_run_event.py`
+- `backend/app/db/models/__init__.py`
+- `backend/app/services/metrics/adopted_artifacts.py`
+- `backend/app/services/metrics/__init__.py`
+- `migrations/versions/0033_sp020_adopted_artifacts.py`
+- `tests/metrics/test_adopted_artifacts_kpi_boundary.py`
+- `tests/db/test_schema_introspection.py`
+- `docs/sprints/SP-020_curator_insights_integration.md`
+- `docs/sprints/README.md`
+
+implemented:
+- `adopted_artifacts` dedicated link table を追加し、`artifacts` 本体への boolean 追加を回避。
+- link は `tenant_id/project_id/run_id/artifact_id` composite boundary を持ち、artifact / run / project mismatch を拒否。
+- `adoption_state='final'` では `adoption_event_id` と `finalized_at` を必須化し、service layer で `artifact_generated` event の `artifact_id` と `adoption_state=final` を検証。
+- `AdoptedArtifactCitationCoverageService` を追加し、final adopted artifact の `sample_claims` だけから claim-level `citation_coverage` を集計。draft link と non-adopted artifact は分母から除外。
+
+self_review:
+- adopted: `adopted_artifacts` table 自体に `draft` row を許容し、metric query 側で `adoption_state='final'` filter を固定。これにより draft を誤って分母に入れる regression を直接 test できる。
+- adopted: DB FK だけでは adoption event payload の final marker まで検証できないため、service layer で `artifact_generated` + `artifact_id` + `adoption_state=final` を検証。
+- adopted: raw SQL 経路で cross-run event を参照できないよう、`agent_run_events(tenant_id, run_id, id)` unique と `adopted_artifacts(tenant_id, run_id, adoption_event_id)` composite FK に強化。
+- adopted: attribution metadata にも service-level raw secret scan と DB prohibited key constraint を追加。
+
+verified:
+- `uv run ruff check backend/app/db/models/adopted_artifact.py backend/app/db/models/agent_run_event.py backend/app/db/models/__init__.py backend/app/services/metrics tests/metrics/test_adopted_artifacts_kpi_boundary.py tests/db/test_schema_introspection.py migrations/versions/0033_sp020_adopted_artifacts.py`
+- `PYTHONPATH=cli uv run mypy backend/app/db/models/adopted_artifact.py backend/app/db/models/agent_run_event.py backend/app/db/models/__init__.py backend/app/services/metrics tests/metrics/test_adopted_artifacts_kpi_boundary.py`
+- `TASKMANAGEDAI_DATABASE_URL=<isolated 127.0.0.1:55433 test db> uv run alembic upgrade head`
+- `TASKMANAGEDAI_DATABASE_URL=<isolated 127.0.0.1:55433 test db> uv run alembic downgrade -1`
+- `TASKMANAGEDAI_DATABASE_URL=<isolated 127.0.0.1:55433 test db> uv run alembic upgrade head`
+- `TASKMANAGEDAI_DATABASE_URL=<isolated 127.0.0.1:55433 test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/metrics tests/db/test_schema_introspection.py::test_adopted_artifacts_have_final_only_project_boundary_schema tests/db/test_schema_introspection.py::test_required_composite_foreign_keys_exist tests/db/test_schema_introspection.py::test_id_only_foreign_keys_to_tenant_scoped_tables_are_rejected -q` (`10 passed`)
+- `uv run pytest tests/metrics/test_adopted_artifacts_kpi_boundary.py -q` (`4 skipped`, no default local DB dependency)
+
+deferred:
+- orchestrator auto-retrieve hook (SP020-T06)。
+
+risks:
+- citation payload shape は `sample_claims[].citation_ids` の ref-only aggregate source に限定。将来 GroundingSupport table が入る場合は separate ADR / migration で exact query を差し替える。

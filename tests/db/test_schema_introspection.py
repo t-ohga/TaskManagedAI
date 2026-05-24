@@ -69,6 +69,11 @@ BATCH_SP018_TENANT_SCOPED_TABLES = frozenset(
         "memory_retrieval_artifacts",
     }
 )
+BATCH_SP020_TENANT_SCOPED_TABLES = frozenset(
+    {
+        "adopted_artifacts",
+    }
+)
 TENANT_SCOPED_TABLES = (
     BATCH1_TENANT_SCOPED_TABLES
     | BATCH2_TENANT_SCOPED_TABLES
@@ -77,6 +82,7 @@ TENANT_SCOPED_TABLES = (
     | BATCH_SP015_TENANT_SCOPED_TABLES
     | BATCH_SP016_TENANT_SCOPED_TABLES
     | BATCH_SP018_TENANT_SCOPED_TABLES
+    | BATCH_SP020_TENANT_SCOPED_TABLES
 )
 METADATA_TABLES = frozenset(
     {
@@ -92,6 +98,7 @@ METADATA_TABLES = frozenset(
         "policy_rules",
         "approval_requests",
         "policy_decisions",
+        "adopted_artifacts",
         "api_capability_tokens",
     }
 )
@@ -550,6 +557,36 @@ async def test_required_composite_foreign_keys_exist(
             "context_snapshots",
             ("tenant_id", "id"),
         ),
+        (
+            "adopted_artifacts",
+            ("tenant_id", "project_id"),
+            "projects",
+            ("tenant_id", "id"),
+        ),
+        (
+            "adopted_artifacts",
+            ("tenant_id", "project_id", "run_id"),
+            "agent_runs",
+            ("tenant_id", "project_id", "id"),
+        ),
+        (
+            "adopted_artifacts",
+            ("tenant_id", "project_id", "artifact_id"),
+            "artifacts",
+            ("tenant_id", "project_id", "id"),
+        ),
+        (
+            "adopted_artifacts",
+            ("tenant_id", "run_id", "adoption_event_id"),
+            "agent_run_events",
+            ("tenant_id", "run_id", "id"),
+        ),
+        (
+            "adopted_artifacts",
+            ("tenant_id", "adopted_by_actor_id"),
+            "actors",
+            ("tenant_id", "id"),
+        ),
     }
 
     async with session_factory() as session:
@@ -697,6 +734,126 @@ async def test_memory_tables_have_ref_only_project_boundary_schema(
     assert "memory_records_idx_active_retention" in indexes
     assert "memory_retrieval_artifacts_idx_tenant_project_record_created" in indexes
     assert "memory_retrieval_artifacts_idx_retrieval_run" in indexes
+
+
+@pytest.mark.asyncio
+async def test_adopted_artifacts_have_final_only_project_boundary_schema(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    column_names = (
+        "id",
+        "tenant_id",
+        "project_id",
+        "run_id",
+        "artifact_id",
+        "adoption_state",
+        "adoption_event_id",
+        "adopted_by_actor_id",
+        "metadata",
+        "created_at",
+        "finalized_at",
+    )
+
+    async with session_factory() as session:
+        columns = await _table_columns(session, "adopted_artifacts", column_names)
+        tenant_unique = await _constraint_columns(
+            session,
+            table_name="adopted_artifacts",
+            constraint_name="adopted_artifacts_uq_tenant_id",
+            constraint_type="u",
+        )
+        project_unique = await _constraint_columns(
+            session,
+            table_name="adopted_artifacts",
+            constraint_name="adopted_artifacts_uq_tenant_project_id",
+            constraint_type="u",
+        )
+        run_artifact_unique = await _constraint_columns(
+            session,
+            table_name="adopted_artifacts",
+            constraint_name="adopted_artifacts_uq_tenant_project_run_artifact",
+            constraint_type="u",
+        )
+        event_run_unique = await _constraint_columns(
+            session,
+            table_name="agent_run_events",
+            constraint_name="agent_run_events_uq_tenant_run_id",
+            constraint_type="u",
+        )
+        state_definition = await _constraint_definition(
+            session,
+            table_name="adopted_artifacts",
+            constraint_name="adopted_artifacts_ck_adoption_state",
+        )
+        final_consistency_definition = await _constraint_definition(
+            session,
+            table_name="adopted_artifacts",
+            constraint_name="adopted_artifacts_ck_final_event_consistency",
+        )
+        metadata_secret_definition = await _constraint_definition(
+            session,
+            table_name="adopted_artifacts",
+            constraint_name="adopted_artifacts_ck_no_prohibited_metadata_keys",
+        )
+        actual_fks = await _foreign_key_signatures(session, BATCH_SP020_TENANT_SCOPED_TABLES)
+        indexes = await _index_definitions(session, BATCH_SP020_TENANT_SCOPED_TABLES)
+
+    assert set(columns) == set(column_names)
+    assert tenant_unique == ("tenant_id", "id")
+    assert project_unique == ("tenant_id", "project_id", "id")
+    assert run_artifact_unique == ("tenant_id", "project_id", "run_id", "artifact_id")
+    assert event_run_unique == ("tenant_id", "run_id", "id")
+
+    assert columns["id"]["data_type"] == "uuid"
+    assert columns["id"]["is_nullable"] == "NO"
+    assert "uuid_generate_v4" in str(columns["id"]["column_default"])
+    assert columns["tenant_id"]["data_type"] == "bigint"
+    assert columns["tenant_id"]["is_nullable"] == "NO"
+    assert columns["tenant_id"]["column_default"] == "1"
+    assert columns["project_id"]["data_type"] == "uuid"
+    assert columns["run_id"]["data_type"] == "uuid"
+    assert columns["artifact_id"]["data_type"] == "uuid"
+    assert columns["adoption_state"]["data_type"] == "text"
+    assert columns["adoption_state"]["is_nullable"] == "NO"
+    assert columns["adoption_event_id"]["is_nullable"] == "YES"
+    assert columns["adopted_by_actor_id"]["is_nullable"] == "NO"
+    assert columns["metadata"]["data_type"] == "jsonb"
+    assert columns["metadata"]["is_nullable"] == "NO"
+    assert "rls_ready" in str(columns["metadata"]["column_default"])
+    assert columns["created_at"]["is_nullable"] == "NO"
+    assert columns["finalized_at"]["is_nullable"] == "YES"
+
+    assert _check_constraint_values(state_definition) == {"draft", "final"}
+    final_consistency_definition = final_consistency_definition.lower()
+    assert "adoption_event_id is not null" in final_consistency_definition
+    assert "finalized_at is not null" in final_consistency_definition
+    assert "jsonb_path_exists" in metadata_secret_definition
+    assert "raw_token" in metadata_secret_definition
+    assert "capability_token" in metadata_secret_definition
+
+    assert (
+        "adopted_artifacts",
+        ("tenant_id", "project_id", "artifact_id"),
+        "artifacts",
+        ("tenant_id", "project_id", "id"),
+    ) in actual_fks
+    assert (
+        "adopted_artifacts",
+        ("tenant_id", "project_id", "run_id"),
+        "agent_runs",
+        ("tenant_id", "project_id", "id"),
+    ) in actual_fks
+    assert (
+        "adopted_artifacts",
+        ("tenant_id", "run_id", "adoption_event_id"),
+        "agent_run_events",
+        ("tenant_id", "run_id", "id"),
+    ) in actual_fks
+
+    assert "adopted_artifacts_idx_final_project_run" in indexes
+    assert "adoption_state = 'final'" in indexes["adopted_artifacts_idx_final_project_run"]
+    assert "adopted_artifacts_idx_final_artifact" in indexes
+    assert "adoption_state = 'final'" in indexes["adopted_artifacts_idx_final_artifact"]
 
 
 @pytest.mark.asyncio

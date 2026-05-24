@@ -5,6 +5,10 @@ from backend.app.db.models.acceptance_criteria import (
     AcceptanceCriteriaStatus,
 )
 from backend.app.db.models.actor import Actor, ActorType
+from backend.app.db.models.adopted_artifact import (
+    AdoptedArtifact,
+    AdoptedArtifactState,
+)
 from backend.app.db.models.api_capability_token import (
     ApiCapabilityToken,
     ApiCapabilityTokenStatus,
@@ -57,6 +61,8 @@ from backend.app.db.models.workspace import Workspace
 __all__ = [
     "AcceptanceCriteria",
     "AcceptanceCriteriaStatus",
+    "AdoptedArtifact",
+    "AdoptedArtifactState",
     "Actor",
     "ActorType",
     "ApiCapabilityToken",

@@ -116,6 +116,12 @@ class AgentRunEvent(TenantIdMixin, Base):
         sa.UniqueConstraint(
             "tenant_id",
             "run_id",
+            "id",
+            name="agent_run_events_uq_tenant_run_id",
+        ),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "run_id",
             "seq_no",
             name="agent_run_events_uq_tenant_run_seq_no",
         ),
