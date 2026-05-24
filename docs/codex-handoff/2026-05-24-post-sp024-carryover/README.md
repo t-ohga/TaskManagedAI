@@ -19,6 +19,7 @@ This handoff is a safe restart package for the remaining carry-over area. It int
 | `tasks/task-01-sp008-residual-reconciliation.md` | SP-008 residual plan |
 | `tasks/task-02-sp009-ui-backend-reconciliation.md` | SP-009 residual plan |
 | `tasks/task-03-sp007-phase5-trust-boundary.md` | SP-007 Phase 5 plan |
+| `plans/task-03-sp007-phase5-trust-boundary-plan.md` | SP-007 Phase 5 trust-boundary implementation sequence |
 
 ## Operating Rule
 
@@ -35,4 +36,4 @@ Do not start SP-008 / SP-009 / SP-007 carry-over code directly from old Sprint P
 1. Run task-01 first: SP-008 residual reconciliation.
 2. If task-01 confirms the residual is still current, implement SP-008 in the smallest safe batch order: server-owned binding, broker-mediated GitHub adapter, webhook service boundary, `repo_pr_opened` event, KPI endpoint, then docs/status closeout.
 3. Run task-02 before SP-009 code because SP-012 / SP-016 already changed the UI and CLI surface.
-4. Run task-03 only as planning unless the user explicitly wants repo-external hook trust changes applied on this machine.
+4. Run task-03 only as planning unless the user explicitly wants repo-external hook trust changes applied on this machine. The current plan artifact is `plans/task-03-sp007-phase5-trust-boundary-plan.md`.
