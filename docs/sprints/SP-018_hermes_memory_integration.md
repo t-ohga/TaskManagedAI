@@ -29,7 +29,7 @@ risks:
   - "Hermes integration is pattern adoption only; no external memory cloud, SQLite persistence, or source embed"
 ---
 
-最終更新: 2026-05-24 (batch 0b ADR accepted readiness、実装未着手)
+最終更新: 2026-05-24 (batch 0c schema / ORM / migration foundation)
 
 ## 目的
 
@@ -81,8 +81,8 @@ Hermes-agent 由来の memory / context pattern を TaskManagedAI 境界で再�
 
 - [x] SP018-T00 plan-only gate
 - [x] SP018-T01 ADR promotion + drift fix
-- [ ] SP018-T02 schema / ORM / migrations
-- [ ] SP018-T03 record_kind enum 5+ source
+- [x] SP018-T02 schema / ORM / migrations
+- [x] SP018-T03 record_kind enum 5+ source
 - [ ] SP018-T04 store pipeline
 - [ ] SP018-T05 retrieval pipeline
 - [ ] SP018-T06 ContextSnapshot read-only guard
@@ -187,3 +187,35 @@ verified:
 deferred:
 - DB schema / migration / API / service implementation remains SP018-T02+.
 - ADR-00016 Wave 22 curator/insights remains SP-020.
+
+### 2026-05-24 batch 0c: memory schema foundation
+
+changed:
+- `migrations/versions/0032_sp018_memory_records.py`
+- `backend/app/db/models/memory_record.py`
+- `backend/app/db/models/sanitizer_policy_version.py`
+- `backend/app/domain/memory/*`
+- `backend/app/schemas/memory.py`
+- `tests/memory/test_schema_contract.py`
+- `tests/db/test_schema_introspection.py`
+
+implemented:
+- `memory_records` + `memory_retrieval_artifacts` DDL / ORM / schema foundation.
+- composite FK boundary: tenant/project required for projects, artifacts, agent_runs, memory_records, sanitizer versions.
+- ref-only storage: no `raw_content`, `redacted_content`, `content_jsonb`, `payload`, or raw message body column in memory tables.
+- record_kind 5+ source integrity: Python Literal / frozenset / ORM CHECK / migration CHECK / pytest expected constant.
+- retrieval artifact trust is DB/Pydantic fixed to `untrusted_content`; `trusted_instruction` cannot be stored in memory records.
+
+verified:
+- `uv run ruff check backend/app/domain/memory backend/app/db/models/memory_record.py backend/app/db/models/sanitizer_policy_version.py backend/app/schemas/memory.py tests/memory/test_schema_contract.py tests/db/test_schema_introspection.py`
+- `uv run mypy backend/app/domain/memory backend/app/db/models/memory_record.py backend/app/db/models/sanitizer_policy_version.py backend/app/schemas/memory.py tests/memory/test_schema_contract.py`
+- `uv run mypy tests/db/test_schema_introspection.py`
+- `uv run pytest tests/memory/test_schema_contract.py -q`
+- `TASKMANAGEDAI_RUN_DB_TESTS=1 ... uv run pytest tests/db/test_schema_introspection.py::test_memory_tables_have_ref_only_project_boundary_schema -q`
+- `uv run alembic downgrade 0031_sp016_api_capability_tokens && uv run alembic upgrade head`
+- `TASKMANAGEDAI_RUN_DB_TESTS=1 ... uv run pytest tests/db/test_schema_introspection.py::test_tenant_scoped_tables_have_tenant_id_not_null tests/db/test_schema_introspection.py::test_tenant_scoped_tables_have_tenant_id_default_one tests/db/test_schema_introspection.py::test_required_composite_foreign_keys_exist tests/db/test_schema_introspection.py::test_memory_tables_have_ref_only_project_boundary_schema tests/db/test_schema_introspection.py::test_id_only_foreign_keys_to_tenant_scoped_tables_are_rejected -q`
+- `TASKMANAGEDAI_RUN_DB_TESTS=1 ... uv run pytest tests/db/test_schema_introspection.py -q`
+- `TASKMANAGEDAI_RUN_DB_TESTS=1 ... uv run pytest tests/db/test_backup_restore_inter_agent.py::test_inter_agent_restore_drill_verifies_required_relationships -q`
+
+deferred:
+- memory store pipeline, retrieval service, cross-project service guard, ContextSnapshot overlay guard, CLI/API endpoint, and UI remain SP018-T04+.

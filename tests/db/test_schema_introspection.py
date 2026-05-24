@@ -63,6 +63,12 @@ BATCH_SP016_TENANT_SCOPED_TABLES = frozenset(
         "api_capability_tokens",
     }
 )
+BATCH_SP018_TENANT_SCOPED_TABLES = frozenset(
+    {
+        "memory_records",
+        "memory_retrieval_artifacts",
+    }
+)
 TENANT_SCOPED_TABLES = (
     BATCH1_TENANT_SCOPED_TABLES
     | BATCH2_TENANT_SCOPED_TABLES
@@ -70,6 +76,7 @@ TENANT_SCOPED_TABLES = (
     | BATCH4_TENANT_SCOPED_TABLES
     | BATCH_SP015_TENANT_SCOPED_TABLES
     | BATCH_SP016_TENANT_SCOPED_TABLES
+    | BATCH_SP018_TENANT_SCOPED_TABLES
 )
 METADATA_TABLES = frozenset(
     {
@@ -102,6 +109,16 @@ POLICY_ACTION_CLASSES = frozenset(
 POLICY_EFFECTS = frozenset({"allow", "deny", "require_approval"})
 APPROVAL_STATUSES = frozenset({"pending", "approved", "rejected", "expired", "invalidated"})
 RISK_LEVELS = frozenset({"low", "medium", "high", "critical"})
+MEMORY_RECORD_KINDS = frozenset(
+    {
+        "manual_user",
+        "manual_agent",
+        "auto_completion",
+        "auto_failure",
+        "auto_review_finding",
+    }
+)
+MEMORY_REDACTION_STATUSES = frozenset({"redacted", "raw_with_canary_scan_passed"})
 ALL_CORE_TABLES = TENANT_SCOPED_TABLES | {"tenants"}
 ForeignKeySignature = tuple[str, tuple[str, ...], str, tuple[str, ...]]
 
@@ -485,12 +502,201 @@ async def test_required_composite_foreign_keys_exist(
             "projects",
             ("tenant_id", "id"),
         ),
+        (
+            "memory_records",
+            ("tenant_id", "project_id"),
+            "projects",
+            ("tenant_id", "id"),
+        ),
+        (
+            "memory_records",
+            ("tenant_id", "sanitizer_version_id"),
+            "sanitizer_policy_versions",
+            ("tenant_id", "id"),
+        ),
+        (
+            "memory_records",
+            ("tenant_id", "project_id", "source_artifact_id"),
+            "artifacts",
+            ("tenant_id", "project_id", "id"),
+        ),
+        (
+            "memory_retrieval_artifacts",
+            ("tenant_id", "project_id"),
+            "projects",
+            ("tenant_id", "id"),
+        ),
+        (
+            "memory_retrieval_artifacts",
+            ("tenant_id", "project_id", "memory_record_id"),
+            "memory_records",
+            ("tenant_id", "project_id", "id"),
+        ),
+        (
+            "memory_retrieval_artifacts",
+            ("tenant_id", "sanitizer_version_id"),
+            "sanitizer_policy_versions",
+            ("tenant_id", "id"),
+        ),
+        (
+            "memory_retrieval_artifacts",
+            ("tenant_id", "project_id", "retrieval_run_id"),
+            "agent_runs",
+            ("tenant_id", "project_id", "id"),
+        ),
+        (
+            "memory_retrieval_artifacts",
+            ("tenant_id", "context_snapshot_id"),
+            "context_snapshots",
+            ("tenant_id", "id"),
+        ),
     }
 
     async with session_factory() as session:
         actual = await _foreign_key_signatures(session)
 
     assert expected <= actual
+
+
+@pytest.mark.asyncio
+async def test_memory_tables_have_ref_only_project_boundary_schema(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    memory_record_column_names = (
+        "id",
+        "tenant_id",
+        "project_id",
+        "record_kind",
+        "content_artifact_ref",
+        "content_hash",
+        "data_class",
+        "redaction_status",
+        "sanitizer_version_id",
+        "source_artifact_id",
+        "trust_level",
+        "retention_until",
+        "archived_at",
+        "created_at",
+    )
+    retrieval_column_names = (
+        "id",
+        "tenant_id",
+        "project_id",
+        "memory_record_id",
+        "retrieval_artifact_ref",
+        "retrieval_hash",
+        "sanitizer_version_id",
+        "retrieval_run_id",
+        "context_snapshot_id",
+        "trust_level",
+        "created_at",
+    )
+
+    async with session_factory() as session:
+        record_columns = await _table_columns(
+            session,
+            "memory_records",
+            memory_record_column_names,
+        )
+        retrieval_columns = await _table_columns(
+            session,
+            "memory_retrieval_artifacts",
+            retrieval_column_names,
+        )
+        record_unique = await _constraint_columns(
+            session,
+            table_name="memory_records",
+            constraint_name="memory_records_uq_tenant_project_id",
+            constraint_type="u",
+        )
+        retrieval_unique = await _constraint_columns(
+            session,
+            table_name="memory_retrieval_artifacts",
+            constraint_name="memory_retrieval_artifacts_uq_tenant_id",
+            constraint_type="u",
+        )
+        retrieval_project_unique = await _constraint_columns(
+            session,
+            table_name="memory_retrieval_artifacts",
+            constraint_name="memory_retrieval_artifacts_uq_tenant_project_id",
+            constraint_type="u",
+        )
+        record_kind_definition = await _constraint_definition(
+            session,
+            table_name="memory_records",
+            constraint_name="memory_records_ck_record_kind",
+        )
+        redaction_definition = await _constraint_definition(
+            session,
+            table_name="memory_records",
+            constraint_name="memory_records_ck_redaction_status",
+        )
+        record_trust_definition = await _constraint_definition(
+            session,
+            table_name="memory_records",
+            constraint_name="memory_records_ck_trust_level_no_trusted_instruction",
+        )
+        retrieval_trust_definition = await _constraint_definition(
+            session,
+            table_name="memory_retrieval_artifacts",
+            constraint_name="memory_retrieval_artifacts_ck_trust_level_untrusted",
+        )
+        actual_fks = await _foreign_key_signatures(session, BATCH_SP018_TENANT_SCOPED_TABLES)
+        indexes = await _index_definitions(session, BATCH_SP018_TENANT_SCOPED_TABLES)
+
+    assert set(record_columns) == set(memory_record_column_names)
+    assert set(retrieval_columns) == set(retrieval_column_names)
+    assert record_unique == ("tenant_id", "project_id", "id")
+    assert retrieval_unique == ("tenant_id", "id")
+    assert retrieval_project_unique == ("tenant_id", "project_id", "id")
+
+    for columns in (record_columns, retrieval_columns):
+        assert columns["id"]["data_type"] == "uuid"
+        assert columns["id"]["is_nullable"] == "NO"
+        assert "uuid_generate_v4" in str(columns["id"]["column_default"])
+        assert columns["tenant_id"]["data_type"] == "bigint"
+        assert columns["tenant_id"]["is_nullable"] == "NO"
+        assert columns["tenant_id"]["column_default"] == "1"
+        assert columns["project_id"]["data_type"] == "uuid"
+        assert columns["project_id"]["is_nullable"] == "NO"
+        assert columns["created_at"]["is_nullable"] == "NO"
+
+    assert record_columns["content_artifact_ref"]["data_type"] == "text"
+    assert record_columns["content_hash"]["data_type"] == "text"
+    assert record_columns["sanitizer_version_id"]["data_type"] == "uuid"
+    assert record_columns["source_artifact_id"]["is_nullable"] == "YES"
+    assert record_columns["retention_until"]["is_nullable"] == "NO"
+    assert record_columns["archived_at"]["is_nullable"] == "YES"
+    assert retrieval_columns["retrieval_artifact_ref"]["data_type"] == "text"
+    assert retrieval_columns["retrieval_hash"]["data_type"] == "text"
+    assert retrieval_columns["retrieval_run_id"]["is_nullable"] == "YES"
+    assert retrieval_columns["context_snapshot_id"]["is_nullable"] == "YES"
+
+    assert _check_constraint_values(record_kind_definition) == MEMORY_RECORD_KINDS
+    assert _check_constraint_values(redaction_definition) == MEMORY_REDACTION_STATUSES
+    assert _check_constraint_values(record_trust_definition) == {
+        "untrusted_content",
+        "validated_artifact",
+    }
+    assert _check_constraint_values(retrieval_trust_definition) == {"untrusted_content"}
+
+    assert (
+        "memory_records",
+        ("tenant_id", "project_id", "source_artifact_id"),
+        "artifacts",
+        ("tenant_id", "project_id", "id"),
+    ) in actual_fks
+    assert (
+        "memory_retrieval_artifacts",
+        ("tenant_id", "project_id", "memory_record_id"),
+        "memory_records",
+        ("tenant_id", "project_id", "id"),
+    ) in actual_fks
+
+    assert "memory_records_idx_tenant_project_kind_created" in indexes
+    assert "memory_records_idx_active_retention" in indexes
+    assert "memory_retrieval_artifacts_idx_tenant_project_record_created" in indexes
+    assert "memory_retrieval_artifacts_idx_retrieval_run" in indexes
 
 
 @pytest.mark.asyncio
