@@ -114,6 +114,7 @@ class ApprovalDetail(BaseModel):
     policy_version: str
     policy_pack_lock: str | None
     provider_request_fingerprint: str | None
+    stale_after_event_seq: int | None
 
 
 class ApprovalDecideRequest(BaseModel):
@@ -152,6 +153,7 @@ def _to_detail(approval: ApprovalRequest) -> ApprovalDetail:
         policy_version=approval.policy_version,
         policy_pack_lock=approval.policy_pack_lock,
         provider_request_fingerprint=approval.provider_request_fingerprint,
+        stale_after_event_seq=approval.stale_after_event_seq,
     )
 
 

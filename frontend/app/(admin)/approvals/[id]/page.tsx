@@ -11,6 +11,8 @@ import { ApprovalDecideForm } from "./_components/approval-decide-form";
 
 export const dynamic = "force-dynamic";
 
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
+
 type ApprovalDetailPageProps = {
   params: Promise<{
     id: string;
@@ -65,22 +67,7 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
       <StatusNotice approval={approval} />
 
       <div className="grid gap-4 lg:grid-cols-[1fr_22rem]">
-        <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
-          <h2 className="text-base font-semibold">申請エビデンス</h2>
-          <dl className="mt-4 grid gap-3 text-sm">
-            <DetailRow label="申請者" value={approval.requested_by_actor_id} mono />
-            <DetailRow label="申請日時" value={formatDateTime(approval.requested_at)} />
-            <DetailRow label="policy_version" value={approval.policy_version} mono />
-            <DetailRow label="policy_pack_lock" value={approval.policy_pack_lock ?? "(未ロック)"} mono />
-            <DetailRow label="artifact_hash" value={approval.artifact_hash ?? "(未提供)"} mono />
-            <DetailRow label="diff_hash" value={approval.diff_hash ?? "(未提供)"} mono />
-            <DetailRow
-              label="provider_request_fingerprint"
-              value={approval.provider_request_fingerprint ?? "(未提供)"}
-              mono
-            />
-          </dl>
-        </article>
+        <DecisionPacketPanel approval={approval} />
 
         <aside className="grid gap-4">
           <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
@@ -108,6 +95,39 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
   );
 }
 
+function DecisionPacketPanel({ approval }: { approval: ApprovalDetail }) {
+  return (
+    <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+      <h2 className="text-base font-semibold">Decision packet</h2>
+      <p className="mt-1 text-sm text-muted">
+        Hash と policy snapshot のみを表示します。payload / provider request の raw value は表示しません。
+      </p>
+      <dl className="mt-4 grid gap-3 text-sm">
+        <DetailRow label="申請者" value={approval.requested_by_actor_id} mono />
+        <DetailRow label="申請日時" value={formatDateTime(approval.requested_at)} />
+        <DetailRow label="policy_version" value={approval.policy_version} mono />
+        <DetailRow
+          label="policy_pack_lock"
+          value={formatSha256Value(approval.policy_pack_lock, "(未ロック)")}
+          mono
+        />
+        <DetailRow label="artifact_hash" value={formatSha256Value(approval.artifact_hash)} mono />
+        <DetailRow label="diff_hash" value={formatSha256Value(approval.diff_hash)} mono />
+        <DetailRow
+          label="provider_request_fingerprint"
+          value={formatSha256Value(approval.provider_request_fingerprint)}
+          mono
+        />
+        <DetailRow
+          label="stale_after_event_seq"
+          value={approval.stale_after_event_seq === null ? "(未設定)" : String(approval.stale_after_event_seq)}
+          mono={approval.stale_after_event_seq !== null}
+        />
+      </dl>
+    </article>
+  );
+}
+
 function DetailRow({
   label,
   value,
@@ -123,6 +143,16 @@ function DetailRow({
       <dd className={`mt-1 break-all ${mono ? "font-mono text-xs" : ""}`}>{value}</dd>
     </div>
   );
+}
+
+function formatSha256Value(value: string | null, emptyValue = "(未提供)"): string {
+  if (value === null || value.trim() === "") {
+    return emptyValue;
+  }
+  if (!SHA256_HEX_PATTERN.test(value)) {
+    return "(非 SHA-256 形式のため非表示)";
+  }
+  return value;
 }
 
 function StatusNotice({ approval }: { approval: ApprovalDetail }) {
