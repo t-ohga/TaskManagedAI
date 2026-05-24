@@ -1,16 +1,16 @@
 ---
 id: "SP-016_ui_cli_parity"
 type: "heavy"
-status: "draft"
+status: "ready"
 sprint_no: 16
 created_at: "2026-05-10"
 updated_at: "2026-05-24"
 target_days: 4
 max_days: 6
-adr_refs: []
-planned_adr_refs:
-  - "[ADR-00015](../adr/00015_ui_cli_parity.md) # SP-016 着手時に proposed → accepted (Criteria #3 + #7)"
-  - "[ADR-00007 update](../adr/00007_external_exposure.md) # network boundary 拡張 (tag:taskhub-cli) (Criteria #7)"
+adr_refs:
+  - "[ADR-00015](../adr/00015_ui_cli_parity.md) # accepted 2026-05-24 at SP-016 kickoff blocker closure (Criteria #3 + #7)"
+  - "[ADR-00007](../adr/00007_external_exposure.md) # accepted; `tag:taskhub-cli` listed as P0.1 grants minimum, config change remains separate external-exposure gate"
+planned_adr_refs: []
 related_sprints:
   - "SP-013_multi_agent_orchestration"
   - "SP-014_orchestrator_agent"
@@ -21,7 +21,7 @@ risks:
   - "PE-F-014 (CLI token misuse の SecretBroker negative case)"
 ---
 
-最終更新: 2026-05-10
+最終更新: 2026-05-24 (SP-016 kickoff blocker closure: ADR-00015 accepted、CLI canonical `tm` 確定、13 capability drift 解消、api_capability_tokens DDL / audit lifecycle 固定)
 
 ## 目的
 
@@ -42,29 +42,29 @@ risks:
 
 ## 設計判断
 
-- **principal-bound API capability token DDL** (PE-F-006): SecretBroker と同等 OperationContext binding (actor_id / principal_id / device_id / project_id / allowed_actions / audience / expires_at / jti / revoked_at)
+- **principal-bound API capability token DDL** (PE-F-006): SecretBroker と同等 OperationContext binding (actor_id / principal_id / device_id / project_id / allowed_actions / scope_constraint / audience / auth_context_hash / request_binding_hash / expires_at / jti / revoked_at)
 - **CLI config に raw token を保存しない**: refresh credential のみ OS keyring / SOPS、operation token は API が短命 (5-30 分) 発行
-- **CLI tool 名 = `tm`** (衝突確認後採用、衝突時 `tmai` fallback)
+- **CLI tool 名 = `tm`** (2026-05-24 local/Homebrew conflict check clean、`tmai` は将来 namespace 衝突時の fallback のみ)
 - **`tm memory` は 404/disabled contract test のみ** (SP-018 accepted まで)
-- **Tailscale grants `tag:taskhub-cli`** を ADR-00007 update で追加
+- **Tailscale grants `tag:taskhub-cli`** は ADR-00007 に accepted 済み。実 config 変更が入る PR では外部公開設定 gate と rollback を別 diff で明示する
 
 ## 実装チケット
 
-- SP016-T01: api_capability_tokens table + migration + DDL (PE-F-006)
+- SP016-T01: api_capability_tokens table + migration `0031_sp016_api_capability_tokens.py` + DDL (PE-F-006)
 - SP016-T02: backend `/api/v1/auth/cli-login` + token issue / refresh / revoke endpoint
 - SP016-T03: cli/tm Python CLI (Click / Typer 等) + entry point `tm`
-- SP016-T04: cli/tm/commands/{ticket,approval,run,message,audit,export,provider,sprint}.py
+- SP016-T04: cli/tm/commands/{ticket,approval,repo,pr,run,secret,provider,memory}.py (13 capability matrix only; `message` / `audit` / `export` は read-only helper として別 scope、`sprint` は taskhub host/admin scope)
 - SP016-T05: cli/tm/auth/capability_token.py + cli/tm/config/profile_loader.py (keyring / SOPS / env)
 - SP016-T06: cli/tm/output/{json_formatter,yaml_formatter,human_formatter}.py + TTY 検知
 - SP016-T07: parity contract test (13 capability すべてで UI 経路 vs CLI 経路で結果 + DB row + audit event 完全一致)
 - SP016-T08: SecretBroker CLI token misuse negative test (PE-F-014 の 6 case のうち CLI 関連 1 つ + scope mismatch deny audit)
-- SP016-T09: ADR-00015 + ADR-00007 update を proposed → accepted、`tag:taskhub-cli` Tailscale grants 設定
+- SP016-T09: ADR-00015 accepted / ADR-00007 accepted 前提の gate verification、`tag:taskhub-cli` Tailscale grants config diff は rollback 付きで分離
 - SP016-T10: `docs/cli/README.md` (使い方、SP-016 完了で公開)
 
 ## タスク一覧
 
 - [ ] SP016-T01-T10 を順次実装
-- [ ] migration `00NN_p0_1_api_capability_tokens.py` + `alembic check` PASS
+- [ ] migration `0031_sp016_api_capability_tokens.py` + `alembic check` PASS
 - [ ] 13 parity contract test 全件 PASS
 - [ ] CLI capability token TTL 5-30 分 + scope minimum + raw 保存 reject
 - [ ] secret redaction (CLI 出力に raw secret 出ない、SecretBroker 経由のみ)
@@ -118,11 +118,11 @@ uv tool install ./cli && tm --version && tm --profile default ticket list --json
 
 ## レビュー観点
 
-- api_capability_tokens DDL が SecretBroker 同等 invariant (actor/principal/device/project/scope/audience/expires/jti/revoked) を満たす
+- api_capability_tokens DDL が SecretBroker 同等 invariant (actor/principal/device/project/scope/audience/auth_context/request_binding/expires/jti/revoked) を満たす
 - CLI config の auth_method=plain が service layer で reject (DB level でなくとも 4 重防御の application layer で fail-closed)
 - Tailscale grants `tag:taskhub-cli` が最小権限 (read-only API + write 必要 endpoint のみ)
 - parity contract test の 13 capability が SP-013-015 で実装した backend と完全整合
-- audit_events の `api_capability_token_*` 系 event_type が cross-source-enum-integrity §1 で同期
+- audit_events の `api_capability_token_*` 系 event_type (`issued` / `revoked` / `denied` / `scope_mismatch`) が cross-source-enum-integrity §1 で同期
 
 ## 残リスク
 
@@ -137,8 +137,8 @@ uv tool install ./cli && tm --version && tm --profile default ticket list --json
 
 ## 関連 ADR
 
-- ADR-00015 (UI ↔ CLI Parity Boundary) — proposed → accepted at SP-016 kickoff
-- ADR-00007 update (network boundary 拡張)
+- ADR-00015 (UI ↔ CLI Parity Boundary) — accepted 2026-05-24 at SP-016 kickoff blocker closure
+- ADR-00007 (network boundary; `tag:taskhub-cli` config change remains external-exposure gate)
 - ADR-00014 / 00018 (関連)
 
 ## Review
@@ -157,20 +157,18 @@ uv tool install ./cli && tm --version && tm --profile default ticket list --json
 
 ### pre-implementation blockers
 
-1. **ADR-00015 remains proposed**: 実装前に ADR-00015 を accepted 化し、principal-bound API capability token DDL / lifecycle / audit event schema を固定する。
-2. **CLI canonical unresolved (U-04)**: `tm` 維持か `tmai` 反転かを実装前に確定し、ADR-00015 / SP-016 / SP-012 / docs/cli/README.md / CLI test を同一 PR で doc-only 同期する。
-3. **13 capability matrix vs command module drift**: §実装チケット SP016-T04 は `message/audit/export/sprint` command を含むが、docs/cli/README.md §4 の 13 capability matrix には対応 capability がない。実装前に次のどちらかへ正規化する:
-   - A: 13 capability matrix にない command は read-only helper / admin scope として明示し、parity contract の 13 件に含めない。
-   - B: capability matrix を拡張し、13 件固定を改訂する (ADR-00015 update 必須)。
-4. **api_capability_tokens migration is high-risk**: actor/principal/device/project/scope/audience/expires/jti/revoked の exact DDL、scope mismatch deny audit、jti replay deny を実装前 plan で固定する。
-5. **Tailscale `tag:taskhub-cli` grants**: ADR-00007 は accepted 済みだが、SP-016 実装 PR で grants 設定変更が入る場合は外部公開設定 gate として別 diff / rollback を明示する。
+1. **ADR-00015 accepted**: 2026-05-24 に accepted 化済み。principal-bound API capability token DDL / lifecycle / audit event schema は ADR-00015 §3 / §7 を正本にする。
+2. **CLI canonical resolved (U-04)**: `tm` 維持を採用。`tmai` は将来 namespace 衝突時の fallback のみ。
+3. **13 capability matrix vs command module drift resolved**: A を採用。13 capability matrix にない `message` / `audit` / `export` は parity contract に含めない read-only helper scope、`sprint` は `taskhub` host/admin scope。
+4. **api_capability_tokens migration plan fixed**: actor/principal/device/project/scope/audience/auth_context/request_binding/expires/jti/revoked の exact DDL、scope mismatch deny audit、jti replay deny は ADR-00015 §3 / §7 を正本にする。
+5. **Tailscale `tag:taskhub-cli` grants gated**: ADR-00007 は accepted 済み。実 config 変更が入る場合は外部公開設定 gate として別 diff / rollback を明示する。
 
 ### carry-over to SP-016 implementation plan
 
 - `tm memory` は SP-018 accepted まで 404/disabled contract のみ。message CLI と memory CLI を混ぜない。
 - SP-015 の SecretBroker inter-agent token negative は完了済み。SP-016 では別途 CLI token misuse / scope mismatch / raw token profile 保存 reject を実装する。
-- `taskhub` host/admin CLI と `tm` / `tmai` project-user CLI の境界を維持し、admin CLI から project mutating command を呼ばない。
-- parity contract test は UI result / CLI result / DB row / audit event を 13 capability ごとに比較し、message/audit/export/sprint command を扱う場合は上記 drift 解消後に範囲へ追加する。
+- `taskhub` host/admin CLI と `tm` project-user CLI の境界を維持し、admin CLI から project mutating command を呼ばない。
+- parity contract test は UI result / CLI result / DB row / audit event を 13 capability ごとに比較する。message/audit/export/sprint command は parity 13 件へ追加しない。
 
 ## QL-F update (R29 §5 QL-F、2026-05-15 doc-only、CLI ContextResolver + canonical 選択肢 spec)
 
@@ -178,7 +176,7 @@ uv tool install ./cli && tm --version && tm --profile default ticket list --json
 
 ### QL-F.1 詳細 spec は docs/cli/README.md に集約
 
-QL-F run で新規起票した `docs/cli/README.md` (proposed design doc) を本 Pack の CLI 設計 source-of-truth として cross-reference。本 Pack §設計判断 / §実装チケット で記載されている CLI 関連 spec は `docs/cli/README.md` の §2-§7 を参照。
+QL-F run で新規起票し、2026-05-24 に accepted 化した `docs/cli/README.md` を本 Pack の CLI 設計 source-of-truth として cross-reference。本 Pack §設計判断 / §実装チケット で記載されている CLI 関連 spec は `docs/cli/README.md` の §2-§7 を参照。
 
 ### QL-F.2 13 capability matrix cross-reference
 
@@ -203,18 +201,18 @@ QL-F run で新規起票した `docs/cli/README.md` (proposed design doc) を本
 
 本 placeholder は QL-G run で実 ADR 起票後、本 §設計判断 で memory backend 関連の must_ship を追加する future implementation gate。本 QL-F run では marker のみ。
 
-### QL-F.5 taskhub host/admin vs tm/tmai project user 境界
+### QL-F.5 taskhub host/admin vs tm project user 境界
 
-`docs/cli/README.md §7` の 2 CLI 境界 (taskhub vs tm/tmai) は本 Pack の admin scope と project user scope の物理分離。本 Pack must_ship では:
+`docs/cli/README.md §7` の 2 CLI 境界 (`taskhub` vs `tm`) は本 Pack の admin scope と project user scope の物理分離。本 Pack must_ship では:
 
-- `tm`/`tmai` 経由の 13 capability (上記 §QL-F.2) のみ実装
+- `tm` 経由の 13 capability (上記 §QL-F.2) のみ実装
 - `taskhub` 経由の admin scope (`tenant_create` / `sprint_pack_admin_close` / `sops_rotate` 等) は本 Pack scope 外、別 SP-XXX で扱う
 
 `taskhub` 経由で project mutating command を invoke する path は **restricted** (本 SP-016 must_ship 範囲外)。
 
-### QL-F.6 同一 PR 一括更新 future requirement (U-04 確定後)
+### QL-F.6 同一 PR 一括更新 future requirement (future rename only)
 
-U-04 (B 反転採用) 確定時、本 SP-016 + ADR-00015 + SP-012 + docs/cli/README.md + CLI test file を **同一 PR で doc-only 一括更新**。CLI test file 更新は反転実装 Sprint Pack accepted 後の別 run。
+U-04 は A (`tm` canonical 維持) で確定済み。将来 `tmai` 反転を採用する場合のみ、本 SP-016 + ADR-00015 + SP-012 + docs/cli/README.md + CLI test file を **同一 PR で doc-only 一括更新**。CLI test file 更新は反転実装 Sprint Pack accepted 後の別 run。
 
 ### QL-F.7 QL-D 教訓適用
 

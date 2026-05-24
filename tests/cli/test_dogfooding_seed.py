@@ -55,8 +55,8 @@ def test_parse_sprint_pack_sp012_7_completed() -> None:
     assert meta.sprint_no == "12.7"
 
 
-def test_parse_sprint_pack_sp013_draft() -> None:
-    """SP-013 (status=draft) の frontmatter parse 確認."""
+def test_parse_sprint_pack_sp013_completed() -> None:
+    """SP-013 (status=completed) の frontmatter parse 確認."""
     paths = discover_sprint_packs()
     target = next(
         (p for p in paths if "SP-013_multi_agent" in p.name),
@@ -66,8 +66,8 @@ def test_parse_sprint_pack_sp013_draft() -> None:
     meta = parse_sprint_pack(target)
     assert meta is not None
     assert meta.id == "SP-013_multi_agent_orchestration"
-    assert meta.status == "draft"
-    assert meta.ticket_status == "open"  # draft → open mapping
+    assert meta.status == "completed"
+    assert meta.ticket_status == "closed"  # completed → closed mapping
 
 
 def test_sprint_pack_meta_slug_is_kebab_dogfooding_prefix() -> None:
