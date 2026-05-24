@@ -28,7 +28,7 @@
 
 修正まとめ統合計画 R29 (`../設計検討/修正まとめ統合計画.md`) §3.5.4 で確定した Pack inventory を正本として登録する。`docs/実装計画/P0_バックログ.md` の `sprint_pack_ref` 列に書かれた **PLAN-01 参照名** が実 file 名と揺れる場合、本 registry を正本として alias map で解決する。
 
-### Pack inventory (match 3 + alias 6 + create_required 1 = 10 entry + match-only 12 entry)
+### Pack inventory (canonical entries)
 
 | sprint_pack_ref (PLAN-01 参照名) | actual_file (実 file 名) | resolution | notes |
 |---|---|---|---|
@@ -56,6 +56,7 @@
 | SP-018_hermes_memory_integration | SP-018_hermes_memory_integration.md | match | P1 memory backend completed; read-only retrieval API remains feature-flag disabled by default |
 | SP-020_curator_insights_integration | SP-020_curator_insights_integration.md | match | P1 curator + insights completed; ADR-00032 accepted, SP020-T00-T08 completed |
 | SP-022_framework_intake_hardening | SP-022_framework_intake_hardening.md | match | framework intake checklist + host migration 自動化 (P0.1+) |
+| SP-024_autonomy_policy_profiles | SP-024_autonomy_policy_profiles.md | match | P0.1 autonomy L0-L3 policy profiles plan; ADR-00025 proposed, runtime implementation blocked until SP024-T01 readiness gate |
 | **SP-0045_tool_registry** | **SP-0045_tool_registry.md** | **create_required** | **security boundary 独立、SP-005-5 alias 禁止** (R26 T-P2R1-012-residual)、本 PR で新規起票 |
 
 ### Alias map (PLAN-01 参照名 ↔ 実 file 名)

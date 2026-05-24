@@ -291,7 +291,7 @@ ADR-00025 (proposed) で導入する autonomy_level は **caller-visible project
 
 **P0 期間中の運用**: `autonomy_level` 列は **追加しない**、Policy Engine は既存 ADR-00009 §Tier 2 の `policy_profile='default'` のみで動作。`applied_level=L0` は audit event metadata として記録 (新規 column 不要)、全 mutation が approval path を通る。
 
-**P0.1 accepted 化後**: ADR-00025 + 新 Sprint Pack SP-017 候補で `autonomy_level` 列追加 (ADR Gate Criteria #2 trigger) + low-risk profile 機械判定実装 + L1-L3 auto-allow path 実装。
+**P0.1 accepted 化後**: ADR-00025 + Sprint Pack SP-024 で `autonomy_level` 列追加 (ADR Gate Criteria #2 trigger) + low-risk profile 機械判定実装 + L1-L3 auto-allow path 実装。
 
 ### auto-allow path は decider 委譲ではない (本 ADR §self-approval invariant の延長)
 
@@ -330,7 +330,7 @@ ADR-00025 の **accepted 化は Phase 5 Hook Trust Boundary 完成 + ADR-00012 a
 | 5 | pytest EXPECTED constant | `tests/policy/test_action_class_enum.py` の `EXPECTED_ACTION_CLASSES` | drift detection (`set(actual) == set(expected)`) |
 | 6 (optional) | frontend TypeScript enum | `frontend/lib/domain/policy/action-class.ts` (Sprint 9+) | UI と backend の enum 同期 |
 
-ADR-00025 の `autonomy_level` enum も同等の 5+ source 整合を P0.1 SP-017 候補で実装する。
+ADR-00025 の `autonomy_level` enum も同等の 5+ source 整合を P0.1 SP-024 で実装する。
 
 ### 関連 ADR (QL-B update)
 
