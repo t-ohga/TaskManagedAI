@@ -30,6 +30,15 @@ from backend.app.services.repoproxy.repo_pr_event import (
     append_repo_pr_opened_event,
     build_repo_pr_opened_payload,
 )
+from backend.app.services.repoproxy.webhook_adapters import (
+    GITHUB_WEBHOOK_SECRET_CONSUMER,
+    GITHUB_WEBHOOK_SECRET_NAME,
+    GITHUB_WEBHOOK_SECRET_OPERATION,
+    GITHUB_WEBHOOK_SECRET_SCOPE,
+    DbWebhookAuditSink,
+    DbWebhookSecretResolver,
+    RedisWebhookReplayStore,
+)
 from backend.app.services.repoproxy.webhook_service import (
     GITHUB_WEBHOOK_DENIED_AUDIT_EVENT_TYPE,
     GITHUB_WEBHOOK_REPLAY_WINDOW_SECONDS,
@@ -50,8 +59,13 @@ __all__ = [
     "GITHUB_API_VERSION",
     "GITHUB_WEBHOOK_DENIED_AUDIT_EVENT_TYPE",
     "GITHUB_WEBHOOK_REPLAY_WINDOW_SECONDS",
+    "GITHUB_WEBHOOK_SECRET_CONSUMER",
+    "GITHUB_WEBHOOK_SECRET_NAME",
+    "GITHUB_WEBHOOK_SECRET_OPERATION",
+    "GITHUB_WEBHOOK_SECRET_SCOPE",
     "GITHUB_WEBHOOK_VERIFIED_AUDIT_EVENT_TYPE",
     "WEBHOOK_HMAC_FAILED_AUDIT_EVENT_TYPE",
+    "DbWebhookAuditSink",
     "GitHubAppAdapter",
     "GitHubDraftPRResponse",
     "GitHubWebhookReasonCode",
@@ -61,6 +75,8 @@ __all__ = [
     "RepoPROpenedEventDenyReason",
     "RepoPROpenedEventPayload",
     "RepoPROpenedEventWriter",
+    "DbWebhookSecretResolver",
+    "RedisWebhookReplayStore",
     "WebhookSecretCandidate",
     "WebhookSecretCandidates",
     "append_repo_pr_opened_event",
