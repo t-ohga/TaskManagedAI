@@ -12,7 +12,7 @@ supersedes: null
 superseded_by: null
 ---
 
-最終更新: 2026-05-24 (SP024-T07 で `autonomy_level` only の API / UI / CLI settings surface を追加)
+最終更新: 2026-05-24 (SP024-T08 で regression / rollback closeout 完了、`alembic check` は既存 MetaData debt として defer)
 
 ## 背景
 
@@ -80,6 +80,7 @@ superseded_by: null
   - **SP024-T05 Policy Engine**: `evaluate_autonomy_policy_engine_decision()` は L0-L3 action matrix、human-required action fallback、global kill switch / budget exceeded / Provider Matrix deny / Tool Registry deny override を `allow` より先に評価する。`policy_profile` seed は変更せず 14 row invariant を維持する。
   - **SP024-T06 trace boundary**: `append_autonomy_policy_trace()` は `policy_decisions`、AuditEvent `policy_decision_created`、AgentRunEvent `policy_linted` に redacted decision summary を append する。raw prompt / raw provider payload / raw secret / capability token は signature に存在せず、`input_hash` と server-owned decision metadata のみを記録する。
   - **SP024-T07 settings boundary**: caller-facing write surface は `autonomy_level` のみを受け取り、API request schema は extra field forbid、CLI request body は `{"autonomy_level": ...}` のみ、frontend server action / API client も `policy_profile` setter を持たない。`projects.policy_profile` は resolver 経由で `default` に server-owned 再解決する。
+  - **SP024-T08 closeout boundary**: regression suite は L0-L3 allow matrix disjoint、全 level human-required fallback、global kill switch precedence、L0 downgrade semantics、enum drift、caller payload reject、14 row policy seed、migration up/down/current を確認済み。`alembic check` は `migrations/env.py` の MetaData 未提供により既存 infrastructure debt として defer。
   - 不変条件 (level 切替で破ってはならない):
     1. `secret_access` / `merge` / `deploy` / `provider_call` は **全 level で human approval 必須**
     2. `approval_requests.decided_by_actor_id` は **human actor のみ** (DB CHECK + service guard + Pydantic + pytest の 4 重防御)
