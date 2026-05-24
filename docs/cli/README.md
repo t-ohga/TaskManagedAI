@@ -116,7 +116,7 @@ tm --agent-mode ticket create --slug example --title "Example"  # fail-closed
 tm memory search "anything"                                     # disabled until SP-018
 ```
 
-Output formatters (`--json` / `--yaml` / human default) redact secret-shaped keys such as `operation_token`, `secret_value`, `api_key`, and `credential`. Identifier fields like `token_id` remain visible.
+Output formatters (`--json` / `--yaml` / human default) redact secret-shaped keys such as `operation_token`, `secret_value`, `api_key`, and `credential`, plus raw secret-shaped values (`sk-*`, `ghp_*`, `Bearer ...`, age secret key, private key marker). Identifier fields like `token_id` remain visible.
 
 ## 1. 不変条件 (本 CLI 設計で破ってはならない)
 

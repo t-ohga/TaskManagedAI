@@ -76,7 +76,7 @@ risks:
 - [x] migration `0031_sp016_api_capability_tokens.py` upgrade/downgrade PASS
 - [x] 13 parity contract test 全件 PASS
 - [x] CLI capability token TTL 5-30 分 + scope minimum + raw 保存 reject
-- [ ] secret redaction (CLI 出力に raw secret 出ない、SecretBroker 経由のみ)
+- [x] secret redaction (CLI 出力に raw secret 出ない、SecretBroker 経由のみ)
 - [x] Tailscale-only enforcement (public IP / Funnel reject + backend_url *.ts.net 検証)
 - [x] `tm memory` は 404/disabled contract test PASS
 
@@ -384,6 +384,25 @@ verified:
 deferred:
 - backend live endpoints for `repo_status` / `repo_push` / `pr_open` / `secret_resolve` / `provider_call` remain planned; this batch fixes their parity contract and fail-drift tests, not gateway implementation.
 - full response/DB/audit equality E2E for planned endpoints must run when those backend surfaces become live.
+
+### Batch 0i: CLI secret output redaction regression (2026-05-24)
+
+changed:
+- `cli/tm/output/redaction.py`
+- `tests/cli/test_secret_redaction.py`
+- `docs/sprints/SP-016_ui_cli_parity.md`
+
+implemented:
+- output redaction now blocks raw secret-shaped values, not only sensitive keys
+- JSON / YAML / human formatters redact `sk-*`, `ghp_*`, `Bearer ...`, age secret key, and private-key-shaped values
+- safe identifier keys such as `token_id` remain visible
+- `tm secret use` output redacts backend-returned secret-shaped values before printing
+
+verified:
+- `uv run ruff check cli/tm/output/redaction.py tests/cli/test_secret_redaction.py`
+- `PYTHONPATH=cli uv run mypy cli/tm tests/cli/test_secret_redaction.py`
+- `PYTHONPATH=cli uv run pytest tests/cli/test_secret_redaction.py tests/cli/test_tm_cli_foundation.py -q` (`39 passed`)
+- `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/cli/test_secret_redaction.py tests/parity/test_ui_cli_parity.py tests/security/test_api_capability_token_scope_mismatch.py tests/security/test_cli_token_misuse_negative.py tests/cli/test_capability_token_lifecycle.py tests/cli/test_tm_cli_foundation.py tests/api/test_tickets_api.py -q` (`62 passed`)
 
 ## Kickoff Inventory (2026-05-24 task-04 plan-only)
 
