@@ -49,6 +49,7 @@ class MemoryRetrievalResult:
 class _ActiveSanitizerPolicy:
     id: UUID
     version: str
+    config_hash: str
 
 
 class MemoryRetrievalService:
@@ -95,6 +96,11 @@ class MemoryRetrievalService:
             )
 
         sanitizer_policy = await self._current_sanitizer_policy(tenant_id=tenant_id)
+        await self._assert_records_sanitizer_not_stale(
+            tenant_id=tenant_id,
+            records=records,
+            active_policy=sanitizer_policy,
+        )
         payload_data_class = _max_record_data_class(records)
         content_jsonb, retrieval_hash = _build_retrieval_content(
             request=request,
@@ -197,7 +203,11 @@ class MemoryRetrievalService:
     ) -> _ActiveSanitizerPolicy:
         row = (
             await self.session.execute(
-                sa.select(SanitizerPolicyVersion.id, SanitizerPolicyVersion.version)
+                sa.select(
+                    SanitizerPolicyVersion.id,
+                    SanitizerPolicyVersion.version,
+                    SanitizerPolicyVersion.config_hash,
+                )
                 .where(
                     SanitizerPolicyVersion.tenant_id == tenant_id,
                     SanitizerPolicyVersion.deprecated_at.is_(None),
@@ -211,7 +221,38 @@ class MemoryRetrievalService:
         ).one_or_none()
         if row is None or not isinstance(row.version, str) or not row.version.strip():
             raise MemoryRetrievalDenied("active sanitizer_policy_versions row not found.")
-        return _ActiveSanitizerPolicy(id=row.id, version=row.version)
+        if not isinstance(row.config_hash, str) or not row.config_hash.strip():
+            raise MemoryRetrievalDenied(
+                "active sanitizer_policy_versions config_hash not found."
+            )
+        return _ActiveSanitizerPolicy(
+            id=row.id,
+            version=row.version,
+            config_hash=row.config_hash,
+        )
+
+    async def _assert_records_sanitizer_not_stale(
+        self,
+        *,
+        tenant_id: int,
+        records: list[MemoryRecord],
+        active_policy: _ActiveSanitizerPolicy,
+    ) -> None:
+        sanitizer_ids = {record.sanitizer_version_id for record in records}
+        result = await self.session.execute(
+            sa.select(SanitizerPolicyVersion.id, SanitizerPolicyVersion.config_hash).where(
+                SanitizerPolicyVersion.tenant_id == tenant_id,
+                SanitizerPolicyVersion.id.in_(sanitizer_ids),
+            )
+        )
+        config_by_id = {row.id: row.config_hash for row in result}
+        if set(config_by_id) != sanitizer_ids:
+            raise MemoryRetrievalDenied("stale_sanitizer")
+        if any(
+            config_hash != active_policy.config_hash
+            for config_hash in config_by_id.values()
+        ):
+            raise MemoryRetrievalDenied("stale_sanitizer")
 
 
 def _max_record_data_class(records: list[MemoryRecord]) -> PayloadDataClass:
