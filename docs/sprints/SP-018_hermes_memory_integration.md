@@ -29,7 +29,7 @@ risks:
   - "Hermes integration is pattern adoption only; no external memory cloud, SQLite persistence, or source embed"
 ---
 
-最終更新: 2026-05-24 (batch 0f ContextSnapshot retrieval ref guard)
+最終更新: 2026-05-24 (batch 0g backup/restore memory drill)
 
 ## 目的
 
@@ -86,7 +86,7 @@ Hermes-agent 由来の memory / context pattern を TaskManagedAI 境界で再�
 - [x] SP018-T04 store pipeline
 - [x] SP018-T05 retrieval pipeline
 - [x] SP018-T06 ContextSnapshot read-only guard
-- [ ] SP018-T07 backup/restore drill
+- [x] SP018-T07 backup/restore drill
 - [ ] SP018-T08 disabled contract / feature-flagged endpoint
 
 ## must_ship / defer_if_over_budget 対応表
@@ -247,6 +247,32 @@ verified:
 
 deferred:
 - retrieval pipeline cross-project deny, archived/retention exclusion, ContextSnapshot read-only guard, backup/restore memory drill, and feature-flagged endpoint remain SP018-T05+.
+
+risks:
+- Alembic emits existing `path_separator` deprecation warning in DB-backed tests; no failure or behavioral regression observed.
+
+### 2026-05-24 batch 0g: backup/restore memory drill
+
+changed:
+- `backend/app/services/memory/retrieval.py`
+- `tests/db/test_backup_restore_memory.py`
+- `docs/sprints/SP-018_hermes_memory_integration.md`
+
+implemented:
+- retrieval path compares each retrieved memory record's stored sanitizer `config_hash` with the active sanitizer policy `config_hash` and denies with `stale_sanitizer` on mismatch.
+- backup/restore drill regression verifies `memory_records.source_artifact_id -> artifacts`, `memory_retrieval_artifacts.retrieval_artifact_ref -> artifacts`, ContextSnapshot ref, and sanitizer FK/config_hash consistency.
+- restore drift fixture simulates target sanitizer policy drift by deprecating old policy and activating a new config hash, then confirms retrieval fails closed before creating retrieval artifacts.
+
+verified:
+- `uv run ruff check backend/app/services/memory tests/memory/test_retrieval_pipeline.py tests/db/test_backup_restore_memory.py`
+- `PYTHONPATH=cli uv run mypy backend/app/services/memory tests/memory/test_retrieval_pipeline.py tests/db/test_backup_restore_memory.py`
+- `uv run pytest tests/memory/test_retrieval_pipeline.py tests/db/test_backup_restore_memory.py -q`
+- `TASKMANAGEDAI_RUN_DB_TESTS=1 ... uv run pytest tests/db/test_backup_restore_memory.py -q`
+- `TASKMANAGEDAI_RUN_DB_TESTS=1 ... uv run pytest tests/memory tests/db/test_backup_restore_memory.py tests/db/test_schema_introspection.py::test_memory_tables_have_ref_only_project_boundary_schema -q`
+- `git diff --check`
+
+deferred:
+- feature-flagged endpoint / disabled API contract remains SP018-T08.
 
 risks:
 - Alembic emits existing `path_separator` deprecation warning in DB-backed tests; no failure or behavioral regression observed.
