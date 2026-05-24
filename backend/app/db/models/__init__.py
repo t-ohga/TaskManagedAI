@@ -27,6 +27,12 @@ from backend.app.db.models.inter_agent_message import (
     InterAgentMessage,
     InterAgentReceiverKind,
 )
+from backend.app.db.models.memory_record import (
+    MemoryRecord,
+    MemoryRecordTrustLevel,
+    MemoryRetrievalArtifact,
+    MemoryRetrievalTrustLevel,
+)
 from backend.app.db.models.notification_event import NotificationEvent
 from backend.app.db.models.policy_decision import PolicyDecision
 from backend.app.db.models.policy_profile import PolicyProfile, PolicyProfileActionEffect
@@ -36,6 +42,7 @@ from backend.app.db.models.project import Project
 from backend.app.db.models.repository import Repository
 from backend.app.db.models.research_task import ResearchTask, ResearchTaskStatus
 from backend.app.db.models.review_artifact import ReviewArtifact
+from backend.app.db.models.sanitizer_policy_version import SanitizerPolicyVersion
 from backend.app.db.models.secret_capability_token import (
     SecretCapabilityToken,
     SecretCapabilityTokenStatus,
@@ -68,6 +75,10 @@ __all__ = [
     "FixtureKind",
     "InterAgentMessage",
     "InterAgentReceiverKind",
+    "MemoryRecord",
+    "MemoryRecordTrustLevel",
+    "MemoryRetrievalArtifact",
+    "MemoryRetrievalTrustLevel",
     "NotificationEvent",
     "PolicyDecision",
     "PolicyProfile",
@@ -81,6 +92,7 @@ __all__ = [
     "ResearchTask",
     "ResearchTaskStatus",
     "RiskLevel",
+    "SanitizerPolicyVersion",
     "STANDARD_FIXTURE_KINDS",
     "SecretCapabilityToken",
     "SecretCapabilityTokenStatus",
