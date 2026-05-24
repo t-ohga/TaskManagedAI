@@ -40,14 +40,14 @@ The earlier next-candidate list named SP-014 batch 1+, SP-015 batch 0, and SP-01
 | SP-007 runner sandbox | `done_with_phase5_defer` | runner/security core is complete; Phase 5 plan + repo-only helpers are ready, but external trust-root install remains approval-gated |
 | SP-008 GitHub App / RepoProxy | `partial_skeleton` | #219-#223 completed service-boundary batches; real GitHub transport, live ref re-fetch, deployment SOPS resolver, and external worker/API adoption remain |
 | SP-009 P0 UI Pack | `partial_skeleton` | #224/#225 completed route reconciliation and contract/redaction tests; golden E2E, DOM secret scan, PayloadDataClass/future AuditEventType registry drift, and SP-009-5 implementation remain |
-| SP-009-5 P0.1 UI deferred surfaces | `partial_skeleton` | Batch A `/today`, Batch B `/timeline`, and Batch C decision packet hash visibility are implemented; notification triage, Newcomer Path, and `request_revision` remain |
+| SP-009-5 P0.1 UI deferred surfaces | `partial_skeleton` | Batch A `/today`, Batch B `/timeline`, and Batch C decision packet hash visibility are implemented; Batch D notification triage contract plan is ready; Newcomer Path and `request_revision` remain |
 | SP-000 bootstrap | `ready` | old bootstrap metadata; treat as backlog hygiene, not feature implementation |
 
 ## Next Work Boundary
 
 The safest next work is one of:
 
-- SP-009-5 continuation: notification triage and `request_revision` require ADR/API contract gates; Newcomer Path is P0.1 polish.
+- SP-009-5 continuation: implement notification triage D1/D2 from the accepted plan; `request_revision` still requires ADR/API/state-machine planning; Newcomer Path is P0.1 polish.
 - SP-008 residual implementation that does not require new GitHub App permissions or raw token exposure.
 - SP-007 Phase 5C only after explicit machine-local trust-root approval.
 

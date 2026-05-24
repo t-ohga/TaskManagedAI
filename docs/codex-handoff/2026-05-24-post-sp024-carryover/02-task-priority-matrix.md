@@ -71,7 +71,7 @@ These are not coding instructions until a dedicated SP-009-5 implementation PR s
 | A | Today/Inbox + minimal KPI strip read-only UI (completed 2026-05-24) | existing API only; no mutation |
 | B | unified execution timeline read-only UI (completed 2026-05-24) | raw payload / secret DOM exposure |
 | C | decision packet hash visibility (completed 2026-05-24) | API field availability; no state transition |
-| D | notification triage minimal lifecycle | ADR-00003 event schema + migration |
+| D | notification triage minimal lifecycle (plan ready 2026-05-24) | ADR-00003 event schema + migration |
 | E | approval `request_revision` loop | ADR-00003 / ADR-00004 / ADR-00009 + stale invalidation |
 
 ## SP-007 Phase 5 Plan
