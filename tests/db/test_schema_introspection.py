@@ -1191,6 +1191,9 @@ async def test_policy_decisions_has_tenant_id_and_composite_fk(
         "actor_id",
         "action_class",
         "decision",
+        "policy_profile",
+        "profile_resolved_effect",
+        "required_review_artifact_id",
         "reason_code",
         "policy_version",
         "input_hash",
@@ -1230,6 +1233,12 @@ async def test_policy_decisions_has_tenant_id_and_composite_fk(
     assert policy_decision_columns["action_class"]["is_nullable"] == "NO"
     assert policy_decision_columns["decision"]["data_type"] == "text"
     assert policy_decision_columns["decision"]["is_nullable"] == "NO"
+    assert policy_decision_columns["policy_profile"]["data_type"] == "text"
+    assert policy_decision_columns["policy_profile"]["is_nullable"] == "NO"
+    assert policy_decision_columns["profile_resolved_effect"]["data_type"] == "text"
+    assert policy_decision_columns["profile_resolved_effect"]["is_nullable"] == "NO"
+    assert policy_decision_columns["required_review_artifact_id"]["data_type"] == "uuid"
+    assert policy_decision_columns["required_review_artifact_id"]["is_nullable"] == "YES"
     assert policy_decision_columns["reason_code"]["data_type"] == "text"
     assert policy_decision_columns["reason_code"]["is_nullable"] == "NO"
     assert policy_decision_columns["policy_version"]["data_type"] == "text"
@@ -1251,6 +1260,18 @@ async def test_policy_decisions_has_tenant_id_and_composite_fk(
         ("tenant_id", "id"),
     ) in actual
     assert ("policy_decisions", ("tenant_id", "actor_id"), "actors", ("tenant_id", "id")) in actual
+    assert (
+        "policy_decisions",
+        ("tenant_id", "policy_profile"),
+        "policy_profiles",
+        ("tenant_id", "profile_id"),
+    ) in actual
+    assert (
+        "policy_decisions",
+        ("tenant_id", "required_review_artifact_id"),
+        "review_artifacts",
+        ("tenant_id", "id"),
+    ) in actual
     assert not any(
         table_name == "policy_decisions" and constrained_columns == ("tenant_id", "run_id")
         for table_name, constrained_columns, _referenced_table, _referred_columns in actual
@@ -1265,6 +1286,17 @@ async def test_policy_decisions_has_tenant_id_and_composite_fk(
     ].upper()
     assert indexes["policy_decisions_idx_created_at"].startswith("CREATE INDEX")
     assert "(tenant_id, created_at)" in indexes["policy_decisions_idx_created_at"]
+    assert indexes["policy_decisions_idx_tenant_policy_profile"].startswith("CREATE INDEX")
+    assert (
+        "(tenant_id, policy_profile)"
+        in indexes["policy_decisions_idx_tenant_policy_profile"]
+    )
+    assert indexes["policy_decisions_idx_required_review_artifact"].startswith(
+        "CREATE INDEX"
+    )
+    assert "REQUIRED_REVIEW_ARTIFACT_ID IS NOT NULL" in indexes[
+        "policy_decisions_idx_required_review_artifact"
+    ].upper()
 
 
 @pytest.mark.asyncio
@@ -1282,9 +1314,15 @@ async def test_policy_decisions_decision_check_enum(
             table_name="policy_decisions",
             constraint_name="policy_decisions_ck_decision",
         )
+        profile_resolved_effect_check = await _constraint_definition(
+            session,
+            table_name="policy_decisions",
+            constraint_name="policy_decisions_ck_profile_resolved_effect",
+        )
 
     assert _check_constraint_values(action_class_check) == POLICY_ACTION_CLASSES
     assert _check_constraint_values(decision_check) == POLICY_EFFECTS
+    assert _check_constraint_values(profile_resolved_effect_check) == POLICY_EFFECTS
 
 
 @pytest.mark.asyncio

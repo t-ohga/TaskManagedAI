@@ -71,7 +71,7 @@ orchestrator agent (司令塔) の本体実装 + lease/heartbeat/failover/kill-s
 - SP014-T05: Tool Registry network_access enum 化 ADR (新規 P0.1) + tool_network_policies table + web_fetch/docs_search 登録 (deny-only initially)
 - SP014-T06: remote_agent_gateway deny-only stub + remote_agent_dispatch_denied audit
 - SP014-T07: orchestrator_kpi_rollup query 実装 (recursive CTE + idempotency dedupe) + metric contract test (PE-F-015)
-- SP014-T08: SecretBroker multi-agent negative 6 case 個別 reason_code + test (PE-F-014)
+- SP014-T08: SecretBroker multi-agent negative 6 case 個別 reason_code + test (PE-F-014): `agent_decider_forbidden` / `tier_2_agent_decider_attempt` / `actor_type_mismatch` / `role_id_mismatch` / `lease_expired_no_secret_access` / `progress_lease_violated`
 - SP014-T09: agent_run_events.event_type 28→37 拡張 (ADR-00004 update)
 
 ## タスク一覧
@@ -83,7 +83,7 @@ orchestrator agent (司令塔) の本体実装 + lease/heartbeat/failover/kill-s
 - [x] orchestrator lease/failover stress test (60s heartbeat 失敗 → failover)
 - [x] max_* 違反全件 reject + 絶対上限 (children≤20/depth≤5/turns≤500/budget≤$50) DB CHECK で破れない確認
 - [x] Tier 2 で agent decider 経路残存しない (4 重防御 negative test)
-- [x] SecretBroker 6 negative case 個別 reason_code で deny
+- [x] SecretBroker 6 negative case 個別 reason_code で deny: `agent_decider_forbidden` / `tier_2_agent_decider_attempt` / `actor_type_mismatch` / `role_id_mismatch` / `lease_expired_no_secret_access` / `progress_lease_violated`
 
 ## must_ship / defer_if_over_budget 対応表
 
@@ -107,7 +107,7 @@ orchestrator agent (司令塔) の本体実装 + lease/heartbeat/failover/kill-s
 - progress lease no-progress 30 分で `blocked + runtime_blocked`
 - 3 階層 operation の各 boundary が機能 (Tier 1 自律 / Tier 2 Policy auto-allow / Tier 3 human approval)
 - remote_agent_gateway P0.1 stub: orchestrator_dispatched で remote child 試行 → 全件 deny + remote_agent_dispatch_denied audit
-- SecretBroker multi-agent 6 negative case 個別 reason_code で deny
+- SecretBroker multi-agent 6 negative case 個別 reason_code で deny: `agent_decider_forbidden` / `tier_2_agent_decider_attempt` / `actor_type_mismatch` / `role_id_mismatch` / `lease_expired_no_secret_access` / `progress_lease_violated`
 - KPI rollup metric contract test 全件 PASS
 - AC-HARD-01 fixture (multi-agent 文脈、unknown profile / missing seed row / secret_access allow drift / provider_call without ZDR / task_write without review_artifact) 全件 deny
 

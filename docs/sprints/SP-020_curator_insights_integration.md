@@ -28,7 +28,7 @@ risks:
   - "PE-F-014/015/016 closure needs cross-source tests, not only docs trace"
 ---
 
-最終更新: 2026-05-24 (SP020-T06 orchestrator auto-retrieve hook completed)
+最終更新: 2026-05-24 (SP020-T07 Phase E closure tests completed)
 
 ## 目的
 
@@ -69,7 +69,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - SP020-T04: insights aggregation service + read-only API / CLI surface (completed)。raw payload 非露出、feature flag disabled default。
 - SP020-T05: adopted_artifacts link table + citation_coverage final-only attribution contract (completed)。
 - SP020-T06: orchestrator auto-retrieve hook (completed)。retrieval output は `untrusted_content` のまま、trusted_instruction 昇格禁止。
-- SP020-T07: Phase E closure tests。PE-F-014 6 reason_code / PE-F-015 exact query / PE-F-016 policy_profile 14 seed + review_artifact guard。
+- SP020-T07: Phase E closure tests (completed)。PE-F-014 6 reason_code / PE-F-015 exact query / PE-F-016 policy_profile 14 seed + review_artifact guard。
 - SP020-T08: backup/restore extension。archive state / adopted_artifacts / insight source FK を verify。
 
 ## タスク一覧
@@ -81,7 +81,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - [x] SP020-T04 insights read-only API / CLI
 - [x] SP020-T05 adopted_artifacts metric attribution
 - [x] SP020-T06 orchestrator auto-retrieve hook
-- [ ] SP020-T07 Phase E PE-F-014/015/016 closure tests
+- [x] SP020-T07 Phase E PE-F-014/015/016 closure tests
 - [ ] SP020-T08 backup/restore extension
 
 ## must_ship / defer_if_over_budget 対応表
@@ -107,7 +107,7 @@ SP-018 で完成した memory backend を使い、Hermes Wave 22 相当の curat
 - insight API / CLI は ref-only で、raw content を返さない。
 - adopted_artifacts は `(tenant_id, project_id, run_id/artifact_id)` boundary を持ち、cross-project attribution を reject する。
 - citation_coverage final-only query は adopted_artifacts だけを分母にし、draft / non-adopted artifact を除外する。
-- SecretBroker multi-agent 6 negative case は exact reason_code で PASS する。
+- SecretBroker multi-agent 6 negative case は exact reason_code (`agent_decider_forbidden` / `tier_2_agent_decider_attempt` / `actor_type_mismatch` / `role_id_mismatch` / `lease_expired_no_secret_access` / `progress_lease_violated`) で PASS する。
 - policy_profile_action_effects は default + low_risk_auto_allow x 7 action_class = 14 rows exact のまま維持される。
 - orchestrator auto-retrieve output は `untrusted_content` から自己昇格できない。
 - backup/restore 後に archive state、adopted_artifacts FK、insight source FK が維持される。
@@ -404,3 +404,41 @@ deferred:
 
 risks:
 - T06 intentionally stops at the orchestration hook. Prompt rendering / UI display of the memory retrieval supplement remains out of scope and must preserve `untrusted_content` semantics when implemented.
+
+### 2026-05-24 SP020-T07 Phase E closure tests
+
+changed:
+- `tests/security/test_secretbroker_multi_agent_negative.py`
+- `tests/metrics/test_adopted_artifacts_kpi_boundary.py`
+- `tests/policy/test_policy_profile_seed.py`
+- `tests/db/test_schema_introspection.py`
+- `docs/sprints/SP-014_orchestrator_agent.md`
+- `docs/sprints/SP-020_curator_insights_integration.md`
+- `docs/sprints/SP-022_framework_intake_hardening.md`
+- `docs/sprints/README.md`
+
+implemented:
+- PE-F-014: SecretBroker multi-agent deny reason matrix を exact 6 reason_code で固定し、ADR / Sprint / rule docs drift を test で検知。
+- PE-F-015: adopted_artifacts final-only `citation_coverage` SQL contract を static regression test 化し、recursive lineage / project-scoped join / final adoption denominator / `sample_claims` path を固定。
+- PE-F-016: policy_profile seed は default + low_risk_auto_allow x 7 action_class = 14 rows exact、allow row は review artifact guard 必須、non-allow row は review artifact 不要で固定。
+- `policy_decisions` schema introspection を拡張し、`policy_profile` FK、`profile_resolved_effect` CHECK、`required_review_artifact_id` FK / partial index を検証。
+- SP-022 Phase E trace を PE-F-014/015/016 exit gate satisfied に更新。
+
+self_review:
+- adopted: PE-F-014 の docs sync 対象に SP-014 / SP-020 / SecretBroker rule を含め、reason_code が docs だけ drift する経路を塞いだ。
+- adopted: PE-F-015 は behavior test に加えて SQL shape test を追加し、draft/non-adopted exclusion が query 変更で抜ける regression を検知できるようにした。
+- adopted: PE-F-016 は seed helper / DB schema / review_artifact FK の 3 層で確認し、単なる row count test で終わらせない。
+
+verified:
+- `uv run ruff check tests/security/test_secretbroker_multi_agent_negative.py tests/metrics/test_adopted_artifacts_kpi_boundary.py tests/policy/test_policy_profile_seed.py tests/db/test_schema_introspection.py docs/sprints/SP-014_orchestrator_agent.md docs/sprints/SP-020_curator_insights_integration.md docs/sprints/SP-022_framework_intake_hardening.md docs/sprints/README.md`
+- `PYTHONPATH=cli uv run mypy tests/security/test_secretbroker_multi_agent_negative.py tests/metrics/test_adopted_artifacts_kpi_boundary.py tests/policy/test_policy_profile_seed.py tests/db/test_schema_introspection.py`
+- `TASKMANAGEDAI_DATABASE_URL=<isolated 127.0.0.1:55434 test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/security/test_secretbroker_multi_agent_negative.py tests/metrics/test_adopted_artifacts_kpi_boundary.py tests/policy/test_policy_profile_seed.py tests/db/test_schema_introspection.py::test_policy_decisions_has_tenant_id_and_composite_fk tests/db/test_schema_introspection.py::test_policy_decisions_decision_check_enum -q` (`26 passed`)
+- `.claude/hooks/sprint/check-sprint-pack-frontmatter.sh docs/sprints/SP-020_curator_insights_integration.md`
+- `scripts/ci/check_phase_e_trace.sh`
+- `git diff --check`
+
+deferred:
+- backup/restore extension (SP020-T08)。
+
+risks:
+- PE-F-015 still records current `time_to_merge` source as `repo_pr_opened` proxy. Adding `repo_pr_merged` remains a future ADR-00004 / event_type expansion, not part of SP020-T07.
