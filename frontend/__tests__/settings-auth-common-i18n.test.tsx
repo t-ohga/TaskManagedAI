@@ -8,7 +8,7 @@ const apiMocks = vi.hoisted(() => ({
   getBackendHealth: vi.fn<() => Promise<HealthResponse>>(),
   getCurrentProject: vi.fn(),
   listCurrentProjects: vi.fn(),
-  listNotifications: vi.fn()
+  listNotificationTriage: vi.fn()
 }));
 
 vi.mock("@/lib/api/client", () => ({
@@ -16,7 +16,7 @@ vi.mock("@/lib/api/client", () => ({
 }));
 
 vi.mock("@/lib/api/notifications", () => ({
-  listNotifications: apiMocks.listNotifications
+  listNotificationTriage: apiMocks.listNotificationTriage
 }));
 
 vi.mock("@/lib/api/session", () => ({
@@ -37,7 +37,7 @@ beforeEach(() => {
   apiMocks.getBackendHealth.mockReset();
   apiMocks.getCurrentProject.mockReset();
   apiMocks.listCurrentProjects.mockReset();
-  apiMocks.listNotifications.mockReset();
+  apiMocks.listNotificationTriage.mockReset();
 });
 
 async function renderAsync(element: Promise<ReactElement>) {
@@ -90,7 +90,7 @@ describe("settings/auth/common i18n", () => {
   });
 
   it("renders Japanese empty state on notifications", async () => {
-    apiMocks.listNotifications.mockResolvedValueOnce([]);
+    apiMocks.listNotificationTriage.mockResolvedValueOnce([]);
 
     await renderAsync(NotificationsPage());
 
