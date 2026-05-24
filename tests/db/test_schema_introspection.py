@@ -476,6 +476,12 @@ async def test_required_composite_foreign_keys_exist(
             "actors",
             ("tenant_id", "id"),
         ),
+        (
+            "notification_events",
+            ("tenant_id", "resolved_by_actor_id"),
+            "actors",
+            ("tenant_id", "id"),
+        ),
         ("policy_rules", ("tenant_id", "project_id"), "projects", ("tenant_id", "id")),
         (
             "approval_requests",
@@ -1629,7 +1635,20 @@ async def test_audit_notification_contract_columns_and_constraints(
         notification_columns = await _table_columns(
             session,
             "notification_events",
-            ("event_type", "payload", "recipient_actor_id", "read_at", "created_at"),
+            (
+                "event_type",
+                "payload",
+                "recipient_actor_id",
+                "read_at",
+                "severity",
+                "required_action",
+                "due_at",
+                "snoozed_until",
+                "resolved_at",
+                "resolved_by_actor_id",
+                "dedupe_key",
+                "created_at",
+            ),
         )
         audit_unique = await _constraint_columns(
             session,
@@ -1648,6 +1667,22 @@ async def test_audit_notification_contract_columns_and_constraints(
             table_name="audit_events",
             constraint_name="audit_events_ck_principal_requires_actor",
         )
+        notification_severity_check = await _constraint_definition(
+            session,
+            table_name="notification_events",
+            constraint_name="notification_events_ck_severity",
+        )
+        notification_required_action_check = await _constraint_definition(
+            session,
+            table_name="notification_events",
+            constraint_name="notification_events_ck_required_action",
+        )
+        notification_resolved_consistency_check = await _constraint_definition(
+            session,
+            table_name="notification_events",
+            constraint_name="notification_events_ck_resolved_consistency",
+        )
+        notification_indexes = await _index_definitions(session, frozenset({"notification_events"}))
 
     assert audit_columns["event_type"]["data_type"] == "text"
     assert audit_columns["event_type"]["is_nullable"] == "NO"
@@ -1673,8 +1708,59 @@ async def test_audit_notification_contract_columns_and_constraints(
     assert notification_columns["recipient_actor_id"]["data_type"] == "uuid"
     assert notification_columns["recipient_actor_id"]["is_nullable"] == "NO"
     assert notification_columns["read_at"]["is_nullable"] == "YES"
+    assert notification_columns["severity"]["data_type"] == "text"
+    assert notification_columns["severity"]["is_nullable"] == "NO"
+    assert "'info'" in str(notification_columns["severity"]["column_default"])
+    assert notification_columns["required_action"]["data_type"] == "text"
+    assert notification_columns["required_action"]["is_nullable"] == "NO"
+    assert "'acknowledge'" in str(notification_columns["required_action"]["column_default"])
+    assert notification_columns["due_at"]["data_type"] == "timestamp with time zone"
+    assert notification_columns["due_at"]["is_nullable"] == "YES"
+    assert notification_columns["snoozed_until"]["data_type"] == "timestamp with time zone"
+    assert notification_columns["snoozed_until"]["is_nullable"] == "YES"
+    assert notification_columns["resolved_at"]["data_type"] == "timestamp with time zone"
+    assert notification_columns["resolved_at"]["is_nullable"] == "YES"
+    assert notification_columns["resolved_by_actor_id"]["data_type"] == "uuid"
+    assert notification_columns["resolved_by_actor_id"]["is_nullable"] == "YES"
+    assert notification_columns["dedupe_key"]["data_type"] == "text"
+    assert notification_columns["dedupe_key"]["is_nullable"] == "YES"
     assert notification_columns["created_at"]["is_nullable"] == "NO"
     assert notification_unique == ("tenant_id", "id")
+    assert _check_constraint_values(notification_severity_check) == {
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical",
+    }
+    assert _check_constraint_values(notification_required_action_check) == {
+        "acknowledge",
+        "review_approval",
+        "inspect_run",
+        "resolve_blocker",
+        "external_followup",
+    }
+    assert "resolved_at" in notification_resolved_consistency_check
+    assert "resolved_by_actor_id" in notification_resolved_consistency_check
+    assert notification_indexes["notification_events_idx_triage_open"].startswith("CREATE INDEX")
+    assert "(tenant_id, recipient_actor_id, severity, due_at, created_at)" in notification_indexes[
+        "notification_events_idx_triage_open"
+    ]
+    assert "WHERE (RESOLVED_AT IS NULL)" in notification_indexes[
+        "notification_events_idx_triage_open"
+    ].upper()
+    assert notification_indexes["notification_events_uq_open_dedupe"].startswith(
+        "CREATE UNIQUE INDEX"
+    )
+    assert "(tenant_id, recipient_actor_id, dedupe_key)" in notification_indexes[
+        "notification_events_uq_open_dedupe"
+    ]
+    assert "DEDUPE_KEY IS NOT NULL" in notification_indexes[
+        "notification_events_uq_open_dedupe"
+    ].upper()
+    assert "RESOLVED_AT IS NULL" in notification_indexes[
+        "notification_events_uq_open_dedupe"
+    ].upper()
 
 
 RESEARCH_EVIDENCE_TABLES = frozenset({"research_tasks", "evidence_sources", "claims", "evidence_items"})
