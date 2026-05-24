@@ -19,6 +19,10 @@ from backend.app.db.models.eval_run import EvalRun
 from backend.app.db.models.eval_score import EvalScore
 from backend.app.db.models.evidence_item import EvidenceItem
 from backend.app.db.models.evidence_source import EvidenceSource
+from backend.app.db.models.inter_agent_message import (
+    InterAgentMessage,
+    InterAgentReceiverKind,
+)
 from backend.app.db.models.notification_event import NotificationEvent
 from backend.app.db.models.policy_decision import PolicyDecision
 from backend.app.db.models.policy_profile import PolicyProfile, PolicyProfileActionEffect
@@ -56,6 +60,8 @@ __all__ = [
     "EvidenceItem",
     "EvidenceSource",
     "FixtureKind",
+    "InterAgentMessage",
+    "InterAgentReceiverKind",
     "NotificationEvent",
     "PolicyDecision",
     "PolicyProfile",

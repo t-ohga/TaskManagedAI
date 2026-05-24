@@ -53,11 +53,17 @@ BATCH4_TENANT_SCOPED_TABLES = frozenset(
         "policy_decisions",
     }
 )
+BATCH_SP015_TENANT_SCOPED_TABLES = frozenset(
+    {
+        "inter_agent_messages",
+    }
+)
 TENANT_SCOPED_TABLES = (
     BATCH1_TENANT_SCOPED_TABLES
     | BATCH2_TENANT_SCOPED_TABLES
     | BATCH3_TENANT_SCOPED_TABLES
     | BATCH4_TENANT_SCOPED_TABLES
+    | BATCH_SP015_TENANT_SCOPED_TABLES
 )
 METADATA_TABLES = frozenset(
     {

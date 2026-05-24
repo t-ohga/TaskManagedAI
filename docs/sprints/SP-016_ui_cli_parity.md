@@ -4,7 +4,7 @@ type: "heavy"
 status: "draft"
 sprint_no: 16
 created_at: "2026-05-10"
-updated_at: "2026-05-10"
+updated_at: "2026-05-24"
 target_days: 4
 max_days: 6
 adr_refs: []
@@ -144,6 +144,33 @@ uv tool install ./cli && tm --version && tm --profile default ticket list --json
 ## Review
 
 (SP-016 完了時に追記)
+
+## Kickoff Inventory (2026-05-24 task-04 plan-only)
+
+本 section は `docs/codex-handoff/2026-05-24-sequence-h-sp015-kickoff` task-04 の plan-only inventory。**CLI / backend / migration 実装は行わない**。
+
+### SP-015 dependency status
+
+- SP-015 batch 0a-0f は `task-03` で完了。message backend は `inter_agent_messages`、publisher/consumer、audit events、AgentRunEvent refs、SecretBroker token payload negative まで固定済み。
+- SP-016 の message-related CLI parity は、SP-015 の `InterAgentPublishRequest` / `InterAgentConsumeRequest` / ref-only audit payload を前提に設計可能。
+- SP-015 の raw payload boundary は CLI からも不変: CLI は message body を audit / AgentRunEvent に直接出さず、backend service の sanitizer / writer 経由に限定する。
+
+### pre-implementation blockers
+
+1. **ADR-00015 remains proposed**: 実装前に ADR-00015 を accepted 化し、principal-bound API capability token DDL / lifecycle / audit event schema を固定する。
+2. **CLI canonical unresolved (U-04)**: `tm` 維持か `tmai` 反転かを実装前に確定し、ADR-00015 / SP-016 / SP-012 / docs/cli/README.md / CLI test を同一 PR で doc-only 同期する。
+3. **13 capability matrix vs command module drift**: §実装チケット SP016-T04 は `message/audit/export/sprint` command を含むが、docs/cli/README.md §4 の 13 capability matrix には対応 capability がない。実装前に次のどちらかへ正規化する:
+   - A: 13 capability matrix にない command は read-only helper / admin scope として明示し、parity contract の 13 件に含めない。
+   - B: capability matrix を拡張し、13 件固定を改訂する (ADR-00015 update 必須)。
+4. **api_capability_tokens migration is high-risk**: actor/principal/device/project/scope/audience/expires/jti/revoked の exact DDL、scope mismatch deny audit、jti replay deny を実装前 plan で固定する。
+5. **Tailscale `tag:taskhub-cli` grants**: ADR-00007 は accepted 済みだが、SP-016 実装 PR で grants 設定変更が入る場合は外部公開設定 gate として別 diff / rollback を明示する。
+
+### carry-over to SP-016 implementation plan
+
+- `tm memory` は SP-018 accepted まで 404/disabled contract のみ。message CLI と memory CLI を混ぜない。
+- SP-015 の SecretBroker inter-agent token negative は完了済み。SP-016 では別途 CLI token misuse / scope mismatch / raw token profile 保存 reject を実装する。
+- `taskhub` host/admin CLI と `tm` / `tmai` project-user CLI の境界を維持し、admin CLI から project mutating command を呼ばない。
+- parity contract test は UI result / CLI result / DB row / audit event を 13 capability ごとに比較し、message/audit/export/sprint command を扱う場合は上記 drift 解消後に範囲へ追加する。
 
 ## QL-F update (R29 §5 QL-F、2026-05-15 doc-only、CLI ContextResolver + canonical 選択肢 spec)
 

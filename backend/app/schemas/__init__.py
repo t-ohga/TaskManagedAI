@@ -12,6 +12,7 @@ from backend.app.schemas.evidence_item import (
     EvidenceItemCreate,
     EvidenceItemRead,
 )
+from backend.app.schemas.inter_agent import InterAgentConsumeRequest, InterAgentPublishRequest
 from backend.app.schemas.notification_event import NotificationEventCreate, NotificationEventRead
 from backend.app.schemas.principal import PrincipalCreate, PrincipalRead, PrincipalType
 from backend.app.schemas.project import ProjectCreate, ProjectRead, ProjectStatus
@@ -49,6 +50,8 @@ __all__ = [
     "EvidenceItemBase",
     "EvidenceItemCreate",
     "EvidenceItemRead",
+    "InterAgentConsumeRequest",
+    "InterAgentPublishRequest",
     "NotificationEventCreate",
     "NotificationEventRead",
     "PrincipalCreate",
