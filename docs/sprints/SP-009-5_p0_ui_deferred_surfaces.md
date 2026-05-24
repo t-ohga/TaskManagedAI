@@ -43,7 +43,7 @@ max_days: 3
 | A | Today/Inbox + minimal KPI strip read-only UI (completed 2026-05-24) | existing API only、mutation なし |
 | B | Unified execution timeline read-only UI (completed 2026-05-24) | raw payload key/value を DOM に出さない |
 | C | Decision packet hash visibility (completed 2026-05-24) | `stale_after_event_seq` は additive Approval Detail API field として公開、state transition なし |
-| D | Notification triage minimal model | ADR-00003 event schema update + migration gate |
+| D | Notification triage minimal model (plan ready 2026-05-24) | ADR-00003 update note + D1/D2 migration/API/UI plan fixed; runtime implementation pending |
 | E | `request_revision` approval loop | ADR-00003 / ADR-00004 / ADR-00009 update + regression tests |
 | F | Newcomer Path / advanced approval refinements | P0.1 polish、P0 Exit blocker にしない |
 
@@ -70,7 +70,7 @@ max_days: 3
 
 ## Review
 
-- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、Batch A で `/today` read-only control plane + minimal KPI strip、Batch B で `/timeline` unified execution timeline、Batch C で Approval Detail decision packet hash visibility を追加した。
-- verified: frontmatter / registry / backlog / handoff cross-reference、frontend typecheck/lint/Vitest、desktop/mobile browser smoke、timeline sensitive key leak check、decision packet malformed-hash DOM non-exposure を確認した。
-- deferred: notification triage lifecycle、`request_revision` state machine は別 PR。
+- changed: SP-009 から P0.1 deferred UI surfaces を独立 Pack として起票し、Batch A で `/today` read-only control plane + minimal KPI strip、Batch B で `/timeline` unified execution timeline、Batch C で Approval Detail decision packet hash visibility を追加し、Batch D notification triage runtime plan を固定した。
+- verified: frontmatter / registry / backlog / handoff cross-reference、frontend typecheck/lint/Vitest、desktop/mobile browser smoke、timeline sensitive key leak check、decision packet malformed-hash DOM non-exposure、notification triage raw-payload non-expansion plan を確認した。
+- deferred: notification triage runtime implementation、`request_revision` state machine は別 PR。
 - risks: SP-009 本体の golden E2E / DOM secret scan / residual enum contract は引き続き未完。
