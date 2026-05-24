@@ -43,6 +43,13 @@ class InterAgentPublishRequest(BaseModel):
             raise ValueError("receiver_ref must be non-empty when provided.")
         return stripped
 
+    @field_validator("expires_at")
+    @classmethod
+    def _expires_at_must_be_timezone_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("expires_at must be timezone-aware.")
+        return value
+
     @model_validator(mode="after")
     def _receiver_target_shape(self) -> InterAgentPublishRequest:
         if self.receiver_kind == "agent_run":

@@ -367,6 +367,88 @@ async def test_publish_trusted_instruction_rejects_approval_binding_mismatch(
 
 @pytest.mark.asyncio
 @db_required
+async def test_publish_trusted_instruction_rejects_cross_run_approval_replay(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture(session)
+            await session.execute(
+                text(
+                    """
+                    update approval_requests
+                       set run_id = :receiver_run_id
+                     where tenant_id = 1
+                       and id = :approval_id
+                    """
+                ),
+                {"receiver_run_id": RECEIVER_RUN_ID, "approval_id": APPROVAL_ID},
+            )
+
+            with pytest.raises(InterAgentPublishError, match="run boundary"):
+                await InterAgentPublisherService(session).publish_trusted_instruction(
+                    tenant_id=TENANT_ID,
+                    project_id=PROJECT_ID,
+                    sender_actor_id=REQUESTER_ACTOR_ID,
+                    request=_request(),
+                    trusted_grant=_grant(),
+                )
+
+
+@pytest.mark.asyncio
+@db_required
+async def test_publish_trusted_instruction_rejects_cross_actor_approval_replay(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture(session)
+
+            with pytest.raises(InterAgentPublishError, match="requester"):
+                await InterAgentPublisherService(session).publish_trusted_instruction(
+                    tenant_id=TENANT_ID,
+                    project_id=PROJECT_ID,
+                    sender_actor_id=DECIDER_ACTOR_ID,
+                    request=_request(),
+                    trusted_grant=_grant(),
+                )
+
+
+@pytest.mark.asyncio
+@db_required
+async def test_publish_trusted_instruction_rejects_cross_run_source_artifact_replay(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture(session)
+            await session.execute(
+                text(
+                    """
+                    update artifacts
+                       set run_id = :receiver_run_id
+                     where tenant_id = 1
+                       and id = :source_artifact_id
+                    """
+                ),
+                {
+                    "receiver_run_id": RECEIVER_RUN_ID,
+                    "source_artifact_id": SOURCE_ARTIFACT_ID,
+                },
+            )
+
+            with pytest.raises(InterAgentPublishError, match="source_artifact_id"):
+                await InterAgentPublisherService(session).publish_trusted_instruction(
+                    tenant_id=TENANT_ID,
+                    project_id=PROJECT_ID,
+                    sender_actor_id=REQUESTER_ACTOR_ID,
+                    request=_request(),
+                    trusted_grant=_grant(),
+                )
+
+
+@pytest.mark.asyncio
+@db_required
 async def test_publish_trusted_instruction_rejects_expired_approval_reuse(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

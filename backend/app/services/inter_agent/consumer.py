@@ -8,6 +8,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.models.agent_run import AgentRun
+from backend.app.db.models.artifact import Artifact
 from backend.app.db.models.inter_agent_message import InterAgentMessage
 from backend.app.schemas.inter_agent import InterAgentConsumeRequest
 from backend.app.services.inter_agent.event_writer import InterAgentEventWriter
@@ -19,8 +20,17 @@ InterAgentConsumeDenyReason = Literal[
     "expired",
     "sender_self_consume",
     "previous_hash_mismatch",
+    "sanitizer_policy_stale",
     "receiver_ineligible",
 ]
+
+_SANITIZER_POLICY_VERSIONS = sa.table(
+    "sanitizer_policy_versions",
+    sa.column("tenant_id", sa.Integer),
+    sa.column("version", sa.Text),
+    sa.column("deprecated_at", sa.DateTime(timezone=True)),
+    sa.column("activated_at", sa.DateTime(timezone=True)),
+)
 
 
 class InterAgentConsumeDenied(ValueError):
@@ -71,6 +81,7 @@ class InterAgentConsumerService:
                 InterAgentMessage.sender_run_id != request.consumer_run_id,
                 self._receiver_eligibility_clause(request.consumer_run_id),
                 self._previous_hash_chain_clause(),
+                self._sanitizer_policy_fresh_clause(),
             )
             .values(
                 consumed_at=sa.func.now(),
@@ -206,6 +217,11 @@ class InterAgentConsumerService:
                 reason_code="previous_hash_mismatch",
                 message=message,
             )
+        if not await self._sanitizer_policy_is_fresh(message):
+            return _DenialClassification(
+                reason_code="sanitizer_policy_stale",
+                message=message,
+            )
         return _DenialClassification(reason_code="receiver_ineligible", message=message)
 
     async def _is_expired(self, message: InterAgentMessage) -> bool:
@@ -233,6 +249,47 @@ class InterAgentConsumerService:
             )
         )
         return previous_hash == message.previous_hash
+
+    @staticmethod
+    def _sanitizer_policy_fresh_clause() -> sa.ColumnElement[bool]:
+        active_policy_version = (
+            sa.select(_SANITIZER_POLICY_VERSIONS.c.version)
+            .where(
+                _SANITIZER_POLICY_VERSIONS.c.tenant_id == InterAgentMessage.tenant_id,
+                _SANITIZER_POLICY_VERSIONS.c.deprecated_at.is_(None),
+            )
+            .order_by(
+                _SANITIZER_POLICY_VERSIONS.c.activated_at.desc(),
+                _SANITIZER_POLICY_VERSIONS.c.version.desc(),
+            )
+            .limit(1)
+            .scalar_subquery()
+        )
+        sanitized_artifact_exists = (
+            sa.select(sa.literal(1))
+            .select_from(Artifact)
+            .where(
+                Artifact.tenant_id == InterAgentMessage.tenant_id,
+                Artifact.project_id == InterAgentMessage.project_id,
+                Artifact.run_id == InterAgentMessage.sender_run_id,
+                Artifact.content_hash == InterAgentMessage.payload_hash,
+                Artifact.content_jsonb["sanitizer_policy_version"].as_string()
+                == active_policy_version,
+            )
+            .exists()
+        )
+        return sanitized_artifact_exists
+
+    async def _sanitizer_policy_is_fresh(self, message: InterAgentMessage) -> bool:
+        return bool(
+            await self.session.scalar(
+                sa.select(sa.literal(True)).where(
+                    InterAgentMessage.tenant_id == message.tenant_id,
+                    InterAgentMessage.id == message.id,
+                    self._sanitizer_policy_fresh_clause(),
+                )
+            )
+        )
 
 
 __all__ = [
