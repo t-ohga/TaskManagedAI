@@ -51,8 +51,8 @@ These are not coding instructions until task-02 marks them `READY`.
 
 | phase | scope | write boundary |
 |---|---|---|
-| 5A | docs and temp-home tests/helper scaffolding | repository only |
-| 5B | wrapper candidate and manifest verification in temp trust root | repository only |
+| 5A | docs and temp-home tests/helper scaffolding (completed 2026-05-24) | repository only |
+| 5B | wrapper candidate and manifest verification in temp trust root (completed 2026-05-24) | repository only |
 | 5C | install `~/.claude-trusted` wrapper, manifest, trusted state, and settings switch | repo-external; requires explicit approval |
 | 5D | SP-007 closeout and status update | repository docs after evidence |
 

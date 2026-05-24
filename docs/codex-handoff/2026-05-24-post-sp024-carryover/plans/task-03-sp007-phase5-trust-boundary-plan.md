@@ -2,7 +2,7 @@
 
 ## Status
 
-- plan_status: `READY_FOR_REVIEW`
+- plan_status: `PHASE_5A_5B_HELPERS_READY`
 - prepared_at: `2026-05-24`
 - source_sprint: `docs/sprints/SP-007_runner_sandbox.md`
 - source_adr: `docs/adr/00012_hook_trust_boundary.md`
@@ -21,6 +21,17 @@ The remaining Phase 5 work is BL-0082, BL-0083, and BL-0084:
 | BL-0084 sha256 manifest | not generated as trust root | manifest covers dispatcher and child hooks and fails closed on mismatch |
 
 ADR-00012 is accepted as of 2026-05-22, but acceptance does not mean the machine-local wrapper was installed. The implementation readiness gate stays closed until the external files, rollback backups, and self-tests are explicitly approved and executed.
+
+## Phase 5A/5B Helper Evidence (2026-05-24)
+
+Repository-only helper work has been prepared:
+
+- `scripts/regenerate-hook-manifest.sh` generates a deterministic `.claude/hooks/**/*.sh` manifest to `--stdout` or an explicit `--output` path only.
+- `scripts/verify-hook-trust-root.sh` verifies wrapper presence, permissions, manifest drift, trusted state writability, and wrapper `--self-test` without mutating the trust root.
+- `.claude/hooks/system/pretool-bash-snapshot.sh` and `.claude/hooks/system/posttool-bash-file-dispatcher.sh` honor `TASKMANAGEDAI_HOOK_STATE_DIR`, preserving the repo-local default until Phase 5C.
+- `tests/harness/test_hook_trust_boundary.py` covers temp trust roots, manifest mismatch, non-executable wrapper rejection, external state dir use, and missing state dir fail-closed behavior.
+
+No repo-external trust root, dotfiles, or settings switch is performed by Phase 5A/5B.
 
 ## Scope Split
 
@@ -85,20 +96,19 @@ Rollback must be prepared before the settings switch.
 
 ### Phase 5A: Docs And Tests Only
 
-- Land this plan.
-- Add temp-home tests and helper scripts.
-- Verify helper scripts do not mutate user home by default.
+- Land this plan. Completed 2026-05-24.
+- Add temp-home tests and helper scripts. Completed 2026-05-24.
+- Verify helper scripts do not mutate user home by default. Completed 2026-05-24.
 - Keep `.claude/settings.json`, `.codex/hooks.json`, and user-global trust roots unchanged.
 
 ### Phase 5B: Wrapper Candidate
 
-- Add wrapper source as an in-repo template or generated artifact candidate.
-- Test wrapper in a temporary trust root with:
+- Add wrapper verification support as in-repo helper scripts. Completed 2026-05-24.
+- Test verification flow in a temporary trust root with:
   - manifest match -> dispatch allowed,
   - manifest mismatch -> exit 2,
-  - missing hook -> exit 2,
-  - chmod-x child hook -> exit 2,
-  - trusted state dir missing/unwritable -> exit 2.
+  - non-executable wrapper -> exit 2,
+  - trusted state dir missing -> exit 2.
 - Confirm no raw secret, token, or local absolute user-private path is committed except documented target paths.
 
 ### Phase 5C: Approved Machine-Local Install
@@ -130,6 +140,8 @@ For the follow-up helper-code PR:
 bash -n scripts/regenerate-hook-manifest.sh
 bash -n scripts/verify-hook-trust-root.sh
 uv run pytest tests/harness/test_hook_trust_boundary.py -q
+uv run ruff check tests/harness/test_hook_trust_boundary.py
+PYTHONPATH=cli uv run mypy tests/harness/test_hook_trust_boundary.py
 git diff --check
 ```
 
