@@ -32,6 +32,7 @@ from backend.app.api.approval_inbox import (
     get_db_session,
     get_tenant_id,
 )
+from backend.app.api.dependencies.api_capability_token import maybe_require_cli_capability
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.repositories.ticket import TicketRepository
 from backend.app.schemas.ticket import TicketPriority, TicketRead, TicketStatus
@@ -71,6 +72,7 @@ async def list_tickets_endpoint(
     project_id: UUID,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_list")),  # noqa: B008
     actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008  # FastAPI Depends pattern
     tenant_id: int = Depends(get_tenant_id),  # noqa: B008
     session: AsyncSession = Depends(get_db_session),  # noqa: B008
@@ -92,6 +94,7 @@ async def list_tickets_endpoint(
 async def get_ticket_endpoint(
     project_id: UUID,
     ticket_id: UUID,
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_show")),  # noqa: B008
     actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
     tenant_id: int = Depends(get_tenant_id),  # noqa: B008
     session: AsyncSession = Depends(get_db_session),  # noqa: B008
@@ -149,6 +152,7 @@ class TicketUpdateRequest(BaseModel):
 async def create_ticket_endpoint(
     project_id: UUID,
     payload: TicketCreateRequest,
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_create")),  # noqa: B008
     actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
     tenant_id: int = Depends(get_tenant_id),  # noqa: B008
     session: AsyncSession = Depends(get_db_session),  # noqa: B008
@@ -203,6 +207,7 @@ async def update_ticket_endpoint(
     project_id: UUID,
     ticket_id: UUID,
     payload: TicketUpdateRequest,
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_write")),  # noqa: B008
     actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
     tenant_id: int = Depends(get_tenant_id),  # noqa: B008
     session: AsyncSession = Depends(get_db_session),  # noqa: B008
