@@ -22,6 +22,7 @@ describe("Navigation", () => {
       ["評価ダッシュボード", "/eval-dashboard"],
       ["承認待ち", "/approvals"],
       ["AI 実行", "/runs"],
+      ["AI 組織", "/orchestrator/board"],
       ["監査ログ", "/audit"],
       ["設定", "/settings"],
       ["ログアウト", "/login"]
