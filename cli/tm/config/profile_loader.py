@@ -65,8 +65,12 @@ class ProfileLoader:
         auth_method = str(selected.get("auth_method") or data.get("auth_method") or "env")
         refresh_credential_ref = _string_or_none(
             selected.get("refresh_credential_ref")
+            or selected.get("credential_ref")
+            or selected.get("operation_token_env")
             or selected.get("refresh_credential_env")
             or data.get("refresh_credential_ref")
+            or data.get("credential_ref")
+            or data.get("operation_token_env")
             or data.get("refresh_credential_env")
         )
         projects_by_remote = _string_dict(selected.get("projects_by_remote") or data.get("projects_by_remote"))

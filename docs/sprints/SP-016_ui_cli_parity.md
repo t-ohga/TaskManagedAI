@@ -67,7 +67,7 @@ risks:
 - [x] SP016-T02 backend CLI auth token service + issue / refresh / revoke endpoint
 - [x] SP016-T03 cli/tm Python CLI package + entry point `tm`
 - [x] SP016-T04 13 capability command surface
-- [ ] SP016-T05 keyring / SOPS profile loader (env runtime token + raw profile reject foundation landed)
+- [x] SP016-T05 keyring / SOPS / env profile credential source resolver
 - [x] SP016-T06 JSON / YAML / human output formatter + TTY/non-interactive gate
 - [ ] SP016-T07 parity contract test
 - [ ] SP016-T08 SecretBroker CLI token misuse negative test
@@ -244,9 +244,39 @@ verified:
 - `uv tool install --force ./cli && tm --version`
 
 deferred:
-- full keyring / SOPS credential persistence backend; current batch only fixes env runtime token + raw profile reject boundary.
+- full keyring / SOPS credential source resolution.
 - real backend parity contract execution for all 13 capabilities.
 - CLI scope mismatch / SecretBroker misuse negative DB-backed tests.
+
+### Batch 0d: CLI credential sources (2026-05-24)
+
+changed:
+- `cli/pyproject.toml`
+- `cli/uv.lock`
+- `cli/tm/auth/capability_token.py`
+- `cli/tm/config/profile_loader.py`
+- `cli/tm/main.py`
+- `tests/cli/test_tm_cli_foundation.py`
+
+implemented:
+- profile `auth_method=env` resolves runtime operation token from `operation_token_env` / `credential_ref` / `refresh_credential_ref`
+- profile `auth_method=keyring` resolves `service/account` refs through optional keyring getter
+- profile `auth_method=sops` resolves `file#nested.key` refs through SOPS JSON decryptor
+- `auth_method=plain` profile usage fails before network access
+- raw operation token profile rejection now scans inactive/nested profiles as well as the selected profile
+- `auth refresh` / `auth revoke` still inject raw operation token only at request boundary
+
+verified:
+- `uv run ruff check cli/tm tests/cli/test_tm_cli_foundation.py pyproject.toml`
+- `PYTHONPATH=cli uv run mypy cli/tm tests/cli/test_tm_cli_foundation.py`
+- `PYTHONPATH=cli uv run pytest tests/cli/test_tm_cli_foundation.py -q` (`29 passed`)
+- `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/cli/test_tm_cli_foundation.py tests/cli/test_capability_token_lifecycle.py tests/api/test_active_registry_gate_dependency.py -q` (`45 passed`)
+- `uv run --project cli tm --version`
+- `uv tool install --force ./cli && tm --version`
+
+deferred:
+- writing refreshed operation tokens back into OS keyring / SOPS storage; current batch is read/resolve only.
+- real backend parity contract execution for all 13 capabilities.
 
 ## Kickoff Inventory (2026-05-24 task-04 plan-only)
 
