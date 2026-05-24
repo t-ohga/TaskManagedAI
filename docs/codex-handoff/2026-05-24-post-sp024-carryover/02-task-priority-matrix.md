@@ -7,6 +7,7 @@
 | P0 | task-01 | SP-008 | GitHub App / RepoProxy residual reconciliation | required | 0.3-0.5 day |
 | P0 | task-02 | SP-009 | P0 UI backend/frontend residual reconciliation | required | 0.3-0.5 day |
 | P1 | task-03 | SP-007 | Phase 5 hook trust boundary plan | required before machine-local changes | 0.2-0.4 day |
+| P1 | task-05 | SP-009-5 | P0.1 deferred UI surface split | required before SP-009-5 UI/code | 0.2 day |
 | P2 | task-04 | SP-000 / roadmap | bootstrap/backlog status hygiene | optional docs-only (completed 2026-05-24) | 0.2 day |
 
 ## Recommended Order
@@ -23,6 +24,9 @@ task-03 (SP-007 Phase 5 plan)
 
 task-04 (status hygiene)
   -> completed after PR #227: current-state, backlog carry-over, and task index reconciled
+
+task-05 (SP-009-5 split docs)
+  -> completed before SP-009-5 UI/code: read-only UI and ADR/API-gated mutation surfaces separated
 ```
 
 ## SP-008 Tentative Implementation Batches
@@ -48,7 +52,19 @@ These are not coding instructions until task-02 marks them `READY`.
 | A | route/API existence diff after SP-012 and SP-016 (completed 2026-05-24 reconciliation) | API contract drift |
 | B | read-only UI wiring gaps only (no backend route gap found for core four surfaces) | no mutation expansion |
 | C | redaction and enum drift contract tests (completed 2026-05-24) | raw payload non-exposure |
-| D | SP-009-5 split for Today/Inbox, unified timeline, request_revision, notification triage, KPI strip | scope control |
+| D | SP-009-5 split for Today/Inbox, unified timeline, request_revision, notification triage, KPI strip (completed 2026-05-24 docs-only) | scope control |
+
+## SP-009-5 Tentative Implementation Batches
+
+These are not coding instructions until a dedicated SP-009-5 implementation PR selects one batch and confirms the gate.
+
+| batch | tentative scope | high-risk boundary |
+|---|---|---|
+| A | Today/Inbox + minimal KPI strip read-only UI | existing API only; no mutation |
+| B | unified execution timeline read-only UI | raw payload / secret DOM exposure |
+| C | decision packet hash visibility | API field availability; no state transition |
+| D | notification triage minimal lifecycle | ADR-00003 event schema + migration |
+| E | approval `request_revision` loop | ADR-00003 / ADR-00004 / ADR-00009 + stale invalidation |
 
 ## SP-007 Phase 5 Plan
 
