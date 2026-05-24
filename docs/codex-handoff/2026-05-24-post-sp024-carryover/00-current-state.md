@@ -2,8 +2,8 @@
 
 ## Verified Repository State
 
-- Remote `main` was verified at `7d20f8eeda3f7c6ac95ef189a2729df4f9a937fe` after PR #237.
-- Open GitHub PR list was empty after PR #237 merge.
+- Remote `main` was verified at `3612ae7b74d4961d008cd55474a5698f403f3984` after PR #238.
+- Open GitHub PR list was empty after PR #238 merge.
 - Root worktree was clean, and `git stash list` returned no entries. Root `main` was fast-forwarded to remote after the autonomous PR sequence; no stash recovery is required.
 - Use `gh` API or non-interactive SSH/HTTPS fetch when local refs are stale; GitHub Actions remains unavailable because of quota exhaustion.
 
@@ -40,14 +40,14 @@ The earlier next-candidate list named SP-014 batch 1+, SP-015 batch 0, and SP-01
 | SP-007 runner sandbox | `done_with_phase5_defer` | runner/security core is complete; Phase 5 plan + repo-only helpers are ready, but external trust-root install remains approval-gated |
 | SP-008 GitHub App / RepoProxy | `partial_skeleton` | #219-#223 completed service-boundary batches; real GitHub transport, live ref re-fetch, deployment SOPS resolver, and external worker/API adoption remain |
 | SP-009 P0 UI Pack | `partial_skeleton` | #224/#225 completed route reconciliation and contract/redaction tests; golden E2E, DOM secret scan, PayloadDataClass/future AuditEventType registry drift, and SP-009-5 implementation remain |
-| SP-009-5 P0.1 UI deferred surfaces | `partial_skeleton` | Batch A `/today`, Batch B `/timeline`, Batch C decision packet hash visibility, Batch D1 notification triage DB/API contract, Batch D2 notification UI/actions, Batch E0 `request_revision` contract plan, Batch E1 DB/API, and Batch E2 Approval Detail UI are implemented; Newcomer Path and Batch E3 remain |
+| SP-009-5 P0.1 UI deferred surfaces | `partial_skeleton` | Batch A `/today`, Batch B `/timeline`, Batch C decision packet hash visibility, Batch D1 notification triage DB/API contract, Batch D2 notification UI/actions, Batch E0 `request_revision` contract plan, Batch E1 DB/API, Batch E2 Approval Detail UI, and Batch E3 revised artifact handoff are implemented; Newcomer Path remains |
 | SP-000 bootstrap | `ready` | old bootstrap metadata; treat as backlog hygiene, not feature implementation |
 
 ## Next Work Boundary
 
 The safest next work is one of:
 
-- SP-009-5 continuation: implement `request_revision` E3 revised-artifact handoff using `plans/task-12-sp0095-request-revision-contract-plan.md`; Newcomer Path is P0.1 polish.
+- SP-009-5 continuation: implement Newcomer Path / advanced approval refinements as P0.1 polish.
 - SP-008 residual implementation that does not require new GitHub App permissions or raw token exposure.
 - SP-007 Phase 5C only after explicit machine-local trust-root approval.
 

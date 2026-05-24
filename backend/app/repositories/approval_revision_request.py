@@ -118,6 +118,26 @@ class ApprovalRevisionRequestRepository(BaseRepository[ApprovalRevisionRequest])
         self._reject_forbidden_update_fields(payload)
         return await super().update(tenant_id=tenant_id, id=id, payload=payload)
 
+    async def supersede_open_revision_request(
+        self,
+        *,
+        tenant_id: int,
+        id: UUID,
+        superseded_by_approval_request_id: UUID,
+    ) -> ApprovalRevisionRequest | None:
+        await self._ensure_tenant_context(tenant_id)
+        result = await self.session.execute(
+            update(ApprovalRevisionRequest)
+            .where(
+                ApprovalRevisionRequest.tenant_id == tenant_id,
+                ApprovalRevisionRequest.id == id,
+                ApprovalRevisionRequest.superseded_by_approval_request_id.is_(None),
+            )
+            .values(superseded_by_approval_request_id=superseded_by_approval_request_id)
+            .returning(ApprovalRevisionRequest)
+        )
+        return result.scalar_one_or_none()
+
     async def delete(self, tenant_id: int, id: UUID) -> NoReturn:
         raise NotImplementedError("ApprovalRevisionRequest は audit history。物理削除は禁止。")
 

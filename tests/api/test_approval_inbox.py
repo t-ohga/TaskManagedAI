@@ -28,6 +28,10 @@ from backend.app.db.session import create_engine
 from backend.app.main import create_app
 from backend.app.repositories.approval_request import ApprovalRequestRepository
 from backend.app.seeds.initial import DEFAULT_ACTOR_ID
+from backend.app.services.policy.revision_request_service import (
+    ApprovalRevisionRequestService,
+    ApprovalRevisionValidationError,
+)
 
 _DEFAULT_DATABASE_URL = (
     "postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test"
@@ -770,3 +774,167 @@ async def test_request_revision_rejects_duplicate_open_revision_request(
     assert "already has an open revision request" in response.json()["detail"]
     assert await _approval_status(session_factory, APPROVAL_ID) == "pending"
     assert await _table_count(session_factory, ApprovalRevisionRequest) == 1
+
+
+@pytest.mark.asyncio
+async def test_revised_artifact_handoff_creates_fresh_pending_approval_and_supersedes_revision(
+    approval_api_client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _setup_api_fixtures(session_factory)
+    async with session_factory.begin() as session:
+        await _insert_approval(session, approval_id=APPROVAL_ID)
+
+    response = await approval_api_client.post(
+        f"/api/v1/approvals/{APPROVAL_ID}/request_revision",
+        json={"rationale": "please revise the artifact"},
+    )
+    assert response.status_code == 200
+    revision_request_id = UUID(response.json()["revision_request_id"])
+
+    async with session_factory.begin() as session:
+        revision_request = await session.scalar(
+            select(ApprovalRevisionRequest).where(
+                ApprovalRevisionRequest.tenant_id == 1,
+                ApprovalRevisionRequest.id == revision_request_id,
+            )
+        )
+        assert revision_request is not None
+        result = await ApprovalRevisionRequestService(session).create_revised_approval(
+            tenant_id=1,
+            revision_request=revision_request,
+            artifact_hash="  artifact-b  ",
+            diff_hash="  diff-b  ",
+            policy_version="policy-v1",
+            policy_pack_lock="pack-a",
+            provider_request_fingerprint="  provider-b  ",
+            stale_after_event_seq=2,
+        )
+        replacement_approval_id = result.replacement_approval.id
+
+    async with session_factory() as session:
+        revision = await session.scalar(
+            select(ApprovalRevisionRequest).where(
+                ApprovalRevisionRequest.tenant_id == 1,
+                ApprovalRevisionRequest.id == revision_request_id,
+            )
+        )
+        replacement = await session.scalar(
+            select(ApprovalRequest).where(
+                ApprovalRequest.tenant_id == 1,
+                ApprovalRequest.id == replacement_approval_id,
+            )
+        )
+
+    assert revision is not None
+    assert revision.superseded_by_approval_request_id == replacement_approval_id
+    assert replacement is not None
+    assert replacement.status == "pending"
+    assert replacement.requested_by_actor_id == REQUESTER_ACTOR_ID
+    assert replacement.decided_by_actor_id is None
+    assert replacement.artifact_hash == "artifact-b"
+    assert replacement.diff_hash == "diff-b"
+    assert replacement.policy_version == "policy-v1"
+    assert replacement.policy_pack_lock == "pack-a"
+    assert replacement.provider_request_fingerprint == "provider-b"
+    assert replacement.stale_after_event_seq == 2
+    assert replacement.metadata_["revision_request_id"] == str(revision_request_id)
+    assert replacement.metadata_["supersedes_approval_request_id"] == str(APPROVAL_ID)
+
+
+@pytest.mark.asyncio
+async def test_revised_artifact_handoff_rejects_stale_decision_packet(
+    approval_api_client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _setup_api_fixtures(session_factory)
+    async with session_factory.begin() as session:
+        await _insert_approval(session, approval_id=APPROVAL_ID)
+
+    response = await approval_api_client.post(
+        f"/api/v1/approvals/{APPROVAL_ID}/request_revision",
+        json={"rationale": "please revise with fresh hashes"},
+    )
+    assert response.status_code == 200
+    revision_request_id = UUID(response.json()["revision_request_id"])
+
+    async with session_factory.begin() as session:
+        revision_request = await session.scalar(
+            select(ApprovalRevisionRequest).where(
+                ApprovalRevisionRequest.tenant_id == 1,
+                ApprovalRevisionRequest.id == revision_request_id,
+            )
+        )
+        assert revision_request is not None
+        with pytest.raises(
+            ApprovalRevisionValidationError,
+            match="revised artifact_hash must differ",
+        ):
+            await ApprovalRevisionRequestService(session).create_revised_approval(
+                tenant_id=1,
+                revision_request=revision_request,
+                artifact_hash="artifact-a",
+                diff_hash="diff-b",
+                policy_version="policy-v1",
+                policy_pack_lock="pack-a",
+                provider_request_fingerprint="provider-b",
+                stale_after_event_seq=2,
+            )
+
+    async with session_factory() as session:
+        revision = await session.scalar(
+            select(ApprovalRevisionRequest).where(
+                ApprovalRevisionRequest.tenant_id == 1,
+                ApprovalRevisionRequest.id == revision_request_id,
+            )
+        )
+        replacement_count = await session.scalar(
+            select(func.count(ApprovalRequest.id)).where(
+                ApprovalRequest.tenant_id == 1,
+                ApprovalRequest.id != APPROVAL_ID,
+            )
+        )
+
+    assert revision is not None
+    assert revision.superseded_by_approval_request_id is None
+    assert int(replacement_count or 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_revised_artifact_handoff_rejects_non_advancing_event_seq(
+    approval_api_client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _setup_api_fixtures(session_factory)
+    async with session_factory.begin() as session:
+        await _insert_approval(session, approval_id=APPROVAL_ID)
+
+    response = await approval_api_client.post(
+        f"/api/v1/approvals/{APPROVAL_ID}/request_revision",
+        json={"rationale": "please revise with a newer event sequence"},
+    )
+    assert response.status_code == 200
+    revision_request_id = UUID(response.json()["revision_request_id"])
+
+    async with session_factory.begin() as session:
+        revision_request = await session.scalar(
+            select(ApprovalRevisionRequest).where(
+                ApprovalRevisionRequest.tenant_id == 1,
+                ApprovalRevisionRequest.id == revision_request_id,
+            )
+        )
+        assert revision_request is not None
+        with pytest.raises(
+            ApprovalRevisionValidationError,
+            match="stale_after_event_seq must advance",
+        ):
+            await ApprovalRevisionRequestService(session).create_revised_approval(
+                tenant_id=1,
+                revision_request=revision_request,
+                artifact_hash="artifact-b",
+                diff_hash="diff-b",
+                policy_version="policy-v1",
+                policy_pack_lock="pack-a",
+                provider_request_fingerprint="provider-b",
+                stale_after_event_seq=1,
+            )

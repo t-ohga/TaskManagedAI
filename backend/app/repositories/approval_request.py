@@ -88,6 +88,7 @@ class ApprovalRequestRepository(BaseRepository[ApprovalRequest]):
         diff_hash: str | None = None,
         policy_pack_lock: str | None = None,
         provider_request_fingerprint: str | None = None,
+        stale_after_event_seq: int | None = None,
         run_id: UUID | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> ApprovalRequest:
@@ -114,6 +115,7 @@ class ApprovalRequestRepository(BaseRepository[ApprovalRequest]):
             diff_hash=diff_hash,
             policy_pack_lock=policy_pack_lock,
             provider_request_fingerprint=provider_request_fingerprint,
+            stale_after_event_seq=stale_after_event_seq,
             run_id=run_id,
             metadata_=metadata or {"rls_ready": True},
         )
@@ -203,4 +205,3 @@ class ApprovalRequestRepository(BaseRepository[ApprovalRequest]):
 
 
 __all__ = ["ApprovalRequestRepository"]
-
