@@ -19,6 +19,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.app.config import Settings, get_settings
+from backend.app.db.models.context_snapshot import CONTEXT_SNAPSHOT_REQUIRED_COLUMNS
 from backend.app.db.session import create_engine
 from backend.app.schemas.memory import MemoryRetrievalRequest, MemoryStoreRequest
 from backend.app.services.memory.retrieval import (
@@ -40,6 +41,8 @@ PROJECT_ID = UUID("00000000-0000-4000-8000-000000018203")
 OTHER_PROJECT_ID = UUID("00000000-0000-4000-8000-000000018204")
 RUN_ID = UUID("00000000-0000-4000-8000-000000018210")
 OTHER_RUN_ID = UUID("00000000-0000-4000-8000-000000018211")
+CONTEXT_SNAPSHOT_ID = UUID("00000000-0000-4000-8000-000000018220")
+OTHER_CONTEXT_SNAPSHOT_ID = UUID("00000000-0000-4000-8000-000000018221")
 
 db_required = pytest.mark.skipif(
     os.environ.get("TASKMANAGEDAI_RUN_DB_TESTS") != "1",
@@ -224,6 +227,80 @@ async def _insert_fixture(session: AsyncSession) -> None:
     )
 
 
+async def _insert_context_snapshot(
+    session: AsyncSession,
+    *,
+    snapshot_id: UUID,
+    run_id: UUID,
+) -> None:
+    await session.execute(
+        text(
+            """
+            insert into context_snapshots (
+              id,
+              tenant_id,
+              run_id,
+              prompt_pack_version,
+              prompt_pack_lock,
+              policy_version,
+              policy_pack_lock,
+              repo_state,
+              tool_manifest,
+              evidence_set_hash,
+              provider_continuation_ref,
+              provider_request_fingerprint,
+              snapshot_kind
+            )
+            values (
+              :snapshot_id,
+              1,
+              :run_id,
+              'prompt-pack-v1',
+              :prompt_pack_lock,
+              'policy-v1',
+              :policy_pack_lock,
+              cast(:repo_state as jsonb),
+              cast(:tool_manifest as jsonb),
+              :evidence_set_hash,
+              null,
+              cast(:provider_request_fingerprint as jsonb),
+              'input'
+            )
+            """
+        ),
+        {
+            "snapshot_id": snapshot_id,
+            "run_id": run_id,
+            "prompt_pack_lock": "6" * 64,
+            "policy_pack_lock": "7" * 64,
+            "repo_state": (
+                '{"commit_sha":"abc123","branch":"main","dirty":false,'
+                '"diff_hash":"' + "8" * 64 + '"}'
+            ),
+            "tool_manifest": (
+                '{"registry_version":"test","allowlist_hash":"' + "9" * 64 + '"}'
+            ),
+            "evidence_set_hash": "a" * 64,
+            "provider_request_fingerprint": '{"model_resolved":"test-model"}',
+        },
+    )
+
+
+def test_context_snapshot_required_columns_stay_exact() -> None:
+    assert CONTEXT_SNAPSHOT_REQUIRED_COLUMNS == (
+        "prompt_pack_version",
+        "prompt_pack_lock",
+        "policy_version",
+        "policy_pack_lock",
+        "repo_state",
+        "tool_manifest",
+        "evidence_set_hash",
+        "provider_continuation_ref",
+        "provider_request_fingerprint",
+        "snapshot_kind",
+    )
+
+
 def test_memory_retrieval_request_removes_server_owned_fields() -> None:
     MemoryRetrievalRequest.model_validate(
         {"project_id": PROJECT_ID, "retrieval_run_id": RUN_ID}
@@ -292,6 +369,71 @@ async def test_retrieve_creates_ref_only_untrusted_retrieval_artifact(
     assert retrieval_row.trust_level == "untrusted_content"
     assert result.payload_data_class == "internal"
     assert result.sanitizer_policy_version == "v1.0.0"
+
+
+@pytest.mark.asyncio
+@db_required
+async def test_retrieve_links_server_owned_context_snapshot_ref_without_overlay(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture(session)
+            stored = await MemoryStoreService(session).store(
+                tenant_id=TENANT_ID,
+                request=_store_request(),
+            )
+            await _insert_context_snapshot(
+                session,
+                snapshot_id=CONTEXT_SNAPSHOT_ID,
+                run_id=RUN_ID,
+            )
+            result = await MemoryRetrievalService(session).retrieve(
+                tenant_id=TENANT_ID,
+                request=_retrieval_request(memory_record_ids=(stored.record.id,)),
+                context_snapshot_id=CONTEXT_SNAPSHOT_ID,
+            )
+
+        snapshot_count = await session.scalar(text("select count(*) from context_snapshots"))
+
+    assert snapshot_count == 1
+    assert result.artifact is not None
+    assert result.artifact.content_jsonb["context_snapshot_id"] == str(
+        CONTEXT_SNAPSHOT_ID
+    )
+    assert len(result.retrieval_artifacts) == 1
+    assert result.retrieval_artifacts[0].context_snapshot_id == CONTEXT_SNAPSHOT_ID
+
+
+@pytest.mark.asyncio
+@db_required
+async def test_retrieve_rejects_context_snapshot_outside_retrieval_run(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            await _insert_fixture(session)
+            stored = await MemoryStoreService(session).store(
+                tenant_id=TENANT_ID,
+                request=_store_request(),
+            )
+            await _insert_context_snapshot(
+                session,
+                snapshot_id=OTHER_CONTEXT_SNAPSHOT_ID,
+                run_id=OTHER_RUN_ID,
+            )
+            with pytest.raises(MemoryRetrievalDenied, match="context_snapshot_id"):
+                await MemoryRetrievalService(session).retrieve(
+                    tenant_id=TENANT_ID,
+                    request=_retrieval_request(memory_record_ids=(stored.record.id,)),
+                    context_snapshot_id=OTHER_CONTEXT_SNAPSHOT_ID,
+                )
+
+        retrieval_count = await session.scalar(
+            text("select count(*) from memory_retrieval_artifacts")
+        )
+
+    assert retrieval_count == 0
 
 
 @pytest.mark.asyncio

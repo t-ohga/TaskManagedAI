@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.artifact import Artifact
+from backend.app.db.models.context_snapshot import ContextSnapshot
 from backend.app.db.models.memory_record import MemoryRecord, MemoryRetrievalArtifact
 from backend.app.db.models.sanitizer_policy_version import SanitizerPolicyVersion
 from backend.app.domain.artifact.data_class import (
@@ -59,6 +60,7 @@ class MemoryRetrievalService:
         *,
         tenant_id: int,
         request: MemoryRetrievalRequest,
+        context_snapshot_id: UUID | None = None,
     ) -> MemoryRetrievalResult:
         await ensure_tenant_context(self.session, tenant_id)
         await self._assert_run_boundary(
@@ -66,6 +68,12 @@ class MemoryRetrievalService:
             project_id=request.project_id,
             run_id=request.retrieval_run_id,
         )
+        if context_snapshot_id is not None:
+            await self._assert_context_snapshot_boundary(
+                tenant_id=tenant_id,
+                run_id=request.retrieval_run_id,
+                context_snapshot_id=context_snapshot_id,
+            )
         now = datetime.now(tz=UTC)
         records = await MemoryRecordRepository(self.session).list_active_for_retrieval(
             tenant_id=tenant_id,
@@ -93,6 +101,7 @@ class MemoryRetrievalService:
             records=records,
             retrieved_at=now,
             sanitizer_policy_version=sanitizer_policy.version,
+            context_snapshot_id=context_snapshot_id,
         )
         artifact = await ArtifactRepository(self.session).create_artifact(
             tenant_id=tenant_id,
@@ -117,6 +126,7 @@ class MemoryRetrievalService:
                         retrieval_hash=retrieval_hash,
                         sanitizer_version_id=sanitizer_policy.id,
                         retrieval_run_id=request.retrieval_run_id,
+                        context_snapshot_id=context_snapshot_id,
                         trust_level="untrusted_content",
                     ),
                 )
@@ -161,6 +171,25 @@ class MemoryRetrievalService:
         if exists is None:
             raise MemoryRetrievalDenied("retrieval_run_id not found in tenant/project boundary.")
 
+    async def _assert_context_snapshot_boundary(
+        self,
+        *,
+        tenant_id: int,
+        run_id: UUID,
+        context_snapshot_id: UUID,
+    ) -> None:
+        exists = await self.session.scalar(
+            sa.select(ContextSnapshot.id).where(
+                ContextSnapshot.tenant_id == tenant_id,
+                ContextSnapshot.run_id == run_id,
+                ContextSnapshot.id == context_snapshot_id,
+            )
+        )
+        if exists is None:
+            raise MemoryRetrievalDenied(
+                "context_snapshot_id not found in tenant/run boundary."
+            )
+
     async def _current_sanitizer_policy(
         self,
         *,
@@ -195,6 +224,7 @@ def _build_retrieval_content(
     records: list[MemoryRecord],
     retrieved_at: datetime,
     sanitizer_policy_version: str,
+    context_snapshot_id: UUID | None,
 ) -> tuple[dict[str, Any], str]:
     content: dict[str, Any] = {
         "schema_version": request.schema_version,
@@ -202,6 +232,9 @@ def _build_retrieval_content(
         "project_id": str(request.project_id),
         "retrieved_at": retrieved_at.isoformat(),
         "trust_level": "untrusted_content",
+        "context_snapshot_id": (
+            str(context_snapshot_id) if context_snapshot_id is not None else None
+        ),
         "records": [
             {
                 "memory_record_id": str(record.id),
