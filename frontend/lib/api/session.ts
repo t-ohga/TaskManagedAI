@@ -24,6 +24,8 @@ export const CurrentProjectSchema = z.object({
 
 export type CurrentProject = z.infer<typeof CurrentProjectSchema>;
 
+export const AutonomyLevelSchema = z.enum(["L0", "L1", "L2", "L3"]);
+
 export const ProjectListItemSchema = z.object({
   tenant_id: z.number().int(),
   project_id: z.string().uuid(),
@@ -31,7 +33,8 @@ export const ProjectListItemSchema = z.object({
   slug: z.string(),
   name: z.string(),
   status: z.string(),
-  policy_profile: z.string()
+  policy_profile: z.string(),
+  autonomy_level: AutonomyLevelSchema
 });
 
 export type ProjectListItem = z.infer<typeof ProjectListItemSchema>;

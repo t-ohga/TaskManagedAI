@@ -16,6 +16,7 @@ from backend.app.db.models.base import (
     UpdatedAtMixin,
     rls_ready_metadata,
 )
+from backend.app.domain.policy.autonomy_level import DEFAULT_AUTONOMY_LEVEL, AutonomyLevel
 from backend.app.domain.policy.profile import PolicyProfileId
 
 ProjectStatus = Literal["active", "archived"]
@@ -27,6 +28,10 @@ class Project(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         sa.CheckConstraint(
             "status in ('active','archived')",
             name="projects_ck_status",
+        ),
+        sa.CheckConstraint(
+            "autonomy_level in ('L0','L1','L2','L3')",
+            name="projects_ck_autonomy_level",
         ),
         sa.ForeignKeyConstraint(
             ["tenant_id"],
@@ -70,6 +75,12 @@ class Project(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         nullable=False,
         default="default",
         server_default=sa.text("'default'"),
+    )
+    autonomy_level: Mapped[AutonomyLevel] = mapped_column(
+        sa.Text,
+        nullable=False,
+        default=DEFAULT_AUTONOMY_LEVEL,
+        server_default=sa.text("'L0'"),
     )
     metadata_: Mapped[JsonDict] = mapped_column(
         "metadata",

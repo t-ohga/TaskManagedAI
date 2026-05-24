@@ -60,7 +60,8 @@ describe("settings/auth/common i18n", () => {
         {
           ...currentProject,
           status: "active",
-          policy_profile: "default"
+          policy_profile: "default",
+          autonomy_level: "L0"
         }
       ]
     });
