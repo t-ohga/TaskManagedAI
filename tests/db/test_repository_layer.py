@@ -372,6 +372,7 @@ async def test_project_repository_create_injects_matching_tenant_id(
     assert created.workspace_id == TENANT_ONE_WORKSPACE_ID
     assert created.slug == "created-project"
     assert created.policy_profile == "default"
+    assert created.autonomy_level == "L0"
     assert created.metadata_["rls_ready"] is True
 
 

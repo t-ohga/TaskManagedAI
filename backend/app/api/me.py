@@ -29,6 +29,7 @@ from backend.app.api.approval_inbox import (
     get_tenant_id,
 )
 from backend.app.db.models.project import Project
+from backend.app.domain.policy.autonomy_level import AutonomyLevel
 
 router = APIRouter(prefix="/api/v1/me", tags=["me"])
 
@@ -61,6 +62,7 @@ class ProjectListItem(BaseModel):
     name: str
     status: str
     policy_profile: str
+    autonomy_level: AutonomyLevel
 
 
 class ProjectListResponse(BaseModel):
@@ -77,6 +79,7 @@ def _to_project_item(project: Project) -> ProjectListItem:
         name=project.name,
         status=project.status,
         policy_profile=project.policy_profile,
+        autonomy_level=project.autonomy_level,
     )
 
 

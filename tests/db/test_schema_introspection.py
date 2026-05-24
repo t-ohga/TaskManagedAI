@@ -1367,7 +1367,11 @@ async def test_workspace_project_repository_contract_columns_and_constraints(
 ) -> None:
     async with session_factory() as session:
         workspace_columns = await _table_columns(session, "workspaces", ("slug", "owner_actor_id"))
-        project_columns = await _table_columns(session, "projects", ("slug", "status", "policy_profile"))
+        project_columns = await _table_columns(
+            session,
+            "projects",
+            ("slug", "status", "policy_profile", "autonomy_level"),
+        )
         repository_columns = await _table_columns(
             session,
             "repositories",
@@ -1409,6 +1413,11 @@ async def test_workspace_project_repository_contract_columns_and_constraints(
             table_name="projects",
             constraint_name="projects_ck_status",
         )
+        project_autonomy_level_check = await _constraint_definition(
+            session,
+            table_name="projects",
+            constraint_name="projects_ck_autonomy_level",
+        )
         repository_provider_check = await _constraint_definition(
             session,
             table_name="repositories",
@@ -1429,9 +1438,13 @@ async def test_workspace_project_repository_contract_columns_and_constraints(
     assert project_columns["policy_profile"]["data_type"] == "text"
     assert project_columns["policy_profile"]["is_nullable"] == "NO"
     assert "default" in str(project_columns["policy_profile"]["column_default"])
+    assert project_columns["autonomy_level"]["data_type"] == "text"
+    assert project_columns["autonomy_level"]["is_nullable"] == "NO"
+    assert "L0" in str(project_columns["autonomy_level"]["column_default"])
     assert project_unique == ("tenant_id", "workspace_id", "slug")
     assert "active" in project_status_check
     assert "archived" in project_status_check
+    assert all(level in project_autonomy_level_check for level in ("L0", "L1", "L2", "L3"))
 
     assert repository_columns["provider"]["data_type"] == "text"
     assert repository_columns["provider"]["is_nullable"] == "NO"

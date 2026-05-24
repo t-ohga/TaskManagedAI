@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.app.domain.policy.autonomy_level import AutonomyLevel
+
 ProjectStatus = Literal["active", "archived"]
 
 
@@ -34,6 +36,7 @@ class ProjectRead(BaseModel):
     name: str
     status: ProjectStatus
     policy_profile: str
+    autonomy_level: AutonomyLevel
     metadata: dict[str, Any] = Field(validation_alias="metadata_")
     created_at: datetime
     updated_at: datetime

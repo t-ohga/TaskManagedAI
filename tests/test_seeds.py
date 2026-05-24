@@ -252,6 +252,7 @@ async def test_seed_initial_creates_default_core_records(
     assert project.name == DEFAULT_PROJECT_NAME
     assert project.status == DEFAULT_PROJECT_STATUS
     assert project.policy_profile == "default"
+    assert project.autonomy_level == "L0"
     assert project.metadata_["rls_ready"] is True
 
     assert repository is not None
