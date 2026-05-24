@@ -100,6 +100,9 @@ async def test_mock_create_draft_pr_success() -> None:
     assert result.draft is True
     assert result.deny_reason is None
     assert result.pr_url == "https://github.com/owner/repo/pull/1"
+    assert result.repo_full_name == "owner/repo"
+    assert result.branch == "codex/agent-run-abcd1234"
+    assert result.head_sha == "0" * 40
 
 
 @pytest.mark.asyncio

@@ -249,7 +249,7 @@ Sprint 9 carry-over (5 BL):
 ```bash
 # carry-over verify
 uv run pytest tests/secrets/test_repo_operations.py tests/repoproxy/test_github_app_adapter.py \
-              tests/agent_runtime/test_repo_pr_opened_event.py tests/contracts/test_kpi_time_to_merge.py \
+              tests/repoproxy/test_repo_pr_opened_event.py tests/contracts/test_kpi_time_to_merge.py \
               tests/repoproxy/test_4integrity_negative.py tests/repoproxy/test_webhook_service.py \
               tests/api/test_tickets_route.py tests/api/test_agent_runs_list.py \
               tests/api/test_audit_events_route.py tests/contracts/test_ac_hard_02_frontend_redaction.py \

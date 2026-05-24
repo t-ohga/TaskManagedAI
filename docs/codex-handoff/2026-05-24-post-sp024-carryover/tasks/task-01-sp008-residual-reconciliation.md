@@ -32,7 +32,7 @@ Validate this; do not assume it is final:
 |---|---|---|
 | BL-0096a 4-binding signature refactor | SP-008 review summary | confirm whether later SecretBroker/policy work already closed it |
 | BL-0097 GitHubAppAdapter HTTP wrapper | SP-008 review summary | likely still needed; must remain broker-mediated |
-| BL-0100 `repo_pr_opened` actual emission | SP-008 review summary | likely still needed; must be append-only and raw-token-free |
+| BL-0100 `repo_pr_opened` actual emission | SP-008 review summary | event writer + DB append test added in Batch D; final RepoProxy call-site wiring still needed |
 | BL-0102 KPI endpoint/helper | SP-008 review summary | may overlap later metrics code; inspect before code |
 | GitHub App admin registration / secret metadata | P0 backlog carry-over | confirm whether real admin setup is available or should remain stubbed |
 
