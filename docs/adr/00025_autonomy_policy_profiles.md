@@ -12,12 +12,12 @@ supersedes: null
 superseded_by: null
 ---
 
-最終更新: 2026-05-15 (QL-B Quality Loop run で `docs/設計検討/修正まとめ統合計画.md` §10 を ADR として proposed 化)
+最終更新: 2026-05-24 (SP024-T00 plan-only gate で SP-024 実 Sprint 化、current implementation drift を T01 blocker として追記)
 
 ## 背景
 
 - 決定対象: `approval 不要で AI が自動実行できる範囲` を 4 段階 (L0/L1/L2/L3) で切替可能にする autonomy policy profiles を定義する。**human-only approval decider invariant (ADR-00009 §self-approval / `.claude/reference/multi-agent-orchestration-draft.md`) は維持**したまま、Policy Engine `effect=allow` で `approval_requests` row を作らない auto-allow path を level ごとに調整する。
-- 関連 Sprint: 本 ADR は **proposed のみ**、accepted 化は P0.1 (新 Sprint Pack **SP-024 候補**、未使用番号)。**SP-017 は SP-016 `## P0.1 候補` で AI Society Visualization (board / role icon / dashboard) に予約済のため使用不可** (`docs/sprints/SP-016_ui_cli_parity.md:39+135` で予約)、R29 plan §10.4 「新 SP-017 候補」言及は本 PR commit 時点で SP-024 に override (R29 plan 側修正は QL-A 完遂後の別 run で forward fix)。P0 期間中は L0 default のみ実 enforce、L1-L3 auto-allow path は disable。
+- 関連 Sprint: 本 ADR は **proposed のみ**、accepted 化は P0.1 (新 Sprint Pack **SP-024**)。**SP-017 は SP-016 `## P0.1 候補` で AI Society Visualization (board / role icon / dashboard) に予約済のため使用不可** (`docs/sprints/SP-016_ui_cli_parity.md:39+135` で予約)、R29 plan §10.4 「新 SP-017 候補」言及は SP-024 に override 済み。P0 期間中は L0 default のみ実 enforce、L1-L3 auto-allow path は disable。
 - 前提 / 制約:
   - **不変条件 #2 維持**: approval を要する action では decider は依然 human only。auto-allow path は「approval を skip」であって「agent / orchestrator / service / provider が decider に昇格」ではない (ADR-00009 §Tier 2 準拠)。
   - **caller-not-allowed**: `autonomy_level` (L0-L3 project setting) は caller-visible だが、`policy_profile` (Policy Engine server-resolved effect profile) は **server-owned**、caller 指定不可 (`.claude/rules/server-owned-boundary.md:5-12`)。両者は概念分離。
@@ -43,11 +43,11 @@ superseded_by: null
   - low-risk profile (機械判定) 通過時のみ auto-allow を適用する設計で fail-closed 維持。1 軸でも不合格なら approval path に fall back。
   - `autonomy_level` (caller-visible) と `policy_profile` (server-owned) の概念分離で server-owned-boundary 不変 (`.claude/rules/server-owned-boundary.md`) を維持。
   - level upgrade (L0→L3) は **accepted ADR + accepted Sprint Pack + human approval event before effect** 必須で gate。
-- 実装 Sprint: 本 ADR は **proposed のみ**。accepted 化は P0.1 (新 Sprint Pack **SP-024 候補**、SP-017 は AI Society Visualization 用に予約済のため使用不可)。P0 期間中は L0 default のみ実 enforce。
+- 実装 Sprint: 本 ADR は **proposed のみ**。accepted 化は P0.1 (新 Sprint Pack **SP-024**、SP-017 は AI Society Visualization 用に予約済のため使用不可)。P0 期間中は L0 default のみ実 enforce。
 - 実装対象ファイル (P0.1 accepted 後):
   - `backend/app/domain/policy/autonomy_level.py` (新規、Literal L0/L1/L2/L3 + Pydantic enum + frozenset)
   - `backend/app/db/models/project.py` (既存) または `workspace.py` の `autonomy_level` 列追加 (`migrations/versions/00NN_p0_1_autonomy_level.py`)
-  - **`backend/app/db/models/project.py` の既存 `policy_profile` 列削除 + `backend/app/schemas/project.py` の `ProjectCreate.policy_profile` / `ProjectUpdate.policy_profile` field 削除 + migration で `projects.policy_profile` 列削除** (server-owned-boundary 不変条件のため、現状 caller-supplied 経路として実装済 `backend/app/db/models/project.py:61` + `backend/app/schemas/project.py:22+35` を `autonomy_level` 経路に置換) — F-PR12-009 adopt
+  - **`projects.policy_profile` compatibility decision**: 現行 code では `ProjectCreate` が `extra="forbid"` で caller-supplied `policy_profile` を拒否し、repository payload でも `policy_profile` を server-owned として reject 済み。一方 `projects.policy_profile` は ADR-00009 accepted 実装の server-owned DB field / FK として存在するため、SP024-T01 で「server-owned cache として維持」または「derived resolver へ移行して列削除」のどちらかを明示決定してから migration へ進む。caller-visible write surface はいずれの案でも禁止。
   - `backend/app/services/policy/engine.py` (autonomy_level → policy_profile resolve helper、Policy Engine 内部で server-owned 解決、caller 入力経路を signature レベル削除)
   - `backend/app/services/policy/low_risk_profile.py` (新規、機械判定: payload_data_class / diff size / file count / forbidden path / dangerous command / provider_request_preflight / runner_mutation_gateway / ContextSnapshot 10 列 PASS)
   - `frontend/app/(admin)/project-settings/autonomy/` (UI、`policy_profile` 入力 field は削除、`autonomy_level` のみ表示)
@@ -55,7 +55,7 @@ superseded_by: null
   - `tests/policy/test_autonomy_level_enum.py` / `test_autonomy_level_resolve.py` / `test_low_risk_profile.py` / `test_autonomy_upgrade_gate.py` / **`test_autonomy_caller_supplied_policy_profile_reject.py` (Pydantic schema から policy_profile 削除後の reject 経路 verify)** (5 件最小)
 - 実装ガイダンス:
   - `autonomy_level` enum は **5+ source** で整合: DB CHECK / SQLAlchemy CheckConstraint / Python Literal / Pydantic Field validator / pytest EXPECTED constant (`.claude/rules/cross-source-enum-integrity.md`)
-  - `policy_profile` は **caller 指定不可**、Policy Engine 内部で `autonomy_level` から解決する server-owned 値 (`.claude/rules/server-owned-boundary.md` §1)。**現状 `backend/app/db/models/project.py:61` + `backend/app/schemas/project.py:22+35` に caller-supplied 経路が実装済**のため、本 ADR の `## 採用案 §実装対象ファイル` 第 3 項目で **migration (`projects.policy_profile` 列削除) + API removal (`ProjectCreate.policy_profile` / `ProjectUpdate.policy_profile` field 削除) + reject test (`test_autonomy_caller_supplied_policy_profile_reject.py`)** を明示済 (F-PR12-009 R1 adopt 反映、P0.1 SP-024 accepted 時に実施)
+  - `policy_profile` は **caller 指定不可**、Policy Engine 内部で `autonomy_level` から解決する server-owned 値 (`.claude/rules/server-owned-boundary.md` §1)。現行 code は `ProjectCreate` で caller-supplied `policy_profile` を拒否済みだが、SP024-T01 で API / CLI / UI / repository / DB の全 write surface を再確認し、`test_autonomy_caller_supplied_policy_profile_reject.py` で regression 化する。
   - level matrix:
 
     | Level | 名称 | auto-allow される action_class (low-risk profile 通過時) | human approval が必須の action_class | 想定用途 |
