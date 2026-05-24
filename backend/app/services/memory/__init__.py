@@ -1,3 +1,9 @@
+from backend.app.services.memory.archive_policy import (
+    MEMORY_ARCHIVE_ENGAGED_EVENT_TYPE,
+    MemoryArchivePolicyError,
+    MemoryArchivePolicyResult,
+    MemoryArchivePolicyService,
+)
 from backend.app.services.memory.curator import (
     CuratedMemoryResult,
     MemoryCuratorError,
@@ -22,6 +28,10 @@ from backend.app.services.memory.store import (
 
 __all__ = [
     "CuratedMemoryResult",
+    "MEMORY_ARCHIVE_ENGAGED_EVENT_TYPE",
+    "MemoryArchivePolicyError",
+    "MemoryArchivePolicyResult",
+    "MemoryArchivePolicyService",
     "MemoryCuratorError",
     "MemoryCuratorService",
     "MemoryPayloadRejectReason",

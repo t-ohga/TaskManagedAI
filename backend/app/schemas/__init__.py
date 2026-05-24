@@ -21,6 +21,11 @@ from backend.app.schemas.evidence_item import (
 )
 from backend.app.schemas.inter_agent import InterAgentConsumeRequest, InterAgentPublishRequest
 from backend.app.schemas.memory import (
+    DEFAULT_MEMORY_ARCHIVE_CANDIDATE_KINDS,
+    MemoryArchiveCandidateKind,
+    MemoryArchivePolicyRequest,
+    MemoryCuratorRequest,
+    MemoryCuratorSourceKind,
     MemoryRecordCreate,
     MemoryRecordTrustLevel,
     MemoryRetrievalArtifactCreate,
@@ -72,6 +77,11 @@ __all__ = [
     "EvidenceItemRead",
     "InterAgentConsumeRequest",
     "InterAgentPublishRequest",
+    "DEFAULT_MEMORY_ARCHIVE_CANDIDATE_KINDS",
+    "MemoryArchiveCandidateKind",
+    "MemoryArchivePolicyRequest",
+    "MemoryCuratorRequest",
+    "MemoryCuratorSourceKind",
     "MemoryRecordCreate",
     "MemoryRecordTrustLevel",
     "MemoryRetrievalArtifactCreate",
