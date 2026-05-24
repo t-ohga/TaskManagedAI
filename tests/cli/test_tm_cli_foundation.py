@@ -13,7 +13,7 @@ _CLI_ROOT = _REPO_ROOT / "cli"
 if str(_CLI_ROOT) not in sys.path:
     sys.path.insert(0, str(_CLI_ROOT))
 
-from tm.auth.capability_token import ALL_CAPABILITIES  # noqa: E402
+from tm.auth.capability_token import ALL_CAPABILITIES, CapabilityTokenConfigError, resolve_operation_token  # noqa: E402
 from tm.client import OPERATION_TOKEN_HEADER, ClientConfig  # noqa: E402
 from tm.config.profile_loader import ProfileConfigError, ProfileLoader  # noqa: E402
 from tm.main import main  # noqa: E402
@@ -252,3 +252,105 @@ def test_auth_refresh_without_runtime_operation_token_fails_before_network() -> 
     assert out == ""
     assert "tm_operation_token_missing" in err
     assert requests == []
+
+
+def test_profile_env_credential_ref_resolves_runtime_operation_token(tmp_path: Path) -> None:
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "profiles": {
+                    "default": {
+                        "backend_url": "https://taskhub.test",
+                        "auth_method": "env",
+                        "operation_token_env": "TM_PROFILE_OPERATION_TOKEN",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = io.StringIO()
+    err = io.StringIO()
+    requests: list[ApiRequest] = []
+
+    def factory(config: ClientConfig) -> CapturingClient:
+        return CapturingClient(config=config, requests=requests)
+
+    code = main(
+        ["--json", "auth", "refresh"],
+        stdout=out,
+        stderr=err,
+        env={
+            "TASKMANAGEDAI_PROJECT_ID": _PROJECT_ID,
+            "TASKMANAGEDAI_PROFILE_PATH": str(profile_path),
+            "TM_PROFILE_OPERATION_TOKEN": "profile-env-token",
+        },
+        cwd=_REPO_ROOT,
+        client_factory=factory,
+    )
+
+    assert code == 0
+    assert err.getvalue() == ""
+    assert requests[0].json_body == {"operation_token": "profile-env-token", "ttl_minutes": 5}
+    assert json.loads(out.getvalue())["operation_token"] == "[REDACTED]"
+
+
+def test_profile_plain_auth_method_is_rejected_before_network(tmp_path: Path) -> None:
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps({"profiles": {"default": {"auth_method": "plain"}}}),
+        encoding="utf-8",
+    )
+    out = io.StringIO()
+    err = io.StringIO()
+    requests: list[ApiRequest] = []
+
+    def factory(config: ClientConfig) -> CapturingClient:
+        return CapturingClient(config=config, requests=requests)
+
+    code = main(
+        ["auth", "refresh"],
+        stdout=out,
+        stderr=err,
+        env={"TASKMANAGEDAI_PROFILE_PATH": str(profile_path)},
+        cwd=_REPO_ROOT,
+        client_factory=factory,
+    )
+
+    assert code == 2
+    assert out.getvalue() == ""
+    assert "tm_operation_token_config_error" in err.getvalue()
+    assert requests == []
+
+
+def test_keyring_credential_source_resolves_with_injected_getter() -> None:
+    value = resolve_operation_token(
+        {},
+        auth_method="keyring",
+        credential_ref="taskmanagedai/default",
+        keyring_getter=lambda service, account: f"{service}:{account}:token",
+    )
+
+    assert value == "taskmanagedai:default:token"
+
+
+def test_sops_credential_source_resolves_nested_key_with_injected_decryptor(tmp_path: Path) -> None:
+    value = resolve_operation_token(
+        {},
+        auth_method="sops",
+        credential_ref=f"{tmp_path / 'profile.enc.json'}#cli.operation_token",
+        sops_decryptor=lambda path: {"cli": {"operation_token": f"token-from-{path.name}"}},
+    )
+
+    assert value == "token-from-profile.enc.json"
+
+
+def test_sops_credential_source_rejects_missing_key(tmp_path: Path) -> None:
+    with pytest.raises(CapabilityTokenConfigError, match="key path not found"):
+        resolve_operation_token(
+            {},
+            auth_method="sops",
+            credential_ref=f"{tmp_path / 'profile.enc.json'}#cli.operation_token",
+            sops_decryptor=lambda _path: {"cli": {}},
+        )

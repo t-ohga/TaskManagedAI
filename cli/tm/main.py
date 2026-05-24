@@ -96,7 +96,16 @@ def main(
         )
         return 2
 
-    operation_token = resolve_operation_token(environ, token_override=cast(str | None, args.operation_token))
+    try:
+        operation_token = resolve_operation_token(
+            environ,
+            token_override=cast(str | None, args.operation_token),
+            auth_method=profile.auth_method,
+            credential_ref=profile.refresh_credential_ref,
+        )
+    except ValueError as exc:
+        _emit_error("tm_operation_token_config_error", str(exc), stderr=err)
+        return 2
     try:
         request = _inject_operation_token(request, operation_token)
     except ValueError as exc:
