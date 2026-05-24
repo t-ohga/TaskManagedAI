@@ -25,7 +25,9 @@ _DEV_ACTOR_CONTEXT_ENVIRONMENTS = frozenset({"development", "test"})
 # Sprint 11.5 batch 0 (Codex PR #40 F-PR40-003 P2 adopt): `/metrics` Prometheus
 # scrape endpoint も production auth bypass。`PrometheusMetricsAccessGuard`
 # middleware が IP allowlist で 2 layer 防御済のため、auth 経由不要。
-_PRODUCTION_PUBLIC_PATHS = frozenset({"/auth/dev-login", "/healthz", "/readyz", "/metrics"})
+_PRODUCTION_PUBLIC_PATHS = frozenset(
+    {"/auth/dev-login", "/healthz", "/readyz", "/metrics", "/webhooks/github"}
+)
 
 
 @dataclass(frozen=True)
@@ -230,4 +232,3 @@ class RequireAuthenticatedActorMiddleware(BaseHTTPMiddleware):
         request.state.principal_id = None
         request.state.authenticated = False
         return _unauthenticated_response()
-

@@ -5,7 +5,7 @@ status: "partial_skeleton"
 sprint_no: 8
 created_at: "2026-05-13"
 updated_at: "2026-05-24"
-review_summary: "2026-05-24 reconciliation + Batch A/A2/B/C/D/D2/E: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup / server-owned Draft PR binding guard / DB-backed ApprovalRequest+ContextSnapshot resolver / broker-mediated GitHubAppAdapter boundary / webhook service boundary with replay protocol / repo_pr_opened event writer + DraftPRRuntime call-site / agent_runs KPI endpoint are present. Real GitHub httpx transport, live Git ref re-fetch, concrete SecretBroker+Redis webhook adapters and route wiring remain residual. Keep status partial_skeleton."
+review_summary: "2026-05-24 reconciliation + Batch A/A2/B/C/C2/D/D2/E: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup / server-owned Draft PR binding guard / DB-backed ApprovalRequest+ContextSnapshot resolver / broker-mediated GitHubAppAdapter boundary / webhook service boundary with replay protocol / concrete SecretRef resolver + Redis replay adapter + FastAPI /webhooks/github route / repo_pr_opened event writer + DraftPRRuntime call-site / agent_runs KPI endpoint are present. Real GitHub httpx transport, live Git ref re-fetch, deployment SOPS material resolver, and external API/worker adoption remain residual. Keep status partial_skeleton."
 target_days: 5
 max_days: 7
 adr_refs:
@@ -306,14 +306,14 @@ verify で品質確認。
 
 - `backend/app/services/repoproxy/github_app_adapter.py` exists as a broker-mediated adapter boundary with no raw installation token exposure to transport. Real GitHub httpx transport and live Git ref re-fetch remain pending.
 - `RepoProxy.create_draft_pr()` now accepts only `DraftPRBinding`; the DB-backed resolver loads ApprovalRequest + latest ContextSnapshot and passes the internal `DraftPRRequest` to the transport. Live Git ref re-fetch remains pending for GitHubAppAdapter.
-- `GitHubWebhookVerifier` service boundary with SecretBroker resolver protocol, Redis SETNX replay protocol, rotation status validation, and redacted audit payload is present. Concrete SecretBroker resolver, concrete Redis adapter, and FastAPI route wiring remain pending.
+- `GitHubWebhookVerifier` service boundary plus concrete SecretRef status resolver, Redis SETNX replay adapter, audit sink, and FastAPI `POST /webhooks/github` route are present. The deployment-specific SOPS material resolver remains an operator/runtime wiring item because `secret_refs` intentionally stores only metadata, not raw HMAC material.
 - Real GitHub App admin registration / private key SOPS metadata cannot be verified from repo files and remains an operator setup item unless a secret metadata fixture is added.
 
 #### next implementation batches
 
 1. Batch A/A2: service-level RepoProxy server-owned binding refactor (`approval_id`, `agent_run_id`) + negative tests for each mismatch. **Completed 2026-05-24**: public signature now takes only `DraftPRBinding`, pure server-owned state builder exists, and DB-backed resolver loads ApprovalRequest + latest ContextSnapshot. Live Git ref re-fetch remains for Batch B transport integration.
 2. Batch B: `GitHubAppAdapter` broker-mediated boundary with raw-token non-exposure tests. **Partially completed 2026-05-24**: adapter boundary + tests exist; real httpx transport, retries/rate limit, and live Git ref re-fetch remain.
-3. Batch C: webhook service layer with SecretBroker resolution, Redis replay guard, rotation status validation, and audit payload redaction. **Completed 2026-05-24 at service boundary level**; concrete SecretBroker resolver / Redis adapter / FastAPI route wiring remain.
+3. Batch C/C2: webhook service layer with SecretBroker resolution, Redis replay guard, rotation status validation, audit payload redaction, concrete SecretRef resolver, Redis replay adapter, and FastAPI route wiring. **Completed 2026-05-24 at service/route boundary level**; deployment SOPS material resolver remains operator/runtime wiring.
 4. Batch D/D2: actual `repo_pr_opened` emission from the runtime path. **Completed at service boundary level 2026-05-24**: append-only event writer + DB persistence tests + `DraftPRRuntime` call-site wrapper exist.
 5. Batch E: `/api/v1/agent_runs/{run_id}/kpi` endpoint. **Completed 2026-05-24**: per-run AC-KPI-02 source endpoint + service tests exist. Final SP-008 status closeout waits for remaining transport/webhook/call-site residuals.
 
@@ -354,10 +354,30 @@ verify で品質確認。
 
 #### deferred
 
-- Concrete SecretBroker-backed secret resolver for webhook HMAC secret material.
-- Concrete Redis SETNX replay adapter.
-- FastAPI `/webhooks/github` route with Tailscale-only ingress check.
+- Deployment-specific SOPS material resolver for raw webhook HMAC material. The route expects `app.state.github_webhook_secret_material_resolver` so raw secret material stays outside DB and outside tests.
 - External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
+
+### 2026-05-24 Batch C2 implementation (Webhook route/adapters)
+
+#### changed
+
+- `backend/app/services/repoproxy/webhook_adapters.py`: added `DbWebhookSecretResolver`, `RedisWebhookReplayStore`, and `DbWebhookAuditSink`.
+- SecretRef resolution now selects the active `secret://sops/p0/github_webhook_hmac#vN` row and the rotated-from deprecated previous row only when `allowed_consumers` includes `api:repo_proxy` and `allowed_operations` includes `secret.verify`.
+- Raw webhook HMAC material is resolved through an injected `SecretMaterialResolver`; DB rows and tests never store raw secret values.
+- `backend/app/api/github_webhooks.py`: added `POST /webhooks/github`, using `request.client.host` only (not forwarded headers) to allow loopback or Tailscale CGNAT `100.64.0.0/10`, then calls `GitHubWebhookVerifier`.
+- Production auth middleware now treats `/webhooks/github` as public to normal session auth, while the route applies its own network + HMAC guard.
+- Response payload is redacted to `accepted`, `reason_code`, and `audit_event_type`; raw request body, signature, delivery id, and secret refs are not returned.
+
+#### verified
+
+- `uv run ruff check backend/app/api/github_webhooks.py backend/app/services/repoproxy/webhook_adapters.py backend/app/api/router.py backend/app/middleware/dev_actor.py backend/app/services/repoproxy/__init__.py tests/api/test_github_webhooks.py tests/repoproxy/test_webhook_adapters.py tests/api/test_sp012_9_ui_wiring_routes.py`
+- `PYTHONPATH=cli uv run mypy backend/app/api/github_webhooks.py backend/app/services/repoproxy/webhook_adapters.py tests/api/test_github_webhooks.py tests/repoproxy/test_webhook_adapters.py`
+- `uv run pytest tests/api/test_github_webhooks.py tests/repoproxy/test_webhook_adapters.py tests/api/test_sp012_9_ui_wiring_routes.py -q`
+
+#### deferred
+
+- Real deployment `SecretMaterialResolver` implementation for decrypting the SOPS-backed HMAC value.
+- Real GitHub httpx transport, retries/rate limit handling, broker-owned installation token use, and live Git ref re-fetch.
 
 ### 2026-05-24 Batch D implementation (repo_pr_opened event writer)
 

@@ -34,6 +34,7 @@ Validate this; do not assume it is final:
 | BL-0097 GitHubAppAdapter HTTP wrapper | SP-008 review summary | likely still needed; must remain broker-mediated |
 | BL-0100 `repo_pr_opened` actual emission | SP-008 review summary | event writer + DB append test added in Batch D; `DraftPRRuntime` call-site wrapper added in Batch D2; external API/worker adoption remains after real GitHub transport is enabled |
 | BL-0102 KPI endpoint/helper | SP-008 review summary | completed 2026-05-24 Batch E as `GET /api/v1/agent_runs/{run_id}/kpi` + `AgentRunKpiService`; true PR merged timestamp remains future event source |
+| BL-0101a webhook route/adapters | SP-008 review summary | concrete SecretRef resolver + Redis SETNX replay adapter + FastAPI `POST /webhooks/github` added in Batch C2; deployment SOPS material resolver remains runtime wiring |
 | GitHub App admin registration / secret metadata | P0 backlog carry-over | confirm whether real admin setup is available or should remain stubbed |
 
 ## 2026-05-24 Reconciliation Result
@@ -41,8 +42,9 @@ Validate this; do not assume it is final:
 The hypothesis is adopted with refinements:
 
 - SecretBroker repo operation primitives exist, but end-to-end RepoProxy issue/redeem integration is not proven.
-- `repo_pr_opened` exists as an event enum, but actual runtime emission is not proven.
+- `repo_pr_opened` exists as an event enum and now has event writer + `DraftPRRuntime` call-site coverage; external API/worker adoption waits for real GitHub transport.
 - KPI code existed for eval corpus and orchestrator proxy rollup. 2026-05-24 Batch E added the canonical SP-008 endpoint `GET /api/v1/agent_runs/{run_id}/kpi`.
+- Webhook HMAC now has service + route/adapters coverage. The remaining deployment piece is the raw material resolver that decrypts SOPS material for the already-registered `secret_refs` metadata row.
 - ADR-00011 remains accepted as a design decision, but its previous acceptance history overstated implementation closure.
 
 See `../reviews/task-01-sp008-residual-reconciliation.md` and the 2026-05-24 SP-008 Review entry.

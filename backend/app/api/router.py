@@ -9,6 +9,7 @@ from backend.app.api import (
     claims,
     evidence_items,
     evidence_sources,
+    github_webhooks,
     health,
     kpi_rollup,
     me,
@@ -20,6 +21,7 @@ from backend.app.api import (
 
 api_router = APIRouter()
 api_router.include_router(health.router)
+api_router.include_router(github_webhooks.router)
 api_router.include_router(auth.router)
 api_router.include_router(auth_cli.router)
 api_router.include_router(research_tasks.router)
