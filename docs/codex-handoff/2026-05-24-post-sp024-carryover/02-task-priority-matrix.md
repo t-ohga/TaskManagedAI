@@ -10,6 +10,7 @@
 | P1 | task-05 | SP-009-5 | P0.1 deferred UI surface split | required before SP-009-5 UI/code | 0.2 day |
 | P1 | task-06 | SP-009-5 | Today/Inbox + minimal KPI strip read-only UI | completed 2026-05-24 | 0.5 day |
 | P1 | task-07 | SP-009-5 | Unified execution timeline read-only UI | completed 2026-05-24 | 0.5 day |
+| P1 | task-10 | SP-009-5 | Notification triage D1 DB/API contract | completed 2026-05-24 | 0.5 day |
 | P2 | task-04 | SP-000 / roadmap | bootstrap/backlog status hygiene | optional docs-only (completed 2026-05-24) | 0.2 day |
 
 ## Recommended Order
@@ -35,6 +36,9 @@ task-06 (SP-009-5 Batch A)
 
 task-07 (SP-009-5 Batch B)
   -> completed: /timeline unified read-only timeline using existing APIs only
+
+task-10 (SP-009-5 Batch D1)
+  -> completed: notification triage DB/API contract, redacted triage endpoint, snooze/resolve lifecycle, frontend client schema
 ```
 
 ## SP-008 Tentative Implementation Batches
@@ -71,7 +75,8 @@ These are not coding instructions until a dedicated SP-009-5 implementation PR s
 | A | Today/Inbox + minimal KPI strip read-only UI (completed 2026-05-24) | existing API only; no mutation |
 | B | unified execution timeline read-only UI (completed 2026-05-24) | raw payload / secret DOM exposure |
 | C | decision packet hash visibility (completed 2026-05-24) | API field availability; no state transition |
-| D | notification triage minimal lifecycle (plan ready 2026-05-24) | ADR-00003 event schema + migration |
+| D1 | notification triage DB/API contract (completed 2026-05-24) | ADR-00003 event schema + migration |
+| D2 | notification triage `/notifications` UI actions | actor-owned transitions; no bulk action |
 | E | approval `request_revision` loop | ADR-00003 / ADR-00004 / ADR-00009 + stale invalidation |
 
 ## SP-007 Phase 5 Plan
