@@ -34,10 +34,14 @@ def test_autonomy_profile_resolver_stays_default_when_runtime_flag_is_premature(
     ]
 
     assert {resolution.policy_profile for resolution in resolutions} == {"default"}
-    assert {resolution.auto_allow_enabled for resolution in resolutions} == {False}
+    assert {
+        resolution.auto_allow_enabled
+        for resolution in resolutions
+        if resolution.autonomy_level != "L0"
+    } == {True}
     assert {
         resolution.reason_code for resolution in resolutions if resolution.autonomy_level != "L0"
-    } == {"autonomy_runtime_not_implemented"}
+    } == {"autonomy_runtime_matrix_enabled"}
 
 
 def test_autonomy_profile_resolver_rejects_unknown_level() -> None:
