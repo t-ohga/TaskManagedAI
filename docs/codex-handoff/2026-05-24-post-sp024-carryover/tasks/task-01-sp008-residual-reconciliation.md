@@ -36,6 +36,17 @@ Validate this; do not assume it is final:
 | BL-0102 KPI endpoint/helper | SP-008 review summary | may overlap later metrics code; inspect before code |
 | GitHub App admin registration / secret metadata | P0 backlog carry-over | confirm whether real admin setup is available or should remain stubbed |
 
+## 2026-05-24 Reconciliation Result
+
+The hypothesis is adopted with refinements:
+
+- SecretBroker repo operation primitives exist, but end-to-end RepoProxy issue/redeem integration is not proven.
+- `repo_pr_opened` exists as an event enum, but actual runtime emission is not proven.
+- KPI code exists for eval corpus and orchestrator proxy rollup, but the SP-008 `/agent-runs/{id}/kpi` endpoint is not proven.
+- ADR-00011 remains accepted as a design decision, but its previous acceptance history overstated implementation closure.
+
+See `../reviews/task-01-sp008-residual-reconciliation.md` and the 2026-05-24 SP-008 Review entry.
+
 ## Plan Review Requirements
 
 - CRITICAL=0 before implementation can start.

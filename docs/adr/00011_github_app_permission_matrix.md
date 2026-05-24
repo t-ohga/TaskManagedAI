@@ -12,43 +12,49 @@ related_sprints:
   - "SP-011-5_operational_hardening"
 acceptance_blocked_by: []
 acceptance_history:
-  - "Sprint 11 BL-0094: real GitHub App registration + private key SOPS encrypt — completed"
-  - "Sprint 11 BL-0095: SecretBroker allowed_operations + capability_token issue flow — completed"
-  - "Sprint 11 BL-0097: GitHubAppAdapter httpx wrapper (broker-mediated only) — completed"
-  - "Sprint 11 BL-0100: AgentRunEvent repo_pr_opened actual emission — completed"
-  - "Sprint 11 BL-0102: AC-KPI-02 time_to_merge endpoint + median calc test — completed"
-  - "Sprint 11 BL-0101a: Webhook HMAC SecretBroker-mediated service layer + Redis SETNX replay — completed"
-  - "Sprint 11 BL-0096a: RepoProxy 4 整合 binding server-side 再計算 refactor — completed"
+  - "Sprint 11 BL-0094: real GitHub App registration + private key SOPS encrypt — not verifiable from current tree; reopened as operator/setup evidence item on 2026-05-24"
+  - "Sprint 11 BL-0095: SecretBroker repo.push / repo.pr_open primitives — partially verified in current tree; end-to-end RepoProxy issue flow still needs implementation evidence"
+  - "Sprint 11 BL-0097: GitHubAppAdapter httpx wrapper (broker-mediated only) — not verifiable in current tree; reopened on 2026-05-24"
+  - "Sprint 11 BL-0100: AgentRunEvent repo_pr_opened actual emission — enum exists, actual runtime emission not verifiable; reopened on 2026-05-24"
+  - "Sprint 11 BL-0102: AC-KPI-02 time_to_merge endpoint + median calc test — eval/orchestrator KPI helpers exist, SP-008 agent-runs endpoint not verifiable; reopened on 2026-05-24"
+  - "Sprint 11 BL-0101a: Webhook HMAC SecretBroker-mediated service layer + Redis SETNX replay — low-level helper exists, service layer not verifiable; reopened on 2026-05-24"
+  - "Sprint 11 BL-0096a: RepoProxy 4 整合 binding server-side 再計算 refactor — not verifiable; current RepoProxy still accepts DraftPRRequest; reopened on 2026-05-24"
   - "Sprint 11.5 BL-Permission-CLI: Permission Matrix CLI static check + dedicated CI workflow (permission-matrix-check.yml) — completed (本 PR、Sprint 8 既実装 `permission_matrix.py --check` を独立 workflow に integrate)"
 supersedes: null
 superseded_by: null
 ---
 
 このテンプレの使い方: ADR Gate Criteria #11 (GitHub App permission 変更) に該当。
-Sprint 8 batch 0 で `proposed`、Sprint 11 で `acceptance_blocked_by` 全 8 件
-完了後に **accepted** 昇格 (Codex SP8 R1 F-SP8-004 + R2 R2-F-002 adopt、
-2026-05-13 status は標準 `proposed` のまま維持し、custom field
-`acceptance_blocked_by` で blocking conditions を非標準扱いで記録)。
+Sprint 8 batch 0 で `proposed`、Sprint 11.5 で design decision として
+**accepted** 昇格。2026-05-24 reconciliation で、過去の
+`acceptance_history` は実装完了証跡ではなく採用判断履歴として読み替える。
+SP-008 の実装完了判定は Sprint Pack residual batch で行う。
 
 Sprint 8 では Permission Matrix の最終形を確定し、`config/github_app_permissions.toml`
 で hardcode + CLI `--check` で diff check 基盤を整備。
 
-## Status 詳細 (Codex SP8 R1 F-SP8-004 + R2 R2-F-002 adopt、Sprint 11.5 BL-Permission-CLI で 2026-05-17 accepted 昇格)
+## Status 詳細 (2026-05-24 reconciliation correction)
 
-- **status: accepted (2026-05-17、Sprint 11.5 batch 5 完了時点)**: 標準 ADR
-  lifecycle (`proposed` → `accepted`) で昇格。Codex R2 R2-F-002 adopt 経緯で
-  `proposed_pending_sprint_11` から `proposed` に戻していた custom status は、
-  本 PR で全 8 件 unblock 達成により `accepted` に昇格。
-- **acceptance_blocked_by**: 全 8 件 completed (acceptance_history に履歴記録)。
-  - Sprint 11 で 7 件 (BL-0094/0095/0097/0100/0102/0101a/0096a) を completed
-    + Sprint Exit `## Review` でレビュー verify (Sprint 11 末は 7/8 unblock review、
-    frontmatter `status: proposed` 維持)
-  - Sprint 11.5 batch 5 で **BL-Permission-CLI** completed: Sprint 8 で実装済の
-    `backend/app/services/repoproxy/permission_matrix.py` の CLI モードを独立
-    `.github/workflows/permission-matrix-check.yml` に integrate、PR 単位で
-    static check を強制し drift 検出時は merge block。これで 8/8 全件 unblock。
+- **2026-05-24 reconciliation correction**: this ADR remains `accepted` as the
+  design decision for GitHub App permission and broker-mediated token handling,
+  but the implementation completion claims in the previous
+  `acceptance_history` were not all verifiable from current repository state.
+  SP-008 remains `partial_skeleton`; implementation completion must be judged by
+  SP-008 residual batches, not by this ADR's prior acceptance wording.
+- **status: accepted (design decision)**: 標準 ADR lifecycle
+  (`proposed` → `accepted`) として、GitHub App permission / broker-mediated
+  token / merge-deploy deny の設計判断は採用済み。これは SP-008 実装完了を
+  意味しない。
+- **acceptance_blocked_by**: 空配列は ADR 採用判断を block しないことだけを
+  表す。2026-05-24 時点では、旧 acceptance wording のうち複数の
+  implementation completion claim が current tree で未検証だったため、
+  SP-008 `partial_skeleton` の residual batch で完了判定をやり直す。
+- **verified accepted element**: Sprint 8 で実装済の
+  `backend/app/services/repoproxy/permission_matrix.py` CLI モードと
+  `.github/workflows/permission-matrix-check.yml` integration は、permission
+  overreach を fail-closed にする design enforcement として維持。
 
-最終更新: 2026-05-17 (Sprint 11.5 batch 5 完了時点で `accepted` 昇格)
+最終更新: 2026-05-24 (post-SP024 reconciliation correction)
 
 ## 背景
 
