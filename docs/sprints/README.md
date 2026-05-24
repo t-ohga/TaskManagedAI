@@ -44,6 +44,7 @@
 | SP-007_docker_runner | SP-007_runner_sandbox.md | alias | runner sandbox が canonical 名 |
 | SP-008_github_draft_pr | SP-008_github_app_repoproxy.md | alias | RepoProxy が canonical 名 (前 session commit `369672b` で起票) |
 | SP-009_p0_ui | SP-009_p0_ui_pack.md | alias | P0 UI Pack が canonical 名 |
+| SP-009-5_p0_ui_deferred_surfaces | SP-009-5_p0_ui_deferred_surfaces.md | match | P0.1 deferred UI surfaces split from SP-009; implementation remains separately gated |
 | **SP-010_research_evidence** | **SP-010_research_evidence.md** | **match** | Sprint 10 batch 0 (BL-0113/BL-0114) commit `314b5bb` で着手済 (Codex R1-R2 clean) |
 | **SP-011_eval_harness** | **SP-011_eval_harness.md** | **match** | - |
 | **SP-0115_operational_hardening** | **SP-011-5_operational_hardening.md** | **alias** | 命名揺れ整理 (SP-0115 → SP-011-5) |

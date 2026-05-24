@@ -23,7 +23,7 @@ Adopted changes:
 Finding A: Overclaiming completion risk.
 
 - Risk: tickets/agent_runs/audit route existence could be mistaken for full SP-009 completion.
-- Decision: adopt. The sprint remains `partial_skeleton`; golden E2E, DOM secret scan, enum drift contract, unified timeline, and SP-009-5 split remain open.
+- Decision: adopt. The sprint remains `partial_skeleton`; at reconciliation time golden E2E, DOM secret scan, enum drift contract, unified timeline, and SP-009-5 split remained open. Task-05 closes the docs-only split while leaving implementation open.
 
 Finding B: Wrong API route risk.
 

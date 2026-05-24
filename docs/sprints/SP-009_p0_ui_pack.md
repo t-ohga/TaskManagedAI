@@ -2,7 +2,7 @@
 id: "SP-009_p0_ui_pack"
 type: "heavy"
 status: "partial_skeleton"
-review_summary: "2026-05-24 reconciliation: Sprint 12/16 後の main では tickets list/detail/create/update、agent_runs list/detail/kpi/cancel、audit_events list、approvals list/detail/decide は backend route と frontend client/page まで実装済み。旧 `backend pending` 前提は解消済みだが、4 面 golden E2E、frontend/backend enum drift contract、frontend redaction/DOM secret scan、SP-009-5/P0.1 split は未完のため `completed` ではなく `partial_skeleton` 維持。"
+review_summary: "2026-05-24 reconciliation: Sprint 12/16 後の main では tickets list/detail/create/update、agent_runs list/detail/kpi/cancel、audit_events list、approvals list/detail/decide は backend route と frontend client/page まで実装済み。旧 `backend pending` 前提は解消済み。SP-009-5/P0.1 split Pack は起票済みだが、4 面 golden E2E、frontend/backend residual enum drift、frontend redaction/DOM secret scan、SP-009-5 実装は未完のため `completed` ではなく `partial_skeleton` 維持。"
 sprint_no: 9
 created_at: "2026-05-12"
 updated_at: "2026-05-24"
@@ -255,13 +255,13 @@ contract が未完のため `completed` へは昇格しない。
 | frontend redaction / DOM secret scan | open | backend response は payload key のみだが、frontend 側の DOM secret scan regression test を追加 |
 | Execution Log unified timeline | partial | AgentRun detail は AgentRunEvent + ContextSnapshot metadata まで。Audit/Budget/Eval 統合 timeline は P0.1 |
 | validator state 表示 | partial | Eval Dashboard には gate/KPI shell があるが、Ticket detail 統合は未完 |
-| Board / Today-Inbox control plane | partial | dashboard/orchestrator board は存在。SP-009 の Portfolio Board としての最終 UX は SP-009-5 で再定義 |
+| Board / Today-Inbox control plane | partial | dashboard/orchestrator board は存在。SP-009 の Portfolio Board としての最終 UX は `SP-009-5_p0_ui_deferred_surfaces.md` で再定義 |
 
 ### 最小で安全な次 PR
 
 1. **SP-009 contract/test cleanup**: stale Playwright spec を現行 real route に合わせ、enum drift + DOM secret scan の最小 regression を追加する。
-2. **SP-009-5 split docs**: Today/Inbox、unified execution timeline、request_revision、notification triage、minimal KPI strip を P0.1 へ分離する。
-3. その後、必要なら UI の小 PR と backend/API の小 PR を分ける。mutating approval expansion は separate accepted plan なしでは着手しない。
+2. **SP-009-5 implementation batches**: `SP-009-5_p0_ui_deferred_surfaces.md` に従い、Today/Inbox + KPI strip、unified execution timeline、decision packet hash visibility を read-only UI から小 PR 化する。
+3. Notification triage / `request_revision` は ADR/API contract + migration plan が accepted になるまで backend/API 実装しない。mutating approval expansion は separate accepted plan なしでは着手しない。
 
 ## 関連 ADR / Sprint Pack / Doc
 
@@ -549,7 +549,7 @@ R29 plan §3.3 D-006 で提案された SP-009 関連 defer 集合の mitigation
 - **ADR-00023 (proposed、本 QL-H run で同時起票)**: Realtime intake BLOCK、本 Q-E.6 で SP-009 と cross-reference
 - **ADR-00003 (API contract、accepted) update 候補**: P-04 採用時の `request_revision` event schema + P-14 採用時の Notification queue event schema
 - **ADR-00009 (Action class taxonomy、accepted) update 候補**: P-04 採用時の `task_write` 等 action_class の revision_requested 状態と整合
-- **SP-009-5 候補 (P0.1)**: U-02 / U-03 で P0 採用却下時の defer 先、本 Pack で reserve
+- **SP-009-5_p0_ui_deferred_surfaces (P0.1)**: U-02 / U-03 で P0 採用却下時の defer 先として独立 Pack 化。read-only UI と mutation-gated work を分離
 - 既存 Sprint 9 batch 1-3 commit (`0813e53` / `ceb28c8` / `2e96222`): 本 Q-E update は既存 commit を破壊せず、追加 must_ship を future spec として記録するのみ
 
 ### Q-E.8 QL-D 教訓適用
