@@ -61,8 +61,11 @@ describe("OnboardingPage", () => {
     );
 
     expect(screen.getByText("tm run plan --dry-run")).toBeVisible();
+    expect(screen.getByRole("button", { name: "dry-run 計画を作成" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "dry-run 計画レビュー" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "dry-run 結果" })).toBeVisible();
     expect(document.body).not.toHaveTextContent("tmai");
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /承認|実行開始|開始/ })).not.toBeInTheDocument();
   });
 
   it("renders a sanitized error state when project context cannot be read", async () => {

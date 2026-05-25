@@ -20,6 +20,7 @@
 | P1 | task-17 | SP-009-5 | Newcomer Path F1 read-only `/onboarding` UI | completed 2026-05-24; F2+ pending | 0.3 day |
 | P1 | task-18 | SP-009-5 | Newcomer Path F2 guided intake dry-run contract plan | completed 2026-05-24; F2b implemented in task-19 | 0.2 day |
 | P1 | task-19 | SP-009-5 | Newcomer Path F2b response-only dry-run backend API | completed 2026-05-24; F3 UI pending | 0.4 day |
+| P1 | task-20 | SP-009-5 | Newcomer Path F3 dry-run plan-review UI | completed 2026-05-24; F4 CLI pending | 0.4 day |
 | P2 | task-04 | SP-000 / roadmap | bootstrap/backlog status hygiene | optional docs-only (completed 2026-05-24) | 0.2 day |
 
 ## Recommended Order
@@ -75,6 +76,9 @@ task-18 (SP-009-5 Batch F2 plan)
 
 task-19 (SP-009-5 Batch F2b)
   -> completed: /api/v1/onboarding/dry_run_plan response-only backend contract; next implementation is F3 plan-review UI
+
+task-20 (SP-009-5 Batch F3)
+  -> completed: /onboarding dry-run form and plan-review rendering; next implementation is F4 CLI onboarding parity notes/tests
 ```
 
 ## SP-008 Tentative Implementation Batches
@@ -121,7 +125,7 @@ These are not coding instructions until a dedicated SP-009-5 implementation PR s
 | F1 | Newcomer Path read-only `/onboarding` UI (completed 2026-05-24) | existing APIs only; no mutating AgentRun |
 | F2a | guided intake dry-run API contract plan (completed 2026-05-24) | response-only decision; no persistence |
 | F2b | guided intake dry-run backend contract implementation (completed 2026-05-24) | no implicit execution; server resolves effective action/approval |
-| F3 | plan-review surface | no implicit run start without approval/runtime handoff |
+| F3 | plan-review surface (completed 2026-05-24) | no implicit run start without approval/runtime handoff |
 | F4 | CLI onboarding parity notes/tests | `tm` canonical; ambiguous mutating command fail-closed |
 
 ## SP-007 Phase 5 Plan

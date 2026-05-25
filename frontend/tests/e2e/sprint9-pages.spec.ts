@@ -84,6 +84,14 @@ test("SP-009-5: newcomer path renders read-only first-use choices", async ({ pag
   await expect(onboardingRegion.getByLabel("初回チェック")).toBeVisible();
   await expect(onboardingRegion.getByRole("region", { name: "安全な最初の選択" })).toBeVisible();
   await expect(onboardingRegion.getByText("tm run plan --dry-run")).toBeVisible();
+  await expect(
+    onboardingRegion.getByRole("region", { name: "dry-run 計画レビュー" })
+  ).toBeVisible();
+  await expect(onboardingRegion.getByRole("button", { name: "dry-run 計画を作成" })).toBeVisible();
+  await expect(onboardingRegion.getByRole("button", { name: /承認|実行開始|開始/u })).toHaveCount(0);
+  await expect(onboardingRegion.getByRole("region", { name: "dry-run 結果" })).toContainText(
+    "承認や実行開始は作成しません"
+  );
 });
 
 test("Sprint 9: approval inbox page renders real status filters", async ({ page }) => {
