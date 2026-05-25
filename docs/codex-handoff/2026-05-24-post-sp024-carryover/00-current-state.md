@@ -40,14 +40,14 @@ The earlier next-candidate list named SP-014 batch 1+, SP-015 batch 0, and SP-01
 | SP-007 runner sandbox | `done_with_phase5_defer` | runner/security core is complete; Phase 5 plan + repo-only helpers are ready, but external trust-root install remains approval-gated |
 | SP-008 GitHub App / RepoProxy | `partial_skeleton` | #219-#223 completed service-boundary batches; real GitHub transport, live ref re-fetch, deployment SOPS resolver, and external worker/API adoption remain |
 | SP-009 P0 UI Pack | `partial_skeleton` | #224/#225 completed route reconciliation and contract/redaction tests; golden E2E, DOM secret scan, PayloadDataClass/future AuditEventType registry drift, and SP-009-5 implementation remain |
-| SP-009-5 P0.1 UI deferred surfaces | `partial_skeleton` | Batch A `/today`, Batch B `/timeline`, Batch C decision packet hash visibility, Batch D1 notification triage DB/API contract, Batch D2 notification UI/actions, Batch E0 `request_revision` contract plan, Batch E1 DB/API, Batch E2 Approval Detail UI, Batch E3 revised artifact handoff, Batch F0 Newcomer Path contract plan, Batch F1 read-only `/onboarding` UI, Batch F2a guided intake dry-run plan, Batch F2b response-only dry-run backend API, and Batch F3 dry-run plan-review UI are complete; F4 CLI onboarding remains |
+| SP-009-5 P0.1 UI deferred surfaces | `partial_skeleton` | Batch A `/today`, Batch B `/timeline`, Batch C decision packet hash visibility, Batch D1 notification triage DB/API contract, Batch D2 notification UI/actions, Batch E0 `request_revision` contract plan, Batch E1 DB/API, Batch E2 Approval Detail UI, Batch E3 revised artifact handoff, Batch F0 Newcomer Path contract plan, Batch F1 read-only `/onboarding` UI, Batch F2a guided intake dry-run plan, Batch F2b response-only dry-run backend API, Batch F3 dry-run plan-review UI, and Batch F4 CLI onboarding parity are complete; F5 closeout remains |
 | SP-000 bootstrap | `ready` | old bootstrap metadata; treat as backlog hygiene, not feature implementation |
 
 ## Next Work Boundary
 
 The safest next work is one of:
 
-- SP-009-5 continuation: implement Newcomer Path F4 CLI onboarding parity notes/tests, then F5 closeout.
+- SP-009-5 continuation: run Newcomer Path F5 closeout.
 - SP-008 residual implementation that does not require new GitHub App permissions or raw token exposure.
 - SP-007 Phase 5C only after explicit machine-local trust-root approval.
 

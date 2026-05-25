@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 
+from tm.commands.onboarding import add_dry_run_arguments, build_dry_run_request
 from tm.types import ApiRequest, JSONObject
 
 
@@ -32,6 +33,16 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     update_parser.add_argument("--status")
     update_parser.add_argument("--priority")
     update_parser.set_defaults(tm_builder=_update)
+
+    intake_parser = nested.add_parser("intake", help="Prepare a newcomer intake dry-run plan")
+    intake_parser.add_argument(
+        "--guided",
+        action="store_true",
+        required=True,
+        help="Required; guided intake stays response-only in F4",
+    )
+    add_dry_run_arguments(intake_parser)
+    intake_parser.set_defaults(tm_builder=_intake)
 
 
 def _list(args: argparse.Namespace) -> ApiRequest:
@@ -79,3 +90,7 @@ def _update(args: argparse.Namespace) -> ApiRequest:
         json_body=body,
         mutating=True,
     )
+
+
+def _intake(args: argparse.Namespace) -> ApiRequest:
+    return build_dry_run_request(args)
