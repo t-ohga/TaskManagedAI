@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 
+from tm.commands.onboarding import add_dry_run_arguments, build_dry_run_request
 from tm.types import ApiRequest, JSONObject
 
 
@@ -17,6 +18,16 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     cancel_parser.add_argument("run_id")
     cancel_parser.add_argument("--reason")
     cancel_parser.set_defaults(tm_builder=_cancel)
+
+    plan_parser = nested.add_parser("plan", help="Create a response-only dry-run plan")
+    plan_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        required=True,
+        help="Required; F4 never starts an AgentRun from this command",
+    )
+    add_dry_run_arguments(plan_parser)
+    plan_parser.set_defaults(tm_builder=_plan)
 
 
 def _show(args: argparse.Namespace) -> ApiRequest:
@@ -40,3 +51,7 @@ def _cancel(args: argparse.Namespace) -> ApiRequest:
         mutating=True,
         requires_project=False,
     )
+
+
+def _plan(args: argparse.Namespace) -> ApiRequest:
+    return build_dry_run_request(args)

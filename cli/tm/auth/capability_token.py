@@ -30,6 +30,12 @@ READ_ONLY_CAPABILITIES: frozenset[str] = frozenset(
         "approval_list",
         "repo_status",
         "run_show",
+        # SP-009-5 F4 newcomer onboarding helpers. These are intentionally
+        # outside the SP-016 canonical 13 capability matrix and do not grant a
+        # mutating runtime path.
+        "context_show",
+        "doctor",
+        "onboarding_dry_run",
         # SP-020 read-only helper; intentionally outside the SP-016 canonical
         # 13 capability UI/CLI parity matrix.
         "memory_insights",

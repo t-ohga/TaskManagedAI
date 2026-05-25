@@ -147,6 +147,137 @@ def test_settings_autonomy_updates_only_autonomy_level() -> None:
     assert requests[0].json_body == {"autonomy_level": "L3"}
 
 
+def test_context_show_is_read_only_current_project_surface() -> None:
+    code, out, err, requests = _run_cli(["--json", "context", "show"], env={"TASKMANAGEDAI_PROJECT_ID": ""})
+
+    assert code == 0
+    assert err == ""
+    assert len(requests) == 1
+    assert requests[0].method == "GET"
+    assert requests[0].path == "/api/v1/me/current_project"
+    assert requests[0].capability == "context_show"
+    assert requests[0].mutating is False
+    assert json.loads(out)["path"] == "/api/v1/me/current_project"
+
+
+def test_doctor_is_read_only_health_surface() -> None:
+    code, out, err, requests = _run_cli(["--json", "doctor"], env={"TASKMANAGEDAI_PROJECT_ID": ""})
+
+    assert code == 0
+    assert err == ""
+    assert len(requests) == 1
+    assert requests[0].method == "GET"
+    assert requests[0].path == "/healthz"
+    assert requests[0].capability == "doctor"
+    assert requests[0].mutating is False
+    assert json.loads(out)["path"] == "/healthz"
+
+
+def test_run_plan_dry_run_uses_response_only_onboarding_endpoint() -> None:
+    code, _out, err, requests = _run_cli(
+        [
+            "run",
+            "plan",
+            "--dry-run",
+            "--purpose",
+            "Plan the first safe task",
+            "--expected-artifact",
+            "reviewed plan",
+            "--allowed-action-class",
+            "pr_open",
+            "--starter-mode",
+            "draft_pr_requires_approval",
+            "--target-repo-ref",
+            "t-ohga/TaskManagedAI",
+            "--budget-cap",
+            "0 USD committed",
+        ]
+    )
+
+    assert code == 0
+    assert err == ""
+    assert len(requests) == 1
+    assert requests[0].method == "POST"
+    assert requests[0].path == "/api/v1/onboarding/dry_run_plan"
+    assert requests[0].capability == "onboarding_dry_run"
+    assert requests[0].mutating is False
+    assert requests[0].approval_required is False
+    assert requests[0].json_body == {
+        "purpose": "Plan the first safe task",
+        "expected_artifact": "reviewed plan",
+        "allowed_action_class": "pr_open",
+        "starter_mode": "draft_pr_requires_approval",
+        "target_repo_ref": "t-ohga/TaskManagedAI",
+        "budget_cap": "0 USD committed",
+    }
+
+
+def test_ticket_intake_guided_uses_response_only_onboarding_endpoint() -> None:
+    code, _out, err, requests = _run_cli(
+        [
+            "ticket",
+            "intake",
+            "--guided",
+            "--purpose",
+            "Plan the first safe task",
+            "--expected-artifact",
+            "reviewed plan",
+        ]
+    )
+
+    assert code == 0
+    assert err == ""
+    assert len(requests) == 1
+    assert requests[0].method == "POST"
+    assert requests[0].path == "/api/v1/onboarding/dry_run_plan"
+    assert requests[0].capability == "onboarding_dry_run"
+    assert requests[0].mutating is False
+    assert requests[0].json_body == {
+        "purpose": "Plan the first safe task",
+        "expected_artifact": "reviewed plan",
+        "allowed_action_class": "read_only",
+        "starter_mode": "plan_only",
+    }
+
+
+def test_onboarding_cli_requires_explicit_dry_run_or_guided_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    code, out, err, requests = _run_cli(
+        [
+            "run",
+            "plan",
+            "--purpose",
+            "Plan the first safe task",
+            "--expected-artifact",
+            "reviewed plan",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert out == ""
+    assert err == ""
+    assert "--dry-run" in captured.err
+    assert requests == []
+
+    code, out, err, requests = _run_cli(
+        [
+            "ticket",
+            "intake",
+            "--purpose",
+            "Plan the first safe task",
+            "--expected-artifact",
+            "reviewed plan",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert out == ""
+    assert err == ""
+    assert "--guided" in captured.err
+    assert requests == []
+
+
 def test_mutating_command_without_project_fails_closed_before_network() -> None:
     code, out, err, requests = _run_cli(
         ["ticket", "create", "--slug", "new-task", "--title", "New task"],
