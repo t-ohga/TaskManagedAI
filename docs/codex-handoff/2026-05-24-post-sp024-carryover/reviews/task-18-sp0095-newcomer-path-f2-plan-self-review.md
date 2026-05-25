@@ -37,4 +37,4 @@
 
 - F2b backend implementation was completed later in task-19.
 - F3 plan-review UI remains pending.
-- F4 CLI onboarding parity remains pending.
+- F4 CLI onboarding parity was closed by task-21.

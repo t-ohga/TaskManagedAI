@@ -169,6 +169,7 @@ Frontend handoff for F3:
 
 ## Open Decisions
 
-- Whether a later F5 closeout should persist dry-run plans for audit history after the first implementation proves useful.
 - Whether `reviewer_actor_id` should be removed from F2b if no UI routing consumes it.
 - Whether `target_repo_ref` should be normalized against a repository registry in a later batch.
+
+F5 closeout decision (2026-05-25): keep dry-run plans response-only and non-persistent. Persisted onboarding state or dry-run audit storage requires a separate API/schema/runtime plan because it adds storage semantics, retention policy, and multi-user visibility decisions.

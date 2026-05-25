@@ -31,4 +31,4 @@ F4 keeps `tm` as the canonical CLI spelling and adds only safe first-use helpers
 
 ## Residual
 
-- F5 closeout remains pending.
+- F5 closeout was closed by task-22.

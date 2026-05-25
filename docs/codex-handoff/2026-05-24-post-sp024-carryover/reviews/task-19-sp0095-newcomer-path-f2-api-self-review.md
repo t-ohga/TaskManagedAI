@@ -43,4 +43,4 @@
 
 - PR review baseline and delayed inline review polling remain pending until this local branch can be pushed.
 - F3 plan-review UI remains pending.
-- F4 CLI onboarding parity remains pending.
+- F4 CLI onboarding parity was closed by task-21.
