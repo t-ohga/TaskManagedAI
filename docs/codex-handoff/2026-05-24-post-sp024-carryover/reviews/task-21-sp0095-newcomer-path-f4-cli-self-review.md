@@ -33,4 +33,4 @@
 
 ## Residual
 
-- F5 closeout remains pending.
+- F5 closeout was closed by task-22.

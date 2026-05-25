@@ -16,12 +16,13 @@
 | P1 | task-13 | SP-009-5 | Request revision E1 DB/API | completed 2026-05-24 | 0.5 day |
 | P1 | task-14 | SP-009-5 | Request revision E2 Approval Detail UI | completed 2026-05-24 | 0.3 day |
 | P1 | task-15 | SP-009-5 | Request revision E3 revised artifact handoff | completed 2026-05-24 | 0.4 day |
-| P1 | task-16 | SP-009-5 | Newcomer Path F0 contract plan | completed 2026-05-24; F1-F4 implemented | 0.2 day |
-| P1 | task-17 | SP-009-5 | Newcomer Path F1 read-only `/onboarding` UI | completed 2026-05-24; F2-F4 implemented | 0.3 day |
-| P1 | task-18 | SP-009-5 | Newcomer Path F2 guided intake dry-run contract plan | completed 2026-05-24; F2b implemented in task-19 | 0.2 day |
-| P1 | task-19 | SP-009-5 | Newcomer Path F2b response-only dry-run backend API | completed 2026-05-24; F3-F4 implemented | 0.4 day |
-| P1 | task-20 | SP-009-5 | Newcomer Path F3 dry-run plan-review UI | completed 2026-05-24; F4 completed, F5 closeout pending | 0.4 day |
-| P1 | task-21 | SP-009-5 | Newcomer Path F4 CLI onboarding parity | completed 2026-05-25; F5 closeout pending | 0.3 day |
+| P1 | task-16 | SP-009-5 | Newcomer Path F0 contract plan | completed 2026-05-24; F1-F5 implemented | 0.2 day |
+| P1 | task-17 | SP-009-5 | Newcomer Path F1 read-only `/onboarding` UI | completed 2026-05-24; F2-F5 implemented | 0.3 day |
+| P1 | task-18 | SP-009-5 | Newcomer Path F2 guided intake dry-run contract plan | completed 2026-05-24; F2b-F5 implemented | 0.2 day |
+| P1 | task-19 | SP-009-5 | Newcomer Path F2b response-only dry-run backend API | completed 2026-05-24; F3-F5 implemented | 0.4 day |
+| P1 | task-20 | SP-009-5 | Newcomer Path F3 dry-run plan-review UI | completed 2026-05-24; F4-F5 implemented | 0.4 day |
+| P1 | task-21 | SP-009-5 | Newcomer Path F4 CLI onboarding parity | completed 2026-05-25; F5 implemented | 0.3 day |
+| P1 | task-22 | SP-009-5 | Newcomer Path F5 closeout | completed 2026-05-25 | 0.2 day |
 | P2 | task-04 | SP-000 / roadmap | bootstrap/backlog status hygiene | optional docs-only (completed 2026-05-24) | 0.2 day |
 
 ## Recommended Order
@@ -67,22 +68,25 @@ task-15 (SP-009-5 Batch E3)
   -> completed: internal revised artifact handoff service, fresh decision-packet guard, supersession wiring
 
 task-16 (SP-009-5 Batch F0)
-  -> completed: Newcomer Path contract plan; F1-F4 are implemented
+  -> completed: Newcomer Path contract plan; F1-F5 are implemented
 
 task-17 (SP-009-5 Batch F1)
-  -> completed: read-only /onboarding route, safe starter cards, navigation, Vitest, and desktop/mobile Playwright smoke; F2-F4 are implemented
+  -> completed: read-only /onboarding route, safe starter cards, navigation, Vitest, and desktop/mobile Playwright smoke; F2-F5 are implemented
 
 task-18 (SP-009-5 Batch F2 plan)
-  -> completed: response-only dry-run intake API contract; F2b backend schema/service/API/tests are implemented in task-19
+  -> completed: response-only dry-run intake API contract; F2b-F5 are implemented
 
 task-19 (SP-009-5 Batch F2b)
-  -> completed: /api/v1/onboarding/dry_run_plan response-only backend contract; F3-F4 are implemented
+  -> completed: /api/v1/onboarding/dry_run_plan response-only backend contract; F3-F5 are implemented
 
 task-20 (SP-009-5 Batch F3)
-  -> completed: /onboarding dry-run form and plan-review rendering; F4 is implemented
+  -> completed: /onboarding dry-run form and plan-review rendering; F4-F5 are implemented
 
 task-21 (SP-009-5 Batch F4)
-  -> completed: tm context/doctor plus response-only dry-run CLI parity; next implementation is F5 closeout
+  -> completed: tm context/doctor plus response-only dry-run CLI parity
+
+task-22 (SP-009-5 Batch F5)
+  -> completed: route/API/CLI parity closeout, final verification sync, no dry-run persistence added
 ```
 
 ## SP-008 Tentative Implementation Batches
@@ -131,7 +135,7 @@ These are not coding instructions until a dedicated SP-009-5 implementation PR s
 | F2b | guided intake dry-run backend contract implementation (completed 2026-05-24) | no implicit execution; server resolves effective action/approval |
 | F3 | plan-review surface (completed 2026-05-24) | no implicit run start without approval/runtime handoff |
 | F4 | CLI onboarding parity notes/tests (completed 2026-05-25) | `tm` canonical; ambiguous mutating command fail-closed |
-| F5 | Newcomer Path closeout | route/API/CLI parity docs and final verification sync |
+| F5 | Newcomer Path closeout (completed 2026-05-25) | route/API/CLI parity docs and final verification sync |
 
 ## SP-007 Phase 5 Plan
 

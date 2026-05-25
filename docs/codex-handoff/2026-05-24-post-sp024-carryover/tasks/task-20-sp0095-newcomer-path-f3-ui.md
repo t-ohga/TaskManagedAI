@@ -36,5 +36,5 @@ F3 is frontend/client API wiring only. It may submit a dry-run request and rende
 
 ## Residual
 
-- F4 CLI onboarding parity remains pending.
-- F5 closeout remains pending.
+- F4 CLI onboarding parity was closed by task-21.
+- F5 closeout was closed by task-22.
