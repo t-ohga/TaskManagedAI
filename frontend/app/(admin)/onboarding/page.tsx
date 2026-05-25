@@ -8,6 +8,8 @@ import {
   type ProjectListItem
 } from "@/lib/api/session";
 
+import { DryRunPlanForm } from "./_components/dry-run-plan-form";
+
 export const dynamic = "force-dynamic";
 
 type SourceState<T> =
@@ -97,6 +99,7 @@ export default async function OnboardingPage() {
         <ReadinessGrid state={state.data} />
       )}
       <StarterChoices />
+      <DryRunPlanForm />
       <SafeNextActions />
       <CliOnboardingPanel />
     </section>
