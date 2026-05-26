@@ -48,6 +48,7 @@ class RepoProxyDenyReason(StrEnum):
     MERGE_DENIED_P0 = "merge_denied_p0"
     DEPLOY_DENIED_P0 = "deploy_denied_p0"
     INSTALLATION_TOKEN_LEAK = "installation_token_leak"  # noqa: S105
+    LIVE_REF_CHANGED = "live_ref_changed"
 
 
 @dataclass(frozen=True, slots=True)
