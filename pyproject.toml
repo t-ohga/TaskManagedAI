@@ -34,6 +34,9 @@ dependencies = [
   "cryptography>=48.0.0",
 ]
 
+[project.scripts]
+taskhub = "scripts.taskhub_admin:main"
+
 [dependency-groups]
 dev = [
   "mypy>=1.10,<2.0",
@@ -44,7 +47,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["backend*"]
+include = ["backend*", "scripts*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
