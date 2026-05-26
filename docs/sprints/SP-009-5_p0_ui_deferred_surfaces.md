@@ -1,10 +1,10 @@
 ---
 id: "SP-009-5_p0_ui_deferred_surfaces"
 type: "light"
-status: "partial_skeleton"
+status: "completed"
 sprint_no: 9.5
 created_at: "2026-05-24"
-updated_at: "2026-05-25"
+updated_at: "2026-05-26"
 target_days: 1.5
 max_days: 3
 ---
@@ -76,9 +76,9 @@ max_days: 3
 
 ## 残リスク
 
-- SP-009-5 は UI 面の束ね直しであり、P0 Exit へ直接必要な SP-009 golden E2E / DOM secret scan / residual enum contract を完了扱いにしない。
-- `request_revision` 実装は Batch E0 plan を正本にし、status enum expansion / AgentRunEvent enum addition / caller-supplied replacement hash を別 PR なしに追加しない。
-- Today/Inbox と KPI strip は既存データの欠落が UI 上の空表示に見えやすい。実装時は empty state と source attribution を acceptance に含める。
+- ~~SP-009 golden E2E / DOM secret scan / residual enum contract~~ → PR #247 (enum drift + DOM scan) + PR #248 (golden flow E2E) で完了。SP-009 本体 completed (PR #249)。
+- `request_revision` は Batch E0-E3 で完了。status enum expansion / AgentRunEvent enum addition は行っていない (設計通り)。
+- Today/Inbox と KPI strip は既存データの欠落が UI 上の空表示に見えやすい。empty state は実装済 (Batch A)。
 
 ## Review
 

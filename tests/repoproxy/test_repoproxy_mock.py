@@ -121,7 +121,7 @@ async def test_mock_distinct_branches_get_distinct_pr_numbers() -> None:
 
 @pytest.mark.asyncio
 async def test_repoproxy_deny_reason_enum_5plus_source() -> None:
-    """RepoProxyDenyReason 全 10 enum 値の完全性。"""
+    """RepoProxyDenyReason 全 11 enum 値の完全性。"""
     expected = {
         "approval_not_granted",
         "artifact_hash_mismatch",
@@ -133,6 +133,7 @@ async def test_repoproxy_deny_reason_enum_5plus_source() -> None:
         "merge_denied_p0",
         "deploy_denied_p0",
         "installation_token_leak",
+        "live_ref_changed",
     }
     actual = {r.value for r in RepoProxyDenyReason}
     assert actual == expected
