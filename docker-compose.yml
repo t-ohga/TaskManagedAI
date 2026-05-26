@@ -105,6 +105,7 @@ services:
       start_period: 5s
     networks:
       - taskmanagedai_internal
+      - taskmanagedai_host
     restart: unless-stopped
 
   redis:
@@ -122,6 +123,7 @@ services:
       start_period: 5s
     networks:
       - taskmanagedai_internal
+      - taskmanagedai_host
     restart: unless-stopped
 
 networks:

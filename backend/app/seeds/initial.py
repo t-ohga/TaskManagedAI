@@ -130,7 +130,7 @@ async def seed_initial(session: AsyncSession) -> None:
             slug=DEFAULT_PROJECT_SLUG,
             name=DEFAULT_PROJECT_NAME,
             status=DEFAULT_PROJECT_STATUS,
-            policy_profile=None,
+            policy_profile="default",
             metadata=_metadata(entity="project"),
         )
         .on_conflict_do_nothing(index_elements=["id"])
