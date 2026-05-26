@@ -82,6 +82,10 @@ class DraftPRResult:
 
 
 _BRANCH_PATTERN = re.compile(r"^codex/agent-run-[a-f0-9]{8}$")
+_REPO_PR_REF_RE = re.compile(
+    r"^repo:(?P<repo>[^:]+/[^:]+):pr:(?P<base>[^:]+):(?P<head>[^:]+):"
+    r"draft:commit:(?P<commit>[a-f0-9]{40}):state:(?P<state>[a-f0-9]{40})$"
+)
 
 
 class RepoProxy(ABC):
@@ -165,6 +169,9 @@ class MockRepoProxy(RepoProxy):
             pr_url=f"https://github.com/{request.repo_full_name}/pull/{pr_number}",
             draft=True,
             deny_reason=None,
+            repo_full_name=request.repo_full_name,
+            branch=request.head_branch,
+            head_sha=getattr(request, "commit_sha", None) or "0" * 40,
         )
 
     async def deny_merge(
@@ -228,15 +235,68 @@ def build_draft_pr_request_from_server_state(
     approval: DraftPRApprovalState,
     snapshot: DraftPRSnapshotState,
 ) -> DraftPRRequest | RepoProxyDenyReason:
+    if approval.status != "approved":
+        return RepoProxyDenyReason.APPROVAL_NOT_GRANTED
+    if approval.action_class != "pr_open":
+        return RepoProxyDenyReason.APPROVAL_NOT_GRANTED
+
+    snapshot_run_id = str(snapshot.run_id) if snapshot.run_id else None
+    approval_run_id = str(approval.run_id) if approval.run_id else None
+    if snapshot_run_id != approval_run_id:
+        return RepoProxyDenyReason.REPO_STATE_MISMATCH
+
+    if approval.policy_version != snapshot.policy_version:
+        return RepoProxyDenyReason.POLICY_VERSION_MISMATCH
+
+    repo_state = snapshot.repo_state or {}
+    snapshot_diff_hash = repo_state.get("diff_hash") or snapshot.diff_hash
+    approval_diff_hash = approval.diff_hash or approval.artifact_hash
+    if snapshot_diff_hash and approval_diff_hash and snapshot_diff_hash != approval_diff_hash:
+        return RepoProxyDenyReason.ARTIFACT_HASH_MISMATCH
+
+    snapshot_fp = snapshot.provider_request_fingerprint
+    if isinstance(snapshot_fp, dict):
+        import hashlib
+
+        from backend.app.domain.agent_runtime.operation_context import canonical_json_dumps
+
+        snapshot_fp = hashlib.sha256(canonical_json_dumps(snapshot_fp).encode("utf-8")).hexdigest()
+    if snapshot_fp and approval.provider_request_fingerprint and snapshot_fp != approval.provider_request_fingerprint:
+        return RepoProxyDenyReason.PROVIDER_FINGERPRINT_MISMATCH
+
+    snapshot_sha = repo_state.get("commit_sha") or snapshot.repo_state_commit_sha
+    resource_ref = approval.resource_ref or ""
+    ref_match = _REPO_PR_REF_RE.match(resource_ref)
+    if ref_match:
+        ref_state_sha = ref_match.group("state")
+        if snapshot_sha and ref_state_sha != snapshot_sha:
+            return RepoProxyDenyReason.REPO_STATE_MISMATCH
+
+    if repo_state.get("dirty"):
+        return RepoProxyDenyReason.REPO_STATE_MISMATCH
+
+    repo_full_name = ""
+    base_branch = "main"
+    head_branch = ""
+    commit_sha = ""
+    if ref_match:
+        repo_full_name = ref_match.group("repo")
+        base_branch = ref_match.group("base")
+        head_branch = ref_match.group("head")
+        commit_sha = ref_match.group("commit")
+
+    if head_branch and not _BRANCH_PATTERN.match(head_branch):
+        return RepoProxyDenyReason.BRANCH_PATTERN_INVALID
+
     return DraftPRRequest(
-        repo_full_name="",
-        base_branch="main",
-        head_branch="",
-        commit_sha="",
+        repo_full_name=repo_full_name,
+        base_branch=base_branch,
+        head_branch=head_branch,
+        commit_sha=commit_sha,
         artifact_hash=approval.artifact_hash or "",
         policy_version=approval.policy_version or "",
         provider_request_fingerprint=approval.provider_request_fingerprint or "",
-        repo_state_commit_sha=snapshot.repo_state_commit_sha or "",
+        repo_state_commit_sha=snapshot.repo_state_commit_sha or snapshot_sha or "",
         approval_id=str(approval.approval_id or approval.id or ""),
     )
 

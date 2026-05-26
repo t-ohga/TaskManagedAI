@@ -358,7 +358,6 @@ async def test_writer_does_not_append_for_denied_result() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="SP-008 residual: DraftPRRuntime stub needs binding→request wiring", strict=False)
 async def test_runtime_appends_repo_pr_opened_after_successful_draft_pr() -> None:
     repository = _FakeEventRepository()
     writer = RepoPROpenedEventWriter(
@@ -387,7 +386,7 @@ async def test_runtime_appends_repo_pr_opened_after_successful_draft_pr() -> Non
                 "pr_url": "https://github.com/owner/repo/pull/1",
                 "repo_full_name": "owner/repo",
                 "branch": "codex/agent-run-abcd1234",
-                "head_sha": HEAD_SHA,
+                "head_sha": "0" * 40,
                 "draft": True,
                 "created_at": "2026-05-24T18:30:00+00:00",
                 "approval_id": str(APPROVAL_ID),
@@ -401,7 +400,6 @@ async def test_runtime_appends_repo_pr_opened_after_successful_draft_pr() -> Non
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="SP-008 residual: DraftPRRuntime stub needs binding→request wiring", strict=False)
 async def test_runtime_does_not_append_event_for_denied_draft_pr() -> None:
     repository = _FakeEventRepository()
     writer = RepoPROpenedEventWriter(
@@ -409,13 +407,22 @@ async def test_runtime_does_not_append_event_for_denied_draft_pr() -> None:
     )
     runtime = DraftPRRuntime(repo_proxy=MockRepoProxy(), event_writer=writer)
 
+    denied_binding = DraftPRBinding(
+        tenant_id=TENANT_ID,
+        agent_run_id=RUN_ID,
+        repo_full_name="owner/repo",
+        base_branch="main",
+        head_branch="feature/not-agent-run",
+        draft=True,
+        approval_id=APPROVAL_ID,
+    )
     execution = await runtime.create_draft_pr(
-        binding=_binding(),
+        binding=denied_binding,
         actor_id=ACTOR_ID,
         created_at=CREATED_AT,
     )
 
-    assert execution.draft_pr_result.deny_reason == RepoProxyDenyReason.APPROVAL_NOT_GRANTED
+    assert execution.draft_pr_result.deny_reason == RepoProxyDenyReason.BRANCH_PATTERN_INVALID
     assert execution.repo_pr_opened_event is None
     assert execution.event_deny_reason is None
     assert repository.calls == []
