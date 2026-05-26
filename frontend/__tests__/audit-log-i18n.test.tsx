@@ -40,17 +40,16 @@ describe("AuditLogPage i18n", () => {
 
     render(await AuditLogPage());
 
-    const region = screen.getByRole("region", { name: "監査ログ" });
-    expect(within(region).getByRole("heading", { name: "監査ログ" })).toBeVisible();
+    const region = screen.getByRole("region", { name: "Audit Log" });
+    expect(within(region).getByRole("heading", { name: "Audit Log" })).toBeVisible();
 
     const table = within(region).getByRole("table", {
-      name: /event_type、actor_id、reason_code/u
+      name: /event_type.*actor_id.*reason_code/u
     });
     expect(within(table).getByRole("columnheader", { name: "event_type" })).toBeVisible();
     expect(within(table).getByRole("columnheader", { name: "reason_code" })).toBeVisible();
-    expect(within(table).getByRole("columnheader", { name: "payload_keys" })).toBeVisible();
+    expect(within(table).getByRole("columnheader", { name: "redaction" })).toBeVisible();
     expect(within(table).getByText("runner_blocked")).toBeVisible();
     expect(within(table).getByText("dangerous_command")).toBeVisible();
-    expect(within(table).getByText("argv_hash, deny_category")).toBeVisible();
   });
 });

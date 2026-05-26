@@ -36,7 +36,7 @@ Expected:
 
 - `postgres` and `redis` are healthy before `api` and `worker`.
 - `api` responds on `http://127.0.0.1:8000/healthz`.
-- `frontend` responds on `http://127.0.0.1:3000`.
+- `frontend` responds on `http://127.0.0.1:3900`.
 
 ## §2 Backup Orchestrator Manual Invocation
 

@@ -12,9 +12,6 @@ dependencies = [
   "alembic>=1.13,<2.0",
   "arq>=0.26,<1.0",
   "asyncpg>=0.29,<1.0",
-  # SP022-T02 Phase 1 signed approval Ed25519 verify (`scripts/taskhub_signed_approval.py`)
-  # ADR-00021 §3 admin CLI security boundary、T03 SOP §7 planned contract normative 化
-  "cryptography>=42,<43",
   "fastapi>=0.115,<1.0",
   "httpx>=0.27,<1.0",
   "jsonschema>=4.0,<5.0",
@@ -34,16 +31,8 @@ dependencies = [
   "sqlalchemy[asyncio]>=2.0,<3.0",
   "uvicorn[standard]>=0.30,<1.0",
   "rfc8785>=0.1.4",
+  "cryptography>=48.0.0",
 ]
-
-[project.scripts]
-# ADR-00021 §3 host-portable admin CLI entry point (Codex R2 F-PR63-003 adopt)
-# `uv sync` 後に `taskhub <subcommand>` で起動可能、SP-012 §128 host migration drill
-# command (`taskhub backup --output ...`, `taskhub migrate --via tailscale`, 等) と整合
-taskhub = "scripts.taskhub_admin:main"
-# SP-016 project-user CLI. The installable package lives under ./cli; this root entry
-# point keeps local `uv run tm ...` smoke tests available before `uv tool install ./cli`.
-tm = "tm.main:main"
 
 [dependency-groups]
 dev = [
@@ -55,8 +44,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["backend*", "scripts*", "tm*"]
-where = [".", "cli"]
+include = ["backend*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -96,16 +84,6 @@ extend-safe-fixes = ["UP046", "UP047"]
 "tests/db/test_secret_constraints.py" = ["S107"]
 "tests/eval/test_citation_coverage_loader.py" = ["S108"]
 "tests/eval/test_secret_canary_loader.py" = ["S108"]
-# tests/scripts/ は subprocess mock の fake_run callable や approval/active-registry
-# fixture が多く、E501 (long canonical signed JSON literal) / ANN001/202 (fake_run
-# 内側 signature は monkeypatch.setattr で動的に決まる) / S108 (test artifact tmp
-# path 固定文字列) / S104 (negative test で "0.0.0.0" を claim mismatch verify) を
-# per-file ignore。production code は影響を受けない。
-# (SP022-T09 prep, 2026-05-22: latest main で latent issue 検出、CI billing-blocked
-# のため CI 上で見落とされていた。Mac single-host smoke verification の一環で fix.)
-"tests/scripts/test_taskhub_active_registry.py" = ["E501"]
-"tests/scripts/test_taskhub_destructive_lock.py" = ["E501"]
-"tests/scripts/test_taskhub_restore_orchestrator.py" = ["ANN001", "ANN202", "S104", "S108"]
 
 [tool.mypy]
 python_version = "3.12"

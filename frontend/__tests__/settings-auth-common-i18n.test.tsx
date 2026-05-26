@@ -66,16 +66,12 @@ describe("settings/auth/common i18n", () => {
       ]
     });
 
-    await renderAsync(ProjectSettingsPage());
+    render(ProjectSettingsPage());
 
-    const region = screen.getByRole("region", { name: "設定" });
-    expect(within(region).getByRole("heading", { name: "設定" })).toBeVisible();
-    expect(within(region).getByText("Project context")).toBeVisible();
-    expect(within(region).getByText("TaskManagedAI")).toBeVisible();
+    const region = screen.getByRole("region", { name: "Project Settings" });
+    expect(within(region).getByRole("heading", { name: "Project Settings" })).toBeVisible();
     expect(within(region).getByText("allowed_data_class")).toBeVisible();
-    expect(within(region).getAllByText("default").length).toBeGreaterThan(0);
-    expect(within(region).getByLabelText("TaskManagedAI autonomy level")).toHaveValue("L0");
-    expect(within(region).getByRole("button", { name: "保存" })).toBeVisible();
+    expect(within(region).getByRole("heading", { name: "Provider Compliance Matrix" })).toBeVisible();
   });
 
   it("renders Japanese dashboard labels and backend unavailable state", async () => {

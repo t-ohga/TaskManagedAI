@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000";
+const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3900";
 const backendURL = process.env.PLAYWRIGHT_BACKEND_URL ?? "http://127.0.0.1:8000";
 const devLoginToken =
   process.env.TASKMANAGEDAI_DEV_LOGIN_TOKEN ??
@@ -43,7 +43,7 @@ export default defineConfig({
       }
     },
     {
-      command: "pnpm dev --hostname 127.0.0.1 --port 3000",
+      command: "pnpm dev --hostname 127.0.0.1 --port 3900",
       url: baseURL,
       reuseExistingServer: true,
       timeout: 120_000,

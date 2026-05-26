@@ -28,6 +28,7 @@ services:
       start_period: 30s
     networks:
       - taskmanagedai_internal
+      - taskmanagedai_host
     restart: unless-stopped
 
   frontend:
@@ -41,23 +42,24 @@ services:
       TASKMANAGEDAI_ENVIRONMENT: "${TASKMANAGEDAI_ENVIRONMENT:?must be set explicitly to production|development|test}"
       NEXT_TELEMETRY_DISABLED: "1"
       HOSTNAME: "0.0.0.0"
-      PORT: "3000"
+      PORT: "3900"
       INTERNAL_API_URL: "http://api:8000"
       DEV_LOGIN_COOKIE_SECRET: "${TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET:?must be set in .env.local}"
       TASKMANAGEDAI_DEV_LOGIN_TOKEN: "${TASKMANAGEDAI_DEV_LOGIN_TOKEN:-}"
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3900:3900"
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/healthz >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3900/api/healthz >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
     networks:
       - taskmanagedai_internal
+      - taskmanagedai_host
     restart: unless-stopped
 
   worker:
@@ -126,6 +128,8 @@ networks:
   taskmanagedai_internal:
     driver: bridge
     internal: true
+  taskmanagedai_host:
+    driver: bridge
 
 volumes:
   postgres_data:

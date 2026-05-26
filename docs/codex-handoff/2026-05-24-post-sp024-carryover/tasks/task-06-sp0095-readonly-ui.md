@@ -32,7 +32,7 @@ git diff --check
 
 ## Browser Check
 
-Use a local Next server on an unused port when the shared Docker compose already owns `127.0.0.1:3000` / `:8000`.
+Use a local Next server on an unused port when the shared Docker compose already owns `127.0.0.1:3900` / `:8000`.
 
 ```bash
 INTERNAL_API_URL=http://127.0.0.1:8000 \

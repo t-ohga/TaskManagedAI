@@ -193,7 +193,7 @@ risks:
 # Observability stack
 docker compose --profile observability up -d
 curl -s http://localhost:9090/metrics | grep -E 'agent_runs_total|payload_data_class|effective_allowed_data_class'
-curl -s http://localhost:3000/api/datasources | jq
+curl -s http://localhost:3900/api/datasources | jq
 curl -s http://localhost:3100/ready  # Loki
 
 # alerting
@@ -219,7 +219,7 @@ uv run pytest tests/audit/test_audit_export_redaction.py -q  # raw secret patter
 
 # a11y / responsive
 cd frontend && pnpm exec playwright test --grep '@a11y|@responsive'
-cd frontend && pnpm exec axe http://localhost:3000/admin/tickets --rules wcag2aa,wcag21aa
+cd frontend && pnpm exec axe http://localhost:3900/admin/tickets --rules wcag2aa,wcag21aa
 
 # BL-Permission-CLI
 uv run python -m backend.app.services.repoproxy.permission_matrix --check \

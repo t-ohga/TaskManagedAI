@@ -58,7 +58,7 @@ Start all local services:
 
 The main local URLs are:
 
-- frontend: `http://127.0.0.1:3000`
+- frontend: `http://127.0.0.1:3900`
 - backend liveness: `http://127.0.0.1:8000/healthz`
 - backend readiness: `http://127.0.0.1:8000/readyz`
 

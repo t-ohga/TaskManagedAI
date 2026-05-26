@@ -60,7 +60,7 @@ echo "DEV_LOGIN_TOKEN=$DEV_LOGIN_TOKEN"
 ## 1.2 §6 dev login flow (Primary path、frontend/tests/e2e/login.spec.ts 正本同経路)
 
 ```
-ブラウザ: http://127.0.0.1:3000/dashboard
+ブラウザ: http://127.0.0.1:3900/dashboard
 ```
 
 期待動作:
@@ -78,7 +78,7 @@ echo "DEV_LOGIN_TOKEN=$DEV_LOGIN_TOKEN"
 ## 1.3 §7 Eval Dashboard
 
 ```
-ブラウザ: http://127.0.0.1:3000/eval-dashboard
+ブラウザ: http://127.0.0.1:3900/eval-dashboard
 (nav から "Eval Dashboard" link click でも可、PR #95 で nav item 追加)
 ```
 
@@ -95,7 +95,7 @@ echo "DEV_LOGIN_TOKEN=$DEV_LOGIN_TOKEN"
 ## 1.4 §8 Tickets
 
 ```
-ブラウザ: http://127.0.0.1:3000/tickets
+ブラウザ: http://127.0.0.1:3900/tickets
 ```
 
 **checklist**:
@@ -106,7 +106,7 @@ echo "DEV_LOGIN_TOKEN=$DEV_LOGIN_TOKEN"
 ## 1.5 §9 Approvals
 
 ```
-ブラウザ: http://127.0.0.1:3000/approvals
+ブラウザ: http://127.0.0.1:3900/approvals
 ```
 
 **checklist**:
@@ -116,7 +116,7 @@ echo "DEV_LOGIN_TOKEN=$DEV_LOGIN_TOKEN"
 ## 1.6 §10 Agent Runs
 
 ```
-ブラウザ: http://127.0.0.1:3000/runs
+ブラウザ: http://127.0.0.1:3900/runs
 (SOP の旧 /admin/agent-runs は誤記、PR #95 で /runs に修正)
 ```
 
@@ -128,7 +128,7 @@ echo "DEV_LOGIN_TOKEN=$DEV_LOGIN_TOKEN"
 ## 1.7 §11 Audit log
 
 ```
-ブラウザ: http://127.0.0.1:3000/audit
+ブラウザ: http://127.0.0.1:3900/audit
 (SOP の旧 /admin/audit-log は誤記、PR #95 で /audit に修正)
 ```
 
@@ -158,12 +158,12 @@ cat > ~/.taskhub/drills/mac-single-host-smoke/$(date +%Y-%m-%d)/C-ui-smoke-check
 
 | § | page | URL | 結果 |
 |---|---|---|---|
-| §6 | dev login | http://127.0.0.1:3000/dashboard → /login?next=%2Fdashboard → /dashboard | (PASS/FAIL) |
-| §7 | Eval Dashboard | http://127.0.0.1:3000/eval-dashboard | (PASS/FAIL) |
-| §8 | Tickets | http://127.0.0.1:3000/tickets | (PASS/FAIL) |
-| §9 | Approvals | http://127.0.0.1:3000/approvals | (PASS/FAIL) |
-| §10 | Agent Runs | http://127.0.0.1:3000/runs | (PASS/FAIL) |
-| §11 | Audit log | http://127.0.0.1:3000/audit | (PASS/FAIL) |
+| §6 | dev login | http://127.0.0.1:3900/dashboard → /login?next=%2Fdashboard → /dashboard | (PASS/FAIL) |
+| §7 | Eval Dashboard | http://127.0.0.1:3900/eval-dashboard | (PASS/FAIL) |
+| §8 | Tickets | http://127.0.0.1:3900/tickets | (PASS/FAIL) |
+| §9 | Approvals | http://127.0.0.1:3900/approvals | (PASS/FAIL) |
+| §10 | Agent Runs | http://127.0.0.1:3900/runs | (PASS/FAIL) |
+| §11 | Audit log | http://127.0.0.1:3900/audit | (PASS/FAIL) |
 
 完了時刻: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF

@@ -99,7 +99,7 @@ uv run pytest tests/api/test_approvals.py tests/api/test_agent_runs.py tests/api
 ```bash
 # Mac local stack で manual smoke
 docker compose ps  # 5 services healthy
-curl -X GET 'http://localhost:3000/api/v1/approvals?status=pending' \
+curl -X GET 'http://localhost:3900/api/v1/approvals?status=pending' \
   -H "Cookie: $(cat .claude/local/dev-cookie.txt)"
 # 期待: 200 + JSON array (current state は 0 件 = empty array)
 ```

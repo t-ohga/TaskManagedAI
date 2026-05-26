@@ -1,16 +1,8 @@
 ---
 id: "ADR-00021"
 title: "Host-Portable Deployment + Data Migration: Mac / Linux / VPS どれでも 1 箇所選択 + taskhub admin CLI (init/backup/restore/migrate) + age key 手動運搬 + Tailscale 閉域維持 + RTO ≤ 4h host migration drill"
-# F-PR67-010 + F-PR67-013 P2 adopt (R3 で私が partial reject した判断を撤回、
-# R4 で master plan grep 詳細により valid と確認):
-#   `docs/設計検討/2026-05-13_p0_exit_master_plan.md:106` で「ADR-00021
-#   acceptance | Sprint 12 で host migration drill PASS 後」明示、PRD-01 §523
-#   で host migration drill 必須化. SP-012 では skeleton 実装着手済だが実機
-#   drill PASS は SP-022 scope なので、acceptance 条件 unmet. accepted 化を
-#   撤回し proposed に戻す.
-status: "accepted"
+status: "proposed"
 date: "2026-05-10"
-updated_at: "2026-05-19"
 authors:
   - "t-ohga"
 related_sprints:
@@ -22,38 +14,15 @@ related_research:
   - "ADR-00007 (External exposure、Tailscale-only invariant 不変前提)"
 supersedes: null
 superseded_by: null
-# F-PR67-010/013 P2 adopt: master plan で明示された acceptance 条件
-# (host migration drill PASS、SP012-T01〜T10 完了) が unmet のため proposed
-# 維持. SP-012 で skeleton 実装着手は進めたが、accepted 化は SP-022 で実機
-# drill PASS 後.
-# F-PR67-040/047 P2 adopt (PR #67 R9/R10): R8 T00 reinterpretation (design
-# accepted + post-acceptance drill verification) で drill PASS は
-# acceptance_blocked_by から削除. F-PR67-047 P2 fix: 旧 blocker
-# "ADR-00007 同期 accepted" は ADR-00007 が同様に "ADR-00021 同期 accepted"
-# を要求しており mutual deadlock になっていた. common SP022-T00 simultaneous
-# acceptance gate を blocker に変更し cycle 解消.
-# F-R2-002 adopt (SP022-T00 PR): 旧 acceptance_blocked_by ["SP022-T00
-# pre-implementation gate trigger (ADR-00007 と同時 accepted、F-PR67-047 P2 adopt:
-# 旧 mutual blocking cycle 解消)"] は SP022-T00 で gate 完了したため accepted 後の
-# lifecycle metadata から削除。完了事実は acceptance_history に移送。
-# post_acceptance_verification (SP022-T09 実機 drill 等) は active verification
-# として残す。
-post_acceptance_verification:
-  - "SP022-T09 実機 host migration drill (Mac→VPS) RTO≤4h PASS"
-  - "SP022-T08 SP012-T01〜T10 carry-over 完了 (taskhub real I/O / 実 DB write integration / signed journal CLI / private staging E2E)"
-acceptance_target_sprint: "SP022-T00 pre-implementation gate (SP-022 着手 PR で acceptance 完了、F-PR67-043 P2 adopt: R8 reinterpretation に整合、実機 drill verification は SP022-T09 post-acceptance)"
-acceptance_history:
-  - "2026-05-10: proposed (Phase G plan-review + adversarial-review clean + Phase H second-opinion で 94 finding closure verify 完了)"
-  - "2026-05-18T00:30:00Z: tentative accepted (PR #67 F-PR67-002 P1 adopt として SP-012 で accepted 化試行、SP-012 batch 7 taskhub admin CLI + batch 10 audit_events 実装着手直前 timestamp)"
-  - "2026-05-18T09:40:06Z: tentative acceptance 撤回 (Codex PR #67 R4 F-PR67-010/013 P2 valid 確認: master plan + PRD-01 で『Sprint 12 で host migration drill PASS 後』明示、acceptance 条件 unmet のため proposed に restore、`.claude/rules/sprint-pack-adr-gate.md §12` invariant 遵守)"
-  - "2026-05-19: accepted at SP022-T00 pre-implementation gate (本 PR で design accepted、ADR-00007 と simultaneous acceptance、SP022-T09 で実機 host migration drill (Mac→VPS) RTO≤4h PASS による post-acceptance verification 必須、master plan §10-§11 update PR #68 で acceptance lifecycle 正本化済、F-PR67-047 common SP022-T00 simultaneous gate で旧 mutual blocking cycle 解消完了、acceptance_blocked_by key は accepted 後削除 = F-R2-002 adopt)"
+acceptance_blocked_by:
+  - "Phase G Codex plan-review + adversarial-review clean"
+  - "Phase H Codex second-opinion で 94 finding closure verify"
+  - "ADR-00007 update accepted (host-portable 明示化、Phase H で同期確認)"
+  - "SP-001.5 (host-portable amendment) が proposed で起票済"
+acceptance_target_sprint: "SP-001 着手直前 (Phase F-0 完了 + SP-001.5 着手と同時に proposed → accepted)"
 ---
 
-最終更新: 2026-05-19 (SP022-T00 pre-implementation gate で design accepted、ADR-00007 と simultaneous、SP022-T09 で実機 host migration drill による post-acceptance verification 待ち。§11/§12/§14 が後勝ち normative source の invariant 維持、acceptance_blocked_by key は accepted 後削除 = F-R2-002 adopt).
-
-**F-PR67-031 P2 adopt (R7)**: §8 / §11 normative section 内の SP-012 / SP-022 timing 記述 (SP-012 が P0 completion / SP-022 が happy-path 改善) は本 acceptance restore に伴い update が必要だが、本 PR scope は Sprint Exit Review のため、ADR body update は SP-022 開始時 (SP022-T00 ADR accepted 化) に同時実施する。**§11/§12/§14 が後勝ち** invariant により、frontmatter (`status: proposed` + acceptance_blocked_by + acceptance_history) が現時点での正本.
-
-**F-PR67-032 P2 adopt (R7)**: `docs/設計検討/2026-05-13_p0_exit_master_plan.md` の「Sprint 12 完了で P0 Exit 宣言 + P0.1 open」記述は本 partial_completed_with_carry_over status と矛盾、master plan update は本 PR scope 外 (Sprint Exit Review)、SP-022 開始時に別 PR で master plan §10-§11 update を提出予定. それまで master plan より frontmatter status + Sprint Pack ## Review § Sprint 12 Exit が正本)
+最終更新: 2026-05-10 (proposed 起票 + Phase G plan/adversarial + Phase H second-opinion 反映、§11/§12/§14 が **正本**、§2/§3/§5/§7 は早期 sample で **§11/§12/§14 が後勝ち**)
 
 ## 仕様 normative source 序列 (PH-F-004 fix)
 
@@ -62,7 +31,7 @@ acceptance_history:
 | §  | 状態 |
 |---|---|
 | §1 (host 選択抽象化) | normative |
-| §2 (docker-compose sample) | **§11.3 / §12.1 / §12.2 で上書き**: postgres:16-alpine@sha256:<digest> + redis:7-alpine@sha256:<digest> + DB/Redis を Docker internal expose のみ + frontend service portable + 127.0.0.1:3000 bind |
+| §2 (docker-compose sample) | **§11.3 / §12.1 / §12.2 で上書き**: postgres:16-alpine@sha256:<digest> + redis:7-alpine@sha256:<digest> + DB/Redis を Docker internal expose のみ + frontend service portable + 127.0.0.1:3900 bind |
 | §3 (`taskhub` admin CLI 仕様) | normative |
 | §4 (backup file 構造) | normative |
 | §5 (age key 安全運搬) | **§11.1 で上書き**: `cat ~/.taskhub/age/key.txt` 表示手順は撤回、secret manager (1Password) default-required、scp/direct write は break-glass 承認付き、`--include-secrets` flag は `--include-sops-env` に rename、age private key は backup file に絶対含めない |
@@ -525,9 +494,9 @@ services:
   frontend:
     image: ghcr.io/<org>/taskhub-frontend:${TASKHUB_VERSION:-latest}
     ports:
-      - "127.0.0.1:3000:3000"               # 127.0.0.1 bind 維持
+      - "127.0.0.1:3900:3000"               # 127.0.0.1 bind 維持
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/healthz"]
+      test: ["CMD", "curl", "-f", "http://localhost:3900/api/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3

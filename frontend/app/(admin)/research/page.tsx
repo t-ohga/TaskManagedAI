@@ -1,3 +1,4 @@
+import type { Route } from "next";
 import Link from "next/link";
 
 import {
@@ -78,7 +79,7 @@ function ResearchTaskTable({ tasks }: { readonly tasks: readonly ResearchTask[] 
               <th scope="row" className="border-b border-line px-3 py-2 font-medium text-ink">
                 <Link
                   className="outline-offset-2 hover:text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                  href={`/research/${task.id}`}
+                  href={`/research/${task.id}` as Route}
                 >
                   {task.title}
                 </Link>

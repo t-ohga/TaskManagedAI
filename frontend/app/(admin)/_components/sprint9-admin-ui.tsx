@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Route } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -25,7 +26,6 @@ type PanelProps = {
 
 type KeyboardNavItem = {
   label: string;
-  displayLabel: string;
   href: string;
   keys: readonly string[];
 };
@@ -85,22 +85,22 @@ const STANDARD_TRANSITION_PATH: readonly AgentRunState[] = [
 // the UI as a complete representation of exception flows (F-P2R1-002 fix).
 const EXCEPTION_TRANSITIONS = [
   { from: "running", to: "provider_refused", reason: "provider refusal" },
-  { from: "running", to: "provider_incomplete", reason: "再試行可能な incomplete" },
+  { from: "running", to: "provider_incomplete", reason: "retryable incomplete" },
   { from: "running", to: "blocked", reason: "policy / budget / runtime deny" },
-  { from: "running", to: "failed", reason: "復旧不能な失敗" },
-  { from: "running", to: "cancelled", reason: "running 中の human cancellation" },
+  { from: "running", to: "failed", reason: "unrecoverable failure" },
+  { from: "running", to: "cancelled", reason: "human cancellation during running" },
   { from: "waiting_approval", to: "cancelled", reason: "human cancellation" },
-  { from: "blocked", to: "cancelled", reason: "blocked 中の human cancellation" },
-  { from: "provider_incomplete", to: "cancelled", reason: "incomplete 中の human cancellation" },
+  { from: "blocked", to: "cancelled", reason: "human cancellation while blocked" },
+  { from: "provider_incomplete", to: "cancelled", reason: "human cancellation while incomplete" },
   { from: "generated_artifact", to: "validation_failed", reason: "schema mismatch" },
   { from: "validation_failed", to: "running", reason: "repair retry attempt" },
-  { from: "validation_failed", to: "repair_exhausted", reason: "retry 上限到達" },
+  { from: "validation_failed", to: "repair_exhausted", reason: "retry limit reached" },
   { from: "policy_linted", to: "blocked", reason: "policy / data class deny" },
   { from: "diff_ready", to: "blocked", reason: "runtime / runner deny" },
   { from: "waiting_approval", to: "blocked", reason: "stale approval invalidated" },
   { from: "blocked", to: "waiting_approval", reason: "resume requires re-approval" },
-  { from: "blocked", to: "running", reason: "原因解消後の resume" },
-  { from: "blocked", to: "failed", reason: "解消不能な blocker" },
+  { from: "blocked", to: "running", reason: "resume after cause resolved" },
+  { from: "blocked", to: "failed", reason: "unresolvable blocker" },
   { from: "provider_incomplete", to: "running", reason: "continuation succeeded" },
   { from: "provider_incomplete", to: "failed", reason: "continuation unavailable" }
 ] as const satisfies readonly {
@@ -110,40 +110,40 @@ const EXCEPTION_TRANSITIONS = [
 }[];
 
 const AGENT_RUN_STATE_DESCRIPTIONS: Record<AgentRunState, string> = {
-  queued: "Run は受理済みで、server-owned な context 解決を待っています。",
-  gathering_context: "raw secret を含めずに ContextSnapshot metadata を組み立てています。",
-  running: "Policy gate の内側で provider または runner 作業を実行中です。",
-  generated_artifact: "構造化 artifact は生成済みですが、検査完了までは信頼しません。",
-  schema_validated: "生成 artifact の output schema validation が通過しました。",
-  policy_linted: "diff または runner action の前に policy lint が完了しました。",
-  diff_ready: "承認と runner-safe execution に向けて patch が準備済みです。",
-  waiting_approval: "human approval が必要です。self-approval は引き続き禁止です。",
-  blocked: "blocked は単一 status で、理由は 3 種の blocked_reason のいずれかです。",
-  provider_refused: "Provider refusal の terminal state です。",
-  provider_incomplete: "再試行可能な provider incomplete state で、terminal ではありません。",
-  validation_failed: "repair 可能な validation failure state です。",
-  repair_exhausted: "repair retry budget を使い切った terminal state です。",
-  completed: "成功 terminal state です。",
-  failed: "失敗 terminal state です。",
-  cancelled: "キャンセル terminal state です。"
+  queued: "Run accepted and waiting for server-owned context resolution.",
+  gathering_context: "ContextSnapshot metadata is assembled without raw secrets.",
+  running: "Provider or runner work is in progress behind policy gates.",
+  generated_artifact: "Structured artifact exists, still untrusted until checks pass.",
+  schema_validated: "Output schema validation passed for the generated artifact.",
+  policy_linted: "Policy lint completed before diff or runner actions.",
+  diff_ready: "Patch is prepared for approval and runner-safe execution.",
+  waiting_approval: "Human approval is required; self-approval stays prohibited.",
+  blocked: "Single blocked status; reason is one of the three blocked_reason values.",
+  provider_refused: "Provider refusal terminal state.",
+  provider_incomplete: "Retryable provider incomplete state, not terminal.",
+  validation_failed: "Repairable validation failure state.",
+  repair_exhausted: "Repair retry budget exhausted terminal state.",
+  completed: "Successful terminal state.",
+  failed: "Failure terminal state.",
+  cancelled: "Cancellation terminal state."
 };
 
 const BLOCKED_REASON_DESCRIPTIONS: Record<BlockedReason, string> = {
-  policy_blocked: "Policy または data-class preflight が遷移を拒否しました。",
-  budget_blocked: "Cost または quota の hard limit が実行を停止しました。",
-  runtime_blocked: "Runner gateway が command、path、resource、または egress を拒否しました。"
+  policy_blocked: "Policy or data-class preflight denied the transition.",
+  budget_blocked: "Cost or quota hard limit stopped execution.",
+  runtime_blocked: "Runner gateway denied command, path, resource, or egress."
 };
 
 // F-P3R1-003 fix: keep KEYBOARD_NAV_ITEMS as readonly + literal type so that
 // `current` consumers cannot pass arbitrary strings (typo would silently lose
 // aria-current).
 const KEYBOARD_NAV_ITEMS = [
-  { label: "Tickets", displayLabel: "チケット", href: "/tickets", keys: ["g", "t"] },
-  { label: "Research", displayLabel: "リサーチ", href: "/research", keys: ["g", "e"] },
-  { label: "Approval Inbox", displayLabel: "承認待ち", href: "/approvals", keys: ["g", "i"] },
-  { label: "Agent Runs", displayLabel: "AI 実行", href: "/runs", keys: ["g", "r"] },
-  { label: "Audit Log", displayLabel: "監査ログ", href: "/audit", keys: ["g", "a"] },
-  { label: "Project Settings", displayLabel: "設定", href: "/settings", keys: ["g", "s"] }
+  { label: "Tickets", href: "/tickets", keys: ["g", "t"] },
+  { label: "Research", href: "/research", keys: ["g", "e"] },
+  { label: "Approval Inbox", href: "/approvals", keys: ["g", "i"] },
+  { label: "Agent Runs", href: "/runs", keys: ["g", "r"] },
+  { label: "Audit Log", href: "/audit", keys: ["g", "a"] },
+  { label: "Project Settings", href: "/settings", keys: ["g", "s"] }
 ] as const satisfies readonly KeyboardNavItem[];
 
 export type KeyboardNavLabel = (typeof KEYBOARD_NAV_ITEMS)[number]["label"];
@@ -151,43 +151,43 @@ export type KeyboardNavLabel = (typeof KEYBOARD_NAV_ITEMS)[number]["label"];
 const CONTEXT_SNAPSHOT_COLUMNS = [
   {
     key: "prompt_pack_version",
-    purpose: "Prompt pack の release identifier。schema metadata としてのみ表示します。"
+    purpose: "Prompt pack release identifier; displayed as schema metadata only."
   },
   {
     key: "prompt_pack_lock",
-    purpose: "Prompt pack の immutable lock reference。UI から編集できません。"
+    purpose: "Immutable lock reference for the prompt pack, never editable from UI."
   },
   {
     key: "policy_version",
-    purpose: "Provider preflight と approval binding に使う policy version です。"
+    purpose: "Policy version used for provider preflight and approval binding."
   },
   {
     key: "policy_pack_lock",
-    purpose: "Replay drift 防止に使う policy pack lock reference です。"
+    purpose: "Policy pack lock reference used to prevent replay drift."
   },
   {
     key: "repo_state",
-    purpose: "Repository state pointer。raw diff content はここでは展開しません。"
+    purpose: "Repository state pointer; raw diff content is not expanded here."
   },
   {
     key: "tool_manifest",
-    purpose: "Allowed tool manifest reference。caller-supplied tool は無視します。"
+    purpose: "Allowed tool manifest reference; caller-supplied tools are ignored."
   },
   {
     key: "evidence_set_hash",
-    purpose: "Citation coverage と claim traceability のための evidence set hash です。"
+    purpose: "Evidence set hash for citation coverage and claim traceability."
   },
   {
     key: "provider_continuation_ref",
-    purpose: "Provider raw payload を含まない continuation reference pointer です。"
+    purpose: "Provider continuation reference pointer without provider raw payload."
   },
   {
     key: "provider_request_fingerprint",
-    purpose: "Approval binding と audit correlation に使う request fingerprint です。"
+    purpose: "Request fingerprint used for approval binding and audit correlation."
   },
   {
     key: "snapshot_kind",
-    purpose: "Snapshot lifecycle kind。append-only かつ server-owned です。"
+    purpose: "Snapshot lifecycle kind; append-only and server-owned."
   }
 ] as const;
 
@@ -281,7 +281,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     status: "queued",
     at: "2026-05-13T03:00:00Z",
     actor_id: "system/orchestrator",
-    summary: "Session と project context 解決後に AgentRun が作成されました。"
+    summary: "AgentRun was created after session and project context resolution."
   },
   {
     seqNo: 2,
@@ -289,7 +289,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     status: "gathering_context",
     at: "2026-05-13T03:00:02Z",
     actor_id: "system/context-resolver",
-    summary: "raw value を含めずに ContextSnapshot 10-column metadata を固定しました。"
+    summary: "ContextSnapshot 10-column metadata was fixed without raw values."
   },
   {
     seqNo: 3,
@@ -297,7 +297,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     status: "running",
     at: "2026-05-13T03:00:03Z",
     actor_id: "system/provider-adapter",
-    summary: "Provider request は matrix preflight と fingerprint binding を通過しました。"
+    summary: "Provider request passed matrix preflight and fingerprint binding."
   },
   {
     seqNo: 4,
@@ -305,7 +305,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     status: "running",
     at: "2026-05-13T03:00:10Z",
     actor_id: "system/provider-adapter",
-    summary: "Provider response は candidate output として受理され、trusted instruction にはしません。"
+    summary: "Provider response was accepted as candidate output, not trusted instruction."
   },
   {
     seqNo: 5,
@@ -313,7 +313,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     status: "generated_artifact",
     at: "2026-05-13T03:00:11Z",
     actor_id: "system/output-validator",
-    summary: "構造化 artifact を生成し、schema validation 待ちにしました。"
+    summary: "Structured artifact was generated and queued for schema validation."
   },
   {
     seqNo: 6,
@@ -321,7 +321,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     status: "schema_validated",
     at: "2026-05-13T03:00:12Z",
     actor_id: "system/output-validator",
-    summary: "Schema validation が通過しました。"
+    summary: "Schema validation passed."
   },
   {
     seqNo: 7,
@@ -329,7 +329,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     status: "policy_linted",
     at: "2026-05-13T03:00:12Z",
     actor_id: "system/policy-engine",
-    summary: "data-class term を分離したまま policy lint が通過しました。"
+    summary: "Policy lint passed with data-class terms kept separate."
   },
   {
     seqNo: 8,
@@ -337,7 +337,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     status: "diff_ready",
     at: "2026-05-13T03:00:13Z",
     actor_id: "system/repo-proxy",
-    summary: "Patch は review 可能になりました。merge と deploy は引き続き deny です。"
+    summary: "Patch became reviewable; merge and deploy stay denied."
   },
   {
     seqNo: 9,
@@ -345,7 +345,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     status: "waiting_approval",
     at: "2026-05-13T03:00:13Z",
     actor_id: "system/approval-gate",
-    summary: "Approval request は actor、artifact、policy、fingerprint、action class に binding されました。"
+    summary: "Approval request was bound to actor, artifact, policy, fingerprint, and action class."
   },
   {
     seqNo: 10,
@@ -353,7 +353,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     status: "running",
     at: "2026-05-13T03:05:00Z",
     actor_id: "system/runner-gateway",
-    summary: "Runner は argv hash と scrubbed environment metadata だけで開始しました。"
+    summary: "Runner started with argv hash and scrubbed environment metadata only."
   },
   {
     seqNo: 11,
@@ -361,7 +361,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     status: "running",
     at: "2026-05-13T03:05:30Z",
     actor_id: "system/runner-gateway",
-    summary: "Runner は exit code と byte count を記録して完了しました。"
+    summary: "Runner completed with exit code and byte counts."
   },
   {
     seqNo: 12,
@@ -369,7 +369,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     status: "running",
     at: "2026-05-13T03:05:32Z",
     actor_id: "system/repo-proxy",
-    summary: "RepoProxy 経由で Draft PR を開きました。"
+    summary: "Draft PR was opened through RepoProxy."
   },
   {
     seqNo: 13,
@@ -377,7 +377,7 @@ const AGENT_RUN_EVENT_TIMELINE = [
     status: "completed",
     at: "2026-05-13T03:05:33Z",
     actor_id: "system/orchestrator",
-    summary: "AgentRun は completed terminal state に到達しました。"
+    summary: "AgentRun reached completed terminal state."
   }
 ] as const satisfies readonly AgentRunTimelineEvent[];
 
@@ -429,27 +429,27 @@ export function KeyboardReadinessStrip({
 }) {
   return (
     <nav
-      aria-label="キーボード対応管理ナビゲーション"
+      aria-label="Keyboard-ready admin navigation"
       className="rounded-md border border-line bg-slate-50 p-3"
     >
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <p className="text-sm font-medium text-ink">
-          管理ナビゲーション
+          Admin navigation
         </p>
         <ul className="flex flex-wrap gap-2">
           {KEYBOARD_NAV_ITEMS.map((item) => (
             <li key={item.href}>
               <Link
                 aria-current={item.label === current ? "page" : undefined}
-                aria-label={`${item.displayLabel}へ移動`}
+                aria-label={`Go to ${item.label}`}
                 className="inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-xs font-semibold text-ink outline-offset-2 hover:border-accent hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                href={item.href}
+                href={item.href as Route}
               >
                 {/* P0.1+ shortcut hint (planned; no key handler attached yet, F-P2R1-013) */}
                 <kbd aria-hidden="true" className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-muted">
                   {item.keys.join(" ")}
                 </kbd>
-                <span>{item.displayLabel}</span>
+                <span>{item.label}</span>
               </Link>
             </li>
           ))}
@@ -472,10 +472,10 @@ export function AgentRunStateGraph() {
     <div className="grid gap-4">
       <div className="rounded-md border border-line bg-slate-50 p-3">
         <h3 className="text-sm font-semibold text-ink">
-          実行グラフ: 固定 16 状態
+          Execution graph: 16 fixed states
         </h3>
         <ol
-          aria-label="AgentRun 16 状態実行グラフ"
+          aria-label="AgentRun 16 state execution graph"
           className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4"
         >
           {AGENT_RUN_STATES_16.map((state, index) => (
@@ -503,10 +503,10 @@ export function AgentRunStateGraph() {
           className="rounded-md border border-line bg-white p-3"
         >
           <h3 id="canonical-transition-path" className="text-sm font-semibold text-ink">
-            正規遷移パス
+            Canonical transition path
           </h3>
           <ol
-            aria-label="正規状態遷移パス"
+            aria-label="Canonical state transition path"
             className="mt-3 flex flex-wrap items-center gap-2"
           >
             {STANDARD_TRANSITION_PATH.map((state, index) => (
@@ -524,7 +524,7 @@ export function AgentRunStateGraph() {
 
         <section aria-labelledby="exception-transitions" className="rounded-md border border-line bg-white p-3">
           <h3 id="exception-transitions" className="text-sm font-semibold text-ink">
-            例外遷移
+            Exception transitions
           </h3>
           <ul className="mt-3 grid gap-2">
             {EXCEPTION_TRANSITIONS.map((transition) => (
@@ -546,7 +546,7 @@ export function AgentRunStateGraph() {
 
 export function BlockedReasonList() {
   return (
-    <ul aria-label="blocked_reason 固定サブ分類" className="grid gap-2 md:grid-cols-3">
+    <ul aria-label="blocked_reason fixed sub categories" className="grid gap-2 md:grid-cols-3">
       {BLOCKED_REASONS_3.map((reason) => (
         <li key={reason} className="rounded-md border border-amber-200 bg-amber-50 p-3">
           <code className="font-mono text-xs font-semibold text-attention">{reason}</code>
@@ -561,7 +561,7 @@ export function BlockedReasonList() {
 
 export function AgentRunEventTimeline() {
   return (
-    <ol aria-label="AgentRunEvent 時系列タイムライン" className="grid gap-2">
+    <ol aria-label="Chronological AgentRunEvent timeline" className="grid gap-2">
       {AGENT_RUN_EVENT_TIMELINE.map((event) => (
         <li
           key={`${event.seqNo}-${event.event_type}`}
@@ -575,7 +575,7 @@ export function AgentRunEventTimeline() {
               {event.event_type}
             </code>
             <p className="mt-1 text-xs text-muted">
-              状態: <CodePill>{event.status}</CodePill>
+              status: <CodePill>{event.status}</CodePill>
             </p>
           </div>
           <div className="text-xs leading-5 text-muted">

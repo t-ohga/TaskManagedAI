@@ -27,7 +27,6 @@ from backend.app.repositories.artifact import assert_sha256_hex
 from backend.app.repositories.base import BaseRepository
 from backend.app.schemas.research.evidence_set import ResearchSetReference
 from backend.app.services.research.evidence_set_hash import compute_evidence_set_hash
-from backend.app.services.tool_registry.loader import current_tool_manifest
 
 _CONTEXT_SNAPSHOT_REQUIRED_NONNULL_COLUMNS: tuple[str, ...] = (
     "prompt_pack_version",
@@ -94,6 +93,7 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
         policy_version: str | None = None,
         policy_pack_lock: str | None = None,
         repo_state: dict[str, Any] | None = None,
+        tool_manifest: dict[str, Any] | None = None,
         evidence_set_reference: ResearchSetReference | None = None,
         inherit_evidence_set_hash_from_snapshot_id: UUID | None = None,
         inherit_tool_manifest_from_snapshot_id: UUID | None = None,
@@ -137,11 +137,6 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
                 "inherit_evidence_set_hash_from_snapshot_id is only valid "
                 "for snapshot_kind='resume'."
             )
-        if inherit_tool_manifest_from_snapshot_id is not None and snapshot_kind != "resume":
-            raise ValueError(
-                "inherit_tool_manifest_from_snapshot_id is only valid "
-                "for snapshot_kind='resume'."
-            )
         if (
             inherit_evidence_set_hash_from_snapshot_id is not None
             and inherit_tool_manifest_from_snapshot_id is not None
@@ -151,17 +146,8 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
             raise ValueError(
                 "inherit_evidence_set_hash_from_snapshot_id and "
                 "inherit_tool_manifest_from_snapshot_id must reference the same "
-                "ContextSnapshot row."
+                "prior snapshot."
             )
-
-        if inherit_tool_manifest_from_snapshot_id is not None:
-            tool_manifest = await self._inherit_tool_manifest(
-                tenant_id,
-                run_id,
-                inherit_tool_manifest_from_snapshot_id,
-            )
-        else:
-            tool_manifest = current_tool_manifest()
 
         self._assert_snapshot_contract(
             prompt_pack_version=prompt_pack_version,
@@ -211,7 +197,7 @@ class ContextSnapshotRepository(BaseRepository[ContextSnapshot]):
             "policy_version": cast(str, policy_version),
             "policy_pack_lock": cast(str, policy_pack_lock),
             "repo_state": cast(JsonDict, repo_state),
-            "tool_manifest": tool_manifest,
+            "tool_manifest": cast(JsonDict, tool_manifest),
             "evidence_set_hash": evidence_set_hash,
             "provider_request_fingerprint": cast(JsonDict, provider_request_fingerprint),
             "snapshot_kind": cast(SnapshotKind, snapshot_kind),
@@ -433,9 +419,9 @@ async def create_snapshot(
     policy_version: str,
     policy_pack_lock: str,
     repo_state: dict[str, Any],
+    tool_manifest: dict[str, Any],
     evidence_set_reference: ResearchSetReference | None = None,
     inherit_evidence_set_hash_from_snapshot_id: UUID | None = None,
-    inherit_tool_manifest_from_snapshot_id: UUID | None = None,
     provider_continuation_ref: dict[str, Any] | None,
     provider_request_fingerprint: dict[str, Any],
     snapshot_kind: SnapshotKind | str,
@@ -448,9 +434,9 @@ async def create_snapshot(
         policy_version=policy_version,
         policy_pack_lock=policy_pack_lock,
         repo_state=repo_state,
+        tool_manifest=tool_manifest,
         evidence_set_reference=evidence_set_reference,
         inherit_evidence_set_hash_from_snapshot_id=inherit_evidence_set_hash_from_snapshot_id,
-        inherit_tool_manifest_from_snapshot_id=inherit_tool_manifest_from_snapshot_id,
         provider_continuation_ref=provider_continuation_ref,
         provider_request_fingerprint=provider_request_fingerprint,
         snapshot_kind=snapshot_kind,

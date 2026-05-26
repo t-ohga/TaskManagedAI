@@ -127,7 +127,7 @@ cd frontend && pnpm test:e2e --grep '日本語|UI label'
 
 # 手動 visual check (Mac local)
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local up
-# Chrome / Safari で http://localhost:3000/ 主要 page 確認
+# Chrome / Safari で http://localhost:3900/ 主要 page 確認
 ```
 
 ## レビュー観点

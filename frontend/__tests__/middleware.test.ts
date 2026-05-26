@@ -57,29 +57,29 @@ describe("middleware", () => {
   it("redirects unauthenticated dashboard requests to login with next path", async () => {
     // Next.js 16 NextRequest は host を `127.0.0.1` -> `localhost` に正規化するため、
     // expected location は `localhost` で記述。(2026-05-10 host normalization fix)
-    const request = new NextRequest("http://127.0.0.1:3000/dashboard");
+    const request = new NextRequest("http://127.0.0.1:3900/dashboard");
 
     const response = await middleware(request);
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/login?next=%2Fdashboard"
+      "http://localhost:3900/login?next=%2Fdashboard"
     );
   });
 
   it("does not allow unknown protected page routes by default", async () => {
-    const request = new NextRequest("http://127.0.0.1:3000/settings");
+    const request = new NextRequest("http://127.0.0.1:3900/settings");
 
     const response = await middleware(request);
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/login?next=%2Fsettings"
+      "http://localhost:3900/login?next=%2Fsettings"
     );
   });
 
   it("returns 401 for unknown protected API routes by default", async () => {
-    const request = new NextRequest("http://127.0.0.1:3000/api/private");
+    const request = new NextRequest("http://127.0.0.1:3900/api/private");
 
     const response = await middleware(request);
 
@@ -99,7 +99,7 @@ describe("middleware", () => {
     const sessionCookie = await createSignedSessionCookie({
       secret: COOKIE_SECRET
     });
-    const request = new NextRequest("http://127.0.0.1:3000/dashboard", {
+    const request = new NextRequest("http://127.0.0.1:3900/dashboard", {
       headers: {
         cookie: `${DEV_SESSION_COOKIE_NAME}=${sessionCookie}`
       }
@@ -123,7 +123,7 @@ describe("middleware", () => {
     const sessionCookie = await createSignedSessionCookie({
       secret: COOKIE_SECRET
     });
-    const request = new NextRequest("http://127.0.0.1:3000/dashboard", {
+    const request = new NextRequest("http://127.0.0.1:3900/dashboard", {
       headers: {
         cookie: `${DEV_SESSION_COOKIE_NAME}=${sessionCookie}; theme=dark`,
         "x-original-header": "kept"
@@ -143,7 +143,7 @@ describe("middleware", () => {
   it("allows explicit development fallback only outside production", async () => {
     vi.stubEnv("TASKMANAGEDAI_ENVIRONMENT", "test");
     vi.stubEnv("TASKMANAGEDAI_ALLOW_DEV_ACTOR_FALLBACK", "true");
-    const request = new NextRequest("http://127.0.0.1:3000/dashboard");
+    const request = new NextRequest("http://127.0.0.1:3900/dashboard");
 
     const response = await middleware(request);
 
@@ -159,13 +159,13 @@ describe("middleware", () => {
   it("denies fallback in production even when the fallback flag is true", async () => {
     vi.stubEnv("TASKMANAGEDAI_ENVIRONMENT", "production");
     vi.stubEnv("TASKMANAGEDAI_ALLOW_DEV_ACTOR_FALLBACK", "true");
-    const request = new NextRequest("http://127.0.0.1:3000/dashboard");
+    const request = new NextRequest("http://127.0.0.1:3900/dashboard");
 
     const response = await middleware(request);
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/login?next=%2Fdashboard"
+      "http://localhost:3900/login?next=%2Fdashboard"
     );
   });
 
@@ -174,7 +174,7 @@ describe("middleware", () => {
     const sessionCookie = await createSignedSessionCookie({
       secret: COOKIE_SECRET
     });
-    const request = new NextRequest("http://127.0.0.1:3000/dashboard", {
+    const request = new NextRequest("http://127.0.0.1:3900/dashboard", {
       headers: {
         cookie: `${DEV_SESSION_COOKIE_NAME}=${sessionCookie}tampered`
       }
@@ -184,7 +184,7 @@ describe("middleware", () => {
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/login?next=%2Fdashboard"
+      "http://localhost:3900/login?next=%2Fdashboard"
     );
     expect(response.cookies.get(DEV_SESSION_COOKIE_NAME)?.value).toBe("");
   });

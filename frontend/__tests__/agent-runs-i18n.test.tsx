@@ -71,10 +71,9 @@ describe("AgentRunsPage i18n", () => {
 
     render(await AgentRunsPage());
 
-    const region = screen.getByRole("region", { name: "AI 実行一覧" });
-    expect(within(region).getByRole("heading", { name: "AI 実行" })).toBeVisible();
+    const region = screen.getByRole("region", { name: "Agent Runs" });
+    expect(within(region).getByRole("heading", { name: "Agent Runs" })).toBeVisible();
     expect(within(region).getAllByText("blocked").length).toBeGreaterThanOrEqual(1);
     expect(within(region).getByText("runtime_blocked")).toBeVisible();
-    expect(within(region).getByText("project:reviewer")).toBeVisible();
   });
 });

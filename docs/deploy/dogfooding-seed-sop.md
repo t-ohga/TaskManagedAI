@@ -70,7 +70,7 @@ docker compose exec api uv run python -m backend.app.cli.dogfooding_seed --apply
 
 ## 5. UI 上での visualize
 
-apply 後、`http://localhost:3000/tickets` で 267 Ticket を一覧表示 (`limit=200` で 200 件 + remaining)。
+apply 後、`http://localhost:3900/tickets` で 267 Ticket を一覧表示 (`limit=200` で 200 件 + remaining)。
 
 各 Ticket は:
 

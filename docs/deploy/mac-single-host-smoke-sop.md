@@ -182,7 +182,7 @@ curl -fsS http://127.0.0.1:8000/healthz | jq .
 # expected: {"status":"ok",...}
 
 # Frontend root
-curl -fsS http://127.0.0.1:3000 | head -20
+curl -fsS http://127.0.0.1:3900 | head -20
 # expected: HTML response、Next.js 16 marker
 
 # Redis ping
@@ -236,11 +236,11 @@ grep TASKMANAGEDAI_DEV_LOGIN_TOKEN .env.local | cut -d= -f2
 ### Primary path (推奨、E2E test 正本と同経路)
 
 ```
-Mac browser で開く: http://127.0.0.1:3000/dashboard
+Mac browser で開く: http://127.0.0.1:3900/dashboard
 ```
 
 ブラウザ:
-1. middleware で未認証検知 → `http://127.0.0.1:3000/login?next=%2Fdashboard` に redirect
+1. middleware で未認証検知 → `http://127.0.0.1:3900/login?next=%2Fdashboard` に redirect
 2. login form 表示 (`/login?next=%2Fdashboard`、dev login token 入力 form)
 3. dev login token を入力 → "Sign in" click → login action 実行 + `taskmanagedai_session` cookie 発行
 4. `next` query param 経由で `/dashboard` に戻る + admin navigation 表示
@@ -249,7 +249,7 @@ Mac browser で開く: http://127.0.0.1:3000/dashboard
 ### Alternative path (root landing 経由)
 
 ```
-Mac browser で開く: http://127.0.0.1:3000/
+Mac browser で開く: http://127.0.0.1:3900/
 ```
 
 ブラウザ:
@@ -271,7 +271,7 @@ Mac browser で開く: http://127.0.0.1:3000/
 
 ## §7 Eval Dashboard 実表示 + live KPI rollup (C-2、5-10 min)
 
-ブラウザ: `http://127.0.0.1:3000/eval-dashboard` (route group `(admin)` は URL prefix に含まれない)
+ブラウザ: `http://127.0.0.1:3900/eval-dashboard` (route group `(admin)` は URL prefix に含まれない)
 
 **確認項目** (PR #91 で実装、live wiring):
 - [ ] P0 Exit verdict panel 表示 (BLOCKED or READY)
@@ -297,7 +297,7 @@ Mac browser で開く: http://127.0.0.1:3000/
 
 ## §8 Ticket 一覧 / 詳細 (C-3、10 min)
 
-ブラウザ: `http://127.0.0.1:3000/tickets`
+ブラウザ: `http://127.0.0.1:3900/tickets`
 
 **確認項目**:
 - [ ] Ticket 一覧表示 (空 list でも layout 正常)
@@ -313,7 +313,7 @@ DevTools Network tab で:
 
 ## §9 Approval Inbox (C-4、10 min)
 
-ブラウザ: `http://127.0.0.1:3000/approvals`
+ブラウザ: `http://127.0.0.1:3900/approvals`
 
 **確認項目**:
 - [ ] Approval 一覧表示 (`pending` / `approved` / `rejected` / `expired` / `invalidated` 状態区別表示)
@@ -322,7 +322,7 @@ DevTools Network tab で:
 
 ## §10 Agent Runs 一覧 (C-5、5 min)
 
-ブラウザ: `http://127.0.0.1:3000/runs` (実 route name は `runs`、SOP の旧 `/admin/agent-runs` は誤記)
+ブラウザ: `http://127.0.0.1:3900/runs` (実 route name は `runs`、SOP の旧 `/admin/agent-runs` は誤記)
 
 **確認項目**:
 - [ ] Agent Runs 一覧表示
@@ -331,7 +331,7 @@ DevTools Network tab で:
 
 ## §11 Audit Log (C-6、5 min)
 
-ブラウザ: `http://127.0.0.1:3000/audit` (実 route name は `audit`、SOP の旧 `/admin/audit-log` は誤記)
+ブラウザ: `http://127.0.0.1:3900/audit` (実 route name は `audit`、SOP の旧 `/admin/audit-log` は誤記)
 
 **確認項目**:
 - [ ] AuditEvent 一覧表示 (append-only)

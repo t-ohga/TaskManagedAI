@@ -152,7 +152,7 @@ cd frontend && pnpm test:e2e --grep 'tickets list|approvals inbox|agent runs|aud
 
 # 手動 visual check (Mac local docker compose)
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local up
-# Chrome / Safari で http://localhost:3000/{dashboard,tickets,approvals,agent-runs,audit,settings} 確認
+# Chrome / Safari で http://localhost:3900/{dashboard,tickets,approvals,agent-runs,audit,settings} 確認
 # 各 page で real data 表示 + skeleton placeholder 排除を verify
 ```
 

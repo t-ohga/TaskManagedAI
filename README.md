@@ -45,7 +45,7 @@ Frontend dependencies are locked by `frontend/pnpm-lock.yaml`. Use `pnpm install
    cd frontend
    pnpm dev
 
-The local frontend runs on `http://127.0.0.1:3000`. Use the development login token from `.env.local` on `/login`.
+The local frontend runs on `http://127.0.0.1:3900`. Use the development login token from `.env.local` on `/login`.
 
 ## Sprint 1 Seed Data
 
@@ -117,7 +117,7 @@ Host publish binds must stay on `127.0.0.1`. Public ingress must not target cont
 Public ingress is gated by the host publish rules in `docker-compose.yml`:
 
    127.0.0.1:8000:8000
-   127.0.0.1:3000:3000
+   127.0.0.1:3900:3000
    127.0.0.1:5432:5432
    127.0.0.1:6379:6379
 

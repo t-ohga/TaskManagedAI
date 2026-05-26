@@ -123,15 +123,15 @@ class Artifact(TenantIdMixin, Base):
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
-            ["tenant_id", "run_id"],
-            ["agent_runs.tenant_id", "agent_runs.id"],
-            name="artifacts_run_fkey",
-            ondelete="RESTRICT",
-        ),
-        sa.ForeignKeyConstraint(
             ["tenant_id", "project_id"],
             ["projects.tenant_id", "projects.id"],
             name="artifacts_project_fkey",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "run_id"],
+            ["agent_runs.tenant_id", "agent_runs.id"],
+            name="artifacts_run_fkey",
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
@@ -160,14 +160,9 @@ class Artifact(TenantIdMixin, Base):
             name="artifacts_uq_tenant_project_id",
         ),
         sa.Index("artifacts_idx_tenant_run_created", "tenant_id", "run_id", "created_at"),
+        sa.Index("artifacts_idx_tenant_project_created", "tenant_id", "project_id", "created_at"),
         sa.Index("artifacts_idx_tenant_run_kind", "tenant_id", "run_id", "kind"),
         sa.Index("artifacts_idx_tenant_content_hash", "tenant_id", "content_hash"),
-        sa.Index(
-            "artifacts_idx_tenant_project_created",
-            "tenant_id",
-            "project_id",
-            "created_at",
-        ),
         sa.Index(
             "artifacts_idx_tenant_parent",
             "tenant_id",
@@ -190,8 +185,10 @@ class Artifact(TenantIdMixin, Base):
         default=uuid4,
         server_default=sa.text("uuid_generate_v4()"),
     )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False
+    )
     run_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     kind: Mapped[ArtifactKind] = mapped_column(sa.Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(sa.Text, nullable=False)
     content_jsonb: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)

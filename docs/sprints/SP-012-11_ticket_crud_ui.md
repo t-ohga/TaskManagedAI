@@ -133,7 +133,7 @@ cd frontend && pnpm typecheck && pnpm lint && pnpm test
 
 # E2E (Mac local docker compose)
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local up
-# Chrome / Safari で http://localhost:3000/tickets:
+# Chrome / Safari で http://localhost:3900/tickets:
 # 1. 「+ 新規 Ticket」button click → form 入力 → submit → list で新 Ticket 表示
 # 2. Ticket 詳細 → status を 'review' に変更 → ApprovalRequest 作成 + audit_event 記録確認
 # 3. 別 actor (dev login token 別) で approve → status='closed' 確認

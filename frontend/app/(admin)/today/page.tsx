@@ -1,3 +1,4 @@
+import type { Route } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -373,7 +374,7 @@ function TicketRow({ ticket }: { ticket: TicketRead }) {
     <li className="grid gap-2 px-3 py-3 hover:bg-panel-muted">
       <div className="flex items-start justify-between gap-3">
         <Link
-          href={`/tickets/${ticket.id}`}
+          href={`/tickets/${ticket.id}` as Route}
           className="min-w-0 break-words text-sm font-semibold text-accent outline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         >
           {ticket.title}
@@ -397,7 +398,7 @@ function RunRow({ run }: { run: AgentRunListItem }) {
     <li className="grid gap-2 px-3 py-3 hover:bg-panel-muted">
       <div className="flex items-start justify-between gap-3">
         <Link
-          href={`/runs/${run.id}`}
+          href={`/runs/${run.id}` as Route}
           className="break-all font-mono text-xs font-semibold text-accent outline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         >
           {run.id}

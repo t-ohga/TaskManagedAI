@@ -23,7 +23,7 @@ retro_for_commit: "056d9bd"
 - 関連 Sprint: SP-001 (Project foundation)。本変更は CI 残 failure (`tests/e2e/approval-inbox.spec.ts` の Approval Inbox heading not visible) の root cause fix として実施した。
 - 前提 / 制約 (既存 invariant 不変):
   - production: HTTPS / Tailscale Serve TLS 終端を前提 → `secure=True` 強制 (ADR-00007 invariant 維持)
-  - development / test: CI Playwright が `http://127.0.0.1:3000` (HTTP loopback) で走る → Chromium 147 が HTTP context で `Secure` 属性付き cookie を silently drop する事象を回避
+  - development / test: CI Playwright が `http://127.0.0.1:3900` (HTTP loopback) で走る → Chromium 147 が HTTP context で `Secure` 属性付き cookie を silently drop する事象を回避
   - XSS / CSRF 防御は HttpOnly + SameSite=lax で維持 (boundary 不変)
   - cookie value 自体は HMAC-SHA256 署名済 (`create_signed_session_cookie`) → 署名検証で改ざん検知
 - ADR Gate Criteria #1 (認証・認可) 該当。`.claude/rules/sprint-pack-adr-gate.md` §10 break-glass exception の 24h 以内 retro 規約に従い proposed → accepted で起票。

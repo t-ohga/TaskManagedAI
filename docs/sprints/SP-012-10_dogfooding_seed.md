@@ -149,7 +149,7 @@ uv run pytest tests/cli/test_dogfooding_seed.py -v
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local up
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local exec api \
   uv run python -m backend.app.cli.dogfooding_seed --apply
-# Chrome / Safari で http://localhost:3000/tickets で 275 Ticket 表示確認
+# Chrome / Safari で http://localhost:3900/tickets で 275 Ticket 表示確認
 ```
 
 ## レビュー観点

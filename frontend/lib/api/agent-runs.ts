@@ -1,14 +1,20 @@
 /**
- * AgentRun API client (SP-012-9 residual wiring).
+ * Sprint 9 BL-0106: AgentRun API client (Zod schema + PENDING REDACTION).
  *
- * Backend exposes read-only list/detail routes and returns redacted event
- * metadata (`payload_keys` + redaction status) instead of raw payload values.
+ * **PENDING SPRINT 11** (Codex audit F-004 + F-008 adopt、2026-05-13):
+ * - 対応 backend route `GET /api/v1/agent_runs` / `GET /api/v1/agent_runs/{id}`
+ *   は **未実装** (現状 backend は `POST /api/v1/agent_runs/{id}/cancel` のみ)。
+ *   Sprint 11 で list / detail route + integration test を追加。
+ * - AC-HARD-02 raw secret 非露出 enforcement は `audit.ts` 同様 Sprint 11 で
+ *   `RedactedAgentRunEventPayloadSchema` として実装予定。
+ *
+ * AgentRun 16 状態 + blocked_reason 3 種 + 22 event_type を Sprint 4 / Sprint 7
+ * backend と整合 verify (Sprint 11 で contract test 追加予定、Codex F-006 adopt)。
  */
 
 import { z } from "zod";
 
 import { fetchBackendJson } from "@/lib/api/client";
-import { NoRawPayloadFieldsSchema } from "@/lib/api/redaction";
 
 // AgentRun 16 状態 (Sprint 4 で確立、本 Sprint で frontend と同期)
 export const AgentRunStatusEnum = z.enum([
@@ -40,7 +46,7 @@ export const BlockedReasonEnum = z.enum([
 
 export type BlockedReason = z.infer<typeof BlockedReasonEnum>;
 
-// AgentRun event_type 37 種 (P0.1+ SP-014 / Tool Registry events included)
+// 22 event_type (Sprint 4 で予約済、Sprint 7 で runner_* + repo_pr_opened)
 export const AgentRunEventTypeEnum = z.enum([
   "run_queued",
   "context_gathered",
@@ -85,39 +91,33 @@ export type AgentRunEventType = z.infer<typeof AgentRunEventTypeEnum>;
 
 export const AgentRunListItemSchema = z.object({
   id: z.string().uuid(),
-  tenant_id: z.number().int().positive(),
-  project_id: z.string().uuid(),
-  parent_run_id: z.string().uuid().nullable(),
+  ticket_id: z.string().uuid(),
   status: AgentRunStatusEnum,
   blocked_reason: BlockedReasonEnum.nullable(),
-  error_code: z.string().nullable(),
-  error_summary: z.string().nullable(),
-  completed_at: z.string().nullable(),
-  role_id: z.string().nullable(),
-  role_scope: z.string().nullable(),
-  orchestrator_lease_expires_at: z.string().nullable(),
-  last_progress_at: z.string().nullable(),
-  progress_seq: z.number().int().nonnegative(),
+  role_id: z.string().nullable().optional(),
+  role_scope: z.string().nullable().optional(),
+  progress_seq: z.number().int().nonnegative().nullable().optional(),
+  last_progress_at: z.string().nullable().optional(),
   created_at: z.string(),
   updated_at: z.string()
 });
 
 export type AgentRunListItem = z.infer<typeof AgentRunListItemSchema>;
 
-export const AgentRunEventSchema = NoRawPayloadFieldsSchema.pipe(z.object({
+export const AgentRunEventSchema = z.object({
   id: z.string().uuid(),
   run_id: z.string().uuid(),
   seq_no: z.number().int().nonnegative(),
   event_type: AgentRunEventTypeEnum,
-  actor_id: z.string().uuid(),
-  payload_keys: z.array(z.string()),
-  payload_redaction_status: z.enum(["keys_only", "blocked_by_secret_scan"]),
+  actor_id: z.string().uuid().nullable().optional(),
+  payload_keys: z.array(z.string()).optional().default([]),
+  payload_redaction_status: z.string().nullable().optional().default(null),
   created_at: z.string()
-}));
+}).strict();
 
 export type AgentRunEvent = z.infer<typeof AgentRunEventSchema>;
 
-export const ContextSnapshotReadSchema = NoRawPayloadFieldsSchema.pipe(z.object({
+export const ContextSnapshotReadSchema = z.object({
   id: z.string().uuid(),
   run_id: z.string().uuid(),
   prompt_pack_version: z.string(),
@@ -126,48 +126,59 @@ export const ContextSnapshotReadSchema = NoRawPayloadFieldsSchema.pipe(z.object(
   policy_pack_lock: z.string(),
   repo_state_keys: z.array(z.string()),
   tool_manifest_keys: z.array(z.string()),
-  evidence_set_hash: z.string(),
+  evidence_set_hash: z.string().nullable(),
   has_provider_continuation_ref: z.boolean(),
   provider_request_fingerprint_keys: z.array(z.string()),
-  snapshot_kind: z.enum([
-    "input",
-    "pre_tool",
-    "post_tool",
-    "resume",
-    "final"
-  ]),
+  snapshot_kind: z.enum(["input", "pre_tool", "post_tool", "resume", "final"]),
   created_at: z.string()
-}));
+}).strict();
 
 export type ContextSnapshotRead = z.infer<typeof ContextSnapshotReadSchema>;
 
-export const AgentRunListResponseSchema = z.object({
-  items: z.array(AgentRunListItemSchema),
-  total: z.number().int().nonnegative(),
-  limit: z.number().int(),
-  offset: z.number().int()
-});
-
-export type AgentRunListResponse = z.infer<typeof AgentRunListResponseSchema>;
-
 export const AgentRunDetailSchema = AgentRunListItemSchema.extend({
   events: z.array(AgentRunEventSchema),
-  context_snapshot: ContextSnapshotReadSchema.nullable()
+  context_snapshot: z
+    .object({
+      prompt_pack_version: z.string(),
+      prompt_pack_lock: z.string(),
+      policy_version: z.string(),
+      policy_pack_lock: z.string(),
+      repo_state: z.record(z.string(), z.unknown()),
+      tool_manifest: z.string(),
+      evidence_set_hash: z.string().nullable(),
+      provider_continuation_ref: z.record(z.string(), z.unknown()).nullable(),
+      provider_request_fingerprint: z.string(),
+      snapshot_kind: z.enum([
+        "input",
+        "pre_tool",
+        "post_tool",
+        "resume",
+        "final"
+      ])
+    })
+    .nullable()
 });
 
 export type AgentRunDetail = z.infer<typeof AgentRunDetailSchema>;
 
+const AgentRunListResponseSchema = z.object({
+  items: z.array(AgentRunListItemSchema),
+  total: z.number().int().nonnegative()
+});
+
+export type AgentRunListResponse = z.infer<typeof AgentRunListResponseSchema>;
+
 export async function listAgentRuns(
-  options: { status?: AgentRunStatus; role?: string; limit?: number; offset?: number } = {}
+  options: { limit?: number; offset?: number } = {}
 ): Promise<AgentRunListResponse> {
   const params = new URLSearchParams();
-  if (options.status) params.set("status", options.status);
-  if (options.role) params.set("role", options.role);
-  if (options.limit !== undefined) params.set("limit", String(options.limit));
-  if (options.offset !== undefined) params.set("offset", String(options.offset));
-  const query = params.toString();
-  const path = query ? `/api/v1/agent_runs?${query}` : "/api/v1/agent_runs";
-  return fetchBackendJson(path as `/${string}`, AgentRunListResponseSchema);
+  if (options.limit != null) params.set("limit", String(options.limit));
+  if (options.offset != null) params.set("offset", String(options.offset));
+  const qs = params.toString();
+  const path: `/${string}` = qs
+    ? (`/api/v1/agent_runs?${qs}` as `/${string}`)
+    : "/api/v1/agent_runs";
+  return fetchBackendJson<AgentRunListResponse>(path, AgentRunListResponseSchema);
 }
 
 export async function getAgentRun(id: string): Promise<AgentRunDetail> {

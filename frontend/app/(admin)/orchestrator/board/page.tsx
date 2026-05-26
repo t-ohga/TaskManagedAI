@@ -1,3 +1,4 @@
+import type { Route } from "next";
 import Link from "next/link";
 
 import { BackendApiError } from "@/lib/api/client";
@@ -62,7 +63,7 @@ type InterAgentTimelineEvent = {
   seqNo: number;
   payloadKeys: string[];
   hiddenPayloadKeyCount: number;
-  redactionStatus: string;
+  redactionStatus: string | null;
   createdAt: string;
 };
 
@@ -347,7 +348,7 @@ function RunLink({ runId }: { runId: string }) {
   return (
     <Link
       className="break-all font-mono text-xs font-semibold text-accent hover:underline"
-      href={`/runs/${runId}`}
+      href={`/runs/${runId}` as Route}
     >
       {runId}
     </Link>

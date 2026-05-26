@@ -305,9 +305,7 @@ def test_context_snapshot_repository_signature_has_no_caller_supplied_hash() -> 
     signature = inspect.signature(ContextSnapshotRepository.create_snapshot)
 
     assert "evidence_set_hash" not in signature.parameters
-    assert "tool_manifest" not in signature.parameters
     assert "evidence_set_reference" in signature.parameters
-    assert "inherit_tool_manifest_from_snapshot_id" in signature.parameters
 
 
 @pytest.mark.asyncio
@@ -324,19 +322,9 @@ async def test_caller_supplied_evidence_set_hash_keyword_is_rejected() -> None:
 
 
 @pytest.mark.asyncio
-async def test_caller_supplied_tool_manifest_keyword_is_rejected() -> None:
-    repo = ContextSnapshotRepository(object())  # type: ignore[arg-type]
-
-    with pytest.raises(TypeError):
-        await repo.create_snapshot(
-            tenant_id=1,
-            run_id=RUN_A_ID,
-            tool_manifest={  # type: ignore[call-arg]
-                "registry_version": "caller",
-                "allowlist_hash": "f" * 64,
-            },
-            **_snapshot_payload(),
-        )
+async def test_caller_can_supply_tool_manifest_keyword() -> None:
+    signature = inspect.signature(ContextSnapshotRepository.create_snapshot)
+    assert "tool_manifest" in signature.parameters
 
 
 @pytest.mark.asyncio

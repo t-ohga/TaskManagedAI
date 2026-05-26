@@ -106,9 +106,11 @@ class RepoPROpenedEventWriter:
         )
         if isinstance(payload, RepoPROpenedEventDenyReason):
             return payload
+        from uuid import UUID as _UUID
+        run_id = _UUID(binding.agent_run_id) if isinstance(binding.agent_run_id, str) else binding.agent_run_id
         return await self._event_repository.append_event(
             tenant_id=binding.tenant_id,
-            run_id=binding.agent_run_id,
+            run_id=run_id,
             event_type="repo_pr_opened",
             event_payload=payload.to_dict(),
             actor_id=actor_id,

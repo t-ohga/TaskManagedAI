@@ -67,7 +67,7 @@ class Settings(BaseSettings):
         default_factory=lambda: ["127.0.0.1", "localhost", "api", "testserver"]
     )
     cors_allowed_origins: list[str] = Field(
-        default_factory=lambda: ["http://127.0.0.1:3000", "http://localhost:3000"]
+        default_factory=lambda: ["http://127.0.0.1:3900", "http://localhost:3900"]
     )
 
     request_id_header: str = "x-request-id"
@@ -75,18 +75,13 @@ class Settings(BaseSettings):
     default_actor_id: str = "human:default"
     default_principal_id: str = "session"
 
+    active_registry_gate_enabled: bool = False
+    taskhub_host_id: str = ""
+    taskhub_config_dir: str = "/etc/taskhub"
+    memory_api_enabled: bool = False
+
     arq_queue_name: str = "taskmanagedai:jobs"
     worker_cancel_channel: str = "taskmanagedai:cancel"
-
-    # SP-012 §9.10 R10 F-001: active-registry gate (L1+L2+L3 defense-in-depth).
-    # production deployment 時に enabled=True にする (`TASKMANAGEDAI_ACTIVE_REGISTRY_GATE_ENABLED=true`).
-    # test / development default は disabled (既存 fixture / contract test を維持)、
-    # production startup で config_dir / host_id が解決できなければ fail-closed startup abort。
-    active_registry_gate_enabled: bool = False
-    taskhub_config_dir: str = "/etc/taskhub"
-    taskhub_host_id: str = ""
-    memory_api_enabled: bool = False
-    memory_auto_retrieve_enabled: bool = False
 
     @model_validator(mode="after")
     def validate_local_boundary(self) -> Self:
@@ -118,3 +113,4 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
