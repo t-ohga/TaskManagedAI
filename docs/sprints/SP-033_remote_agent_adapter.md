@@ -1,7 +1,7 @@
 ---
 id: "SP-033_remote_agent_adapter"
 type: "light"
-status: "draft"
+status: "completed"
 sprint_no: 33
 created_at: "2026-05-26"
 updated_at: "2026-05-26"

@@ -1,7 +1,7 @@
 ---
 id: "SP-027_source_trust_registry"
 type: "light"
-status: "draft"
+status: "completed"
 sprint_no: 27
 created_at: "2026-05-26"
 updated_at: "2026-05-26"

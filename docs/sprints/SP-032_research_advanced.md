@@ -1,7 +1,7 @@
 ---
 id: "SP-032_research_advanced"
 type: "light"
-status: "draft"
+status: "completed"
 sprint_no: 32
 created_at: "2026-05-26"
 updated_at: "2026-05-26"

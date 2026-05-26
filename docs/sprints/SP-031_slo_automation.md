@@ -1,7 +1,7 @@
 ---
 id: "SP-031_slo_automation"
 type: "light"
-status: "draft"
+status: "completed"
 sprint_no: 31
 created_at: "2026-05-26"
 updated_at: "2026-05-26"
