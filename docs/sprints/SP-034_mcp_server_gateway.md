@@ -7,9 +7,9 @@ created_at: "2026-05-26"
 updated_at: "2026-05-26"
 target_days: 7
 max_days: 10
-adr_refs: []
-planned_adr_refs:
-  - "ADR-00026 (MCP Server Gateway、新規起票)"
+adr_refs:
+  - "[ADR-00026](../adr/00026_mcp_server_gateway.md) # accepted 2026-05-26"
+planned_adr_refs: []
 related_sprints:
   - "SP-016_ui_cli_parity"
   - "SP-014_orchestrator_agent"
