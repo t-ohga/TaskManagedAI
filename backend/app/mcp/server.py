@@ -28,7 +28,22 @@ mcp = FastMCP(
 @mcp.tool()
 async def ticket_list(project_id: str, limit: int = 20, offset: int = 0) -> dict[str, Any]:
     """プロジェクト内のチケット一覧を取得。"""
-    return {"tickets": [], "total": 0, "limit": limit, "offset": offset, "project_id": project_id}
+    from uuid import UUID
+
+    from backend.app.mcp.api_bridge import bridge_ticket_list
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_ticket_list(
+                session,
+                tenant_id=DEFAULT_TENANT_ID,
+                project_id=UUID(project_id),
+                limit=limit,
+                offset=offset,
+            )
+    except Exception as e:
+        return {"error": str(type(e).__name__), "tickets": [], "total": 0}
 
 
 @mcp.tool()
@@ -96,7 +111,23 @@ async def ticket_create(
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """新規チケットを作成。idempotency_key で重複防止。"""
-    return {"ticket_id": "pending-wiring", "title": title, "project_id": project_id}
+    from uuid import UUID
+
+    from backend.app.mcp.api_bridge import bridge_ticket_create
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            result = await bridge_ticket_create(
+                session,
+                tenant_id=DEFAULT_TENANT_ID,
+                project_id=UUID(project_id),
+                title=title,
+                description=description,
+            )
+            return result
+    except Exception as e:
+        return {"error": str(type(e).__name__), "message": str(e)[:200]}
 
 
 @mcp.tool()
