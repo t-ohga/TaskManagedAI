@@ -6,7 +6,7 @@ import pytest
 
 from backend.app.mcp.server import mcp
 
-EXPECTED_TOOL_COUNT = 15
+EXPECTED_TOOL_COUNT = 21
 
 EXPECTED_READ_TOOLS = {
     "ticket_list",
@@ -27,6 +27,15 @@ EXPECTED_MUTATE_TOOLS = {
     "run_create",
     "run_cancel",
     "notification_resolve",
+    "superintendent_agent_register",
+    "superintendent_agent_start",
+    "superintendent_agent_stop",
+    "superintendent_dispatch",
+}
+
+EXPECTED_SUPERINTENDENT_READ_TOOLS = {
+    "superintendent_agent_list",
+    "superintendent_delegation_show",
 }
 
 HUMAN_ONLY_EXCLUDED = {

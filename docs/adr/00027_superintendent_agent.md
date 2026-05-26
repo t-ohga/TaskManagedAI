@@ -27,8 +27,9 @@ TaskManagedAI は multi-agent 基盤 (10 roles, lease, failover, kill switch, Au
 
 - actor_type enum に `superintendent` を追加
 - 1 project に最大 1 Superintendent
-- approval_decide 可能 (delegation policy 範囲内のみ)
-- **merge / deploy / secret_access は常に deny** (hardcode、policy 変更不可)
+- **approval_decide 不可** (human-only invariant 維持)
+- 低リスク自動処理は Policy Engine auto-allow (SP-024 L0-L3 拡張)
+- **merge / deploy / secret_access / provider_call / approval_decide は常に deny**
 
 ### 5 レイヤー防御
 
@@ -41,8 +42,9 @@ TaskManagedAI は multi-agent 基盤 (10 roles, lease, failover, kill switch, Au
 ### delegation policy 設計
 
 - `max_auto_approve_risk`: none / low / medium
-- `forbidden_actions`: {"merge", "deploy", "secret_access"} (不変)
+- `forbidden_actions`: {"merge", "deploy", "secret_access", "provider_call", "approval_decide"} (不変)
 - Superintendent 自身が policy を write 変更不可 (human-only)
+- control-domain lineage: Superintendent が spawn した agent の request は auto-allow 対象外
 
 ## 却下案
 

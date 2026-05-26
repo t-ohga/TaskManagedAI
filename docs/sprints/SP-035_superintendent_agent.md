@@ -1,7 +1,7 @@
 ---
 id: "SP-035_superintendent_agent"
 type: "heavy"
-status: "draft"
+status: "completed"
 sprint_no: 35
 created_at: "2026-05-26"
 updated_at: "2026-05-26"
@@ -53,8 +53,9 @@ actor_type enum 追加:
 
 - Superintendent は **1 project に最大 1 体**
 - human が明示的に Superintendent を有効化 (設定 UI or CLI)
-- Superintendent は approval_decide 可能 **ただし delegation policy の範囲内のみ**
-- merge / deploy / secret_access は **常に human-only** (Superintendent も不可)
+- **Superintendent は approval_decide 不可** (human-only invariant 維持、R1-CRITICAL-1 fix)
+- 低リスク自動処理は **Policy Engine auto-allow** (SP-024 L0-L3 拡張) として実装。`approval_requests` を決裁するのではなく、`policy_decisions` + audit に記録
+- merge / deploy / secret_access / provider_call は **常に human-only** (R1-HIGH-1 fix)
 
 ### Delegation Policy
 
@@ -65,7 +66,7 @@ class DelegationPolicy:
     max_budget_per_run: Decimal  # USD
     max_concurrent_agents: int
     allowed_providers: list[str]  # Provider Compliance Matrix subset
-    forbidden_actions: frozenset[str]  # always: {"merge", "deploy", "secret_access"}
+    forbidden_actions: frozenset[str]  # always: {"merge", "deploy", "secret_access", "provider_call", "approval_decide"}
     auto_retry_on_failure: bool
     escalate_to_human_after: int  # consecutive failures
 ```
@@ -73,7 +74,9 @@ class DelegationPolicy:
 - `none`: Superintendent は agent を起動できるが approval は全て human 待ち (L0 相当)
 - `low`: 低リスク (task_write, read_only) を自動承認、repo_write / pr_open は human 待ち
 - `medium`: repo_write も自動承認、pr_open は human 待ち
-- **merge / deploy / secret_access は常に forbidden** (policy で変更不可、hardcode)
+- **merge / deploy / secret_access / provider_call / approval_decide は常に forbidden** (policy で変更不可、hardcode)
+- delegation policy の write (変更) は **human-only** (Superintendent は read + apply のみ、R1-CRITICAL-3 fix)
+- control-domain lineage: Superintendent が spawn/assign した agent の request は auto-allow 対象外 (R1-CRITICAL-2 fix)
 
 ### Agent Lifecycle
 
@@ -93,8 +96,7 @@ Superintendent → agent_stop(agent_id) → lease revoke + process kill
 | `superintendent_agent_start` | agent process spawn | human kill switch |
 | `superintendent_agent_stop` | agent 停止 | human override |
 | `superintendent_agent_list` | 登録 agent roster | read-only |
-| `superintendent_delegation_set` | delegation policy 設定 | human override |
-| `superintendent_delegation_show` | delegation policy 確認 | read-only |
+| `superintendent_delegation_show` | delegation policy 確認 (read-only) | — |
 | `superintendent_dispatch` | ticket → agent 割当 + run 開始 | delegation policy gate |
 
 ### Workflow Orchestration
