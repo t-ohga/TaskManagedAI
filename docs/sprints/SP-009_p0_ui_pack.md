@@ -1,11 +1,11 @@
 ---
 id: "SP-009_p0_ui_pack"
 type: "heavy"
-status: "skeleton_pending_backend"
-review_summary: "Sprint 11 (2026-05-17 SP-011 Exit) で **carry-over 5 BL は未着手** のまま、Sprint 12 (P0 Acceptance) へ defer 移送。backend/app/api/tickets.py / audit_events.py 不在、agent_runs.py は POST cancel のみ。frontend RedactedAuditPayloadSchema + BL-EnumDrift contract test も未実装。Codex audit 2026-05-13 で F-004/F-006/F-008 指摘 adopt 済 + Sprint 11 main scope (Eval Harness 12 BL) 優先で carry-over は defer。Codex PR #39 R1 F-PR39-003 (P2) 反映: SP-011 PR #39 で `status: done` 昇格を試みたが、carry-over 未着手の事実が判明、`skeleton_pending_backend` 維持。"
+status: "completed"
+review_summary: "2026-05-26 closeout: 4面 golden flow E2E (PR #248) + enum drift contract + DOM secret scan (PR #247) で must_ship 残件を完遂。SP-009-5 は別 Pack で partial_skeleton 維持。"
 sprint_no: 9
 created_at: "2026-05-12"
-updated_at: "2026-05-17"
+updated_at: "2026-05-26"
 target_days: 6
 max_days: 9
 adr_refs:
