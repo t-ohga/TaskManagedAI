@@ -16,13 +16,14 @@ related_sprints:
   - "SP-013_multi_agent_orchestration"
 risks:
   - "MCP protocol version drift"
-  - "AI agent が TaskManagedAI invariant を破壊する経路"
+  - "AI agent self-registration / token mint 経路"
   - "raw secret が MCP tool response に漏れる経路"
+  - "caller-supplied server-owned field bypass"
 ---
 
 ## 目的
 
-- TaskManagedAI を **MCP Server** として公開し、Claude Code / Codex / 他の AI agent が MCP client として接続して開発タスクを管理できるようにする
+- TaskManagedAI を **MCP Server (stdio transport)** として公開し、Claude Code / Codex / 他の AI agent が MCP client として接続して開発タスクを管理できるようにする
 - AI agent が「チケット作成 → 計画 → 承認待ち → 実行 → Draft PR」を TaskManagedAI API 経由で一気通貫実行できる回路を確立する
 - 全 AI の作業を統一された監査ログ・承認ワークフロー・品質ゲートで管理する
 
@@ -37,74 +38,152 @@ risks:
 - MCP Server の marketplace 公開 (P2)
 - AI agent の自律 merge / deploy (P0 deny 維持)
 - Provider key の MCP 経由直接取得 (SecretBroker boundary 維持)
+- HTTP transport (P2、stdio transport で P1 は十分)
 
 ## 設計判断
 
-### MCP Server として公開する Tool 一覧
+### Transport: stdio-only local (R1-F1 fix)
 
-| Tool | 対応 API | AI が使うシーン |
-|---|---|---|
-| `ticket_create` | POST /api/v1/projects/{id}/tickets | タスク登録 |
-| `ticket_list` | GET /api/v1/projects/{id}/tickets | 既存タスク確認 |
-| `ticket_show` | GET /api/v1/projects/{id}/tickets/{id} | 詳細確認 |
-| `run_create` | POST /api/v1/agent_runs | AI 実行開始 |
-| `run_show` | GET /api/v1/agent_runs/{id} | 実行状態確認 |
-| `run_plan_dry_run` | POST /api/v1/onboarding/dry_run_plan | 計画ドライラン |
-| `approval_list` | GET /api/v1/approvals | 承認一覧 |
-| `approval_show` | GET /api/v1/approvals/{id} | 承認詳細 |
-| `audit_list` | GET /api/v1/audit_events | 監査ログ確認 |
-| `context_show` | GET /api/v1/me/current_project | プロジェクト情報 |
-| `kpi_show` | GET /api/v1/eval/kpi-rollup | KPI 確認 |
+- **stdio transport を採用** (HTTP transport は P2 defer)
+- Claude Code: `.claude/settings.json` の `mcpServers` に stdio command 登録
+- Codex: `.codex/config.toml` の `[mcp_servers]` に登録
+- 他 AI: stdio protocol 準拠の任意 MCP client から接続可能
+- Tailscale 閉域内で動作 (ネットワーク認可は不要、プロセス認可で十分)
 
-### AI agent 認証
+### AI Agent 認証 (R1-F2 fix)
 
-- MCP Server 起動時に Tailscale 閉域内のみアクセス可能
-- 各 AI agent は `actor_type=agent` として actors table に登録
-- capability token (TTL 5-30 分) で operation ごとに認可
-- raw secret は MCP tool response に含めない
+- **agent 登録は human/admin 限定** (agent 自身が自己登録不可)
+- admin が `taskhub agent register` CLI で agent actor を作成 → bootstrap token 発行
+- bootstrap token は TTL 30 分、one-time、human 発行のみ
+- agent は bootstrap token で初回認証 → session-scoped capability token 取得
+- capability token は TTL 5-30 分、operation bound、actor/run/fingerprint binding
+- **self-grant 禁止**: agent が自身の scope を escalation する経路なし
+- SP-016 `api_capability_tokens` 契約を流用 (project/audience/request_binding/jti/scope_constraint)
 
-### 安全境界
+### MCP Tool 一覧 (R1-F3/F6/F8 fix)
 
-- AI agent が `approval_decide` を呼べない (human-only decider invariant)
-- AI agent が `merge` / `deploy` を実行できない (P0 deny)
-- AI agent の全操作が audit_events に記録される
-- Provider Compliance Matrix による送信データ分類は維持
+| Tool | Method | API | read/mutate | annotations |
+|---|---|---|---|---|
+| `ticket_create` | POST | /api/v1/projects/{id}/tickets | mutate | `readOnlyHint=false`, `idempotentHint=false` |
+| `ticket_list` | GET | /api/v1/projects/{id}/tickets | read | `readOnlyHint=true` |
+| `ticket_show` | GET | /api/v1/projects/{id}/tickets/{id} | read | `readOnlyHint=true` |
+| `ticket_update` | PATCH | /api/v1/projects/{id}/tickets/{id} | mutate | `readOnlyHint=false`, `idempotentHint=true` |
+| `run_create` | POST | /api/v1/agent_runs | mutate | `readOnlyHint=false`, `idempotentHint=false` |
+| `run_show` | GET | /api/v1/agent_runs/{id} | read | `readOnlyHint=true` |
+| `run_cancel` | POST | /api/v1/agent_runs/{id}/cancel | mutate | `readOnlyHint=false` |
+| `run_plan_dry_run` | POST | /api/v1/onboarding/dry_run_plan | read | `readOnlyHint=true` (response-only) |
+| `approval_list` | GET | /api/v1/approvals | read | `readOnlyHint=true` |
+| `approval_show` | GET | /api/v1/approvals/{id} | read | `readOnlyHint=true` |
+| `audit_list` | GET | /api/v1/audit_events | read | `readOnlyHint=true` |
+| `context_show` | GET | /api/v1/me/current_project | read | `readOnlyHint=true` |
+| `kpi_show` | GET | /api/v1/eval/kpi-rollup | read | `readOnlyHint=true` |
+| `notification_list` | GET | /api/v1/notifications | read | `readOnlyHint=true` |
+| `notification_resolve` | POST | /api/v1/notifications/{id}/resolve | mutate | `readOnlyHint=false` |
+
+**Intentionally excluded**:
+- `approval_decide`: **human-only** (agent は approval requester のみ)
+- `repo_push` / `pr_open`: AgentRun pipeline 内部で実行 (MCP tool として直接公開しない)
+- `merge` / `deploy`: P0 deny
+
+### Input Schema: server-owned field 拒否 (R1-F3 fix)
+
+全 mutating tool の inputSchema で以下を `extra=forbid` 相当で拒否:
+- `actor_id`, `principal_id`, `tenant_id` (server-resolved from session)
+- `policy_profile`, `autonomy_level` (server-owned)
+- `approval_request_id`, `decided_by_actor_id` (approval boundary)
+- `capability_token`, `provider_payload` (SecretBroker boundary)
+
+violation 時は MCP tool result `isError: true` + error_code `caller_supplied_field_rejected`。
+
+### Response Redaction (R1-F4 fix)
+
+全 tool response で以下を除外 (allowlist DTO):
+- raw secret / provider key / capability token 生値
+- provider raw response body
+- internal error stack trace
+- canary values
+- audit の field-level redaction: `payload_keys` のみ返し `payload_values` は返さない
+- pagination: `limit` / `offset` で制御、unbounded query 禁止
+- project/actor scope: tenant_id + actor_id で filter
+
+outputSchema を各 tool に定義し、allowlist 外の field は structuredContent に含めない。
+
+### Idempotency + Multi-Agent (R1-F5 fix)
+
+- `ticket_create`: client が `idempotency_key` を送信可能。同一 key の再送は既存 ticket を返す
+- `run_create`: `(tenant_id, run_id, idempotency_key)` で重複防止
+- `run_cancel`: cancel は idempotent (既に cancelled なら 200)
+- multi-agent concurrency: lease ownership で排他制御 (SP-014 lease_manager 流用)
+- duplicate-safe conflict response: 409 Conflict + existing resource ref
+
+### Error Mapping (R1-F7 fix)
+
+| エラー種別 | MCP response |
+|---|---|
+| validation error (inputSchema) | `isError: true`, error_code |
+| auth failure | MCP protocol error (stdio transport では process exit) |
+| policy deny | `isError: true`, `policy_blocked` |
+| budget exceeded | `isError: true`, `budget_blocked` |
+| not found | `isError: true`, `not_found` |
+| server error | `isError: true`, `internal_error` (stack trace 除外) |
+
+### Long-Running run_create (R1-F7 fix)
+
+- `run_create` は run_id を即時返却 (AgentRun `queued` 状態)
+- 実行進捗は `run_show` で polling
+- MCP task support は P2 defer (stdio transport では不要)
 
 ## 実装チケット
 
 | BL | 内容 |
 |---|---|
-| BL-0300 | MCP Server skeleton (FastMCP or stdio transport) |
-| BL-0301 | 11 Tool 定義 + input schema (Zod → JSON Schema) |
-| BL-0302 | AI agent 登録 API + capability token 発行 |
-| BL-0303 | MCP → FastAPI API 橋渡し (auth + tenant context resolve) |
-| BL-0304 | response redaction (raw secret / provider key 除去) |
-| BL-0305 | .claude/settings.json MCP server 登録 (Claude Code 用) |
-| BL-0306 | .codex/config.toml MCP server 登録 (Codex 用) |
-| BL-0307 | E2E テスト (MCP client → ticket create → run → approval) |
-| BL-0308 | Sprint Pack closeout + docs |
+| BL-0300 | MCP Server skeleton (FastMCP stdio transport) |
+| BL-0301 | 15 Tool 定義 + inputSchema + outputSchema + annotations |
+| BL-0302 | admin agent 登録 CLI + bootstrap token 発行 (human-only) |
+| BL-0303 | MCP → FastAPI API 橋渡し (session resolve + server-owned field reject) |
+| BL-0304 | response redaction (allowlist DTO + field-level audit redaction) |
+| BL-0305 | idempotency key + multi-agent conflict response |
+| BL-0306 | .claude/settings.json + .codex/config.toml MCP server 登録 |
+| BL-0307 | error mapping (isError + error_code + stack trace 除外) |
+| BL-0308 | E2E テスト (MCP client → ticket create → run → approval → audit) |
+| BL-0309 | negative test (self-registration deny + caller-supplied field reject + approval decide deny) |
+| BL-0310 | Sprint Pack closeout + docs |
 
 ## タスク一覧
 
-- [ ] batch 0: ADR-00026 起票 (MCP Server Gateway) + ADR accepted
+- [ ] batch 0: ADR-00026 起票 (MCP Server Gateway、stdio transport 固定) + ADR accepted
 - [ ] batch 1: BL-0300 + BL-0301 (MCP Server skeleton + Tool 定義)
-- [ ] batch 2: BL-0302 + BL-0303 (認証 + API 橋渡し)
-- [ ] batch 3: BL-0304 + BL-0305 + BL-0306 (redaction + 設定)
-- [ ] batch 4: BL-0307 + BL-0308 (E2E + closeout)
+- [ ] batch 2: BL-0302 + BL-0303 + BL-0305 (認証 + API 橋渡し + idempotency)
+- [ ] batch 3: BL-0304 + BL-0307 (redaction + error mapping)
+- [ ] batch 4: BL-0306 (Claude Code / Codex 設定)
+- [ ] batch 5: BL-0308 + BL-0309 + BL-0310 (E2E + negative test + closeout)
 
 ## must_ship / defer_if_over_budget
 
 | must_ship | defer_if_over_budget |
 |---|---|
-| MCP Server 起動 + 11 Tool + Claude Code 接続 | Codex 接続 / 他 AI 接続 / marketplace 公開 |
+| MCP Server (stdio) + 15 Tool + Claude Code 接続 + admin agent 登録 + E2E | Codex 接続 (設定ファイルのみ提供、smoke test は defer) / HTTP transport / marketplace / task support |
 
 ## 受け入れ条件
 
 - [ ] Claude Code から MCP 経由で ticket 作成 → agent run 開始 → 状態確認ができる
 - [ ] 全操作が audit_events に記録される
-- [ ] approval_decide は human-only (AI agent 不可)
-- [ ] raw secret が MCP tool response に出ない
-- [ ] Codex からも接続可能 (設定ファイル配布)
+- [ ] approval_decide は human-only (AI agent は MCP tool として呼べない)
+- [ ] raw secret / provider key / capability token が MCP tool response に出ない
+- [ ] agent 自己登録不可 (human/admin CLI 限定)
+- [ ] caller-supplied server-owned field (actor_id/policy_profile 等) が reject される
+- [ ] ticket_create / run_create に idempotency_key が使える
+- [ ] multi-agent concurrent access で data corruption がない
+- [ ] all mutating tool に inputSchema + outputSchema + annotations 定義
+- [ ] error は isError: true + error_code (stack trace 除外)
+- [ ] **CRITICAL: ApprovalDecisionService で Actor.actor_type=="human" を必須化** (agent/service/provider/github_app decider negative test)
+- [ ] **API capability issue で non-human actor への approval_decide を deny**
+- [ ] audit_list / run_show は session actor/project scope で filter (cross-actor deny negative test)
+- [ ] notification_list は keys-only DTO (raw payload 返さない + raw secret scan)
+- [ ] idempotency key は `(tenant_id, actor_id, tool_name, key)` で bind (cross-actor replay deny)
+- [ ] MCP ingress に per-actor rate limit + max concurrent (BudgetGuard pre-spend gate)
+- [ ] auth failure は sanitized MCP error (process exit は fatal-only、stderr はログのみ)
+- [ ] stdio hardening: absolute argv, no shell, max request bytes, env allowlist
 
 ## 検証手順
 
@@ -115,12 +194,15 @@ uv run python -m backend.app.mcp_server
 # Claude Code から接続テスト
 claude --mcp-config .mcp.json
 
-# E2E
+# テスト
 uv run pytest tests/mcp/ -q
+uv run ruff check backend/app/mcp_server.py tests/mcp/
+uv run mypy backend/app/mcp_server.py
 ```
 
 ## 残リスク
 
-- MCP protocol の breaking change (version pinning で対処)
+- MCP protocol の breaking change (version pinning + CI drift test で対処)
 - AI agent が大量 request で rate limit (BudgetGuard で制御)
-- 複数 AI agent の並行 approval request 競合 (atomic claim で制御)
+- stdio transport の process lifecycle 管理 (claude code が管理)
+- 複数 AI agent の並行 approval request 競合 (atomic claim + lease ownership で制御)
