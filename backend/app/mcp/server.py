@@ -151,7 +151,22 @@ async def run_create(
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """AI 実行 (AgentRun) を開始。run_id を即時返却。"""
-    return {"run_id": "pending-wiring", "status": "queued", "ticket_id": ticket_id}
+    from uuid import UUID
+
+    from backend.app.mcp.api_bridge import bridge_run_create
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_run_create(
+                session,
+                tenant_id=DEFAULT_TENANT_ID,
+                project_id=UUID(project_id),
+                ticket_id=ticket_id,
+                purpose=purpose,
+            )
+    except Exception as e:
+        return {"error": str(type(e).__name__), "message": str(e)[:200]}
 
 
 @mcp.tool()

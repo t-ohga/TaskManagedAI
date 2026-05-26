@@ -12,6 +12,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.db.models.agent_run import AgentRun
 from backend.app.repositories.ticket import TicketRepository
 
 
@@ -65,4 +66,29 @@ async def bridge_ticket_create(
         "ticket_id": str(ticket.id),
         "title": ticket.title,
         "status": ticket.status,
+    }
+
+
+async def bridge_run_create(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    project_id: UUID,
+    ticket_id: str,
+    purpose: str,
+) -> dict[str, Any]:
+    run = AgentRun(
+        tenant_id=tenant_id,
+        project_id=project_id,
+        status="queued",
+    )
+    session.add(run)
+    await session.flush()
+    await session.commit()
+    return {
+        "run_id": str(run.id),
+        "status": run.status,
+        "project_id": str(project_id),
+        "ticket_id": ticket_id,
+        "purpose": purpose,
     }
