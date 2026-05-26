@@ -8,6 +8,7 @@ Security invariants:
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastmcp import FastMCP
@@ -164,28 +165,65 @@ async def run_cancel(run_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def superintendent_agent_register(
-    role_id: str, project_id: str, provider: str = "mock"
+    role_id: str, project_id: str, provider: str = "claude"
 ) -> dict[str, Any]:
-    """Agent を登録して role を割り当てる。Superintendent only。"""
-    return {"agent_id": "pending-wiring", "role_id": role_id, "state": "registered"}
+    """Agent を登録して role を割り当てる。provider: claude / codex / custom。"""
+    from uuid import uuid4
+
+    agent_id = str(uuid4())
+    return {"agent_id": agent_id, "role_id": role_id, "provider": provider, "state": "registered"}
 
 
 @mcp.tool()
-async def superintendent_agent_start(agent_id: str) -> dict[str, Any]:
-    """Agent プロセスを起動する。"""
-    return {"agent_id": agent_id, "state": "starting"}
+async def superintendent_agent_start(agent_id: str, provider: str = "claude") -> dict[str, Any]:
+    """Agent プロセスを起動する。Claude Code / Codex を subprocess で spawn。"""
+    from uuid import UUID
+
+    from backend.app.services.superintendent.agent_spawner import spawn_agent
+
+    try:
+        project_dir = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+        agent = await spawn_agent(
+            agent_id=UUID(agent_id),
+            provider=provider,  # type: ignore[arg-type]
+            project_dir=project_dir,
+        )
+        return {
+            "agent_id": str(agent.agent_id),
+            "pid": agent.pid,
+            "state": "starting",
+            "provider": agent.provider,
+        }
+    except Exception as e:
+        return {"agent_id": agent_id, "state": "failed", "error": str(type(e).__name__)}
 
 
 @mcp.tool()
 async def superintendent_agent_stop(agent_id: str) -> dict[str, Any]:
-    """Agent を停止する。"""
-    return {"agent_id": agent_id, "state": "stopping"}
+    """Agent プロセスを停止する。"""
+    from uuid import UUID
+
+    from backend.app.services.superintendent.agent_spawner import stop_agent
+
+    try:
+        agent = await stop_agent(UUID(agent_id))
+        if agent is None:
+            return {"agent_id": agent_id, "state": "not_found"}
+        return {
+            "agent_id": str(agent.agent_id),
+            "state": "stopped",
+            "exit_code": agent.exit_code,
+        }
+    except Exception as e:
+        return {"agent_id": agent_id, "state": "failed", "error": str(type(e).__name__)}
 
 
 @mcp.tool()
 async def superintendent_agent_list() -> dict[str, Any]:
-    """登録 agent の一覧 (role + state)。"""
-    return {"agents": []}
+    """登録 agent の一覧 (role + state + pid)。"""
+    from backend.app.services.superintendent.agent_spawner import list_agents
+
+    return {"agents": list_agents()}
 
 
 @mcp.tool()
