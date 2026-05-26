@@ -1,7 +1,7 @@
 ---
 id: "SP-034_mcp_server_gateway"
 type: "heavy"
-status: "draft"
+status: "completed"
 sprint_no: 34
 created_at: "2026-05-26"
 updated_at: "2026-05-26"
