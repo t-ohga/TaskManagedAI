@@ -1,16 +1,16 @@
 ---
 id: "SP-007_runner_sandbox"
 type: "heavy"
-status: "done_with_phase5_defer"
+status: "completed"
 sprint_no: 7
 created_at: "2026-05-08"
-updated_at: "2026-05-13"
+updated_at: "2026-05-26"
 target_days: 4.7
 max_days: 7
 adr_refs:
   - "[ADR-00008](../adr/00008_destructive_operation.md) # 2026-05-13 accepted (Sprint 7 batch 0)"
-planned_adr_refs:
-  - "[ADR-00012](../adr/00012_hook_trust_boundary.md) # 2026-05-13 proposed (Sprint 7 batch 0)、Phase 4 hooks の repo 外 trusted wrapper 実装は Phase 5 で扱う"
+  - "[ADR-00012](../adr/00012_hook_trust_boundary.md) # 2026-05-26 accepted (Phase 5C completed)"
+planned_adr_refs: []
 related_sprints:
   - "SP-006_cli_artifact"
 downstream_sprints:
@@ -445,6 +445,18 @@ audit F-001 adopt)。Phase 5 で BL-0082/0083/0084 完了 + ADR-00012 accepted �
 - **Sprint 11 (Eval Harness)**: DockerRunnerAdapter 実装 + Docker network=none + sidecar proxy + iptables/nftables / private_holdout 30+ 件 + adversarial_new 月次 / eval_harness 統合
 - **Sprint 11.5**: env scrub auto-discovery + permission audit log + Loki redaction
 - **Phase 5**: ADR-00012 accepted 化 + repo 外 trusted wrapper + sha256 manifest 完成 (PH4-F-001 / PH4-F-002 最終解消)
+
+### Phase 5 progress (2026-05-26)
+
+| phase | status | scope |
+|---|---|---|
+| 5A | completed (2026-05-24) | docs + temp-home tests/helper scaffolding |
+| 5B | completed (2026-05-24) | wrapper candidate + manifest verification in temp trust root |
+| 5C | **completed (2026-05-26)** | `~/.claude-trusted/` に wrapper + manifest install、verify PASS |
+| 5D | **completed (2026-05-26)** | ADR-00012 accepted + SP-007 status completed |
+
+Phase 5C: ユーザー承認取得後に install 実行。`verify-hook-trust-root.sh` 全 check PASS。
+ADR-00012: proposed → accepted (2026-05-26)。
 
 ### Codex R1-R6 累計 (Sprint 7 batch 1 + 2)
 
