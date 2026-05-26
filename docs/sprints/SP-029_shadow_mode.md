@@ -1,7 +1,7 @@
 ---
 id: "SP-029_shadow_mode"
 type: "light"
-status: "draft"
+status: "completed"
 sprint_no: 29
 created_at: "2026-05-26"
 updated_at: "2026-05-26"

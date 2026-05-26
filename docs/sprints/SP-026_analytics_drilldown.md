@@ -1,7 +1,7 @@
 ---
 id: "SP-026_analytics_drilldown"
 type: "light"
-status: "draft"
+status: "completed"
 sprint_no: 26
 created_at: "2026-05-26"
 updated_at: "2026-05-26"
