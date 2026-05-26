@@ -1,9 +1,8 @@
 ---
 id: "ADR-00012"
 title: "Hook Trust Boundary (repo 外 trusted wrapper + sha256 manifest)"
-status: "accepted"
+status: "proposed"
 date: "2026-05-13"
-updated_at: "2026-05-22"
 deciders:
   - "TaskManagedAI core"
 adr_gate_criteria:
@@ -42,7 +41,7 @@ Phase 4 で `.claude/hooks/` 配下に防御 hook (Bash command tool denylist / 
 
 ## 選択肢
 
-### 採用案: repo 外 trusted wrapper + sha256 manifest
+### 採用案 (proposed): repo 外 trusted wrapper + sha256 manifest
 
 **trust root**:
 
@@ -86,15 +85,13 @@ Phase 4 で `.claude/hooks/` 配下に防御 hook (Bash command tool denylist / 
 
 ## rollback 手順
 
-1. `.claude/settings.json` の `hooks.*.command` を repo 内 `.claude/hooks/dispatcher.sh` に戻す。
+1. `.claude/settings.json` の `hooks.*.command` を repo 内 `.claude/hooks/dispatcher.sh` に戻す (本 ADR proposed 化前の状態)。
 2. `~/.claude-trusted/` 配下を削除。
 3. `.claude/local/hook-state/` に snapshot state を戻す。
 
-ADR-00012 は SP-0045 batch A で accepted 化する。repo 外 trusted
-wrapper の host-level 配置は operator task として扱い、Tool Registry
-側は trust root を前提に caller-supplied boundary を実装する。
+ADR-00012 が **proposed (本 Sprint 7 では accept しない)** のため、本 Sprint 7 では実装せず Phase 5 で扱う。
 
-## 実装対象ファイル
+## 実装対象ファイル (Sprint 7 では proposed のみ、実装は Phase 5)
 
 - `~/.claude-trusted/taskmanagedai-hook-wrapper.sh` (dotfiles 管理、Phase 5)
 - `~/.claude-trusted/taskmanagedai-hook-manifest.sha256` (Phase 5)
@@ -109,9 +106,8 @@ wrapper の host-level 配置は operator task として扱い、Tool Registry
 - snapshot state が repo 外に書かれることを確認。
 - `.claude/hooks/dispatcher.sh` の改ざん → 次 hook 起動で block。
 
-## Sprint 7 / SP-0045 への影響
+## Sprint 7 への影響
 
-- 本 ADR は SP-0045 Tool Registry boundary の prerequisite として accepted。
-- Sprint 7 BL-0082 / BL-0083 / BL-0084 の host wrapper 配置は operator
-  timing へ defer。
+- 本 ADR は **proposed のまま** で Sprint 7 を進める。
+- Sprint 7 BL-0082 / BL-0083 / BL-0084 の実装は Phase 5 / Sprint 11 へ defer。
 - 代わり Sprint 7 で `.claude/hooks/dispatcher.sh` および snapshot state path (`~/.claude-trusted/` / `~/.claude-trusted-state/`) を **forbidden path に追加** することで、本 ADR accepted 化後の trust root を pre-protect する (BL-0072 forbidden path で実装)。

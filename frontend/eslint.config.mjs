@@ -12,10 +12,6 @@ const tsRules = Object.assign(
 );
 
 export default [
-  // ESLint v9 flat config: global ignores は ignores のみの object として分離
-  // (他 key と同居すると local scope 限定になり、.next/** 等の build artifact が
-  // lint scan されて誤検出される。routing-fix-2026-05-22 plan の Layer A 強化で
-  // `pnpm build` step 追加した際に副次的に発覚した既存 config bug を fix)
   {
     ignores: [
       ".next/**",
@@ -23,9 +19,7 @@ export default [
       "coverage/**",
       "playwright-report/**",
       "test-results/**"
-    ]
-  },
-  {
+    ],
     linterOptions: {
       reportUnusedDisableDirectives: "error"
     }

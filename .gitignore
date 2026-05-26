@@ -33,10 +33,6 @@ build/
 .claude/.hook-state/
 .claude/worktrees/
 
-# Claude per-session local artifacts (codex outputs / smoke logs / temp evidence)
-# Commit-worthy evidence は docs/deploy/smoke-evidence/ など public path に置く
-.claude/local/
-
 # Codex Quality Loop runtime state (local run ledgers and archives)
 .codex/plans/
 

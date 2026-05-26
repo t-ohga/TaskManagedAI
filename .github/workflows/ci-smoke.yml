@@ -57,10 +57,6 @@ jobs:
       TASKMANAGEDAI_RUN_DB_TESTS: "1"
     steps:
       - uses: actions/checkout@v4
-        # SP022-T01 R2 F-001 adopt: framework intake check で origin/main...HEAD diff を解決するため
-        # shallow checkout 不可 (actions/checkout@v4 default は fetch-depth: 1)
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -94,36 +90,6 @@ jobs:
 
       - name: Install backend dependencies
         run: uv sync --locked
-
-      - name: Framework intake check (ADR-00020 8 verify, SP022-T01)
-        # Emergency disable: set repository variable FRAMEWORK_INTAKE_CHECK_DISABLED=1 from
-        # GitHub Settings -> Variables (admin only, PR author cannot override from diff).
-        # SP022-T01 R1 F-013 adopt.
-        env:
-          FRAMEWORK_INTAKE_CHECK_DISABLED: ${{ vars.FRAMEWORK_INTAKE_CHECK_DISABLED }}
-        run: bash scripts/ci/check_framework_intake.sh
-
-      - name: Framework intake fixture tests
-        run: bash tests/scripts/test_check_framework_intake.sh
-
-      - name: Drill timer alert-only check (ADR-00021 §14.2 #4 PGA-F-013, SP022-T03)
-        # PR71 R1-004 adopt: `if:` を削除して script 内 emergency disable branch を実行、
-        # audit marker (timestamp + emergency_disable=true + retro pack 義務 + ADR PGA ref) を
-        # CI log に必ず残す。Disable 時も step 自体は実行 (script が即 exit 0)、admin が後で
-        # GitHub Actions log で disable trail を確認可能。
-        env:
-          DRILL_TIMER_ALERT_ONLY_CHECK_DISABLED: ${{ vars.DRILL_TIMER_ALERT_ONLY_CHECK_DISABLED }}
-        run: bash scripts/ci/check_drill_timer_alert_only.sh
-
-      - name: Phase E trace audit check (SP022-T04)
-        # SP022-T04 R1-F-011 adopt: canonical step name `Phase E trace audit check (SP022-T04)`.
-        # Verifies SP-022 §Phase E adversarial closure trace matrix (16 findings,
-        # 5-column header, per-row owning sprint mapping, PE-F-010 closure marker).
-        # Emergency disable: PHASE_E_TRACE_CHECK_DISABLED=1 repository variable
-        # (admin only, PR author cannot override from diff).
-        env:
-          PHASE_E_TRACE_CHECK_DISABLED: ${{ vars.PHASE_E_TRACE_CHECK_DISABLED }}
-        run: bash scripts/ci/check_phase_e_trace.sh
 
       - name: Ruff
         run: uv run ruff check backend tests

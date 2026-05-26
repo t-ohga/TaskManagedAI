@@ -11,12 +11,11 @@ related_sprints:
   - "SP-005_provider_adapter"
   - "SP-008_repo_integration"
   - "SP-011_eval_harness"
-  - "SP-014_orchestrator_agent"
 supersedes: null
 superseded_by: null
 ---
 
-最終更新: 2026-05-24 (SP-009-5 Batch E0 で Approval `request_revision` human-only action boundary を append。前: 2026-05-22 SP-014 batch 0c で policy_profile schema / 14 row seed / policy_decisions trace を accepted 実装へ反映)
+最終更新: 2026-05-09 (Sprint 3 Batch 4 R3 review F-010 fix で accepted 化)
 
 ## 背景
 
@@ -63,63 +62,6 @@ superseded_by: null
   - 本 ADR は `tool_mutating_gateway_stub` や `runner_mutation_gateway` の実装ではなく、policy action class と approval boundary の正本である。
 - テスト指針: enum 一致、初期 matrix deny (`merge` / `deploy` deny、unknown action / unknown resource_ref deny、unregistered provider deny)、`secret_access` / `provider_call` fail-closed、AC-HARD-01 policy source contract (reason_code が Sprint 5 / 11 trace と整合)、stale invalidation **5 種** (artifact_hash / diff_hash / policy_version / policy_pack_lock / provider_request_fingerprint 変化すべてを `tests/policy/test_approval_stale_invalidation.py` の fixture で検証)、self-approval / delegated actor negative、`merge` / `deploy` 実行不可、`approval_wait_ms` DB 集計、audit event の actor_id / run_id / trace_id / correlation_id / policy_version / reason_code、**schema introspection で `policy_rules` / `approval_requests` / `policy_decisions` 3 table の `tenant_id` 列 / 複合 FK / `id` 単独 FK 不在 (`tests/db/test_schema_introspection.py` 拡張) と cross-tenant negative test (`tests/security/test_tenant_isolation_negative.py` 拡張)** を確認する。
 - ADR Gate Criteria 該当: #4 AI エージェント権限を主、#3 API / event schema と #1 actor binding を補助として扱う。
-
-## SP-014 batch 0c policy_profile accepted update (2026-05-22)
-
-SP-014 batch 0c で、Phase D/E proposed だった `policy_profile` を accepted 実装へ昇格した。action_class 7 種は不変で、auto-allow は action_class 追加ではなく server-owned `policy_profile` と per-action effect matrix で表現する。
-
-### schema / seed
-
-- `policy_profiles(tenant_id, profile_id)` を追加し、許可値は `default` / `low_risk_auto_allow` の 2 種に固定する。
-- `policy_profile_action_effects(tenant_id, profile_id, action_class)` を追加し、`default + low_risk_auto_allow` × ADR-00009 7 action_class = **14 rows exact** を canonical seed とする。
-- `projects.policy_profile` は `text not null default 'default'` とし、`(tenant_id, policy_profile)` → `policy_profiles(tenant_id, profile_id)` の複合 FK で server-owned value を DB 境界へ固定する。
-- 新規 tenant でも project default FK が成立するよう、migration は既存 tenant seed に加えて `tenants_seed_policy_profiles` trigger を追加する。
-
-### policy_decisions trace
-
-`policy_decisions` に以下を追加する:
-
-- `policy_profile text not null default 'default'` (trigger default)
-- `profile_resolved_effect text not null check (profile_resolved_effect in ('allow','deny','require_approval'))`
-- `required_review_artifact_id uuid null` + `(tenant_id, required_review_artifact_id)` → `review_artifacts(tenant_id, id)` FK
-
-Tier 2 auto-allow は `approval_requests` を作らず、Policy Engine が `policy_decisions.profile_resolved_effect='allow'` と review artifact binding を残す。missing profile / missing seed row は fail-closed deny とする。
-
-### server-owned boundary
-
-`ProjectCreate` など caller-visible schema は `policy_profile` を受け取らない。repository layer も dict payload に `policy_profile` が含まれる場合は reject し、project policy profile は server / migration / policy profile resolver のみが決める。
-
-## SP-009-5 request_revision human-only boundary (2026-05-24 planning note)
-
-Approval `request_revision` is a human decision action within the existing Approval boundary. It does not add an action_class and does not grant agents a new decider capability.
-
-### Decision boundary
-
-- The requester of the original approval and the actor requesting revision must satisfy the existing self-approval guard.
-- Delegated actors that resolve to the same human through impersonation are rejected.
-- Revision request is only valid for `pending` approvals.
-- The old approval becomes `invalidated`; approve/reject decisions on that row are no longer allowed.
-
-### Server-owned data
-
-Public callers cannot supply:
-
-- replacement approval request ids
-- artifact hashes
-- diff hashes
-- policy versions
-- policy pack locks
-- provider request fingerprints
-- stale event sequence values
-
-The service snapshots these fields from the current approval and records them in `approval_revision_requests`. Supersession is set only when server-owned revised artifact handoff creates a fresh approval request.
-
-### Taxonomy impact
-
-- action_class remains the accepted 7-value taxonomy.
-- no new approval status is added in E1/E2.
-- no AgentRunEvent enum value is added in E1/E2.
-- audit event `approval_revision_requested` is metadata-only and must not copy raw rationale, raw artifact content, or provider payload values.
 
 ## 却下案
 
@@ -299,7 +241,7 @@ policy_decisions 列拡張は **行わない** (Sprint 5.5 で additive only 維
 
 ### 関連 ADR (Sprint 5.5)
 
-- ADR-00004 update §Sprint 5.5: event_type 22 → 25 拡張 (`repair_exhausted` / `trust_level_promoted` / `trust_level_promotion_denied`)、`repair_exhausted` terminal 強制、artifacts.trust_level 列追加。current final numbering は Sprint 6 batch 2 と SP-014 を経て 28 → 37 に同期済み。
+- ADR-00004 update §Sprint 5.5: event_type 22 → 25 拡張 (`repair_exhausted` / `trust_level_promoted` / `trust_level_promotion_denied`)、`repair_exhausted` terminal 強制、artifacts.trust_level 列追加、event_type numbering 整合 (Phase D-E は 26-34 にシフト)
 - ADR-00006 (SecretBroker): repair retry context redaction で `assert_no_raw_secret` を retry prompt builder で必須実行 (Sprint 5.5 で延長)
 - ADR-00010 (Provider Compliance Matrix v2): payload_data_class 算出を Input Trust Layer 側に集約 (Sprint 5.5 で延長、Sprint 5 で確立した caller-supplied 禁止 invariant 継続)
 - ADR-00002 (DB schema): artifacts.trust_level 列追加は ADR-00002 の延長として扱う (de facto accepted via Sprint 2 完了)
@@ -323,7 +265,7 @@ ADR-00025 (proposed) で導入する autonomy_level は **caller-visible project
 
 **P0 期間中の運用**: `autonomy_level` 列は **追加しない**、Policy Engine は既存 ADR-00009 §Tier 2 の `policy_profile='default'` のみで動作。`applied_level=L0` は audit event metadata として記録 (新規 column 不要)、全 mutation が approval path を通る。
 
-**P0.1 accepted 化後**: ADR-00025 + Sprint Pack SP-024 で `autonomy_level` 列追加 (ADR Gate Criteria #2 trigger) + low-risk profile 機械判定実装 + L1-L3 auto-allow path 実装。
+**P0.1 accepted 化後**: ADR-00025 + 新 Sprint Pack SP-017 候補で `autonomy_level` 列追加 (ADR Gate Criteria #2 trigger) + low-risk profile 機械判定実装 + L1-L3 auto-allow path 実装。
 
 ### auto-allow path は decider 委譲ではない (本 ADR §self-approval invariant の延長)
 
@@ -355,14 +297,14 @@ ADR-00025 の **accepted 化は Phase 5 Hook Trust Boundary 完成 + ADR-00012 a
 
 | # | source | path | enforcement |
 |---:|---|---|---|
-| 1 | DB CHECK constraint | `migrations/versions/0005_policy_rules.py` (policy_rules、Sprint 3) + `migrations/versions/0006_approval_policy_decisions.py` (approval_requests + policy_decisions、Sprint 3) | `policy_rules.action_class` / `approval_requests.action_class` / `policy_decisions.action_class` の CHECK constraint で 7 種に限定 |
+| 1 | DB CHECK constraint | `migrations/versions/0005_policy_rules.py` (policy_rules、Sprint 3) + `migrations/versions/0006_approval_policy_decisions.py` (approval_requests + policy_decisions、Sprint 3) + future `migrations/versions/00NN_p0_1_event_type_37.py` (P0.1 SP-013 prerequisite Phase F-0) | `policy_rules.action_class` / `approval_requests.action_class` / `policy_decisions.action_class` の CHECK constraint で 7 種に限定 |
 | 2 | SQLAlchemy CheckConstraint | `backend/app/db/models/policy_rule.py` / `approval_request.py` / `policy_decision.py` | ORM レベルで再 enforce |
 | 3 | Python Literal | `backend/app/domain/policy/action_class.py` | `ACTION_CLASSES: Final[frozenset[str]]` で型レベル enforce |
 | 4 | Pydantic Field validator | **P0 完成時に追加予定** (`backend/app/schemas/policy_rule.py` / `approval_request.py` / `policy_decision.py` を新規起票、現状 `backend/app/schemas/` 配下に該当 schema 未実装、F-PR12-003 反映) | API request body validation で reject、P0 完成時に SP-003 acceptance spec として追加 |
 | 5 | pytest EXPECTED constant | `tests/policy/test_action_class_enum.py` の `EXPECTED_ACTION_CLASSES` | drift detection (`set(actual) == set(expected)`) |
 | 6 (optional) | frontend TypeScript enum | `frontend/lib/domain/policy/action-class.ts` (Sprint 9+) | UI と backend の enum 同期 |
 
-ADR-00025 の `autonomy_level` enum も同等の 5+ source 整合を P0.1 SP-024 で実装する。
+ADR-00025 の `autonomy_level` enum も同等の 5+ source 整合を P0.1 SP-017 候補で実装する。
 
 ### 関連 ADR (QL-B update)
 

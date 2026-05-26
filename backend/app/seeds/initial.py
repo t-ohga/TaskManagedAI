@@ -16,7 +16,6 @@ from backend.app.db.models.repository import Repository
 from backend.app.db.models.tenant import Tenant
 from backend.app.db.models.ticket import Ticket
 from backend.app.db.models.workspace import Workspace
-from backend.app.seeds.initial_policy_profiles import seed_initial_policy_profiles
 
 DEFAULT_TENANT_ID: Final[int] = 1
 DEFAULT_TENANT_NAME: Final[str] = "default-tenant"
@@ -79,7 +78,6 @@ async def seed_initial(session: AsyncSession) -> None:
         )
         .on_conflict_do_nothing(index_elements=["id"])
     )
-    await seed_initial_policy_profiles(session, tenant_id=DEFAULT_TENANT_ID)
 
     await session.execute(
         insert(ACTOR_TABLE)
@@ -132,7 +130,7 @@ async def seed_initial(session: AsyncSession) -> None:
             slug=DEFAULT_PROJECT_SLUG,
             name=DEFAULT_PROJECT_NAME,
             status=DEFAULT_PROJECT_STATUS,
-            policy_profile="default",
+            policy_profile=None,
             metadata=_metadata(entity="project"),
         )
         .on_conflict_do_nothing(index_elements=["id"])
@@ -244,3 +242,4 @@ __all__ = [
     "DEFAULT_WORKSPACE_SLUG",
     "seed_initial",
 ]
+

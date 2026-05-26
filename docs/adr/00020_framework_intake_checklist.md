@@ -1,9 +1,8 @@
 ---
 id: "ADR-00020"
 title: "Framework Intake Checklist: license / attribution / no embed / persistence / external network / telemetry / secret canary / tenant boundary 8 verify + scripts/ci/check_framework_intake.sh"
-status: "accepted"
+status: "proposed"
 date: "2026-05-10"
-updated_at: "2026-05-19"
 authors:
   - "t-ohga"
 related_sprints:
@@ -11,21 +10,12 @@ related_sprints:
 related_research:
   - "Phase B-2 R-007 (Polyform Shield) + R-008 (full embed scope creep)"
   - "Phase E PE-F-010 (framework intake CI 機械化)"
-# F-PLAN-R2-001 + F-ADV-R5-001 + F-005 + F-R2-002 adopt (master plan §10-§11 update PR #68 +
-# SP022-T00 PR): 旧 acceptance_blocked_by ["ADR-00014/16 accepted", "P0 完了"] は SP022-T00 で
-# 再解釈 + 削除。Framework Intake Checklist は P0 全体方針として独立 acceptable (CI 機械検査 +
-# 8 verify item は multi-agent implementation に依存しない)、ADR-00014 (multi-agent
-# orchestration) / ADR-00016 (hermes integration) の P0.1+ accepted を待たずに SP022-T00
-# pre-implementation gate で simultaneous accept. acceptance_blocked_by key は accepted 後
-# 削除 (status: accepted と active blocker key の同居を回避、F-005 + F-R2-002 adopt 一貫).
-# 完了事実は acceptance_history に移送.
-acceptance_target_sprint: "SP022-T00 pre-implementation gate (SP-022 着手 PR で acceptance 完了、master plan §10-§11 update PR #68 で acceptance lifecycle 正本化済、§1.3 / §5 整合)"
-acceptance_history:
-  - "2026-05-10: proposed (Phase B-2 R-007 Polyform Shield + R-008 full embed scope creep + Phase E PE-F-010 起票)"
-  - "2026-05-19: accepted at SP022-T00 pre-implementation gate. 旧 acceptance_blocked_by ['ADR-00014/16 accepted', 'P0 完了'] は SP022-T00 で blocker 再解釈し削除 (Framework Intake Checklist は P0 全体方針として独立 acceptable、multi-agent ADR-00014/00016 から独立 accept、F-PLAN-R2-001 + F-005 + F-R2-002 adopt: status accepted と active blocker key の同居を回避). ADR-00021/00007 と simultaneous acceptance、common SP022-T00 gate trigger で promotion 完了."
+acceptance_blocked_by:
+  - "ADR-00014/16 accepted"
+  - "P0 完了"
 ---
 
-最終更新: 2026-05-19 (SP022-T00 pre-implementation gate で accepted promotion、blocker 完全削除完了、ADR-00021/00007 と simultaneous acceptance)
+最終更新: 2026-05-10 (proposed 起票)
 
 ## 背景
 

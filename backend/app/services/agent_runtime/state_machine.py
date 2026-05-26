@@ -59,13 +59,7 @@ EVENT_TYPE_FOR_TRANSITION: Mapping[
     ("running", "provider_refused"): frozenset({"provider_responded"}),
     ("running", "provider_incomplete"): frozenset({"provider_responded"}),
     ("running", "blocked"): frozenset(
-        {
-            "policy_blocked",
-            "budget_blocked",
-            "runtime_blocked",
-            "orchestrator_lease_expired",
-            "orchestrator_kill_engaged",
-        }
+        {"policy_blocked", "budget_blocked", "runtime_blocked"}
     ),
     ("policy_linted", "blocked"): frozenset({"policy_blocked"}),
     ("diff_ready", "blocked"): frozenset({"policy_blocked", "budget_blocked"}),
@@ -91,8 +85,6 @@ BLOCKED_EVENT_TYPE_REASON_MAPPING: Mapping[AgentRunEventType, BlockedReason] = {
     "policy_blocked": "policy_blocked",
     "budget_blocked": "budget_blocked",
     "runtime_blocked": "runtime_blocked",
-    "orchestrator_lease_expired": "runtime_blocked",
-    "orchestrator_kill_engaged": "runtime_blocked",
 }
 
 
@@ -141,3 +133,4 @@ __all__ = [
     "validate_event_type_for_transition",
     "validate_transition",
 ]
+

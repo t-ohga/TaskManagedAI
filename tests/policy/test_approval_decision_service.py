@@ -158,7 +158,7 @@ def _assert_integrity_error_with_any_constraint(
 
 
 async def _reset_approval_tables(session: AsyncSession) -> None:
-    await session.execute(text("truncate policy_decisions, approval_requests restart identity cascade"))
+    await session.execute(text("truncate policy_decisions, approval_requests restart identity"))
 
 
 async def _insert_tenant(session: AsyncSession, tenant_id: int, name: str) -> None:
@@ -553,3 +553,4 @@ async def test_db_check_allows_pending_with_null_decision_fields(
         await session.commit()
 
         assert await _approval_status(session) == "pending"
+

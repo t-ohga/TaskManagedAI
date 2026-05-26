@@ -28,7 +28,7 @@
 
 修正まとめ統合計画 R29 (`../設計検討/修正まとめ統合計画.md`) §3.5.4 で確定した Pack inventory を正本として登録する。`docs/実装計画/P0_バックログ.md` の `sprint_pack_ref` 列に書かれた **PLAN-01 参照名** が実 file 名と揺れる場合、本 registry を正本として alias map で解決する。
 
-### Pack inventory (canonical entries)
+### Pack inventory (match 3 + alias 6 + create_required 1 = 10 entry + match-only 12 entry)
 
 | sprint_pack_ref (PLAN-01 参照名) | actual_file (実 file 名) | resolution | notes |
 |---|---|---|---|
@@ -44,7 +44,6 @@
 | SP-007_docker_runner | SP-007_runner_sandbox.md | alias | runner sandbox が canonical 名 |
 | SP-008_github_draft_pr | SP-008_github_app_repoproxy.md | alias | RepoProxy が canonical 名 (前 session commit `369672b` で起票) |
 | SP-009_p0_ui | SP-009_p0_ui_pack.md | alias | P0 UI Pack が canonical 名 |
-| SP-009-5_p0_ui_deferred_surfaces | SP-009-5_p0_ui_deferred_surfaces.md | match | P0.1 deferred UI surfaces split from SP-009; implementation remains separately gated |
 | **SP-010_research_evidence** | **SP-010_research_evidence.md** | **match** | Sprint 10 batch 0 (BL-0113/BL-0114) commit `314b5bb` で着手済 (Codex R1-R2 clean) |
 | **SP-011_eval_harness** | **SP-011_eval_harness.md** | **match** | - |
 | **SP-0115_operational_hardening** | **SP-011-5_operational_hardening.md** | **alias** | 命名揺れ整理 (SP-0115 → SP-011-5) |
@@ -53,11 +52,7 @@
 | SP-014_orchestrator_agent | SP-014_orchestrator_agent.md | match | P0.1+ sealed |
 | SP-015_inter_agent_communication | SP-015_inter_agent_communication.md | match | P0.1+ sealed |
 | SP-016_ui_cli_parity | SP-016_ui_cli_parity.md | match | CLI canonical name `tm` 維持 (R29 §6 U-04) |
-| SP-017_ai_society_visualization | SP-017_ai_society_visualization.md | match | P1 read-only AI Society board + role visualization; character generation remains SP-021 |
-| SP-018_hermes_memory_integration | SP-018_hermes_memory_integration.md | match | P1 memory backend completed; read-only retrieval API remains feature-flag disabled by default |
-| SP-020_curator_insights_integration | SP-020_curator_insights_integration.md | match | P1 curator + insights completed; ADR-00032 accepted, SP020-T00-T08 completed |
 | SP-022_framework_intake_hardening | SP-022_framework_intake_hardening.md | match | framework intake checklist + host migration 自動化 (P0.1+) |
-| SP-024_autonomy_policy_profiles | SP-024_autonomy_policy_profiles.md | match | P0.1 autonomy L0-L3 policy profiles completed; runtime dogfooding enablement remains separate opt-in Sprint |
 | **SP-0045_tool_registry** | **SP-0045_tool_registry.md** | **create_required** | **security boundary 独立、SP-005-5 alias 禁止** (R26 T-P2R1-012-residual)、本 PR で新規起票 |
 
 ### Alias map (PLAN-01 参照名 ↔ 実 file 名)

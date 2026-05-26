@@ -104,10 +104,7 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
 async def _reset_approval_tables(session: AsyncSession) -> None:
     await session.execute(
-        text(
-            "truncate notification_events, policy_decisions, "
-            "approval_requests restart identity cascade"
-        )
+        text("truncate notification_events, policy_decisions, approval_requests restart identity")
     )
 
 
@@ -469,3 +466,4 @@ async def test_actors_impersonated_by_self_rejected_by_db_check(
                 impersonated_by=REQUESTER_ACTOR_ID,
             )
             await session.commit()
+

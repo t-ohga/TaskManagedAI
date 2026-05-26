@@ -1,10 +1,8 @@
 ---
 id: "ADR-00016"
 title: "Hermes-Agent Integration Strategy: pattern adoption only + 48 module 4 分類 + Wave 19-23 ロードマップ + ContextSnapshot 10 列不変保証 + memory_retrieval_artifacts 別 table + sanitizer_policy_versions"
-status: "accepted"
+status: "proposed"
 date: "2026-05-10"
-updated_at: "2026-05-24"
-accepted_at: "2026-05-24"
 authors:
   - "t-ohga"
 related_sprints:
@@ -15,23 +13,17 @@ related_research:
   - "Phase B-1 4 分類最終判定 (brush-up 36 / optimize 3 / skip 9)"
   - "Phase B-2 R-007/008/013/014 + Phase E PE-F-005"
   - "docs/設計検討/harness-v5-wave-19-23-roadmap.md"
-acceptance_history:
-  - "2026-05-10: proposed (Hermes pattern adoption, ContextSnapshot boundary, memory_retrieval_artifacts, sanitizer_policy_versions)."
-  - "2026-05-24: accepted at SP018-T01 ADR readiness gate. ADR-00014 and ADR-00020 are accepted, SP-013 through SP-017 prerequisites are completed, and SP-018 is now completed. The old blocker 'Wave 19-22 completed' was reinterpreted as implementation completion evidence, not ADR acceptance prerequisite; Wave 19-21 are SP-018 implementation batches and Wave 22 remains SP-020."
+acceptance_blocked_by:
+  - "ADR-00014 + ADR-00020 accepted"
+  - "P0 完了 + ハーネス v5 Wave 19-22 完了"
 ---
 
-最終更新: 2026-05-24 (SP018-T01 ADR readiness gate で accepted promotion、runtime 実装は SP-018 後続 batch)
+最終更新: 2026-05-10 (proposed 起票)
 
 ## 背景
 
 - 決定対象: TaskManagedAI vision の **「user-scope ハーネス v5 = hermes 級 memory + context + curation + cron」** を実現するため、hermes-agent 48 module を **pattern adoption only** で取り込む scope と方針を固定。本 ADR は (1) full embed 禁止、(2) 4 分類判定 (brush-up 36 / optimize 3 / skip 9)、(3) Wave 19-23 ロードマップ、(4) ContextSnapshot 10 列不変保証、(5) memory_retrieval_artifacts 別 table、(6) **sanitizer_policy_versions** (PE-F-005 fix) の 6 点を担保.
 - ADR Gate Criteria #4 (AI 権限) + #2 (DB schema) + #5 (MCP/tool 権限、cron) 該当.
-
-## Acceptance scope (2026-05-24)
-
-本 ADR の accepted は **Hermes pattern adoption 方針と TaskManagedAI 側の境界条件を固定する** もの。`memory_records` / `memory_retrieval_artifacts` の DDL、API endpoint、retrieval service、CLI command をこの ADR promotion PR で実装したことを意味しない。実装は SP-018 batch T02+ で、test DB migration round-trip、cross-project deny negative、ContextSnapshot invariant test、SecretBroker/canary negative を満たした PR だけで進める。
-
-旧 `acceptance_blocked_by` の `ハーネス v5 Wave 19-22 完了` は循環 blocker だったため削除した。Wave 19-21 は本 ADR accepted 後の SP-018 implementation scope、Wave 22 は SP-020 curator/insights scope として扱う。
 
 ## 採用案
 

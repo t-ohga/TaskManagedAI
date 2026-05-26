@@ -7,8 +7,8 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field, field_validator
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,11 +17,6 @@ from backend.app.db.models.approval_request import ApprovalRequest
 from backend.app.db.session import get_session
 from backend.app.repositories.approval_request import ApprovalRequestRepository
 from backend.app.services.policy.decision_service import ApprovalDecisionService
-from backend.app.services.policy.revision_request_service import (
-    ApprovalRevisionConflictError,
-    ApprovalRevisionRequestService,
-    ApprovalRevisionValidationError,
-)
 
 router = APIRouter(prefix="/api/v1/approvals", tags=["approvals"])
 
@@ -119,7 +114,6 @@ class ApprovalDetail(BaseModel):
     policy_version: str
     policy_pack_lock: str | None
     provider_request_fingerprint: str | None
-    stale_after_event_seq: int | None
 
 
 class ApprovalDecideRequest(BaseModel):
@@ -127,27 +121,6 @@ class ApprovalDecideRequest(BaseModel):
 
     action: Literal["approve", "reject"]
     rationale: str | None = Field(default=None, max_length=2000)
-
-
-class ApprovalRevisionRequestBody(BaseModel):
-    """request_revision API request body."""
-
-    rationale: str = Field(min_length=1, max_length=2000)
-
-    @field_validator("rationale")
-    @classmethod
-    def rationale_must_not_be_blank(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("rationale must not be blank")
-        return normalized
-
-
-class ApprovalRevisionResponse(BaseModel):
-    """request_revision response."""
-
-    approval: ApprovalDetail
-    revision_request_id: UUID
 
 
 def _to_list_item(approval: ApprovalRequest) -> ApprovalListItem:
@@ -179,18 +152,16 @@ def _to_detail(approval: ApprovalRequest) -> ApprovalDetail:
         policy_version=approval.policy_version,
         policy_pack_lock=approval.policy_pack_lock,
         provider_request_fingerprint=approval.provider_request_fingerprint,
-        stale_after_event_seq=approval.stale_after_event_seq,
     )
 
 
 @router.get("", response_model=list[ApprovalListItem])
 async def list_pending_approvals(
-    status_filter: ApprovalStatusLiteral = Query(default="pending", alias="status"),
     tenant_id: int = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[ApprovalListItem]:
     repo = ApprovalRequestRepository(session)
-    approvals = await repo.list_by_status(tenant_id=tenant_id, status=status_filter)
+    approvals = await repo.list_by_status(tenant_id=tenant_id, status="pending")
     return [_to_list_item(approval) for approval in approvals]
 
 
@@ -243,53 +214,11 @@ async def decide_approval(
     return _to_detail(updated)
 
 
-@router.post(
-    "/{approval_id}/request_revision",
-    response_model=ApprovalRevisionResponse,
-    status_code=200,
-)
-async def request_approval_revision(
-    approval_id: UUID,
-    body: ApprovalRevisionRequestBody,
-    actor_id: UUID = Depends(get_current_actor_id),
-    tenant_id: int = Depends(get_tenant_id),
-    session: AsyncSession = Depends(get_db_session),
-) -> ApprovalRevisionResponse:
-    repo = ApprovalRequestRepository(session)
-    approval = await repo.get(tenant_id=tenant_id, id=approval_id)
-    if approval is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="approval not found")
-
-    service = ApprovalRevisionRequestService(session)
-    try:
-        result = await service.request_revision(
-            tenant_id=tenant_id,
-            approval=approval,
-            requested_by_actor_id=actor_id,
-            rationale=body.rationale,
-        )
-    except ApprovalRevisionConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except ApprovalRevisionValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(exc),
-        ) from exc
-
-    await session.commit()
-    return ApprovalRevisionResponse(
-        approval=_to_detail(result.approval),
-        revision_request_id=result.revision_request.id,
-    )
-
-
 __all__ = [
     "ActionClassLiteral",
     "ApprovalDecideRequest",
     "ApprovalDetail",
     "ApprovalListItem",
-    "ApprovalRevisionRequestBody",
-    "ApprovalRevisionResponse",
     "ApprovalStatusLiteral",
     "RiskLevelLiteral",
     "get_current_actor_id",
@@ -297,3 +226,4 @@ __all__ = [
     "get_tenant_id",
     "router",
 ]
+

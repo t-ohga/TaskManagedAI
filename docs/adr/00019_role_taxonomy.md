@@ -1,9 +1,8 @@
 ---
 id: "ADR-00019"
 title: "Role Taxonomy + Custom Role Extension: 10 標準 (code enum、reserved namespace) + project_agent_roles + role ⊥ capability + soft-delete + agent_run_project_roles link table option"
-status: "accepted"
+status: "proposed"
 date: "2026-05-10"
-accepted_at: "2026-05-22"
 authors:
   - "t-ohga"
 related_sprints:
@@ -11,12 +10,12 @@ related_sprints:
   - "SP-017_ai_society_visualization"
 related_research:
   - "docs/設計検討/phase-c-multi-agent-spec-draft.md §C-1 + §11.3 PE-F-001/PE-F-012"
-acceptance_resolved_by:
-  - "ADR-00014 accepted: 本 PR で同時 accepted"
-  - "P0 完了: 2026-05-22 PR #103 P0 Exit Declaration で完遂"
+acceptance_blocked_by:
+  - "ADR-00014 accepted"
+  - "P0 完了"
 ---
 
-最終更新: 2026-05-22 (accepted 昇格、SP-013 kickoff 直前 promotion、ADR-00014 と同時)
+最終更新: 2026-05-10 (proposed 起票)
 
 ## 背景
 

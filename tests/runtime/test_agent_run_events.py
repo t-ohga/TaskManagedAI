@@ -7,18 +7,16 @@ import os
 import re
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, cast, get_args
+from typing import Any, get_args
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
 from alembic import command
 from alembic.config import Config
-from asyncpg.exceptions import PostgresError  # type: ignore[import-untyped]
-from sqlalchemy import CheckConstraint, func, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.sql.schema import Table
 
 from backend.app.config import Settings, get_settings
 from backend.app.db.models.agent_run import AgentRun
@@ -36,11 +34,11 @@ _DEFAULT_DATABASE_URL = (
 _DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/1"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENT_RUNS_MIGRATION = _REPO_ROOT / "migrations" / "versions" / "0008_agent_runs_lifecycle.py"
+_EVENT_TYPE_25_MIGRATION = (
+    _REPO_ROOT / "migrations" / "versions" / "0011_trust_level_event_25.py"
+)
 _EVENT_TYPE_28_MIGRATION = (
     _REPO_ROOT / "migrations" / "versions" / "0013_cli_event_type_28.py"
-)
-_EVENT_TYPE_37_MIGRATION = (
-    _REPO_ROOT / "migrations" / "versions" / "0025_sp014_event_type_37.py"
 )
 
 ACTOR_ID = UUID("00000000-0000-4000-8000-000000005001")
@@ -77,15 +75,6 @@ EXPECTED_AGENT_RUN_EVENT_TYPES = (
     "cli_invocation_started",
     "cli_process_completed",
     "cli_decision_recorded",
-    "orchestrator_dispatched",
-    "orchestrator_lease_renewed",
-    "orchestrator_lease_expired",
-    "orchestrator_failover_triggered",
-    "orchestrator_kill_engaged",
-    "inter_agent_message_sent_ref",
-    "inter_agent_message_consumed_ref",
-    "tool_web_fetch_executed",
-    "tool_docs_search_executed",
 )
 
 
@@ -123,7 +112,7 @@ async def _assert_database_available(settings: Settings) -> None:
     try:
         async with engine.connect() as connection:
             await connection.execute(text("select 1"))
-    except (OSError, PostgresError, SQLAlchemyError, TimeoutError) as exc:
+    except (OSError, SQLAlchemyError, TimeoutError) as exc:
         if os.environ.get("TASKMANAGEDAI_RUN_DB_TESTS") == "1":
             raise AssertionError("AgentRun event tests require a reachable test database.") from exc
         pytest.skip("Set TASKMANAGEDAI_RUN_DB_TESTS=1 with test PostgreSQL running.")
@@ -246,22 +235,6 @@ def _check_constraint_values_from_migration(
     raise AssertionError(
         f"{constraint_name} was not found in {target.name}."
     )
-
-
-def _check_constraint_values_from_orm_model(constraint_name: str) -> set[str]:
-    from backend.app.db.models.agent_run_event import AgentRunEvent
-
-    table = cast(Table, AgentRunEvent.__table__)
-    matches = [
-        constraint
-        for constraint in table.constraints
-        if isinstance(constraint, CheckConstraint)
-        and constraint.name == constraint_name
-    ]
-    assert len(matches) == 1, (
-        f"{constraint_name} ORM CheckConstraint count mismatch: {len(matches)}"
-    )
-    return set(re.findall(r"'([^']+)'", str(matches[0].sqltext)))
 
 
 def _sqlstate(error: BaseException) -> str | None:
@@ -463,54 +436,32 @@ def test_all_agent_run_event_types_match_literal_and_order() -> None:
     assert ALL_AGENT_RUN_EVENT_TYPES == EXPECTED_AGENT_RUN_EVENT_TYPES
 
 
-def test_pydantic_agent_run_event_schema_matches_literal() -> None:
-    from backend.app.schemas.agent_run_event import AgentRunEventAppend
-
-    assert (
-        tuple(get_args(AgentRunEventAppend.model_fields["event_type"].annotation))
-        == ALL_AGENT_RUN_EVENT_TYPES
-    )
-
-
 def test_db_event_type_check_constraint_matches_event_types() -> None:
-    # SP-014 batch 0a extends the CHECK from 28 -> 37 by drop + create,
-    # so the latest source of truth lives in 0025.
+    # Sprint 6 batch 2 (migration 0013) extends the CHECK from 25 -> 28 by
+    # drop + create, so the latest source of truth lives in 0013.
     assert (
         _check_constraint_values_from_migration(
             "agent_run_events_ck_event_type",
-            _EVENT_TYPE_37_MIGRATION,
+            _EVENT_TYPE_28_MIGRATION,
         )
         == set(ALL_AGENT_RUN_EVENT_TYPES)
     )
 
 
-def test_orm_event_type_check_constraint_matches_event_types() -> None:
-    assert (
-        _check_constraint_values_from_orm_model("agent_run_events_ck_event_type")
-        == set(ALL_AGENT_RUN_EVENT_TYPES)
-    )
+def test_migration_0013_supersedes_0011_for_cli_events() -> None:
+    """Sprint 6 batch 2 では 25 → 28 を additive 拡張するため、cli_* events は
+    0013 にのみ登場し、0011 には登場しないことを fail-fast で確認する。"""
 
-
-def test_migration_0025_supersedes_0013_for_orchestrator_events() -> None:
-    """SP-014 では 28 -> 37 を additive 拡張するため、orchestrator/tool
-    events は 0025 にのみ登場し、0013 には登場しないことを fail-fast で確認する。"""
-
-    orchestrator_events = {
-        "orchestrator_dispatched",
-        "orchestrator_lease_renewed",
-        "orchestrator_lease_expired",
-        "orchestrator_failover_triggered",
-        "orchestrator_kill_engaged",
-        "inter_agent_message_sent_ref",
-        "inter_agent_message_consumed_ref",
-        "tool_web_fetch_executed",
-        "tool_docs_search_executed",
+    cli_events = {
+        "cli_invocation_started",
+        "cli_process_completed",
+        "cli_decision_recorded",
     }
+    migration_0011 = _EVENT_TYPE_25_MIGRATION.read_text(encoding="utf-8")
     migration_0013 = _EVENT_TYPE_28_MIGRATION.read_text(encoding="utf-8")
-    migration_0025 = _EVENT_TYPE_37_MIGRATION.read_text(encoding="utf-8")
-    for ev in orchestrator_events:
-        assert f"'{ev}'" not in migration_0013
-        assert f"'{ev}'" in migration_0025
+    for ev in cli_events:
+        assert f"'{ev}'" not in migration_0011
+        assert f"'{ev}'" in migration_0013
 
 
 def test_migration_and_repository_prohibited_keys_match() -> None:

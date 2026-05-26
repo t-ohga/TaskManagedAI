@@ -1,35 +1,27 @@
 ---
 id: "SP-013_multi_agent_orchestration"
 type: "heavy"
-status: "completed"
+status: "draft"
 sprint_no: 13
 created_at: "2026-05-10"
-updated_at: "2026-05-22"
-completed_at: "2026-05-22"
+updated_at: "2026-05-10"
 target_days: 5
 max_days: 7
-adr_refs:
-  - "[ADR-00014](../adr/00014_multi_agent_orchestration.md) # accepted 2026-05-22 (PR #109)、SP-013 kickoff prerequisite satisfied"
-  - "[ADR-00019](../adr/00019_role_taxonomy.md) # accepted 2026-05-22 (PR #109)、同上"
-planned_adr_refs: []
+adr_refs: []
+planned_adr_refs:
+  - "[ADR-00014](../adr/00014_multi_agent_orchestration.md) # P0.1 Sprint 13 着手時に proposed → accepted (Criteria #4 主、#1/#2/#3 補助)"
+  - "[ADR-00019](../adr/00019_role_taxonomy.md) # 同上 (Criteria #2 + #4)"
 related_sprints:
   - "SP-014_orchestrator_agent"
   - "SP-015_inter_agent_communication"
   - "SP-016_ui_cli_parity"
 risks:
   - "PE-F-001 (custom role が standard role_id を再利用)"
+  - "PE-F-007 (Phase F-0 artifacts.project_id migration 完了前の interim defense)"
   - "PE-F-012 (constraint trigger だけで cross-project role reference を防げない可能性)"
-kickoff_readiness:
-  prerequisite_p0_exit: "✅ satisfied (PR #103、2026-05-22)"
-  prerequisite_phase_f0: "✅ satisfied (SP-012-7 PR #106/#107/#108、action_class enum + artifacts.project_id materialize + AC-HARD-03 artifact-domain test)"
-  prerequisite_pe_f007_artifacts_project_id: "✅ satisfied (PR #107 migration 0019_artifacts_project_id apply 済)"
-  prerequisite_adr_00014_accepted: "✅ satisfied (PR #109、2026-05-22)"
-  prerequisite_adr_00019_accepted: "✅ satisfied (PR #109、2026-05-22)"
-  kickoff_blocker: "なし"
-  recommended_execution: "codex-all-loops mode=code 委譲 (heavy Sprint Pack、Claude orchestrator + Codex 実装 + adopt/reject/defer 判定 + 品質ゲート)"
 ---
 
-最終更新: 2026-05-22 (kickoff readiness attestation、prerequisite 全件 satisfied、draft → ready 昇格)
+最終更新: 2026-05-10
 
 ## 目的
 
@@ -148,127 +140,3 @@ uv run alembic downgrade -1 && uv run alembic upgrade head  # rollback round-tri
 ## Review
 
 (SP-013 完了時に追記: changed / verified / deferred / risks)
-
-## P0.1 Unblock 前提 prerequisite status (2026-05-22 prep、prep/phase8-sp013-2026-05-22 PR)
-
-SP-013 着手前に **以下 prerequisite が全件 accepted / completed であること**。本表は p0-exit-final-hardening-2026-05-22 plan の Phase 8 P0 Exit declaration 完了後、SP-013 kickoff 直前に再 verify。
-
-### 1. P0 完了 prerequisite (SP-022 完遂)
-
-| 項目 | 状態 (2026-05-22 prep 時点) | unblock 条件 |
-|---|---|---|
-| SP-022 T01-T07 完了 | ✅ PR #69-#80 全 merged | - |
-| SP-022 T08 batch 1-6 完了 | ✅ PR #76,#77,#78,#79,#90,#91 全 merged | - |
-| SP-022 T06 Mac KPI baseline | ✅ PR #89 merged | - |
-| Additional Hardening Gate (p0-exit-final-hardening 12 latent fix) | ✅ PR #95+#96+#97 全 merged | - |
-| SP-022 T09 host migration drill (Mac→VPS、RTO≤4h) PASS | ⏳ user 物理作業待ち | 物理 host 2 台 + Tailscale 閉域 + age key + signed approval |
-| SP-022 frontmatter `status: → completed` | ⏳ T09 drill 完了後 | T09 completion evidence |
-| SP-012 frontmatter `status: → completed` (partial_completed_with_carry_over から昇格) | ⏳ T09 drill 完了後 | T09 completion evidence |
-
-### 2. ADR acceptance prerequisite (SP-013 kickoff 直前に proposed → accepted 化)
-
-ADR-00014 frontmatter `acceptance_blocked_by` の全件解消条件:
-
-| ADR | 現状 status | acceptance_blocked_by | 解消方法 |
-|---|---|---|---|
-| ADR-00014 (Multi-Agent Orchestration Foundation) | proposed | P0 完了 + Phase F-0 完了 + ADR-00018/19/20 + 00004/00009/00013 update accepted | SP-013 kickoff 直前 |
-| ADR-00019 (Role Taxonomy) | proposed | ADR-00014 accepted + P0 完了 | ADR-00014 と同 timing |
-| ADR-00018 (Inter-Agent Communication) | proposed | (要確認、SP-015 prerequisite) | SP-015 着手時 |
-| ADR-00009 (Action Class Taxonomy) | accepted ✅ | - (update 要、Phase F-0 で) | Phase F-0 で update |
-| ADR-00020 (Framework Intake Checklist) | accepted ✅ | - | - (SP022-T00 で accepted 済) |
-| ADR-00016 (Hermes Agent Integration) | proposed | (要確認、SP-013 直結ではない) | - |
-
-### 3. Phase F-0 prerequisite (SP-013 kickoff 前 must_ship)
-
-ADR-00014 acceptance_blocked_by #2「Phase F-0 (ADR-00009 update + DD-02 policy 3 table の read/search → provider_call 同期 migration) 完了」:
-
-| 項目 | 状態 (2026-05-22 prep 時点) | 着手予定 |
-|---|---|---|
-| ADR-00009 update (action_class enum に provider_call 追加 / read/search 削除) | ❌ 未着手 (`rg "Phase F-0\|phase-f-0"` で実装 file 0 件) | SP-013 kickoff 直前 (separate light ADR + migration PR) |
-| DD-02 policy 3 table (`role_authorization` / `principal_grant` / `policy_decision`) の `read/search` → `provider_call` 同期 migration | ❌ 未着手 | 同上 |
-| artifacts.project_id materialize migration (PE-F-007 strict prerequisite) | ❌ 未着手 (`migrations/versions/*project*` 0 件) | 同上 |
-| AC-HARD-03 cross-project negative test (research domain) | ✅ 既存 (`tests/security/test_research_cross_project_negative.py` 存在、SP-010 で起票) | - (本 test は research domain で完結、Phase F-0 で artifacts.project_id 追加後の **artifact-domain cross-project test** を別途 追加必要) |
-| AC-HARD-03 cross-project negative test (artifacts.project_id 追加後の artifact-domain) | ❌ 未着手 (artifacts.project_id materialize migration 完了後、`tests/security/test_artifact_cross_project_negative.py` 等の追加 test が必要) | Phase F-0 migration 後 |
-
-Phase F-0 は **SP-013 着手前の separate light Sprint Pack** として起票推奨 (SP-012.5 や SP-022.1 系の position)。本 prep では state 確認のみ、着手は本 plan §2.3 pre-P0 freeze 期間内禁止作業に該当のため P0 Exit declaration merge 後。
-
-### 4. P0.1 unblock 完了判定 (TASKHUB_P0_1_OPENED=1 解禁条件)
-
-P0 Exit declaration PR 起票時 (Phase 8) に以下を verify:
-
-- [ ] Hard Gates 7 全件 PASS (AC-HARD-01〜07)
-- [ ] Quality KPIs 5 未達 ≤ 1 個 (AC-KPI-01〜05)
-- [ ] backup/restore drill PASS (AC-HARD-04、T09 drill 7 mandatory checklist 経由)
-- [ ] 実機 host migration drill (Mac→VPS) RTO ≤ 4h PASS (T09)
-- [ ] SP-022 frontmatter `status: completed`
-- [ ] SP-012 frontmatter `status: completed` (partial_completed_with_carry_over から昇格)
-- [ ] `docs/release/p0_exit_2026_MM_DD.md` commit + master plan §3-§9 update + TASKHUB_P0_1_OPENED=1 env 解禁
-- [ ] sealed CI guard 解除 (P0.1 path 追加禁止 lift = migration `*event_type_37*` 等)
-
-### 5. SP-013 着手後の sub-Sprint dependency tree
-
-```
-SP-013 (Multi-Agent Orchestration Foundation)
-├─ SP-014 (Orchestrator Agent: lease/dispatch/failover)
-├─ SP-015 (Inter-Agent Communication: inter_agent_messages table)
-├─ SP-016 (UI/CLI Parity)
-├─ SP-017 (AI Society Visualization、optional P1)
-├─ SP-018 (Memory backend、ADR 別途)
-└─ SP-019/020 (P1 後段、未起票)
-```
-
-SP-013 完了で SP-014/015/016 の DDL 前提 (agent_roles / project_agent_roles / agent_runs.role_id+role_scope / parent/child / project boundary) が確立。
-
-### Related links
-
-- p0-exit-final-hardening-2026-05-22 plan: `.claude/plans/p0-exit-final-hardening-2026-05-22.md`
-- Phase 8 P0 Exit declaration prep: 本 PR (`prep/phase8-sp013-2026-05-22`)
-- ADR-00014 Phase A-E research: `docs/設計検討/phase-c-multi-agent-spec-draft.md` (56 finding adopt 済)
-- master plan §10.C: SP-022 完了 → P0 Exit declaration → P0.1 unblock (TASKHUB_P0_1_OPENED=1 + SP-013 着手)
-
----
-
-## Review (2026-05-22 batch 0 完遂)
-
-最終更新: 2026-05-22
-
-### changed (batch 0 全 5 ステップ完遂)
-
-| step | scope | PR |
-|---|---|---|
-| readiness 昇格 | Sprint Pack draft → ready | #132 |
-| 0a | 10 standard role taxonomy enum + matrix validator (5+ source enum integrity) | #133 → #135 → #137 (Codex P1 cascade matrix-based fix) |
-| 0b | project_agent_roles + standard_role_ids_mirror migration + immutable seed | #134 |
-| 0c | agent_runs 8 columns 拡張 (role/lease/progress) + 2 CHECK + partial index | #136 |
-| 0d | check_project_role_link trigger function (PE-F-012 DB-level defense) | #138 → #140 (Codex P1 regression fix) |
-| 0e | sanitizer_policy_versions minimal table + v1.0.0 seed (ADR-00016 §5 PH-F-009 fix) | #139 → #140 (Codex P2 fix) |
-
-### verified
-
-- alembic head: `0024_multi_agent_foundation_e` (Mac local DB apply 確認済)
-- pytest tests/multi_agent/: **30 PASS** (累計、role taxonomy 13 + standard role seed 3 + agent_runs role columns 4 + trigger 6 + sanitizer 4)
-- 全 Codex finding close (P1×8 + P2×3、本 Sprint batch 0 関連 PR で発生した P1×4 + P2×1 全件 fix 完遂):
-  - PR #133 P1 (role_scope invariant) → #135 → #137 matrix-based fix
-  - PR #138 P1 (project + standard role regression) → #140 fix
-  - PR #139 P2 (seed test no-op assertion) → #140 fix
-
-### deferred (batch 1+、SP-014 移送、SP-018 連携)
-
-- **orchestrator agent 本体実装** (lease/dispatch/failover/kill-switch): SP-014 で実装
-- **memory_records / memory_retrieval_artifacts FK 接続** (sanitizer_policy_versions): SP-018 で hermes 取り込み後
-- **5 検証項目 backup drill** (parent/child AgentRun FK / agent_roles soft-delete / standard mirror / sanitizer / audit_events correlation): SP-018 / SP-022 で backup 整備時に実装
-
-### residual risks
-
-- check_project_role_link trigger function は `CREATE OR REPLACE` で migration 0024 で更新済、Mac local DB apply 確認済。本番 deploy 時に migration 0022 → 0024 の順序保証必要 (linear migration history で自動保証)
-- standard_role_ids_mirror の immutable seed は PostgreSQL DELETE で削除可能 = HARD DELETE 不可 trigger は P0.1+ で別途追加 (SP-018 hermes 取り込み時に検討)
-
-### kickoff path SP-014
-
-SP-013 batch 0 完遂で SP-014 prerequisite 満たす:
-- agent_runs に `orchestrator_lease_token / orchestrator_lease_expires_at / lease_renewed_at / orchestrator_kill_at / last_progress_at / progress_seq` 完備
-- check_project_role_link trigger で role reference の DB-level defense (PE-F-012 mitigation) 完備
-- 10 standard role (orchestrator 含む) と standard_role_ids_mirror で global standard role 利用可能
-- sanitizer_policy_versions v1.0.0 で memory layer の sanitizer integrity 基盤完備
-
-SP-014 batch 0 着手可能 state (codex-all-loops mode=code 委譲推奨)。

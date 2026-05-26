@@ -1,17 +1,16 @@
 ---
 id: "SP-016_ui_cli_parity"
 type: "heavy"
-status: "completed"
+status: "draft"
 sprint_no: 16
 created_at: "2026-05-10"
-updated_at: "2026-05-24"
-completed_at: "2026-05-24"
+updated_at: "2026-05-10"
 target_days: 4
 max_days: 6
-adr_refs:
-  - "[ADR-00015](../adr/00015_ui_cli_parity.md) # accepted 2026-05-24 at SP-016 kickoff blocker closure (Criteria #3 + #7)"
-  - "[ADR-00007](../adr/00007_external_exposure.md) # accepted; `tag:taskhub-cli` listed as P0.1 grants minimum, config change remains separate external-exposure gate"
-planned_adr_refs: []
+adr_refs: []
+planned_adr_refs:
+  - "[ADR-00015](../adr/00015_ui_cli_parity.md) # SP-016 着手時に proposed → accepted (Criteria #3 + #7)"
+  - "[ADR-00007 update](../adr/00007_external_exposure.md) # network boundary 拡張 (tag:taskhub-cli) (Criteria #7)"
 related_sprints:
   - "SP-013_multi_agent_orchestration"
   - "SP-014_orchestrator_agent"
@@ -22,7 +21,7 @@ risks:
   - "PE-F-014 (CLI token misuse の SecretBroker negative case)"
 ---
 
-最終更新: 2026-05-24 (batch 0a-0i 完了、13 capability contract / token misuse / Tailscale gate / secret redaction PASS、frontmatter completed 化)
+最終更新: 2026-05-10
 
 ## 目的
 
@@ -43,43 +42,34 @@ risks:
 
 ## 設計判断
 
-- **principal-bound API capability token DDL** (PE-F-006): SecretBroker と同等 OperationContext binding (actor_id / principal_id / device_id / project_id / allowed_actions / scope_constraint / audience / auth_context_hash / request_binding_hash / expires_at / jti / revoked_at)
+- **principal-bound API capability token DDL** (PE-F-006): SecretBroker と同等 OperationContext binding (actor_id / principal_id / device_id / project_id / allowed_actions / audience / expires_at / jti / revoked_at)
 - **CLI config に raw token を保存しない**: refresh credential のみ OS keyring / SOPS、operation token は API が短命 (5-30 分) 発行
-- **CLI tool 名 = `tm`** (2026-05-24 local/Homebrew conflict check clean、`tmai` は将来 namespace 衝突時の fallback のみ)
+- **CLI tool 名 = `tm`** (衝突確認後採用、衝突時 `tmai` fallback)
 - **`tm memory` は 404/disabled contract test のみ** (SP-018 accepted まで)
-- **Tailscale grants `tag:taskhub-cli`** は ADR-00007 に accepted 済み。実 config 変更が入る PR では外部公開設定 gate と rollback を別 diff で明示する
+- **Tailscale grants `tag:taskhub-cli`** を ADR-00007 update で追加
 
 ## 実装チケット
 
-- SP016-T01: api_capability_tokens table + migration `0031_sp016_api_capability_tokens.py` + DDL (PE-F-006)
+- SP016-T01: api_capability_tokens table + migration + DDL (PE-F-006)
 - SP016-T02: backend `/api/v1/auth/cli-login` + token issue / refresh / revoke endpoint
 - SP016-T03: cli/tm Python CLI (Click / Typer 等) + entry point `tm`
-- SP016-T04: cli/tm/commands/{ticket,approval,repo,pr,run,secret,provider,memory}.py (13 capability matrix only; `message` / `audit` / `export` は read-only helper として別 scope、`sprint` は taskhub host/admin scope)
+- SP016-T04: cli/tm/commands/{ticket,approval,run,message,audit,export,provider,sprint}.py
 - SP016-T05: cli/tm/auth/capability_token.py + cli/tm/config/profile_loader.py (keyring / SOPS / env)
 - SP016-T06: cli/tm/output/{json_formatter,yaml_formatter,human_formatter}.py + TTY 検知
 - SP016-T07: parity contract test (13 capability すべてで UI 経路 vs CLI 経路で結果 + DB row + audit event 完全一致)
 - SP016-T08: SecretBroker CLI token misuse negative test (PE-F-014 の 6 case のうち CLI 関連 1 つ + scope mismatch deny audit)
-- SP016-T09: ADR-00015 accepted / ADR-00007 accepted 前提の gate verification、`tag:taskhub-cli` Tailscale grants config diff は rollback 付きで分離
+- SP016-T09: ADR-00015 + ADR-00007 update を proposed → accepted、`tag:taskhub-cli` Tailscale grants 設定
 - SP016-T10: `docs/cli/README.md` (使い方、SP-016 完了で公開)
 
 ## タスク一覧
 
-- [x] SP016-T01 api_capability_tokens table + migration + DDL
-- [x] SP016-T02 backend CLI auth token service + issue / refresh / revoke endpoint
-- [x] SP016-T03 cli/tm Python CLI package + entry point `tm`
-- [x] SP016-T04 13 capability command surface
-- [x] SP016-T05 keyring / SOPS / env profile credential source resolver
-- [x] SP016-T06 JSON / YAML / human output formatter + TTY/non-interactive gate
-- [x] SP016-T07 parity contract test
-- [x] SP016-T08 SecretBroker CLI token misuse negative test
-- [x] SP016-T09 ADR / Tailscale backend_url gate verification
-- [x] SP016-T10 `docs/cli/README.md` public usage hardening
-- [x] migration `0031_sp016_api_capability_tokens.py` upgrade/downgrade PASS
-- [x] 13 parity contract test 全件 PASS
-- [x] CLI capability token TTL 5-30 分 + scope minimum + raw 保存 reject
-- [x] secret redaction (CLI 出力に raw secret 出ない、SecretBroker 経由のみ)
-- [x] Tailscale-only enforcement (public IP / Funnel reject + backend_url *.ts.net 検証)
-- [x] `tm memory` は 404/disabled contract test PASS
+- [ ] SP016-T01-T10 を順次実装
+- [ ] migration `00NN_p0_1_api_capability_tokens.py` + `alembic check` PASS
+- [ ] 13 parity contract test 全件 PASS
+- [ ] CLI capability token TTL 5-30 分 + scope minimum + raw 保存 reject
+- [ ] secret redaction (CLI 出力に raw secret 出ない、SecretBroker 経由のみ)
+- [ ] Tailscale-only enforcement (public IP / Funnel reject + backend_url *.ts.net 検証)
+- [ ] `tm memory` は 404/disabled contract test PASS
 
 ## must_ship / defer_if_over_budget 対応表
 
@@ -110,53 +100,29 @@ risks:
 ## 検証手順
 
 ```bash
-uv run ruff check cli/tm \
-                  tests/cli/test_tm_cli_foundation.py \
-                  tests/cli/test_capability_token_lifecycle.py \
-                  tests/cli/test_secret_redaction.py \
-                  tests/parity/test_ui_cli_parity.py \
-                  tests/security/test_cli_token_misuse_negative.py \
-                  tests/security/test_api_capability_token_scope_mismatch.py
-
-PYTHONPATH=cli uv run mypy cli/tm \
-                             tests/cli/test_tm_cli_foundation.py \
-                             tests/cli/test_capability_token_lifecycle.py \
-                             tests/cli/test_secret_redaction.py \
-                             tests/parity/test_ui_cli_parity.py \
-                             tests/security/test_cli_token_misuse_negative.py \
-                             tests/security/test_api_capability_token_scope_mismatch.py
-
-PYTHONPATH=cli \
-TASKMANAGEDAI_DATABASE_URL=<local test db> \
-TASKMANAGEDAI_RUN_DB_TESTS=1 \
-uv run pytest tests/cli/test_secret_redaction.py \
-              tests/parity/test_ui_cli_parity.py \
-              tests/security/test_api_capability_token_scope_mismatch.py \
-              tests/security/test_cli_token_misuse_negative.py \
+uv run pytest tests/parity/test_ui_cli_parity.py \
               tests/cli/test_capability_token_lifecycle.py \
-              tests/cli/test_tm_cli_foundation.py \
-              tests/api/test_tickets_api.py -q
+              tests/cli/test_multi_profile.py \
+              tests/cli/test_output_formats.py \
+              tests/cli/test_secret_redaction.py \
+              tests/cli/test_tailscale_only.py \
+              tests/cli/test_memory_disabled.py \
+              tests/security/test_cli_token_misuse_negative.py \
+              tests/security/test_api_capability_token_scope_mismatch.py -q
 
-TASKMANAGEDAI_DATABASE_URL=<local test db> uv run alembic downgrade 0030_sp015_inter_agent_messages
-TASKMANAGEDAI_DATABASE_URL=<local test db> uv run alembic upgrade head
-TASKMANAGEDAI_DATABASE_URL=<local test db> uv run alembic current
-
-# Known repository infrastructure debt until migrations/env.py provides target_metadata.
-TASKMANAGEDAI_DATABASE_URL=<local test db> uv run alembic check
+uv run alembic check && uv run alembic upgrade head
 
 # CLI 自身の installation smoke
-uv tool install --force ./cli
-tm --version
-tm --profile default ticket list --json
+uv tool install ./cli && tm --version && tm --profile default ticket list --json
 ```
 
 ## レビュー観点
 
-- api_capability_tokens DDL が SecretBroker 同等 invariant (actor/principal/device/project/scope/audience/auth_context/request_binding/expires/jti/revoked) を満たす
+- api_capability_tokens DDL が SecretBroker 同等 invariant (actor/principal/device/project/scope/audience/expires/jti/revoked) を満たす
 - CLI config の auth_method=plain が service layer で reject (DB level でなくとも 4 重防御の application layer で fail-closed)
 - Tailscale grants `tag:taskhub-cli` が最小権限 (read-only API + write 必要 endpoint のみ)
 - parity contract test の 13 capability が SP-013-015 で実装した backend と完全整合
-- audit_events の `api_capability_token_*` 系 event_type (`issued` / `revoked` / `denied` / `scope_mismatch`) が cross-source-enum-integrity §1 で同期
+- audit_events の `api_capability_token_*` 系 event_type が cross-source-enum-integrity §1 で同期
 
 ## 残リスク
 
@@ -171,302 +137,13 @@ tm --profile default ticket list --json
 
 ## 関連 ADR
 
-- ADR-00015 (UI ↔ CLI Parity Boundary) — accepted 2026-05-24 at SP-016 kickoff blocker closure
-- ADR-00007 (network boundary; `tag:taskhub-cli` config change remains external-exposure gate)
+- ADR-00015 (UI ↔ CLI Parity Boundary) — proposed → accepted at SP-016 kickoff
+- ADR-00007 update (network boundary 拡張)
 - ADR-00014 / 00018 (関連)
 
 ## Review
 
-### Batch 0a: api_capability_tokens schema (2026-05-24)
-
-changed:
-- `backend/app/db/models/api_capability_token.py`
-- `migrations/versions/0031_sp016_api_capability_tokens.py`
-- `tests/db/test_schema_introspection.py`
-
-verified:
-- `uv run ruff check backend/app/db/models/api_capability_token.py backend/app/db/models/__init__.py migrations/versions/0031_sp016_api_capability_tokens.py tests/db/test_schema_introspection.py`
-- `uv run mypy backend/app/db/models/api_capability_token.py tests/db/test_schema_introspection.py`
-- `uv run alembic upgrade head`
-- `uv run alembic downgrade 0030_sp015_inter_agent_messages && uv run alembic upgrade head`
-- `uv run pytest tests/db/test_schema_introspection.py -q` (`24 passed`)
-
-deferred:
-- SP016-T02 auth endpoints and token issue/revoke service.
-- SP016-T03-T06 CLI implementation.
-- SP016-T07 parity contract tests.
-- SP016-T08 CLI token misuse negative tests.
-
-risks:
-- `alembic check` remains blocked by existing repository infrastructure debt (`migrations/env.py` target metadata), not by this batch.
-
-### Batch 0b: backend CLI auth token lifecycle (2026-05-24)
-
-changed:
-- `backend/app/services/auth/api_capability_token.py`
-- `backend/app/api/auth_cli.py`
-- `backend/app/schemas/api_capability_token.py`
-- `backend/app/api/router.py`
-- `backend/app/api/dependencies/active_registry_gate.py`
-- `tests/cli/test_capability_token_lifecycle.py`
-- `tests/api/test_active_registry_gate_dependency.py`
-
-implemented:
-- `/api/v1/auth/cli-login`
-- `/api/v1/auth/cli-token/refresh`
-- `/api/v1/auth/cli-token/revoke`
-- short-lived operation token issue / refresh / revoke lifecycle
-- raw operation token is returned once only; DB stores SHA-256 `token_hash`
-- `principals.principal_type='capability_token'` binding
-- `auth_method='plain'` service-layer reject with `api_capability_token_denied` audit
-- ref-only `api_capability_token_issued` / `api_capability_token_revoked` / `api_capability_token_denied` audit payloads
-- `/api/v1/auth/*` active-registry write gate exemption for auth bootstrap parity with `/auth/*`
-
-verified:
-- `uv run ruff check backend/app/api/auth_cli.py backend/app/api/router.py backend/app/api/dependencies/active_registry_gate.py backend/app/schemas/api_capability_token.py backend/app/schemas/__init__.py backend/app/services/auth tests/cli/test_capability_token_lifecycle.py tests/api/test_active_registry_gate_dependency.py`
-- `uv run mypy backend/app/api/auth_cli.py backend/app/api/router.py backend/app/api/dependencies/active_registry_gate.py backend/app/schemas/api_capability_token.py backend/app/schemas/__init__.py backend/app/services/auth tests/cli/test_capability_token_lifecycle.py tests/api/test_active_registry_gate_dependency.py`
-- `TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/cli/test_capability_token_lifecycle.py tests/api/test_active_registry_gate_dependency.py -q` (`16 passed`)
-- `uv run pytest tests/test_auth.py tests/test_dev_actor_middleware.py tests/api/test_sp012_9_ui_wiring_routes.py -q` (`25 passed`)
-
-deferred:
-- SP016-T03 CLI package / `tm` entry point.
-- SP016-T05 local keyring / SOPS profile loader. This batch enforces backend `auth_method='plain'` rejection but does not create local profile storage.
-- SP016-T07 13 capability parity contract.
-- SP016-T08 scope mismatch / misuse negative expansion.
-
-### Batch 0c: `tm` CLI foundation (2026-05-24)
-
-changed:
-- `cli/pyproject.toml`
-- `cli/README.md`
-- `cli/uv.lock`
-- `cli/tm/*`
-- `tests/cli/test_tm_cli_foundation.py`
-- `pyproject.toml`
-
-implemented:
-- standalone installable `./cli` package with console script `tm`
-- root `uv run tm` developer entry point for local smoke tests
-- `ticket` / `approval` / `repo` / `pr` / `run` / `secret` / `provider` / `memory` command modules
-- 13 capability matrix command surface fixed in tests
-- project ContextResolver order: explicit arg → env → cwd git remote profile mapping → profile default → fail-closed
-- mutating command unresolved project fail-closed
-- agent-mode mutating command fail-closed
-- non-interactive approval-required command fail-closed
-- operation token sent via `X-TaskManagedAI-Operation-Token`, not bearer auth
-- runtime operation token injection for `auth refresh` / `auth revoke` only at request boundary
-- profile loader rejects raw operation token fields
-- JSON / YAML / human output formatters with secret-shaped key redaction
-- `tm memory record/search` disabled locally until SP-018
-
-verified:
-- `uv run ruff check cli/tm tests/cli/test_tm_cli_foundation.py pyproject.toml`
-- `PYTHONPATH=cli uv run mypy cli/tm tests/cli/test_tm_cli_foundation.py`
-- `PYTHONPATH=cli uv run pytest tests/cli/test_tm_cli_foundation.py -q` (`24 passed`)
-- `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/cli/test_tm_cli_foundation.py tests/cli/test_capability_token_lifecycle.py tests/api/test_active_registry_gate_dependency.py -q` (`40 passed`)
-- `uv run tm --version`
-- `uv run --project cli tm --version`
-- `uv tool install --force ./cli && tm --version`
-
-deferred:
-- full keyring / SOPS credential source resolution.
-- real backend parity contract execution for all 13 capabilities.
-- CLI scope mismatch / SecretBroker misuse negative DB-backed tests.
-
-### Batch 0d: CLI credential sources (2026-05-24)
-
-changed:
-- `cli/pyproject.toml`
-- `cli/uv.lock`
-- `cli/tm/auth/capability_token.py`
-- `cli/tm/config/profile_loader.py`
-- `cli/tm/main.py`
-- `tests/cli/test_tm_cli_foundation.py`
-
-implemented:
-- profile `auth_method=env` resolves runtime operation token from `operation_token_env` / `credential_ref` / `refresh_credential_ref`
-- profile `auth_method=keyring` resolves `service/account` refs through optional keyring getter
-- profile `auth_method=sops` resolves `file#nested.key` refs through SOPS JSON decryptor
-- `auth_method=plain` profile usage fails before network access
-- raw operation token profile rejection now scans inactive/nested profiles as well as the selected profile
-- `auth refresh` / `auth revoke` still inject raw operation token only at request boundary
-
-verified:
-- `uv run ruff check cli/tm tests/cli/test_tm_cli_foundation.py pyproject.toml`
-- `PYTHONPATH=cli uv run mypy cli/tm tests/cli/test_tm_cli_foundation.py`
-- `PYTHONPATH=cli uv run pytest tests/cli/test_tm_cli_foundation.py -q` (`29 passed`)
-- `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/cli/test_tm_cli_foundation.py tests/cli/test_capability_token_lifecycle.py tests/api/test_active_registry_gate_dependency.py -q` (`45 passed`)
-- `uv run --project cli tm --version`
-- `uv tool install --force ./cli && tm --version`
-
-deferred:
-- writing refreshed operation tokens back into OS keyring / SOPS storage; current batch is read/resolve only.
-- real backend parity contract execution for all 13 capabilities.
-
-### Batch 0e: CLI public usage docs (2026-05-24)
-
-changed:
-- `docs/cli/README.md`
-- `docs/sprints/SP-016_ui_cli_parity.md`
-
-implemented:
-- converted `docs/cli/README.md` from R1 doc-only future spec to R2 implementation-synced usage/design doc
-- added install / smoke commands for `uv tool install ./cli`, root `uv run tm`, and `uv run --project cli`
-- documented runtime token boundary and supported credential sources (`--operation-token`, env, profile env ref, keyring, SOPS)
-- documented profile JSON/YAML examples without raw token persistence
-- documented command/output smoke, redaction behavior, `--agent-mode` fail-closed, and `tm memory` disabled state
-- marked SP016-T10 completed
-
-verified:
-- `rg -n "本 doc 自体は CLI バイナリ実装許可ではない|CLI 実装は SP-016" docs/cli/README.md` (no output)
-- `uv run tm --version`
-- `uv run --project cli tm --help`
-- `git diff --check`
-
-deferred:
-- T07 real parity contract execution for all 13 capabilities.
-- T08 CLI token misuse / scope mismatch DB-backed negative tests.
-
-### Batch 0f: CLI Tailscale backend URL gate (2026-05-24)
-
-changed:
-- `cli/tm/config/profile_loader.py`
-- `tests/cli/test_tm_cli_foundation.py`
-- `docs/cli/README.md`
-- `docs/sprints/SP-016_ui_cli_parity.md`
-
-implemented:
-- `backend_url` validation at profile/env load boundary
-- allowed: localhost / loopback / Tailscale CGNAT `100.64.0.0/10` / `*.ts.net`
-- rejected: normal public hostname and public IP backend URLs
-- documented Tailscale-only CLI network boundary
-- marked SP016-T09 completed for CLI-side backend URL gate; Tailscale grants config change remains a separate external-exposure diff
-
-verified:
-- `uv run ruff check cli/tm tests/cli/test_tm_cli_foundation.py pyproject.toml`
-- `PYTHONPATH=cli uv run mypy cli/tm tests/cli/test_tm_cli_foundation.py`
-- `PYTHONPATH=cli uv run pytest tests/cli/test_tm_cli_foundation.py -q` (`37 passed`)
-- `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/cli/test_tm_cli_foundation.py tests/cli/test_capability_token_lifecycle.py tests/api/test_active_registry_gate_dependency.py -q` (`53 passed`)
-- `git diff --check`
-
-deferred:
-- actual Tailscale grants config mutation / rollback plan diff.
-- T07 real parity contract execution for all 13 capabilities.
-
-### Batch 0g: CLI token misuse / scope mismatch negative (2026-05-24)
-
-changed:
-- `backend/app/services/auth/api_capability_token.py`
-- `backend/app/services/auth/__init__.py`
-- `backend/app/api/dependencies/api_capability_token.py`
-- `backend/app/api/tickets.py`
-- `tests/security/test_api_capability_token_scope_mismatch.py`
-- `tests/security/test_cli_token_misuse_negative.py`
-- `tests/security/conftest.py`
-- `docs/sprints/SP-016_ui_cli_parity.md`
-- `docs/cli/README.md`
-
-implemented:
-- `ApiCapabilityTokenService.authorize_request(...)` for backend-side API capability token authorization
-- `X-TaskManagedAI-Operation-Token` FastAPI dependency wired into tickets list/show/create/update API paths
-- `api_capability_token_scope_mismatch` audit event for project/action scope drift
-- project-scope mismatch denies without marking the token used
-- action-scope mismatch denies without marking the token used
-- successful authorization marks `last_used_at`
-- real ticket create API call with wrong project scope returns 403, creates no ticket row, and writes ref-only scope mismatch audit
-- API capability token raw value cannot be redeemed as a SecretBroker capability token
-- SecretBroker misuse denial remains ref-only and leaves the API capability token `issued`
-
-verified:
-- `uv run ruff check backend/app/services/auth/api_capability_token.py backend/app/services/auth/__init__.py backend/app/api/dependencies/api_capability_token.py backend/app/api/tickets.py tests/security/conftest.py tests/security/test_api_capability_token_scope_mismatch.py tests/security/test_cli_token_misuse_negative.py`
-- `PYTHONPATH=cli uv run mypy backend/app/services/auth/api_capability_token.py backend/app/services/auth/__init__.py backend/app/api/dependencies/api_capability_token.py backend/app/api/tickets.py tests/security/conftest.py tests/security/test_api_capability_token_scope_mismatch.py tests/security/test_cli_token_misuse_negative.py`
-- `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/security/test_api_capability_token_scope_mismatch.py tests/security/test_cli_token_misuse_negative.py tests/cli/test_capability_token_lifecycle.py tests/cli/test_tm_cli_foundation.py tests/api/test_tickets_api.py -q` (`55 passed`)
-
-deferred:
-- T07 real parity contract execution for all 13 capabilities.
-- wiring `X-TaskManagedAI-Operation-Token` into non-ticket project-user API endpoints is part of the T07 parity/API coverage batch.
-
-### Batch 0h: 13 capability UI/CLI parity contract test (2026-05-24)
-
-changed:
-- `tests/parity/test_ui_cli_parity.py`
-- `docs/sprints/SP-016_ui_cli_parity.md`
-
-implemented:
-- canonical 13 capability parity matrix in test code
-- CLI-generated `method` / `path` / `capability` assertion for all 13 commands
-- backend route inventory check for live routes vs planned routes
-- UI reference check for live API clients and policy-surface-only entries
-- DB row and audit event expectation recorded for every capability
-- all 13 capabilities are checked against `ALL_CAPABILITIES` to prevent command matrix drift
-
-verified:
-- `uv run ruff check tests/parity/test_ui_cli_parity.py`
-- `PYTHONPATH=cli uv run mypy cli/tm tests/parity/test_ui_cli_parity.py`
-- `PYTHONPATH=cli uv run pytest tests/parity/test_ui_cli_parity.py -q` (`5 passed`)
-- `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/parity/test_ui_cli_parity.py tests/security/test_api_capability_token_scope_mismatch.py tests/security/test_cli_token_misuse_negative.py tests/cli/test_capability_token_lifecycle.py tests/cli/test_tm_cli_foundation.py tests/api/test_tickets_api.py -q` (`60 passed`)
-
-deferred:
-- backend live endpoints for `repo_status` / `repo_push` / `pr_open` / `secret_resolve` / `provider_call` remain planned; this batch fixes their parity contract and fail-drift tests, not gateway implementation.
-- full response/DB/audit equality E2E for planned endpoints must run when those backend surfaces become live.
-
-### Batch 0i: CLI secret output redaction regression (2026-05-24)
-
-changed:
-- `cli/tm/output/redaction.py`
-- `tests/cli/test_secret_redaction.py`
-- `docs/sprints/SP-016_ui_cli_parity.md`
-
-implemented:
-- output redaction now blocks raw secret-shaped values, not only sensitive keys
-- JSON / YAML / human formatters redact `sk-*`, `ghp_*`, `Bearer ...`, age secret key, and private-key-shaped values
-- safe identifier keys such as `token_id` remain visible
-- `tm secret use` output redacts backend-returned secret-shaped values before printing
-
-verified:
-- `uv run ruff check cli/tm/output/redaction.py tests/cli/test_secret_redaction.py`
-- `PYTHONPATH=cli uv run mypy cli/tm tests/cli/test_secret_redaction.py`
-- `PYTHONPATH=cli uv run pytest tests/cli/test_secret_redaction.py tests/cli/test_tm_cli_foundation.py -q` (`39 passed`)
-- `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/cli/test_secret_redaction.py tests/parity/test_ui_cli_parity.py tests/security/test_api_capability_token_scope_mismatch.py tests/security/test_cli_token_misuse_negative.py tests/cli/test_capability_token_lifecycle.py tests/cli/test_tm_cli_foundation.py tests/api/test_tickets_api.py -q` (`62 passed`)
-
-### Batch 0j: SP-016 closeout verification (2026-05-24)
-
-changed:
-- `docs/sprints/SP-016_ui_cli_parity.md`
-
-verified:
-- SP016-T01-T10 checklist 全件 complete。
-- `PYTHONPATH=cli TASKMANAGEDAI_DATABASE_URL=<local test db> TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/cli/test_secret_redaction.py tests/parity/test_ui_cli_parity.py tests/security/test_api_capability_token_scope_mismatch.py tests/security/test_cli_token_misuse_negative.py tests/cli/test_capability_token_lifecycle.py tests/cli/test_tm_cli_foundation.py tests/api/test_tickets_api.py -q` PASS (`62 passed`)。
-- `TASKMANAGEDAI_DATABASE_URL=<local test db> uv run alembic downgrade 0029_sp0045_tool_registry_core` → `uv run alembic upgrade head` → `uv run alembic current` PASS (`0031_sp016_api_capability_tokens (head)`)。
-- `TASKMANAGEDAI_DATABASE_URL=<local test db> uv run alembic check` は既知 infrastructure debt (`migrations/env.py` が `target_metadata` を context に渡していない) で失敗。SP-016 migration 自体の downgrade→upgrade は PASS 済みのため、Sprint 完了判定では carry-over として分離する。
-
-deferred:
-- backend live endpoints for `repo_status` / `repo_push` / `pr_open` / `secret_resolve` / `provider_call` remain planned surfaces. SP-016 completion covers the 13 capability CLI command surface, token boundary, network gate, redaction, and parity drift contract; full response/DB/audit equality for those planned backend surfaces must run when the gateway/API endpoints become live.
-
-## Kickoff Inventory (2026-05-24 task-04 plan-only)
-
-本 section は `docs/codex-handoff/2026-05-24-sequence-h-sp015-kickoff` task-04 の plan-only inventory。**CLI / backend / migration 実装は行わない**。
-
-### SP-015 dependency status
-
-- SP-015 batch 0a-0f は `task-03` で完了。message backend は `inter_agent_messages`、publisher/consumer、audit events、AgentRunEvent refs、SecretBroker token payload negative まで固定済み。
-- SP-016 の message-related CLI parity は、SP-015 の `InterAgentPublishRequest` / `InterAgentConsumeRequest` / ref-only audit payload を前提に設計可能。
-- SP-015 の raw payload boundary は CLI からも不変: CLI は message body を audit / AgentRunEvent に直接出さず、backend service の sanitizer / writer 経由に限定する。
-
-### pre-implementation blockers
-
-1. **ADR-00015 accepted**: 2026-05-24 に accepted 化済み。principal-bound API capability token DDL / lifecycle / audit event schema は ADR-00015 §3 / §7 を正本にする。
-2. **CLI canonical resolved (U-04)**: `tm` 維持を採用。`tmai` は将来 namespace 衝突時の fallback のみ。
-3. **13 capability matrix vs command module drift resolved**: A を採用。13 capability matrix にない `message` / `audit` / `export` は parity contract に含めない read-only helper scope、`sprint` は `taskhub` host/admin scope。
-4. **api_capability_tokens migration plan fixed**: actor/principal/device/project/scope/audience/auth_context/request_binding/expires/jti/revoked の exact DDL、scope mismatch deny audit、jti replay deny は ADR-00015 §3 / §7 を正本にする。
-5. **Tailscale `tag:taskhub-cli` grants gated**: ADR-00007 は accepted 済み。実 config 変更が入る場合は外部公開設定 gate として別 diff / rollback を明示する。
-
-### carry-over to SP-016 implementation plan
-
-- `tm memory` は SP-018 accepted まで 404/disabled contract のみ。message CLI と memory CLI を混ぜない。
-- SP-015 の SecretBroker inter-agent token negative は完了済み。SP-016 では別途 CLI token misuse / scope mismatch / raw token profile 保存 reject を実装する。
-- `taskhub` host/admin CLI と `tm` project-user CLI の境界を維持し、admin CLI から project mutating command を呼ばない。
-- parity contract test は UI result / CLI result / DB row / audit event を 13 capability ごとに比較する。message/audit/export/sprint command は parity 13 件へ追加しない。
+(SP-016 完了時に追記)
 
 ## QL-F update (R29 §5 QL-F、2026-05-15 doc-only、CLI ContextResolver + canonical 選択肢 spec)
 
@@ -474,7 +151,7 @@ deferred:
 
 ### QL-F.1 詳細 spec は docs/cli/README.md に集約
 
-QL-F run で新規起票し、2026-05-24 に accepted 化した `docs/cli/README.md` を本 Pack の CLI 設計 source-of-truth として cross-reference。本 Pack §設計判断 / §実装チケット で記載されている CLI 関連 spec は `docs/cli/README.md` の §2-§7 を参照。
+QL-F run で新規起票した `docs/cli/README.md` (proposed design doc) を本 Pack の CLI 設計 source-of-truth として cross-reference。本 Pack §設計判断 / §実装チケット で記載されている CLI 関連 spec は `docs/cli/README.md` の §2-§7 を参照。
 
 ### QL-F.2 13 capability matrix cross-reference
 
@@ -499,18 +176,18 @@ QL-F run で新規起票し、2026-05-24 に accepted 化した `docs/cli/README
 
 本 placeholder は QL-G run で実 ADR 起票後、本 §設計判断 で memory backend 関連の must_ship を追加する future implementation gate。本 QL-F run では marker のみ。
 
-### QL-F.5 taskhub host/admin vs tm project user 境界
+### QL-F.5 taskhub host/admin vs tm/tmai project user 境界
 
-`docs/cli/README.md §7` の 2 CLI 境界 (`taskhub` vs `tm`) は本 Pack の admin scope と project user scope の物理分離。本 Pack must_ship では:
+`docs/cli/README.md §7` の 2 CLI 境界 (taskhub vs tm/tmai) は本 Pack の admin scope と project user scope の物理分離。本 Pack must_ship では:
 
-- `tm` 経由の 13 capability (上記 §QL-F.2) のみ実装
+- `tm`/`tmai` 経由の 13 capability (上記 §QL-F.2) のみ実装
 - `taskhub` 経由の admin scope (`tenant_create` / `sprint_pack_admin_close` / `sops_rotate` 等) は本 Pack scope 外、別 SP-XXX で扱う
 
 `taskhub` 経由で project mutating command を invoke する path は **restricted** (本 SP-016 must_ship 範囲外)。
 
-### QL-F.6 同一 PR 一括更新 future requirement (future rename only)
+### QL-F.6 同一 PR 一括更新 future requirement (U-04 確定後)
 
-U-04 は A (`tm` canonical 維持) で確定済み。将来 `tmai` 反転を採用する場合のみ、本 SP-016 + ADR-00015 + SP-012 + docs/cli/README.md + CLI test file を **同一 PR で doc-only 一括更新**。CLI test file 更新は反転実装 Sprint Pack accepted 後の別 run。
+U-04 (B 反転採用) 確定時、本 SP-016 + ADR-00015 + SP-012 + docs/cli/README.md + CLI test file を **同一 PR で doc-only 一括更新**。CLI test file 更新は反転実装 Sprint Pack accepted 後の別 run。
 
 ### QL-F.7 QL-D 教訓適用
 

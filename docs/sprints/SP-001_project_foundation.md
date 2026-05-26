@@ -1,14 +1,10 @@
 ---
 id: "SP-001_project_foundation"
 type: "heavy"
-status: "completed"
+status: "draft"
 sprint_no: 1
 created_at: "2026-05-08"
-updated_at: "2026-05-22"
-completed_at: "2026-05-22"
-# F-PR100-R1-002 audit fix (PR #101): frontmatter drift 訂正、actor/principal/seed runner 等の
-# project foundation 実装は SP-001 batch で完了済 (master plan §1.1 で完了 Sprint と明示).
-# 本 訂正 PR で frontmatter status を draft → completed に同期更新.
+updated_at: "2026-05-08"
 target_days: 4.5
 max_days: 6
 adr_refs:
@@ -321,3 +317,4 @@ ADR-00021 (Host-Portable Deployment + Data Migration) accepted 化に伴い、SP
 
 - ADR-00021 (Host-Portable Deployment + Data Migration、SP-001 着手時 proposed → accepted)
 - ADR-00007 update (host 中立 invariant 明示化、同期 accepted)
+

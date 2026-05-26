@@ -53,35 +53,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 from uuid import UUID
 
 from jsonschema import Draft7Validator
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.config import get_settings
 from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.agent_run_event import AgentRunEvent
 from backend.app.db.models.artifact import Artifact
 from backend.app.db.models.context_snapshot import ContextSnapshot
 from backend.app.domain.agent_runtime.event_type import AgentRunEventType
 from backend.app.domain.agent_runtime.status import AgentRunStatus, BlockedReason
-from backend.app.domain.memory.record_kind import MemoryRecordKind
 from backend.app.domain.provider.adapter import ProviderAdapter
 from backend.app.domain.provider.compliance import ComplianceDecision
 from backend.app.domain.provider.request import ProviderRequest
 from backend.app.domain.provider.result import ProviderResult
 from backend.app.repositories.context_snapshot import create_snapshot
-from backend.app.schemas.memory import MemoryRetrievalRequest
 from backend.app.services.agent_runtime.event_log import transition_with_event
 from backend.app.services.agent_runtime.provider_result_mapping import (
     AgentRunStatusTransitionTarget,
     map_provider_result_to_status,
-)
-from backend.app.services.memory.retrieval import (
-    MemoryRetrievalResult,
-    MemoryRetrievalService,
 )
 from backend.app.services.output_validator.core import RepairDecision, decide_repair
 from backend.app.services.policy_pack.loader import PolicyPack, get_policy_pack
@@ -103,28 +96,6 @@ ValidationStepOutcome = Literal[
     "schema_validated",
     "validation_failed",
 ]
-
-
-@dataclass(frozen=True)
-class MemoryPromptSupplement:
-    """Ref-only memory supplement that remains untrusted prompt input."""
-
-    artifact_ref: str
-    retrieval_hash: str
-    record_count: int
-    trust_level: Literal["untrusted_content"] = "untrusted_content"
-    source_type: Literal["memory_retrieval_artifact"] = "memory_retrieval_artifact"
-    may_contain_instructions: bool = True
-    instruction_effect: Literal["none"] = "none"
-
-
-@dataclass(frozen=True)
-class MemoryAutoRetrieveStepResult:
-    """Outcome of the optional orchestrator memory retrieval hook."""
-
-    enabled: bool
-    retrieval: MemoryRetrievalResult | None
-    prompt_supplement: MemoryPromptSupplement | None
 
 
 @dataclass(frozen=True)
@@ -174,16 +145,6 @@ class RepairStepResult:
     resume_snapshot: ContextSnapshot | None
 
 
-class MemoryRetrievalClient(Protocol):
-    async def retrieve(
-        self,
-        *,
-        tenant_id: int,
-        request: MemoryRetrievalRequest,
-        context_snapshot_id: UUID | None = None,
-    ) -> MemoryRetrievalResult: ...
-
-
 class AgentRunOrchestrator:
     """Compose the provider / validate / repair chain over ``AgentRun``.
 
@@ -209,55 +170,6 @@ class AgentRunOrchestrator:
     @property
     def policy_pack(self) -> PolicyPack:
         return self._policy_pack if self._policy_pack is not None else get_policy_pack()
-
-    async def execute_memory_auto_retrieve_step(
-        self,
-        *,
-        run: AgentRun,
-        context_snapshot_id: UUID | None = None,
-        memory_record_ids: tuple[UUID, ...] = (),
-        record_kinds: tuple[MemoryRecordKind, ...] = (),
-        limit: int = 20,
-        enabled: bool | None = None,
-        retrieval_client: MemoryRetrievalClient | None = None,
-    ) -> MemoryAutoRetrieveStepResult:
-        """Run the optional memory retrieval hook before provider execution.
-
-        The hook is fail-closed by the ``memory_auto_retrieve_enabled`` flag.
-        When enabled it records a MemoryRetrievalArtifact and returns only a
-        ref-only ``MemoryPromptSupplement``. It does not mutate
-        ``ProviderRequest.messages`` and never emits ``trusted_instruction``;
-        downstream prompt builders must preserve the supplement's
-        ``trust_level='untrusted_content'`` and ``instruction_effect='none'``.
-        """
-
-        resolved_enabled = (
-            get_settings().memory_auto_retrieve_enabled if enabled is None else enabled
-        )
-        if not resolved_enabled:
-            return MemoryAutoRetrieveStepResult(
-                enabled=False,
-                retrieval=None,
-                prompt_supplement=None,
-            )
-
-        client = retrieval_client or MemoryRetrievalService(self._session)
-        retrieval = await client.retrieve(
-            tenant_id=run.tenant_id,
-            request=MemoryRetrievalRequest(
-                project_id=run.project_id,
-                retrieval_run_id=run.id,
-                memory_record_ids=memory_record_ids,
-                record_kinds=record_kinds,
-                limit=limit,
-            ),
-            context_snapshot_id=context_snapshot_id,
-        )
-        return MemoryAutoRetrieveStepResult(
-            enabled=True,
-            retrieval=retrieval,
-            prompt_supplement=_memory_prompt_supplement(retrieval),
-        )
 
     async def execute_provider_step(
         self,
@@ -601,10 +513,11 @@ class AgentRunOrchestrator:
     ) -> ContextSnapshot:
         """Derive a ``snapshot_kind='resume'`` snapshot from the previous one.
 
-        All reproducibility columns except provider_request_fingerprint are
-        carried over through repository-owned inheritance hooks. Hash and tool
-        manifest material stays server-owned instead of being passed through
-        caller-supplied parameters.
+        All reproducibility columns except ``evidence_set_hash`` are carried
+        over. ``evidence_set_hash`` remains server-owned and is recomputed by
+        ContextSnapshotRepository from a ResearchSetReference; resume retries
+        without an active research binding receive the deterministic empty set
+        hash instead of passing through caller-supplied hash material.
         """
 
         # F-PR22-001 P2 adopt: carry the prior server-emitted
@@ -613,8 +526,7 @@ class AgentRunOrchestrator:
         # research binding rather than collapsing to the empty-set placeholder.
         # The repository validates the previous snapshot exists in
         # (tenant_id, run_id) and loads the hash from the DB row — caller-
-        # supplied hash or tool manifest material remains rejected at the
-        # signature boundary.
+        # supplied hash material remains rejected at the signature boundary.
         return await create_snapshot(
             self._session,
             tenant_id=tenant_id,
@@ -624,9 +536,9 @@ class AgentRunOrchestrator:
             policy_version=previous_snapshot.policy_version,
             policy_pack_lock=previous_snapshot.policy_pack_lock,
             repo_state=previous_snapshot.repo_state,
+            tool_manifest=previous_snapshot.tool_manifest,
             evidence_set_reference=None,
             inherit_evidence_set_hash_from_snapshot_id=previous_snapshot.id,
-            inherit_tool_manifest_from_snapshot_id=previous_snapshot.id,
             provider_continuation_ref=previous_snapshot.provider_continuation_ref,
             provider_request_fingerprint=new_provider_request_fingerprint,
             snapshot_kind="resume",
@@ -752,18 +664,6 @@ def _compliance_deny_payload(
     }
 
 
-def _memory_prompt_supplement(
-    retrieval: MemoryRetrievalResult,
-) -> MemoryPromptSupplement | None:
-    if retrieval.artifact is None or retrieval.retrieval_hash is None:
-        return None
-    return MemoryPromptSupplement(
-        artifact_ref=f"artifact://memory-retrieval/{retrieval.artifact.id}",
-        retrieval_hash=retrieval.retrieval_hash,
-        record_count=len(retrieval.records),
-    )
-
-
 def _provider_event_payload(
     provider_result: ProviderResult,
     decision: ComplianceDecision,
@@ -815,8 +715,6 @@ def _redact_validation_error_summary(error: JsonSchemaValidationError) -> str:
 
 __all__ = [
     "AgentRunOrchestrator",
-    "MemoryAutoRetrieveStepResult",
-    "MemoryPromptSupplement",
     "ProviderStepOutcome",
     "ProviderStepResult",
     "RepairStepResult",

@@ -1,198 +1,176 @@
-import Link from "next/link";
-import type { Route } from "next";
-import type { ReactNode } from "react";
+/**
+ * Sprint 9 BL-0107: Audit Log (P0 UI skeleton).
+ *
+ * Append-only audit display. Raw secrets, raw provider responses, and
+ * capability token values are excluded; only redacted metadata and reason codes
+ * are shown.
+ */
 
-import { BackendApiError } from "@/lib/api/client";
-import { listAuditEvents, type AuditEvent } from "@/lib/api/audit";
+import {
+  AdminPageShell,
+  KeyboardReadinessStrip,
+  Panel,
+  SecretBoundaryNotice
+} from "../_components/sprint9-admin-ui";
 
 export const dynamic = "force-dynamic";
 
-type AuditLogPageProps = {
-  searchParams?: Promise<{ event_type?: string; actor_id?: string }>;
-};
-
-type AuditState =
-  | {
-      kind: "ok";
-      events: AuditEvent[];
-      total: number;
-      eventType?: string;
-      actorId?: string;
-    }
-  | { kind: "error"; message: string };
-
-async function readAuditEvents(
-  eventType: string | undefined,
-  actorId: string | undefined
-): Promise<AuditState> {
-  try {
-    const options: {
-      eventType?: string;
-      actorId?: string;
-      limit: number;
-      offset: number;
-    } = { limit: 50, offset: 0 };
-    if (eventType !== undefined) {
-      options.eventType = eventType;
-    }
-    if (actorId !== undefined) {
-      options.actorId = actorId;
-    }
-    const response = await listAuditEvents(options);
-    return {
-      kind: "ok",
-      events: response.events,
-      total: response.total,
-      ...(eventType !== undefined ? { eventType } : {}),
-      ...(actorId !== undefined ? { actorId } : {})
-    };
-  } catch (error: unknown) {
-    if (error instanceof BackendApiError) {
-      return {
-        kind: "error",
-        message: `バックエンドが ${error.status} を返しました: ${error.message}`
-      };
-    }
-    const message =
-      error instanceof Error ? error.message : "監査ログの取得に失敗しました。";
-    return { kind: "error", message };
+// F-P2R1-006 fix: reason_code (Provider Compliance / event-level) and
+// blocked_reason (AgentRun status sub-category) are distinct invariants.
+// blocked_reason is null unless the resulting status is `blocked`, while
+// reason_code mirrors event-specific deny / allow codes (Provider Compliance
+// Matrix has 13 reason_code values, runner_blocked has its own deny_category).
+const AUDIT_EVENT_ROWS = [
+  {
+    event_type: "policy_decision_created",
+    actor_id: "actor:user:reviewer-001",
+    reason_code: "allow",
+    blocked_reason: null,
+    payload_data_class: "internal",
+    allowed_data_class: "confidential",
+    redaction: "hash references only"
+  },
+  {
+    event_type: "secret_canary_detected",
+    actor_id: "system/provider-preflight",
+    reason_code: "provider_request_preflight_violation",
+    blocked_reason: null,
+    payload_data_class: "confidential",
+    allowed_data_class: "confidential",
+    redaction: "pattern_hit only"
+  },
+  {
+    event_type: "runner_blocked",
+    actor_id: "system/runner-gateway",
+    reason_code: "dangerous_command",
+    blocked_reason: "runtime_blocked",
+    payload_data_class: "internal",
+    allowed_data_class: "internal",
+    redaction: "argv_hash and deny_category only"
+  },
+  {
+    event_type: "repo_pr_opened",
+    actor_id: "system/repo-proxy",
+    reason_code: "allow",
+    blocked_reason: null,
+    payload_data_class: "internal",
+    allowed_data_class: "confidential",
+    redaction: "branch and pr number metadata only"
   }
-}
+] as const;
 
-export default async function AuditLogPage({ searchParams }: AuditLogPageProps = {}) {
-  const { event_type: eventType, actor_id: actorId } = searchParams
-    ? await searchParams
-    : {};
-  const selectedEventType = eventType && eventType.trim() ? eventType.trim() : undefined;
-  const selectedActorId = actorId && actorId.trim() ? actorId.trim() : undefined;
-  const state = await readAuditEvents(selectedEventType, selectedActorId);
-  const allFilterActive = selectedEventType === undefined && selectedActorId === undefined;
-
+export default function AuditLogPage() {
   return (
-    <section aria-label="監査ログ" className="grid gap-4">
-      <header>
-        <p className="text-sm font-medium text-accent">管理</p>
-        <h1 className="text-3xl font-semibold tracking-normal">監査ログ</h1>
-        <p className="mt-2 text-sm text-muted">
-          {state.kind === "ok"
-            ? `${state.total} 件の audit event を payload key のみで表示しています。`
-            : "監査ログの取得に失敗しました"}
-        </p>
-      </header>
+    <AdminPageShell
+      description="Sprint 9 BL-0107 skeleton for append-only audit rows with reason_code, actor_id, data-class separation, and SecretBroker redaction markers."
+      eyebrow="Admin / Audit"
+      regionLabel="Audit Log"
+      title="Audit Log"
+    >
+      <KeyboardReadinessStrip current="Audit Log" />
 
-      <div className="flex flex-wrap gap-2" aria-label="監査ログフィルター">
-        <FilterLink href="/audit" active={allFilterActive}>
-          すべて
-        </FilterLink>
-        {[
-          "policy_decision_created",
-          "approval_decided",
-          "runner_blocked",
-          "provider_blocked",
-          "secret_capability_redeemed"
-        ].map((value) => (
-          <FilterLink
-            key={value}
-            href={`/audit?event_type=${value}`}
-            active={selectedEventType === value}
-          >
-            {value}
-          </FilterLink>
-        ))}
-      </div>
-
-      {state.kind === "error" ? (
-        <article role="status" className="rounded-md border border-attention bg-amber-50 p-4">
-          <h2 className="text-base font-semibold text-attention">監査ログを表示できません</h2>
-          <p className="mt-1 text-sm text-muted">{state.message}</p>
-        </article>
-      ) : state.events.length === 0 ? (
-        <article className="rounded-md border border-base p-4 text-sm text-muted">
-          条件に一致する audit event はありません。
-        </article>
-      ) : (
-        <article className="overflow-x-auto rounded-lg border border-line bg-panel shadow-sm">
-          <table className="min-w-full divide-y divide-line text-sm">
+      <Panel
+        description="Event types are visible for CI and operators, while payload content remains redacted."
+        title="Audit event stream"
+        titleId="audit-event-stream"
+      >
+        <div className="overflow-x-auto rounded-md border border-line">
+          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
             <caption className="sr-only">
-              event_type、actor_id、reason_code、payload_keys、redaction status を含む監査 event。
+              Audit events with event_type, actor_id, reason_code, blocked_reason,
+              payload_data_class, allowed_data_class, and redaction status.
             </caption>
-            <thead className="bg-panel-muted text-xs uppercase tracking-wide text-muted">
+            <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted">
               <tr>
-                <th scope="col" className="px-4 py-3 text-left font-medium">event_type</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium">actor_id</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium">reason_code</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium">payload_keys</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium">redaction</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium">created_at</th>
+                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
+                  event_type
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
+                  actor_id
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
+                  reason_code
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
+                  blocked_reason
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
+                  payload_data_class
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
+                  allowed_data_class
+                </th>
+                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
+                  redaction
+                </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line">
-              {state.events.map((event) => (
-                <tr key={event.id} className="align-top hover:bg-panel-muted">
-                  <th scope="row" className="px-4 py-3 text-left">
+            <tbody>
+              {AUDIT_EVENT_ROWS.map((event) => (
+                <tr key={event.event_type} className="align-top">
+                  <th scope="row" className="border-b border-line px-3 py-2">
                     <code className="font-mono text-xs font-semibold text-ink">
                       {event.event_type}
                     </code>
                   </th>
-                  <td className="px-4 py-3">
-                    {event.actor_id ? (
-                      <code className="font-mono text-xs text-muted">{event.actor_id}</code>
+                  <td className="border-b border-line px-3 py-2">
+                    <code className="font-mono text-xs text-ink">{event.actor_id}</code>
+                  </td>
+                  <td className="border-b border-line px-3 py-2">
+                    <code className="font-mono text-xs text-ink">{event.reason_code}</code>
+                  </td>
+                  <td className="border-b border-line px-3 py-2 text-muted">
+                    {event.blocked_reason === null ? (
+                      <span aria-label="not applicable" className="text-muted">
+                        —
+                      </span>
                     ) : (
-                      <span className="text-muted">—</span>
+                      <code className="font-mono text-xs text-attention">
+                        {event.blocked_reason}
+                      </code>
                     )}
                   </td>
-                  <td className="px-4 py-3">
-                    <code className="font-mono text-xs text-muted">
-                      {event.reason_code ?? "—"}
-                    </code>
+                  <td className="border-b border-line px-3 py-2 text-muted">
+                    {event.payload_data_class}
                   </td>
-                  <td className="px-4 py-3 text-xs text-muted">
-                    {event.payload_keys.length > 0 ? event.payload_keys.join(", ") : "—"}
+                  <td className="border-b border-line px-3 py-2 text-muted">
+                    {event.allowed_data_class}
                   </td>
-                  <td className="px-4 py-3 text-xs text-muted">
-                    {event.payload_redaction_status}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-muted">
-                    {formatDate(event.created_at)}
+                  <td className="border-b border-line px-3 py-2 text-muted">
+                    {event.redaction}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </article>
-      )}
-    </section>
-  );
-}
+        </div>
+      </Panel>
 
-function FilterLink({
-  href,
-  active,
-  children
-}: {
-  href: string;
-  active: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <Link
-      aria-current={active ? "page" : undefined}
-      className={
-        active
-          ? "rounded-md bg-teal-50 px-3 py-2 text-sm font-semibold text-accent"
-          : "rounded-md border border-line px-3 py-2 text-sm font-medium text-muted hover:bg-panel-muted"
-      }
-      href={href as Route}
-    >
-      {children}
-    </Link>
-  );
-}
+      <Panel
+        description="The notice keeps AC-HARD-02 visible without exposing any secret or token value."
+        title="No raw secret invariant"
+        titleId="audit-secret-boundary"
+      >
+        <SecretBoundaryNotice title="AC-HARD-02 audit redaction" />
+      </Panel>
 
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toISOString().slice(0, 16).replace("T", " ");
-  } catch {
-    return iso;
-  }
+      <Panel
+        description="Audit rows remain display-only in this skeleton. No AI output, shortcut, or UI action can mutate audit history."
+        title="Append-only behavior"
+        titleId="audit-append-only"
+      >
+        <ul className="grid gap-2 text-sm text-muted md:grid-cols-3">
+          <li className="rounded-md border border-line bg-white p-3">
+            event_type and actor_id are required for every row.
+          </li>
+          <li className="rounded-md border border-line bg-white p-3">
+            policy_decision_created records policy outcomes without becoming a policy source.
+          </li>
+          <li className="rounded-md border border-line bg-white p-3">
+            runner_blocked records deny_category and reason_code, not raw command input.
+          </li>
+        </ul>
+      </Panel>
+    </AdminPageShell>
+  );
 }

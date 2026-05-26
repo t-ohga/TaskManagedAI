@@ -44,14 +44,7 @@ if ! is_taskmanagedai_path "$project_root"; then
   exit 0
 fi
 
-state_dir="${TASKMANAGEDAI_HOOK_STATE_DIR:-$project_root/.claude/.hook-state/bash}"
-if [[ "$state_dir" != /* ]]; then
-  state_dir="$project_root/$state_dir"
-fi
-if [[ ! -d "$state_dir" || ! -w "$state_dir" ]]; then
-  emit_system_message "PostToolUse" "BLOCK bash-dispatcher: state dir unavailable (fail-closed). Run the matching PreToolUse snapshot or verify TASKMANAGEDAI_HOOK_STATE_DIR: $state_dir" 2>/dev/null || true
-  exit 2
-fi
+state_dir="$project_root/.claude/.hook-state/bash"
 pre_file="$state_dir/last-pre.tsv"
 pre_meta_file="$state_dir/last-pre-meta.tsv"
 

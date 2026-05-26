@@ -4,13 +4,13 @@ type: "heavy"
 status: "done_with_phase5_defer"
 sprint_no: 7
 created_at: "2026-05-08"
-updated_at: "2026-05-24"
+updated_at: "2026-05-13"
 target_days: 4.7
 max_days: 7
 adr_refs:
   - "[ADR-00008](../adr/00008_destructive_operation.md) # 2026-05-13 accepted (Sprint 7 batch 0)"
-  - "[ADR-00012](../adr/00012_hook_trust_boundary.md) # accepted 2026-05-22、Phase 4 hooks の repo 外 trusted wrapper 実装は Phase 5 で扱う"
-planned_adr_refs: []
+planned_adr_refs:
+  - "[ADR-00012](../adr/00012_hook_trust_boundary.md) # 2026-05-13 proposed (Sprint 7 batch 0)、Phase 4 hooks の repo 外 trusted wrapper 実装は Phase 5 で扱う"
 related_sprints:
   - "SP-006_cli_artifact"
 downstream_sprints:
@@ -226,52 +226,6 @@ risks:
 - ADR-00011 は Sprint 8 の GitHub App permission 変更で扱う。この Sprint では GitHub installation token や RepoProxy permission を変更しない。
 
 ## Review
-
-### Phase 5 planning refresh (2026-05-24)
-
-#### current state
-
-- ADR-00012 is accepted as of 2026-05-22.
-- BL-0082 / BL-0083 / BL-0084 remain unimplemented: no repo-external trusted wrapper, no trusted-state migration, and no active sha256 manifest trust root is installed by this planning refresh.
-- SP-007 stays `done_with_phase5_defer`. It must not move to `done` until wrapper self-test, manifest mismatch, trusted state, settings switch, and rollback evidence exist.
-
-#### plan artifact
-
-- `docs/codex-handoff/2026-05-24-post-sp024-carryover/plans/task-03-sp007-phase5-trust-boundary-plan.md` is the current Phase 5 implementation sequence.
-- Phase 5A / 5B may prepare repository-only helper scripts and temp-home tests.
-- Phase 5C is repo-external and requires explicit implementation-time approval before writing `~/.claude-trusted`, `~/.claude-trusted-state`, or switching `.claude/settings.json`.
-
-#### verification for this refresh
-
-- Validate SP-007 frontmatter as YAML.
-- Run the sprint frontmatter hook against this file.
-- Run `git diff --check`.
-
-### Phase 5A/5B repo-only helper completion (2026-05-24)
-
-#### changed
-
-- `scripts/regenerate-hook-manifest.sh`: deterministic `.claude/hooks/**/*.sh` sha256 manifest generation to `--stdout` or explicit `--output` only.
-- `scripts/verify-hook-trust-root.sh`: read-only trust-root verification for wrapper existence, permissions, manifest drift, trusted state writability, and wrapper `--self-test`.
-- `.claude/hooks/system/pretool-bash-snapshot.sh`: honors `TASKMANAGEDAI_HOOK_STATE_DIR` while preserving the repo-local default.
-- `.claude/hooks/system/posttool-bash-file-dispatcher.sh`: honors `TASKMANAGEDAI_HOOK_STATE_DIR` and fails closed when the selected state dir is missing or unwritable.
-- `tests/harness/test_hook_trust_boundary.py`: temp trust-root coverage for manifest generation, manifest mismatch, non-executable wrapper rejection, external state dir use, and missing state dir fail-closed.
-
-#### verified
-
-- `bash -n scripts/regenerate-hook-manifest.sh`
-- `bash -n scripts/verify-hook-trust-root.sh`
-- `bash -n .claude/hooks/system/pretool-bash-snapshot.sh`
-- `bash -n .claude/hooks/system/posttool-bash-file-dispatcher.sh`
-- `uv run pytest tests/harness/test_hook_trust_boundary.py -q`
-- `uv run ruff check tests/harness/test_hook_trust_boundary.py`
-- `PYTHONPATH=cli uv run mypy tests/harness/test_hook_trust_boundary.py`
-- `git diff --check`
-
-#### remaining
-
-- Phase 5C still requires explicit approval before creating or modifying `~/.claude-trusted`, `~/.claude-trusted-state`, dotfiles, or `.claude/settings.json`.
-- SP-007 remains `done_with_phase5_defer` until the machine-local wrapper install, mismatch drill, trusted-state drill, settings switch, and rollback drill are complete.
 
 ### batch 0 + batch 1 完了 (2026-05-13、commit `dc573cc`)
 
@@ -518,3 +472,4 @@ audit F-001 adopt)。Phase 5 で BL-0082/0083/0084 完了 + ADR-00012 accepted �
 - `docs/基本設計/04_セキュリティ_権限_監査設計.md §13.1` action_class 7 種 (Runner 内で `task_write` / `repo_write` のみ許可、`merge` / `deploy` は forbidden command と同等に deny)
 - `docs/基本設計/06_秘密管理設計.md §13` SecretBroker OperationContext (Runner が `secret_access` を要する場合、broker 側 fingerprint binding が必須、Runner env への raw secret 注入禁止)
 - `docs/adr/00025_autonomy_policy_profiles.md` (proposed) §不変条件 #6 budget exceeded / kill switch / Tool/MCP Gateway deny 発火時 level 設定を無視して即 deny
+

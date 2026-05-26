@@ -1,9 +1,8 @@
 ---
 id: "ADR-00018"
 title: "Inter-Agent Communication Protocol: inter_agent_messages 12 fields + project boundary 複合 FK + atomic consume + replay/hijack defense + 3 trust_level + sanitizer pipeline + audit_events 必須 payload"
-status: "accepted"
+status: "proposed"
 date: "2026-05-10"
-accepted_at: "2026-05-24"
 authors:
   - "t-ohga"
 related_sprints:
@@ -12,11 +11,13 @@ related_research:
   - "docs/設計検討/phase-c-multi-agent-spec-draft.md §C-2 + §11.3 PE-F-002 strengthening"
 supersedes: null
 superseded_by: null
-acceptance_history:
-  - "2026-05-24: accepted at SP-015 kickoff. ADR-00014 is accepted, P0 Sprint 1-12 is completed, and artifacts.project_id is materialized with `(tenant_id, project_id, id)` unique constraint. Batch 0a implements the DB schema/migration with project-scoped FKs."
+acceptance_blocked_by:
+  - "ADR-00014 accepted"
+  - "P0 (Sprint 1-12) 完了"
+  - "Phase F-0 (artifacts.project_id materialize migration) 完了"
 ---
 
-最終更新: 2026-05-24 (SP-015 kickoff plan review、event_type 37 同期 + project boundary 補正 + batch 0a schema 実装)
+最終更新: 2026-05-10 (proposed 起票、Phase D R4 + Phase E PE-F-002 反映)
 
 ## 背景
 
@@ -48,7 +49,7 @@ create table inter_agent_messages (
     sender_run_id uuid not null,
     receiver_kind text not null check (receiver_kind in ('agent_run', 'role', 'broadcast')),
     receiver_ref text,
-    payload_data_class text not null check (payload_data_class in ('public','internal','confidential','pii')),
+    data_class text not null check (data_class in ('public','internal','confidential','pii')),
     trust_level text not null default 'untrusted_content'
         check (trust_level in ('untrusted_content','validated_artifact','trusted_instruction')),
     -- trusted_instruction の server-owned refs (PD-F-020 / PD-R2-F-007 / PD-R3-F-002 fix):
@@ -76,16 +77,14 @@ create table inter_agent_messages (
     foreign key (tenant_id, project_id, consumed_by_run_id) references agent_runs(tenant_id, project_id, id),
     foreign key (tenant_id, sender_actor_id) references actors(tenant_id, id),
     foreign key (tenant_id, approval_request_id) references approval_requests(tenant_id, id),
-    foreign key (tenant_id, project_id, source_artifact_id) references artifacts(tenant_id, project_id, id),
-    unique (tenant_id, project_id, parent_run_id, seq_no),
-    unique (tenant_id, project_id, parent_run_id, idempotency_key),
+    foreign key (tenant_id, source_artifact_id) references artifacts(tenant_id, id),
+    -- Phase H PH-F-008 fix: SP-013 の artifacts.project_id materialize hard gate (ADR-00021 §11.5 + §3.11) 完了後に
+    -- 上記 FK を `(tenant_id, project_id, source_artifact_id) references artifacts(tenant_id, project_id, id)` に変更
+    -- それまで (P0.1 SP-013 着手前) は service layer guard で cross-project artifact reference を reject、
+    -- DB CHECK / FK で完全防御は SP-013 hard gate 完了後に確立
+    unique (tenant_id, parent_run_id, seq_no),
+    unique (tenant_id, parent_run_id, idempotency_key),
     check (sender_run_id <> consumed_by_run_id or consumed_by_run_id is null),
-    check (action_class is null or action_class in ('task_write','repo_write','pr_open','secret_access','provider_call')),
-    check (
-        (receiver_kind = 'agent_run' and child_run_id is not null and receiver_ref is null)
-        or (receiver_kind = 'role' and child_run_id is null and nullif(receiver_ref, '') is not null)
-        or (receiver_kind = 'broadcast' and child_run_id is null and receiver_ref is null)
-    ),
     -- PD-R2-F-007 fail-open fix: action_class is not null + enum 部分集合
     check (
         trust_level <> 'trusted_instruction'
@@ -131,7 +130,6 @@ update inter_agent_messages
            and exists (
                select 1 from agent_runs r
                 where r.tenant_id = inter_agent_messages.tenant_id
-                  and r.project_id = inter_agent_messages.project_id
                   and r.id = :child_run_id
                   and r.parent_run_id = inter_agent_messages.parent_run_id
                   and r.role_id = inter_agent_messages.receiver_ref))
@@ -139,7 +137,6 @@ update inter_agent_messages
            and exists (
                select 1 from agent_runs r
                 where r.tenant_id = inter_agent_messages.tenant_id
-                  and r.project_id = inter_agent_messages.project_id
                   and r.id = :child_run_id
                   and r.parent_run_id = inter_agent_messages.parent_run_id))
    )
@@ -163,7 +160,7 @@ inter-agent message を child run が受信時に通す:
 
 | event_type | 必須 payload (NULL 不可) | 禁止 payload |
 |---|---|---|
-| `inter_agent_message_sent` | tenant_id, project_id, parent_run_id, sender_run_id, sender_actor_id, receiver_kind, receiver_ref, seq_no, payload_hash, payload_data_class, trust_level, schema_version, redaction_status | message body / artifact 本体 / secret / capability token |
+| `inter_agent_message_sent` | tenant_id, project_id, parent_run_id, sender_run_id, sender_actor_id, receiver_kind, receiver_ref, seq_no, payload_hash, data_class, trust_level, schema_version, redaction_status | message body / artifact 本体 / secret / capability token |
 | `inter_agent_message_consumed` | tenant_id, project_id, parent_run_id, consumed_by_run_id, message_id (hash), seq_no, previous_hash_match, payload_hash, redaction_status | 同上 |
 | `inter_agent_message_denied` | tenant_id, project_id, parent_run_id, attempted_message_id (hash), seq_no, denial_reason (`already_consumed/expired/cross_parent/cross_tenant/cross_project/previous_hash_mismatch/replay_detected/untrusted_promotion_attempt/approval_target_mismatch/receiver_ineligible`), redaction_status | 同上 |
 
@@ -171,7 +168,7 @@ inter-agent message を child run が受信時に通す:
 
 ### §6: AgentRunEvent ref 連動 (S-22 / PD-R2-F-004 / PE-F-018)
 
-各 run の timeline に `inter_agent_message_sent_ref` / `inter_agent_message_consumed_ref` の AgentRunEvent を append (raw payload なし、`message_id + payload_hash + seq_no + sender_run_id + receiver_run_id + redaction_status` のみ)。ADR-00004 は SP-014 accepted implementation で current event_type 37 に同期済みであり、当該 ref は event 34/35 として既存 exact set に含まれる。SP-015 はこの source set を再利用し、新規 event_type を追加しない。
+各 run の timeline に `inter_agent_message_sent_ref` / `inter_agent_message_consumed_ref` の AgentRunEvent を append (raw payload なし、`message_id + payload_hash + seq_no + sender_run_id + receiver_run_id + redaction_status` のみ)。これは ADR-00004 update で event_type 22→31 拡張に含まれる.
 
 ### §7: 実装 Sprint と対象ファイル
 
@@ -214,6 +211,6 @@ inter-agent message を child run が受信時に通す:
 ## 関連
 
 - ADR-00014 (Multi-Agent Orchestration Foundation)
-- ADR-00004 (current event_type 37、inter_agent ref event 34/35)
+- ADR-00004 update (event_type 22→31)
 - ADR-00009 update (action_class 部分集合 enforcement)
 - Phase C draft §C-2 + §11.3 PE-F-002 strengthening

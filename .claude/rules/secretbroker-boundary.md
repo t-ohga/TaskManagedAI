@@ -215,20 +215,6 @@ OperationContext 設計の効果を検証する fixture:
 - approval substitution: 別 approval の token を異 operation で使う → 全件 deny
 - secret_ref substitution: 別 secret_ref 参照の token を異 secret resolve に使う → 全件 deny
 
-### 8.2 Multi-Agent Negative Test 必須項目 (SP-014 PE-F-014)
-
-Multi-agent 文脈では、SecretBroker は actor / run 属性を caller 申告ではなく
-DB から解決し、以下 6 case を個別 reason_code で deny する:
-
-| negative case | reason_code |
-|---|---|
-| orchestrator / agent decider 試行 | `agent_decider_forbidden` |
-| Tier 2 auto-allow profile から approval decider 経路へ escape | `tier_2_agent_decider_attempt` |
-| expected actor_type と DB 上の Actor.actor_type が一致しない | `actor_type_mismatch` |
-| expected role_id と DB 上の AgentRun.role_id が一致しない | `role_id_mismatch` |
-| lease expired 状態で secret access | `lease_expired_no_secret_access` |
-| progress lease 違反 run の secret access | `progress_lease_violated` |
-
 ## 9. Redeem 後検証 + 後処理
 
 claim 成功後、**同一 transaction 内で `secret_refs` を再検証**してから operation を実行する。

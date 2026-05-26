@@ -5,13 +5,12 @@ status: "completed"
 sprint_no: 10
 created_at: "2026-05-13"
 updated_at: "2026-05-16"
-completed_at: "2026-05-16"
 target_days: 4.3
 max_days: 7
 adr_refs:
   - "[ADR-00002](../adr/00002_db_schema.md) # accepted、Research/Evidence schema 追加で update"
-  - "[ADR-00003](../adr/00003_api_contract.md) # accepted、Research-to-Ticket adapter API contract"
-planned_adr_refs: []
+planned_adr_refs:
+  - "[ADR-00003](../adr/00003_api_contract.md) # Sprint 10 で update proposed、Research-to-Ticket adapter API contract"
 related_sprints:
   - "SP-002_core_data_model"
   - "SP-004_agent_runtime"

@@ -1,75 +1,34 @@
-import { BackendApiError } from "@/lib/api/client";
-import { getCurrentProject, listCurrentProjects, type ProjectListItem } from "@/lib/api/session";
+/**
+ * Sprint 9 BL-0108: Project Settings (P0 UI skeleton).
+ *
+ * Provider Compliance Matrix, policy profiles, and repository binding metadata
+ * are rendered read-only. Secret refs are displayed as metadata concepts only;
+ * SecretBroker remains the sole resolver.
+ */
 
 import {
+  AdminPageShell,
+  KeyboardReadinessStrip,
   Panel,
   PolicyProfileList,
   ProviderComplianceMatrixTable,
   SecretBoundaryNotice
 } from "../_components/sprint9-admin-ui";
-import { updateProjectAutonomyLevelAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-type SettingsState =
-  | {
-      kind: "ok";
-      currentProjectId: string;
-      projects: ProjectListItem[];
-    }
-  | { kind: "error"; message: string };
-
-async function readSettings(): Promise<SettingsState> {
-  try {
-    const [currentProject, projectList] = await Promise.all([
-      getCurrentProject(),
-      listCurrentProjects()
-    ]);
-    return {
-      kind: "ok",
-      currentProjectId: currentProject.project_id,
-      projects: projectList.projects
-    };
-  } catch (error: unknown) {
-    if (error instanceof BackendApiError) {
-      return {
-        kind: "error",
-        message: `バックエンドが ${error.status} を返しました: ${error.message}`
-      };
-    }
-    const message =
-      error instanceof Error ? error.message : "設定情報の取得に失敗しました。";
-    return { kind: "error", message };
-  }
-}
-
-export default async function ProjectSettingsPage() {
-  const state = await readSettings();
-
+export default function ProjectSettingsPage() {
   return (
-    <section aria-label="設定" className="grid gap-4">
-      <header>
-        <p className="text-sm font-medium text-accent">管理</p>
-        <h1 className="text-3xl font-semibold tracking-normal">設定</h1>
-        <p className="mt-2 text-sm text-muted">
-          project と policy/provider 境界を read-only で確認します。
-        </p>
-      </header>
-
-      {state.kind === "error" ? (
-        <article role="status" className="rounded-md border border-attention bg-amber-50 p-4">
-          <h2 className="text-base font-semibold text-attention">設定を表示できません</h2>
-          <p className="mt-1 text-sm text-muted">{state.message}</p>
-        </article>
-      ) : (
-        <ProjectListPanel
-          currentProjectId={state.currentProjectId}
-          projects={state.projects}
-        />
-      )}
+    <AdminPageShell
+      description="Sprint 9 BL-0108 skeleton with Anthropic Console inspired provider matrix table, policy profile visibility, and SecretBroker-safe repository settings."
+      eyebrow="Admin / Settings"
+      regionLabel="Project Settings"
+      title="Project Settings"
+    >
+      <KeyboardReadinessStrip current="Project Settings" />
 
       <Panel
-        description="Matrix column は P0 invariant 名と一致します。allowed_data_class は Matrix-owned であり、caller input にはしません。"
+        description="Matrix columns match the P0 invariant names. allowed_data_class remains matrix-owned and is never caller input."
         title="Provider Compliance Matrix"
         titleId="settings-provider-compliance"
       >
@@ -77,7 +36,7 @@ export default async function ProjectSettingsPage() {
       </Panel>
 
       <Panel
-        description="Policy profile は operator-readable metadata として表示します。privileged mutation には引き続き server-side policy と approval check が必要です。"
+        description="Policy profiles are shown as operator-readable metadata; privileged mutation still requires server-side policy and approval checks."
         title="Policy Profiles"
         titleId="settings-policy-profiles"
       >
@@ -85,98 +44,41 @@ export default async function ProjectSettingsPage() {
       </Panel>
 
       <Panel
-        description="設定は secret_ref metadata を参照できますが、raw secret resolution は SecretBroker-mediated operation の内部でのみ行います。"
-        title="Secret handling (シークレット管理)"
+        description="Repository operations are routed through RepoProxy and GitHub App binding. UI display does not expose installation tokens."
+        title="GitHub App Repository Binding"
+        titleId="settings-repo-binding"
+      >
+        <dl className="grid gap-2 md:grid-cols-3">
+          <div className="rounded-md border border-line bg-white p-3">
+            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+              write path
+            </dt>
+            <dd className="mt-2 text-sm text-ink">RepoProxy only</dd>
+          </div>
+          <div className="rounded-md border border-line bg-white p-3">
+            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+              branch policy
+            </dt>
+            <dd className="mt-2 text-sm text-ink">Draft PR, no direct main push</dd>
+          </div>
+          <div className="rounded-md border border-line bg-white p-3">
+            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+              merge guard
+            </dt>
+            <dd className="mt-2 text-sm text-ink">
+              <code className="font-mono text-xs text-danger">merge_deny</code>
+            </dd>
+          </div>
+        </dl>
+      </Panel>
+
+      <Panel
+        description="Settings can reference secret_ref metadata, but raw secret resolution happens only inside SecretBroker-mediated operations."
+        title="Secret handling"
         titleId="settings-secret-handling"
       >
         <SecretBoundaryNotice title="Settings SecretBroker boundary" />
       </Panel>
-    </section>
-  );
-}
-
-function ProjectListPanel({
-  currentProjectId,
-  projects
-}: {
-  currentProjectId: string;
-  projects: ProjectListItem[];
-}) {
-  return (
-    <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">Project context</h2>
-          <p className="mt-1 text-sm text-muted">
-            current project は backend session から解決しています。切替 mutation は SP-018 で扱います。
-          </p>
-        </div>
-        <span className="rounded-md bg-panel-muted px-2 py-1 font-mono text-xs text-muted">
-          {currentProjectId}
-        </span>
-      </div>
-
-      <div className="mt-4 overflow-x-auto rounded-md border border-line">
-        <table className="min-w-full divide-y divide-line text-sm">
-          <thead className="bg-panel-muted text-xs uppercase tracking-wide text-muted">
-            <tr>
-              <th scope="col" className="px-4 py-3 text-left font-medium">Project</th>
-              <th scope="col" className="px-4 py-3 text-left font-medium">Workspace</th>
-              <th scope="col" className="px-4 py-3 text-left font-medium">Status</th>
-              <th scope="col" className="px-4 py-3 text-left font-medium">Policy profile</th>
-              <th scope="col" className="px-4 py-3 text-left font-medium">Autonomy</th>
-              <th scope="col" className="px-4 py-3 text-left font-medium">Current</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line">
-            {projects.map((project) => (
-              <tr key={project.project_id} className="hover:bg-panel-muted">
-                <th scope="row" className="px-4 py-3 text-left">
-                  <div className="font-semibold">{project.name}</div>
-                  <div className="font-mono text-xs text-muted">{project.slug}</div>
-                </th>
-                <td className="px-4 py-3 font-mono text-xs text-muted">
-                  {project.workspace_id}
-                </td>
-                <td className="px-4 py-3">
-                  <span className="rounded-md bg-panel-muted px-2 py-1 text-xs font-semibold">
-                    {project.status}
-                  </span>
-                </td>
-                <td className="px-4 py-3 font-mono text-xs text-muted">
-                  {project.policy_profile}
-                </td>
-                <td className="px-4 py-3">
-                  <form action={updateProjectAutonomyLevelAction} className="flex items-center gap-2">
-                    <input name="project_id" type="hidden" value={project.project_id} />
-                    <select
-                      aria-label={`${project.name} autonomy level`}
-                      className="rounded-md border border-line bg-panel px-2 py-1 text-xs"
-                      defaultValue={project.autonomy_level}
-                      name="autonomy_level"
-                    >
-                      {["L0", "L1", "L2", "L3"].map((level) => (
-                        <option key={level} value={level}>
-                          {level}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="rounded-md border border-line bg-panel-muted px-2 py-1 text-xs font-semibold hover:bg-line"
-                      type="submit"
-                    >
-                      保存
-                    </button>
-                  </form>
-                </td>
-                <td className="px-4 py-3 text-xs text-muted">
-                  {project.project_id === currentProjectId ? "現在" : "切替は SP-018"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </article>
+    </AdminPageShell>
   );
 }

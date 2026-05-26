@@ -5,7 +5,6 @@ status: "completed"
 sprint_no: 6
 created_at: "2026-05-08"
 updated_at: "2026-05-13"
-completed_at: "2026-05-13"
 target_days: 2.5
 max_days: 5
 adr_refs:
@@ -275,3 +274,4 @@ Sprint 6 を 3 batch 構成で完了。3 commit (`1843054` / `147c433` / 本 com
 - `docs/基本設計/06_秘密管理設計.md §13` SecretBroker OperationContext canonical schema (CLI artifact が `secret.verify` operation を内包する場合、broker 側 OperationContext fingerprint binding が必須)
 - `docs/基本設計/03_AIオーケストレーション設計.md §13.1` PolicyDecision must-precede (CLI 経由の `task_write` action 実行前に policy_decisions row 記録)
 - `docs/adr/00025_autonomy_policy_profiles.md` (proposed) `secret_access` は全 level (L0-L3) で human approval 必須、CLI 経由でも auto-allow されない
+

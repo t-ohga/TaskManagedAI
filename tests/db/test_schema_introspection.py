@@ -53,42 +53,11 @@ BATCH4_TENANT_SCOPED_TABLES = frozenset(
         "policy_decisions",
     }
 )
-BATCH_SP015_TENANT_SCOPED_TABLES = frozenset(
-    {
-        "inter_agent_messages",
-    }
-)
-BATCH_SP016_TENANT_SCOPED_TABLES = frozenset(
-    {
-        "api_capability_tokens",
-    }
-)
-BATCH_SP018_TENANT_SCOPED_TABLES = frozenset(
-    {
-        "memory_records",
-        "memory_retrieval_artifacts",
-    }
-)
-BATCH_SP020_TENANT_SCOPED_TABLES = frozenset(
-    {
-        "adopted_artifacts",
-    }
-)
-BATCH_SP0095_TENANT_SCOPED_TABLES = frozenset(
-    {
-        "approval_revision_requests",
-    }
-)
 TENANT_SCOPED_TABLES = (
     BATCH1_TENANT_SCOPED_TABLES
     | BATCH2_TENANT_SCOPED_TABLES
     | BATCH3_TENANT_SCOPED_TABLES
     | BATCH4_TENANT_SCOPED_TABLES
-    | BATCH_SP015_TENANT_SCOPED_TABLES
-    | BATCH_SP016_TENANT_SCOPED_TABLES
-    | BATCH_SP018_TENANT_SCOPED_TABLES
-    | BATCH_SP020_TENANT_SCOPED_TABLES
-    | BATCH_SP0095_TENANT_SCOPED_TABLES
 )
 METADATA_TABLES = frozenset(
     {
@@ -103,10 +72,7 @@ METADATA_TABLES = frozenset(
         "ticket_relations",
         "policy_rules",
         "approval_requests",
-        "approval_revision_requests",
         "policy_decisions",
-        "adopted_artifacts",
-        "api_capability_tokens",
     }
 )
 POLICY_ACTION_CLASSES = frozenset(
@@ -123,16 +89,6 @@ POLICY_ACTION_CLASSES = frozenset(
 POLICY_EFFECTS = frozenset({"allow", "deny", "require_approval"})
 APPROVAL_STATUSES = frozenset({"pending", "approved", "rejected", "expired", "invalidated"})
 RISK_LEVELS = frozenset({"low", "medium", "high", "critical"})
-MEMORY_RECORD_KINDS = frozenset(
-    {
-        "manual_user",
-        "manual_agent",
-        "auto_completion",
-        "auto_failure",
-        "auto_review_finding",
-    }
-)
-MEMORY_REDACTION_STATUSES = frozenset({"redacted", "raw_with_canary_scan_passed"})
 ALL_CORE_TABLES = TENANT_SCOPED_TABLES | {"tenants"}
 ForeignKeySignature = tuple[str, tuple[str, ...], str, tuple[str, ...]]
 
@@ -483,12 +439,6 @@ async def test_required_composite_foreign_keys_exist(
             "actors",
             ("tenant_id", "id"),
         ),
-        (
-            "notification_events",
-            ("tenant_id", "resolved_by_actor_id"),
-            "actors",
-            ("tenant_id", "id"),
-        ),
         ("policy_rules", ("tenant_id", "project_id"), "projects", ("tenant_id", "id")),
         (
             "approval_requests",
@@ -509,382 +459,12 @@ async def test_required_composite_foreign_keys_exist(
             ("tenant_id", "id"),
         ),
         ("policy_decisions", ("tenant_id", "actor_id"), "actors", ("tenant_id", "id")),
-        (
-            "approval_revision_requests",
-            ("tenant_id", "approval_request_id"),
-            "approval_requests",
-            ("tenant_id", "id"),
-        ),
-        (
-            "approval_revision_requests",
-            ("tenant_id", "requested_by_actor_id"),
-            "actors",
-            ("tenant_id", "id"),
-        ),
-        (
-            "approval_revision_requests",
-            ("tenant_id", "superseded_by_approval_request_id"),
-            "approval_requests",
-            ("tenant_id", "id"),
-        ),
-        ("api_capability_tokens", ("tenant_id", "actor_id"), "actors", ("tenant_id", "id")),
-        (
-            "api_capability_tokens",
-            ("tenant_id", "actor_id", "principal_id"),
-            "principals",
-            ("tenant_id", "actor_id", "id"),
-        ),
-        (
-            "api_capability_tokens",
-            ("tenant_id", "project_id"),
-            "projects",
-            ("tenant_id", "id"),
-        ),
-        (
-            "memory_records",
-            ("tenant_id", "project_id"),
-            "projects",
-            ("tenant_id", "id"),
-        ),
-        (
-            "memory_records",
-            ("tenant_id", "sanitizer_version_id"),
-            "sanitizer_policy_versions",
-            ("tenant_id", "id"),
-        ),
-        (
-            "memory_records",
-            ("tenant_id", "project_id", "source_artifact_id"),
-            "artifacts",
-            ("tenant_id", "project_id", "id"),
-        ),
-        (
-            "memory_retrieval_artifacts",
-            ("tenant_id", "project_id"),
-            "projects",
-            ("tenant_id", "id"),
-        ),
-        (
-            "memory_retrieval_artifacts",
-            ("tenant_id", "project_id", "memory_record_id"),
-            "memory_records",
-            ("tenant_id", "project_id", "id"),
-        ),
-        (
-            "memory_retrieval_artifacts",
-            ("tenant_id", "sanitizer_version_id"),
-            "sanitizer_policy_versions",
-            ("tenant_id", "id"),
-        ),
-        (
-            "memory_retrieval_artifacts",
-            ("tenant_id", "project_id", "retrieval_run_id"),
-            "agent_runs",
-            ("tenant_id", "project_id", "id"),
-        ),
-        (
-            "memory_retrieval_artifacts",
-            ("tenant_id", "context_snapshot_id"),
-            "context_snapshots",
-            ("tenant_id", "id"),
-        ),
-        (
-            "adopted_artifacts",
-            ("tenant_id", "project_id"),
-            "projects",
-            ("tenant_id", "id"),
-        ),
-        (
-            "adopted_artifacts",
-            ("tenant_id", "project_id", "run_id"),
-            "agent_runs",
-            ("tenant_id", "project_id", "id"),
-        ),
-        (
-            "adopted_artifacts",
-            ("tenant_id", "project_id", "artifact_id"),
-            "artifacts",
-            ("tenant_id", "project_id", "id"),
-        ),
-        (
-            "adopted_artifacts",
-            ("tenant_id", "run_id", "adoption_event_id"),
-            "agent_run_events",
-            ("tenant_id", "run_id", "id"),
-        ),
-        (
-            "adopted_artifacts",
-            ("tenant_id", "adopted_by_actor_id"),
-            "actors",
-            ("tenant_id", "id"),
-        ),
     }
 
     async with session_factory() as session:
         actual = await _foreign_key_signatures(session)
 
     assert expected <= actual
-
-
-@pytest.mark.asyncio
-async def test_memory_tables_have_ref_only_project_boundary_schema(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    memory_record_column_names = (
-        "id",
-        "tenant_id",
-        "project_id",
-        "record_kind",
-        "content_artifact_ref",
-        "content_hash",
-        "data_class",
-        "redaction_status",
-        "sanitizer_version_id",
-        "source_artifact_id",
-        "trust_level",
-        "retention_until",
-        "archived_at",
-        "created_at",
-    )
-    retrieval_column_names = (
-        "id",
-        "tenant_id",
-        "project_id",
-        "memory_record_id",
-        "retrieval_artifact_ref",
-        "retrieval_hash",
-        "sanitizer_version_id",
-        "retrieval_run_id",
-        "context_snapshot_id",
-        "trust_level",
-        "created_at",
-    )
-
-    async with session_factory() as session:
-        record_columns = await _table_columns(
-            session,
-            "memory_records",
-            memory_record_column_names,
-        )
-        retrieval_columns = await _table_columns(
-            session,
-            "memory_retrieval_artifacts",
-            retrieval_column_names,
-        )
-        record_unique = await _constraint_columns(
-            session,
-            table_name="memory_records",
-            constraint_name="memory_records_uq_tenant_project_id",
-            constraint_type="u",
-        )
-        retrieval_unique = await _constraint_columns(
-            session,
-            table_name="memory_retrieval_artifacts",
-            constraint_name="memory_retrieval_artifacts_uq_tenant_id",
-            constraint_type="u",
-        )
-        retrieval_project_unique = await _constraint_columns(
-            session,
-            table_name="memory_retrieval_artifacts",
-            constraint_name="memory_retrieval_artifacts_uq_tenant_project_id",
-            constraint_type="u",
-        )
-        record_kind_definition = await _constraint_definition(
-            session,
-            table_name="memory_records",
-            constraint_name="memory_records_ck_record_kind",
-        )
-        redaction_definition = await _constraint_definition(
-            session,
-            table_name="memory_records",
-            constraint_name="memory_records_ck_redaction_status",
-        )
-        record_trust_definition = await _constraint_definition(
-            session,
-            table_name="memory_records",
-            constraint_name="memory_records_ck_trust_level_no_trusted_instruction",
-        )
-        retrieval_trust_definition = await _constraint_definition(
-            session,
-            table_name="memory_retrieval_artifacts",
-            constraint_name="memory_retrieval_artifacts_ck_trust_level_untrusted",
-        )
-        actual_fks = await _foreign_key_signatures(session, BATCH_SP018_TENANT_SCOPED_TABLES)
-        indexes = await _index_definitions(session, BATCH_SP018_TENANT_SCOPED_TABLES)
-
-    assert set(record_columns) == set(memory_record_column_names)
-    assert set(retrieval_columns) == set(retrieval_column_names)
-    assert record_unique == ("tenant_id", "project_id", "id")
-    assert retrieval_unique == ("tenant_id", "id")
-    assert retrieval_project_unique == ("tenant_id", "project_id", "id")
-
-    for columns in (record_columns, retrieval_columns):
-        assert columns["id"]["data_type"] == "uuid"
-        assert columns["id"]["is_nullable"] == "NO"
-        assert "uuid_generate_v4" in str(columns["id"]["column_default"])
-        assert columns["tenant_id"]["data_type"] == "bigint"
-        assert columns["tenant_id"]["is_nullable"] == "NO"
-        assert columns["tenant_id"]["column_default"] == "1"
-        assert columns["project_id"]["data_type"] == "uuid"
-        assert columns["project_id"]["is_nullable"] == "NO"
-        assert columns["created_at"]["is_nullable"] == "NO"
-
-    assert record_columns["content_artifact_ref"]["data_type"] == "text"
-    assert record_columns["content_hash"]["data_type"] == "text"
-    assert record_columns["sanitizer_version_id"]["data_type"] == "uuid"
-    assert record_columns["source_artifact_id"]["is_nullable"] == "YES"
-    assert record_columns["retention_until"]["is_nullable"] == "NO"
-    assert record_columns["archived_at"]["is_nullable"] == "YES"
-    assert retrieval_columns["retrieval_artifact_ref"]["data_type"] == "text"
-    assert retrieval_columns["retrieval_hash"]["data_type"] == "text"
-    assert retrieval_columns["retrieval_run_id"]["is_nullable"] == "YES"
-    assert retrieval_columns["context_snapshot_id"]["is_nullable"] == "YES"
-
-    assert _check_constraint_values(record_kind_definition) == MEMORY_RECORD_KINDS
-    assert _check_constraint_values(redaction_definition) == MEMORY_REDACTION_STATUSES
-    assert _check_constraint_values(record_trust_definition) == {
-        "untrusted_content",
-        "validated_artifact",
-    }
-    assert _check_constraint_values(retrieval_trust_definition) == {"untrusted_content"}
-
-    assert (
-        "memory_records",
-        ("tenant_id", "project_id", "source_artifact_id"),
-        "artifacts",
-        ("tenant_id", "project_id", "id"),
-    ) in actual_fks
-    assert (
-        "memory_retrieval_artifacts",
-        ("tenant_id", "project_id", "memory_record_id"),
-        "memory_records",
-        ("tenant_id", "project_id", "id"),
-    ) in actual_fks
-
-    assert "memory_records_idx_tenant_project_kind_created" in indexes
-    assert "memory_records_idx_active_retention" in indexes
-    assert "memory_retrieval_artifacts_idx_tenant_project_record_created" in indexes
-    assert "memory_retrieval_artifacts_idx_retrieval_run" in indexes
-
-
-@pytest.mark.asyncio
-async def test_adopted_artifacts_have_final_only_project_boundary_schema(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    column_names = (
-        "id",
-        "tenant_id",
-        "project_id",
-        "run_id",
-        "artifact_id",
-        "adoption_state",
-        "adoption_event_id",
-        "adopted_by_actor_id",
-        "metadata",
-        "created_at",
-        "finalized_at",
-    )
-
-    async with session_factory() as session:
-        columns = await _table_columns(session, "adopted_artifacts", column_names)
-        tenant_unique = await _constraint_columns(
-            session,
-            table_name="adopted_artifacts",
-            constraint_name="adopted_artifacts_uq_tenant_id",
-            constraint_type="u",
-        )
-        project_unique = await _constraint_columns(
-            session,
-            table_name="adopted_artifacts",
-            constraint_name="adopted_artifacts_uq_tenant_project_id",
-            constraint_type="u",
-        )
-        run_artifact_unique = await _constraint_columns(
-            session,
-            table_name="adopted_artifacts",
-            constraint_name="adopted_artifacts_uq_tenant_project_run_artifact",
-            constraint_type="u",
-        )
-        event_run_unique = await _constraint_columns(
-            session,
-            table_name="agent_run_events",
-            constraint_name="agent_run_events_uq_tenant_run_id",
-            constraint_type="u",
-        )
-        state_definition = await _constraint_definition(
-            session,
-            table_name="adopted_artifacts",
-            constraint_name="adopted_artifacts_ck_adoption_state",
-        )
-        final_consistency_definition = await _constraint_definition(
-            session,
-            table_name="adopted_artifacts",
-            constraint_name="adopted_artifacts_ck_final_event_consistency",
-        )
-        metadata_secret_definition = await _constraint_definition(
-            session,
-            table_name="adopted_artifacts",
-            constraint_name="adopted_artifacts_ck_no_prohibited_metadata_keys",
-        )
-        actual_fks = await _foreign_key_signatures(session, BATCH_SP020_TENANT_SCOPED_TABLES)
-        indexes = await _index_definitions(session, BATCH_SP020_TENANT_SCOPED_TABLES)
-
-    assert set(columns) == set(column_names)
-    assert tenant_unique == ("tenant_id", "id")
-    assert project_unique == ("tenant_id", "project_id", "id")
-    assert run_artifact_unique == ("tenant_id", "project_id", "run_id", "artifact_id")
-    assert event_run_unique == ("tenant_id", "run_id", "id")
-
-    assert columns["id"]["data_type"] == "uuid"
-    assert columns["id"]["is_nullable"] == "NO"
-    assert "uuid_generate_v4" in str(columns["id"]["column_default"])
-    assert columns["tenant_id"]["data_type"] == "bigint"
-    assert columns["tenant_id"]["is_nullable"] == "NO"
-    assert columns["tenant_id"]["column_default"] == "1"
-    assert columns["project_id"]["data_type"] == "uuid"
-    assert columns["run_id"]["data_type"] == "uuid"
-    assert columns["artifact_id"]["data_type"] == "uuid"
-    assert columns["adoption_state"]["data_type"] == "text"
-    assert columns["adoption_state"]["is_nullable"] == "NO"
-    assert columns["adoption_event_id"]["is_nullable"] == "YES"
-    assert columns["adopted_by_actor_id"]["is_nullable"] == "NO"
-    assert columns["metadata"]["data_type"] == "jsonb"
-    assert columns["metadata"]["is_nullable"] == "NO"
-    assert "rls_ready" in str(columns["metadata"]["column_default"])
-    assert columns["created_at"]["is_nullable"] == "NO"
-    assert columns["finalized_at"]["is_nullable"] == "YES"
-
-    assert _check_constraint_values(state_definition) == {"draft", "final"}
-    final_consistency_definition = final_consistency_definition.lower()
-    assert "adoption_event_id is not null" in final_consistency_definition
-    assert "finalized_at is not null" in final_consistency_definition
-    assert "jsonb_path_exists" in metadata_secret_definition
-    assert "raw_token" in metadata_secret_definition
-    assert "capability_token" in metadata_secret_definition
-
-    assert (
-        "adopted_artifacts",
-        ("tenant_id", "project_id", "artifact_id"),
-        "artifacts",
-        ("tenant_id", "project_id", "id"),
-    ) in actual_fks
-    assert (
-        "adopted_artifacts",
-        ("tenant_id", "project_id", "run_id"),
-        "agent_runs",
-        ("tenant_id", "project_id", "id"),
-    ) in actual_fks
-    assert (
-        "adopted_artifacts",
-        ("tenant_id", "run_id", "adoption_event_id"),
-        "agent_run_events",
-        ("tenant_id", "run_id", "id"),
-    ) in actual_fks
-
-    assert "adopted_artifacts_idx_final_project_run" in indexes
-    assert "adoption_state = 'final'" in indexes["adopted_artifacts_idx_final_project_run"]
-    assert "adopted_artifacts_idx_final_artifact" in indexes
-    assert "adoption_state = 'final'" in indexes["adopted_artifacts_idx_final_artifact"]
 
 
 @pytest.mark.asyncio
@@ -1211,107 +791,6 @@ async def test_approval_requests_self_approval_check_constraint(
 
 
 @pytest.mark.asyncio
-async def test_approval_revision_requests_have_additive_revision_schema(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    column_names = (
-        "id",
-        "tenant_id",
-        "approval_request_id",
-        "requested_by_actor_id",
-        "rationale",
-        "artifact_hash",
-        "diff_hash",
-        "policy_version",
-        "policy_pack_lock",
-        "provider_request_fingerprint",
-        "stale_after_event_seq",
-        "superseded_by_approval_request_id",
-        "created_at",
-        "metadata",
-    )
-
-    async with session_factory() as session:
-        columns = await _table_columns(session, "approval_revision_requests", column_names)
-        unique = await _constraint_columns(
-            session,
-            table_name="approval_revision_requests",
-            constraint_name="approval_revision_requests_uq_tenant_id",
-            constraint_type="u",
-        )
-        rationale_definition = await _constraint_definition(
-            session,
-            table_name="approval_revision_requests",
-            constraint_name="approval_revision_requests_ck_rationale",
-        )
-        actual = await _foreign_key_signatures(session, BATCH_SP0095_TENANT_SCOPED_TABLES)
-        indexes = await _index_definitions(session, BATCH_SP0095_TENANT_SCOPED_TABLES)
-
-    assert set(columns) == set(column_names)
-    assert columns["id"]["data_type"] == "uuid"
-    assert columns["id"]["is_nullable"] == "NO"
-    assert "uuid_generate_v4" in str(columns["id"]["column_default"])
-    assert columns["tenant_id"]["data_type"] == "bigint"
-    assert columns["tenant_id"]["is_nullable"] == "NO"
-    assert columns["tenant_id"]["column_default"] == "1"
-    assert columns["approval_request_id"]["data_type"] == "uuid"
-    assert columns["approval_request_id"]["is_nullable"] == "NO"
-    assert columns["requested_by_actor_id"]["data_type"] == "uuid"
-    assert columns["requested_by_actor_id"]["is_nullable"] == "NO"
-    assert columns["rationale"]["data_type"] == "text"
-    assert columns["rationale"]["is_nullable"] == "NO"
-    assert columns["artifact_hash"]["data_type"] == "text"
-    assert columns["diff_hash"]["data_type"] == "text"
-    assert columns["policy_version"]["data_type"] == "text"
-    assert columns["policy_version"]["is_nullable"] == "NO"
-    assert columns["policy_pack_lock"]["is_nullable"] == "YES"
-    assert columns["provider_request_fingerprint"]["is_nullable"] == "YES"
-    assert columns["stale_after_event_seq"]["data_type"] == "bigint"
-    assert columns["superseded_by_approval_request_id"]["data_type"] == "uuid"
-    assert columns["superseded_by_approval_request_id"]["is_nullable"] == "YES"
-    assert columns["created_at"]["is_nullable"] == "NO"
-    assert "now()" in str(columns["created_at"]["column_default"])
-    assert columns["metadata"]["data_type"] == "jsonb"
-    assert columns["metadata"]["is_nullable"] == "NO"
-    assert "rls_ready" in str(columns["metadata"]["column_default"])
-    assert unique == ("tenant_id", "id")
-
-    assert "btrim" in rationale_definition.lower()
-    assert "char_length" in rationale_definition.lower()
-    assert (
-        "approval_revision_requests",
-        ("tenant_id", "approval_request_id"),
-        "approval_requests",
-        ("tenant_id", "id"),
-    ) in actual
-    assert (
-        "approval_revision_requests",
-        ("tenant_id", "requested_by_actor_id"),
-        "actors",
-        ("tenant_id", "id"),
-    ) in actual
-    assert (
-        "approval_revision_requests",
-        ("tenant_id", "superseded_by_approval_request_id"),
-        "approval_requests",
-        ("tenant_id", "id"),
-    ) in actual
-
-    assert indexes["approval_revision_requests_uq_open_approval"].startswith(
-        "CREATE UNIQUE INDEX"
-    )
-    assert "(tenant_id, approval_request_id)" in indexes[
-        "approval_revision_requests_uq_open_approval"
-    ]
-    assert "SUPERSEDED_BY_APPROVAL_REQUEST_ID IS NULL" in indexes[
-        "approval_revision_requests_uq_open_approval"
-    ].upper()
-    assert indexes["approval_revision_requests_idx_approval"].startswith("CREATE INDEX")
-    assert indexes["approval_revision_requests_idx_requested_by"].startswith("CREATE INDEX")
-    assert indexes["approval_revision_requests_idx_superseded_by"].startswith("CREATE INDEX")
-
-
-@pytest.mark.asyncio
 async def test_policy_decisions_has_tenant_id_and_composite_fk(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -1323,9 +802,6 @@ async def test_policy_decisions_has_tenant_id_and_composite_fk(
         "actor_id",
         "action_class",
         "decision",
-        "policy_profile",
-        "profile_resolved_effect",
-        "required_review_artifact_id",
         "reason_code",
         "policy_version",
         "input_hash",
@@ -1365,12 +841,6 @@ async def test_policy_decisions_has_tenant_id_and_composite_fk(
     assert policy_decision_columns["action_class"]["is_nullable"] == "NO"
     assert policy_decision_columns["decision"]["data_type"] == "text"
     assert policy_decision_columns["decision"]["is_nullable"] == "NO"
-    assert policy_decision_columns["policy_profile"]["data_type"] == "text"
-    assert policy_decision_columns["policy_profile"]["is_nullable"] == "NO"
-    assert policy_decision_columns["profile_resolved_effect"]["data_type"] == "text"
-    assert policy_decision_columns["profile_resolved_effect"]["is_nullable"] == "NO"
-    assert policy_decision_columns["required_review_artifact_id"]["data_type"] == "uuid"
-    assert policy_decision_columns["required_review_artifact_id"]["is_nullable"] == "YES"
     assert policy_decision_columns["reason_code"]["data_type"] == "text"
     assert policy_decision_columns["reason_code"]["is_nullable"] == "NO"
     assert policy_decision_columns["policy_version"]["data_type"] == "text"
@@ -1392,18 +862,6 @@ async def test_policy_decisions_has_tenant_id_and_composite_fk(
         ("tenant_id", "id"),
     ) in actual
     assert ("policy_decisions", ("tenant_id", "actor_id"), "actors", ("tenant_id", "id")) in actual
-    assert (
-        "policy_decisions",
-        ("tenant_id", "policy_profile"),
-        "policy_profiles",
-        ("tenant_id", "profile_id"),
-    ) in actual
-    assert (
-        "policy_decisions",
-        ("tenant_id", "required_review_artifact_id"),
-        "review_artifacts",
-        ("tenant_id", "id"),
-    ) in actual
     assert not any(
         table_name == "policy_decisions" and constrained_columns == ("tenant_id", "run_id")
         for table_name, constrained_columns, _referenced_table, _referred_columns in actual
@@ -1418,17 +876,6 @@ async def test_policy_decisions_has_tenant_id_and_composite_fk(
     ].upper()
     assert indexes["policy_decisions_idx_created_at"].startswith("CREATE INDEX")
     assert "(tenant_id, created_at)" in indexes["policy_decisions_idx_created_at"]
-    assert indexes["policy_decisions_idx_tenant_policy_profile"].startswith("CREATE INDEX")
-    assert (
-        "(tenant_id, policy_profile)"
-        in indexes["policy_decisions_idx_tenant_policy_profile"]
-    )
-    assert indexes["policy_decisions_idx_required_review_artifact"].startswith(
-        "CREATE INDEX"
-    )
-    assert "REQUIRED_REVIEW_ARTIFACT_ID IS NOT NULL" in indexes[
-        "policy_decisions_idx_required_review_artifact"
-    ].upper()
 
 
 @pytest.mark.asyncio
@@ -1446,15 +893,9 @@ async def test_policy_decisions_decision_check_enum(
             table_name="policy_decisions",
             constraint_name="policy_decisions_ck_decision",
         )
-        profile_resolved_effect_check = await _constraint_definition(
-            session,
-            table_name="policy_decisions",
-            constraint_name="policy_decisions_ck_profile_resolved_effect",
-        )
 
     assert _check_constraint_values(action_class_check) == POLICY_ACTION_CLASSES
     assert _check_constraint_values(decision_check) == POLICY_EFFECTS
-    assert _check_constraint_values(profile_resolved_effect_check) == POLICY_EFFECTS
 
 
 @pytest.mark.asyncio
@@ -1499,11 +940,7 @@ async def test_workspace_project_repository_contract_columns_and_constraints(
 ) -> None:
     async with session_factory() as session:
         workspace_columns = await _table_columns(session, "workspaces", ("slug", "owner_actor_id"))
-        project_columns = await _table_columns(
-            session,
-            "projects",
-            ("slug", "status", "policy_profile", "autonomy_level"),
-        )
+        project_columns = await _table_columns(session, "projects", ("slug", "status", "policy_profile"))
         repository_columns = await _table_columns(
             session,
             "repositories",
@@ -1545,11 +982,6 @@ async def test_workspace_project_repository_contract_columns_and_constraints(
             table_name="projects",
             constraint_name="projects_ck_status",
         )
-        project_autonomy_level_check = await _constraint_definition(
-            session,
-            table_name="projects",
-            constraint_name="projects_ck_autonomy_level",
-        )
         repository_provider_check = await _constraint_definition(
             session,
             table_name="repositories",
@@ -1568,15 +1000,10 @@ async def test_workspace_project_repository_contract_columns_and_constraints(
     assert project_columns["status"]["is_nullable"] == "NO"
     assert "active" in str(project_columns["status"]["column_default"])
     assert project_columns["policy_profile"]["data_type"] == "text"
-    assert project_columns["policy_profile"]["is_nullable"] == "NO"
-    assert "default" in str(project_columns["policy_profile"]["column_default"])
-    assert project_columns["autonomy_level"]["data_type"] == "text"
-    assert project_columns["autonomy_level"]["is_nullable"] == "NO"
-    assert "L0" in str(project_columns["autonomy_level"]["column_default"])
+    assert project_columns["policy_profile"]["is_nullable"] == "YES"
     assert project_unique == ("tenant_id", "workspace_id", "slug")
     assert "active" in project_status_check
     assert "archived" in project_status_check
-    assert all(level in project_autonomy_level_check for level in ("L0", "L1", "L2", "L3"))
 
     assert repository_columns["provider"]["data_type"] == "text"
     assert repository_columns["provider"]["is_nullable"] == "NO"
@@ -1761,20 +1188,7 @@ async def test_audit_notification_contract_columns_and_constraints(
         notification_columns = await _table_columns(
             session,
             "notification_events",
-            (
-                "event_type",
-                "payload",
-                "recipient_actor_id",
-                "read_at",
-                "severity",
-                "required_action",
-                "due_at",
-                "snoozed_until",
-                "resolved_at",
-                "resolved_by_actor_id",
-                "dedupe_key",
-                "created_at",
-            ),
+            ("event_type", "payload", "recipient_actor_id", "read_at", "created_at"),
         )
         audit_unique = await _constraint_columns(
             session,
@@ -1793,22 +1207,6 @@ async def test_audit_notification_contract_columns_and_constraints(
             table_name="audit_events",
             constraint_name="audit_events_ck_principal_requires_actor",
         )
-        notification_severity_check = await _constraint_definition(
-            session,
-            table_name="notification_events",
-            constraint_name="notification_events_ck_severity",
-        )
-        notification_required_action_check = await _constraint_definition(
-            session,
-            table_name="notification_events",
-            constraint_name="notification_events_ck_required_action",
-        )
-        notification_resolved_consistency_check = await _constraint_definition(
-            session,
-            table_name="notification_events",
-            constraint_name="notification_events_ck_resolved_consistency",
-        )
-        notification_indexes = await _index_definitions(session, frozenset({"notification_events"}))
 
     assert audit_columns["event_type"]["data_type"] == "text"
     assert audit_columns["event_type"]["is_nullable"] == "NO"
@@ -1834,59 +1232,8 @@ async def test_audit_notification_contract_columns_and_constraints(
     assert notification_columns["recipient_actor_id"]["data_type"] == "uuid"
     assert notification_columns["recipient_actor_id"]["is_nullable"] == "NO"
     assert notification_columns["read_at"]["is_nullable"] == "YES"
-    assert notification_columns["severity"]["data_type"] == "text"
-    assert notification_columns["severity"]["is_nullable"] == "NO"
-    assert "'info'" in str(notification_columns["severity"]["column_default"])
-    assert notification_columns["required_action"]["data_type"] == "text"
-    assert notification_columns["required_action"]["is_nullable"] == "NO"
-    assert "'acknowledge'" in str(notification_columns["required_action"]["column_default"])
-    assert notification_columns["due_at"]["data_type"] == "timestamp with time zone"
-    assert notification_columns["due_at"]["is_nullable"] == "YES"
-    assert notification_columns["snoozed_until"]["data_type"] == "timestamp with time zone"
-    assert notification_columns["snoozed_until"]["is_nullable"] == "YES"
-    assert notification_columns["resolved_at"]["data_type"] == "timestamp with time zone"
-    assert notification_columns["resolved_at"]["is_nullable"] == "YES"
-    assert notification_columns["resolved_by_actor_id"]["data_type"] == "uuid"
-    assert notification_columns["resolved_by_actor_id"]["is_nullable"] == "YES"
-    assert notification_columns["dedupe_key"]["data_type"] == "text"
-    assert notification_columns["dedupe_key"]["is_nullable"] == "YES"
     assert notification_columns["created_at"]["is_nullable"] == "NO"
     assert notification_unique == ("tenant_id", "id")
-    assert _check_constraint_values(notification_severity_check) == {
-        "info",
-        "low",
-        "medium",
-        "high",
-        "critical",
-    }
-    assert _check_constraint_values(notification_required_action_check) == {
-        "acknowledge",
-        "review_approval",
-        "inspect_run",
-        "resolve_blocker",
-        "external_followup",
-    }
-    assert "resolved_at" in notification_resolved_consistency_check
-    assert "resolved_by_actor_id" in notification_resolved_consistency_check
-    assert notification_indexes["notification_events_idx_triage_open"].startswith("CREATE INDEX")
-    assert "(tenant_id, recipient_actor_id, severity, due_at, created_at)" in notification_indexes[
-        "notification_events_idx_triage_open"
-    ]
-    assert "WHERE (RESOLVED_AT IS NULL)" in notification_indexes[
-        "notification_events_idx_triage_open"
-    ].upper()
-    assert notification_indexes["notification_events_uq_open_dedupe"].startswith(
-        "CREATE UNIQUE INDEX"
-    )
-    assert "(tenant_id, recipient_actor_id, dedupe_key)" in notification_indexes[
-        "notification_events_uq_open_dedupe"
-    ]
-    assert "DEDUPE_KEY IS NOT NULL" in notification_indexes[
-        "notification_events_uq_open_dedupe"
-    ].upper()
-    assert "RESOLVED_AT IS NULL" in notification_indexes[
-        "notification_events_uq_open_dedupe"
-    ].upper()
 
 
 RESEARCH_EVIDENCE_TABLES = frozenset({"research_tasks", "evidence_sources", "claims", "evidence_items"})
@@ -2078,178 +1425,6 @@ async def test_evidence_items_schema_constraints_and_composite_foreign_keys(
             ("tenant_id", "id"),
         ),
     } <= foreign_keys
-
-
-@pytest.mark.asyncio
-async def test_api_capability_tokens_schema_constraints_and_indexes(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    column_names = (
-        "id",
-        "tenant_id",
-        "project_id",
-        "token_hash",
-        "actor_id",
-        "principal_id",
-        "device_id",
-        "allowed_actions",
-        "scope_constraint",
-        "audience",
-        "auth_context_hash",
-        "request_binding_hash",
-        "status",
-        "issued_at",
-        "expires_at",
-        "jti",
-        "revoked_at",
-        "last_used_at",
-        "metadata",
-    )
-
-    async with session_factory() as session:
-        columns = await _table_columns(session, "api_capability_tokens", column_names)
-        tenant_unique = await _constraint_columns(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_uq_tenant_id",
-            constraint_type="u",
-        )
-        token_hash_unique = await _constraint_columns(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_uq_tenant_token_hash",
-            constraint_type="u",
-        )
-        jti_unique = await _constraint_columns(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_uq_tenant_jti",
-            constraint_type="u",
-        )
-        status_check = await _constraint_definition(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_ck_status",
-        )
-        audience_check = await _constraint_definition(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_ck_audience",
-        )
-        token_hash_check = await _constraint_definition(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_ck_token_hash_format",
-        )
-        auth_context_hash_check = await _constraint_definition(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_ck_auth_context_hash_format",
-        )
-        request_binding_hash_check = await _constraint_definition(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_ck_request_binding_hash_format",
-        )
-        allowed_actions_check = await _constraint_definition(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_ck_allowed_actions_nonempty_array",
-        )
-        allowed_action_strings_check = await _constraint_definition(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_ck_allowed_actions_string_elements",
-        )
-        scope_constraint_check = await _constraint_definition(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_ck_scope_constraint_jsonb_object",
-        )
-        metadata_check = await _constraint_definition(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_ck_metadata_no_raw_secret",
-        )
-        ttl_check = await _constraint_definition(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_ck_expires_within_ttl_bounds",
-        )
-        revoked_check = await _constraint_definition(
-            session,
-            table_name="api_capability_tokens",
-            constraint_name="api_capability_tokens_ck_revoked_at_status",
-        )
-        foreign_keys = await _foreign_key_signatures(
-            session,
-            frozenset({"api_capability_tokens"}),
-        )
-        indexes = await _index_definitions(session, frozenset({"api_capability_tokens"}))
-
-    assert set(columns) == set(column_names)
-    assert columns["tenant_id"]["data_type"] == "bigint"
-    assert columns["tenant_id"]["is_nullable"] == "NO"
-    assert columns["project_id"]["data_type"] == "uuid"
-    assert columns["project_id"]["is_nullable"] == "YES"
-    assert columns["token_hash"]["data_type"] == "text"
-    assert columns["actor_id"]["data_type"] == "uuid"
-    assert columns["principal_id"]["data_type"] == "uuid"
-    assert columns["device_id"]["is_nullable"] == "YES"
-    assert columns["allowed_actions"]["data_type"] == "jsonb"
-    assert columns["allowed_actions"]["is_nullable"] == "NO"
-    assert columns["scope_constraint"]["data_type"] == "jsonb"
-    assert columns["scope_constraint"]["is_nullable"] == "NO"
-    assert columns["audience"]["column_default"] == "'taskmanagedai-api'::text"
-    assert columns["auth_context_hash"]["data_type"] == "text"
-    assert columns["request_binding_hash"]["data_type"] == "text"
-    assert columns["status"]["column_default"] == "'issued'::text"
-    assert columns["issued_at"]["is_nullable"] == "NO"
-    assert columns["expires_at"]["is_nullable"] == "NO"
-    assert columns["jti"]["data_type"] == "text"
-    assert columns["revoked_at"]["is_nullable"] == "YES"
-    assert columns["last_used_at"]["is_nullable"] == "YES"
-    assert columns["metadata"]["data_type"] == "jsonb"
-    assert columns["metadata"]["is_nullable"] == "NO"
-
-    assert tenant_unique == ("tenant_id", "id")
-    assert token_hash_unique == ("tenant_id", "token_hash")
-    assert jti_unique == ("tenant_id", "jti")
-    assert _check_constraint_values(status_check) == {"issued", "expired", "revoked"}
-    assert "taskmanagedai-api" in audience_check
-    assert "64" in token_hash_check
-    assert "64" in auth_context_hash_check
-    assert "64" in request_binding_hash_check
-    assert "jsonb_array_length" in allowed_actions_check
-    assert "jsonb_path_exists" in allowed_action_strings_check
-    assert "jsonb_typeof(scope_constraint)" in scope_constraint_check
-    assert "jsonb_path_exists" in metadata_check
-    assert "raw_token" in metadata_check
-    assert "capability_token" in metadata_check
-    assert "00:05:00" in ttl_check
-    assert "00:30:00" in ttl_check
-    assert "revoked_at" in revoked_check
-
-    assert {
-        ("api_capability_tokens", ("tenant_id",), "tenants", ("id",)),
-        ("api_capability_tokens", ("tenant_id", "actor_id"), "actors", ("tenant_id", "id")),
-        (
-            "api_capability_tokens",
-            ("tenant_id", "actor_id", "principal_id"),
-            "principals",
-            ("tenant_id", "actor_id", "id"),
-        ),
-        (
-            "api_capability_tokens",
-            ("tenant_id", "project_id"),
-            "projects",
-            ("tenant_id", "id"),
-        ),
-    } <= foreign_keys
-
-    assert "api_capability_tokens_idx_active" in indexes
-    assert "api_capability_tokens_idx_project" in indexes
-    assert "project_id IS NOT NULL" in indexes["api_capability_tokens_idx_project"]
 
 
 @pytest.mark.asyncio

@@ -38,7 +38,7 @@ describe("NotificationListItem", () => {
     const item = screen.getByTestId(`notification-${unreadNotification.id}`);
     expect(item).toHaveAttribute("data-read", "false");
     expect(screen.getByText("approval_pending")).toBeVisible();
-    expect(screen.getByRole("button", { name: "既読にする" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Mark read" })).toBeVisible();
   });
 
   it("renders read notifications without a mark-read action", () => {
@@ -54,7 +54,7 @@ describe("NotificationListItem", () => {
 
     const item = screen.getByTestId("notification-00000000-0000-4000-8000-000000005002");
     expect(item).toHaveAttribute("data-read", "true");
-    expect(screen.queryByRole("button", { name: "既読にする" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mark read" })).not.toBeInTheDocument();
   });
 });
 
@@ -73,3 +73,4 @@ describe("ApprovalListItemSchema", () => {
     ).toThrow();
   });
 });
+

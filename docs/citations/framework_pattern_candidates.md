@@ -35,7 +35,6 @@ TaskManagedAI の外部 AI/agent framework に対する **「参考にする pat
 | **Letta** | memory-first agent platform | persistent memory + memory hierarchy + stateful agents | Letta SaaS / OSS runtime、独自 memory storage | persistence 二重化 (Letta memory store vs PostgreSQL)、ContextSnapshot 混合禁止 | ADR-00016 Hermes memory pattern adoption + `memory_retrieval_artifacts` 別 table で P1 実装 |
 | **OpenHands** | open platform for cloud coding agents | skills + micro-agents + sandbox + GitHub/GitLab/Slack/API 連携 | OpenHands runtime、独自 sandbox container | runner_mutation_gateway 境界 (TaskManagedAI Sprint 7 で実装) | 自前 Docker isolated runner + forbidden path / dangerous command で代替 |
 | **TaskingAI** | unified model/tool API | plugin + async high concurrency + OpenAI-compatible API | TaskingAI runtime、独自 plugin store | Provider Compliance Matrix の bypass | ProviderAdapter (SP-005 完了済) + Provider Compliance Matrix で代替 |
-| **Foundational Crypto (non-AI)** | crypto primitive (non-framework) | 公開鍵暗号 / 署名 / hashing (Ed25519 / RSA / SHA-2) などの low-level primitive | (該当なし、本枠は AI/agent framework ではない foundational lib 用) | (該当なし、ADR-00020 §3 No code embed は AI runtime 用)、本 lib は SecretBroker boundary 内で limited scope で使用 | SP022-T02 Phase 1 `scripts/taskhub_signed_approval.py` で `cryptography` lib (PyCA、現代 Python crypto standard) を Ed25519 signed approval verify に使用、ADR-00021 §3 admin CLI security boundary 直結、SOPS age 配下の signing key は別経路管理 |
 
 ## 4. 採用判定の枠組み
 

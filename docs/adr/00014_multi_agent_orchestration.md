@@ -1,9 +1,8 @@
 ---
 id: "ADR-00014"
 title: "Multi-Agent Orchestration Foundation: 10 標準役職 (code enum) + project_agent_roles + role ⊥ capability authorization + orchestrator requester-only + lease/heartbeat/failover/kill-switch + max_* 上限 + remote_agent_gateway 連動"
-status: "accepted"
+status: "proposed"
 date: "2026-05-10"
-accepted_at: "2026-05-22"
 authors:
   - "t-ohga"
 related_sprints:
@@ -14,13 +13,13 @@ related_research:
   - "Phase A-1/A-2/B-1/B-2 Codex deep-dive 結果"
 supersedes: null
 superseded_by: null
-acceptance_resolved_by:
-  - "P0 (Sprint 1-12) 完了: 2026-05-22 PR #103 P0 Exit Declaration で完遂"
-  - "Phase F-0 完了: 2026-05-22 SP-012-7 Sprint Pack 全 3 件 must_ship 完遂 (PR #106 + #107 + #108)、`backend/app/domain/policy/action_class.py` は既に 7 種 enum (provider_call 追加 + read/search 削除済)、DB CHECK constraint 3 か所 (policy_rules + approval_requests + policy_decisions) も同期済確認 (PR #106)"
-  - "ADR-00018/19/20 + 既存 ADR-00004/00009/00013 accepted: ADR-00020 既 accepted (SP022-T00 2026-05-19)、ADR-00004/00009 既 accepted、ADR-00019 は本 PR で同時 accepted、ADR-00018/00013 は各 owning sprint (SP-015 / P0.1+) kickoff 時 accepted で再解釈 (SP-013 着手時には未 accepted catch-22 解消)"
+acceptance_blocked_by:
+  - "P0 (Sprint 1-12) 完了"
+  - "Phase F-0 (ADR-00009 update + DD-02 policy 3 table の read/search → provider_call 同期 migration) 完了"
+  - "ADR-00018/19/20 + 既存 ADR-00004/00009/00013 update accepted"
 ---
 
-最終更新: 2026-05-22 (SP-014 batch 0f: SecretBroker multi-agent deny reason / KPI rollup 実装反映)
+最終更新: 2026-05-10 (proposed 起票、Phase D R4 + Phase E Strengthening Catalog 反映)
 
 ## 背景
 
@@ -217,14 +216,14 @@ create table review_artifacts (
 
 各 child run は独立に SecretBroker から token 取得 (agent 間 pass-through 禁止)。SP-014/015/016 で **6 negative case + 個別 reason_code** を must_ship:
 
-| negative case | reason_code |
+| substitution case | reason_code |
 |---|---|
-| orchestrator / agent が approval decider になろうとする | `agent_decider_forbidden` |
-| Tier 2 auto-allow profile を approval decider 経路へ escape しようとする | `tier_2_agent_decider_attempt` |
-| capability expectation が human なのに agent actor が redeem / secret access を試行 | `actor_type_mismatch` |
-| expected role_id と AgentRun.role_id が一致しない | `role_id_mismatch` |
-| orchestrator lease expired 状態で secret access を試行 | `lease_expired_no_secret_access` |
-| progress lease 違反で blocked になった run が secret access を試行 | `progress_lease_violated` |
+| parent token used by child | `cross_run_token_substitution` |
+| child token used by parent | 同上 |
+| inter_agent_message token payload (raw token を message に含めようとする) | `secret_in_message_payload` |
+| approval_id substitution | `approval_target_mismatch` (既存 + multi-agent 拡張) |
+| payload_hash substitution | `payload_hash_mismatch` (既存) |
+| run_id substitution | `run_binding_mismatch` |
 
 ### §10: KPI rollup (PD-R2-F-008 / PD-R3-F-004 / PD-R4-F-001 / PE-F-015 fix、Phase F metrics ADR で詳細化)
 
@@ -250,7 +249,7 @@ KPI source は **既存正本** に固定:
 - `test_progress_lease.py`: PE-F-004 (no-progress 30 分で blocked+runtime_blocked)
 - `test_max_limits.py`: children/depth/turns/budget 違反すべて
 - `test_action_class_3tier.py`: Tier 1 自律 / Tier 2 Policy auto-allow (decider なし) / Tier 3 human approval 必須
-- `test_secretbroker_multi_agent_negative.py`: 6 multi-agent negative case 個別 reason_code
+- `test_secretbroker_multi_agent_negative.py`: 6 substitution case 個別 reason_code
 - `test_remote_agent_gateway_p0_1_stub.py`: deny-only stub + audit
 - `test_review_artifact_4_defense.py`: PE-F-003 (reviewer != requester / role=reviewer / parent 同一 / project 同一)
 - `eval/multi_agent/role_authorization_negative/`: AC-HARD 候補

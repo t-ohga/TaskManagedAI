@@ -1,9 +1,9 @@
 ---
 id: "ADR-00027"
 title: "Tool Registry Security Boundary"
-status: "accepted"
+status: "proposed"
 created_at: "2026-05-15"
-updated_at: "2026-05-22"
+updated_at: "2026-05-15"
 decision_target: "Tool Registry (`config/tool_registry.toml` + Pydantic loader + ContextSnapshot.tool_manifest 統合) の security boundary 定義"
 sprint_ref:
   - "SP-0045_tool_registry"
@@ -13,13 +13,13 @@ adr_gate_criteria:
 co_accepted_with:
   - "SP-0045_tool_registry (本 Pack accepted 化と co-accepted)"
 related_adrs:
-  - "ADR-00012 (Hook Trust Boundary、accepted、trust root prerequisite)"
+  - "ADR-00012 (Hook Trust Boundary、proposed、Phase 5 prerequisite)"
   - "ADR-00013 (Remote Agent Extension Point、proposed、external MCP server boundary)"
   - "ADR-00002 (Core Data Model、proposed、ContextSnapshot 10 列 + DD-02 tool_registry trust_tier 4 種 既存定義)"
   - "ADR-00003 (AI Orchestration、proposed、AgentRunEvent event_type 31 → +N 拡張時の 5+ source 整合)"
 ---
 
-最終更新: 2026-05-22
+最終更新: 2026-05-15
 
 # ADR-00027: Tool Registry Security Boundary
 
@@ -45,7 +45,7 @@ Tool Registry は P0 / P0.1 で扱う MCP / external tool / local stdio tool を
 - SP-0045 (本 Sprint Pack、QL-A R30 で新規起票)
 - SP-005-5 Output Validator (functional-near reuse / alias 禁止、security boundary 独立 invariant)
 - SP-007 Runner Sandbox (`runner_mutation_gateway` は別 boundary、Tool Registry は authorization layer)
-- SP-0045 batch A で `config/tool_registry.toml` Pydantic loader 実装着手
+- Sprint 5+ で `config/tool_registry.toml` Pydantic loader 実装着手
 
 ## 4. 前提 / 制約
 
@@ -104,9 +104,9 @@ Tool Registry は P0 / P0.1 で扱う MCP / external tool / local stdio tool を
 
 | enum | source 1: Pydantic | source 2: Python Literal | source 3: pytest EXPECTED | source 4: docs | source 5: DD-02 / DB CHECK | source 6 (P0.1+): frontend TS |
 |---|---|---|---|---|---|---|
-| `allowed_actions` (4 種: `web_fetch` / `docs_search` / `code_grep` / `filesystem_read`) | `backend/app/services/tool_registry/schemas.py` | `backend/app/domain/tool_registry/enums.py` | `tests/services/tool_registry/test_registry_loader.py` | SP-0045 + ADR-00027 | SP-0045 batch B migration DB CHECK | `frontend/lib/domain/tool-registry.ts` |
-| `trust_tier` (4 種: `official` / `self_hosted` / `third_party` / `experimental`) | 同上 (`schemas.py`) | 同上 (`enums.py`) | `test_registry_loader.py` + batch B DB test | SP-0045 + ADR-00027 + DD-02 §tool_registry | **DD-02 / `tool_registry.trust_tier` DB CHECK = `('official', 'self_hosted', 'third_party', 'experimental')`** | 同上 |
-| `max_outgoing_data_class` (4 種: `public` / `internal` / `confidential` / `pii`) | 同上 | 同上 | `test_registry_loader.py` + batch B DB test | SP-0045 + ADR-00027 | Provider Compliance Matrix ordinal + SP-0045 batch B DB CHECK | 同上 |
+| `allowed_actions` (4 種: `web_fetch` / `docs_search` / `code_grep` / `filesystem_read`) | `backend/app/services/tool_registry/schemas.py` (P0.1+ 実装 Sprint) | `tool_registry/enums.py` | `tests/services/tool_registry/test_allowed_actions_enum_integrity.py` | SP-0045 + ADR-00027 | (P0.1+ で `tool_registry` DB table 化時に DB CHECK) | `frontend/lib/domain/tool-registry.ts` (P0.1+) |
+| `trust_tier` (4 種: `official` / `self_hosted` / `third_party` / `experimental`) | 同上 (`schemas.py`) | 同上 (`enums.py`) | `test_trust_tier_enum_integrity.py` + `test_provenance_trust_tier_server_owned.py` | SP-0045 + ADR-00027 + DD-02 §tool_registry | **DD-02 `tool_registry.trust_tier` DB CHECK = `('official', 'self_hosted', 'third_party', 'experimental')` (canonical、既存)** | 同上 (P0.1+) |
+| `max_outgoing_data_class` (4 種: `public` / `internal` / `confidential` / `pii`) | 同上 | 同上 | `test_max_outgoing_data_class_enum_integrity.py` + `test_experimental_max_outgoing_data_class_deny.py` | SP-0045 + ADR-00027 | (Provider Compliance Matrix と同 ordinal、独立 boundary) | 同上 (P0.1+) |
 
 ## 11. server-owned boundary checklist (server-owned-boundary §1-§2 準拠)
 
@@ -132,8 +132,8 @@ Tool Registry は P0 / P0.1 で扱う MCP / external tool / local stdio tool を
 
 ## 13. 関連メモ
 
-- 本 ADR は QL-A R30 で proposed 起票し、SP-0045 batch A で accepted 化
-- SP-0045 (Tool Registry Sprint Pack) と co-accepted
+- 本 ADR は QL-A R30 で proposed 起票 (R2 P2R2 F-P2R2-002 反映)
+- SP-0045 (Tool Registry Sprint Pack) と co-accepted が原則
 - 採用案 A は F-P2R2-006 (trust_tier semantic mismatch) を解消
 - enum source manifest は F-P2R1-003 (TOML/DB 二正本) を解消
 - server-owned boundary checklist は F-P2R1-005 (caller-supplied tool_manifest) と F-P2R2-005 (caller-supplied lineage hash chain) を解消

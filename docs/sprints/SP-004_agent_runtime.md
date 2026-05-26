@@ -1,14 +1,10 @@
 ---
 id: "SP-004_agent_runtime"
 type: "heavy"
-status: "completed"
+status: "draft"
 sprint_no: 4
 created_at: "2026-05-08"
-updated_at: "2026-05-22"
-completed_at: "2026-05-22"
-# F-PR100-R1-002 audit fix (PR #101): frontmatter drift 訂正、AgentRun 16 状態 + ContextSnapshot 10 column
-# + SecretBroker atomic claim + AC-HARD-02 / AC-KPI-04 fixture skeleton 完成 (master plan §1.1).
-# 本 訂正 PR で frontmatter status を draft → completed に同期更新.
+updated_at: "2026-05-09"
 target_days: 7.8
 max_days: 10
 adr_refs:
@@ -341,3 +337,4 @@ Codex multi-round adversarial review pattern (Sprint 1-3 から継続):
 → **Sprint 4 完了**。次 Sprint は Sprint 5 (Provider Adapter: ProviderAdapter 本実装 + Provider Compliance Matrix runtime + `provider_request_preflight` + provider_call boundary)。
 
 **重要**: TaskList #54 ([永続] Sprint 1-4 知見の .claude ハーネス恒久化) の実行を Sprint 5 着手と並行で進めることを推奨。詳細計画は `memory/project_harness_consolidation_plan.md`。
+

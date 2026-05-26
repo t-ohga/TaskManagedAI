@@ -14,7 +14,7 @@ supersedes: null
 superseded_by: null
 ---
 
-最終更新: 2026-05-24 (SP-009-5 Batch E0 で Approval `request_revision` の state-machine boundary note を append。前: 2026-05-09 Sprint 4 accepted 化)
+最終更新: 2026-05-09 (Sprint 4 着手前 ADR Gate で proposed 化新規作成、Sprint 4 全 Batch clean 達成で同日 accepted 化)
 
 ## 背景
 
@@ -458,23 +458,23 @@ Provider result は `.claude/rules/agentrun-state-machine.md` §7 と一致す�
 
 ADR-00014/15/16/17/18/19/20 (Multi-Agent vision) accepted 化に伴う本 ADR の update (Phase D 40 + Phase E 16 = 計 56 finding 反映)。本 update は **既存 16 状態 + blocked サブ 3 + ContextSnapshot 10 列 invariant を不変前提** に、event_type と parent/child semantics を additive 拡張のみ。
 
-### event_type 28 → 37 拡張 (SP-014 accepted implementation / PD-R2-F-004 / PE-F-018)
+### event_type 22 → 31 拡張 (PD-R2-F-004 / PE-F-018)
 
-Sprint 6 batch 2 までに P0 baseline は 28 event_type へ拡張済み。SP-014 accepted implementation では既存 28 event_type に追加 9 種を加え、current source は 37 event_type とする:
+既存 22 event_type に追加 9 種:
 
 | # | event_type | state transition | 必須 payload | audit_events |
 |---|---|---|---|---|
-| 29 | `orchestrator_dispatched` | running | child_run_id, role_id, role_scope, dispatch_reason, recommended_provider | (AgentRunEvent のみ) |
-| 30 | `orchestrator_lease_renewed` | running | lease_token_hash, renewed_at, expires_at | (AgentRunEvent のみ) |
-| 31 | `orchestrator_lease_expired` | running -> blocked/running | old_lease_hash, expired_at, reason_code | (AgentRunEvent のみ) |
-| 32 | `orchestrator_failover_triggered` | running | old/new lease + reason | audit_events `orchestrator_failover` |
-| 33 | `orchestrator_kill_engaged` | running -> blocked (runtime_blocked) | engaged_by_actor_id (human only), reason | audit_events `orchestrator_kill_engaged` |
-| 34 | `inter_agent_message_sent_ref` | (status 不変) | message_id, payload_hash, seq_no, sender_run_id, receiver_run_id, redaction_status | audit_events `inter_agent_message_sent` |
-| 35 | `inter_agent_message_consumed_ref` | (status 不変) | + previous_hash_match | audit_events `inter_agent_message_consumed` |
-| 36 | `tool_web_fetch_executed` | running | tool_name, domain, provider, payload_data_class, redaction_status | (AgentRunEvent のみ) |
-| 37 | `tool_docs_search_executed` | running | 同上 | 同上 |
+| 23 | `orchestrator_dispatched` | running | child_run_id, role_id, role_scope, dispatch_reason, recommended_provider | (AgentRunEvent のみ) |
+| 24 | `orchestrator_lease_renewed` | running | lease_token_hash, renewed_at, expires_at | (AgentRunEvent のみ) |
+| 25 | `orchestrator_lease_expired` | running -> blocked/running | old_lease_hash, expired_at, reason_code | (AgentRunEvent のみ) |
+| 26 | `orchestrator_failover_triggered` | running | old/new lease + reason | audit_events `orchestrator_failover` |
+| 27 | `orchestrator_kill_engaged` | running -> blocked (runtime_blocked) | engaged_by_actor_id (human only), reason | audit_events `orchestrator_kill_engaged` |
+| 28 | `inter_agent_message_sent_ref` | (status 不変) | message_id, payload_hash, seq_no, sender_run_id, receiver_run_id, redaction_status | audit_events `inter_agent_message_sent` |
+| 29 | `inter_agent_message_consumed_ref` | (status 不変) | + previous_hash_match | audit_events `inter_agent_message_consumed` |
+| 30 | `tool_web_fetch_executed` | running | tool_name, domain, provider, payload_data_class, redaction_status | (AgentRunEvent のみ) |
+| 31 | `tool_docs_search_executed` | running | 同上 | 同上 |
 
-5+ source 整合: migration `0025_sp014_event_type_37.py` DB CHECK + ORM CheckConstraint + Python Literal `AgentRunEventType` / `ALL_AGENT_RUN_EVENT_TYPES` (37) + Pydantic schema + pytest `EXPECTED_AGENT_RUN_EVENT_TYPES` + frontend TS enum.
+5+ source 整合: migration DB CHECK + ORM CheckConstraint + Python Literal `EVENT_TYPES: frozenset` (31) + Pydantic + pytest `EXPECTED_EVENT_TYPES` + frontend TS enum (Sprint 17).
 
 ### parent/child semantics
 
@@ -496,7 +496,7 @@ SP-013 で agent_runs に `unique (tenant_id, project_id, id)` 追加 → 後続
 
 ## Sprint 5.5 Output Validator + Input Trust Layer update (2026-05-10 proposed 追記 / 2026-05-12 Sprint 5.5 着手で accepted)
 
-SP-005-5 (Output Validator) accepted 化に伴う本 ADR の update。**P0 期間中** (Sprint 5.5) で event_type を 22 → 25 に拡張、`repair_exhausted` を terminal 強制、Input Trust Layer の `trust_level` enum (artifact 単体) を導入。当時の Phase D-E P0.1 proposal はこの Sprint 5.5 update により numbering 再調整が必要になり、current final numbering は SP-014 の 28 → 37 に同期済み (詳細は §event_type numbering 整合)。
+SP-005-5 (Output Validator) accepted 化に伴う本 ADR の update。**P0 期間中** (Sprint 5.5) で event_type を 22 → 25 に拡張、`repair_exhausted` を terminal 強制、Input Trust Layer の `trust_level` enum (artifact 単体) を導入。**Phase D-E update §event_type 22 → 31 (P0.1+ 拡張) は本 Sprint 5.5 update が先行 accepted 化されるため、numbering を 26-34 にシフト**する (詳細は §event_type numbering 整合)。
 
 ### event_type 22 → 25 拡張 (P0 期間中、Sprint 5.5 で追加)
 
@@ -546,16 +546,14 @@ repair retry 上限到達条件 (どちらか一方で `repair_exhausted` 遷移
 
 ### event_type numbering 整合 (P0 / P0.1+ 衝突回避)
 
-**履歴**: Phase D-E update は当初 22 → 31 として proposed されたが、Sprint 5.5 で 22 → 25、Sprint 6 batch 2 で 25 → 28 が先行 accepted 化されたため、final accepted numbering は SP-014 の 28 → 37 で固定する:
+**重要**: Phase D-E update §event_type 22 → 31 (proposed) は本 Sprint 5.5 update が先行 accepted 化されるため、**numbering をシフト**:
 
-- **元の Phase D-E numbering (historical proposed)**: 23-31 (orchestrator_dispatched 等 9 種)
-- **Sprint 5.5 accepted 化後**: 23-25 (repair / trust_level)
-- **Sprint 6 batch 2 accepted 化後**: 26-28 (CLI artifact)
-- **SP-014 accepted implementation**: 29-37 (orchestrator / inter-agent refs / tool execution)
+- **元の Phase D-E numbering (proposed)**: 23-31 (orchestrator_dispatched 等 9 種)
+- **本 Sprint 5.5 update accepted 化後**: 23-25 (Sprint 5.5)、**26-34 (Phase D-E P0.1+)**
 
-本 ADR の SP-014 section が current source であり、historical proposed numbering は invalidated。PD-R2-F-004 / PE-F-018 反映の意味は不変。
+Phase D-E update section (line 461 の §event_type 22 → 31 拡張表) は P0.1 SP-014/015 着手時に numbering 26-34 で再 accepted 化する。本 Sprint 5.5 update は P0 期間中の先行 accepted 化のため、Phase D-E section の numbering 23-31 は **proposed のまま invalidated** とし、SP-014/015 着手時に 26-34 で書換する (PD-R2-F-004 / PE-F-018 反映の意味は不変)。
 
-5+ source 整合の事実上の影響: P0 期間中は 22 → 25 → 28、P0.1 SP-014 完遂後は 28 → 37。
+5+ source 整合の事実上の影響: P0 期間中は 22 → 25、P0.1 着手時に 25 → 34 で 2 段階拡張。
 
 ### audit_events への追加 (本 ADR 範囲外、ADR-00009 update §audit_events と整合)
 
@@ -573,29 +571,4 @@ Sprint 5.5 で audit_events に追加する event_type (本 ADR の AgentRunEven
 - ADR-00010 (Provider Compliance Matrix v2): payload_data_class 算出を Input Trust Layer 側に集約 (本 Sprint 5.5 で延長、Sprint 5 で確立した caller-supplied 禁止 invariant 継続)
 - ADR-00006 (SecretBroker): repair retry context redaction で `assert_no_raw_secret` を retry prompt builder で必須実行
 - SP-005-5 §設計判断 + §Rollback section
-- `.claude/rules/agentrun-state-machine.md` §6 (Sprint 5.5 / Sprint 6 / SP-014 を反映し、current event_type 37 を正本化済み)
-
-## SP-009-5 request_revision state-machine boundary (2026-05-24 planning note)
-
-SP-009-5 Batch E adds an Approval revision-request loop. The initial E1/E2 implementation must not expand AgentRun status or AgentRunEvent enum values.
-
-### State semantics
-
-- A pending approval receiving `request_revision` becomes `invalidated`.
-- The related AgentRun remains in the existing blocked / waiting path until a revised artifact creates a fresh approval request.
-- The old approval row never returns to `pending`, and cannot be approved or rejected after invalidation.
-- Revised artifact handoff creates a new approval request with fresh `artifact_hash`, `diff_hash`, `policy_version`, `policy_pack_lock`, `provider_request_fingerprint`, and `stale_after_event_seq` binding.
-
-### Event boundary
-
-- E1/E2 must not add `approval_revision_requested` or similar values to `agent_run_events.event_type`.
-- The revision request itself is represented by the additive `approval_revision_requests` table plus metadata-only audit and notification events.
-- Any future AgentRunEvent enum addition for revision-request runtime flow must be a separate PR that updates DB CHECK, SQLAlchemy CheckConstraint, Python Literal, Pydantic/frontend schema, and pytest expected-set drift tests together.
-
-### Regression requirements
-
-- approving/rejecting an invalidated approval returns conflict
-- duplicate open revision requests are rejected
-- replacement approval uses fresh decision-packet hashes
-- terminal AgentRun states remain non-resumable
-- audit and notification payloads do not contain raw rationale or raw artifact content
+- `.claude/rules/agentrun-state-machine.md` §6 (Sprint 5.5 update で event_type 22 → 25 反映予定、別 commit)

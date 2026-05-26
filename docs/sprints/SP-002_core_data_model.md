@@ -1,20 +1,16 @@
 ---
 id: "SP-002_core_data_model"
 type: "heavy"
-status: "completed"
+status: "draft"
 sprint_no: 2
 created_at: "2026-05-08"
-updated_at: "2026-05-22"
-completed_at: "2026-05-22"
-# F-PR100-R1-002 audit fix (PR #101): frontmatter drift 訂正、tenant_id boundary + actors / principals
-# / secret_refs schema + AC-HARD-03 fixture loader 実装は完了済 (master plan §1.1).
-# 本 訂正 PR で frontmatter status を draft → completed に同期更新.
+updated_at: "2026-05-08"
 target_days: 6.5
 max_days: 8
 adr_refs:
   - "[ADR-00006](../adr/00006_secrets_management.md)"
-  - "[ADR-00002](../adr/00002_db_schema.md) # accepted、project 境界 invariant + actors/principals + complex FK"
-planned_adr_refs: []
+planned_adr_refs:
+  - "[ADR-00002](../adr/00002_db_schema.md) # Sprint 2 で proposed 化、project 境界 invariant + actors/principals + complex FK"
 related_sprints:
   - "SP-001_project_foundation"
   - "SP-003_policy_approval"
@@ -321,3 +317,4 @@ DB schema 変更 (Alembic migration) を伴う場合、以下を必ず満たす:
 - **AC-HARD-03 fixture loader の anti-gaming bypass**:
   - 検知: 97 件の test で 23 種の defense-in-depth invariant を fail-closed 検証 (PublicFixture/RedactedFixture 型分離 + nested expectation leak + jsonschema fail-closed + fixture_immutable_index sha256 双方向 + JSON strict parser + post-load constructed bypass + tuple/non-string key TypeError + unknown top-level key + split path containment + canonical filename + raw secret keys denylist)
   - 軽減: Sprint 11 で eval harness 接続時に CI hook で fixture 改変を block、月次 append-only refresh を git history check で強制
+

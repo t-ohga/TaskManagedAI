@@ -4,17 +4,17 @@ type: "heavy"
 status: "partial_skeleton"
 sprint_no: 8
 created_at: "2026-05-13"
-updated_at: "2026-05-24"
-review_summary: "2026-05-26 Batch F+G+H: SOPS resolver + httpx GitHub transport + DI wiring factory added (PR #246). Remaining residual: repo.push concrete impl, broker executor pattern change, RepoProxyDenyReason enum addition, concurrent DB test, real GitHub App E2E. Keep status partial_skeleton."
+updated_at: "2026-05-17"
+review_summary: "Sprint 11 (2026-05-17 SP-011 Exit) で carry-over 7 BL のうち **5 BL 完遂** (BL-0094 / BL-0095 / BL-0097 / BL-0101a / BL-0102 aggregator)。**未実装 3 BL** (BL-0096a 4 整合 binding signature refactor / BL-0100 repo_pr_opened actual emission / BL-0102 KPI endpoint) は Sprint 12 へ defer。Codex audit 2026-05-13 で F-001/F-005 指摘 adopt 済。Codex PR #39 R1 F-PR39-002 (P2) 反映: SP-011 PR #39 で `status: done` 昇格を試みたが、未実装 BL が残る事実が判明、`partial_skeleton` 維持。"
 target_days: 5
 max_days: 7
 adr_refs:
   - "[ADR-00006](../adr/00006_secrets_management.md) # accepted、installation token を SecretBroker capability token 経由で扱う"
   - "[ADR-00007](../adr/00007_external_exposure.md) # accepted、GitHub webhook は Tailscale 内 endpoint のみ受信、Funnel/Cloudflare 不使用"
   - "[ADR-00009](../adr/00009_action_class_taxonomy.md) # accepted、repo_write / pr_open / merge / deploy action_class enforcement"
-  - "[ADR-00011](../adr/00011_github_app_permission_matrix.md) # accepted、Criteria #11 GitHub App permission 変更"
-  - "[ADR-00003](../adr/00003_api_contract.md) # accepted、Draft PR / webhook API contract (Criteria #3)"
-planned_adr_refs: []
+planned_adr_refs:
+  - "[ADR-00011](../adr/00011_github_app_permission_matrix.md) # Sprint 8 で proposed 化、Criteria #11 GitHub App permission 変更"
+  - "[ADR-00003](../adr/00003_api_contract.md) # Sprint 8 batch 5 で proposed 化、Draft PR / webhook API contract (Criteria #3)"
 related_sprints:
   - "SP-007_runner_sandbox # 実在、runner_mutation_gateway → RepoProxy 経由 push"
   - "SP-009_p0_ui_pack # 実在、Approval Inbox + AI Runs で repo_write/pr_open 表示"
@@ -84,17 +84,17 @@ risks:
 - **BL-0099**: Webhook HMAC verifier (FastAPI route `/webhooks/github` Tailscale 内のみ accessible、Webhook secret SecretBroker 経由 resolve)
 - **BL-0100**: AgentRunEvent integration - `repo_pr_opened` event を RepoProxy から append、payload に `pr_number` / `branch` / `head_sha` / `draft=true` / `created_at`
 - **BL-0101**: `merge` / `deploy` deny test (capability token issue 経路で deny 確認、Policy Engine deny 確認、HARD test)
-- **BL-0102**: AC-KPI-02 `time_to_merge` 計測 helper (2026-05-24 Batch E で `/api/v1/agent_runs/{run_id}/kpi` endpoint を追加。現 P0 source は `repo_pr_opened` first event → `agent_runs.completed_at` proxy、median 集計は Eval / orchestrator rollup 側で扱う)
+- **BL-0102**: AC-KPI-02 `time_to_merge` 計測 helper (Draft PR created_at → merged_at の median 計算、`/agent-runs/{id}/kpi` endpoint)
 
 ## タスク一覧
 
-- [ ] **batch 0**: ADR-00011 起票 (proposed)、Permission Matrix draft。2026-05-24 reconciliation 以降は ADR-00011 を design decision accepted とし、implementation closeout は本 Pack の residual batches で判定する。
+- [ ] **batch 0**: ADR-00011 起票 (proposed)、Permission Matrix draft、Sprint 11 `acceptance_blocked_by` 完了後に accepted 化 (Codex SP8 R2 R2-F-002 + R3 R3-F-001 adopt: Sprint 8 内では accepted 化しない)
 - [ ] **batch 1**: BL-0094 (GitHub App 登録) + BL-0095 (SecretBroker integration) + Codex multi-round review
 - [ ] **batch 2**: BL-0096 (RepoProxy) + BL-0097 (GitHubAppAdapter) + Codex multi-round review
 - [ ] **batch 3**: BL-0098 (Permission Matrix) + BL-0101 (merge/deploy deny test) + Codex multi-round review
 - [ ] **batch 4**: BL-0099 (Webhook HMAC verifier) + Codex multi-round review
 - [ ] **batch 5**: BL-0100 (AgentRunEvent integration) + BL-0102 (AC-KPI-02 計測) + Codex multi-round review
-- [ ] **Sprint Exit**: SP-008 ## Review 章 + main merge。ADR-00011 の accepted status だけでは Exit 不可; residual batches A-E の実装証跡が必要。
+- [ ] **Sprint Exit**: SP-008 ## Review 章 + main ff merge (ADR-00011 は Sprint 11 acceptance_blocked_by 完了後に accepted 化、Sprint 8 内では proposed 維持)
 - [ ] **Hard Gate 接続**: AC-HARD-03 tenant isolation の repo permission 越境 test 追加
 
 ## must_ship / defer_if_over_budget 対応表
@@ -123,19 +123,18 @@ risks:
 - [ ] `uv run pytest tests/repoproxy/test_github_app_adapter.py -q` で broker-mediated token 経由のみ動作することを確認。
 - [ ] `uv run pytest tests/repoproxy/test_repoproxy_service.py -q` で 4 整合 binding が 1 つでも mismatch なら deny されることを確認。
 - [ ] `uv run pytest tests/repoproxy/test_permission_matrix.py -q` で actions / workflows / administration が deny 明示されていることを確認。
-- [ ] `uv run pytest tests/repoproxy/test_webhook_hmac.py tests/repoproxy/test_webhook_service.py -q` で signature mismatch / replay / rotation status / timing attack に対応していることを確認。
+- [ ] `uv run pytest tests/repoproxy/test_webhook_hmac.py -q` で signature mismatch / replay / timing attack に対応していることを確認。
 - [ ] `uv run pytest tests/repoproxy/test_merge_deploy_deny.py -q` で merge / deploy が capability token / Policy Engine 両方で deny されることを確認。
-- [ ] `uv run pytest tests/repoproxy/test_repo_pr_opened_event.py -q` で AgentRunEvent integration を確認。
+- [ ] `uv run pytest tests/repoproxy/test_agent_run_event_repo_pr_opened.py -q` で AgentRunEvent integration を確認。
 - [ ] `uv run pytest tests/repoproxy/test_canary_no_raw_token.py -q` で raw installation token が AI / runner / artifact / log / audit に漏れないことを確認。
 - [ ] `uv run pytest tests/repoproxy/test_branch_naming_collision.py -q` で `codex/agent-run-*` branch overwrite が deny されることを確認。
 - [ ] `uv run pytest tests/repoproxy/test_forbidden_path_dotgithub.py -q` で `.github/workflows/**` への push が forbidden_path + RepoProxy で二重 deny されることを確認。
 - [ ] `uv run pytest tests/contracts/test_kpi_time_to_merge.py -q` で AC-KPI-02 median 計算が正しいことを確認。
-- [ ] `TASKMANAGEDAI_RUN_DB_TESTS=1 TASKMANAGEDAI_DATABASE_URL='postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:55434/taskmanagedai_test' uv run pytest tests/metrics/test_agent_run_kpi.py -q` と `uv run pytest tests/api/test_agent_runs_kpi.py -q` で AgentRun KPI endpoint exposure を確認。
 - [ ] `rg -n "installation_token|GITHUB_TOKEN|GITHUB_INSTALLATION_TOKEN" backend tests --glob '!**/test_*' --glob '!**/env_scrub.py'` で raw token を保存する経路がないことを review する。
 
 ## レビュー観点
 
-- [ ] ADR-00011 は design decision として accepted。SP-008 completion は ADR status ではなく、2026-05-24 residual reconciliation で列挙した implementation evidence の完了で判定する。
+- [ ] ADR-00011 が Sprint 8 batch 0 で proposed 化 → **Sprint 11 acceptance_blocked_by 完了後に accepted 化** (Sprint 8 partial_skeleton + Sprint 11 carry-over BL 全件完了が accepted 条件、Codex SP8 R2 R2-F-002 adopt)。
 - [ ] GitHub App permission は最小 (contents:write + pull_requests:write + metadata:read のみ)、actions / workflows / packages / administration は明示 deny。
 - [ ] installation token は SecretBroker 内でのみ resolve、RepoProxy は broker-mediated operation 経由でのみ httpx request を投げる。
 - [ ] 4 整合 binding が all-or-nothing (1 mismatch でも invalidate)、`expected_request_fingerprint` は OperationContext canonical JCS で server-side 計算 (`server-owned-boundary §1` 違反なし)。
@@ -171,7 +170,7 @@ risks:
 - [ADR-00006](../adr/00006_secrets_management.md): accepted。installation token を SecretBroker capability token 経由で扱う前提。本 Sprint で `provider=github` / `operation=repo.push,repo.pr_open` を allowed_operations に追加。
 - [ADR-00007](../adr/00007_external_exposure.md): accepted。webhook endpoint を Tailscale 内 (`100.64.0.0/10`) のみ受信、Funnel/Cloudflare 不使用。
 - [ADR-00009](../adr/00009_action_class_taxonomy.md): accepted。action_class `repo_write` / `pr_open` / `merge` / `deploy` の enforcement 経路を本 Sprint で確立 (merge / deploy は P0 deny)。
-- [ADR-00011](../adr/00011_github_app_permission_matrix.md): design decision accepted。2026-05-24 reconciliation で過去の implementation completion claim を補正済み。Criteria #11 GitHub App permission 変更の正本。
+- [ADR-00011](../adr/00011_github_app_permission_matrix.md): Sprint 8 で proposed、Sprint 11 acceptance_blocked_by 8 件完了後に accepted (Codex SP8 R2/R3 adopt で旧「batch 5 で accepted」表現訂正)。Criteria #11 GitHub App permission 変更の正本。
 - [ADR-00003](../adr/00003_api_contract.md): Sprint 8 batch 5 で proposed 化、Draft PR / webhook API endpoint contract (Criteria #3)。
 
 ## Review
@@ -248,7 +247,7 @@ risks:
   - SecretBroker repo.push / repo.pr_open allowed_operations 追加 (BL-0095):
     RequestedOperation Literal で予約済だが、`secret_refs.allowed_operations` 配列
     + capability_token issue flow との結線は未実装
-  - GitHubAppAdapter httpx wrapper (BL-0097): 2026-05-13 audit 時点では boundary absent
+  - GitHubAppAdapter httpx wrapper (BL-0097): **完全未実装**
   - AgentRunEvent `repo_pr_opened` actual emission (BL-0100): MockRepoProxy
     から AgentRuntime への結線なし、未実装
   - AC-KPI-02 time_to_merge 計測 helper / endpoint (BL-0102): KPI collector
@@ -256,7 +255,7 @@ risks:
 - **partial_skeleton 達成**:
   - Permission Matrix toml hardcode + check_no_dangerous_permissions (BL-0098): ✅
   - RepoProxy ABC + MockRepoProxy + DraftPRRequest server-owned-boundary
-    pending (Codex F-002 で当時の 4 整合 binding 欠落を指摘、Sprint 11 で
+    pending (Codex F-002 で 4 整合 binding 未実装を指摘、Sprint 11 で
     refactor): ✅ interface のみ
   - Webhook HMAC low-level pure helper (BL-0099): ✅ helper のみ、
     SecretBroker mediated service layer は Sprint 11
@@ -287,236 +286,6 @@ verify で品質確認。
 本 worktree branch を main へ ff merge する操作は user 直接実行を待つ
 (CLAUDE.md §6.7 destructive operation policy)。本 commit push 済、PR 作成
 または ff merge は user 判断。
-
-### 2026-05-24 residual reconciliation (post-SP024 Codex)
-
-#### verified present in current tree
-
-- `config/github_app_permissions.toml` + `backend/app/services/repoproxy/permission_matrix.py`: minimal permission matrix, explicit deny list, and static/differential checks.
-- `backend/app/services/repoproxy/repoproxy.py`: `RepoProxy` ABC, `MockRepoProxy`, branch pattern validation, branch overwrite deny, merge/deploy deny stubs.
-- `backend/app/services/repoproxy/webhook_hmac.py`: low-level HMAC SHA-256 helper with constant-time compare and rotation helper.
-- `backend/app/domain/agent_runtime/operation_context.py`: `repo.push` / `repo.pr_open` target schema, including `commit_sha` and `repo_state_commit_sha`.
-- `backend/app/services/secrets/broker.py`: `repo.push` / `repo.pr_open` action-class mapping, approval binding, allowed operation validation, and atomic claim fingerprint checks.
-- `backend/app/domain/agent_runtime/event_type.py`: `repo_pr_opened` event type exists.
-- `backend/app/services/metrics/orchestrator_kpi_rollup.py`: reads existing `repo_pr_opened` events for orchestrator-level proxy rollup.
-- `backend/app/services/metrics/agent_run_kpi.py` + `backend/app/api/agent_runs.py`: expose `GET /api/v1/agent_runs/{run_id}/kpi` for one tenant-scoped run without returning raw event payloads.
-- `backend/app/services/repoproxy/draft_pr_runtime.py`: standard runtime call-site calls `RepoProxy.create_draft_pr()` and appends `repo_pr_opened` through `RepoPROpenedEventWriter` after successful Draft PR creation.
-
-#### not verified / still residual
-
-- `backend/app/services/repoproxy/github_app_adapter.py` exists as a broker-mediated adapter boundary with no raw installation token exposure to transport. Real GitHub httpx transport and live Git ref re-fetch remain pending.
-- `RepoProxy.create_draft_pr()` now accepts only `DraftPRBinding`; the DB-backed resolver loads ApprovalRequest + latest ContextSnapshot and passes the internal `DraftPRRequest` to the transport. Live Git ref re-fetch remains pending for GitHubAppAdapter.
-- `GitHubWebhookVerifier` service boundary plus concrete SecretRef status resolver, Redis SETNX replay adapter, audit sink, and FastAPI `POST /webhooks/github` route are present. The deployment-specific SOPS material resolver remains an operator/runtime wiring item because `secret_refs` intentionally stores only metadata, not raw HMAC material.
-- Real GitHub App admin registration / private key SOPS metadata cannot be verified from repo files and remains an operator setup item unless a secret metadata fixture is added.
-
-#### next implementation batches
-
-1. Batch A/A2: service-level RepoProxy server-owned binding refactor (`approval_id`, `agent_run_id`) + negative tests for each mismatch. **Completed 2026-05-24**: public signature now takes only `DraftPRBinding`, pure server-owned state builder exists, and DB-backed resolver loads ApprovalRequest + latest ContextSnapshot. Live Git ref re-fetch remains for Batch B transport integration.
-2. Batch B: `GitHubAppAdapter` broker-mediated boundary with raw-token non-exposure tests. **Partially completed 2026-05-24**: adapter boundary + tests exist; real httpx transport, retries/rate limit, and live Git ref re-fetch remain.
-3. Batch C/C2: webhook service layer with SecretBroker resolution, Redis replay guard, rotation status validation, audit payload redaction, concrete SecretRef resolver, Redis replay adapter, and FastAPI route wiring. **Completed 2026-05-24 at service/route boundary level**; deployment SOPS material resolver remains operator/runtime wiring.
-4. Batch D/D2: actual `repo_pr_opened` emission from the runtime path. **Completed at service boundary level 2026-05-24**: append-only event writer + DB persistence tests + `DraftPRRuntime` call-site wrapper exist.
-5. Batch E: `/api/v1/agent_runs/{run_id}/kpi` endpoint. **Completed 2026-05-24**: per-run AC-KPI-02 source endpoint + service tests exist. Final SP-008 status closeout waits for remaining transport/webhook/call-site residuals.
-
-### 2026-05-24 Batch A implementation (RepoProxy binding guard)
-
-#### changed
-
-- `backend/app/services/repoproxy/repoproxy.py`: `RepoProxy.create_draft_pr()` now accepts only `DraftPRBinding` (`tenant_id`, `approval_id`, `agent_run_id`), not a caller-supplied `DraftPRRequest`.
-- Added `DraftPRApprovalState` / `DraftPRSnapshotState` projections and `build_draft_pr_request_from_server_state()` for server-owned 4-binding validation.
-- `MockRepoProxy` now fail-closes without a resolver and uses `StaticDraftPRRequestResolver` in tests.
-- Added regression tests for signature-level deletion, approved-only PR open, action class guard, run mismatch, policy mismatch, diff hash mismatch, provider fingerprint mismatch, repo state mismatch, invalid branch, unknown binding, and resolver-less fail-closed behavior.
-
-#### verified
-
-- `uv run pytest tests/repoproxy -q`
-- pending final PR gate: ruff + mypy + docs frontmatter + diff check.
-
-#### deferred
-
-- Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
-- Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
-- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
-
-### 2026-05-24 Batch C implementation (Webhook service boundary)
-
-#### changed
-
-- `backend/app/services/repoproxy/webhook_service.py`: added `GitHubWebhookVerifier`, `WebhookSecretResolver`, `WebhookReplayStore`, and redacted audit result payloads.
-- The service verifies current active secret first, then previous deprecated secret during rotation, and denies any previous secret with an invalid status.
-- Replay nonce is claimed only after HMAC validation succeeds, using a tenant + installation + delivery hash key and a 3600 second TTL.
-- Audit payload records hashes and metadata only; raw signature header, delivery id, and HMAC secret are not emitted.
-- `backend/app/services/repoproxy/webhook_hmac.py`: updated module contract to keep it as the low-level pure helper behind the service boundary.
-- `tests/repoproxy/test_webhook_service.py`: added 11 focused tests for current/previous secret acceptance, mismatch no-replay, replay duplicate deny, status validation, missing delivery id, audit redaction, JSON serializability, and replay TTL validation.
-
-#### verified
-
-- `uv run pytest tests/repoproxy/test_webhook_service.py -q`
-
-#### deferred
-
-- Deployment-specific SOPS material resolver for raw webhook HMAC material. The route expects `app.state.github_webhook_secret_material_resolver` so raw secret material stays outside DB and outside tests.
-- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
-
-### 2026-05-24 Batch C2 implementation (Webhook route/adapters)
-
-#### changed
-
-- `backend/app/services/repoproxy/webhook_adapters.py`: added `DbWebhookSecretResolver`, `RedisWebhookReplayStore`, and `DbWebhookAuditSink`.
-- SecretRef resolution now selects the active `secret://sops/p0/github_webhook_hmac#vN` row and the rotated-from deprecated previous row only when `allowed_consumers` includes `api:repo_proxy` and `allowed_operations` includes `secret.verify`.
-- Raw webhook HMAC material is resolved through an injected `SecretMaterialResolver`; DB rows and tests never store raw secret values.
-- `backend/app/api/github_webhooks.py`: added `POST /webhooks/github`, using `request.client.host` only (not forwarded headers) to allow loopback or Tailscale CGNAT `100.64.0.0/10`, then calls `GitHubWebhookVerifier`.
-- Production auth middleware now treats `/webhooks/github` as public to normal session auth, while the route applies its own network + HMAC guard.
-- Response payload is redacted to `accepted`, `reason_code`, and `audit_event_type`; raw request body, signature, delivery id, and secret refs are not returned.
-
-#### verified
-
-- `uv run ruff check backend/app/api/github_webhooks.py backend/app/services/repoproxy/webhook_adapters.py backend/app/api/router.py backend/app/middleware/dev_actor.py backend/app/services/repoproxy/__init__.py tests/api/test_github_webhooks.py tests/repoproxy/test_webhook_adapters.py tests/api/test_sp012_9_ui_wiring_routes.py`
-- `PYTHONPATH=cli uv run mypy backend/app/api/github_webhooks.py backend/app/services/repoproxy/webhook_adapters.py tests/api/test_github_webhooks.py tests/repoproxy/test_webhook_adapters.py`
-- `uv run pytest tests/api/test_github_webhooks.py tests/repoproxy/test_webhook_adapters.py tests/api/test_sp012_9_ui_wiring_routes.py -q`
-
-#### deferred
-
-- Real deployment `SecretMaterialResolver` implementation for decrypting the SOPS-backed HMAC value.
-- Real GitHub httpx transport, retries/rate limit handling, broker-owned installation token use, and live Git ref re-fetch.
-
-### 2026-05-24 Batch D implementation (repo_pr_opened event writer)
-
-#### changed
-
-- `backend/app/services/repoproxy/repo_pr_event.py`: added `RepoPROpenedEventWriter`, `build_repo_pr_opened_payload()`, and `append_repo_pr_opened_event()`.
-- `DraftPRResult` now carries safe server-owned `repo_full_name`, `branch`, and `head_sha` fields for downstream event emission.
-- `MockRepoProxy` and `GitHubAppAdapter` populate those safe result fields from the internal resolved `DraftPRRequest`.
-- Event payloads are rebuilt into canonical `https://github.com/{owner}/{repo}/pull/{number}` URLs, so a bad transport-provided URL cannot leak raw tokens.
-- Event writer uses `AgentRunEventRepository.append_event()` with `event_type='repo_pr_opened'` and idempotency key `repoproxy:repo_pr_opened:{run_id}:{pr_number}`.
-- `tests/repoproxy/test_repo_pr_opened_event.py`: added unit tests for payload redaction, deny paths, idempotency key calls, and a DB integration test for append-only persistence.
-
-#### verified
-
-- `TASKMANAGEDAI_RUN_DB_TESTS=1 TASKMANAGEDAI_DATABASE_URL='postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:55434/taskmanagedai_test' uv run pytest tests/repoproxy/test_repo_pr_opened_event.py -q`
-
-#### deferred
-
-- Completed by Batch D2 below.
-
-### 2026-05-24 Batch D2 implementation (DraftPRRuntime call-site wiring)
-
-#### changed
-
-- `backend/app/services/repoproxy/draft_pr_runtime.py`: added `DraftPRRuntime` and `DraftPRRuntimeResult`.
-- `DraftPRRuntime.create_draft_pr()` calls `RepoProxy.create_draft_pr(binding)` and appends `repo_pr_opened` through `RepoPROpenedEventWriter` only after successful Draft PR creation.
-- Denied Draft PR results return without event append, preserving the invariant that `repo_pr_opened` means an actual PR exists.
-- Writer-level denial for incomplete successful results is surfaced as `event_deny_reason` instead of silently claiming event emission.
-- `tests/repoproxy/test_repo_pr_opened_event.py`: added unit tests for success and denied paths plus a DB integration test proving MockRepoProxy success persists `repo_pr_opened` through the runtime service.
-
-#### verified
-
-- `uv run ruff check backend/app/services/repoproxy/draft_pr_runtime.py backend/app/services/repoproxy/__init__.py tests/repoproxy/test_repo_pr_opened_event.py`
-- `PYTHONPATH=cli uv run mypy backend/app/services/repoproxy/draft_pr_runtime.py tests/repoproxy/test_repo_pr_opened_event.py`
-- `TASKMANAGEDAI_RUN_DB_TESTS=1 TASKMANAGEDAI_DATABASE_URL='postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:55434/taskmanagedai_test' uv run pytest tests/repoproxy/test_repo_pr_opened_event.py -q`
-
-#### deferred
-
-- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
-
-### 2026-05-24 Batch E implementation (AgentRun KPI endpoint)
-
-#### changed
-
-- `backend/app/services/metrics/agent_run_kpi.py`: added `AgentRunKpiService` and `AgentRunKpi` for one tenant-scoped AgentRun.
-- The service dedupes `repo_pr_opened` events by `(run_id, seq_no)`, uses the first PR-opened event timestamp as the source, and emits a `time_to_merge_proxy_ms` sample only when the run is `completed` and `completed_at >= first_repo_pr_opened_at`.
-- `backend/app/api/agent_runs.py`: added `GET /api/v1/agent_runs/{run_id}/kpi`.
-- The endpoint returns ids, status, timestamps, counts, sample count, and proxy value only. It does not return raw `agent_run_events.event_payload`.
-- `tests/metrics/test_agent_run_kpi.py`: added DB integration tests for first-event selection, running-run no-sample, negative temporal sample rejection, and tenant/missing-run scoping.
-- `tests/api/test_agent_runs_kpi.py`: added route/response/404 tests and asserted raw payload keys are absent from API output.
-- `tests/api/test_sp012_9_ui_wiring_routes.py`: added route registration coverage.
-
-#### verified
-
-- `uv run ruff check backend/app/services/metrics/agent_run_kpi.py backend/app/services/metrics/__init__.py backend/app/api/agent_runs.py tests/metrics/test_agent_run_kpi.py tests/api/test_agent_runs_kpi.py tests/api/test_sp012_9_ui_wiring_routes.py`
-- `PYTHONPATH=cli uv run mypy backend/app/services/metrics/agent_run_kpi.py backend/app/api/agent_runs.py tests/metrics/test_agent_run_kpi.py tests/api/test_agent_runs_kpi.py`
-- `uv run pytest tests/api/test_agent_runs_kpi.py tests/api/test_sp012_9_ui_wiring_routes.py -q`
-- `TASKMANAGEDAI_RUN_DB_TESTS=1 TASKMANAGEDAI_DATABASE_URL='postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:55434/taskmanagedai_test' uv run pytest tests/metrics/test_agent_run_kpi.py -q`
-
-#### deferred
-
-- True PR merged timestamp source (`repo_pr_merged` / GitHub merge event) remains future work; current P0 source is explicitly a `repo_pr_opened` to AgentRun completion proxy.
-- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
-
-### 2026-05-24 Batch A2 implementation (DB-backed Draft PR resolver)
-
-#### changed
-
-- `backend/app/services/repoproxy/draft_pr_resolver.py`: added `DbDraftPRRequestResolver` that tenant-scopes `ApprovalRequest` and latest `ContextSnapshot` lookup from `DraftPRBinding`.
-- Resolver delegates all 4-binding validation to `build_draft_pr_request_from_server_state()`.
-- Approved approvals are invalidated on stale artifact/policy/provider/repo-state deny reasons before returning fail-closed.
-- Added DB integration tests for latest snapshot selection, missing approval, tenant/run scoping, missing snapshot invalidation, repo-state mismatch invalidation, and pending approval no-mutation behavior.
-
-#### verified
-
-- `TASKMANAGEDAI_RUN_DB_TESTS=1 TASKMANAGEDAI_DATABASE_URL='postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:55434/taskmanagedai_test' uv run pytest tests/repoproxy/test_repoproxy_db_resolver.py -q`
-
-#### deferred
-
-- Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
-- Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
-- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
-
-### 2026-05-24 Batch B implementation (GitHubAppAdapter boundary)
-
-#### changed
-
-- `backend/app/services/repoproxy/github_app_adapter.py`: added `GitHubAppAdapter`, `GitHubBrokeredTransport`, `GitHubDraftPRResponse`, and pinned `GITHUB_API_VERSION = "2022-11-28"`.
-- Adapter redeems only SecretBroker capability tokens for `repo.pr_open`; it never accepts or passes a raw GitHub installation token.
-- Transport receives `BrokerOperationContext.secret_handle` + internal `DraftPRRequest`, keeping raw installation token resolution inside SecretBroker / broker-owned transport internals.
-- Added tests for broker redeem arguments, pinned API version, broker-denial fail-closed behavior, invalid approval ID no-broker-call behavior, and no installation token exposure to transport.
-
-#### verified
-
-- `uv run pytest tests/repoproxy/test_github_app_adapter.py -q`
-- `TASKMANAGEDAI_RUN_DB_TESTS=1 TASKMANAGEDAI_DATABASE_URL='postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:55434/taskmanagedai_test' uv run pytest tests/repoproxy -q`
-
-#### deferred
-
-- Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
-- Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
-- External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
-
-### Batch F+G+H 完了 (2026-05-26、PR #246)
-
-#### changed (Batch F: SOPS resolver)
-
-- `backend/app/services/secrets/sops_resolver.py`: SopsSubprocessResolver (broker/webhook internal-only、URI scheme validation + path traversal deny + symlink component check + absolute binary pinning + subprocess env allowlist + timeout+kill + stderr canary redaction)
-- `tests/repoproxy/test_sops_resolver.py`: 20 tests (URI reject + path traversal + subprocess hardening + status deny + canary redaction + happy path)
-
-#### changed (Batch G: httpx transport)
-
-- `backend/app/services/repoproxy/httpx_transport.py`: HttpxGitHubTransport (GitHubBrokeredTransport Protocol concrete implementation、live SHA mismatch fail-closed + 429 retry + token non-exposure in errors/returns)
-- `tests/repoproxy/test_httpx_transport.py`: 7 tests (token non-exposure + live ref changed + retry + error sanitization)
-
-#### changed (Batch H: DI wiring)
-
-- `backend/app/services/repoproxy/transport_factory.py`: FastAPI app.state injection + create factory functions
-- `tests/repoproxy/test_transport_factory.py`: 6 tests (factory + app state + error paths)
-
-#### verified (Batch F+G+H)
-
-- `uv run ruff check`: all pass
-- `uv run mypy`: all pass
-- `uv run pytest tests/repoproxy/ -q`: 127 passed, 9 skipped
-- Codex Phase 1 review (R1 7 + R2 3 = 10 findings all adopt)
-- Codex Phase 3 adversarial review (HIGH 2 + MEDIUM 3 + LOW 1, all adopt + fix)
-
-#### deferred (Batch F+G+H)
-
-- `repo.push` operation concrete implementation (BL-0095 partial)
-- Broker-owned token executor pattern change (R2-F1、broker.py 変更は別 PR)
-- `RepoProxyDenyReason.LIVE_REF_CHANGED` enum addition (requires 5+ source sync)
-- Concurrent redeem DB integration test (requires running PostgreSQL)
-- Real GitHub API E2E test (requires GitHub App registration)
-
-#### risks
-
-- broker.py の `_resolve_secret` → `del` pattern は callback に raw secret を渡さない。transport は webhook パターンと同じ `material_resolver` injection で callback 内 resolve。broker 変更なしで boundary 維持。
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
 

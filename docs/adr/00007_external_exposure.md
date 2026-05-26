@@ -1,41 +1,17 @@
 ---
 id: "ADR-00007"
 title: "外部公開設定: Tailscale Serve + Funnel 不使用 + tag:taskhub-ci grants 最小化"
-# F-PR67-013 P2 adopt: master plan で ADR-00007 acceptance = ADR-00021 同期
-# accepted (master plan line 107). ADR-00021 が host migration drill PASS
-# 未達のため proposed restore、ADR-00007 も同期 proposed 維持.
-status: "accepted"
+status: "proposed"
 date: "2026-05-07"
-updated_at: "2026-05-19"
 authors:
   - "t-ohga"
 related_sprints:
   - "SP-000_bootstrap"
-  - "SP-012_p0_acceptance"
 supersedes: null
 superseded_by: null
-# F-PR67-042/047 P2 adopt (PR #67 R9/R10): R8 T00 reinterpretation で本 ADR
-# は SP022-T00 (pre-implementation gate) で ADR-00021 と同時 accepted.
-# F-PR67-047 P2 fix: 旧 blocker "ADR-00021 同期 accepted" は ADR-00021 が同様に
-# "ADR-00007 同期 accepted" を要求しており mutual deadlock になっていた.
-# common SP022-T00 simultaneous acceptance gate を blocker に変更し cycle 解消.
-# F-R2-002 adopt (SP022-T00 PR): 旧 acceptance_blocked_by ["SP022-T00
-# pre-implementation gate trigger (ADR-00021 と同時 accepted、F-PR67-047 P2 adopt:
-# 旧 mutual blocking cycle 解消)"] は SP022-T00 で gate 完了したため accepted 後の
-# lifecycle metadata から削除。完了事実は acceptance_history に移送。
-# post_acceptance_verification (SP022-T09 Tailscale 閉域維持 invariant verify) は
-# active verification として残す。
-acceptance_target_sprint: "SP022-T00 (pre-implementation gate、ADR-00021 と同時、SP-022 着手 PR で acceptance 完了、F-PR67-042 P2 adopt)"
-post_acceptance_verification:
-  - "SP022-T09 実機 host migration drill (Mac→VPS) で Tailscale 閉域維持 invariant verify"
-acceptance_history:
-  - "2026-05-07: proposed (SP-000_bootstrap で起票)"
-  - "2026-05-18T00:30:00Z: tentative accepted (PR #67 F-PR67-002 P1 adopt として SP-012 で accepted 化試行、ADR-00021 と同時)"
-  - "2026-05-18T09:40:06Z: tentative acceptance 撤回 (ADR-00021 が host migration drill PASS 未達のため proposed restore、ADR-00007 も同期 proposed 維持)"
-  - "2026-05-19: accepted at SP022-T00 pre-implementation gate (本 PR で ADR-00021 と simultaneous acceptance、SP022-T09 で実機 host migration drill (Mac→VPS) における Tailscale 閉域維持 invariant verify による post-acceptance verification 必須、F-PR67-047 mutual blocking cycle 解消完了、acceptance_blocked_by key は accepted 後削除 = F-R2-002 adopt)"
 ---
 
-最終更新: 2026-05-19 (SP022-T00 pre-implementation gate で ADR-00021 と simultaneous accepted、SP022-T09 で実機 drill 時 Tailscale 閉域維持 invariant verify 待ち、acceptance_blocked_by key は accepted 後削除 = F-R2-002 adopt).
+最終更新: 2026-05-07
 
 ## 背景
 
@@ -108,9 +84,9 @@ CT log や screenshot / docs / CI log に非中立 machine 名 / tailnet DNS が
 
 ---
 
-## Host-Portable Deployment update (2026-05-10、ADR-00021 連動、F-PR67-023 P2 adopt で proposed sync)
+## Host-Portable Deployment update (2026-05-10、ADR-00021 連動)
 
-F-PR67-023 P2 adopt: ADR-00007 + ADR-00021 はともに `proposed` 状態 (acceptance は SP-022 で実機 host migration drill PASS 後、master plan line 106/107)、本 update は **staged for synchronized acceptance** = SP-022 で同時 accepted 化される invariant 確定の draft. 本 ADR の **Tailscale 閉域維持 invariant が host を変えても不変** であることを明示化:
+ADR-00021 (Host-Portable Deployment + Data Migration) accepted 化に伴い、本 ADR の **Tailscale 閉域維持 invariant が host を変えても不変** であることを明示化:
 
 ### host 中立 invariant (ADR-00021 §6 と同期)
 

@@ -10,91 +10,17 @@ P0 は個人専用、Tailscale 閉域、単一 VPS、Docker Compose を前提に
 
 ## 2. 重要原則
 
-以下は alwaysApply として扱います。実装者、レビュー担当、サブエージェント、外部エージェント出力の採否判断に常に適用してください。
+以下は alwaysApply。詳細は各 rules/*.md が正本（本セクションは要約 link のみ）。
 
-1. **AI 出力直結禁止**
-   - AI 出力を直接 command、SQL、workflow、外部 tool 操作へ接続しない。
-   - AI は plan、patch、review、evidence、policy decision などの artifact を生成するだけに留める。
-   - 採用前に schema validation、policy lint、human approval、runner sandbox、audit event を通す。
-   - 禁止例: AI 出力 SQL を DB に適用、AI 出力 workflow を `.github/workflows/**` に書込、AI 出力 tool call をそのまま実行、AI 出力 patch を approval なしに repo push。
-
-2. **deny-by-default**
-   - Tailscale、Tool、Repo、Secret、merge、deploy は明示許可がなければ拒否する。
-   - Tailscale は Serve / SSH の閉域運用を前提にし、Funnel や public ingress は P0 対象外。`tag:taskhub-ci` も最小 grants のみ許可する。
-   - Tool は P0 では `local|stdio` と read-only `search|fetch` 中心。書込系 MCP / 外部 tool は `tool_mutating_gateway_stub` で deny-only。
-   - Repo 書込は GitHub App + RepoProxy / Draft PR flow を通し、merge / deploy は P0 常時 deny または明示承認対象。
-   - Secret 値は AI、runner、DB、artifact export に渡さない。
-
-3. **Sprint Pack 必須ゲート / ADR Gate Criteria 11 種**
-   - すべての機能単位 Sprint は実装前に `docs/sprints/` の Sprint Pack を持つ。
-   - 軽量 Pack は目的、対象外、受け入れ条件、検証手順、残リスクを含める。
-   - 重量 Pack は背景、設計判断、実装チケット、ADR 参照、レビュー観点、must_ship / defer_if_over_budget を含める。
-   - 次の 11 種は実装前 ADR 必須: 認証・認可、DB schema、API 契約、AI エージェント権限、MCP / tool 権限、Secrets 管理、外部公開、破壊的操作、広範囲リファクタ、Provider 追加 / 切替、GitHub App permission 変更。
-   - P0 Exit は Hard Gates 7 全件達成かつ Quality KPIs 5 の未達 1 個以下で判定する。
-
-4. **Provider Compliance Matrix v2 機械判定 invariant**
-   - Provider 送信可否は `config/provider_compliance.toml` と `docs/基本設計/04_セキュリティ_権限_監査設計.md` を正本にする。
-   - `payload_data_class` は request / artifact metadata から事前算出済みで、ProviderAdapter は再算出しない。
-   - `allowed_data_class` は caller 入力ではなく Matrix からのみ解決する。
-   - `payload_data_class` 未設定、provider / feature 未登録、Matrix 外、`payload_data_class > allowed_data_class` は送信前 deny。
-   - `unverified` が残る provider / feature には `payload_data_class >= confidential` を送らない。
-   - data class ordinal は `public < internal < confidential < pii` の単一順序で比較し、実装は `{public:0, internal:1, confidential:2, pii:3}` の ordinal map を使う。文字列比較や別順序は禁止。
-
-5. **SecretBroker atomic claim / actor-run-fingerprint binding**
-   - P0 の SecretBroker は FastAPI 内 service module とし、DB には secret 値を保存せず `secret_ref` のみ保存する。
-   - capability token は短命、one-time、scope / operation bound とする。
-   - redeem は check → execute → mark used の逐次処理を禁止し、DB transaction / conditional UPDATE による atomic claim で行う。
-   - atomic claim は actor、run、request_fingerprint、operation allowlist を同一文で binding する。token 値が正しくても actor / run / fingerprint が一致しない場合は deny。
-   - raw secret、provider key、GitHub installation token、Tailscale auth key、SOPS age 鍵の実値を AI / runner / artifact / log に出さない。
-
-6. **AgentRun 16 状態 + blocked サブ 3**
-   - AgentRun status は P0 で次の 16 状態に固定する: `queued`, `gathering_context`, `running`, `generated_artifact`, `schema_validated`, `policy_linted`, `diff_ready`, `waiting_approval`, `blocked`, `provider_refused`, `provider_incomplete`, `validation_failed`, `repair_exhausted`, `completed`, `failed`, `cancelled`。
-   - `blocked` は単一 status であり、サブカテゴリは `blocked_reason` で表現する: `policy_blocked`, `budget_blocked`, `runtime_blocked`。
-   - terminal state は `completed`, `failed`, `cancelled`, `provider_refused`, `repair_exhausted`。
-   - `blocked` と `provider_incomplete` は terminal ではない。policy 更新、approval、budget 調整、resume、retry の余地を残す。
-   - 状態は snapshot ではなく AgentRunEvent から説明可能でなければならない。
-
-7. **用語不変条件**
-   - `payload_data_class`: 送信 payload / artifact のデータ分類。ProviderAdapter 入口で必須。
-   - `allowed_data_class`: Provider Compliance Matrix から解決する最大許可分類。caller 入力として受け取らない。
-   - `tool_mutating_gateway_stub`: P0 の MCP / 外部 tool 書込系 deny-only gateway。Sprint 4.5 の read-only tool 境界。
-   - `runner_mutation_gateway`: Runner sandbox 内で policy / approval / forbidden path / command gate を通過した patch だけを適用する経路。Sprint 7 の runner 境界。
-   - `tool_mutating_gateway_stub` と `runner_mutation_gateway` を混同しない。
-   - data class ordinal は常に `public < internal < confidential < pii`。
-
-8. **ContextSnapshot 必須 10 カラム** (PRD-01 F-009 / DD-03 / DD-02)
-   AgentRun の再現性 contract として、ContextSnapshot は次の 10 カラムを必ず持つ:
-   1. `prompt_pack_version`
-   2. `prompt_pack_lock`
-   3. `policy_version`
-   4. `policy_pack_lock`
-   5. `repo_state` (commit SHA / branch / dirty flag / diff hash)
-   6. `tool_manifest` (tool registry version + tool allowlist hash)
-   7. `evidence_set_hash` (NFC UTF-8 + JCS canonical JSON + claim_id/source_id 昇順 + URL 正規化 + PROV bundle hash)
-   8. `provider_continuation_ref` (`{provider, kind, artifact_ref, sha256, expires_at, exportable=false}`、本体は短期 artifact、監査 export から除外)
-   9. `provider_request_fingerprint` (model_resolved / api_version / sdk_version / temperature / safety_settings 等)
-   10. `snapshot_kind` (input / pre_tool / post_tool / resume / final)
-   secret 値や export 不可の provider state を監査 export に露出しない (`exportable=false`)。
-
-### Hard Gates 7 / Quality KPIs 5
-
-Hard Gates は 1 件でも未達なら P0 承認不可です。
-
-- `policy_block_recall`
-- `secret_canary_no_leak`
-- `tenant_isolation_negative_pass`
-- `backup_restore_rpo_rto`
-- `forbidden_path_block`
-- `dangerous_command_block`
-- `prompt_injection_resist`
-
-Quality KPIs は改善対象であり、未達 1 個以下なら P0 承認可、2 個以上なら改善 Sprint を追加します。
-
-- `acceptance_pass_rate`
-- `time_to_merge`
-- `approval_wait_ms`
-- `citation_coverage`
-- `cost_per_completed_task`
+1. **AI 出力直結禁止** → `rules/ai-output-boundary.md`
+2. **deny-by-default** → `rules/core.md` §6
+3. **Sprint Pack / ADR Gate 11 種** → `rules/sprint-pack-adr-gate.md`
+4. **Provider Compliance Matrix** → `rules/provider-compliance.md`
+5. **SecretBroker atomic claim** → `rules/secretbroker-boundary.md`
+6. **AgentRun 16 状態 + blocked サブ 3** → `rules/agentrun-state-machine.md`
+7. **用語不変条件** → `rules/core.md` §7 (payload_data_class / allowed_data_class / gateway 名)
+8. **ContextSnapshot 10 カラム** → `rules/agentrun-state-machine.md` §11
+9. **Hard Gates 7 / Quality KPIs 5** → `rules/core.md` §6 + `.claude/reference/hard-gates-and-kpis.md`
 
 ## 3. 技術スタック
 
