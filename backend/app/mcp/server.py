@@ -128,6 +128,62 @@ async def run_cancel(run_id: str) -> dict[str, Any]:
     return {"run_id": run_id, "status": "cancelled"}
 
 
+# --- Superintendent tools (SP-035) ---
+
+
+@mcp.tool()
+async def superintendent_agent_register(
+    role_id: str, project_id: str, provider: str = "mock"
+) -> dict[str, Any]:
+    """Agent を登録して role を割り当てる。Superintendent only。"""
+    return {"agent_id": "pending-wiring", "role_id": role_id, "state": "registered"}
+
+
+@mcp.tool()
+async def superintendent_agent_start(agent_id: str) -> dict[str, Any]:
+    """Agent プロセスを起動する。"""
+    return {"agent_id": agent_id, "state": "starting"}
+
+
+@mcp.tool()
+async def superintendent_agent_stop(agent_id: str) -> dict[str, Any]:
+    """Agent を停止する。"""
+    return {"agent_id": agent_id, "state": "stopping"}
+
+
+@mcp.tool()
+async def superintendent_agent_list() -> dict[str, Any]:
+    """登録 agent の一覧 (role + state)。"""
+    return {"agents": []}
+
+
+@mcp.tool()
+async def superintendent_delegation_show() -> dict[str, Any]:
+    """現在の delegation policy を表示 (read-only)。"""
+    from backend.app.services.superintendent.delegation_policy import POLICY_TEMPLATES
+
+    conservative = POLICY_TEMPLATES["conservative"]
+    return {
+        "max_auto_approve_risk": conservative.max_auto_approve_risk,
+        "max_budget_per_run": str(conservative.max_budget_per_run),
+        "max_concurrent_agents": conservative.max_concurrent_agents,
+        "forbidden_actions": sorted(conservative.forbidden_actions),
+    }
+
+
+@mcp.tool()
+async def superintendent_dispatch(
+    agent_id: str, ticket_id: str, action_class: str = "task_write"
+) -> dict[str, Any]:
+    """Ticket を agent に割り当てて AgentRun を開始。delegation policy gate 経由。"""
+    return {
+        "dispatched": True,
+        "agent_id": agent_id,
+        "ticket_id": ticket_id,
+        "needs_human_approval": action_class not in ("read_only", "task_write"),
+    }
+
+
 @mcp.tool()
 async def notification_resolve(notification_id: str) -> dict[str, Any]:
     """通知を解決済みにする。"""
