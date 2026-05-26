@@ -1,17 +1,18 @@
 ---
 id: "SP-014_orchestrator_agent"
 type: "heavy"
-status: "draft"
+status: "completed"
 sprint_no: 14
 created_at: "2026-05-10"
-updated_at: "2026-05-10"
+updated_at: "2026-05-22"
+completed_at: "2026-05-22"
 target_days: 4
 max_days: 6
-adr_refs: []
-planned_adr_refs:
-  - "[ADR-00014](../adr/00014_multi_agent_orchestration.md) # SP-013 で accepted、本 Sprint で実装拡張"
-  - "[ADR-00009 update](../adr/00009_action_class_taxonomy.md) # policy_profile schema を本 Sprint で追加 (Criteria #4)"
-  - "[Tool Registry network ADR (新規 P0.1)](../adr/00021_tool_registry_network_enum.md) # 本 Sprint で起票 + accepted (Criteria #5)"
+adr_refs:
+  - "[ADR-00014](../adr/00014_multi_agent_orchestration.md) # accepted 2026-05-22 (PR #109)、SP-013 batch 0 完遂で本 Sprint kickoff prerequisite satisfied"
+  - "[ADR-00009 update](../adr/00009_action_class_taxonomy.md) # accepted 2026-05-22、policy_profile schema / policy_decisions trace / 14 row seed を batch 0c で実装 (Criteria #4)"
+  - "[ADR-00030](../adr/00030_tool_registry_network_enum.md) # accepted 2026-05-22、Tool Registry network_access enum + tool_network_policies を batch 0d で実装 (Criteria #5)"
+planned_adr_refs: []
 related_sprints:
   - "SP-013_multi_agent_orchestration"
   - "SP-015_inter_agent_communication"
@@ -23,9 +24,16 @@ risks:
   - "PE-F-014 (SecretBroker 6 case 個別 reason_code)"
   - "PE-F-015 (KPI rollup の recursive CTE / dedupe)"
   - "PE-F-016 (policy_profile_action_effects seed の網羅性)"
+kickoff_readiness:
+  prerequisite_sp013_batch_0: "✅ satisfied (PR #133-#140、Multi-Agent Foundation core schema 完成、2026-05-22)"
+  prerequisite_agent_runs_lease_columns: "✅ satisfied (PR #136、orchestrator_lease_* 8 columns 完備)"
+  prerequisite_check_project_role_trigger: "✅ satisfied (PR #138 → #140、PE-F-012 DB-level defense + project + standard role accept)"
+  prerequisite_standard_role_taxonomy: "✅ satisfied (10 standard role + matrix validator + immutable seed、PR #133-#137/#134)"
+  kickoff_blocker: "なし"
+  recommended_execution: "codex-all-loops mode=code 委譲 (heavy Sprint Pack、scope 大、Codex first 実装で品質担保)"
 ---
 
-最終更新: 2026-05-10
+最終更新: 2026-05-22 (task-01 batch 0a-0f 完遂、event_type 28→37 反映)
 
 ## 目的
 
@@ -63,19 +71,19 @@ orchestrator agent (司令塔) の本体実装 + lease/heartbeat/failover/kill-s
 - SP014-T05: Tool Registry network_access enum 化 ADR (新規 P0.1) + tool_network_policies table + web_fetch/docs_search 登録 (deny-only initially)
 - SP014-T06: remote_agent_gateway deny-only stub + remote_agent_dispatch_denied audit
 - SP014-T07: orchestrator_kpi_rollup query 実装 (recursive CTE + idempotency dedupe) + metric contract test (PE-F-015)
-- SP014-T08: SecretBroker multi-agent negative 6 case 個別 reason_code + test (PE-F-014)
-- SP014-T09: agent_run_events.event_type 22→31 拡張 (ADR-00004 update)
+- SP014-T08: SecretBroker multi-agent negative 6 case 個別 reason_code + test (PE-F-014): `agent_decider_forbidden` / `tier_2_agent_decider_attempt` / `actor_type_mismatch` / `role_id_mismatch` / `lease_expired_no_secret_access` / `progress_lease_violated`
+- SP014-T09: agent_run_events.event_type 28→37 拡張 (ADR-00004 update)
 
 ## タスク一覧
 
-- [ ] SP014-T01-T09 を順次実装
-- [ ] ADR-00009 / Tool Registry network ADR を proposed → accepted
-- [ ] migration `00NN_p0_1_orchestrator.py` + `00NN_p0_1_policy_profile.py` PASS
-- [ ] policy_profile_action_effects 14 rows seed verify
-- [ ] orchestrator lease/failover stress test (60s heartbeat 失敗 → failover)
-- [ ] max_* 違反全件 reject + 絶対上限 (children≤20/depth≤5/turns≤500/budget≤$50) DB CHECK で破れない確認
-- [ ] Tier 2 で agent decider 経路残存しない (4 重防御 negative test)
-- [ ] SecretBroker 6 negative case 個別 reason_code で deny
+- [x] SP014-T01-T09 を順次実装
+- [x] ADR-00009 / Tool Registry network ADR を proposed → accepted
+- [x] migrations `0025_sp014_event_type_37.py` / `0026_sp014_policy_profile.py` / `0027_sp014_review_artifacts.py` / `0028_sp014_tool_registry_network.py` PASS
+- [x] policy_profile_action_effects 14 rows seed verify
+- [x] orchestrator lease/failover stress test (60s heartbeat 失敗 → failover)
+- [x] max_* 違反全件 reject + 絶対上限 (children≤20/depth≤5/turns≤500/budget≤$50) DB CHECK で破れない確認
+- [x] Tier 2 で agent decider 経路残存しない (4 重防御 negative test)
+- [x] SecretBroker 6 negative case 個別 reason_code で deny: `agent_decider_forbidden` / `tier_2_agent_decider_attempt` / `actor_type_mismatch` / `role_id_mismatch` / `lease_expired_no_secret_access` / `progress_lease_violated`
 
 ## must_ship / defer_if_over_budget 対応表
 
@@ -88,7 +96,7 @@ orchestrator agent (司令塔) の本体実装 + lease/heartbeat/failover/kill-s
 | remote_agent_gateway deny-only stub | ○ | - |
 | KPI rollup query + contract test | ○ | adopted_artifacts link table は SP-018 で完成可 |
 | SecretBroker 6 negative case | ○ | - |
-| event_type 22→31 拡張 | ○ | - |
+| event_type 28→37 拡張 | ○ | - |
 | progress lease (PE-F-004) | ○ | tenant_config tuning は SP-022 で再検討可 |
 
 ## 受け入れ条件
@@ -99,7 +107,7 @@ orchestrator agent (司令塔) の本体実装 + lease/heartbeat/failover/kill-s
 - progress lease no-progress 30 分で `blocked + runtime_blocked`
 - 3 階層 operation の各 boundary が機能 (Tier 1 自律 / Tier 2 Policy auto-allow / Tier 3 human approval)
 - remote_agent_gateway P0.1 stub: orchestrator_dispatched で remote child 試行 → 全件 deny + remote_agent_dispatch_denied audit
-- SecretBroker multi-agent 6 negative case 個別 reason_code で deny
+- SecretBroker multi-agent 6 negative case 個別 reason_code で deny: `agent_decider_forbidden` / `tier_2_agent_decider_attempt` / `actor_type_mismatch` / `role_id_mismatch` / `lease_expired_no_secret_access` / `progress_lease_violated`
 - KPI rollup metric contract test 全件 PASS
 - AC-HARD-01 fixture (multi-agent 文脈、unknown profile / missing seed row / secret_access allow drift / provider_call without ZDR / task_write without review_artifact) 全件 deny
 
@@ -142,8 +150,14 @@ uv run alembic check && uv run alembic upgrade head
 
 ## 関連 ADR
 
-- ADR-00014 / ADR-00009 update / Tool Registry network ADR (新規) / ADR-00013 update / ADR-00018 (関連) / ADR-00004 update (event_type 22→31)
+- ADR-00014 / ADR-00009 update / ADR-00030 Tool Registry network enum / ADR-00013 update / ADR-00018 (関連) / ADR-00004 update (event_type 28→37)
 
 ## Review
 
-(SP-014 完了時に追記)
+- 2026-05-22 task-01 batch 0a: orchestrator lease primitives 完了、PR #145 merged。
+- 2026-05-22 task-01 batch 0b: review_artifacts 4 重防御 完了、PR #146 merged。
+- 2026-05-22 task-01 batch 0c: policy_profile schema / exact 14 seed / policy_decisions trace / ADR-00009 update 完了。`alembic check` は既存 `migrations/env.py target_metadata` debt で継続 defer。
+- 2026-05-22 task-01 batch 0d: Tool Registry network_access enum / tool_network_policies / web_fetch+docs_search deny-only seed / ADR-00030 accepted update 完了。`internet` は enum として保持するが P0 service guard では deny。
+- 2026-05-22 task-01 batch 0e: remote_agent_gateway P0.1 deny-only stub 完了。full remote adapter/API/config は ADR-00013 proposed のまま禁止、stub は `remote_agent_dispatch_denied` audit だけを emit。
+- 2026-05-22 task-01 batch 0f: orchestrator_kpi_rollup recursive CTE / SecretBroker multi-agent negative 6 reason_code / existing event_type 37 source integrity 確認完了。`repo_pr_merged` event_type と final adopted artifact attribution は SP-018+ carry-over。
+- 2026-05-22 task-08 docs drift fix: frontmatter `ready → completed`、historical event_type proposal references を current 28→37 completion state に同期。
