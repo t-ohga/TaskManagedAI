@@ -1,10 +1,10 @@
 ---
 id: "SP-007_runner_sandbox"
 type: "heavy"
-status: "done_with_phase5_defer"
+status: "done_with_phase5c_pending"
 sprint_no: 7
 created_at: "2026-05-08"
-updated_at: "2026-05-13"
+updated_at: "2026-05-26"
 target_days: 4.7
 max_days: 7
 adr_refs:
@@ -445,6 +445,18 @@ audit F-001 adopt)。Phase 5 で BL-0082/0083/0084 完了 + ADR-00012 accepted �
 - **Sprint 11 (Eval Harness)**: DockerRunnerAdapter 実装 + Docker network=none + sidecar proxy + iptables/nftables / private_holdout 30+ 件 + adversarial_new 月次 / eval_harness 統合
 - **Sprint 11.5**: env scrub auto-discovery + permission audit log + Loki redaction
 - **Phase 5**: ADR-00012 accepted 化 + repo 外 trusted wrapper + sha256 manifest 完成 (PH4-F-001 / PH4-F-002 最終解消)
+
+### Phase 5 progress (2026-05-26)
+
+| phase | status | scope |
+|---|---|---|
+| 5A | completed (2026-05-24) | docs + temp-home tests/helper scaffolding |
+| 5B | completed (2026-05-24) | wrapper candidate + manifest verification in temp trust root |
+| 5C | **pending user approval** | install `~/.claude-trusted` wrapper + manifest + settings switch (repo 外書込) |
+| 5D | **this commit** | Sprint Pack status update + Phase 5 progress 記録 |
+
+5C は repo 外ファイル書込 (`~/.claude-trusted/`) を伴うため、ユーザー explicit approval 後に実行。
+ADR-00012 accepted 化も 5C 着手時に行う。
 
 ### Codex R1-R6 累計 (Sprint 7 batch 1 + 2)
 
