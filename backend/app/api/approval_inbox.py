@@ -114,6 +114,7 @@ class ApprovalDetail(BaseModel):
     policy_version: str
     policy_pack_lock: str | None
     provider_request_fingerprint: str | None
+    stale_after_event_seq: int | None = None
 
 
 class ApprovalDecideRequest(BaseModel):

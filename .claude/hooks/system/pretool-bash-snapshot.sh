@@ -47,7 +47,10 @@ case "$_pr_abs" in
 esac
 unset _pr_abs _pr_resolved
 
-state_dir="$project_root/.claude/.hook-state/bash"
+state_dir="${TASKMANAGEDAI_HOOK_STATE_DIR:-$project_root/.claude/.hook-state/bash}"
+if [[ "$state_dir" != /* ]]; then
+  state_dir="$project_root/$state_dir"
+fi
 if ! mkdir -p "$state_dir" 2>/dev/null; then
   # state dir 作成不能 = Post 側が fail-closed の SNAPSHOT_FALLBACK 経路へ落ちる
   # ここでは BLOCK にせず、Post 側の fail-closed に委ねる (Pre で BLOCK すると Bash が走らず観測不能になる)

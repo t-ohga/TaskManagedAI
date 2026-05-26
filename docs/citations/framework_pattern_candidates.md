@@ -35,6 +35,7 @@ TaskManagedAI の外部 AI/agent framework に対する **「参考にする pat
 | **Letta** | memory-first agent platform | persistent memory + memory hierarchy + stateful agents | Letta SaaS / OSS runtime、独自 memory storage | persistence 二重化 (Letta memory store vs PostgreSQL)、ContextSnapshot 混合禁止 | ADR-00016 Hermes memory pattern adoption + `memory_retrieval_artifacts` 別 table で P1 実装 |
 | **OpenHands** | open platform for cloud coding agents | skills + micro-agents + sandbox + GitHub/GitLab/Slack/API 連携 | OpenHands runtime、独自 sandbox container | runner_mutation_gateway 境界 (TaskManagedAI Sprint 7 で実装) | 自前 Docker isolated runner + forbidden path / dangerous command で代替 |
 | **TaskingAI** | unified model/tool API | plugin + async high concurrency + OpenAI-compatible API | TaskingAI runtime、独自 plugin store | Provider Compliance Matrix の bypass | ProviderAdapter (SP-005 完了済) + Provider Compliance Matrix で代替 |
+| **Foundational Crypto (non-AI)** | cryptographic primitives | HMAC / SHA-256 / AES via `cryptography` PyPI package | N/A (stdlib-level dependency) | N/A | SOPS + age + SecretBroker で使用。pattern 参照ではなく dependency として管理 |
 
 ## 4. 採用判定の枠組み
 
