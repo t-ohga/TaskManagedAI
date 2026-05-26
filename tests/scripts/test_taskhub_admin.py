@@ -390,7 +390,6 @@ def test_cli_verify_integrity_with_multi_agent_matches_drill_command() -> None:
     assert "--multi-agent" in result.stdout
 
 
-@pytest.mark.xfail(reason="taskhub console_script not yet in pyproject.toml [project.scripts]")
 def test_taskhub_console_script_entry_point_installed() -> None:
     """ADR-00021 §3 + SP-012 §128 で `taskhub` executable で起動できる (Codex R2 F-PR63-003 adopt)."""
     taskhub_path = shutil.which("taskhub")

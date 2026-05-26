@@ -290,7 +290,6 @@ def test_live_backend_routes_match_parity_contract() -> None:
             assert route_key not in routes
 
 
-@pytest.mark.xfail(reason="frontend tickets client not yet project-scoped (API contract migration pending)")
 def test_ui_references_and_docs_cover_all_parity_capabilities() -> None:
     docs = (_REPO_ROOT / "docs/cli/README.md").read_text(encoding="utf-8")
 

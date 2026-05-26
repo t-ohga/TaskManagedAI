@@ -117,20 +117,19 @@ export async function listTickets(
   options: { limit?: number; offset?: number } = {}
 ): Promise<TicketListResponse> {
   const params = new URLSearchParams();
-  params.set("project_id", projectId);
   if (options.limit != null) params.set("limit", String(options.limit));
   if (options.offset != null) params.set("offset", String(options.offset));
   const qs = params.toString();
-  const path: `/${string}` = `/api/v1/tickets?${qs}` as `/${string}`;
+  const path: `/${string}` = `/api/v1/projects/${projectId}/tickets${qs ? `?${qs}` : ""}` as `/${string}`;
   return fetchBackendJson<TicketListResponse>(path, TicketListResponseSchema);
 }
 
-export async function getTicket(id: string): Promise<TicketDetail> {
+export async function getTicket(projectId: string, id: string): Promise<TicketDetail> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) {
     throw new Error("invalid ticket id format");
   }
   return fetchBackendJson<TicketDetail>(
-    `/api/v1/tickets/${id}` as `/${string}`,
+    `/api/v1/projects/${projectId}/tickets/${id}` as `/${string}`,
     TicketDetailSchema
   );
 }
