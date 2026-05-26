@@ -50,13 +50,38 @@ async def ticket_list(project_id: str, limit: int = 20, offset: int = 0) -> dict
 @mcp.tool()
 async def ticket_show(project_id: str, ticket_id: str) -> dict[str, Any]:
     """チケット詳細を取得。"""
-    return {"ticket_id": ticket_id, "project_id": project_id}
+    from uuid import UUID
+
+    from backend.app.mcp.api_bridge import bridge_ticket_show
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_ticket_show(
+                session,
+                tenant_id=DEFAULT_TENANT_ID,
+                project_id=UUID(project_id),
+                ticket_id=UUID(ticket_id),
+            )
+    except Exception as e:
+        return {"error": str(type(e).__name__), "ticket_id": ticket_id}
 
 
 @mcp.tool()
 async def run_show(run_id: str) -> dict[str, Any]:
-    """AgentRun の状態と events timeline を取得。payload は keys_only。"""
-    return {"run_id": run_id, "status": "queued", "events": []}
+    """AgentRun の状態を取得。payload は keys_only。"""
+    from uuid import UUID
+
+    from backend.app.mcp.api_bridge import bridge_run_show
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_run_show(
+                session, tenant_id=DEFAULT_TENANT_ID, run_id=UUID(run_id)
+            )
+    except Exception as e:
+        return {"error": str(type(e).__name__), "run_id": run_id}
 
 
 @mcp.tool()
@@ -68,7 +93,16 @@ async def run_plan_dry_run(purpose: str, expected_artifact: str = "") -> dict[st
 @mcp.tool()
 async def approval_list(status: str = "pending") -> dict[str, Any]:
     """承認リクエスト一覧。AI agent は閲覧のみ (decide は human-only)。"""
-    return {"approvals": [], "status_filter": status}
+    from backend.app.mcp.api_bridge import bridge_approval_list
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_approval_list(
+                session, tenant_id=DEFAULT_TENANT_ID, status=status
+            )
+    except Exception as e:
+        return {"error": str(type(e).__name__), "approvals": []}
 
 
 @mcp.tool()
@@ -80,13 +114,39 @@ async def approval_show(approval_id: str) -> dict[str, Any]:
 @mcp.tool()
 async def audit_list(limit: int = 50, offset: int = 0) -> dict[str, Any]:
     """監査ログ一覧 (keys_only、raw secret 除外)。"""
-    return {"events": [], "total": 0, "limit": limit, "offset": offset}
+    from backend.app.mcp.api_bridge import bridge_audit_list
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_audit_list(
+                session, tenant_id=DEFAULT_TENANT_ID, limit=limit, offset=offset
+            )
+    except Exception as e:
+        return {"error": str(type(e).__name__), "events": [], "total": 0}
 
 
 @mcp.tool()
 async def context_show() -> dict[str, Any]:
     """現在のプロジェクト情報を取得。"""
-    return {"project_id": None, "project_name": None}
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+    from backend.app.repositories.project import ProjectRepository
+
+    try:
+        async with get_db_session() as session:
+            repo = ProjectRepository(session)
+            projects = await repo.list(tenant_id=DEFAULT_TENANT_ID)
+            if not projects:
+                return {"project_id": None, "project_name": None}
+            p = projects[0]
+            return {
+                "project_id": str(p.id),
+                "project_name": p.name,
+                "project_slug": p.slug,
+                "status": p.status,
+            }
+    except Exception as e:
+        return {"error": str(type(e).__name__), "project_id": None}
 
 
 @mcp.tool()
@@ -140,7 +200,33 @@ async def ticket_update(
     status: str | None = None,
 ) -> dict[str, Any]:
     """チケットを更新。"""
-    return {"ticket_id": ticket_id, "updated": True}
+    from uuid import UUID
+
+    from backend.app.mcp.api_bridge import bridge_ticket_update
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    payload: dict[str, Any] = {}
+    if title is not None:
+        payload["title"] = title
+    if description is not None:
+        payload["description"] = description
+    if status is not None:
+        payload["status"] = status
+
+    if not payload:
+        return {"error": "no_fields_to_update", "ticket_id": ticket_id}
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_ticket_update(
+                session,
+                tenant_id=DEFAULT_TENANT_ID,
+                project_id=UUID(project_id),
+                ticket_id=UUID(ticket_id),
+                payload=payload,
+            )
+    except Exception as e:
+        return {"error": str(type(e).__name__), "ticket_id": ticket_id}
 
 
 @mcp.tool()
