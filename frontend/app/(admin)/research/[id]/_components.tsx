@@ -77,7 +77,7 @@ function ProvenanceSummary({ claim }: { readonly claim: Claim }) {
   const prov = claim.provenance_json;
 
   return (
-    <dl className="mt-3 grid gap-2 text-xs text-muted sm:grid-cols-4">
+    <dl className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-4">
       <div className="rounded-md border border-line bg-slate-50 p-2">
         <dt className="font-semibold text-ink">activities</dt>
         <dd>{prov.activities.length}</dd>
@@ -102,11 +102,11 @@ export function ResearchTaskCard({ task }: { readonly task: ResearchTaskDetail }
   return (
     <dl className="grid gap-3 md:grid-cols-2">
       <div className="rounded-md border border-line bg-white p-3">
-        <dt className="text-xs font-semibold uppercase tracking-normal text-muted">タイトル</dt>
+        <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">タイトル</dt>
         <dd className="mt-2 text-sm font-medium text-ink">{task.title}</dd>
       </div>
       <div className="rounded-md border border-line bg-white p-3">
-        <dt className="text-xs font-semibold uppercase tracking-normal text-muted">状態 (status)</dt>
+        <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">状態 (status)</dt>
         <dd className="mt-2">
           <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-ink">
             {formatResearchStatus(task.status)}
@@ -114,14 +114,14 @@ export function ResearchTaskCard({ task }: { readonly task: ResearchTaskDetail }
         </dd>
       </div>
       <div className="rounded-md border border-line bg-white p-3">
-        <dt className="text-xs font-semibold uppercase tracking-normal text-muted">project_id</dt>
+        <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">project_id</dt>
         <dd className="mt-2 break-all font-mono text-xs text-ink">{task.project_id}</dd>
       </div>
       <div className="rounded-md border border-line bg-white p-3">
-        <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+        <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
           作成日時 (created_at)
         </dt>
-        <dd className="mt-2 text-sm text-muted">
+        <dd className="mt-2 text-sm text-muted-foreground">
           <time dateTime={task.created_at}>{formatDate(task.created_at)}</time>
         </dd>
       </div>
@@ -135,7 +135,7 @@ export function ResearchMetricSummary({ task }: { readonly task: ResearchTaskDet
   return (
     <dl className="grid gap-3 md:grid-cols-4">
       <div className="rounded-md border border-line bg-white p-3 md:col-span-2">
-        <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+        <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
           evidence_set_hash
         </dt>
         <dd className="mt-2 break-all font-mono text-xs text-ink">
@@ -143,7 +143,7 @@ export function ResearchMetricSummary({ task }: { readonly task: ResearchTaskDet
         </dd>
       </div>
       <div className="rounded-md border border-line bg-white p-3">
-        <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+        <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
           attachment_rate
         </dt>
         <dd className="mt-2 text-2xl font-semibold text-ink">
@@ -151,7 +151,7 @@ export function ResearchMetricSummary({ task }: { readonly task: ResearchTaskDet
         </dd>
       </div>
       <div className="rounded-md border border-line bg-white p-3">
-        <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+        <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
           numerator / denominator
         </dt>
         <dd className="mt-2 font-mono text-sm text-ink">
@@ -171,7 +171,7 @@ export function ClaimList({
 }) {
   if (claims.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-line bg-white p-4 text-sm text-muted">
+      <div className="rounded-md border border-dashed border-line bg-white p-4 text-sm text-muted-foreground">
         このリサーチ task に紐づく claim はありません。
       </div>
     );
@@ -187,9 +187,9 @@ export function ClaimList({
             <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
               <div>
                 <p className="text-sm font-medium text-ink">{claim.claim_text}</p>
-                <p className="mt-1 font-mono text-xs text-muted">{claim.id}</p>
+                <p className="mt-1 font-mono text-xs text-muted-foreground">{claim.id}</p>
               </div>
-              <div className="grid gap-1 text-xs text-muted md:text-right">
+              <div className="grid gap-1 text-xs text-muted-foreground md:text-right">
                 <span>relation: {relationSummary(evidenceItems)}</span>
                 <time dateTime={claim.created_at}>created_at: {formatDate(claim.created_at)}</time>
               </div>
@@ -208,13 +208,13 @@ export function EvidenceSourceLink({
   readonly source: EvidenceSource | undefined;
 }) {
   if (!source) {
-    return <span className="text-xs text-muted">source 未解決 (source unavailable)</span>;
+    return <span className="text-xs text-muted-foreground">source 未解決 (source unavailable)</span>;
   }
 
   const href = safeEvidenceSourceUrl(source.canonical_url);
 
   if (!href) {
-    return <span className="text-xs text-muted">source 非表示 (redacted source)</span>;
+    return <span className="text-xs text-muted-foreground">source 非表示 (redacted source)</span>;
   }
 
   return (
@@ -238,7 +238,7 @@ export function EvidenceItemList({
 }) {
   if (items.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-line bg-white p-4 text-sm text-muted">
+      <div className="rounded-md border border-dashed border-line bg-white p-4 text-sm text-muted-foreground">
         このリサーチ task に紐づく evidence item はありません。
       </div>
     );
@@ -250,7 +250,7 @@ export function EvidenceItemList({
         <caption className="sr-only">
           locator、relation、relevance score、source link を含む evidence item 一覧。
         </caption>
-        <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted">
+        <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted-foreground">
           <tr>
             <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
               locator
@@ -277,7 +277,7 @@ export function EvidenceItemList({
                   {formatEvidenceRelation(item.relation)}
                 </code>
               </td>
-              <td className="border-b border-line px-3 py-2 text-muted">
+              <td className="border-b border-line px-3 py-2 text-muted-foreground">
                 {item.relevance_score === null ? "n/a" : item.relevance_score}
               </td>
               <td className="border-b border-line px-3 py-2">

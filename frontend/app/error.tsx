@@ -13,11 +13,11 @@ export default function AppError({ error, reset }: AppErrorProps) {
         <h1 className="mt-2 text-2xl font-semibold tracking-normal">
           画面の表示に失敗しました
         </h1>
-        <p className="mt-3 text-sm leading-6 text-muted">
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
           しばらくしてから再試行してください。問題が続く場合は audit log と実行ログを確認してください。
         </p>
         {error.digest ? (
-          <p className="mt-3 font-mono text-xs text-muted">digest: {error.digest}</p>
+          <p className="mt-3 font-mono text-xs text-muted-foreground">digest: {error.digest}</p>
         ) : null}
         <button
           className="mt-5 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white outline-offset-2 hover:bg-teal-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"

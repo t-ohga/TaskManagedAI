@@ -175,7 +175,7 @@ export default async function TimelinePage() {
       <header className="grid gap-2">
         <p className="text-sm font-medium text-accent">管理 / P0.1</p>
         <h1 className="text-3xl font-semibold tracking-normal">実行タイムライン</h1>
-        <p className="max-w-3xl text-sm text-muted">
+        <p className="max-w-3xl text-sm text-muted-foreground">
           AgentRun、監査、承認待ちを時系列で確認します。
         </p>
       </header>
@@ -191,7 +191,7 @@ export default async function TimelinePage() {
           <h2 className="text-base font-semibold text-attention">
             一部データを表示できません
           </h2>
-          <ul className="mt-2 grid gap-1 text-sm text-muted">
+          <ul className="mt-2 grid gap-1 text-sm text-muted-foreground">
             {errors.map((error) => (
               <li key={error}>{error}</li>
             ))}
@@ -204,7 +204,7 @@ export default async function TimelinePage() {
           <h2 className="text-base font-semibold text-attention">
             一部 AgentRun detail を取得できません
           </h2>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-1 text-sm text-muted-foreground">
             最新 {RUN_DETAIL_LIMIT} 件のうち {state.agents.data.detailFailures} 件を除外しました。
           </p>
         </section>
@@ -215,7 +215,7 @@ export default async function TimelinePage() {
           <h2 className="text-lg font-semibold">Unified events</h2>
         </div>
         {rows.length === 0 ? (
-          <p className="px-4 py-5 text-sm text-muted">表示できるイベントはありません。</p>
+          <p className="px-4 py-5 text-sm text-muted-foreground">表示できるイベントはありません。</p>
         ) : (
           <ol className="divide-y divide-line">
             {rows.map((row) => (
@@ -253,9 +253,9 @@ function TimelineSummary({ rowCount, state }: { rowCount: number; state: Timelin
 function MetricCard({ detail, label, value }: { detail: string; label: string; value: string }) {
   return (
     <div className="rounded-md border border-line bg-panel p-4 shadow-sm">
-      <dt className="font-mono text-xs text-muted">{label}</dt>
+      <dt className="font-mono text-xs text-muted-foreground">{label}</dt>
       <dd className="mt-2 text-2xl font-semibold tracking-normal">{value}</dd>
-      <dd className="mt-1 text-xs text-muted">{detail}</dd>
+      <dd className="mt-1 text-xs text-muted-foreground">{detail}</dd>
     </div>
   );
 }
@@ -267,7 +267,7 @@ function TimelineListItem({ row }: { row: TimelineRow }) {
         <span className={`w-fit rounded-md px-2 py-1 text-xs font-semibold ${toneClass(row.tone)}`}>
           {row.source}
         </span>
-        <time className="font-mono text-xs text-muted" dateTime={row.occurredAt}>
+        <time className="font-mono text-xs text-muted-foreground" dateTime={row.occurredAt}>
           {formatDate(row.occurredAt)}
         </time>
       </div>
@@ -284,14 +284,14 @@ function TimelineListItem({ row }: { row: TimelineRow }) {
             <h3 className="break-all text-sm font-semibold">{row.title}</h3>
           )}
           {row.redactionStatus ? (
-            <span className="rounded-md bg-panel-muted px-2 py-1 text-xs text-muted">
+            <span className="rounded-md bg-panel-muted px-2 py-1 text-xs text-muted-foreground">
               {row.redactionStatus}
             </span>
           ) : null}
         </div>
-        <p className="mt-1 break-all text-sm text-muted">{row.subtitle}</p>
+        <p className="mt-1 break-all text-sm text-muted-foreground">{row.subtitle}</p>
         {row.safeKeys.length > 0 || row.hiddenKeyCount > 0 ? (
-          <p className="mt-2 break-all font-mono text-xs text-muted">
+          <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
             keys:{row.safeKeys.length > 0 ? row.safeKeys.join(", ") : "—"}
             {row.hiddenKeyCount > 0 ? ` / hidden_keys:${row.hiddenKeyCount}` : ""}
           </p>

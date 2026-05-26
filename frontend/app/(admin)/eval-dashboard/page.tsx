@@ -496,43 +496,43 @@ export default async function EvalDashboardPage() {
       >
         <dl className="grid gap-3 text-sm">
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">p0_exit_decision</dt>
+            <dt className="text-muted-foreground">p0_exit_decision</dt>
             <dd className="font-mono">
               {P0_EXIT_VERDICT.p0_exit_decision ? "true" : "false"}
             </dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">hard_gates_pass</dt>
+            <dt className="text-muted-foreground">hard_gates_pass</dt>
             <dd className="font-mono">{P0_EXIT_VERDICT.hard_gates_pass_count} / 7</dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">kpis_pass</dt>
+            <dt className="text-muted-foreground">kpis_pass</dt>
             <dd className="font-mono">{P0_EXIT_VERDICT.kpis_pass_count} / 5</dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">operational_drills_pass</dt>
+            <dt className="text-muted-foreground">operational_drills_pass</dt>
             <dd className="font-mono">{P0_EXIT_VERDICT.drills_pass_count} / 2</dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">smoke.overall_success</dt>
+            <dt className="text-muted-foreground">smoke.overall_success</dt>
             <dd className="font-mono">
               {P0_EXIT_VERDICT.smoke_success ? "true" : "false"}
             </dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">private_staging_passed</dt>
+            <dt className="text-muted-foreground">private_staging_passed</dt>
             <dd className="font-mono">
               {P0_EXIT_VERDICT.private_staging_passed ? "true" : "false"}
             </dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">gated_acceptance_rows_satisfied</dt>
+            <dt className="text-muted-foreground">gated_acceptance_rows_satisfied</dt>
             <dd className="font-mono">
               {P0_EXIT_VERDICT.gated_rows_satisfied ? "true" : "false"}
             </dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">deficiency_reasons</dt>
+            <dt className="text-muted-foreground">deficiency_reasons</dt>
             <dd className="font-mono">
               {P0_EXIT_VERDICT.deficiency_reasons.length === 0
                 ? "[]"
@@ -625,7 +625,7 @@ export default async function EvalDashboardPage() {
         title="Quality KPIs 5"
         titleId="quality-kpis-5"
       >
-        <div className="mb-2 text-xs text-muted">
+        <div className="mb-2 text-xs text-muted-foreground">
           source: <span className="font-mono">{kpiSource}</span>
           {" "}| p0_accept: <span className="font-mono">{kpiRollup.p0_accept ? "true" : "false"}</span>
           {" "}| met: <span className="font-mono">{kpiRollup.met_count}/{kpiRollup.kpi_count}</span>
@@ -701,7 +701,7 @@ export default async function EvalDashboardPage() {
       >
         <dl className="grid gap-3 text-sm">
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">overall_success</dt>
+            <dt className="text-muted-foreground">overall_success</dt>
             <dd>
               {SMOKE_RESULT.overall_success ? (
                 <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
@@ -715,15 +715,15 @@ export default async function EvalDashboardPage() {
             </dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">passed_count</dt>
+            <dt className="text-muted-foreground">passed_count</dt>
             <dd className="font-mono">{SMOKE_RESULT.passed_count}</dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">failed_count</dt>
+            <dt className="text-muted-foreground">failed_count</dt>
             <dd className="font-mono">{SMOKE_RESULT.failed_count}</dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">skipped_count</dt>
+            <dt className="text-muted-foreground">skipped_count</dt>
             <dd className="font-mono">{SMOKE_RESULT.skipped_count}</dd>
           </div>
         </dl>
@@ -736,7 +736,7 @@ export default async function EvalDashboardPage() {
       >
         <dl className="grid gap-3 text-sm">
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">status</dt>
+            <dt className="text-muted-foreground">status</dt>
             <dd>
               {PRIVATE_STAGING.status === "passed" ? (
                 <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
@@ -750,7 +750,7 @@ export default async function EvalDashboardPage() {
             </dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-line pt-3">
-            <dt className="text-muted">description</dt>
+            <dt className="text-muted-foreground">description</dt>
             <dd className="text-right">{PRIVATE_STAGING.description}</dd>
           </div>
         </dl>
@@ -843,7 +843,7 @@ export default async function EvalDashboardPage() {
                         </div>
                       </dl>
                     ) : (
-                      <span className="text-muted">—</span>
+                      <span className="text-muted-foreground">—</span>
                     )}
                   </td>
                 </tr>
@@ -864,9 +864,9 @@ export default async function EvalDashboardPage() {
               key={drill.drill_kind}
               className="flex justify-between gap-4 border-t border-line pt-3"
             >
-              <dt className="text-muted">
+              <dt className="text-muted-foreground">
                 <span className="font-mono">{drill.drill_kind}</span>
-                <span className="ml-2 text-xs text-muted">{drill.description}</span>
+                <span className="ml-2 text-xs text-muted-foreground">{drill.description}</span>
               </dt>
               <dd>
                 {drill.drill_status === "passed" ? (

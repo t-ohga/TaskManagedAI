@@ -88,7 +88,7 @@ export default async function OnboardingPage() {
       <header className="grid gap-2">
         <p className="text-sm font-medium text-accent">管理 / P0.1</p>
         <h1 className="text-3xl font-semibold tracking-normal">初回導線</h1>
-        <p className="max-w-3xl text-sm text-muted">
+        <p className="max-w-3xl text-sm text-muted-foreground">
           最初の実行前に project、policy、approval 境界を確認します。
         </p>
       </header>
@@ -153,13 +153,13 @@ function ReadinessCard({
   return (
     <article className="rounded-md border border-line bg-panel p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
-        <h2 className="font-mono text-xs text-muted">{label}</h2>
-        <span className="rounded-md bg-panel-muted px-2 py-1 font-mono text-[11px] text-muted">
+        <h2 className="font-mono text-xs text-muted-foreground">{label}</h2>
+        <span className="rounded-md bg-panel-muted px-2 py-1 font-mono text-[11px] text-muted-foreground">
           {status}
         </span>
       </div>
       <p className="mt-3 text-lg font-semibold tracking-normal">{value}</p>
-      <p className="mt-1 break-words text-xs text-muted">{detail}</p>
+      <p className="mt-1 break-words text-xs text-muted-foreground">{detail}</p>
     </article>
   );
 }
@@ -176,9 +176,9 @@ function ReadinessUnavailable({ message }: { message: string }) {
           <h2 className="text-base font-semibold text-attention">
             Project context を確認できません
           </h2>
-          <p className="mt-1 text-sm text-muted">{message}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{message}</p>
         </div>
-        <span className="rounded-md bg-panel px-2 py-1 font-mono text-[11px] text-muted">
+        <span className="rounded-md bg-panel px-2 py-1 font-mono text-[11px] text-muted-foreground">
           read_only
         </span>
       </div>
@@ -202,7 +202,7 @@ function StarterChoices() {
         {STARTER_CHOICES.map((choice) => (
           <article key={choice.mode} className="rounded-md border border-line bg-panel p-4 shadow-sm">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-md bg-panel-muted px-2 py-1 font-mono text-[11px] text-muted">
+              <span className="rounded-md bg-panel-muted px-2 py-1 font-mono text-[11px] text-muted-foreground">
                 {choice.mode}
               </span>
               <span className="rounded-md bg-teal-50 px-2 py-1 font-mono text-[11px] text-accent">
@@ -212,11 +212,11 @@ function StarterChoices() {
             <h3 className="mt-3 text-base font-semibold">{choice.title}</h3>
             <dl className="mt-3 grid gap-2 text-sm">
               <div>
-                <dt className="font-mono text-xs text-muted">result</dt>
+                <dt className="font-mono text-xs text-muted-foreground">result</dt>
                 <dd>{choice.result}</dd>
               </div>
               <div>
-                <dt className="font-mono text-xs text-muted">gate</dt>
+                <dt className="font-mono text-xs text-muted-foreground">gate</dt>
                 <dd>{choice.gate}</dd>
               </div>
             </dl>
@@ -233,7 +233,7 @@ function SafeNextActions() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">次の確認先</h2>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-1 text-sm text-muted-foreground">
             mutation なしで現状を確認できる画面だけを開きます。
           </p>
         </div>
@@ -259,11 +259,11 @@ function CliOnboardingPanel() {
       <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)] md:items-center">
         <div>
           <h2 className="text-lg font-semibold">CLI 導線</h2>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-1 text-sm text-muted-foreground">
             terminal では <code className="font-mono">tm</code> を canonical entry point として扱います。
           </p>
         </div>
-        <div className="grid gap-1 rounded-md bg-panel-muted p-3 font-mono text-xs text-muted">
+        <div className="grid gap-1 rounded-md bg-panel-muted p-3 font-mono text-xs text-muted-foreground">
           <code>tm context show</code>
           <code>tm doctor</code>
           <code>tm run plan --dry-run</code>

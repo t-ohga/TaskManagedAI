@@ -33,7 +33,7 @@ export default async function DashboardPage() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="text-base font-semibold">Frontend</h2>
-              <p className="mt-1 text-sm text-muted">Next.js アプリの health endpoint</p>
+              <p className="mt-1 text-sm text-muted-foreground">Next.js アプリの health endpoint</p>
             </div>
             <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
               {frontendHealth.status}
@@ -41,19 +41,19 @@ export default async function DashboardPage() {
           </div>
           <dl className="mt-5 grid gap-3 text-sm">
             <div className="flex justify-between gap-4 border-t border-line pt-3">
-              <dt className="text-muted">エンドポイント</dt>
+              <dt className="text-muted-foreground">エンドポイント</dt>
               <dd className="font-mono">/api/healthz</dd>
             </div>
             <div className="flex justify-between gap-4 border-t border-line pt-3">
-              <dt className="text-muted">サービス</dt>
+              <dt className="text-muted-foreground">サービス</dt>
               <dd className="font-mono">{frontendHealth.service}</dd>
             </div>
             <div className="flex justify-between gap-4 border-t border-line pt-3">
-              <dt className="text-muted">ランタイム</dt>
+              <dt className="text-muted-foreground">ランタイム</dt>
               <dd className="font-mono">{frontendHealth.runtime}</dd>
             </div>
             <div className="flex justify-between gap-4 border-t border-line pt-3">
-              <dt className="text-muted">Node env</dt>
+              <dt className="text-muted-foreground">Node env</dt>
               <dd className="font-mono">{frontendHealth.node_env}</dd>
             </div>
           </dl>
@@ -63,7 +63,7 @@ export default async function DashboardPage() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="text-base font-semibold">Backend</h2>
-              <p className="mt-1 text-sm text-muted">FastAPI internal health endpoint</p>
+              <p className="mt-1 text-sm text-muted-foreground">FastAPI internal health endpoint</p>
             </div>
             {backendHealth.kind === "ok" ? (
               <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
@@ -79,16 +79,16 @@ export default async function DashboardPage() {
           {backendHealth.kind === "ok" ? (
             <dl className="mt-5 grid gap-3 text-sm">
               <div className="flex justify-between gap-4 border-t border-line pt-3">
-                <dt className="text-muted">サービス</dt>
+                <dt className="text-muted-foreground">サービス</dt>
                 <dd className="font-mono">{backendHealth.health.service}</dd>
               </div>
               <div className="flex justify-between gap-4 border-t border-line pt-3">
-                <dt className="text-muted">バージョン</dt>
+                <dt className="text-muted-foreground">バージョン</dt>
                 <dd className="font-mono">{backendHealth.health.version}</dd>
               </div>
             </dl>
           ) : (
-            <p role="status" className="mt-5 border-t border-line pt-3 text-sm text-muted">
+            <p role="status" className="mt-5 border-t border-line pt-3 text-sm text-muted-foreground">
               {backendHealth.message}
             </p>
           )}

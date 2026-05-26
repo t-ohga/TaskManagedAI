@@ -393,7 +393,7 @@ export function AdminPageShell({
       <header className="max-w-5xl">
         <p className="text-sm font-medium text-accent">{eyebrow}</p>
         <h1 className="text-3xl font-semibold tracking-normal text-ink">{title}</h1>
-        <div className="mt-2 max-w-3xl text-sm leading-6 text-muted">{description}</div>
+        <div className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</div>
       </header>
       {children}
     </section>
@@ -412,7 +412,7 @@ export function Panel({ titleId, title, description, aside, children }: PanelPro
             {title}
           </h2>
           {description === undefined ? null : (
-            <div className="mt-1 max-w-3xl text-sm leading-6 text-muted">{description}</div>
+            <div className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</div>
           )}
         </div>
         {aside === undefined ? null : <div className="shrink-0">{aside}</div>}
@@ -446,7 +446,7 @@ export function KeyboardReadinessStrip({
                 href={item.href as Route}
               >
                 {/* P0.1+ shortcut hint (planned; no key handler attached yet, F-P2R1-013) */}
-                <kbd aria-hidden="true" className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-muted">
+                <kbd aria-hidden="true" className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
                   {item.keys.join(" ")}
                 </kbd>
                 <span>{item.label}</span>
@@ -485,11 +485,11 @@ export function AgentRunStateGraph() {
             >
               <div className="flex items-start justify-between gap-3">
                 <code className="break-all font-mono text-xs font-semibold">{state}</code>
-                <span className="rounded bg-white/70 px-1.5 py-0.5 font-mono text-[11px] text-muted">
+                <span className="rounded bg-white/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
                   {String(index + 1).padStart(2, "0")}
                 </span>
               </div>
-              <p className="mt-2 text-xs leading-5 text-muted">
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
                 {AGENT_RUN_STATE_DESCRIPTIONS[state]}
               </p>
             </li>
@@ -513,7 +513,7 @@ export function AgentRunStateGraph() {
               <li key={`${state}-${String(index)}`} className="flex items-center gap-2">
                 <CodePill>{state}</CodePill>
                 {index === STANDARD_TRANSITION_PATH.length - 1 ? null : (
-                  <span aria-hidden="true" className="text-muted">
+                  <span aria-hidden="true" className="text-muted-foreground">
                     -&gt;
                   </span>
                 )}
@@ -528,7 +528,7 @@ export function AgentRunStateGraph() {
           </h3>
           <ul className="mt-3 grid gap-2">
             {EXCEPTION_TRANSITIONS.map((transition) => (
-              <li key={`${transition.from}-${transition.to}`} className="text-xs leading-5 text-muted">
+              <li key={`${transition.from}-${transition.to}`} className="text-xs leading-5 text-muted-foreground">
                 <CodePill>{transition.from}</CodePill>
                 <span aria-hidden="true" className="mx-1">
                   -&gt;
@@ -550,7 +550,7 @@ export function BlockedReasonList() {
       {BLOCKED_REASONS_3.map((reason) => (
         <li key={reason} className="rounded-md border border-amber-200 bg-amber-50 p-3">
           <code className="font-mono text-xs font-semibold text-attention">{reason}</code>
-          <p className="mt-2 text-xs leading-5 text-muted">
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">
             {BLOCKED_REASON_DESCRIPTIONS[reason]}
           </p>
         </li>
@@ -567,18 +567,18 @@ export function AgentRunEventTimeline() {
           key={`${event.seqNo}-${event.event_type}`}
           className="grid gap-3 rounded-md border border-line bg-white p-3 md:grid-cols-[4rem_minmax(10rem,0.8fr)_minmax(0,1fr)] md:items-start"
         >
-          <span className="font-mono text-xs font-semibold text-muted">
+          <span className="font-mono text-xs font-semibold text-muted-foreground">
             #{String(event.seqNo).padStart(2, "0")}
           </span>
           <div>
             <code className="font-mono text-xs font-semibold text-ink">
               {event.event_type}
             </code>
-            <p className="mt-1 text-xs text-muted">
+            <p className="mt-1 text-xs text-muted-foreground">
               status: <CodePill>{event.status}</CodePill>
             </p>
           </div>
-          <div className="text-xs leading-5 text-muted">
+          <div className="text-xs leading-5 text-muted-foreground">
             <time dateTime={event.at}>{event.at}</time>
             <p className="mt-1">
               actor_id: <CodePill>{event.actor_id}</CodePill>
@@ -601,7 +601,7 @@ export function ContextSnapshotDefinitionList() {
               {column.key}
             </code>
           </dt>
-          <dd className="mt-2 text-xs leading-5 text-muted">{column.purpose}</dd>
+          <dd className="mt-2 text-xs leading-5 text-muted-foreground">{column.purpose}</dd>
         </div>
       ))}
     </dl>
@@ -616,7 +616,7 @@ export function ProviderComplianceMatrixTable() {
           Provider Compliance Matrix with provider, api_or_feature, allowed_data_class,
           retention, zdr_eligible, and training_use columns.
         </caption>
-        <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted">
+        <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted-foreground">
           <tr>
             <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
               provider
@@ -650,9 +650,9 @@ export function ProviderComplianceMatrixTable() {
               <td className="border-b border-line px-3 py-2">
                 <CodePill>{row.allowed_data_class}</CodePill>
               </td>
-              <td className="border-b border-line px-3 py-2 text-muted">{row.retention}</td>
-              <td className="border-b border-line px-3 py-2 text-muted">{row.zdr_eligible}</td>
-              <td className="border-b border-line px-3 py-2 text-muted">{row.training_use}</td>
+              <td className="border-b border-line px-3 py-2 text-muted-foreground">{row.retention}</td>
+              <td className="border-b border-line px-3 py-2 text-muted-foreground">{row.zdr_eligible}</td>
+              <td className="border-b border-line px-3 py-2 text-muted-foreground">{row.training_use}</td>
             </tr>
           ))}
         </tbody>
@@ -667,7 +667,7 @@ export function PolicyProfileList() {
       {POLICY_PROFILES.map((profile) => (
         <li key={profile.name} className="rounded-md border border-line bg-white p-3">
           <code className="font-mono text-xs font-semibold text-accent">{profile.name}</code>
-          <p className="mt-2 text-xs leading-5 text-muted">{profile.summary}</p>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">{profile.summary}</p>
         </li>
       ))}
     </ul>
@@ -678,7 +678,7 @@ export function SecretBoundaryNotice({ title = "SecretBroker boundary" }: { titl
   return (
     <section aria-label={title} className="rounded-md border border-rose-200 bg-rose-50 p-3">
       <h3 className="text-sm font-semibold text-danger">{title}</h3>
-      <p className="mt-2 text-sm leading-6 text-muted">
+      <p className="mt-2 text-sm leading-6 text-muted-foreground">
         raw secret, raw token, provider key, and capability token values are never
         rendered. UI rows show reason_code, pattern_hit, hash references, actor_id,
         and scrubbed_env_keys only.

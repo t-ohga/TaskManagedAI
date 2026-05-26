@@ -84,7 +84,7 @@ export function NotificationTriageListItem({ notification }: NotificationTriageL
             >
               {formatNotificationSeverity(notification.severity)}
             </span>
-            <span className="rounded-md bg-panel-muted px-2 py-1 text-xs font-semibold text-muted">
+            <span className="rounded-md bg-panel-muted px-2 py-1 text-xs font-semibold text-muted-foreground">
               {formatNotificationRequiredAction(notification.required_action)}
             </span>
             {isResolved ? (
@@ -95,7 +95,7 @@ export function NotificationTriageListItem({ notification }: NotificationTriageL
           </div>
 
           <p className="mt-3 break-all text-sm font-semibold">{notification.event_type}</p>
-          <dl className="mt-2 grid gap-1 text-xs text-muted sm:grid-cols-2">
+          <dl className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
             <div>
               <dt className="font-medium text-foreground">作成</dt>
               <dd>{formatDateTime(notification.created_at)}</dd>
@@ -124,7 +124,7 @@ export function NotificationTriageListItem({ notification }: NotificationTriageL
             {notification.payload_keys.map((key) => (
               <span
                 key={key}
-                className="rounded-md border border-line bg-white px-2 py-1 font-mono text-xs text-muted"
+                className="rounded-md border border-line bg-white px-2 py-1 font-mono text-xs text-muted-foreground"
               >
                 {key}
               </span>
@@ -139,7 +139,7 @@ export function NotificationTriageListItem({ notification }: NotificationTriageL
               <button
                 type="submit"
                 disabled={isPending}
-                className="rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-muted outline-offset-2 hover:bg-panel-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-muted-foreground outline-offset-2 hover:bg-panel-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
                 既読
               </button>
@@ -158,7 +158,7 @@ export function NotificationTriageListItem({ notification }: NotificationTriageL
                 <button
                   type="submit"
                   disabled={isPending}
-                  className="rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-muted outline-offset-2 hover:bg-panel-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-muted-foreground outline-offset-2 hover:bg-panel-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   1時間スヌーズ
                 </button>
@@ -218,8 +218,8 @@ function severityBadgeClass(severity: NotificationTriageItem["severity"]): strin
     case "medium":
       return "bg-teal-50 text-accent";
     case "low":
-      return "bg-slate-100 text-muted";
+      return "bg-slate-100 text-muted-foreground";
     case "info":
-      return "bg-panel-muted text-muted";
+      return "bg-panel-muted text-muted-foreground";
   }
 }

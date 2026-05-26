@@ -80,7 +80,7 @@ export default function AuditLogPage() {
               Audit events with event_type, actor_id, reason_code, blocked_reason,
               payload_data_class, allowed_data_class, and redaction status.
             </caption>
-            <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted">
+            <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted-foreground">
               <tr>
                 <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
                   event_type
@@ -119,9 +119,9 @@ export default function AuditLogPage() {
                   <td className="border-b border-line px-3 py-2">
                     <code className="font-mono text-xs text-ink">{event.reason_code}</code>
                   </td>
-                  <td className="border-b border-line px-3 py-2 text-muted">
+                  <td className="border-b border-line px-3 py-2 text-muted-foreground">
                     {event.blocked_reason === null ? (
-                      <span aria-label="not applicable" className="text-muted">
+                      <span aria-label="not applicable" className="text-muted-foreground">
                         —
                       </span>
                     ) : (
@@ -130,13 +130,13 @@ export default function AuditLogPage() {
                       </code>
                     )}
                   </td>
-                  <td className="border-b border-line px-3 py-2 text-muted">
+                  <td className="border-b border-line px-3 py-2 text-muted-foreground">
                     {event.payload_data_class}
                   </td>
-                  <td className="border-b border-line px-3 py-2 text-muted">
+                  <td className="border-b border-line px-3 py-2 text-muted-foreground">
                     {event.allowed_data_class}
                   </td>
-                  <td className="border-b border-line px-3 py-2 text-muted">
+                  <td className="border-b border-line px-3 py-2 text-muted-foreground">
                     {event.redaction}
                   </td>
                 </tr>
@@ -159,7 +159,7 @@ export default function AuditLogPage() {
         title="Append-only behavior"
         titleId="audit-append-only"
       >
-        <ul className="grid gap-2 text-sm text-muted md:grid-cols-3">
+        <ul className="grid gap-2 text-sm text-muted-foreground md:grid-cols-3">
           <li className="rounded-md border border-line bg-white p-3">
             event_type and actor_id are required for every row.
           </li>

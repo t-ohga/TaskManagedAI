@@ -20,7 +20,7 @@ export default function TicketsListPage() {
       <header>
         <p className="text-sm font-medium text-accent">Admin</p>
         <h1 className="text-3xl font-semibold tracking-normal">Tickets</h1>
-        <p className="mt-2 text-sm text-muted">
+        <p className="mt-2 text-sm text-muted-foreground">
           Sprint 9 BL-0103 skeleton — Ticket 一覧 (Acceptance Criteria + Evidence
           + AgentRun status を表示)。
         </p>
@@ -28,7 +28,7 @@ export default function TicketsListPage() {
 
       <article className="rounded-md border border-base p-4">
         <h2 className="text-lg font-medium">Sprint 9 batch 1 進捗</h2>
-        <ul className="mt-2 list-disc pl-5 text-sm text-muted">
+        <ul className="mt-2 list-disc pl-5 text-sm text-muted-foreground">
           <li>BL-0103 Ticket 一覧 skeleton (本ページ)</li>
           <li>BL-0104 Ticket 詳細: Sprint 9 batch 2 で実装</li>
           <li>BL-0105 Approval Inbox: 既存実装 (Sprint 3 完成)</li>
@@ -40,7 +40,7 @@ export default function TicketsListPage() {
 
       <article className="rounded-md border border-base p-4">
         <h2 className="text-lg font-medium">P0 UI 設計 (SP-009 §scope)</h2>
-        <p className="mt-2 text-sm text-muted">
+        <p className="mt-2 text-sm text-muted-foreground">
           - Server Component default (Next.js 16 App Router)
           <br />- secret_ref / installation_token / capability token を DOM に出さない
           <br />- AgentRun 16 状態 + blocked_reason 3 種を status と分離表示

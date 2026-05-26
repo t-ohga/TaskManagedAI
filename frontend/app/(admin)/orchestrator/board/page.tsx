@@ -108,7 +108,7 @@ export default async function AiSocietyBoardPage() {
       <header className="grid gap-2">
         <p className="text-sm font-medium text-accent">管理 / Orchestrator</p>
         <h1 className="text-3xl font-semibold tracking-normal">AI 組織ボード</h1>
-        <p className="max-w-3xl text-sm text-muted">
+        <p className="max-w-3xl text-sm text-muted-foreground">
           既存 AgentRun API だけを使い、role_id、status、event_type を read-only で表示します。
         </p>
       </header>
@@ -116,7 +116,7 @@ export default async function AiSocietyBoardPage() {
       {state.kind === "error" ? (
         <article role="status" className="rounded-md border border-attention bg-amber-50 p-4">
           <h2 className="text-base font-semibold text-attention">AI 組織ボードを表示できません</h2>
-          <p className="mt-1 text-sm text-muted">{state.message}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{state.message}</p>
         </article>
       ) : (
         <BoardContents state={state} />
@@ -144,7 +144,7 @@ function BoardContents({ state }: { state: Extract<BoardState, { kind: "ok" }> }
       {state.detailFailures > 0 ? (
         <article role="status" className="rounded-md border border-attention bg-amber-50 p-4">
           <h2 className="text-base font-semibold text-attention">一部 timeline を取得できません</h2>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-1 text-sm text-muted-foreground">
             最新 {DETAIL_FETCH_LIMIT} 件の detail fetch のうち {state.detailFailures} 件が失敗しました。
             role 集計は list API の値だけで表示しています。
           </p>
@@ -156,7 +156,7 @@ function BoardContents({ state }: { state: Extract<BoardState, { kind: "ok" }> }
           <h2 id="role-board-heading" className="text-xl font-semibold">
             role catalog
           </h2>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-1 text-sm text-muted-foreground">
             10 standard roles を固定順で表示し、raw role_id を併記します。
           </p>
         </div>
@@ -173,13 +173,13 @@ function BoardContents({ state }: { state: Extract<BoardState, { kind: "ok" }> }
             <h2 id="unknown-role-heading" className="text-xl font-semibold">
               unknown role_id
             </h2>
-            <p className="mt-1 text-sm text-muted">
+            <p className="mt-1 text-sm text-muted-foreground">
               standard role catalog 外の値も raw id を隠さず表示します。
             </p>
           </div>
           <div className="overflow-x-auto rounded-lg border border-line bg-panel shadow-sm">
             <table className="min-w-full divide-y divide-line text-sm">
-              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-muted">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th scope="col" className="px-4 py-3 text-left font-medium">Run ID</th>
                   <th scope="col" className="px-4 py-3 text-left font-medium">role_id</th>
@@ -196,7 +196,7 @@ function BoardContents({ state }: { state: Extract<BoardState, { kind: "ok" }> }
                     <td className="px-4 py-3 font-mono text-xs">
                       {run.role_id ?? "unassigned"}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted">
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                       {run.role_scope ?? "—"}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">{run.status}</td>
@@ -216,7 +216,7 @@ function BoardContents({ state }: { state: Extract<BoardState, { kind: "ok" }> }
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-line bg-panel p-4 shadow-sm">
-      <dt className="font-mono text-xs text-muted">{label}</dt>
+      <dt className="font-mono text-xs text-muted-foreground">{label}</dt>
       <dd className="mt-2 text-2xl font-semibold tracking-normal">{value}</dd>
     </div>
   );
@@ -238,11 +238,11 @@ function RoleCard({ summary }: { summary: RoleSummary }) {
         </span>
         <div className="min-w-0">
           <h3 className="text-base font-semibold">{visual.label}</h3>
-          <p className="break-all font-mono text-xs text-muted">{visual.rawId}</p>
+          <p className="break-all font-mono text-xs text-muted-foreground">{visual.rawId}</p>
         </div>
       </div>
 
-      <p className="text-sm text-muted">{visual.description}</p>
+      <p className="text-sm text-muted-foreground">{visual.description}</p>
 
       <dl className="grid grid-cols-4 gap-2 text-sm">
         <CompactMetric label="total" value={summary.total} />
@@ -252,7 +252,7 @@ function RoleCard({ summary }: { summary: RoleSummary }) {
       </dl>
 
       <div className="border-t border-line pt-3 text-xs">
-        <p className="font-mono text-muted">
+        <p className="font-mono text-muted-foreground">
           group: {ROLE_GROUP_LABELS[visual.group]} ({visual.group})
         </p>
         {summary.latestRun ? (
@@ -260,12 +260,12 @@ function RoleCard({ summary }: { summary: RoleSummary }) {
             <p className="break-all">
               latest: <RunLink runId={summary.latestRun.id} />
             </p>
-            <p className="break-all font-mono text-muted">
+            <p className="break-all font-mono text-muted-foreground">
               status:{summary.latestRun.status} scope:{summary.latestRun.role_scope ?? "—"}
             </p>
           </div>
         ) : (
-          <p className="mt-2 text-muted">latest: —</p>
+          <p className="mt-2 text-muted-foreground">latest: —</p>
         )}
       </div>
     </article>
@@ -275,7 +275,7 @@ function RoleCard({ summary }: { summary: RoleSummary }) {
 function CompactMetric({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-md border border-line px-2 py-2">
-      <dt className="font-mono text-[11px] text-muted">{label}</dt>
+      <dt className="font-mono text-[11px] text-muted-foreground">{label}</dt>
       <dd className="mt-1 font-semibold">{value}</dd>
     </div>
   );
@@ -288,12 +288,12 @@ function InterAgentTimeline({ events }: { events: InterAgentTimelineEvent[] }) {
         <h2 id="inter-agent-heading" className="text-xl font-semibold">
           inter-agent ref timeline
         </h2>
-        <p className="mt-1 text-sm text-muted">
+        <p className="mt-1 text-sm text-muted-foreground">
           message body は表示せず、event_type と参照用 payload key だけを表示します。
         </p>
       </div>
       {events.length === 0 ? (
-        <article className="rounded-md border border-line bg-panel p-4 text-sm text-muted">
+        <article className="rounded-md border border-line bg-panel p-4 text-sm text-muted-foreground">
           最新 {DETAIL_FETCH_LIMIT} 件の AgentRun detail に inter-agent ref event はありません。
         </article>
       ) : (
@@ -302,7 +302,7 @@ function InterAgentTimeline({ events }: { events: InterAgentTimelineEvent[] }) {
             aria-label="inter-agent event_type、payload_keys、run_id"
             className="min-w-full divide-y divide-line text-sm"
           >
-            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-muted">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th scope="col" className="px-4 py-3 text-left font-medium">seq_no</th>
                 <th scope="col" className="px-4 py-3 text-left font-medium">event_type</th>
@@ -320,7 +320,7 @@ function InterAgentTimeline({ events }: { events: InterAgentTimelineEvent[] }) {
                   <td className="px-4 py-3">
                     <RunLink runId={event.runId} />
                   </td>
-                  <td className="px-4 py-3 text-xs text-muted">
+                  <td className="px-4 py-3 text-xs text-muted-foreground">
                     {event.payloadKeys.length > 0 ? event.payloadKeys.join(", ") : "—"}
                     {event.hiddenPayloadKeyCount > 0 ? (
                       <span className="ml-2 font-mono text-attention">
@@ -328,10 +328,10 @@ function InterAgentTimeline({ events }: { events: InterAgentTimelineEvent[] }) {
                       </span>
                     ) : null}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted">
+                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                     {event.redactionStatus}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-muted">
+                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-muted-foreground">
                     {formatDate(event.createdAt)}
                   </td>
                 </tr>

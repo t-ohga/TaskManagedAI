@@ -141,7 +141,7 @@ function DryRunEmptyState() {
   return (
     <section
       aria-label="dry-run 結果"
-      className="rounded-md border border-line bg-panel-muted p-4 text-sm text-muted"
+      className="rounded-md border border-line bg-panel-muted p-4 text-sm text-muted-foreground"
     >
       <h3 className="font-semibold text-fg">dry-run 結果</h3>
       <p className="mt-2">
@@ -157,9 +157,9 @@ export function DryRunPlanReview({ plan }: { plan: OnboardingDryRunPlan }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-base font-semibold">dry-run 結果</h3>
-          <p className="mt-1 text-sm text-muted">{plan.estimated_cost}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{plan.estimated_cost}</p>
         </div>
-        <span className="rounded-md bg-panel-muted px-2 py-1 font-mono text-[11px] text-muted">
+        <span className="rounded-md bg-panel-muted px-2 py-1 font-mono text-[11px] text-muted-foreground">
           {plan.risk_level}
         </span>
       </div>
@@ -179,11 +179,11 @@ export function DryRunPlanReview({ plan }: { plan: OnboardingDryRunPlan }) {
       </div>
 
       <section aria-label="would_create ledger" className="rounded-md bg-panel-muted p-3">
-        <h4 className="font-mono text-xs text-muted">would_create</h4>
+        <h4 className="font-mono text-xs text-muted-foreground">would_create</h4>
         <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
           {Object.entries(plan.would_create).map(([key, value]) => (
             <div key={key} className="flex items-center justify-between gap-3">
-              <dt className="font-mono text-xs text-muted">{key}</dt>
+              <dt className="font-mono text-xs text-muted-foreground">{key}</dt>
               <dd className="font-mono text-xs">{String(value)}</dd>
             </div>
           ))}
@@ -204,7 +204,7 @@ export function DryRunPlanReview({ plan }: { plan: OnboardingDryRunPlan }) {
 
       <details className="rounded-md border border-line bg-panel-muted p-3 text-sm">
         <summary className="cursor-pointer font-semibold">理由を見る</summary>
-        <p className="mt-2 text-muted">
+        <p className="mt-2 text-muted-foreground">
           この結果は dry-run API の response-only deterministic response です。実行状態や承認レコードは作成していません。
         </p>
       </details>
@@ -215,7 +215,7 @@ export function DryRunPlanReview({ plan }: { plan: OnboardingDryRunPlan }) {
 function PlanFact({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md bg-panel-muted p-3">
-      <dt className="font-mono text-xs text-muted">{label}</dt>
+      <dt className="font-mono text-xs text-muted-foreground">{label}</dt>
       <dd className="mt-1 break-words font-semibold">{value}</dd>
     </div>
   );
@@ -224,7 +224,7 @@ function PlanFact({ label, value }: { label: string; value: string }) {
 function ListBlock({ label, values }: { label: string; values: string[] }) {
   return (
     <section className="rounded-md bg-panel-muted p-3">
-      <h4 className="font-mono text-xs text-muted">{label}</h4>
+      <h4 className="font-mono text-xs text-muted-foreground">{label}</h4>
       <ul className="mt-2 grid gap-2 text-sm">
         {values.map((value) => (
           <li className="break-words" key={value}>

@@ -9,7 +9,7 @@ export default function HomePage() {
           <ul className="flex items-center gap-2 text-sm">
             <li>
               <Link
-                className="rounded-md px-3 py-2 text-muted outline-offset-2 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="rounded-md px-3 py-2 text-muted-foreground outline-offset-2 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 href="/login"
               >
                 ログイン
@@ -33,7 +33,7 @@ export default function HomePage() {
           <h1 className="text-4xl font-semibold tracking-normal sm:text-5xl">
             TaskManagedAI
           </h1>
-          <p className="mt-4 max-w-xl text-base leading-7 text-muted">
+          <p className="mt-4 max-w-xl text-base leading-7 text-muted-foreground">
             Deep Research から実装 PR までの証拠、判断、承認、実行ログを管理する
             AI-native な開発タスク管理基盤です。
           </p>

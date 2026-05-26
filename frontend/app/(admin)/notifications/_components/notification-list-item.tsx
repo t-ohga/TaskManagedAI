@@ -21,7 +21,7 @@ export function NotificationListItem({ notification }: { notification: Notificat
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-sm font-semibold">{notification.event_type}</p>
-          <p className="mt-1 text-xs text-muted">
+          <p className="mt-1 text-xs text-muted-foreground">
             {new Date(notification.created_at).toLocaleString()}
           </p>
         </div>
