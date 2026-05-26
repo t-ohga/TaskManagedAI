@@ -63,6 +63,9 @@ def configure_github_transport_on_app(
     sops_binary: Path | None = None,
     age_key_file: Path | None = None,
 ) -> None:
+    import logging
+
+    logger = logging.getLogger(__name__)
     try:
         resolver = create_sops_resolver(
             sops_dir=sops_dir,
@@ -71,6 +74,10 @@ def configure_github_transport_on_app(
         )
         app_state.github_secret_material_resolver = resolver  # type: ignore[attr-defined]
     except Exception:
+        logger.warning(
+            "github_secret_material_resolver init failed; GitHub transport will be unavailable",
+            exc_info=True,
+        )
         app_state.github_secret_material_resolver = None  # type: ignore[attr-defined]
 
 

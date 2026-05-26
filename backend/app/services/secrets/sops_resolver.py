@@ -26,7 +26,7 @@ _SOPS_URI_PATTERN: Final = re.compile(
 _RAW_MATERIAL_CANARY_PATTERNS: Final = (
     re.compile(r"AGE-SECRET-KEY-[A-Z0-9]+"),
     re.compile(r"-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----"),
-    re.compile(r"gh[ps]_[A-Za-z0-9_]{36,}"),
+    re.compile(r"gh[ps]_[A-Za-z0-9_.]{36,}"),
     re.compile(r"ghu_[A-Za-z0-9_]{36,}"),
     re.compile(r"gho_[A-Za-z0-9_]{36,}"),
     re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
@@ -214,11 +214,11 @@ class SopsSubprocessResolver:
     def _validate_age_key_file(path: Path | None) -> Path | None:
         if path is None:
             return None
+        if path.is_symlink():
+            raise SopsResolverError("age_key_file must not be a symlink")
         resolved = path.resolve()
         if not resolved.is_file():
             raise SopsResolverError(f"age_key_file not found: {resolved}")
-        if resolved.is_symlink():
-            raise SopsResolverError("age_key_file must not be a symlink")
         return resolved
 
     @staticmethod

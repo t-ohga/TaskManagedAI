@@ -204,6 +204,7 @@ class HttpxGitHubTransport(GitHubBrokeredTransport):
                 write=WRITE_TIMEOUT,
                 pool=POOL_TIMEOUT,
             ),
+            trust_env=False,
         )
 
 
