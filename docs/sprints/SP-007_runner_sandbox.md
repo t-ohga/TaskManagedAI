@@ -1,7 +1,7 @@
 ---
 id: "SP-007_runner_sandbox"
 type: "heavy"
-status: "done_with_phase5c_pending"
+status: "completed"
 sprint_no: 7
 created_at: "2026-05-08"
 updated_at: "2026-05-26"
@@ -9,8 +9,8 @@ target_days: 4.7
 max_days: 7
 adr_refs:
   - "[ADR-00008](../adr/00008_destructive_operation.md) # 2026-05-13 accepted (Sprint 7 batch 0)"
-planned_adr_refs:
-  - "[ADR-00012](../adr/00012_hook_trust_boundary.md) # 2026-05-13 proposed (Sprint 7 batch 0)、Phase 4 hooks の repo 外 trusted wrapper 実装は Phase 5 で扱う"
+  - "[ADR-00012](../adr/00012_hook_trust_boundary.md) # 2026-05-26 accepted (Phase 5C completed)"
+planned_adr_refs: []
 related_sprints:
   - "SP-006_cli_artifact"
 downstream_sprints:
@@ -452,11 +452,11 @@ audit F-001 adopt)。Phase 5 で BL-0082/0083/0084 完了 + ADR-00012 accepted �
 |---|---|---|
 | 5A | completed (2026-05-24) | docs + temp-home tests/helper scaffolding |
 | 5B | completed (2026-05-24) | wrapper candidate + manifest verification in temp trust root |
-| 5C | **pending user approval** | install `~/.claude-trusted` wrapper + manifest + settings switch (repo 外書込) |
-| 5D | **this commit** | Sprint Pack status update + Phase 5 progress 記録 |
+| 5C | **completed (2026-05-26)** | `~/.claude-trusted/` に wrapper + manifest install、verify PASS |
+| 5D | **completed (2026-05-26)** | ADR-00012 accepted + SP-007 status completed |
 
-5C は repo 外ファイル書込 (`~/.claude-trusted/`) を伴うため、ユーザー explicit approval 後に実行。
-ADR-00012 accepted 化も 5C 着手時に行う。
+Phase 5C: ユーザー承認取得後に install 実行。`verify-hook-trust-root.sh` 全 check PASS。
+ADR-00012: proposed → accepted (2026-05-26)。
 
 ### Codex R1-R6 累計 (Sprint 7 batch 1 + 2)
 

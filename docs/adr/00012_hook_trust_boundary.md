@@ -1,8 +1,8 @@
 ---
 id: "ADR-00012"
 title: "Hook Trust Boundary (repo 外 trusted wrapper + sha256 manifest)"
-status: "proposed"
-date: "2026-05-13"
+status: "accepted"
+date: "2026-05-26"
 deciders:
   - "TaskManagedAI core"
 adr_gate_criteria:
