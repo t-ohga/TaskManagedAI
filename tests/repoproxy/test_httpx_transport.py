@@ -16,6 +16,7 @@ from backend.app.services.repoproxy.github_app_adapter import GitHubDraftPRRespo
 from backend.app.services.repoproxy.httpx_transport import (
     GitHubTransportError,
     HttpxGitHubTransport,
+    InvalidTokenError,
     LiveRefChangedError,
     SecretRefMismatchError,
 )
@@ -295,3 +296,70 @@ class TestTokenDeletedAfterUse:
 
         # Verify resolver was called (token was obtained and used)
         transport._material_resolver.resolve_secret_material.assert_called_once()
+
+
+class TestSecondaryRateLimit403:
+    @pytest.mark.asyncio
+    async def test_403_with_ratelimit_remaining_zero_retries(
+        self, transport: HttpxGitHubTransport
+    ) -> None:
+        mock_response_403 = MagicMock()
+        mock_response_403.status_code = 403
+        mock_response_403.headers = {"x-ratelimit-remaining": "0", "Retry-After": "0"}
+        mock_response_403.text = "rate limit exceeded"
+
+        mock_response_200 = MagicMock()
+        mock_response_200.status_code = 200
+        mock_response_200.json.return_value = {"number": 1, "html_url": "url", "draft": True}
+
+        call_count = 0
+
+        async def mock_post(url: Any, json: Any = None) -> Any:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return mock_response_403
+            return mock_response_200
+
+        mock_client = AsyncMock()
+        mock_client.post = mock_post
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.object(transport, "_build_client", return_value=mock_client):
+            result = await transport._post_with_retry(
+                url="https://api.github.com/repos/o/r/pulls",
+                token=b"test",
+                api_version="2022-11-28",
+                json_body={},
+            )
+
+        assert result["number"] == 1
+        assert call_count == 2
+
+
+class TestTokenSanitization:
+    @pytest.mark.asyncio
+    async def test_token_with_trailing_newline_stripped(
+        self, mock_resolver: AsyncMock
+    ) -> None:
+        mock_resolver.resolve_secret_material = AsyncMock(return_value=b"ghs_valid_token_123\n")
+        transport = HttpxGitHubTransport(
+            material_resolver=mock_resolver,
+            secret_ref=_make_secret_ref(),
+        )
+        token = await transport._resolve_token()
+        assert token == b"ghs_valid_token_123"
+        assert b"\n" not in token
+
+    @pytest.mark.asyncio
+    async def test_token_with_invalid_chars_raises(
+        self, mock_resolver: AsyncMock
+    ) -> None:
+        mock_resolver.resolve_secret_material = AsyncMock(return_value=b"bad\x00token\xff")
+        transport = HttpxGitHubTransport(
+            material_resolver=mock_resolver,
+            secret_ref=_make_secret_ref(),
+        )
+        with pytest.raises(InvalidTokenError):
+            await transport._resolve_token()

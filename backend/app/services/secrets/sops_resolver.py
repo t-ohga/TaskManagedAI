@@ -103,7 +103,11 @@ class SopsSubprocessResolver:
         scope = match.group("scope")
         name = match.group("name")
         version = match.group("version")
-        return (self._sops_dir / scope / f"{name}.{version}.enc.yaml").resolve()
+        lexical_path = self._sops_dir / scope / f"{name}.{version}.enc.yaml"
+        self._validate_no_symlink_components(lexical_path)
+        if lexical_path.is_symlink():
+            raise SopsPathTraversalError("Symlink denied at lexical path before resolve")
+        return lexical_path.resolve()
 
     def _validate_containment(self, file_path: Path) -> None:
         try:

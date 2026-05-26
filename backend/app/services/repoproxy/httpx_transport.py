@@ -7,6 +7,8 @@ is never logged, and is never returned to the caller.
 
 from __future__ import annotations
 
+import re
+import time
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
@@ -24,10 +26,13 @@ from backend.app.services.secrets.broker import BrokerOperationContext
 GITHUB_API_BASE: Final = "https://api.github.com"
 MAX_RETRY_ATTEMPTS: Final = 3
 RETRY_BASE_SECONDS: Final = 1.0
+RETRY_MIN_WAIT: Final = 60.0
 CONNECT_TIMEOUT: Final = 30.0
 READ_TIMEOUT: Final = 60.0
 WRITE_TIMEOUT: Final = 60.0
 POOL_TIMEOUT: Final = 10.0
+
+_TOKEN_CHAR_RE: Final = re.compile(r"\A[A-Za-z0-9_\-./+=]+\Z")
 
 
 class GitHubTransportError(Exception):
@@ -39,6 +44,10 @@ class LiveRefChangedError(GitHubTransportError):
 
 
 class SecretRefMismatchError(GitHubTransportError):
+    pass
+
+
+class InvalidTokenError(GitHubTransportError):
     pass
 
 
@@ -139,8 +148,13 @@ class HttpxGitHubTransport(GitHubBrokeredTransport):
     async def _resolve_token(self) -> bytes:
         material = await self._material_resolver.resolve_secret_material(self._secret_ref)
         if isinstance(material, str):
-            return material.encode()
-        return material
+            raw = material.strip().encode()
+        else:
+            raw = material.strip()
+        token_str = raw.decode(errors="replace")
+        if not _TOKEN_CHAR_RE.match(token_str):
+            raise InvalidTokenError("resolved token contains invalid characters")
+        return raw
 
     async def _post_with_retry(
         self,
@@ -157,12 +171,9 @@ class HttpxGitHubTransport(GitHubBrokeredTransport):
             async with self._build_client(token, api_version) as client:
                 resp = await client.post(url, json=json_body)
 
-                if resp.status_code == 429:
-                    retry_after = _parse_retry_after(
-                        resp.headers.get("Retry-After"),
-                        default=RETRY_BASE_SECONDS * (2**attempt),
-                    )
-                    await asyncio.sleep(min(retry_after, 60))
+                if _is_rate_limited(resp):
+                    wait = _compute_rate_limit_wait(resp, attempt)
+                    await asyncio.sleep(wait)
                     last_error = GitHubTransportError(f"rate limited (attempt {attempt + 1})")
                     continue
 
@@ -196,13 +207,48 @@ class HttpxGitHubTransport(GitHubBrokeredTransport):
         )
 
 
-def _parse_retry_after(value: str | None, *, default: float) -> float:
+def _is_rate_limited(resp: httpx.Response) -> bool:
+    if resp.status_code == 429:
+        return True
+    if resp.status_code == 403:
+        remaining = resp.headers.get("x-ratelimit-remaining")
+        if remaining == "0":
+            return True
+        body_text = resp.text[:500] if resp.text else ""
+        if "rate limit" in body_text.lower() or "secondary" in body_text.lower():
+            return True
+    return False
+
+
+def _compute_rate_limit_wait(resp: httpx.Response, attempt: int) -> float:
+    retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+    if retry_after is not None:
+        return min(retry_after, 300.0)
+
+    reset_at = _parse_ratelimit_reset(resp.headers.get("x-ratelimit-reset"))
+    if reset_at is not None:
+        wait = max(reset_at - time.time(), 0.0)
+        return min(wait, 300.0)
+
+    return float(max(RETRY_MIN_WAIT, RETRY_BASE_SECONDS * (2**attempt)))
+
+
+def _parse_retry_after(value: str | None) -> float | None:
     if value is None:
-        return default
+        return None
     try:
         return float(value)
     except ValueError:
-        return default
+        return None
+
+
+def _parse_ratelimit_reset(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)  # epoch seconds
+    except (ValueError, OverflowError):
+        return None
 
 
 __all__ = [
@@ -210,6 +256,7 @@ __all__ = [
     "BranchPushResult",
     "GitHubTransportError",
     "HttpxGitHubTransport",
+    "InvalidTokenError",
     "LiveRefChangedError",
     "SecretRefMismatchError",
 ]
