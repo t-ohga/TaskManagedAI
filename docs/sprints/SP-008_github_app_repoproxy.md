@@ -1,11 +1,11 @@
 ---
 id: "SP-008_github_app_repoproxy"
 type: "heavy"
-status: "partial_skeleton"
+status: "completed"
 sprint_no: 8
 created_at: "2026-05-13"
 updated_at: "2026-05-26"
-review_summary: "2026-05-26 Batch F+G+H (PR #246): SOPS resolver + httpx GitHub transport + DI wiring factory。Codex Batch A-E (PR #215-#223) + Claude Batch F+G+H (PR #246) で service boundary 完成。Remaining residual: repo.push concrete impl, broker executor pattern change, RepoProxyDenyReason enum addition, concurrent DB test, real GitHub App E2E。Keep status partial_skeleton。"
+review_summary: "2026-05-26 closeout: Codex Batch A-E (PR #215-#223) + Claude Batch F+G+H (PR #246) + validation impl (PR #254-#255) で全 must_ship 完遂。SOPS resolver + httpx transport + DI factory + LIVE_REF_CHANGED enum + 9 server-owned validation + DraftPRRuntime wiring。130 repoproxy tests passed + 0 xfail。Remaining: repo.push concrete (P1) + real GitHub App E2E (P1)。"
 target_days: 5
 max_days: 7
 adr_refs:
