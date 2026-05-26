@@ -28,7 +28,7 @@ helper 内部は本 checklist の Step 1〜4 を **paginated + Codex bot filter 
 
 - repo: `t-ohga/TaskManagedAI`
 - bot: `chatgpt-codex-connector[bot]`
-- review trigger: PR open / draft→ready / `@codex review` コメント
+- review trigger: PR open / push / draft→ready (自動)。`@codex review` コメントは手動トリガーとして使えるが、通常は不要 (自動で走るため)
 - review timing: push から 1-5 分 (10 file 未満) / 5-10 分 (50+ file)
 
 ## 必須確認順序 (PR 起票後 / push 後 / merge 前、全 3 タイミング)
