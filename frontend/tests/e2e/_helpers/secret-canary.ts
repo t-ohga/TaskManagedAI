@@ -27,7 +27,7 @@ export async function assertPageNoSecretCanary(
     const match = html.match(pattern);
     expect(
       match,
-      `DOM secret canary detected on ${context}: kind=${kind} match="${match?.[0]?.slice(0, 20)}..."`
+      `DOM secret canary detected on ${context}: kind=${kind} length=${match?.[0]?.length ?? 0}`
     ).toBeNull();
   }
 }
