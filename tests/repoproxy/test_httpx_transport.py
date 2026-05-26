@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -17,12 +17,15 @@ from backend.app.services.repoproxy.httpx_transport import (
     GitHubTransportError,
     HttpxGitHubTransport,
     LiveRefChangedError,
+    SecretRefMismatchError,
 )
 from backend.app.services.repoproxy.repoproxy import DraftPRRequest
 from backend.app.services.secrets.broker import BrokerOperationContext, SecretHandle
 
+_FIXED_SECRET_REF_ID = uuid4()
 
-def _make_context() -> BrokerOperationContext:
+
+def _make_context(*, secret_ref_id: UUID | None = None) -> BrokerOperationContext:
     return BrokerOperationContext(
         tenant_id=1,
         actor_id=uuid4(),
@@ -31,7 +34,7 @@ def _make_context() -> BrokerOperationContext:
         target={"repo_full_name": "owner/repo"},
         payload_hash="abc123",
         secret_handle=SecretHandle(
-            secret_ref_id=uuid4(),
+            secret_ref_id=secret_ref_id or _FIXED_SECRET_REF_ID,
             scope="repo",
             name="github-app-key",
             version="v1",
@@ -57,7 +60,7 @@ def _make_secret_ref() -> Any:
     ref = MagicMock()
     ref.secret_uri = "secret://sops/repo/github-app-key#v1"
     ref.status = "active"
-    ref.id = uuid4()
+    ref.id = _FIXED_SECRET_REF_ID
     ref.scope = "repo"
     ref.name = "github-app-key"
     ref.version = "v1"
@@ -221,6 +224,57 @@ class TestErrorSanitization:
 
         assert "leaked" not in str(exc_info.value)
         assert "secret" not in str(exc_info.value)
+
+
+class TestContextSecretRefMismatch:
+    @pytest.mark.asyncio
+    async def test_mismatched_secret_ref_raises(self, transport: HttpxGitHubTransport) -> None:
+        ctx = _make_context(secret_ref_id=uuid4())  # intentionally different
+        req = _make_request()
+
+        with pytest.raises(SecretRefMismatchError):
+            await transport.create_draft_pr(
+                context=ctx, request=req, api_version="2022-11-28"
+            )
+
+
+class TestRetryAfterParsing:
+    @pytest.mark.asyncio
+    async def test_non_numeric_retry_after_uses_default(
+        self, transport: HttpxGitHubTransport
+    ) -> None:
+        mock_response_429 = MagicMock()
+        mock_response_429.status_code = 429
+        mock_response_429.headers = {"Retry-After": "Thu, 01 Jan 2026 00:00:00 GMT"}
+
+        mock_response_200 = MagicMock()
+        mock_response_200.status_code = 200
+        mock_response_200.json.return_value = {"number": 1, "html_url": "url", "draft": True}
+
+        call_count = 0
+
+        async def mock_post(url: Any, json: Any = None) -> Any:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return mock_response_429
+            return mock_response_200
+
+        mock_client = AsyncMock()
+        mock_client.post = mock_post
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.object(transport, "_build_client", return_value=mock_client):
+            result = await transport._post_with_retry(
+                url="https://api.github.com/repos/o/r/pulls",
+                token=b"test",
+                api_version="2022-11-28",
+                json_body={},
+            )
+
+        assert result["number"] == 1
+        assert call_count == 2
 
 
 class TestTokenDeletedAfterUse:

@@ -26,6 +26,8 @@ MAX_RETRY_ATTEMPTS: Final = 3
 RETRY_BASE_SECONDS: Final = 1.0
 CONNECT_TIMEOUT: Final = 30.0
 READ_TIMEOUT: Final = 60.0
+WRITE_TIMEOUT: Final = 60.0
+POOL_TIMEOUT: Final = 10.0
 
 
 class GitHubTransportError(Exception):
@@ -33,6 +35,10 @@ class GitHubTransportError(Exception):
 
 
 class LiveRefChangedError(GitHubTransportError):
+    pass
+
+
+class SecretRefMismatchError(GitHubTransportError):
     pass
 
 
@@ -74,6 +80,7 @@ class HttpxGitHubTransport(GitHubBrokeredTransport):
         request: DraftPRRequest,
         api_version: str,
     ) -> GitHubDraftPRResponse:
+        self._verify_context_secret_ref(context)
         token = await self._resolve_token()
         try:
             live_sha = await self._get_branch_head_sha(
@@ -105,6 +112,12 @@ class HttpxGitHubTransport(GitHubBrokeredTransport):
             )
         finally:
             del token
+
+    def _verify_context_secret_ref(self, context: BrokerOperationContext) -> None:
+        if context.secret_handle.secret_ref_id != self._secret_ref.id:
+            raise SecretRefMismatchError(
+                "broker-authorized secret_ref_id does not match transport secret_ref"
+            )
 
     async def _get_branch_head_sha(
         self,
@@ -145,7 +158,10 @@ class HttpxGitHubTransport(GitHubBrokeredTransport):
                 resp = await client.post(url, json=json_body)
 
                 if resp.status_code == 429:
-                    retry_after = int(resp.headers.get("Retry-After", RETRY_BASE_SECONDS * (2**attempt)))
+                    retry_after = _parse_retry_after(
+                        resp.headers.get("Retry-After"),
+                        default=RETRY_BASE_SECONDS * (2**attempt),
+                    )
                     await asyncio.sleep(min(retry_after, 60))
                     last_error = GitHubTransportError(f"rate limited (attempt {attempt + 1})")
                     continue
@@ -171,8 +187,22 @@ class HttpxGitHubTransport(GitHubBrokeredTransport):
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": api_version,
             },
-            timeout=httpx.Timeout(connect=CONNECT_TIMEOUT, read=READ_TIMEOUT),
+            timeout=httpx.Timeout(
+                connect=CONNECT_TIMEOUT,
+                read=READ_TIMEOUT,
+                write=WRITE_TIMEOUT,
+                pool=POOL_TIMEOUT,
+            ),
         )
+
+
+def _parse_retry_after(value: str | None, *, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
 
 
 __all__ = [
@@ -181,4 +211,5 @@ __all__ = [
     "GitHubTransportError",
     "HttpxGitHubTransport",
     "LiveRefChangedError",
+    "SecretRefMismatchError",
 ]

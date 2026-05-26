@@ -125,6 +125,7 @@ class SopsSubprocessResolver:
     async def _decrypt(self, file_path: Path, secret_ref: SecretRef) -> bytes:
         if not Path.is_file(file_path):  # noqa: ASYNC240
             raise SopsResolverError(f"Encrypted file not found for secret_ref id={secret_ref.id}")
+        self._validate_no_symlink_components(file_path)
         if Path.is_symlink(file_path):  # noqa: ASYNC240
             raise SopsPathTraversalError("Symlink target file denied at exec time")
 
