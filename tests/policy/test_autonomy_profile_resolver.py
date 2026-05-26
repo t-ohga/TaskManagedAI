@@ -9,8 +9,29 @@ from backend.app.services.policy.autonomy_profile_resolver import (
 )
 
 
+class _ScalarResult:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def scalar_one_or_none(self) -> object:
+        return self._value
+
+
 class _DummySession:
-    pass
+    async def execute(self, *args: object, **kwargs: object) -> _ScalarResult:
+        return _ScalarResult(None)
+
+    async def scalar(self, *args: object, **kwargs: object) -> int:
+        return 1
+
+    def add(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    async def flush(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    async def refresh(self, *args: object, **kwargs: object) -> None:
+        pass
 
 
 def test_autonomy_profile_resolver_defaults_all_levels_until_runtime_gate() -> None:

@@ -40,6 +40,9 @@ _EVENT_TYPE_25_MIGRATION = (
 _EVENT_TYPE_28_MIGRATION = (
     _REPO_ROOT / "migrations" / "versions" / "0013_cli_event_type_28.py"
 )
+_EVENT_TYPE_37_MIGRATION = (
+    _REPO_ROOT / "migrations" / "versions" / "0025_sp014_event_type_37.py"
+)
 
 ACTOR_ID = UUID("00000000-0000-4000-8000-000000005001")
 WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000005002")
@@ -75,6 +78,15 @@ EXPECTED_AGENT_RUN_EVENT_TYPES = (
     "cli_invocation_started",
     "cli_process_completed",
     "cli_decision_recorded",
+    "orchestrator_dispatched",
+    "orchestrator_lease_renewed",
+    "orchestrator_lease_expired",
+    "orchestrator_failover_triggered",
+    "orchestrator_kill_engaged",
+    "inter_agent_message_sent_ref",
+    "inter_agent_message_consumed_ref",
+    "tool_web_fetch_executed",
+    "tool_docs_search_executed",
 )
 
 
@@ -437,12 +449,11 @@ def test_all_agent_run_event_types_match_literal_and_order() -> None:
 
 
 def test_db_event_type_check_constraint_matches_event_types() -> None:
-    # Sprint 6 batch 2 (migration 0013) extends the CHECK from 25 -> 28 by
-    # drop + create, so the latest source of truth lives in 0013.
+    # SP-014 batch 0a (migration 0025) extends the CHECK from 28 -> 37.
     assert (
         _check_constraint_values_from_migration(
             "agent_run_events_ck_event_type",
-            _EVENT_TYPE_28_MIGRATION,
+            _EVENT_TYPE_37_MIGRATION,
         )
         == set(ALL_AGENT_RUN_EVENT_TYPES)
     )
