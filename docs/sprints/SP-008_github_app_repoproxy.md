@@ -5,7 +5,7 @@ status: "partial_skeleton"
 sprint_no: 8
 created_at: "2026-05-13"
 updated_at: "2026-05-24"
-review_summary: "2026-05-24 reconciliation + Batch A/A2/B/C/C2/D/D2/E: Permission Matrix / MockRepoProxy / low-level HMAC / SecretBroker repo operation primitives / repo_pr_opened enum / orchestrator KPI proxy rollup / server-owned Draft PR binding guard / DB-backed ApprovalRequest+ContextSnapshot resolver / broker-mediated GitHubAppAdapter boundary / webhook service boundary with replay protocol / concrete SecretRef resolver + Redis replay adapter + FastAPI /webhooks/github route / repo_pr_opened event writer + DraftPRRuntime call-site / agent_runs KPI endpoint are present. Real GitHub httpx transport, live Git ref re-fetch, deployment SOPS material resolver, and external API/worker adoption remain residual. Keep status partial_skeleton."
+review_summary: "2026-05-26 Batch F+G+H: SOPS resolver + httpx GitHub transport + DI wiring factory added (PR #246). Remaining residual: repo.push concrete impl, broker executor pattern change, RepoProxyDenyReason enum addition, concurrent DB test, real GitHub App E2E. Keep status partial_skeleton."
 target_days: 5
 max_days: 7
 adr_refs:
@@ -480,6 +480,43 @@ verify で品質確認。
 - Real GitHub httpx transport, retries/rate limit handling, and broker-owned installation token use.
 - Live Git ref re-fetch immediately before GitHub push / Draft PR creation.
 - External API/worker adoption of `DraftPRRuntime` once the real GitHub transport is enabled.
+
+### Batch F+G+H 完了 (2026-05-26、PR #246)
+
+#### changed (Batch F: SOPS resolver)
+
+- `backend/app/services/secrets/sops_resolver.py`: SopsSubprocessResolver (broker/webhook internal-only、URI scheme validation + path traversal deny + symlink component check + absolute binary pinning + subprocess env allowlist + timeout+kill + stderr canary redaction)
+- `tests/repoproxy/test_sops_resolver.py`: 20 tests (URI reject + path traversal + subprocess hardening + status deny + canary redaction + happy path)
+
+#### changed (Batch G: httpx transport)
+
+- `backend/app/services/repoproxy/httpx_transport.py`: HttpxGitHubTransport (GitHubBrokeredTransport Protocol concrete implementation、live SHA mismatch fail-closed + 429 retry + token non-exposure in errors/returns)
+- `tests/repoproxy/test_httpx_transport.py`: 7 tests (token non-exposure + live ref changed + retry + error sanitization)
+
+#### changed (Batch H: DI wiring)
+
+- `backend/app/services/repoproxy/transport_factory.py`: FastAPI app.state injection + create factory functions
+- `tests/repoproxy/test_transport_factory.py`: 6 tests (factory + app state + error paths)
+
+#### verified (Batch F+G+H)
+
+- `uv run ruff check`: all pass
+- `uv run mypy`: all pass
+- `uv run pytest tests/repoproxy/ -q`: 127 passed, 9 skipped
+- Codex Phase 1 review (R1 7 + R2 3 = 10 findings all adopt)
+- Codex Phase 3 adversarial review (HIGH 2 + MEDIUM 3 + LOW 1, all adopt + fix)
+
+#### deferred (Batch F+G+H)
+
+- `repo.push` operation concrete implementation (BL-0095 partial)
+- Broker-owned token executor pattern change (R2-F1、broker.py 変更は別 PR)
+- `RepoProxyDenyReason.LIVE_REF_CHANGED` enum addition (requires 5+ source sync)
+- Concurrent redeem DB integration test (requires running PostgreSQL)
+- Real GitHub API E2E test (requires GitHub App registration)
+
+#### risks
+
+- broker.py の `_resolve_secret` → `del` pattern は callback に raw secret を渡さない。transport は webhook パターンと同じ `material_resolver` injection で callback 内 resolve。broker 変更なしで boundary 維持。
 
 ## QL-B cross-reference (R29 §5 QL-B、2026-05-15 doc-only、F-PR12-004 P2 adopt)
 
