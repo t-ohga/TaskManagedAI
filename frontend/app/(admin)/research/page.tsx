@@ -42,7 +42,7 @@ function StatusBadge({ status }: { readonly status: ResearchTask["status"] }) {
 function ResearchTaskTable({ tasks }: { readonly tasks: readonly ResearchTask[] }) {
   if (tasks.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-line bg-white p-4 text-sm text-muted">
+      <div className="rounded-md border border-dashed border-line bg-white p-4 text-sm text-muted-foreground">
         リサーチ task はまだありません。
       </div>
     );
@@ -54,7 +54,7 @@ function ResearchTaskTable({ tasks }: { readonly tasks: readonly ResearchTask[] 
         <caption className="sr-only">
           状態、タイトル、作成日時、project_id を含むリサーチ task 一覧。
         </caption>
-        <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted">
+        <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted-foreground">
           <tr>
             <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
               状態 (status)
@@ -83,9 +83,9 @@ function ResearchTaskTable({ tasks }: { readonly tasks: readonly ResearchTask[] 
                 >
                   {task.title}
                 </Link>
-                <p className="mt-1 font-mono text-xs text-muted">{task.id}</p>
+                <p className="mt-1 font-mono text-xs text-muted-foreground">{task.id}</p>
               </th>
-              <td className="border-b border-line px-3 py-2 text-muted">
+              <td className="border-b border-line px-3 py-2 text-muted-foreground">
                 <time dateTime={task.created_at}>{formatDate(task.created_at)}</time>
               </td>
               <td className="border-b border-line px-3 py-2">
@@ -144,7 +144,7 @@ export default async function ResearchListPage() {
 
       <Panel
         aside={
-          <span className="rounded-md border border-line bg-white px-3 py-2 font-mono text-xs text-muted">
+          <span className="rounded-md border border-line bg-white px-3 py-2 font-mono text-xs text-muted-foreground">
             合計 {result.total}
           </span>
         }

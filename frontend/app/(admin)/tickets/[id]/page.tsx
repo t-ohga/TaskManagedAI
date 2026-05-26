@@ -52,7 +52,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
         title="Acceptance Criteria"
         titleId="ticket-detail-acceptance-criteria"
       >
-        <ol className="grid gap-2 text-sm text-muted">
+        <ol className="grid gap-2 text-sm text-muted-foreground">
           <li className="rounded-md border border-line bg-white p-3">
             AC-001: Ticket scope, action class, and reviewer-visible risk summary are
             resolved inside the project boundary.
@@ -75,22 +75,22 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
       >
         <dl className="grid gap-2 md:grid-cols-3">
           <div className="rounded-md border border-line bg-white p-3">
-            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+            <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
               claim_id
             </dt>
             <dd className="mt-2 font-mono text-xs text-ink">claim.ticket.scope.p0</dd>
           </div>
           <div className="rounded-md border border-line bg-white p-3">
-            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+            <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
               source binding
             </dt>
             <dd className="mt-2 font-mono text-xs text-ink">source_id + citation hash</dd>
           </div>
           <div className="rounded-md border border-line bg-white p-3">
-            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+            <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
               evidence_set_hash
             </dt>
-            <dd className="mt-2 text-sm text-muted">
+            <dd className="mt-2 text-sm text-muted-foreground">
               fixed in ContextSnapshot, raw source body omitted.
             </dd>
           </div>
@@ -107,7 +107,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
             <caption className="sr-only">
               Ticket to AgentRun mapping with status and blocked_reason separated.
             </caption>
-            <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted">
+            <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted-foreground">
               <tr>
                 <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
                   run_ref
@@ -131,8 +131,8 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
                 <td className="border-b border-line px-3 py-2">
                   <code className="font-mono text-xs text-ink">waiting_approval</code>
                 </td>
-                <td className="border-b border-line px-3 py-2 text-muted">null unless blocked</td>
-                <td className="border-b border-line px-3 py-2 text-muted">
+                <td className="border-b border-line px-3 py-2 text-muted-foreground">null unless blocked</td>
+                <td className="border-b border-line px-3 py-2 text-muted-foreground">
                   requester actor cannot approve own artifact.
                 </td>
               </tr>

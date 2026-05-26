@@ -55,7 +55,7 @@ export default async function ApprovalInboxPage({
       <header>
         <p className="text-sm font-medium text-accent">管理</p>
         <h1 className="text-3xl font-semibold tracking-normal">承認一覧</h1>
-        <p className="mt-2 text-sm text-muted">
+        <p className="mt-2 text-sm text-muted-foreground">
           {formatApprovalStatus(selectedStatus)} の承認 request を表示しています。
         </p>
       </header>
@@ -70,7 +70,7 @@ export default async function ApprovalInboxPage({
               className={
                 isActive
                   ? "rounded-md bg-teal-50 px-3 py-2 text-sm font-semibold text-accent"
-                  : "rounded-md border border-line px-3 py-2 text-sm font-medium text-muted hover:bg-panel-muted"
+                  : "rounded-md border border-line px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-panel-muted"
               }
               href={`/approvals?status=${statusValue}`}
             >
@@ -97,13 +97,13 @@ export default async function ApprovalInboxPage({
                   <p className="text-sm font-semibold">
                     {formatApprovalActionClass(approval.action_class)}
                   </p>
-                  <p className="mt-1 break-all text-sm text-muted">{approval.resource_ref}</p>
-                  <p className="mt-1 break-all font-mono text-xs text-muted">
+                  <p className="mt-1 break-all text-sm text-muted-foreground">{approval.resource_ref}</p>
+                  <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
                     申請者: {approval.requested_by_actor_id}
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-2">
-                  <span className="rounded-md bg-panel-muted px-2 py-1 text-xs font-semibold text-muted">
+                  <span className="rounded-md bg-panel-muted px-2 py-1 text-xs font-semibold text-muted-foreground">
                     {formatApprovalStatus(approval.status)}
                   </span>
                   <span

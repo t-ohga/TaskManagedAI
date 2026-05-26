@@ -199,7 +199,7 @@ export default async function TodayPage() {
       <header className="grid gap-2">
         <p className="text-sm font-medium text-accent">管理 / P0.1</p>
         <h1 className="text-3xl font-semibold tracking-normal">Today / Inbox</h1>
-        <p className="max-w-3xl text-sm text-muted">
+        <p className="max-w-3xl text-sm text-muted-foreground">
           今日の確認対象と未割当の入口を分けて表示します。
         </p>
       </header>
@@ -220,7 +220,7 @@ export default async function TodayPage() {
           <h2 className="text-base font-semibold text-attention">
             一部データを表示できません
           </h2>
-          <ul className="mt-2 grid gap-1 text-sm text-muted">
+          <ul className="mt-2 grid gap-1 text-sm text-muted-foreground">
             {errors.map((error) => (
               <li key={error}>{error}</li>
             ))}
@@ -309,9 +309,9 @@ function MetricCard({
 }) {
   return (
     <div className="rounded-md border border-line bg-panel p-4 shadow-sm">
-      <dt className="font-mono text-xs text-muted">{label}</dt>
+      <dt className="font-mono text-xs text-muted-foreground">{label}</dt>
       <dd className="mt-2 text-2xl font-semibold tracking-normal">{value}</dd>
-      <dd className="mt-1 text-xs text-muted">{detail}</dd>
+      <dd className="mt-1 text-xs text-muted-foreground">{detail}</dd>
     </div>
   );
 }
@@ -335,9 +335,9 @@ function Lane({
       <header className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-xl font-semibold tracking-normal">{title}</h2>
-          <p className="mt-1 text-sm text-muted">{subtitle}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
         </div>
-        <span className="rounded-md bg-panel-muted px-2 py-1 font-mono text-xs font-semibold text-muted">
+        <span className="rounded-md bg-panel-muted px-2 py-1 font-mono text-xs font-semibold text-muted-foreground">
           {count}
         </span>
       </header>
@@ -359,11 +359,11 @@ function LaneGroup({
 
   return (
     <section className="grid gap-2" aria-label={title}>
-      <h3 className="text-sm font-semibold text-muted">{title}</h3>
+      <h3 className="text-sm font-semibold text-muted-foreground">{title}</h3>
       {hasItems ? (
         <ul className="divide-y divide-line rounded-md border border-line">{children}</ul>
       ) : (
-        <p className="rounded-md border border-line px-3 py-3 text-sm text-muted">{emptyLabel}</p>
+        <p className="rounded-md border border-line px-3 py-3 text-sm text-muted-foreground">{emptyLabel}</p>
       )}
     </section>
   );
@@ -383,7 +383,7 @@ function TicketRow({ ticket }: { ticket: TicketRead }) {
           {formatTicketPriority(ticket.priority)}
         </span>
       </div>
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span className="font-mono">{ticket.slug}</span>
         <span>{formatTicketStatus(ticket.status)}</span>
         <span>assignee:{ticket.assignee_actor_id ?? "unassigned"}</span>
@@ -407,7 +407,7 @@ function RunRow({ run }: { run: AgentRunListItem }) {
           {run.status.replaceAll("_", " ")}
         </span>
       </div>
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span>role:{run.role_id ?? "unassigned"}</span>
         <span>seq:{run.progress_seq}</span>
         <span>last:{run.last_progress_at ? formatDate(run.last_progress_at) : "—"}</span>
@@ -431,7 +431,7 @@ function ApprovalRow({ approval }: { approval: ApprovalListItem }) {
           {formatRiskLevel(approval.risk_level)}
         </span>
       </div>
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span className="break-all">resource:{approval.resource_ref}</span>
         <span>requested:{formatDate(approval.requested_at)}</span>
       </div>

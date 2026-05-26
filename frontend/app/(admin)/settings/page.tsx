@@ -50,19 +50,19 @@ export default function ProjectSettingsPage() {
       >
         <dl className="grid gap-2 md:grid-cols-3">
           <div className="rounded-md border border-line bg-white p-3">
-            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+            <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
               write path
             </dt>
             <dd className="mt-2 text-sm text-ink">RepoProxy only</dd>
           </div>
           <div className="rounded-md border border-line bg-white p-3">
-            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+            <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
               branch policy
             </dt>
             <dd className="mt-2 text-sm text-ink">Draft PR, no direct main push</dd>
           </div>
           <div className="rounded-md border border-line bg-white p-3">
-            <dt className="text-xs font-semibold uppercase tracking-normal text-muted">
+            <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
               merge guard
             </dt>
             <dd className="mt-2 text-sm text-ink">

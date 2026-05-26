@@ -53,7 +53,7 @@ export default async function NotificationsPage({
       <header className="grid gap-2">
         <p className="text-sm font-medium text-accent">管理</p>
         <h1 className="text-3xl font-semibold tracking-normal">通知</h1>
-        <p className="max-w-3xl text-sm text-muted">
+        <p className="max-w-3xl text-sm text-muted-foreground">
           {formatNotificationTriageState(selectedState)} の通知を表示しています。
         </p>
       </header>
@@ -68,7 +68,7 @@ export default async function NotificationsPage({
               className={
                 isActive
                   ? "rounded-md bg-teal-50 px-3 py-2 text-sm font-semibold text-accent"
-                  : "rounded-md border border-line px-3 py-2 text-sm font-medium text-muted hover:bg-panel-muted"
+                  : "rounded-md border border-line px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-panel-muted"
               }
               href={`/notifications?state=${stateValue}`}
             >

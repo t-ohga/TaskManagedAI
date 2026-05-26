@@ -79,7 +79,7 @@ export default async function AgentRunDetailPage({
                 runner_started
               </code>
             </dt>
-            <dd className="mt-2 text-xs leading-5 text-muted">
+            <dd className="mt-2 text-xs leading-5 text-muted-foreground">
               workspace_id, argv_basename, argv_hash, and policy_version only.
             </dd>
           </div>
@@ -89,7 +89,7 @@ export default async function AgentRunDetailPage({
                 runner_completed
               </code>
             </dt>
-            <dd className="mt-2 text-xs leading-5 text-muted">
+            <dd className="mt-2 text-xs leading-5 text-muted-foreground">
               exit_code, stdout_bytes, stderr_bytes, output_cap_exceeded, and
               scrubbed_env_keys.
             </dd>
@@ -100,7 +100,7 @@ export default async function AgentRunDetailPage({
                 runner_blocked
               </code>
             </dt>
-            <dd className="mt-2 text-xs leading-5 text-muted">
+            <dd className="mt-2 text-xs leading-5 text-muted-foreground">
               deny_category and reason_code only; maps to runtime_blocked when status
               becomes blocked.
             </dd>

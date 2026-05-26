@@ -52,7 +52,7 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
             <h1 className="text-3xl font-semibold tracking-normal">
               {formatApprovalActionClass(approval.action_class)}
             </h1>
-            <p className="mt-2 break-all text-sm text-muted">{approval.resource_ref}</p>
+            <p className="mt-2 break-all text-sm text-muted-foreground">{approval.resource_ref}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <span className={`rounded-md px-2 py-1 text-xs font-semibold ${statusClass(approval.status)}`}>
@@ -103,7 +103,7 @@ function DecisionPacketPanel({ approval }: { approval: ApprovalDetail }) {
   return (
     <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
       <h2 className="text-base font-semibold">Decision packet</h2>
-      <p className="mt-1 text-sm text-muted">
+      <p className="mt-1 text-sm text-muted-foreground">
         Hash と policy snapshot のみを表示します。payload / provider request の raw value は表示しません。
       </p>
       <dl className="mt-4 grid gap-3 text-sm">
@@ -143,7 +143,7 @@ function DetailRow({
 }) {
   return (
     <div className="border-t border-line pt-3">
-      <dt className="text-muted">{label}</dt>
+      <dt className="text-muted-foreground">{label}</dt>
       <dd className={`mt-1 break-all ${mono ? "font-mono text-xs" : ""}`}>{value}</dd>
     </div>
   );
@@ -170,7 +170,7 @@ function StatusNotice({ approval }: { approval: ApprovalDetail }) {
 
   if (approval.status === "expired") {
     return (
-      <p className="rounded-md bg-slate-100 p-3 text-sm text-muted">
+      <p className="rounded-md bg-slate-100 p-3 text-sm text-muted-foreground">
         この承認は期限切れです。再開前に再申請が必要です。
       </p>
     );
