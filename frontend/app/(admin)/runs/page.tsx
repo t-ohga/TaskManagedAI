@@ -21,16 +21,16 @@ export const dynamic = "force-dynamic";
 export default function AgentRunsPage() {
   return (
     <AdminPageShell
-      description="Sprint 9 BL-0106 skeleton with LangSmith inspired state graph, AgentOps inspired chronological events, and server-owned ContextSnapshot metadata anchors."
-      eyebrow="Admin / Runs"
-      regionLabel="Agent Runs"
-      title="Agent Runs"
+      description="AI 実行の状態グラフ、イベントタイムライン、ContextSnapshot メタデータを表示します。"
+      eyebrow="管理 / AI 実行"
+      regionLabel="AI 実行"
+      title="AI 実行"
     >
-      <KeyboardReadinessStrip current="Agent Runs" />
+      <KeyboardReadinessStrip current="AI 実行" />
 
       <Panel
-        description="CSS grid graph keeps the AgentRun enum at exactly 16 states while making the normal path, terminal states, and blocked node scannable."
-        title="Execution graph"
+        description="AgentRun の 16 状態を CSS グリッドで表示。正常パス、終了状態、ブロック状態を視覚的に確認できます。"
+        title="実行グラフ"
         titleId="agent-runs-execution-graph"
       >
         <AgentRunStateGraph />

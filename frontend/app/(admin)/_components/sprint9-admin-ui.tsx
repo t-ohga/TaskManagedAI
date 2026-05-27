@@ -84,15 +84,15 @@ const STANDARD_TRANSITION_PATH: readonly AgentRunState[] = [
 // Keep this list aligned with the rules document so that operators can rely on
 // the UI as a complete representation of exception flows (F-P2R1-002 fix).
 const EXCEPTION_TRANSITIONS = [
-  { from: "running", to: "provider_refused", reason: "provider refusal" },
-  { from: "running", to: "provider_incomplete", reason: "retryable incomplete" },
-  { from: "running", to: "blocked", reason: "policy / budget / runtime deny" },
-  { from: "running", to: "failed", reason: "unrecoverable failure" },
-  { from: "running", to: "cancelled", reason: "human cancellation during running" },
+  { from: "running", to: "provider_refused", reason: "プロバイダー拒否" },
+  { from: "running", to: "provider_incomplete", reason: "リトライ可能な未完了" },
+  { from: "running", to: "blocked", reason: "ポリシー/予算/ランタイム拒否" },
+  { from: "running", to: "failed", reason: "回復不能な失敗" },
+  { from: "running", to: "cancelled", reason: "実行中の人間によるキャンセル" },
   { from: "waiting_approval", to: "cancelled", reason: "human cancellation" },
-  { from: "blocked", to: "cancelled", reason: "human cancellation while blocked" },
-  { from: "provider_incomplete", to: "cancelled", reason: "human cancellation while incomplete" },
-  { from: "generated_artifact", to: "validation_failed", reason: "schema mismatch" },
+  { from: "blocked", to: "cancelled", reason: "ブロック中の人間によるキャンセル" },
+  { from: "provider_incomplete", to: "cancelled", reason: "未完了時の人間によるキャンセル" },
+  { from: "generated_artifact", to: "validation_failed", reason: "スキーマ不一致" },
   { from: "validation_failed", to: "running", reason: "repair retry attempt" },
   { from: "validation_failed", to: "repair_exhausted", reason: "retry limit reached" },
   { from: "policy_linted", to: "blocked", reason: "policy / data class deny" },
@@ -110,22 +110,22 @@ const EXCEPTION_TRANSITIONS = [
 }[];
 
 const AGENT_RUN_STATE_DESCRIPTIONS: Record<AgentRunState, string> = {
-  queued: "Run accepted and waiting for server-owned context resolution.",
-  gathering_context: "ContextSnapshot metadata is assembled without raw secrets.",
-  running: "Provider or runner work is in progress behind policy gates.",
-  generated_artifact: "Structured artifact exists, still untrusted until checks pass.",
-  schema_validated: "Output schema validation passed for the generated artifact.",
-  policy_linted: "Policy lint completed before diff or runner actions.",
-  diff_ready: "Patch is prepared for approval and runner-safe execution.",
-  waiting_approval: "Human approval is required; self-approval stays prohibited.",
-  blocked: "Single blocked status; reason is one of the three blocked_reason values.",
-  provider_refused: "Provider refusal terminal state.",
-  provider_incomplete: "Retryable provider incomplete state, not terminal.",
-  validation_failed: "Repairable validation failure state.",
-  repair_exhausted: "Repair retry budget exhausted terminal state.",
-  completed: "Successful terminal state.",
-  failed: "Failure terminal state.",
-  cancelled: "Cancellation terminal state."
+  queued: "実行受付済み。サーバー側コンテキスト解決を待機中。",
+  gathering_context: "ContextSnapshot メタデータを組み立て中（シークレットなし）。",
+  running: "プロバイダーまたはランナーが作業中。",
+  generated_artifact: "構造化アーティファクトが存在。チェック通過まで未信頼。",
+  schema_validated: "スキーマ検証に合格。",
+  policy_linted: "ポリシーチェック完了。",
+  diff_ready: "パッチが承認準備完了。",
+  waiting_approval: "人間の承認が必要です（自己承認は禁止）。",
+  blocked: "ブロック中。blocked_reason の 3 値のいずれか。",
+  provider_refused: "プロバイダー拒否（終了状態）。",
+  provider_incomplete: "プロバイダー未完了（リトライ可能）。",
+  validation_failed: "バリデーション失敗（修復可能）。",
+  repair_exhausted: "修復リトライ上限到達（終了状態）。",
+  completed: "正常完了（終了状態）。",
+  failed: "失敗（終了状態）。",
+  cancelled: "キャンセル（終了状態）。"
 };
 
 const BLOCKED_REASON_DESCRIPTIONS: Record<BlockedReason, string> = {
@@ -138,12 +138,12 @@ const BLOCKED_REASON_DESCRIPTIONS: Record<BlockedReason, string> = {
 // `current` consumers cannot pass arbitrary strings (typo would silently lose
 // aria-current).
 const KEYBOARD_NAV_ITEMS = [
-  { label: "Tickets", href: "/tickets", keys: ["g", "t"] },
-  { label: "Research", href: "/research", keys: ["g", "e"] },
-  { label: "Approval Inbox", href: "/approvals", keys: ["g", "i"] },
-  { label: "Agent Runs", href: "/runs", keys: ["g", "r"] },
-  { label: "Audit Log", href: "/audit", keys: ["g", "a"] },
-  { label: "Project Settings", href: "/settings", keys: ["g", "s"] }
+  { label: "チケット", href: "/tickets", keys: ["g", "t"] },
+  { label: "リサーチ", href: "/research", keys: ["g", "e"] },
+  { label: "承認一覧", href: "/approvals", keys: ["g", "i"] },
+  { label: "AI 実行", href: "/runs", keys: ["g", "r"] },
+  { label: "監査ログ", href: "/audit", keys: ["g", "a"] },
+  { label: "プロジェクト設定", href: "/settings", keys: ["g", "s"] }
 ] as const satisfies readonly KeyboardNavItem[];
 
 export type KeyboardNavLabel = (typeof KEYBOARD_NAV_ITEMS)[number]["label"];

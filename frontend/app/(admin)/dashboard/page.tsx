@@ -20,7 +20,7 @@ async function readBackendHealth(): Promise<BackendHealthState> {
   try {
     return { kind: "ok", health: await getBackendHealth() };
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Backend healthcheck に失敗しました。";
+    const message = error instanceof Error ? error.message : "バックエンドの接続に失敗しました。";
     return { kind: "error", message };
   }
 }
@@ -28,24 +28,25 @@ async function readBackendHealth(): Promise<BackendHealthState> {
 async function readProjectSummaries(): Promise<ProjectSummary[]> {
   try {
     const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
-    const projects = (projectsRes as any)?.projects ?? (projectsRes as any)?.items ?? [];
+    const rawRes = projectsRes as Record<string, unknown> | null;
+    const projects = (Array.isArray(rawRes) ? rawRes : ((rawRes as any)?.projects ?? (rawRes as any)?.items ?? [])) as Array<Record<string, string>>;
     if (!Array.isArray(projects)) return [];
 
     const summaries: ProjectSummary[] = [];
     for (const p of projects.slice(0, 10)) {
       let ticketCount = 0;
       try {
-        const pid = p.project_id ?? p.id;
-        const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets`);
-        ticketCount = ticketsRes?.total ?? ticketsRes?.items?.length ?? 0;
+        const pid = (p as any).project_id ?? (p as any).id;
+        const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets`) as Record<string, unknown>;
+        ticketCount = (ticketsRes?.total as number) ?? ((ticketsRes?.items as unknown[])?.length ?? 0);
       } catch {
         ticketCount = 0;
       }
       summaries.push({
-        id: p.project_id ?? p.id,
-        slug: p.slug,
-        name: p.name,
-        status: p.status,
+        id: String((p as any).project_id ?? (p as any).id ?? ''),
+        slug: String(p.slug ?? ''),
+        name: String(p.name ?? ''),
+        status: String(p.status ?? 'active'),
         ticketCount,
       });
     }
@@ -71,8 +72,8 @@ export default async function DashboardPage() {
         <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-base font-semibold">Frontend</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Next.js アプリの health endpoint</p>
+              <h2 className="text-base font-semibold">フロントエンド</h2>
+              <p className="mt-1 text-sm text-muted-foreground">フロントエンドの状態確認</p>
             </div>
             <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
               {frontendHealth.status}
@@ -92,7 +93,7 @@ export default async function DashboardPage() {
               <dd className="font-mono">{frontendHealth.runtime}</dd>
             </div>
             <div className="flex justify-between gap-4 border-t border-line pt-3">
-              <dt className="text-muted-foreground">Node env</dt>
+              <dt className="text-muted-foreground">実行環境</dt>
               <dd className="font-mono">{frontendHealth.node_env}</dd>
             </div>
           </dl>
@@ -101,8 +102,8 @@ export default async function DashboardPage() {
         <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-base font-semibold">Backend</h2>
-              <p className="mt-1 text-sm text-muted-foreground">FastAPI internal health endpoint</p>
+              <h2 className="text-base font-semibold">バックエンド</h2>
+              <p className="mt-1 text-sm text-muted-foreground">バックエンドの状態確認</p>
             </div>
             {backendHealth.kind === "ok" ? (
               <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">

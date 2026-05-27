@@ -45,7 +45,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
       regionLabel="Ticket detail"
       title="Ticket detail"
     >
-      <KeyboardReadinessStrip current="Tickets" />
+      <KeyboardReadinessStrip current="チケット" />
 
       <Panel
         description="Acceptance Criteria are operator-facing requirements. EvalResult and approval binding remain server-side."

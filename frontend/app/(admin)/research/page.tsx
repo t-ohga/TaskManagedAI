@@ -138,7 +138,7 @@ export default async function ResearchListPage() {
       regionLabel="リサーチ"
       title="リサーチ"
     >
-      <KeyboardReadinessStrip current="Research" />
+      <KeyboardReadinessStrip current="リサーチ" />
 
       {loadError === null ? null : <ErrorPanel error={loadError} />}
 

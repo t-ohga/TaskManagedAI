@@ -16,12 +16,12 @@ export const dynamic = "force-dynamic";
 
 export default function TicketsListPage() {
   return (
-    <section aria-label="Tickets" className="grid gap-4">
+    <section aria-label="チケット" className="grid gap-4">
       <header>
         <p className="text-sm font-medium text-accent">Admin</p>
         <h1 className="text-3xl font-semibold tracking-normal">Tickets</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Sprint 9 BL-0103 skeleton — Ticket 一覧 (Acceptance Criteria + Evidence
+          チケット一覧 — Ticket 一覧 (Acceptance Criteria + Evidence
           + AgentRun status を表示)。
         </p>
       </header>

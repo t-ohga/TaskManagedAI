@@ -62,16 +62,16 @@ const AUDIT_EVENT_ROWS = [
 export default function AuditLogPage() {
   return (
     <AdminPageShell
-      description="Sprint 9 BL-0107 skeleton for append-only audit rows with reason_code, actor_id, data-class separation, and SecretBroker redaction markers."
-      eyebrow="Admin / Audit"
-      regionLabel="Audit Log"
-      title="Audit Log"
+      description="追記専用の監査イベントを reason_code、actor_id、データクラス分離で表示します。"
+      eyebrow="管理 / 監査"
+      regionLabel="監査ログ"
+      title="監査ログ"
     >
-      <KeyboardReadinessStrip current="Audit Log" />
+      <KeyboardReadinessStrip current="監査ログ" />
 
       <Panel
-        description="Event types are visible for CI and operators, while payload content remains redacted."
-        title="Audit event stream"
+        description="イベントタイプは CI とオペレーターに表示され、ペイロード内容はマスクされます。"
+        title="監査イベントストリーム"
         titleId="audit-event-stream"
       >
         <div className="overflow-x-auto rounded-md border border-line">
@@ -147,27 +147,27 @@ export default function AuditLogPage() {
       </Panel>
 
       <Panel
-        description="The notice keeps AC-HARD-02 visible without exposing any secret or token value."
-        title="No raw secret invariant"
+        description="AC-HARD-02 準拠: シークレットやトークンの値を露出せずに監査情報を表示します。"
+        title="シークレット非露出"
         titleId="audit-secret-boundary"
       >
-        <SecretBoundaryNotice title="AC-HARD-02 audit redaction" />
+        <SecretBoundaryNotice title="AC-HARD-02 監査マスク" />
       </Panel>
 
       <Panel
-        description="Audit rows remain display-only in this skeleton. No AI output, shortcut, or UI action can mutate audit history."
-        title="Append-only behavior"
+        description="監査行は表示専用です。AI 出力、ショートカット、UI 操作で監査履歴を変更することはできません。"
+        title="追記専用"
         titleId="audit-append-only"
       >
         <ul className="grid gap-2 text-sm text-muted-foreground md:grid-cols-3">
           <li className="rounded-md border border-line bg-white p-3">
-            event_type and actor_id are required for every row.
+            すべての行に event_type と actor_id が必須です。
           </li>
           <li className="rounded-md border border-line bg-white p-3">
-            policy_decision_created records policy outcomes without becoming a policy source.
+            policy_decision_created はポリシー判定結果を記録します。
           </li>
           <li className="rounded-md border border-line bg-white p-3">
-            runner_blocked records deny_category and reason_code, not raw command input.
+            runner_blocked は deny_category と reason_code を記録します（生のコマンド入力は含みません）。
           </li>
         </ul>
       </Panel>

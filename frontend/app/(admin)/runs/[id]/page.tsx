@@ -40,16 +40,16 @@ export default async function AgentRunDetailPage({
     <AdminPageShell
       description={
         <>
-          Sprint 9 BL-0106 detail skeleton for AgentRun <code>{id}</code>. The
+          AI 実行詳細: AgentRun <code>{id}</code>. この
           timeline is chronological, append-only, and redacted according to
           AC-HARD-02.
         </>
       }
-      eyebrow="Admin / AgentRun"
+      eyebrow="管理 / AI 実行詳細"
       regionLabel="Agent Run detail"
       title="Agent Run detail"
     >
-      <KeyboardReadinessStrip current="Agent Runs" />
+      <KeyboardReadinessStrip current="AI 実行" />
 
       <Panel
         description="AgentOps inspired event timeline shows the important run lifecycle events in seq_no order."
@@ -61,7 +61,7 @@ export default async function AgentRunDetailPage({
 
       <Panel
         description="LangSmith inspired graph view keeps all 16 AgentRun states visible without adding a 17th status or converting blocked_reason into statuses."
-        title="Execution graph"
+        title="実行グラフ"
         titleId="run-detail-execution-graph"
       >
         <AgentRunStateGraph />
@@ -117,8 +117,8 @@ export default async function AgentRunDetailPage({
       </Panel>
 
       <Panel
-        description="The invariant is visible for reviewers and E2E checks while keeping all secret-bearing values out of the DOM."
-        title="No raw secret invariant"
+        description="この invariant is visible for reviewers and E2E checks while keeping all secret-bearing values out of the DOM."
+        title="シークレット非露出"
         titleId="run-detail-secret-invariant"
       >
         <SecretBoundaryNotice title="AC-HARD-02 AgentRunEvent redaction" />

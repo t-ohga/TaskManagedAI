@@ -155,7 +155,7 @@ export default async function ResearchDetailPage({ params }: ResearchDetailPageP
       regionLabel="リサーチ詳細"
       title="リサーチ詳細"
     >
-      <KeyboardReadinessStrip current="Research" />
+      <KeyboardReadinessStrip current="リサーチ" />
 
       {detail === null ? (
         <ErrorPanel error={loadError} />

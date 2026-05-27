@@ -22,10 +22,10 @@ export default function ProjectSettingsPage() {
     <AdminPageShell
       description="Sprint 9 BL-0108 skeleton with Anthropic Console inspired provider matrix table, policy profile visibility, and SecretBroker-safe repository settings."
       eyebrow="Admin / Settings"
-      regionLabel="Project Settings"
-      title="Project Settings"
+      regionLabel="プロジェクト設定"
+      title="プロジェクト設定"
     >
-      <KeyboardReadinessStrip current="Project Settings" />
+      <KeyboardReadinessStrip current="プロジェクト設定" />
 
       <Panel
         description="Matrix columns match the P0 invariant names. allowed_data_class remains matrix-owned and is never caller input."
