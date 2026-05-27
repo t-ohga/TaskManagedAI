@@ -247,3 +247,94 @@ async def bridge_run_create(
         "ticket_id": ticket_id,
         "purpose": purpose,
     }
+
+
+async def bridge_run_cancel(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    run_id: UUID,
+) -> dict[str, Any]:
+    result = await session.execute(
+        select(AgentRun).where(
+            AgentRun.tenant_id == tenant_id,
+            AgentRun.id == run_id,
+        )
+    )
+    run = result.scalar_one_or_none()
+    if run is None:
+        return {"error": "not_found", "run_id": str(run_id)}
+
+    terminal = {"completed", "failed", "cancelled", "provider_refused", "repair_exhausted"}
+    if run.status in terminal:
+        return {"error": "already_terminal", "run_id": str(run_id), "status": run.status}
+
+    run.status = "cancelled"
+    run.blocked_reason = None
+    await session.commit()
+    return {"run_id": str(run.id), "status": "cancelled"}
+
+
+async def bridge_approval_show(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    approval_id: UUID,
+) -> dict[str, Any]:
+    from backend.app.repositories.approval_request import ApprovalRequestRepository
+
+    repo = ApprovalRequestRepository(session)
+    approval = await repo.get_by_id(tenant_id=tenant_id, id=approval_id)
+    if approval is None:
+        return {"error": "not_found", "approval_id": str(approval_id)}
+    return {
+        "id": str(approval.id),
+        "action_class": approval.action_class,
+        "status": approval.status,
+        "requester_actor_id": str(approval.requester_actor_id) if approval.requester_actor_id else None,
+        "decider_actor_id": str(approval.decider_actor_id) if approval.decider_actor_id else None,
+        "created_at": approval.created_at.isoformat() if approval.created_at else None,
+    }
+
+
+async def bridge_notification_list(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    actor_id: UUID,
+    limit: int = 20,
+) -> dict[str, Any]:
+    from backend.app.repositories.notification_event import NotificationEventRepository
+
+    repo = NotificationEventRepository(session)
+    events = await repo.list_for_recipient(
+        tenant_id=tenant_id, recipient_actor_id=actor_id
+    )
+    limited = events[:limit]
+    return {
+        "notifications": [
+            {
+                "id": str(e.id),
+                "event_type": e.event_type,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in limited
+        ],
+        "total": len(limited),
+    }
+
+
+async def bridge_notification_resolve(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    notification_id: UUID,
+) -> dict[str, Any]:
+    from backend.app.repositories.notification_event import NotificationEventRepository
+
+    repo = NotificationEventRepository(session)
+    event = await repo.resolve(tenant_id=tenant_id, event_id=notification_id)
+    if event is None:
+        return {"error": "not_found", "notification_id": str(notification_id)}
+    await session.commit()
+    return {"notification_id": str(event.id), "resolved": True}
