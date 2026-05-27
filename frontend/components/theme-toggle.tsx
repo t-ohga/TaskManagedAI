@@ -12,6 +12,8 @@ export function ThemeToggle() {
     if (stored) {
       setTheme(stored);
       applyTheme(stored);
+    } else {
+      applyTheme("system");
     }
   }, []);
 
@@ -35,13 +37,18 @@ export function ThemeToggle() {
 }
 
 function applyTheme(theme: Theme) {
+  if (typeof document === "undefined") return;
   const root = document.documentElement;
   if (theme === "dark") {
     root.classList.add("dark");
   } else if (theme === "light") {
     root.classList.remove("dark");
   } else {
-    if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    const prefersDark =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches;
+    if (prefersDark) {
       root.classList.add("dark");
     } else {
       root.classList.remove("dark");

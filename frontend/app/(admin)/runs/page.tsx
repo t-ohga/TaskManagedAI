@@ -156,7 +156,7 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
         </div>
       )}
 
-      {runs.length === 0 && (
+      {allRuns.length === 0 && (
         <div className="rounded-lg border border-line bg-panel p-8 text-center">
           <p className="text-muted-foreground">AI 実行はまだありません</p>
           <p className="mt-2 text-xs text-muted-foreground">
@@ -164,6 +164,18 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
           </p>
           <a href="/dashboard" className="mt-3 inline-block rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90">
             ダッシュボードへ
+          </a>
+        </div>
+      )}
+
+      {allRuns.length > 0 && filteredRuns.length === 0 && (
+        <div className="rounded-lg border border-line bg-panel p-8 text-center">
+          <p className="text-muted-foreground">条件に一致する実行がありません</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            フィルターを変更するか、すべて表示に切り替えてください。
+          </p>
+          <a href="/runs" className="mt-3 inline-block rounded-md border border-line px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-slate-50">
+            フィルターをリセット
           </a>
         </div>
       )}
