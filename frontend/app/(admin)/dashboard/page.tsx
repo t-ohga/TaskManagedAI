@@ -10,12 +10,20 @@ type BackendHealthState =
   | { kind: "ok"; health: HealthResponse }
   | { kind: "error"; message: string };
 
+type TicketStatusCounts = {
+  open: number;
+  in_progress: number;
+  closed: number;
+  cancelled: number;
+};
+
 type ProjectSummary = {
   id: string;
   slug: string;
   name: string;
   status: string;
   ticketCount: number;
+  statusCounts: TicketStatusCounts;
 };
 
 async function readBackendHealth(): Promise<BackendHealthState> {
@@ -37,10 +45,19 @@ async function readProjectSummaries(): Promise<ProjectSummary[]> {
     const summaries: ProjectSummary[] = [];
     for (const p of projects.slice(0, 10)) {
       let ticketCount = 0;
+      const statusCounts: TicketStatusCounts = { open: 0, in_progress: 0, closed: 0, cancelled: 0 };
       try {
         const pid = (p as any).project_id ?? (p as any).id;
-        const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets`) as Record<string, unknown>;
-        ticketCount = (ticketsRes?.total as number) ?? ((ticketsRes?.items as unknown[])?.length ?? 0);
+        const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets?limit=500`) as Record<string, unknown>;
+        const items = (ticketsRes?.items ?? []) as Array<{ status: string }>;
+        ticketCount = (ticketsRes?.total as number) ?? items.length;
+        for (const t of items) {
+          if (t.status === "open") statusCounts.open++;
+          else if (t.status === "in_progress" || t.status === "blocked" || t.status === "review") statusCounts.in_progress++;
+          else if (t.status === "closed") statusCounts.closed++;
+          else if (t.status === "cancelled") statusCounts.cancelled++;
+          else statusCounts.open++;
+        }
       } catch {
         ticketCount = 0;
       }
@@ -50,6 +67,7 @@ async function readProjectSummaries(): Promise<ProjectSummary[]> {
         name: String(p.name ?? ''),
         status: String(p.status ?? 'active'),
         ticketCount,
+        statusCounts,
       });
     }
     return summaries;
@@ -65,18 +83,23 @@ export default async function DashboardPage() {
   ]);
   const frontendHealth = getFrontendHealth();
 
+  const aggCounts = projects.reduce(
+    (acc, p) => ({
+      open: acc.open + p.statusCounts.open,
+      in_progress: acc.in_progress + p.statusCounts.in_progress,
+      closed: acc.closed + p.statusCounts.closed,
+      cancelled: acc.cancelled + p.statusCounts.cancelled,
+    }),
+    { open: 0, in_progress: 0, closed: 0, cancelled: 0 }
+  );
   const ticketStatusCounts = [
-    { label: "未着手", count: 0, color: "#3b82f6" },
-    { label: "進行中", count: 0, color: "#f59e0b" },
-    { label: "完了", count: 0, color: "#10b981" },
-    { label: "中止", count: 0, color: "#6b7280" },
+    { label: "未着手", count: aggCounts.open, color: "#3b82f6" },
+    { label: "進行中", count: aggCounts.in_progress, color: "#f59e0b" },
+    { label: "完了", count: aggCounts.closed, color: "#10b981" },
+    { label: "中止", count: aggCounts.cancelled, color: "#6b7280" },
   ];
   const totalTickets = projects.reduce((s, p) => s + p.ticketCount, 0);
-  const closedTickets = Math.round(totalTickets * 0.3);
-  ticketStatusCounts[0].count = Math.round(totalTickets * 0.3);
-  ticketStatusCounts[1].count = Math.round(totalTickets * 0.4);
-  ticketStatusCounts[2].count = closedTickets;
-  ticketStatusCounts[3].count = totalTickets - ticketStatusCounts[0].count - ticketStatusCounts[1].count - closedTickets;
+  const closedTickets = aggCounts.closed;
 
   return (
     <div className="grid gap-6">
