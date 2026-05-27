@@ -14,7 +14,7 @@ export function MobileNav({ children }: MobileNavProps) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="rounded-md border border-line p-2 text-muted-foreground lg:hidden"
+        className="rounded-md border border-line p-2 text-muted-foreground md:hidden"
         aria-label={open ? "メニューを閉じる" : "メニューを開く"}
         aria-expanded={open}
       >
@@ -26,7 +26,7 @@ export function MobileNav({ children }: MobileNavProps) {
           )}
         </svg>
       </button>
-      <div className={open ? "block lg:block" : "hidden lg:block"}>
+      <div className={open ? "block md:block" : "hidden md:block"}>
         {children}
       </div>
     </>

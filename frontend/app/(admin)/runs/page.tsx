@@ -69,10 +69,16 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
   const params = await searchParams;
   const statusFilter = params.status ?? "";
   const roleFilter = params.role ?? "";
-  const { items: filteredRuns, total: totalRuns } = await loadRuns({
-    status: statusFilter || undefined,
-    role: roleFilter || undefined,
-  });
+  const [filteredResult, allResult] = await Promise.all([
+    loadRuns({
+      status: statusFilter || undefined,
+      role: roleFilter || undefined,
+    }),
+    (statusFilter || roleFilter) ? loadRuns() : Promise.resolve(null),
+  ]);
+  const filteredRuns = filteredResult.items;
+  const totalRuns = filteredResult.total;
+  const totalAllRuns = allResult ? allResult.total : totalRuns;
 
   const { active, terminal } = groupByStatus(filteredRuns);
   const statuses = Object.keys(STATUS_LABELS);
@@ -168,7 +174,7 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
         </div>
       )}
 
-      {totalRuns === 0 && (
+      {totalAllRuns === 0 && (
         <div className="rounded-lg border border-line bg-panel p-8 text-center">
           <p className="text-muted-foreground">AI 実行はまだありません</p>
           <p className="mt-2 text-xs text-muted-foreground">
@@ -180,7 +186,7 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
         </div>
       )}
 
-      {totalRuns > 0 && filteredRuns.length === 0 && (
+      {totalAllRuns > 0 && filteredRuns.length === 0 && (
         <div className="rounded-lg border border-line bg-panel p-8 text-center">
           <p className="text-muted-foreground">条件に一致する実行がありません</p>
           <p className="mt-2 text-xs text-muted-foreground">
