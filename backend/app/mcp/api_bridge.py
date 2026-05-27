@@ -887,14 +887,18 @@ async def bridge_delegation_accept(
     if run.status != "queued":
         return {"error": "invalid_state", "status": run.status, "expected": "queued"}
 
-    run.status = "running"
-    await session.execute(
+    consume_result = await session.execute(
         sa.text(
             "UPDATE inter_agent_messages SET consumed_at = now(), consumed_by_run_id = :rid "
-            "WHERE tenant_id = :tid AND id = :mid AND consumed_at IS NULL"
+            "WHERE tenant_id = :tid AND id = :mid AND child_run_id = :rid AND consumed_at IS NULL "
+            "RETURNING id"
         ),
         {"tid": tenant_id, "rid": run_id, "mid": message_id},
     )
+    if consume_result.fetchone() is None:
+        return {"error": "message_not_found_or_not_addressed_to_this_run", "run_id": str(run_id)}
+
+    run.status = "running"
     await session.commit()
     return {"run_id": str(run_id), "status": "running", "accepted": True}
 
@@ -925,6 +929,8 @@ async def bridge_delegation_submit(
     run = result.scalar_one_or_none()
     if run is None:
         return {"error": "not_found", "run_id": str(run_id)}
+    if run.parent_run_id and run.parent_run_id != parent_run_id:
+        return {"error": "parent_run_id_mismatch", "expected": str(run.parent_run_id)}
 
     run_status = "completed" if result_status == "completed" else "failed" if result_status == "failed" else "running"
     run.status = run_status
@@ -990,8 +996,7 @@ async def bridge_delegation_review(
     valid_decisions = {"adopt", "reject"}
     if decision not in valid_decisions:
         return {"error": "invalid_decision", "valid": sorted(valid_decisions)}
-    if not 0.0 <= quality_score <= 1.0:
-        return {"error": "invalid_quality_score", "range": "0.0-1.0"}
+    quality_score = round(max(0.0, min(1.0, quality_score)), 6)
 
     result = await session.execute(
         select(AgentRun).where(AgentRun.tenant_id == tenant_id, AgentRun.id == run_id)
@@ -1094,11 +1099,12 @@ async def bridge_delegation_cancel(
     result = await session.execute(
         sa.text("""
             WITH RECURSIVE tree AS (
-                SELECT id FROM agent_runs
+                SELECT id, 0 as depth FROM agent_runs
                 WHERE tenant_id = :tid AND id = :rid
                 UNION ALL
-                SELECT ar.id FROM agent_runs ar
+                SELECT ar.id, t.depth + 1 FROM agent_runs ar
                 JOIN tree t ON ar.parent_run_id = t.id AND ar.tenant_id = :tid
+                WHERE t.depth < 10
             )
             UPDATE agent_runs SET status = 'cancelled', blocked_reason = NULL
             WHERE tenant_id = :tid AND id IN (SELECT id FROM tree)
