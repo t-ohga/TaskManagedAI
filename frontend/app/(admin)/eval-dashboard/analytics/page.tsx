@@ -44,7 +44,7 @@ export default function AnalyticsPage() {
   return (
     <section aria-label="KPI Analytics" className="grid gap-6">
       <PageHeader
-        title="KPI Analytics"
+        title="KPI 分析"
         description="Quality KPIs の時系列推移と drill-down"
       />
 

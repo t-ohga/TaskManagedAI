@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 export default function ProjectSettingsPage() {
   return (
     <AdminPageShell
-      description="Sprint 9 BL-0108 skeleton with Anthropic Console inspired provider matrix table, policy profile visibility, and SecretBroker-safe repository settings."
+      description="プロジェクト設定 with Anthropic Console inspired provider matrix table, policy profile visibility, and SecretBroker-safe repository settings."
       eyebrow="管理 / 設定"
       regionLabel="プロジェクト設定"
       title="プロジェクト設定"
@@ -77,7 +77,7 @@ export default function ProjectSettingsPage() {
         title="シークレット管理"
         titleId="settings-secret-handling"
       >
-        <SecretBoundaryNotice title="Settings SecretBroker boundary" />
+        <SecretBoundaryNotice title="SecretBroker 境界" />
       </Panel>
     </AdminPageShell>
   );

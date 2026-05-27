@@ -252,7 +252,7 @@ export default async function TodayPage() {
         </Lane>
 
         <Lane
-          title="Inbox"
+          title="受信箱"
           subtitle="未割当チケットと queued run"
           count={inboxTickets.length + queuedRuns.length}
         >

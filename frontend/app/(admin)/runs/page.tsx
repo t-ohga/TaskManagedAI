@@ -46,7 +46,7 @@ export default function AgentRunsPage() {
 
       <Panel
         description="Chronological event rows keep run_queued, runner_started, runner_completed, and repo_pr_opened visible for P0 observability."
-        title="AgentRunEvent timeline"
+        title="イベントタイムライン"
         titleId="agent-runs-event-timeline"
       >
         <AgentRunEventTimeline />
@@ -54,7 +54,7 @@ export default function AgentRunsPage() {
 
       <Panel
         description="Each graph node links conceptually to the same immutable 10-column snapshot contract. Values are intentionally not expanded in this skeleton."
-        title="ContextSnapshot metadata contract"
+        title="ContextSnapshot メタデータ"
         titleId="agent-runs-context-snapshot"
       >
         <ContextSnapshotDefinitionList />

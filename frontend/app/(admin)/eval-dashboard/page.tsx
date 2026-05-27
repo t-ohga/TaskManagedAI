@@ -487,11 +487,11 @@ export default async function EvalDashboardPage() {
       regionLabel="P0 Exit ダッシュボード"
       title="P0 Exit ダッシュボード"
     >
-      <SecretBoundaryNotice title="No secret / token / raw provider response is rendered" />
+      <SecretBoundaryNotice title="シークレット・トークン非表示" />
 
       <Panel
         description={`P0 Exit verdict: ${P0_EXIT_VERDICT.p0_exit_decision ? "READY" : "BLOCKED"}.`}
-        title="P0 Exit verdict"
+        title="P0 出口判定"
         titleId="p0-exit-verdict"
       >
         <dl className="grid gap-3 text-sm">
@@ -544,7 +544,7 @@ export default async function EvalDashboardPage() {
 
       <Panel
         description="AC-HARD-01〜07 must all PASS for P0 Exit. metric_value ≥ threshold and threshold_met=true required."
-        title="Hard Gates 7"
+        title="ハードゲート 7"
         titleId="hard-gates-7"
       >
         <div className="overflow-x-auto rounded-md border border-line">
@@ -622,7 +622,7 @@ export default async function EvalDashboardPage() {
                 : `skeleton fallback (${kpiFallbackReason ?? "unknown reason"})`
           }.`
         }
-        title="Quality KPIs 5"
+        title="品質 KPI 5"
         titleId="quality-kpis-5"
       >
         <div className="mb-2 text-xs text-muted-foreground">
@@ -696,7 +696,7 @@ export default async function EvalDashboardPage() {
 
       <Panel
         description="Ticket → PR gold flow smoke (BL-0140a). P0 Exit requires overall_success=true."
-        title="Ticket-to-PR smoke"
+        title="チケット→PR スモークテスト"
         titleId="ticket-to-pr-smoke"
       >
         <dl className="grid gap-3 text-sm">
@@ -731,7 +731,7 @@ export default async function EvalDashboardPage() {
 
       <Panel
         description="Private staging CI/E2E (Tailscale 閉域). P0 Exit requires status=passed."
-        title="Private staging"
+        title="プライベートステージング"
         titleId="private-staging"
       >
         <dl className="grid gap-3 text-sm">
@@ -758,7 +758,7 @@ export default async function EvalDashboardPage() {
 
       <Panel
         description="SP-012 表 2 + lines 682-704: gated acceptance rows. status=pass (with pass_evidence) or structured_defer (6-field schema) required. F-PR65-004/005/006 P1 adopt."
-        title="Gated acceptance rows"
+        title="ゲート付き受入基準"
         titleId="gated-acceptance-rows"
       >
         <div className="overflow-x-auto rounded-md border border-line">
@@ -855,7 +855,7 @@ export default async function EvalDashboardPage() {
 
       <Panel
         description="Operational drills required for P0 Exit (host_migration + backup_restore)."
-        title="Operational drills"
+        title="運用ドリル"
         titleId="operational-drills"
       >
         <dl className="grid gap-3 text-sm">

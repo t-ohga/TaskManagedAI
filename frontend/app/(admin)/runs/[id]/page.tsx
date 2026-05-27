@@ -47,13 +47,13 @@ export default async function AgentRunDetailPage({
       }
       eyebrow="管理 / AI 実行詳細"
       regionLabel="Agent Run detail"
-      title="Agent Run detail"
+      title="AI 実行詳細"
     >
       <KeyboardReadinessStrip current="AI 実行" />
 
       <Panel
         description="AgentOps inspired event timeline shows the important run lifecycle events in seq_no order."
-        title="Chronological AgentRunEvent timeline"
+        title="時系列イベントタイムライン"
         titleId="run-detail-event-timeline"
       >
         <AgentRunEventTimeline />
@@ -69,7 +69,7 @@ export default async function AgentRunDetailPage({
 
       <Panel
         description="Runner events expose bounded metadata only. Raw argv, raw stdout, raw stderr, secret values, and provider raw payloads are excluded."
-        title="Sprint 7 runner event integration"
+        title="ランナーイベント連携"
         titleId="run-detail-runner-events"
       >
         <dl className="grid gap-2 md:grid-cols-3">
@@ -110,7 +110,7 @@ export default async function AgentRunDetailPage({
 
       <Panel
         description="ContextSnapshot references are shown as a fixed 10-column definition list. This supports graph inspection without time-travel mutation."
-        title="ContextSnapshot 10 columns"
+        title="ContextSnapshot 10 カラム"
         titleId="run-detail-context-snapshot"
       >
         <ContextSnapshotDefinitionList />
@@ -121,7 +121,7 @@ export default async function AgentRunDetailPage({
         title="シークレット非露出"
         titleId="run-detail-secret-invariant"
       >
-        <SecretBoundaryNotice title="AC-HARD-02 AgentRunEvent redaction" />
+        <SecretBoundaryNotice title="AC-HARD-02 イベントマスク" />
       </Panel>
     </AdminPageShell>
   );

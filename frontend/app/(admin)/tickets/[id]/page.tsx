@@ -1,21 +1,7 @@
-/**
- * Sprint 9 BL-0104: Ticket detail (P0 UI skeleton).
- *
- * Acceptance Criteria, evidence, AgentRun mapping, and ContextSnapshot metadata
- * are rendered as server-owned display surfaces. AI output remains candidate
- * artifact material until approval flow accepts it.
- */
-
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { UUID_V1_TO_V5_PATTERN } from "../../_lib/route-id";
-import {
-  AdminPageShell,
-  ContextSnapshotDefinitionList,
-  KeyboardReadinessStrip,
-  Panel,
-  SecretBoundaryNotice
-} from "../../_components/sprint9-admin-ui";
+import { fetchBackendRaw } from "@/lib/api/client";
 
 export const dynamic = "force-dynamic";
 
@@ -23,139 +9,140 @@ type TicketDetailPageProps = {
   params: Promise<{ id: string }>;
 };
 
+type TicketDetail = {
+  id: string;
+  title: string;
+  slug: string;
+  status: string;
+  description: string | null;
+  priority: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  project_id: string;
+};
+
+function statusBadge(status: string) {
+  const colors: Record<string, string> = {
+    open: "bg-blue-50 text-blue-700",
+    in_progress: "bg-amber-50 text-amber-700",
+    closed: "bg-gray-100 text-gray-500",
+    cancelled: "bg-red-50 text-red-600",
+  };
+  const labels: Record<string, string> = {
+    open: "未着手",
+    in_progress: "進行中",
+    closed: "完了",
+    cancelled: "中止",
+  };
+  return (
+    <span
+      className={`rounded-full px-3 py-1 text-sm font-medium ${colors[status] ?? "bg-gray-100 text-gray-600"}`}
+    >
+      {labels[status] ?? status}
+    </span>
+  );
+}
+
+async function loadTicket(id: string): Promise<TicketDetail | null> {
+  try {
+    const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
+    const projects = ((projectsRes as Record<string, unknown>)?.projects ?? []) as Array<Record<string, string>>;
+
+    for (const p of projects) {
+      const pid = p.project_id ?? p.id;
+      try {
+        const ticketsRes = await fetchBackendRaw(
+          `/api/v1/projects/${pid}/tickets` as `/${string}`
+        );
+        const items = ((ticketsRes as Record<string, unknown>)?.items ?? []) as TicketDetail[];
+        const found = items.find((t) => t.id === id);
+        if (found) {
+          return { ...found, project_id: pid };
+        }
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default async function TicketDetailPage({ params }: TicketDetailPageProps) {
   const { id } = await params;
+  const ticket = await loadTicket(id);
 
-  // F-P2R1-007 + F-P3R1-006: shared UUID v1-v5 guard prevents caller-supplied
-  // path values from reaching downstream layers (server-owned-boundary).
-  if (!id || !UUID_V1_TO_V5_PATTERN.test(id)) {
+  if (!ticket) {
     notFound();
   }
 
   return (
-    <AdminPageShell
-      description={
-        <>
-          Sprint 9 BL-0104 skeleton for ticket <code>{id}</code>. The page keeps
-          Acceptance Criteria, evidence, AgentRun mapping, and ContextSnapshot 10
-          columns visible without exposing raw snapshot values.
-        </>
-      }
-      eyebrow="Admin / Ticket"
-      regionLabel="Ticket detail"
-      title="Ticket detail"
-    >
-      <KeyboardReadinessStrip current="チケット" />
-
-      <Panel
-        description="Acceptance Criteria are operator-facing requirements. EvalResult and approval binding remain server-side."
-        title="Acceptance Criteria"
-        titleId="ticket-detail-acceptance-criteria"
-      >
-        <ol className="grid gap-2 text-sm text-muted-foreground">
-          <li className="rounded-md border border-line bg-white p-3">
-            AC-001: Ticket scope, action class, and reviewer-visible risk summary are
-            resolved inside the project boundary.
-          </li>
-          <li className="rounded-md border border-line bg-white p-3">
-            AC-002: AI generated artifact stays candidate output until approval binding
-            succeeds.
-          </li>
-          <li className="rounded-md border border-line bg-white p-3">
-            AC-HARD-02: secret values and provider raw payloads are excluded from
-            evidence display.
-          </li>
-        </ol>
-      </Panel>
-
-      <Panel
-        description="Evidence is represented through stable hashes and citation IDs. The UI does not fetch external raw source bodies in this skeleton."
-        title="Evidence / Claim / Citation"
-        titleId="ticket-detail-evidence"
-      >
-        <dl className="grid gap-2 md:grid-cols-3">
-          <div className="rounded-md border border-line bg-white p-3">
-            <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
-              claim_id
-            </dt>
-            <dd className="mt-2 font-mono text-xs text-ink">claim.ticket.scope.p0</dd>
-          </div>
-          <div className="rounded-md border border-line bg-white p-3">
-            <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
-              source binding
-            </dt>
-            <dd className="mt-2 font-mono text-xs text-ink">source_id + citation hash</dd>
-          </div>
-          <div className="rounded-md border border-line bg-white p-3">
-            <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
-              evidence_set_hash
-            </dt>
-            <dd className="mt-2 text-sm text-muted-foreground">
-              fixed in ContextSnapshot, raw source body omitted.
-            </dd>
-          </div>
-        </dl>
-      </Panel>
-
-      <Panel
-        description="Ticket to AgentRun remains a 1:N server-owned mapping. status and blocked_reason are not collapsed into a single enum."
-        title="AgentRun Mapping"
-        titleId="ticket-detail-agentrun-mapping"
-      >
-        <div className="overflow-x-auto rounded-md border border-line">
-          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
-            <caption className="sr-only">
-              Ticket to AgentRun mapping with status and blocked_reason separated.
-            </caption>
-            <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted-foreground">
-              <tr>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  run_ref
-                </th>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  status
-                </th>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  blocked_reason
-                </th>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  approval invariant
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="align-top">
-                <th scope="row" className="border-b border-line px-3 py-2">
-                  <code className="font-mono text-xs text-ink">agent_run.latest</code>
-                </th>
-                <td className="border-b border-line px-3 py-2">
-                  <code className="font-mono text-xs text-ink">waiting_approval</code>
-                </td>
-                <td className="border-b border-line px-3 py-2 text-muted-foreground">null unless blocked</td>
-                <td className="border-b border-line px-3 py-2 text-muted-foreground">
-                  requester actor cannot approve own artifact.
-                </td>
-              </tr>
-            </tbody>
-          </table>
+    <section aria-label="チケット詳細" className="grid gap-6">
+      <header className="grid gap-2">
+        <div className="flex items-center gap-2 text-sm">
+          <Link href="/tickets" className="text-accent hover:underline">
+            チケット一覧
+          </Link>
+          <span className="text-muted-foreground">/</span>
+          <span className="text-muted-foreground">{ticket.slug}</span>
         </div>
-      </Panel>
+        <div className="flex items-center gap-4">
+          <h1 className="text-3xl font-semibold tracking-normal">{ticket.title}</h1>
+          {statusBadge(ticket.status)}
+        </div>
+      </header>
 
-      <Panel
-        description="Vault / Doppler inspired metadata layout: 10 fixed ContextSnapshot columns, structured as a definition list, with raw values omitted."
-        title="ContextSnapshot 10 columns"
-        titleId="ticket-detail-context-snapshot"
-      >
-        <ContextSnapshotDefinitionList />
-      </Panel>
+      <div className="grid gap-4 md:grid-cols-2">
+        <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+          <h2 className="text-lg font-semibold">基本情報</h2>
+          <dl className="mt-4 grid gap-3 text-sm">
+            <div className="flex justify-between border-t border-line pt-3">
+              <dt className="text-muted-foreground">チケット ID</dt>
+              <dd className="font-mono text-xs">{ticket.id.slice(0, 8)}...</dd>
+            </div>
+            <div className="flex justify-between border-t border-line pt-3">
+              <dt className="text-muted-foreground">スラッグ</dt>
+              <dd className="font-mono">{ticket.slug}</dd>
+            </div>
+            <div className="flex justify-between border-t border-line pt-3">
+              <dt className="text-muted-foreground">ステータス</dt>
+              <dd>{statusBadge(ticket.status)}</dd>
+            </div>
+            <div className="flex justify-between border-t border-line pt-3">
+              <dt className="text-muted-foreground">優先度</dt>
+              <dd>{ticket.priority ?? "未設定"}</dd>
+            </div>
+            <div className="flex justify-between border-t border-line pt-3">
+              <dt className="text-muted-foreground">作成日</dt>
+              <dd>
+                {ticket.created_at
+                  ? new Date(ticket.created_at).toLocaleString("ja-JP")
+                  : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between border-t border-line pt-3">
+              <dt className="text-muted-foreground">更新日</dt>
+              <dd>
+                {ticket.updated_at
+                  ? new Date(ticket.updated_at).toLocaleString("ja-JP")
+                  : "—"}
+              </dd>
+            </div>
+          </dl>
+        </article>
 
-      <Panel
-        description="Provider continuation and request fingerprint are references for binding and replay safety, not raw provider payload display."
-        title="Secret and provider payload boundary"
-        titleId="ticket-detail-secret-boundary"
-      >
-        <SecretBoundaryNotice title="Ticket detail SecretBroker boundary" />
-      </Panel>
-    </AdminPageShell>
+        <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+          <h2 className="text-lg font-semibold">説明</h2>
+          <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
+            {ticket.description ? (
+              <p className="whitespace-pre-wrap">{ticket.description}</p>
+            ) : (
+              <p className="italic">説明はまだありません</p>
+            )}
+          </div>
+        </article>
+      </div>
+    </section>
   );
 }
