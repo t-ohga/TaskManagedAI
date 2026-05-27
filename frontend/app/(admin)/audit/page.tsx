@@ -54,8 +54,24 @@ function eventTypeBadge(eventType: string) {
   );
 }
 
-export default async function AuditPage() {
-  const events = await loadAuditEvents();
+type AuditPageProps = {
+  searchParams: Promise<{ type?: string; page?: string }>;
+};
+
+const PAGE_SIZE = 50;
+
+export default async function AuditPage({ searchParams }: AuditPageProps) {
+  const params = await searchParams;
+  const typeFilter = params.type ?? "";
+  const pageNum = Math.max(1, Number(params.page ?? "1"));
+  const allEvents = await loadAuditEvents();
+
+  const filtered = typeFilter
+    ? allEvents.filter((e) => e.event_type === typeFilter)
+    : allEvents;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const events = filtered.slice((pageNum - 1) * PAGE_SIZE, pageNum * PAGE_SIZE);
+  const eventTypes = [...new Set(allEvents.map((e) => e.event_type))].sort();
 
   return (
     <section aria-label="監査ログ" className="grid gap-6">
@@ -63,9 +79,30 @@ export default async function AuditPage() {
         <p className="text-sm font-medium text-accent">管理</p>
         <h1 className="text-3xl font-semibold tracking-normal">監査ログ</h1>
         <p className="text-sm text-muted-foreground">
-          追記専用の監査イベント ({events.length} 件)。シークレットやトークンの値は表示されません。
+          追記専用の監査イベント ({filtered.length} 件)。シークレットやトークンの値は表示されません。
         </p>
       </header>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="text-xs text-muted-foreground">イベント種別:</label>
+        <div className="flex flex-wrap gap-1">
+          <a
+            href="/audit"
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${!typeFilter ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+          >
+            すべて
+          </a>
+          {eventTypes.map((t) => (
+            <a
+              key={t}
+              href={`/audit?type=${t}`}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${typeFilter === t ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+            >
+              {EVENT_TYPE_LABELS[t] ?? t}
+            </a>
+          ))}
+        </div>
+      </div>
 
       <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
         <p className="text-sm font-medium text-red-700">AC-HARD-02 監査マスク</p>
@@ -110,6 +147,22 @@ export default async function AuditPage() {
             チケット操作や AI 実行を行うと、ここにイベントが記録されます
           </p>
         </div>
+      )}
+
+      {totalPages > 1 && (
+        <nav aria-label="ページネーション" className="flex items-center justify-center gap-2">
+          {pageNum > 1 && (
+            <a href={`/audit?${typeFilter ? `type=${typeFilter}&` : ""}page=${pageNum - 1}`} className="rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+              前へ
+            </a>
+          )}
+          <span className="text-sm text-muted-foreground">{pageNum} / {totalPages}</span>
+          {pageNum < totalPages && (
+            <a href={`/audit?${typeFilter ? `type=${typeFilter}&` : ""}page=${pageNum + 1}`} className="rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+              次へ
+            </a>
+          )}
+        </nav>
       )}
     </section>
   );

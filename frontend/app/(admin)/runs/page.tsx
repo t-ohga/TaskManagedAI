@@ -32,9 +32,39 @@ function groupByStatus(runs: AgentRunItem[]) {
   return { active, terminal };
 }
 
-export default async function RunsPage() {
-  const runs = await loadRuns();
-  const { active, terminal } = groupByStatus(runs);
+type RunsPageProps = {
+  searchParams: Promise<{ status?: string; role?: string }>;
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  queued: "待機中",
+  gathering_context: "情報収集中",
+  running: "実行中",
+  blocked: "ブロック",
+  completed: "完了",
+  failed: "失敗",
+  cancelled: "キャンセル",
+  provider_refused: "プロバイダ拒否",
+  repair_exhausted: "修復上限",
+};
+
+export default async function RunsPage({ searchParams }: RunsPageProps) {
+  const params = await searchParams;
+  const statusFilter = params.status ?? "";
+  const roleFilter = params.role ?? "";
+  const allRuns = await loadRuns();
+
+  let filteredRuns = allRuns;
+  if (statusFilter) {
+    filteredRuns = filteredRuns.filter((r) => r.status === statusFilter);
+  }
+  if (roleFilter) {
+    filteredRuns = filteredRuns.filter((r) => r.role_id === roleFilter);
+  }
+
+  const { active, terminal } = groupByStatus(filteredRuns);
+  const statuses = [...new Set(allRuns.map((r) => r.status))].sort();
+  const roles = [...new Set(allRuns.map((r) => r.role_id).filter(Boolean))].sort();
 
   return (
     <section aria-label="AI 実行一覧" className="grid gap-6">
@@ -42,7 +72,7 @@ export default async function RunsPage() {
         <p className="text-sm font-medium text-accent">管理</p>
         <h1 className="text-3xl font-semibold tracking-normal">AI 実行</h1>
         <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <span>全 {runs.length} 実行</span>
+          <span>全 {filteredRuns.length} 実行</span>
           <span className="text-muted-foreground/50">|</span>
           <span className="flex items-center gap-1">
             <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
@@ -54,6 +84,29 @@ export default async function RunsPage() {
           </span>
         </div>
       </header>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap gap-1">
+          <a href="/runs" className={`rounded-full px-3 py-1 text-xs font-medium ${!statusFilter ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+            すべて
+          </a>
+          {statuses.map((s) => (
+            <a key={s} href={`/runs?status=${s}${roleFilter ? `&role=${roleFilter}` : ""}`} className={`rounded-full px-3 py-1 text-xs font-medium ${statusFilter === s ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+              {STATUS_LABELS[s] ?? s}
+            </a>
+          ))}
+        </div>
+        {roles.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            <span className="text-xs text-muted-foreground">ロール:</span>
+            {roles.map((r) => (
+              <a key={r} href={`/runs?${statusFilter ? `status=${statusFilter}&` : ""}role=${r}`} className={`rounded-full px-3 py-1 text-xs font-medium ${roleFilter === r ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                {r}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
 
       {active.length > 0 && (
         <div>
