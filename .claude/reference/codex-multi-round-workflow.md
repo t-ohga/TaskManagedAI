@@ -1,3 +1,11 @@
+
+> **2026-05-27 Codex プラグイン移行**: Codex 呼び出しは公式プラグイン (`codex@openai-codex`) に移行。
+> - `/codex:review` — コードレビュー (working tree / branch diff)
+> - `/codex:adversarial-review` — 敵対レビュー (focus text 指定可能)
+> - `/codex:rescue` — タスク委譲 (調査・修正・バックグラウンド)
+> - `/codex:status` / `/codex:result` / `/codex:cancel` — ジョブ管理
+> 旧 `codex exec` + `launch-codex.sh` は互換として残すが、新規利用は非推奨。
+
 # Codex Multi-Round Workflow Rules
 
 Sprint 1-4 で確立した Codex multi-round review の規律。`feedback_codex_multi_round_workflow.md` (project memory archived) からの恒久化。
