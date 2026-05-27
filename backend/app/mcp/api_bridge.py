@@ -361,3 +361,212 @@ async def bridge_project_list(
         ],
         "total": len(projects),
     }
+
+
+async def bridge_context_auto(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    cwd: str,
+) -> dict[str, Any]:
+    import os
+
+    from backend.app.repositories.project import ProjectRepository
+
+    repo = ProjectRepository(session)
+    projects = await repo.list(tenant_id=tenant_id)
+
+    dir_name = os.path.basename(cwd.rstrip("/"))
+    dir_name_lower = dir_name.lower().replace("_", "-").replace(" ", "-")
+
+    for p in projects:
+        if p.slug == dir_name_lower or p.slug == dir_name:
+            return {
+                "project_id": str(p.id),
+                "project_name": p.name,
+                "project_slug": p.slug,
+                "matched_by": "directory_name",
+            }
+
+    for p in projects:
+        if dir_name_lower in p.slug or p.slug in dir_name_lower:
+            return {
+                "project_id": str(p.id),
+                "project_name": p.name,
+                "project_slug": p.slug,
+                "matched_by": "partial_match",
+            }
+
+    return {"error": "no_matching_project", "cwd": cwd, "hint": "Use project_list to find available projects"}
+
+
+async def bridge_ticket_list_all(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    status: str = "open",
+    limit: int = 50,
+) -> dict[str, Any]:
+    from sqlalchemy import text as sa_text
+
+    result = await session.execute(
+        sa_text("""
+            SELECT t.id, t.title, t.status, t.priority, t.created_at,
+                   p.slug as project_slug, p.name as project_name, p.id as project_id
+            FROM tickets t
+            JOIN projects p ON t.project_id = p.id AND t.tenant_id = p.tenant_id
+            WHERE t.tenant_id = :tenant_id AND t.status = :status
+            ORDER BY t.created_at DESC
+            LIMIT :limit
+        """),
+        {"tenant_id": tenant_id, "status": status, "limit": limit},
+    )
+    rows = result.fetchall()
+    return {
+        "tickets": [
+            {
+                "id": str(r[0]),
+                "title": r[1],
+                "status": r[2],
+                "priority": r[3],
+                "created_at": r[4].isoformat() if r[4] else None,
+                "project_slug": r[5],
+                "project_name": r[6],
+                "project_id": str(r[7]),
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+        "status_filter": status,
+    }
+
+
+async def bridge_ticket_search(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    query: str,
+    limit: int = 20,
+) -> dict[str, Any]:
+    from sqlalchemy import text as sa_text
+
+    search_pattern = f"%{query}%"
+    result = await session.execute(
+        sa_text("""
+            SELECT t.id, t.title, t.status, t.priority, t.created_at,
+                   p.slug as project_slug, p.name as project_name, p.id as project_id
+            FROM tickets t
+            JOIN projects p ON t.project_id = p.id AND t.tenant_id = p.tenant_id
+            WHERE t.tenant_id = :tenant_id AND t.title ILIKE :pattern
+            ORDER BY t.created_at DESC
+            LIMIT :limit
+        """),
+        {"tenant_id": tenant_id, "pattern": search_pattern, "limit": limit},
+    )
+    rows = result.fetchall()
+    return {
+        "tickets": [
+            {
+                "id": str(r[0]),
+                "title": r[1],
+                "status": r[2],
+                "priority": r[3],
+                "created_at": r[4].isoformat() if r[4] else None,
+                "project_slug": r[5],
+                "project_name": r[6],
+                "project_id": str(r[7]),
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+        "query": query,
+    }
+
+
+async def bridge_ticket_comment(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    project_id: UUID,
+    ticket_id: UUID,
+    message: str,
+    actor_id: UUID,
+) -> dict[str, Any]:
+    from backend.app.db.models.audit_event import AuditEvent
+
+    event = AuditEvent(
+        tenant_id=tenant_id,
+        event_type="ticket_comment",
+        actor_id=actor_id,
+        event_payload={
+            "project_id": str(project_id),
+            "ticket_id": str(ticket_id),
+            "message": message,
+        },
+    )
+    session.add(event)
+    await session.flush()
+    await session.commit()
+    return {
+        "comment_id": str(event.id),
+        "ticket_id": str(ticket_id),
+        "message": message,
+    }
+
+
+async def bridge_ticket_link(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    project_id: UUID,
+    source_ticket_id: UUID,
+    target_ticket_id: UUID,
+    relation_type: str,
+) -> dict[str, Any]:
+    from backend.app.repositories.ticket_relation import TicketRelationRepository
+
+    repo = TicketRelationRepository(session)
+    relation = await repo.create_in_project(
+        tenant_id=tenant_id,
+        project_id=project_id,
+        payload={
+            "source_ticket_id": source_ticket_id,
+            "target_ticket_id": target_ticket_id,
+            "relation_type": relation_type,
+        },
+    )
+    await session.commit()
+    return {
+        "relation_id": str(relation.id),
+        "source_ticket_id": str(source_ticket_id),
+        "target_ticket_id": str(target_ticket_id),
+        "relation_type": relation_type,
+    }
+
+
+async def bridge_run_list(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    project_id: UUID,
+    limit: int = 20,
+) -> dict[str, Any]:
+    result = await session.execute(
+        select(AgentRun)
+        .where(AgentRun.tenant_id == tenant_id, AgentRun.project_id == project_id)
+        .order_by(AgentRun.created_at.desc())
+        .limit(limit)
+    )
+    runs = result.scalars().all()
+    return {
+        "runs": [
+            {
+                "id": str(r.id),
+                "status": r.status,
+                "blocked_reason": r.blocked_reason,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in runs
+        ],
+        "total": len(runs),
+    }

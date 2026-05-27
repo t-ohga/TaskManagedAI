@@ -1,4 +1,4 @@
-"""TaskManagedAI MCP Server — stdio transport, 22 tools (all DB-wired).
+"""TaskManagedAI MCP Server — stdio transport, 28 tools (all DB-wired).
 
 Security invariants:
 - approval_decide is human-only (not exposed)
@@ -234,6 +234,48 @@ async def project_list() -> dict[str, Any]:
         return {"error": str(type(e).__name__), "projects": []}
 
 
+
+
+@mcp.tool()
+async def context_auto(cwd: str = '') -> dict[str, Any]:
+    """作業ディレクトリからプロジェクトを自動検出。cwd 省略時は環境変数から推定。"""
+    from backend.app.mcp.api_bridge import bridge_context_auto
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    if not cwd:
+        cwd = os.environ.get('CLAUDE_PROJECT_DIR', os.getcwd())
+    try:
+        async with get_db_session() as session:
+            return await bridge_context_auto(session, tenant_id=DEFAULT_TENANT_ID, cwd=cwd)
+    except Exception as e:
+        return {'error': str(type(e).__name__), 'cwd': cwd}
+
+
+@mcp.tool()
+async def ticket_list_all(status: str = 'open', limit: int = 50) -> dict[str, Any]:
+    """全プロジェクト横断でチケット一覧を取得。status でフィルタ。"""
+    from backend.app.mcp.api_bridge import bridge_ticket_list_all
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_ticket_list_all(session, tenant_id=DEFAULT_TENANT_ID, status=status, limit=limit)
+    except Exception as e:
+        return {'error': str(type(e).__name__), 'tickets': []}
+
+
+@mcp.tool()
+async def ticket_search(query: str, limit: int = 20) -> dict[str, Any]:
+    """チケットをタイトルでキーワード検索 (全プロジェクト横断)。"""
+    from backend.app.mcp.api_bridge import bridge_ticket_search
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_ticket_search(session, tenant_id=DEFAULT_TENANT_ID, query=query, limit=limit)
+    except Exception as e:
+        return {'error': str(type(e).__name__), 'tickets': []}
+
 # --- Mutating tools ---
 
 
@@ -259,6 +301,8 @@ async def ticket_create(
                 title=title,
                 description=description,
             )
+            from backend.app.mcp.discord_notify import notify_ticket_created
+            await notify_ticket_created(title, project_id[:8])
             return result
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
@@ -344,6 +388,67 @@ async def run_cancel(run_id: str) -> dict[str, Any]:
     except Exception as e:
         return {"error": str(type(e).__name__), "run_id": run_id}
 
+
+
+
+@mcp.tool()
+async def ticket_comment(project_id: str, ticket_id: str, message: str) -> dict[str, Any]:
+    """チケットにコメント (作業ログ) を追記。"""
+    from uuid import UUID
+
+    from backend.app.mcp.api_bridge import bridge_ticket_comment
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_ticket_comment(
+                session, tenant_id=DEFAULT_TENANT_ID, project_id=UUID(project_id),
+                ticket_id=UUID(ticket_id), message=message, actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+            )
+    except Exception as e:
+        return {'error': str(type(e).__name__), 'ticket_id': ticket_id}
+
+
+@mcp.tool()
+async def ticket_link(
+    project_id: str, source_ticket_id: str, target_ticket_id: str,
+    relation_type: str = 'relates_to',
+) -> dict[str, Any]:
+    """チケット間の依存関係を作成。relation_type: blocks / blocked_by / relates_to / depends_on / duplicates"""
+    from uuid import UUID
+
+    from backend.app.mcp.api_bridge import bridge_ticket_link
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    valid_types = {'blocks', 'blocked_by', 'relates_to', 'depends_on', 'duplicates'}
+    if relation_type not in valid_types:
+        return {'error': 'invalid_relation_type', 'valid': sorted(valid_types)}
+    try:
+        async with get_db_session() as session:
+            return await bridge_ticket_link(
+                session, tenant_id=DEFAULT_TENANT_ID, project_id=UUID(project_id),
+                source_ticket_id=UUID(source_ticket_id), target_ticket_id=UUID(target_ticket_id),
+                relation_type=relation_type,
+            )
+    except Exception as e:
+        return {'error': str(type(e).__name__)}
+
+
+@mcp.tool()
+async def run_list(project_id: str, limit: int = 20) -> dict[str, Any]:
+    """プロジェクト内の AgentRun 一覧。"""
+    from uuid import UUID
+
+    from backend.app.mcp.api_bridge import bridge_run_list
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_run_list(
+                session, tenant_id=DEFAULT_TENANT_ID, project_id=UUID(project_id), limit=limit,
+            )
+    except Exception as e:
+        return {'error': str(type(e).__name__), 'runs': []}
 
 # --- Superintendent tools (SP-035) ---
 
@@ -493,6 +598,8 @@ async def superintendent_dispatch(
                     ticket_id=ticket_id,
                     purpose=f"superintendent dispatch: {action_class}",
                 )
+                from backend.app.mcp.discord_notify import notify_dispatch
+                await notify_dispatch(agent_id, ticket_id[:8], action_class)
                 return {
                     "dispatched": True,
                     "agent_id": agent_id,
@@ -504,6 +611,8 @@ async def superintendent_dispatch(
         except Exception as e:
             return {"error": str(type(e).__name__), "dispatched": False}
 
+    from backend.app.mcp.discord_notify import notify_approval_needed
+    await notify_approval_needed(action_class, ticket_id[:8])
     return {
         "dispatched": True,
         "agent_id": agent_id,
