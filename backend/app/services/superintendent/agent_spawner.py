@@ -24,13 +24,9 @@ AgentProvider = Literal["claude", "codex", "custom"]
 SPAWN_TIMEOUT_SECONDS = 30
 STOP_GRACE_SECONDS = 10
 
-_ENV_SCRUB_KEYS = frozenset({
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "GITHUB_TOKEN",
-    "SOPS_AGE_KEY_FILE",
-    "TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET",
-    "TASKMANAGEDAI_DEV_LOGIN_TOKEN",
+_ENV_ALLOW_KEYS = frozenset({
+    "PATH", "HOME", "LANG", "LC_ALL", "SHELL", "TERM", "TZ",
+    "USER", "LOGNAME", "TMPDIR", "XDG_RUNTIME_DIR",
 })
 
 
@@ -57,7 +53,7 @@ def _build_agent_command(provider: AgentProvider, project_dir: str) -> list[str]
 
 
 def _build_safe_env(project_dir: str) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in _ENV_SCRUB_KEYS}
+    env = {k: v for k, v in os.environ.items() if k in _ENV_ALLOW_KEYS}
     env["TASKMANAGEDAI_AGENT_MODE"] = "true"
     env["TASKMANAGEDAI_PROJECT_DIR"] = project_dir
     return env

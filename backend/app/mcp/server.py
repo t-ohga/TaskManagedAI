@@ -1,4 +1,4 @@
-"""TaskManagedAI MCP Server — stdio transport, 28 tools (all DB-wired).
+"""TaskManagedAI MCP Server — stdio transport, 30 tools (all DB-wired).
 
 Security invariants:
 - approval_decide is human-only (not exposed)
@@ -253,6 +253,10 @@ async def context_auto(cwd: str = '') -> dict[str, Any]:
 @mcp.tool()
 async def ticket_list_all(status: str = 'open', limit: int = 50) -> dict[str, Any]:
     """全プロジェクト横断でチケット一覧を取得。status でフィルタ。"""
+    valid_statuses = {'open', 'in_progress', 'closed', 'cancelled'}
+    if status not in valid_statuses:
+        return {'error': 'invalid_status', 'valid': sorted(valid_statuses)}
+
     from backend.app.mcp.api_bridge import bridge_ticket_list_all
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
 
@@ -300,15 +304,14 @@ async def ticket_create(
                 title=title,
                 description=description,
             )
+            try:
+                from backend.app.mcp.discord_notify import notify_ticket_created
+                await notify_ticket_created(title, project_id[:8])
+            except Exception:  # noqa: S110
+                logging.getLogger(__name__).debug("Discord notification skipped")
             return result
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
-    finally:
-        try:
-            from backend.app.mcp.discord_notify import notify_ticket_created
-            await notify_ticket_created(title, project_id[:8])
-        except Exception:  # noqa: S110
-            logging.getLogger(__name__).debug("Discord notification skipped")
 
 
 @mcp.tool()
@@ -456,6 +459,62 @@ async def run_list(project_id: str, limit: int = 20) -> dict[str, Any]:
     except Exception as e:
         return {'error': str(type(e).__name__), 'runs': []}
 
+
+@mcp.tool()
+async def run_update(run_id: str, status: str, summary: str = "") -> dict[str, Any]:
+    """AgentRun の状態を更新。status: running/completed/failed/blocked/gathering_context/generated_artifact"""
+    from backend.app.mcp.api_bridge import bridge_run_update
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            result = await bridge_run_update(
+                session, tenant_id=DEFAULT_TENANT_ID, run_id=UUID(run_id),
+                status=status, summary=summary,
+            )
+            if result.get("new_status") in ("completed", "failed"):
+                try:
+                    from backend.app.mcp.discord_notify import notify_run_completed
+                    await notify_run_completed(run_id, status, summary)
+                except Exception:  # noqa: S110
+                    logging.getLogger(__name__).debug("Discord notification skipped")
+            return result
+    except (ValueError, AttributeError):
+        return {"error": "invalid_uuid", "field": "run_id"}
+    except Exception as e:
+        return {"error": str(type(e).__name__), "run_id": run_id}
+
+
+@mcp.tool()
+async def approval_request_create(
+    project_id: str, ticket_id: str, action_class: str = "repo_write",
+) -> dict[str, Any]:
+    """承認リクエストを作成。AI agent は作成のみ可能 (決裁は human-only)。"""
+    from backend.app.mcp.api_bridge import bridge_approval_request_create
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
+
+    forbidden = {"merge", "deploy", "secret_access", "approval_decide"}
+    if action_class in forbidden:
+        return {"error": "forbidden_action", "action_class": action_class}
+
+    try:
+        async with get_db_session() as session:
+            result = await bridge_approval_request_create(
+                session, tenant_id=DEFAULT_TENANT_ID, project_id=UUID(project_id),
+                ticket_id=ticket_id, action_class=action_class,
+                requester_actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+            )
+            try:
+                from backend.app.mcp.discord_notify import notify_approval_needed
+                await notify_approval_needed(action_class, ticket_id[:8])
+            except Exception:  # noqa: S110
+                logging.getLogger(__name__).debug("Discord notification skipped")
+            return result
+    except (ValueError, AttributeError):
+        return {"error": "invalid_uuid"}
+    except Exception as e:
+        return {"error": str(type(e).__name__), "message": str(e)[:200]}
+
 # --- Superintendent tools (SP-035) ---
 
 
@@ -581,7 +640,10 @@ async def superintendent_dispatch(
         ticket_id=ticket_id,
         project_id=UUID(project_id),
         action_class=action_class,
-        risk_level="low",
+        risk_level={
+            "read_only": "low", "task_write": "low",
+            "repo_write": "medium", "pr_open": "medium",
+        }.get(action_class, "high"),
     )
     result = evaluate_dispatch(request, policy)
 
@@ -618,12 +680,26 @@ async def superintendent_dispatch(
         except Exception as e:
             return {"error": str(type(e).__name__), "dispatched": False}
 
-    from backend.app.mcp.discord_notify import notify_approval_needed
-    await notify_approval_needed(action_class, ticket_id[:8])
+    try:
+        async with get_db_session() as session:
+            from backend.app.mcp.api_bridge import bridge_run_create
+            run_result = await bridge_run_create(
+                session, tenant_id=DEFAULT_TENANT_ID,
+                project_id=UUID(project_id), ticket_id=ticket_id,
+                purpose=f"superintendent dispatch (awaiting approval): {action_class}",
+            )
+    except Exception:
+        run_result = {}
+    try:
+        from backend.app.mcp.discord_notify import notify_approval_needed
+        await notify_approval_needed(action_class, ticket_id[:8])
+    except Exception:  # noqa: S110
+        logging.getLogger(__name__).debug("Discord notification skipped")
     return {
         "dispatched": True,
         "agent_id": agent_id,
         "ticket_id": ticket_id,
+        "run_id": run_result.get("run_id"),
         "needs_human_approval": True,
         "action_class": action_class,
     }

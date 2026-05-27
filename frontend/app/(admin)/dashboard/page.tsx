@@ -28,20 +28,21 @@ async function readBackendHealth(): Promise<BackendHealthState> {
 async function readProjectSummaries(): Promise<ProjectSummary[]> {
   try {
     const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
-    const projects = projectsRes?.items ?? projectsRes ?? [];
+    const projects = (projectsRes as any)?.projects ?? (projectsRes as any)?.items ?? [];
     if (!Array.isArray(projects)) return [];
 
     const summaries: ProjectSummary[] = [];
     for (const p of projects.slice(0, 10)) {
       let ticketCount = 0;
       try {
-        const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${p.id}/tickets`);
+        const pid = p.project_id ?? p.id;
+        const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets`);
         ticketCount = ticketsRes?.total ?? ticketsRes?.items?.length ?? 0;
       } catch {
         ticketCount = 0;
       }
       summaries.push({
-        id: p.id,
+        id: p.project_id ?? p.id,
         slug: p.slug,
         name: p.name,
         status: p.status,

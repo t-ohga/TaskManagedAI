@@ -20,6 +20,12 @@ from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.repositories.ticket import TicketRepository
 
+MAX_LIMIT = 200
+
+
+def _clamp(limit: int, offset: int) -> tuple[int, int]:
+    return min(max(1, limit), MAX_LIMIT), max(0, offset)
+
 
 def _title_to_slug(title: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
@@ -54,6 +60,7 @@ async def bridge_ticket_list(
         .offset(offset)
     )
     tickets = result.scalars().all()
+    clamped_limit, clamped_offset = _clamp(limit, offset)
     return {
         "tickets": [
             {
@@ -65,8 +72,8 @@ async def bridge_ticket_list(
             for t in tickets
         ],
         "total": total,
-        "limit": limit,
-        "offset": offset,
+        "limit": clamped_limit,
+        "offset": clamped_offset,
     }
 
 
@@ -184,6 +191,7 @@ async def bridge_audit_list(
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
+    limit, offset = _clamp(limit, offset)
     count_result = await session.execute(
         select(sa.func.count()).select_from(AuditEvent).where(
             AuditEvent.tenant_id == tenant_id
@@ -441,6 +449,7 @@ async def bridge_ticket_list_all(
 ) -> dict[str, Any]:
     from sqlalchemy import text as sa_text
 
+    limit = min(max(1, limit), MAX_LIMIT)
     result = await session.execute(
         sa_text("""
             SELECT t.id, t.title, t.status, t.priority, t.created_at,
@@ -482,6 +491,7 @@ async def bridge_ticket_search(
 ) -> dict[str, Any]:
     from sqlalchemy import text as sa_text
 
+    query = query[:200]
     search_pattern = f"%{query}%"
     result = await session.execute(
         sa_text("""
@@ -586,7 +596,7 @@ async def bridge_run_list(
         select(AgentRun)
         .where(AgentRun.tenant_id == tenant_id, AgentRun.project_id == project_id)
         .order_by(AgentRun.created_at.desc())
-        .limit(limit)
+        .limit(min(max(1, limit), MAX_LIMIT))
     )
     runs = result.scalars().all()
     return {
@@ -600,4 +610,112 @@ async def bridge_run_list(
             for r in runs
         ],
         "total": len(runs),
+    }
+
+
+async def bridge_run_update(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    run_id: UUID,
+    status: str,
+    summary: str = "",
+) -> dict[str, Any]:
+    from backend.app.db.models.agent_run_event import AgentRunEvent
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
+
+    valid_statuses = {
+        "running", "completed", "failed", "blocked",
+        "gathering_context", "generated_artifact",
+    }
+    if status not in valid_statuses:
+        return {"error": "invalid_status", "valid": sorted(valid_statuses)}
+
+    result = await session.execute(
+        select(AgentRun).where(
+            AgentRun.tenant_id == tenant_id,
+            AgentRun.id == run_id,
+        )
+    )
+    run = result.scalar_one_or_none()
+    if run is None:
+        return {"error": "not_found", "run_id": str(run_id)}
+
+    terminal = {"completed", "failed", "cancelled", "provider_refused", "repair_exhausted"}
+    if run.status in terminal:
+        return {"error": "already_terminal", "run_id": str(run_id), "status": run.status}
+
+    old_status = run.status
+    run.status = status
+    if status == "blocked":
+        run.blocked_reason = "runtime_blocked"
+    elif run.blocked_reason and status != "blocked":
+        run.blocked_reason = None
+
+    event_type_map = {
+        "running": "context_gathered",
+        "completed": "run_completed",
+        "failed": "run_failed",
+        "blocked": "runtime_blocked",
+        "gathering_context": "context_gathered",
+        "generated_artifact": "artifact_generated",
+    }
+
+    max_seq = await session.execute(
+        sa.text("SELECT COALESCE(MAX(seq_no), 0) FROM agent_run_events WHERE tenant_id = :tid AND run_id = :rid"),
+        {"tid": tenant_id, "rid": run_id},
+    )
+    next_seq = (max_seq.scalar() or 0) + 1
+
+    event = AgentRunEvent(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        seq_no=next_seq,
+        event_type=event_type_map.get(status, "context_gathered"),
+        event_payload={
+            "old_status": old_status,
+            "new_status": status,
+            "summary": summary,
+        },
+        actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+    )
+    session.add(event)
+    await session.commit()
+
+    return {
+        "run_id": str(run.id),
+        "old_status": old_status,
+        "new_status": status,
+        "summary": summary,
+    }
+
+
+async def bridge_approval_request_create(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    project_id: UUID,
+    ticket_id: str,
+    action_class: str,
+    requester_actor_id: UUID,
+) -> dict[str, Any]:
+    from backend.app.repositories.approval_request import ApprovalRequestRepository
+
+    repo = ApprovalRequestRepository(session)
+    approval = await repo.create_pending_approval(
+        tenant_id=tenant_id,
+        action_class=action_class,
+        resource_ref=f"ticket:{ticket_id}",
+        risk_level="medium",
+        requested_by_actor_id=requester_actor_id,
+        recipient_actor_id=requester_actor_id,
+        policy_version="v1",
+        artifact_hash=f"ticket:{ticket_id}",
+    )
+    await session.commit()
+    return {
+        "approval_id": str(approval.id),
+        "action_class": action_class,
+        "status": "pending",
+        "ticket_id": ticket_id,
     }

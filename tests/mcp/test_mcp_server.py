@@ -6,7 +6,7 @@ import pytest
 
 from backend.app.mcp.server import mcp
 
-EXPECTED_TOOL_COUNT = 28
+EXPECTED_TOOL_COUNT = 30
 
 EXPECTED_READ_TOOLS = {
     "ticket_list",
