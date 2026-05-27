@@ -1,5 +1,5 @@
 /**
- * Sprint 12 batch 9 + SP-022 T08 batch 6: P0 Exit Dashboard with live KPI wiring.
+ * P0 出口ダッシュボード。
  *
  * Read-only display of:
  * - Hard Gates 7 (AC-HARD-01〜07) with metric_value / threshold / threshold_met (static)

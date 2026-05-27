@@ -230,7 +230,7 @@ export default async function TodayPage() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Lane
-          title="Today"
+          title="今日の概要"
           subtitle={todaySubtitle(state.tickets)}
           count={workTickets.length + activeRuns.length + pendingApprovals.length}
         >

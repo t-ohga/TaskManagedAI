@@ -130,7 +130,7 @@ export default async function ResearchListPage() {
     <AdminPageShell
       description={
         <>
-          Sprint 10 BL-0120 read-only Research / Claim / Evidence surface。対象 project は{" "}
+          リサーチ・クレーム・エビデンス管理。対象 project は{" "}
           <code>{projectId}</code> です。Mutation UI は P1 まで defer しています。
         </>
       }

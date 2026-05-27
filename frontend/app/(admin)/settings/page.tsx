@@ -1,5 +1,5 @@
 /**
- * Sprint 9 BL-0108: Project Settings (P0 UI skeleton).
+ * プロジェクト設定ページ。
  *
  * Provider Compliance Matrix, policy profiles, and repository binding metadata
  * are rendered read-only. Secret refs are displayed as metadata concepts only;
@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 export default function ProjectSettingsPage() {
   return (
     <AdminPageShell
-      description="プロジェクト設定 with Anthropic Console inspired provider matrix table, policy profile visibility, and SecretBroker-safe repository settings."
+      description="プロバイダー準拠マトリクス、ポリシープロファイル、リポジトリ連携、シークレット管理の設定を表示します。"
       eyebrow="管理 / 設定"
       regionLabel="プロジェクト設定"
       title="プロジェクト設定"
