@@ -8,19 +8,14 @@ Security invariants:
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 from uuid import UUID
 
 from fastmcp import FastMCP
 
-
-def _safe_uuid(s: str) -> UUID:
-    _UUID = UUID
-    try:
-        return _UUID(s)
-    except (ValueError, AttributeError):
-        return _UUID("00000000-0000-4000-8000-000000000099")
+# _safe_uuid removed (H-1 fix): callers use UUID() directly with error handling
 
 mcp = FastMCP(
     "TaskManagedAI",
@@ -102,6 +97,10 @@ async def run_plan_dry_run(purpose: str, expected_artifact: str = "") -> dict[st
 @mcp.tool()
 async def approval_list(status: str = "pending") -> dict[str, Any]:
     """承認リクエスト一覧。AI agent は閲覧のみ (decide は human-only)。"""
+    valid_statuses = {"pending", "approved", "rejected", "expired", "invalidated"}
+    if status not in valid_statuses:
+        return {"error": "invalid_status", "valid": sorted(valid_statuses)}
+
     from backend.app.mcp.api_bridge import bridge_approval_list
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
 
@@ -301,11 +300,15 @@ async def ticket_create(
                 title=title,
                 description=description,
             )
-            from backend.app.mcp.discord_notify import notify_ticket_created
-            await notify_ticket_created(title, project_id[:8])
             return result
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
+    finally:
+        try:
+            from backend.app.mcp.discord_notify import notify_ticket_created
+            await notify_ticket_created(title, project_id[:8])
+        except Exception:  # noqa: S110
+            logging.getLogger(__name__).debug("Discord notification skipped")
 
 
 @mcp.tool()
@@ -354,10 +357,13 @@ async def run_create(
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """AI 実行 (AgentRun) を開始。run_id を即時返却。"""
-    from uuid import UUID
-
     from backend.app.mcp.api_bridge import bridge_run_create
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        parsed_ticket_id = UUID(ticket_id)
+    except (ValueError, AttributeError):
+        return {"error": "invalid_uuid", "field": "ticket_id"}
 
     try:
         async with get_db_session() as session:
@@ -365,7 +371,7 @@ async def run_create(
                 session,
                 tenant_id=DEFAULT_TENANT_ID,
                 project_id=UUID(project_id),
-                ticket_id=ticket_id,
+                ticket_id=str(parsed_ticket_id),
                 purpose=purpose,
             )
     except Exception as e:
@@ -474,11 +480,10 @@ async def superintendent_agent_register(
         superintendent_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
         created_at=datetime.now(UTC),
     )
-    from backend.app.services.superintendent.agent_spawner import _active_agents
-    _active_agents[agent_id] = type("SpawnedAgent", (), {
-        "agent_id": agent_id, "provider": provider, "process": None,
-        "pid": None, "started_at": None, "stopped_at": None, "exit_code": None,
-    })()
+    from backend.app.services.superintendent.agent_spawner import SpawnedAgent, _active_agents
+    _active_agents[agent_id] = SpawnedAgent(
+        agent_id=agent_id, provider=provider,
+    )
     return {
         "agent_id": str(agent_id),
         "role_id": role_id,
@@ -560,16 +565,19 @@ async def superintendent_dispatch(
     project_id: str = "00000000-0000-4000-8000-000000000004",
 ) -> dict[str, Any]:
     """Ticket を agent に割り当てて AgentRun を開始。delegation policy gate 経由。"""
-    from uuid import UUID
-
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
     from backend.app.services.superintendent.delegation_policy import POLICY_TEMPLATES
     from backend.app.services.superintendent.dispatch import DispatchRequest, evaluate_dispatch
 
+    try:
+        parsed_agent_id = UUID(agent_id)
+    except (ValueError, AttributeError):
+        return {"error": "invalid_uuid", "field": "agent_id"}
+
     policy = POLICY_TEMPLATES["conservative"]
     request = DispatchRequest(
         superintendent_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
-        agent_id=_safe_uuid(agent_id),
+        agent_id=parsed_agent_id,
         ticket_id=ticket_id,
         project_id=UUID(project_id),
         action_class=action_class,
@@ -586,8 +594,7 @@ async def superintendent_dispatch(
             "reason": result.deny_reason or "policy denied",
         }
 
-    auto_dispatch_actions = {"read_only", "task_write"}
-    if not result.needs_human_approval or action_class in auto_dispatch_actions:
+    if not result.needs_human_approval:
         try:
             async with get_db_session() as session:
                 from backend.app.mcp.api_bridge import bridge_run_create

@@ -63,12 +63,12 @@ async def test_mcp_superintendent_dispatch_forbidden_action_denied() -> None:
     from backend.app.mcp.server import superintendent_dispatch
 
     result = await superintendent_dispatch(
-        agent_id="test-agent",
-        ticket_id="test-ticket",
+        agent_id="00000000-0000-4000-8000-000000000099",
+        ticket_id="00000000-0000-4000-8000-000000000006",
         action_class="merge",
     )
 
-    assert result.get("needs_human_approval") is True or result.get("dispatched") is False
+    assert result.get("denied") is True or result.get("dispatched") is False
 
 
 @pytest.mark.asyncio

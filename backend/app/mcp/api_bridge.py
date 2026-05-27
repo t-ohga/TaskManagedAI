@@ -36,9 +36,24 @@ async def bridge_ticket_list(
     limit: int = 20,
     offset: int = 0,
 ) -> dict[str, Any]:
-    repo = TicketRepository(session)
-    all_tickets = await repo.list_in_project(tenant_id=tenant_id, project_id=project_id)
-    tickets = all_tickets[offset : offset + limit]
+    from sqlalchemy import text as sa_text
+
+    from backend.app.db.models.ticket import Ticket
+
+    count_result = await session.execute(
+        sa_text("SELECT count(*) FROM tickets WHERE tenant_id = :tid AND project_id = :pid"),
+        {"tid": tenant_id, "pid": project_id},
+    )
+    total = count_result.scalar() or 0
+
+    result = await session.execute(
+        select(Ticket)
+        .where(Ticket.tenant_id == tenant_id, Ticket.project_id == project_id)
+        .order_by(Ticket.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    tickets = result.scalars().all()
     return {
         "tickets": [
             {
@@ -49,7 +64,7 @@ async def bridge_ticket_list(
             }
             for t in tickets
         ],
-        "total": len(tickets),
+        "total": total,
         "limit": limit,
         "offset": offset,
     }
@@ -232,6 +247,9 @@ async def bridge_run_create(
     ticket_id: str,
     purpose: str,
 ) -> dict[str, Any]:
+    from backend.app.db.models.agent_run_event import AgentRunEvent
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
+
     run = AgentRun(
         tenant_id=tenant_id,
         project_id=project_id,
@@ -239,6 +257,20 @@ async def bridge_run_create(
     )
     session.add(run)
     await session.flush()
+
+    event = AgentRunEvent(
+        tenant_id=tenant_id,
+        run_id=run.id,
+        seq_no=1,
+        event_type="run_queued",
+        event_payload={
+            "ticket_id": ticket_id,
+            "purpose": purpose,
+            "project_id": str(project_id),
+        },
+        actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+    )
+    session.add(event)
     await session.commit()
     return {
         "run_id": str(run.id),
@@ -492,20 +524,19 @@ async def bridge_ticket_comment(
     message: str,
     actor_id: UUID,
 ) -> dict[str, Any]:
-    from backend.app.db.models.audit_event import AuditEvent
+    from backend.app.repositories.notification_event import NotificationEventRepository
 
-    event = AuditEvent(
+    repo = NotificationEventRepository(session)
+    event = await repo.append(
         tenant_id=tenant_id,
         event_type="ticket_comment",
-        actor_id=actor_id,
-        event_payload={
+        payload={
             "project_id": str(project_id),
             "ticket_id": str(ticket_id),
             "message": message,
         },
+        recipient_actor_id=actor_id,
     )
-    session.add(event)
-    await session.flush()
     await session.commit()
     return {
         "comment_id": str(event.id),
