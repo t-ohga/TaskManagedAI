@@ -15,14 +15,24 @@ type AgentRunItem = {
   project_id: string;
 };
 
-async function loadRuns(): Promise<AgentRunItem[]> {
+type RunsResponse = {
+  items: AgentRunItem[];
+  total: number;
+};
+
+async function loadRuns(params?: { status?: string; role?: string }): Promise<RunsResponse> {
   try {
-    const res = await fetchBackendRaw("/api/v1/agent_runs?limit=200" as `/${string}`);
+    const query = new URLSearchParams();
+    query.set("limit", "200");
+    if (params?.status) query.set("status", params.status);
+    if (params?.role) query.set("role", params.role);
+    const res = await fetchBackendRaw(`/api/v1/agent_runs?${query}` as `/${string}`);
     const raw = res as Record<string, unknown>;
-    return ((raw?.items ?? []) as AgentRunItem[]);
-  } catch (e) {
-    // AgentRun API error — display empty state
-    return [];
+    const items = (raw?.items ?? []) as AgentRunItem[];
+    const total = typeof raw?.total === "number" ? raw.total : items.length;
+    return { items, total };
+  } catch {
+    return { items: [], total: 0 };
   }
 }
 
@@ -40,31 +50,33 @@ const STATUS_LABELS: Record<string, string> = {
   queued: "待機中",
   gathering_context: "情報収集中",
   running: "実行中",
+  generated_artifact: "成果物生成",
+  schema_validated: "スキーマ検証済",
+  policy_linted: "ポリシーLint済",
+  diff_ready: "差分準備完了",
+  waiting_approval: "承認待ち",
   blocked: "ブロック",
+  provider_refused: "プロバイダ拒否",
+  provider_incomplete: "プロバイダ未完了",
+  validation_failed: "検証失敗",
+  repair_exhausted: "修復上限",
   completed: "完了",
   failed: "失敗",
   cancelled: "キャンセル",
-  provider_refused: "プロバイダ拒否",
-  repair_exhausted: "修復上限",
 };
 
 export default async function RunsPage({ searchParams }: RunsPageProps) {
   const params = await searchParams;
   const statusFilter = params.status ?? "";
   const roleFilter = params.role ?? "";
-  const allRuns = await loadRuns();
-
-  let filteredRuns = allRuns;
-  if (statusFilter) {
-    filteredRuns = filteredRuns.filter((r) => r.status === statusFilter);
-  }
-  if (roleFilter) {
-    filteredRuns = filteredRuns.filter((r) => r.role_id === roleFilter);
-  }
+  const { items: filteredRuns, total: totalRuns } = await loadRuns({
+    status: statusFilter || undefined,
+    role: roleFilter || undefined,
+  });
 
   const { active, terminal } = groupByStatus(filteredRuns);
-  const statuses = [...new Set(allRuns.map((r) => r.status))].sort();
-  const roles = [...new Set(allRuns.map((r) => r.role_id).filter(Boolean))].sort();
+  const statuses = Object.keys(STATUS_LABELS);
+  const roles = [...new Set(filteredRuns.map((r) => r.role_id).filter(Boolean))].sort();
 
   return (
     <section aria-label="AI 実行一覧" className="grid gap-6">
@@ -156,7 +168,7 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
         </div>
       )}
 
-      {allRuns.length === 0 && (
+      {totalRuns === 0 && (
         <div className="rounded-lg border border-line bg-panel p-8 text-center">
           <p className="text-muted-foreground">AI 実行はまだありません</p>
           <p className="mt-2 text-xs text-muted-foreground">
@@ -168,7 +180,7 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
         </div>
       )}
 
-      {allRuns.length > 0 && filteredRuns.length === 0 && (
+      {totalRuns > 0 && filteredRuns.length === 0 && (
         <div className="rounded-lg border border-line bg-panel p-8 text-center">
           <p className="text-muted-foreground">条件に一致する実行がありません</p>
           <p className="mt-2 text-xs text-muted-foreground">

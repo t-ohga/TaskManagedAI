@@ -12,27 +12,60 @@ type AuditEvent = {
   created_at: string | null;
 };
 
-async function loadAuditEvents(): Promise<AuditEvent[]> {
+type AuditResponse = {
+  items: AuditEvent[];
+  total: number;
+};
+
+async function loadAuditEvents(params: {
+  eventType?: string;
+  limit: number;
+  offset: number;
+}): Promise<AuditResponse> {
   try {
-    const res = await fetchBackendRaw("/api/v1/audit_events" as `/${string}`);
+    const query = new URLSearchParams();
+    query.set("limit", String(params.limit));
+    query.set("offset", String(params.offset));
+    if (params.eventType) query.set("event_type", params.eventType);
+    const res = await fetchBackendRaw(`/api/v1/audit_events?${query}` as `/${string}`);
     const raw = res as Record<string, unknown>;
-    return ((raw?.items ?? raw?.events ?? []) as AuditEvent[]);
-  } catch (e) {
-    // Audit API error — display empty state
-    return [];
+    const items = (raw?.items ?? raw?.events ?? []) as AuditEvent[];
+    const total = typeof raw?.total === "number" ? raw.total : items.length;
+    return { items, total };
+  } catch {
+    return { items: [], total: 0 };
   }
 }
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
+  run_queued: "実行待機",
+  context_gathered: "情報収集完了",
+  provider_requested: "プロバイダ要求",
+  provider_responded: "プロバイダ応答",
+  artifact_generated: "成果物生成",
+  schema_validated: "スキーマ検証",
+  validation_failed: "検証失敗",
+  repair_retry_scheduled: "修復リトライ",
+  policy_linted: "ポリシーLint",
+  policy_blocked: "ポリシーブロック",
   policy_decision_created: "ポリシー判定",
-  secret_canary_detected: "シークレット検出",
-  runner_blocked: "ランナーブロック",
-  repo_pr_opened: "PR 作成",
+  budget_blocked: "予算ブロック",
+  runtime_blocked: "ランタイムブロック",
+  diff_ready: "差分準備完了",
   approval_requested: "承認要求",
   approval_decided: "承認決定",
+  runner_started: "ランナー開始",
+  runner_completed: "ランナー完了",
+  runner_blocked: "ランナーブロック",
+  repo_pr_opened: "PR 作成",
   run_completed: "実行完了",
   run_failed: "実行失敗",
   run_cancelled: "実行キャンセル",
+  secret_canary_detected: "シークレット検出",
+  secret_capability_issued: "シークレット発行",
+  secret_capability_redeemed: "シークレット使用",
+  secret_capability_denied: "シークレット拒否",
+  config_changed: "設定変更",
 };
 
 function eventTypeBadge(eventType: string) {
@@ -64,14 +97,13 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
   const params = await searchParams;
   const typeFilter = params.type ?? "";
   const pageNum = Math.max(1, Number(params.page ?? "1"));
-  const allEvents = await loadAuditEvents();
-
-  const filtered = typeFilter
-    ? allEvents.filter((e) => e.event_type === typeFilter)
-    : allEvents;
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const events = filtered.slice((pageNum - 1) * PAGE_SIZE, pageNum * PAGE_SIZE);
-  const eventTypes = [...new Set(allEvents.map((e) => e.event_type))].sort();
+  const { items: events, total } = await loadAuditEvents({
+    eventType: typeFilter || undefined,
+    limit: PAGE_SIZE,
+    offset: (pageNum - 1) * PAGE_SIZE,
+  });
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const eventTypes = Object.keys(EVENT_TYPE_LABELS);
 
   return (
     <section aria-label="監査ログ" className="grid gap-6">
@@ -79,7 +111,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
         <p className="text-sm font-medium text-accent">管理</p>
         <h1 className="text-3xl font-semibold tracking-normal">監査ログ</h1>
         <p className="text-sm text-muted-foreground">
-          追記専用の監査イベント ({filtered.length} 件)。シークレットやトークンの値は表示されません。
+          追記専用の監査イベント ({total} 件)。シークレットやトークンの値は表示されません。
         </p>
       </header>
 
