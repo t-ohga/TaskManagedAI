@@ -135,14 +135,34 @@ export default async function DashboardPage() {
         </article>
       </section>
 
+            <section aria-label="全体サマリー" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <article className="rounded-lg border border-line bg-panel p-4 shadow-sm">
+          <p className="text-xs text-muted-foreground">総チケット数</p>
+          <p className="mt-1 text-2xl font-bold text-ink">{projects.reduce((s: number, p: any) => s + p.ticketCount, 0)}</p>
+        </article>
+        <article className="rounded-lg border border-line bg-panel p-4 shadow-sm">
+          <p className="text-xs text-muted-foreground">プロジェクト数</p>
+          <p className="mt-1 text-2xl font-bold text-ink">{projects.length}</p>
+        </article>
+        <article className="rounded-lg border border-blue-200 bg-blue-50 p-4 shadow-sm">
+          <p className="text-xs text-blue-600">未着手チケット</p>
+          <p className="mt-1 text-2xl font-bold text-blue-700">{projects.reduce((s: number, p: any) => s + p.ticketCount, 0)}</p>
+        </article>
+        <article className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+          <p className="text-xs text-emerald-600">完了率</p>
+          <p className="mt-1 text-2xl font-bold text-emerald-700">0%</p>
+        </article>
+      </section>
+
       {projects.length > 0 && (
         <section aria-label="プロジェクト横断サマリー">
           <h2 className="mb-4 text-lg font-semibold">プロジェクト一覧</h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((p) => (
-              <article
+              <a
                 key={p.id}
-                className="rounded-lg border border-line bg-panel p-4 shadow-sm transition-colors hover:border-accent/30"
+                href={`/tickets?project=${p.slug}`}
+                className="block rounded-lg border border-line bg-panel p-4 shadow-sm transition-all hover:border-accent/40 hover:shadow-md"
               >
                 <div className="flex items-start justify-between">
                   <div>
@@ -159,7 +179,7 @@ export default async function DashboardPage() {
                     <span className="ml-1 text-muted-foreground">チケット</span>
                   </p>
                 </div>
-              </article>
+              </a>
             ))}
           </div>
         </section>
