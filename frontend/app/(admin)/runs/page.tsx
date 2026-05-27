@@ -3,6 +3,7 @@ import Link from "next/link";
 import { fetchBackendRaw } from "@/lib/api/client";
 import { AgentRunStatusIndicator } from "@/components/agent-run-status-indicator-v2";
 import { RoleBadge } from "@/components/role-badge";
+import { AutoRefresh } from "@/components/auto-refresh";
 
 export const dynamic = "force-dynamic";
 
@@ -86,6 +87,7 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
 
   return (
     <section aria-label="AI 実行一覧" className="grid gap-6">
+      <AutoRefresh intervalMs={30000} enabled={active.length > 0} />
       <header className="grid gap-2">
         <p className="text-sm font-medium text-accent">管理</p>
         <h1 className="text-3xl font-semibold tracking-normal">AI 実行</h1>
