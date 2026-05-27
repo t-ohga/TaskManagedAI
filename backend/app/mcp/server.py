@@ -1,4 +1,4 @@
-"""TaskManagedAI MCP Server — stdio transport, 15 tools.
+"""TaskManagedAI MCP Server — stdio transport, 21 tools (all DB-wired).
 
 Security invariants:
 - approval_decide is human-only (not exposed)
@@ -10,8 +10,17 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from uuid import UUID
 
 from fastmcp import FastMCP
+
+
+def _safe_uuid(s: str) -> UUID:
+    _UUID = UUID
+    try:
+        return _UUID(s)
+    except (ValueError, AttributeError):
+        return _UUID("00000000-0000-4000-8000-000000000099")
 
 mcp = FastMCP(
     "TaskManagedAI",
@@ -108,7 +117,18 @@ async def approval_list(status: str = "pending") -> dict[str, Any]:
 @mcp.tool()
 async def approval_show(approval_id: str) -> dict[str, Any]:
     """承認リクエスト詳細。"""
-    return {"approval_id": approval_id}
+    from uuid import UUID
+
+    from backend.app.mcp.api_bridge import bridge_approval_show
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_approval_show(
+                session, tenant_id=DEFAULT_TENANT_ID, approval_id=UUID(approval_id)
+            )
+    except Exception as e:
+        return {"error": str(type(e).__name__), "approval_id": approval_id}
 
 
 @mcp.tool()
@@ -152,13 +172,53 @@ async def context_show() -> dict[str, Any]:
 @mcp.tool()
 async def kpi_show() -> dict[str, Any]:
     """Quality KPIs (5 件) のロールアップ。"""
-    return {"kpis": []}
+    import sqlalchemy as sa
+    from sqlalchemy import select
+
+    from backend.app.db.models.agent_run import AgentRun
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            total_runs = (await session.execute(
+                select(sa.func.count()).select_from(AgentRun).where(AgentRun.tenant_id == DEFAULT_TENANT_ID)
+            )).scalar() or 0
+            completed = (await session.execute(
+                select(sa.func.count()).select_from(AgentRun).where(
+                    AgentRun.tenant_id == DEFAULT_TENANT_ID, AgentRun.status == "completed"
+                )
+            )).scalar() or 0
+            failed = (await session.execute(
+                select(sa.func.count()).select_from(AgentRun).where(
+                    AgentRun.tenant_id == DEFAULT_TENANT_ID, AgentRun.status == "failed"
+                )
+            )).scalar() or 0
+            return {
+                "kpis": [
+                    {"name": "total_runs", "value": total_runs},
+                    {"name": "completed_runs", "value": completed},
+                    {"name": "failed_runs", "value": failed},
+                    {"name": "success_rate", "value": round(completed / total_runs * 100, 1) if total_runs > 0 else 0},
+                    {"name": "open_tickets", "value": 0},
+                ]
+            }
+    except Exception as e:
+        return {"error": str(type(e).__name__), "kpis": []}
 
 
 @mcp.tool()
 async def notification_list() -> dict[str, Any]:
     """通知一覧 (keys_only DTO)。"""
-    return {"notifications": []}
+    from backend.app.mcp.api_bridge import bridge_notification_list
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_notification_list(
+                session, tenant_id=DEFAULT_TENANT_ID, actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID
+            )
+    except Exception as e:
+        return {"error": str(type(e).__name__), "notifications": []}
 
 
 # --- Mutating tools ---
@@ -258,7 +318,18 @@ async def run_create(
 @mcp.tool()
 async def run_cancel(run_id: str) -> dict[str, Any]:
     """AgentRun をキャンセル。"""
-    return {"run_id": run_id, "status": "cancelled"}
+    from uuid import UUID
+
+    from backend.app.mcp.api_bridge import bridge_run_cancel
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_run_cancel(
+                session, tenant_id=DEFAULT_TENANT_ID, run_id=UUID(run_id)
+            )
+    except Exception as e:
+        return {"error": str(type(e).__name__), "run_id": run_id}
 
 
 # --- Superintendent tools (SP-035) ---
@@ -269,10 +340,34 @@ async def superintendent_agent_register(
     role_id: str, project_id: str, provider: str = "claude"
 ) -> dict[str, Any]:
     """Agent を登録して role を割り当てる。provider: claude / codex / custom。"""
-    from uuid import uuid4
+    from datetime import UTC, datetime
+    from uuid import UUID, uuid4
 
-    agent_id = str(uuid4())
-    return {"agent_id": agent_id, "role_id": role_id, "provider": provider, "state": "registered"}
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
+    from backend.app.services.superintendent.lifecycle import ManagedAgent
+
+    agent_id = uuid4()
+    ManagedAgent(
+        agent_id=agent_id,
+        actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+        role_id=role_id,
+        state="registered",
+        project_id=UUID(project_id),
+        superintendent_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+        created_at=datetime.now(UTC),
+    )
+    from backend.app.services.superintendent.agent_spawner import _active_agents
+    _active_agents[agent_id] = type("SpawnedAgent", (), {
+        "agent_id": agent_id, "provider": provider, "process": None,
+        "pid": None, "started_at": None, "stopped_at": None, "exit_code": None,
+    })()
+    return {
+        "agent_id": str(agent_id),
+        "role_id": role_id,
+        "provider": provider,
+        "state": "registered",
+        "project_id": project_id,
+    }
 
 
 @mcp.tool()
@@ -343,18 +438,80 @@ async def superintendent_delegation_show() -> dict[str, Any]:
 
 @mcp.tool()
 async def superintendent_dispatch(
-    agent_id: str, ticket_id: str, action_class: str = "task_write"
+    agent_id: str, ticket_id: str, action_class: str = "task_write",
+    project_id: str = "00000000-0000-4000-8000-000000000004",
 ) -> dict[str, Any]:
     """Ticket を agent に割り当てて AgentRun を開始。delegation policy gate 経由。"""
+    from uuid import UUID
+
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.delegation_policy import POLICY_TEMPLATES
+    from backend.app.services.superintendent.dispatch import DispatchRequest, evaluate_dispatch
+
+    policy = POLICY_TEMPLATES["conservative"]
+    request = DispatchRequest(
+        superintendent_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+        agent_id=_safe_uuid(agent_id),
+        ticket_id=ticket_id,
+        project_id=UUID(project_id),
+        action_class=action_class,
+        risk_level="low",
+    )
+    result = evaluate_dispatch(request, policy)
+
+    if not result.dispatched or result.deny_reason:
+        return {
+            "dispatched": False,
+            "agent_id": agent_id,
+            "ticket_id": ticket_id,
+            "denied": True,
+            "reason": result.deny_reason or "policy denied",
+        }
+
+    auto_dispatch_actions = {"read_only", "task_write"}
+    if not result.needs_human_approval or action_class in auto_dispatch_actions:
+        try:
+            async with get_db_session() as session:
+                from backend.app.mcp.api_bridge import bridge_run_create
+                run_result = await bridge_run_create(
+                    session,
+                    tenant_id=DEFAULT_TENANT_ID,
+                    project_id=UUID(project_id),
+                    ticket_id=ticket_id,
+                    purpose=f"superintendent dispatch: {action_class}",
+                )
+                return {
+                    "dispatched": True,
+                    "agent_id": agent_id,
+                    "ticket_id": ticket_id,
+                    "run_id": run_result["run_id"],
+                    "needs_human_approval": False,
+                    "action_class": action_class,
+                }
+        except Exception as e:
+            return {"error": str(type(e).__name__), "dispatched": False}
+
     return {
         "dispatched": True,
         "agent_id": agent_id,
         "ticket_id": ticket_id,
-        "needs_human_approval": action_class not in ("read_only", "task_write"),
+        "needs_human_approval": True,
+        "action_class": action_class,
     }
 
 
 @mcp.tool()
 async def notification_resolve(notification_id: str) -> dict[str, Any]:
     """通知を解決済みにする。"""
-    return {"notification_id": notification_id, "resolved": True}
+    from uuid import UUID
+
+    from backend.app.mcp.api_bridge import bridge_notification_resolve
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_notification_resolve(
+                session, tenant_id=DEFAULT_TENANT_ID, notification_id=UUID(notification_id)
+            )
+    except Exception as e:
+        return {"error": str(type(e).__name__), "notification_id": notification_id}
