@@ -14,6 +14,21 @@ TaskManagedAI を「人間が直感的に理解でき、AI agent の動作を透
 - **Phase 1**: 静的レンダリング (Server Component)
 - **Phase 2 (defer)**: dnd-kit + shadcn/ui でドラッグ&ドロップ
 
+### TicketStatus → 看板カラム配置表
+
+| TicketStatus | 看板カラム | 表示 |
+|---|---|---|
+| open | 未着手 | デフォルトカラム |
+| in_progress | 進行中 | アクティブカラム |
+| blocked | 進行中 (ブロック表示) | ブロックインジケーター付き |
+| review | 進行中 (レビュー中) | レビューバッジ付き |
+| completed | 完了 | 完了カラム |
+| closed | 完了 | 完了カラム (closed バッジ) |
+| cancelled | 完了 (中止) | 中止バッジ付き、グレーアウト |
+
+→ 3 カラム (未着手 / 進行中 / 完了) に全 7 ステータスをマッピング。
+blocked/review は進行中カラム内でサブインジケーターで区別。
+
 ### 2. ステータスインジケーター
 - **色付きドット + ラベル**: 一目で状態がわかる
 - **一貫性**: 全ページで同じインジケーターを使用
@@ -59,7 +74,24 @@ TaskManagedAI を「人間が直感的に理解でき、AI agent の動作を透
 
 ## 共通コンポーネント設計
 
-### StatusIndicator コンポーネント
+### TicketStatusIndicator コンポーネント (チケット用)
+```tsx
+const TICKET_STATUS_CONFIG = {
+  open:        { color: "bg-blue-500",    label: "未着手" },
+  in_progress: { color: "bg-amber-500",   label: "進行中" },
+  blocked:     { color: "bg-orange-500",  label: "ブロック" },
+  review:      { color: "bg-purple-500",  label: "レビュー中" },
+  completed:   { color: "bg-emerald-500", label: "完了" },
+  closed:      { color: "bg-emerald-500", label: "完了" },
+  cancelled:   { color: "bg-gray-400",    label: "中止" },
+};
+```
+
+### AgentRunStatusIndicator コンポーネント (AgentRun 用)
+- `status` + `blocked_reason` を受け取る
+- blocked 時: policy_blocked (赤) / budget_blocked (黄) / runtime_blocked (橙) で色分け
+
+### StatusIndicator コンポーネント (レガシー互換)
 ```tsx
 // 使い方: <StatusIndicator status="running" />
 // 出力: ● 進行中 (amber ドット + ラベル)
@@ -108,6 +140,14 @@ const ROLE_CONFIG = {
 // プロジェクト切替タブバー (全プロジェクト | kintone | ieshima-edu | ...)
 ```
 
+### プロジェクト切替 URL 契約
+- URL: `/tickets?project=<slug>` (query parameter)
+- デフォルト: `?project=all` (全プロジェクト横断)
+- チケット作成: 選択中の project_id を server action に渡す
+- チケット詳細: `/tickets/[id]?project=<slug>` (パンくず用)
+- mutation: URL の project slug → server 側で project_id に解決 (caller-supplied 禁止)
+- E2E: 非デフォルトプロジェクトでの作成・詳細・更新を完了条件に含める
+
 ## 実装 Units (codex-quality-loop で各 Unit を回す)
 
 ### Unit 1: 共通コンポーネント基盤
@@ -149,13 +189,50 @@ const ROLE_CONFIG = {
 - **phases**: 4, 5
 
 ## 品質 Gate (各 Unit)
-- TypeScript ビルド成功 (`pnpm build` in Docker)
-- 日本語テキスト漏れチェック (英語 title/description grep = 0)
-- ステータスインジケーター一貫性チェック
-- モバイルレスポンシブ確認
+
+### 必須検証コマンド
+- `pnpm typecheck` — TypeScript 型チェック
+- `pnpm lint` — ESLint
+- `pnpm test` — Vitest unit test
+- `pnpm build` — Docker ビルド成功
+- Playwright: `pnpm test:e2e` — 該当 route の E2E
+
+### 各 Unit 固有の完了条件
+| Unit | 追加検証 |
+|---|---|
+| 1 | StatusIndicator: 全 7 TicketStatus + 全 16 AgentRunStatus + blocked_reason 3 種の exact-set テスト |
+| 2 | 看板: 全 7 TicketStatus のカードが正しいカラムに配置される fixture テスト |
+| 3 | ダッシュボード→チケット→詳細の導線 E2E |
+| 4 | /runs: 実 API データ表示 + role バッジ + ステータスインジケーター |
+| 5 | /audit: 実 API データ表示 + イベントフィルター |
+| 6 | /settings + /approvals + /orchestrator: 日本語 100% |
+| 7 | /eval-dashboard + /today + /timeline: 日本語 100% + 導線確認 |
+| 8 | 全ページ: 375/768/1024/1440px レスポンシブ + Tab/Enter/Escape キーボード操作 + aria-live |
+
+## 使用する shadcn/ui コンポーネント一覧
+
+### Phase 1 (Unit 1-7) で使用
+| コンポーネント | 用途 | 既存/追加 |
+|---|---|---|
+| Card / CardHeader / CardContent | チケットカード、プロジェクトカード | 既存 |
+| Badge | ステータスバッジ、Role バッジ | 既存 |
+| Tabs / TabsList / TabsTrigger | プロジェクト切替 | 既存 |
+| Select | ステータスフィルター | 追加 (`npx shadcn@latest add select`) |
+| ScrollArea | 看板カラムのスクロール | 追加 (`npx shadcn@latest add scroll-area`) |
+| Separator | カード間区切り | 既存 |
+
+### Phase 2 (defer) で追加
+| コンポーネント | 用途 |
+|---|---|
+| @dnd-kit/core + @dnd-kit/sortable | ドラッグ&ドロップ |
+
+### Phase 1 でのドラッグ文言
+- Phase 1 ではドラッグ&ドロップ非対応
+- 空カラムには「チケットはありません」と表示 (「ドラッグ」文言は使わない)
+- ステータス変更は ticket_update API 経由 (ボタン or ドロップダウン)
 
 ## 参考資料
-- shadcn/ui Kanban Board: WCAG 2.2 AAA + keyboard navigation
+- shadcn/ui: Card / Badge / Tabs (既存導入済み)
 - dnd-kit: @dnd-kit/core + @dnd-kit/sortable (Phase 2 defer)
 - Agent UX 2026: 透明性 + 介入ポイント + コスト可視化
 - マルチエージェントダッシュボード: 統合ビュー + フィルター
