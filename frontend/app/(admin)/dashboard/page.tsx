@@ -48,7 +48,7 @@ async function readProjectSummaries(): Promise<ProjectSummary[]> {
       const statusCounts: TicketStatusCounts = { open: 0, in_progress: 0, closed: 0, cancelled: 0 };
       try {
         const pid = (p as any).project_id ?? (p as any).id;
-        const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets?limit=500`) as Record<string, unknown>;
+        const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets?limit=200`) as Record<string, unknown>;
         const items = (ticketsRes?.items ?? []) as Array<{ status: string }>;
         ticketCount = (ticketsRes?.total as number) ?? items.length;
         for (const t of items) {

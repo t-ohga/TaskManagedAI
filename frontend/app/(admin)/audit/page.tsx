@@ -126,7 +126,8 @@ const PAGE_SIZE = 50;
 export default async function AuditPage({ searchParams }: AuditPageProps) {
   const params = await searchParams;
   const typeFilter = params.type ?? "";
-  const pageNum = Math.max(1, Number(params.page ?? "1"));
+  const parsedPage = Number(params.page ?? "1");
+  const pageNum = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1;
   const { items: events, total } = await loadAuditEvents({
     eventType: typeFilter || undefined,
     limit: PAGE_SIZE,
