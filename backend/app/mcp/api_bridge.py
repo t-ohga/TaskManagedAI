@@ -338,3 +338,26 @@ async def bridge_notification_resolve(
         return {"error": "not_found", "notification_id": str(notification_id)}
     await session.commit()
     return {"notification_id": str(event.id), "resolved": True}
+
+
+async def bridge_project_list(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+) -> dict[str, Any]:
+    from backend.app.repositories.project import ProjectRepository
+
+    repo = ProjectRepository(session)
+    projects = await repo.list(tenant_id=tenant_id)
+    return {
+        "projects": [
+            {
+                "id": str(p.id),
+                "slug": p.slug,
+                "name": p.name,
+                "status": p.status,
+            }
+            for p in projects
+        ],
+        "total": len(projects),
+    }

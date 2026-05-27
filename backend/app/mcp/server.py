@@ -1,4 +1,4 @@
-"""TaskManagedAI MCP Server — stdio transport, 21 tools (all DB-wired).
+"""TaskManagedAI MCP Server — stdio transport, 22 tools (all DB-wired).
 
 Security invariants:
 - approval_decide is human-only (not exposed)
@@ -219,6 +219,19 @@ async def notification_list() -> dict[str, Any]:
             )
     except Exception as e:
         return {"error": str(type(e).__name__), "notifications": []}
+
+
+@mcp.tool()
+async def project_list() -> dict[str, Any]:
+    """全プロジェクト一覧を取得。AI agent がどのプロジェクトで作業するか発見できる。"""
+    from backend.app.mcp.api_bridge import bridge_project_list
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_project_list(session, tenant_id=DEFAULT_TENANT_ID)
+    except Exception as e:
+        return {"error": str(type(e).__name__), "projects": []}
 
 
 # --- Mutating tools ---

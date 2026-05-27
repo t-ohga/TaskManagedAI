@@ -73,8 +73,8 @@ async def test_mcp_superintendent_dispatch_forbidden_action_denied() -> None:
 
 @pytest.mark.asyncio
 async def test_mcp_tool_count_is_21() -> None:
-    """All 21 tools (15 base + 6 superintendent) are registered."""
+    """All 22 tools (16 base + 6 superintendent) are registered."""
     from backend.app.mcp.server import mcp
 
     tools = await mcp.list_tools()
-    assert len(tools) == 21
+    assert len(tools) == 22
