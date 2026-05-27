@@ -61,3 +61,28 @@ export async function getBackendHealth(): Promise<HealthResponse> {
   return fetchBackendJson("/healthz", healthResponseSchema);
 }
 
+
+export async function fetchBackendRaw(
+  path: `/${string}`,
+  init: RequestInit = {}
+): Promise<unknown> {
+  const headers = new Headers(init.headers);
+  const cookieStore = await cookies();
+  const sessionCookie = cookieStore.get(DEV_SESSION_COOKIE_NAME);
+
+  if (sessionCookie) {
+    headers.set("cookie", `${DEV_SESSION_COOKIE_NAME}=${sessionCookie.value}`);
+  }
+
+  const response = await fetch(buildBackendUrl(path), {
+    ...init,
+    headers,
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    throw new BackendApiError(response.status, `Backend request failed with ${response.status}.`);
+  }
+
+  return response.json();
+}

@@ -1,4 +1,4 @@
-import { getBackendHealth } from "@/lib/api/client";
+import { getBackendHealth, fetchBackendRaw } from "@/lib/api/client";
 import type { HealthResponse } from "@/lib/api/types";
 import { getFrontendHealth } from "@/lib/health";
 
@@ -7,6 +7,14 @@ export const dynamic = "force-dynamic";
 type BackendHealthState =
   | { kind: "ok"; health: HealthResponse }
   | { kind: "error"; message: string };
+
+type ProjectSummary = {
+  id: string;
+  slug: string;
+  name: string;
+  status: string;
+  ticketCount: number;
+};
 
 async function readBackendHealth(): Promise<BackendHealthState> {
   try {
@@ -17,9 +25,39 @@ async function readBackendHealth(): Promise<BackendHealthState> {
   }
 }
 
+async function readProjectSummaries(): Promise<ProjectSummary[]> {
+  try {
+    const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
+    const projects = projectsRes?.items ?? projectsRes ?? [];
+    if (!Array.isArray(projects)) return [];
+
+    const summaries: ProjectSummary[] = [];
+    for (const p of projects.slice(0, 10)) {
+      let ticketCount = 0;
+      try {
+        const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${p.id}/tickets`);
+        ticketCount = ticketsRes?.total ?? ticketsRes?.items?.length ?? 0;
+      } catch {
+        ticketCount = 0;
+      }
+      summaries.push({
+        id: p.id,
+        slug: p.slug,
+        name: p.name,
+        status: p.status,
+        ticketCount,
+      });
+    }
+    return summaries;
+  } catch {
+    return [];
+  }
+}
+
 export default async function DashboardPage() {
   const backendHealth = await readBackendHealth();
   const frontendHealth = getFrontendHealth();
+  const projects = await readProjectSummaries();
 
   return (
     <div className="grid gap-6">
@@ -94,6 +132,36 @@ export default async function DashboardPage() {
           )}
         </article>
       </section>
+
+      {projects.length > 0 && (
+        <section aria-label="プロジェクト横断サマリー">
+          <h2 className="mb-4 text-lg font-semibold">プロジェクト一覧</h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {projects.map((p) => (
+              <article
+                key={p.id}
+                className="rounded-lg border border-line bg-panel p-4 shadow-sm transition-colors hover:border-accent/30"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="font-semibold">{p.name}</h3>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{p.slug}</p>
+                  </div>
+                  <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                    {p.status}
+                  </span>
+                </div>
+                <div className="mt-3 border-t border-line pt-3">
+                  <p className="text-sm">
+                    <span className="font-semibold text-accent">{p.ticketCount}</span>
+                    <span className="ml-1 text-muted-foreground">チケット</span>
+                  </p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

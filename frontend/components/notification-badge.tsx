@@ -15,7 +15,7 @@ export async function NotificationBadge() {
   return (
     <Link
       href="/notifications"
-      className="relative inline-flex items-center gap-2 rounded-md px-3 py-1 text-sm font-semibold text-muted hover:text-foreground"
+      className="relative inline-flex items-center gap-2 rounded-md px-3 py-1 text-sm font-semibold text-muted-foreground hover:text-foreground"
       data-testid="notification-badge-link"
     >
       <span aria-hidden="true">🔔</span>

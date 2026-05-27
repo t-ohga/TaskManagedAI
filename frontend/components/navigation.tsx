@@ -33,7 +33,7 @@ export function Navigation({ actorLabel }: NavigationProps) {
             TaskManagedAI
           </Link>
           <div className="flex items-center gap-2">
-            <p className="rounded-md border border-line px-2 py-1 font-mono text-xs text-muted">
+            <p className="rounded-md border border-line px-2 py-1 font-mono text-xs text-muted-foreground">
               {actorLabel}
             </p>
             <NotificationBadge />
@@ -49,7 +49,7 @@ export function Navigation({ actorLabel }: NavigationProps) {
                   className={
                     item.current
                       ? "block rounded-md bg-teal-50 px-3 py-2 text-sm font-semibold text-accent outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                      : "block rounded-md px-3 py-2 text-sm font-medium text-muted outline-offset-2 hover:bg-slate-50 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                      : "block rounded-md px-3 py-2 text-sm font-medium text-muted-foreground outline-offset-2 hover:bg-slate-50 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                   }
                   href={item.href as Route}
                 >
@@ -59,7 +59,7 @@ export function Navigation({ actorLabel }: NavigationProps) {
             ))}
             <li>
               <Link
-                className="block rounded-md px-3 py-2 text-sm font-medium text-muted outline-offset-2 hover:bg-slate-50 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="block rounded-md px-3 py-2 text-sm font-medium text-muted-foreground outline-offset-2 hover:bg-slate-50 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 href="/login"
               >
                 ログアウト
