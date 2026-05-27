@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { fetchBackendRaw } from "@/lib/api/client";
+import { TicketStatusChanger } from "@/components/ticket-status-changer";
 
 export const dynamic = "force-dynamic";
 
@@ -146,29 +147,9 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
       <div className="grid gap-4 md:grid-cols-2">
         <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
           <h2 className="text-lg font-semibold">ステータス変更</h2>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {[
-              { status: "open", label: "未着手", color: "bg-blue-100 text-blue-700 hover:bg-blue-200" },
-              { status: "in_progress", label: "進行中", color: "bg-amber-100 text-amber-700 hover:bg-amber-200" },
-              { status: "review", label: "レビュー", color: "bg-purple-100 text-purple-700 hover:bg-purple-200" },
-              { status: "blocked", label: "ブロック", color: "bg-orange-100 text-orange-700 hover:bg-orange-200" },
-              { status: "closed", label: "完了", color: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" },
-              { status: "cancelled", label: "中止", color: "bg-gray-100 text-gray-600 hover:bg-gray-200" },
-            ].map(({ status: s, label, color }) => (
-              <span
-                key={s}
-                className={`cursor-default rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                  ticket.status === s ? color + " ring-2 ring-offset-1 ring-accent" : color + " opacity-50"
-                }`}
-              >
-                {label}
-                {ticket.status === s && " ✓"}
-              </span>
-            ))}
+          <div className="mt-4">
+            <TicketStatusChanger ticketId={ticket.id} currentStatus={ticket.status} />
           </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            ※ ステータス変更は MCP tool (ticket_update) または API 経由で行えます
-          </p>
         </article>
 
         <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">

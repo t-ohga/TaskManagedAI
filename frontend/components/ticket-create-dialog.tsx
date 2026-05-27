@@ -36,7 +36,8 @@ export function TicketCreateDialog({ projectSlug, projectId }: { projectSlug: st
         </div>
       )}
       <form action={formAction} className="grid gap-3">
-        <input type="hidden" name="slug" value={`ticket-${Date.now()}`} />
+        <input type="hidden" name="slug" value="ticket" />
+        
         {projectId && <input type="hidden" name="project_id" value={projectId} />}
         <div>
           <label htmlFor="title" className="text-xs font-medium text-muted-foreground">
@@ -48,6 +49,15 @@ export function TicketCreateDialog({ projectSlug, projectId }: { projectSlug: st
             type="text"
             required
             placeholder="チケットのタイトル"
+            onChange={(e) => {
+              const slug = e.target.value
+                .toLowerCase()
+                .replace(/[^a-z0-9぀-ゟ゠-ヿ一-鿿]+/g, '-')
+                .replace(/^-|-$/g, '')
+                .slice(0, 40) || 'ticket';
+              const slugInput = e.target.form?.querySelector('input[name="slug"]') as HTMLInputElement;
+              if (slugInput) slugInput.value = slug + '-' + Date.now() % 100000;
+            }}
             className="mt-1 w-full rounded-md border border-line px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
         </div>

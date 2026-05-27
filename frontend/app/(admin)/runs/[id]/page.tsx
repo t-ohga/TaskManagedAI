@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { fetchBackendRaw } from "@/lib/api/client";
+import { RunCancelButton } from "@/components/run-cancel-button";
 import { AgentRunStatusIndicator } from "@/components/agent-run-status-indicator-v2";
 import { RoleBadge } from "@/components/role-badge";
 
