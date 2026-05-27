@@ -7,6 +7,7 @@ import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { TicketCreateDialog } from "@/components/ticket-create-dialog";
 import { SearchBar } from "@/components/search-bar";
 import { StatusFilter } from "@/components/status-filter";
+import { ViewToggle } from "@/components/view-toggle";
 
 export const dynamic = "force-dynamic";
 
@@ -155,7 +156,7 @@ function KanbanColumnEnhanced({
 }
 
 type Props = {
-  searchParams: Promise<{ project?: string; q?: string; status?: string }>;
+  searchParams: Promise<{ project?: string; q?: string; status?: string; view?: string; sort?: string }>;
 };
 
 export default async function TicketsKanbanPage({ searchParams }: Props) {
@@ -163,6 +164,8 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   const selectedProject = params.project ?? "all";
   const searchQuery = params.q ?? "";
   const statusFilter = params.status ?? "";
+  const currentView = (params.view === "list" ? "list" : "kanban") as "kanban" | "list";
+  const sortKey = params.sort ?? "created_desc";
   const projects = await loadProjects();
 
   let allTickets: (TicketItem & { projectSlug: string })[] = [];
@@ -198,6 +201,17 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   for (const ticket of filteredTickets) {
     const group = STATUS_TO_KANBAN[ticket.status] ?? "todo";
     grouped[group].push(ticket);
+  }
+
+  const PRIORITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+  if (sortKey === "priority") {
+    filteredTickets.sort((a, b) => (PRIORITY_RANK[a.priority ?? ""] ?? 99) - (PRIORITY_RANK[b.priority ?? ""] ?? 99));
+  } else if (sortKey === "title") {
+    filteredTickets.sort((a, b) => a.title.localeCompare(b.title, "ja"));
+  } else if (sortKey === "status") {
+    filteredTickets.sort((a, b) => a.status.localeCompare(b.status));
+  } else {
+    filteredTickets.sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
   }
 
   const showProjectBadge = selectedProject === "all";
@@ -241,6 +255,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex-1"><SearchBar /></div>
           <StatusFilter />
+          <ViewToggle currentView={currentView} />
         </div>
       </Suspense>
 
@@ -258,25 +273,67 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
         />
       )}
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        {KANBAN_COLUMNS.map((col) => (
-          <KanbanColumnEnhanced
-            key={col.key}
-            title={col.title}
-            count={grouped[col.key].length}
-            color={col.color}
-            hint={col.hint}
-          >
-            {grouped[col.key].map((ticket) => (
-              <TicketCard
-                key={ticket.id}
-                ticket={ticket}
-                projectSlug={showProjectBadge ? ticket.projectSlug : undefined}
-              />
-            ))}
-          </KanbanColumnEnhanced>
-        ))}
-      </div>
+      {currentView === "kanban" ? (
+        <div className="grid gap-4 lg:grid-cols-3">
+          {KANBAN_COLUMNS.map((col) => (
+            <KanbanColumnEnhanced
+              key={col.key}
+              title={col.title}
+              count={grouped[col.key].length}
+              color={col.color}
+              hint={col.hint}
+            >
+              {grouped[col.key].map((ticket) => (
+                <TicketCard
+                  key={ticket.id}
+                  ticket={ticket}
+                  projectSlug={showProjectBadge ? ticket.projectSlug : undefined}
+                />
+              ))}
+            </KanbanColumnEnhanced>
+          ))}
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-line">
+          <table className="w-full text-sm">
+            <thead className="bg-canvas text-left text-xs font-medium text-muted-foreground">
+              <tr>
+                <th className="px-4 py-3">タイトル</th>
+                <th className="px-4 py-3">ステータス</th>
+                <th className="px-4 py-3">優先度</th>
+                {showProjectBadge && <th className="px-4 py-3">プロジェクト</th>}
+                <th className="px-4 py-3">作成日</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {filteredTickets.map((ticket) => (
+                <tr key={ticket.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3">
+                    <Link href={`/tickets/${ticket.id}` as never} className="font-medium text-accent hover:underline">
+                      {ticket.title}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-3"><TicketStatusIndicator status={ticket.status} /></td>
+                  <td className="px-4 py-3">{priorityBadge(ticket.priority)}</td>
+                  {showProjectBadge && (
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{ticket.projectSlug}</td>
+                  )}
+                  <td className="px-4 py-3 text-xs text-muted-foreground">
+                    {ticket.created_at ? new Date(ticket.created_at).toLocaleDateString("ja-JP") : ""}
+                  </td>
+                </tr>
+              ))}
+              {filteredTickets.length === 0 && (
+                <tr>
+                  <td colSpan={showProjectBadge ? 5 : 4} className="px-4 py-8 text-center text-muted-foreground">
+                    チケットがありません
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }

@@ -290,10 +290,10 @@ function KpiStrip({
 
   return (
     <dl aria-label="Today KPI strip" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <MetricCard label="open_tickets" value={String(workTickets)} detail="active ticket statuses" />
-      <MetricCard label="pending_approvals" value={String(pendingApprovals)} detail="human decision queue" />
-      <MetricCard label="active_runs" value={String(activeRuns)} detail="non-terminal AgentRun" />
-      <MetricCard label="p0_kpis_met" value={kpiValue} detail={kpiSource} />
+      <MetricCard label="未完了チケット" value={String(workTickets)} detail="アクティブなチケット" />
+      <MetricCard label="承認待ち" value={String(pendingApprovals)} detail="承認待ちキュー" />
+      <MetricCard label="実行中AI" value={String(activeRuns)} detail="実行中のAI" />
+      <MetricCard label="KPI達成" value={kpiValue} detail={kpiSource} />
     </dl>
   );
 }

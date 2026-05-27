@@ -170,7 +170,7 @@ export default async function DashboardPage() {
                     <p className="mt-0.5 text-xs text-muted-foreground">{p.slug}</p>
                   </div>
                   <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                    {p.status}
+                    {p.status === "active" ? "稼働中" : p.status}
                   </span>
                 </div>
                 <div className="mt-3 border-t border-line pt-3">

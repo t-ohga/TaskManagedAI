@@ -49,22 +49,23 @@ async function loadTicket(id: string): Promise<TicketDetail | null> {
     const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
     const projects = ((projectsRes as Record<string, unknown>)?.projects ?? []) as Array<Record<string, string>>;
 
-    for (const p of projects) {
-      const pid = String(p.project_id ?? p.id ?? "");
-      try {
-        const ticketsRes = await fetchBackendRaw(
-          `/api/v1/projects/${pid}/tickets` as `/${string}`
-        );
-        const items = ((ticketsRes as Record<string, unknown>)?.items ?? []) as TicketDetail[];
-        const found = items.find((t) => t.id === id);
-        if (found) {
-          return { ...found, project_id: pid };
+    const results = await Promise.all(
+      projects.map(async (p) => {
+        const pid = String(p.project_id ?? p.id ?? "");
+        try {
+          const ticketsRes = await fetchBackendRaw(
+            `/api/v1/projects/${pid}/tickets` as `/${string}`
+          );
+          const items = ((ticketsRes as Record<string, unknown>)?.items ?? []) as TicketDetail[];
+          const found = items.find((t) => t.id === id);
+          if (found) return { ...found, project_id: pid };
+        } catch {
+          /* skip inaccessible project */
         }
-      } catch {
-        continue;
-      }
-    }
-    return null;
+        return null;
+      })
+    );
+    return results.find((r) => r !== null) ?? null;
   } catch {
     return null;
   }
