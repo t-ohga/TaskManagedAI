@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import time
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from sqlalchemy import select
@@ -755,4 +755,117 @@ async def bridge_approval_request_create(
         "action_class": action_class,
         "status": "pending",
         "ticket_id": ticket_id,
+    }
+
+
+async def bridge_delegation_create(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    project_id: UUID,
+    parent_run_id: UUID,
+    ticket_id: str,
+    purpose: str,
+    role_id: str,
+    task_spec: dict[str, Any],
+    sender_actor_id: UUID,
+) -> dict[str, Any]:
+    import hashlib
+    import json as json_mod
+    from datetime import UTC, datetime, timedelta
+
+    child_run = await bridge_run_create(
+        session,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        ticket_id=ticket_id,
+        purpose=purpose,
+        role_id=role_id,
+        parent_run_id=parent_run_id,
+    )
+    if "error" in child_run:
+        return child_run
+
+    child_run_id = UUID(child_run["run_id"])
+    spec_json = json_mod.dumps(task_spec, sort_keys=True, ensure_ascii=False)
+    payload_hash = hashlib.sha256(spec_json.encode()).hexdigest()
+
+    max_seq = await session.execute(
+        sa.text(
+            "SELECT COALESCE(MAX(seq_no), 0) FROM inter_agent_messages "
+            "WHERE tenant_id = :tid AND parent_run_id = :prid"
+        ),
+        {"tid": tenant_id, "prid": parent_run_id},
+    )
+    next_seq = (max_seq.scalar() or 0) + 1
+
+    msg_id = uuid4()
+    await session.execute(
+        sa.text("""
+            INSERT INTO inter_agent_messages (
+                id, tenant_id, project_id, parent_run_id, child_run_id,
+                sender_actor_id, sender_run_id, receiver_kind, receiver_ref,
+                payload_data_class, trust_level, payload_hash, artifact_ref,
+                seq_no, schema_version, idempotency_key, expires_at
+            ) VALUES (
+                :id, :tid, :pid, :prid, :crid,
+                :said, :srid, 'agent_run', NULL,
+                'internal', 'untrusted_content', :phash, :aref,
+                :seq, '1.0', :ikey, :exp
+            )
+        """),
+        {
+            "id": msg_id, "tid": tenant_id, "pid": project_id,
+            "prid": parent_run_id, "crid": child_run_id,
+            "said": sender_actor_id, "srid": parent_run_id,
+             "phash": payload_hash,
+            "aref": f"task_spec:{child_run_id}",
+            "seq": next_seq, "ikey": f"delegation:{parent_run_id}:{next_seq}",
+            "exp": datetime.now(UTC) + timedelta(hours=24),
+        },
+    )
+    await session.commit()
+
+    return {
+        "delegation_id": str(msg_id),
+        "child_run_id": str(child_run_id),
+        "parent_run_id": str(parent_run_id),
+        "role_id": role_id,
+        "status": "pending",
+        "task_spec": task_spec,
+    }
+
+
+async def bridge_delegation_inbox(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    run_id: UUID,
+    limit: int = 20,
+) -> dict[str, Any]:
+    limit = min(max(1, limit), MAX_LIMIT)
+    result = await session.execute(
+        sa.text("""
+            SELECT id, sender_run_id, parent_run_id, artifact_ref, seq_no, created_at
+            FROM inter_agent_messages
+            WHERE tenant_id = :tid AND child_run_id = :crid AND consumed_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT :lim
+        """),
+        {"tid": tenant_id, "crid": run_id, "lim": limit},
+    )
+    rows = result.fetchall()
+    return {
+        "messages": [
+            {
+                "id": str(r[0]),
+                "sender_run_id": str(r[1]),
+                "parent_run_id": str(r[2]),
+                "artifact_ref": r[3],
+                "seq_no": r[4],
+                "created_at": r[5].isoformat() if r[5] else None,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
     }

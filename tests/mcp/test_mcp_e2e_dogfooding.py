@@ -77,4 +77,4 @@ async def test_mcp_tool_count_is_21() -> None:
     from backend.app.mcp.server import mcp
 
     tools = await mcp.list_tools()
-    assert len(tools) == 30
+    assert len(tools) == 32

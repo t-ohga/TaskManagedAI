@@ -1,4 +1,4 @@
-"""TaskManagedAI MCP Server — stdio transport, 30 tools (all DB-wired).
+"""TaskManagedAI MCP Server — stdio transport, 32 tools (all DB-wired).
 
 Security invariants:
 - approval_decide is human-only (not exposed)
@@ -533,6 +533,62 @@ async def approval_request_create(
         return {"error": "invalid_uuid"}
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
+
+
+
+@mcp.tool()
+async def delegation_create(
+    project_id: str, parent_run_id: str, ticket_id: str,
+    purpose: str, role_id: str, task_spec: str = "{}",
+) -> dict[str, Any]:
+    """タスク委譲を作成。親 run から子 run を spawn し、task_spec で指示を送る。"""
+    import json as json_mod
+
+    from backend.app.mcp.api_bridge import bridge_delegation_create
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
+
+    valid_roles = {
+        "orchestrator", "dispatcher", "implementer", "reviewer",
+        "researcher", "tester", "security_agent", "repair_specialist",
+        "curator", "observer",
+    }
+    if role_id not in valid_roles:
+        return {"error": "invalid_role_id", "valid": sorted(valid_roles)}
+
+    try:
+        spec = json_mod.loads(task_spec) if isinstance(task_spec, str) else task_spec
+    except json_mod.JSONDecodeError:
+        return {"error": "invalid_json", "field": "task_spec"}
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_delegation_create(
+                session, tenant_id=DEFAULT_TENANT_ID, project_id=UUID(project_id),
+                parent_run_id=UUID(parent_run_id), ticket_id=ticket_id,
+                purpose=purpose, role_id=role_id, task_spec=spec,
+                sender_actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+            )
+    except (ValueError, AttributeError):
+        return {"error": "invalid_uuid"}
+    except Exception as e:
+        return {"error": str(type(e).__name__), "message": str(e)[:200]}
+
+
+@mcp.tool()
+async def delegation_inbox(run_id: str, limit: int = 20) -> dict[str, Any]:
+    """自分宛の未処理タスク一覧 (consumed_at IS NULL)。"""
+    from backend.app.mcp.api_bridge import bridge_delegation_inbox
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_delegation_inbox(
+                session, tenant_id=DEFAULT_TENANT_ID, run_id=UUID(run_id), limit=limit,
+            )
+    except (ValueError, AttributeError):
+        return {"error": "invalid_uuid", "field": "run_id"}
+    except Exception as e:
+        return {"error": str(type(e).__name__), "messages": []}
 
 # --- Superintendent tools (SP-035) ---
 
