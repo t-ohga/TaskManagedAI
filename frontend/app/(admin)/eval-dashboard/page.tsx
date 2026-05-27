@@ -2,16 +2,16 @@
  * P0 出口ダッシュボード。
  *
  * Read-only display of:
- * - Hard Gates 7 (AC-HARD-01〜07) with metric_value / threshold / threshold_met (static)
+ * - ハードゲート 7 (AC-HARD-01〜07)
  * - KPIs 5 (AC-KPI-01〜05) — **live fetch from `/api/v1/eval/kpi-rollup`** with
- *   skeleton fallback when backend unavailable (503/501) [SP-022 T08 batch 6]
- * - Operational drills (host_migration / backup_restore) with drill_status (static)
+ *   バックエンド未接続時は静的データにフォールバック
+ * - 運用ドリル (ホスト移行 / バックアップ復元)
  * - P0 Exit decision summary (verdict + deficiency reasons)
  *
  * **Data source**: KPI section now wires to backend `/api/v1/eval/kpi-rollup`
- * via `fetchKpiRollupOrFallback`, with graceful skeleton fallback for backend
- * outage. Hard Gates / Smoke / Private staging / Drills remain static until
- * SP-013+ backend endpoints (BL-0149 sign-off completion).
+ * KPI はバックエンド API から取得。
+ * ハードゲート・スモーク・ステージング・ドリルは静的データ。
+ * 将来のバックエンド API 拡張で動的化予定。
  *
  * **No live mutation**: Eval Dashboard is read-only per .claude/rules/rendering.md §5.
  * No raw secret / provider response / capability token may appear in DOM.
@@ -34,7 +34,7 @@ import {
 export const dynamic = "force-dynamic";
 
 // Hard Gates 7 (AC-HARD-01〜07). Each row is the canonical contract from
-// .claude/rules/agentrun-state-machine.md + Sprint Pack SP-012.
+// AgentRun 16 状態定義準拠
 const HARD_GATES_7 = [
   {
     gate_id: "AC-HARD-01",
