@@ -251,4 +251,8 @@ const ROLE_CONFIG = {
 - Unit 4: AI 実行ページ完了 (実 API + ステータスインジケーター + role バッジ)
 - Unit 5: 監査ログ完了 (実 API + イベントバッジ + AC-HARD-02)
 - Codex 最終レビュー: API path 修正 (agent_runs/audit_events) + KPI 虚偽値修正
-- STATUS: Unit 1-5 COMPLETE + Codex review clean
+- Unit 6: 設定/承認/AI組織ボード完了 (英語残り修正)
+- Unit 7: eval-dashboard/today/timeline/research 完了 (Sprint参照削除)
+- Unit 8: Codex 最終レビュー 2 rounds完了 (API contract + pagination + KPI accuracy)
+- STATUS: ALL 8 UNITS COMPLETE
+- Codex review total: 計画 4R (13 findings) + 実装 3R (9 findings) = 7 rounds / 22 findings all adopted
