@@ -1,4 +1,4 @@
-"""TaskManagedAI MCP Server — stdio transport, 38 tools (all DB-wired).
+"""TaskManagedAI MCP Server — stdio transport, 39 tools (all DB-wired).
 
 Security invariants:
 - approval_decide is human-only (not exposed)
@@ -728,6 +728,28 @@ async def workflow_status(project_id: str = "") -> dict[str, Any]:
             )
     except Exception as e:
         return {"error": str(type(e).__name__)}
+
+
+
+@mcp.tool()
+async def run_cost(
+    run_id: str, cost_usd: float = 0.0,
+    tokens_input: int = 0, tokens_output: int = 0,
+) -> dict[str, Any]:
+    """AgentRun のコスト・トークン使用量を記録。"""
+    from backend.app.mcp.api_bridge import bridge_run_cost
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_run_cost(
+                session, tenant_id=DEFAULT_TENANT_ID, run_id=UUID(run_id),
+                cost_usd=cost_usd, tokens_input=tokens_input, tokens_output=tokens_output,
+            )
+    except (ValueError, AttributeError):
+        return {"error": "invalid_uuid", "field": "run_id"}
+    except Exception as e:
+        return {"error": str(type(e).__name__), "run_id": run_id}
 
 # --- Superintendent tools (SP-035) ---
 

@@ -1,128 +1,198 @@
-/**
- * Sprint 9 BL-0106 detail: Agent Run detail (P0 UI skeleton).
- *
- * AgentRunEvent timeline, 16-state graph, runner event metadata, and
- * ContextSnapshot references are rendered read-only. Runner and provider raw
- * payloads stay outside the DOM.
- */
-
 import { notFound } from "next/navigation";
 
-import { UUID_V1_TO_V5_PATTERN } from "../../_lib/route-id";
-import {
-  AdminPageShell,
-  AgentRunEventTimeline,
-  AgentRunStateGraph,
-  ContextSnapshotDefinitionList,
-  KeyboardReadinessStrip,
-  Panel,
-  SecretBoundaryNotice
-} from "../../_components/sprint9-admin-ui";
+import { fetchBackendRaw } from "@/lib/api/client";
+import { AgentRunStatusIndicator } from "@/components/agent-run-status-indicator-v2";
+import { RoleBadge } from "@/components/role-badge";
 
 export const dynamic = "force-dynamic";
 
-type AgentRunDetailPageProps = {
+type RunDetail = {
+  id: string;
+  status: string;
+  blocked_reason: string | null;
+  role_id: string | null;
+  parent_run_id: string | null;
+  project_id: string;
+  error_code: string | null;
+  error_summary: string | null;
+  cost_usd: number | null;
+  tokens_input: number | null;
+  tokens_output: number | null;
+  created_at: string | null;
+  completed_at: string | null;
+};
+
+type RunEvent = {
+  id: string;
+  event_type: string;
+  actor_id: string | null;
+  payload_keys: string[];
+  created_at: string | null;
+};
+
+async function loadRun(id: string): Promise<{ run: RunDetail; events: RunEvent[] } | null> {
+  try {
+    const res = await fetchBackendRaw(`/api/v1/agent_runs/${id}` as `/${string}`);
+    const raw = res as Record<string, unknown>;
+    return {
+      run: raw as unknown as RunDetail,
+      events: ((raw?.events ?? []) as RunEvent[]),
+    };
+  } catch {
+    return null;
+  }
+}
+
+const EVENT_LABELS: Record<string, string> = {
+  run_queued: "実行キュー追加",
+  context_gathered: "コンテキスト収集",
+  provider_requested: "プロバイダー呼出",
+  provider_responded: "プロバイダー応答",
+  artifact_generated: "成果物生成",
+  schema_validated: "スキーマ検証",
+  validation_failed: "検証失敗",
+  policy_linted: "ポリシーチェック",
+  policy_blocked: "ポリシー拒否",
+  budget_blocked: "予算超過",
+  runtime_blocked: "ランタイム拒否",
+  diff_ready: "差分準備完了",
+  approval_requested: "承認要求",
+  approval_decided: "承認決定",
+  runner_started: "ランナー起動",
+  runner_completed: "ランナー完了",
+  runner_blocked: "ランナー拒否",
+  repo_pr_opened: "PR 作成",
+  run_completed: "実行完了",
+  run_failed: "実行失敗",
+  run_cancelled: "実行キャンセル",
+};
+
+type Props = {
   params: Promise<{ id: string }>;
 };
 
-export default async function AgentRunDetailPage({
-  params
-}: AgentRunDetailPageProps) {
+export default async function RunDetailPage({ params }: Props) {
   const { id } = await params;
+  const data = await loadRun(id);
 
-  // F-P2R1-007 + F-P3R1-006: shared UUID v1-v5 guard prevents caller-supplied
-  // path values from reaching downstream layers (server-owned-boundary).
-  if (!id || !UUID_V1_TO_V5_PATTERN.test(id)) {
+  if (!data) {
     notFound();
   }
 
+  const { run, events } = data;
+
   return (
-    <AdminPageShell
-      description={
-        <>
-          AI 実行詳細: AgentRun <code>{id}</code>. この
-          timeline is chronological, append-only, and redacted according to
-          AC-HARD-02.
-        </>
-      }
-      eyebrow="管理 / AI 実行詳細"
-      regionLabel="Agent Run detail"
-      title="AI 実行詳細"
-    >
-      <KeyboardReadinessStrip current="AI 実行" />
+    <section aria-label="AI 実行詳細" className="grid gap-6">
+      <header className="grid gap-2">
+        <div className="flex items-center gap-2 text-sm">
+          <a href="/runs" className="text-accent hover:underline">AI 実行一覧</a>
+          <span className="text-muted-foreground">/</span>
+          <span className="font-mono text-xs text-muted-foreground">{id.slice(0, 8)}...</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <h1 className="text-3xl font-semibold tracking-normal">AI 実行詳細</h1>
+          <AgentRunStatusIndicator status={run.status} blockedReason={run.blocked_reason} />
+          <RoleBadge role={run.role_id} />
+        </div>
+      </header>
 
-      <Panel
-        description="AgentOps inspired event timeline shows the important run lifecycle events in seq_no order."
-        title="時系列イベントタイムライン"
-        titleId="run-detail-event-timeline"
-      >
-        <AgentRunEventTimeline />
-      </Panel>
+      <div className="grid gap-4 md:grid-cols-2">
+        <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+          <h2 className="text-lg font-semibold">基本情報</h2>
+          <dl className="mt-4 grid gap-3 text-sm">
+            <div className="flex justify-between border-t border-line pt-3">
+              <dt className="text-muted-foreground">実行 ID</dt>
+              <dd className="font-mono text-xs">{run.id.slice(0, 12)}...</dd>
+            </div>
+            <div className="flex justify-between border-t border-line pt-3">
+              <dt className="text-muted-foreground">ステータス</dt>
+              <dd><AgentRunStatusIndicator status={run.status} blockedReason={run.blocked_reason} /></dd>
+            </div>
+            <div className="flex justify-between border-t border-line pt-3">
+              <dt className="text-muted-foreground">役割</dt>
+              <dd><RoleBadge role={run.role_id} /></dd>
+            </div>
+            {run.parent_run_id && (
+              <div className="flex justify-between border-t border-line pt-3">
+                <dt className="text-muted-foreground">親実行</dt>
+                <dd><a href={`/runs/${run.parent_run_id}`} className="font-mono text-xs text-accent hover:underline">{run.parent_run_id.slice(0, 8)}...</a></dd>
+              </div>
+            )}
+            <div className="flex justify-between border-t border-line pt-3">
+              <dt className="text-muted-foreground">作成日時</dt>
+              <dd>{run.created_at ? new Date(run.created_at).toLocaleString("ja-JP") : "—"}</dd>
+            </div>
+            {run.completed_at && (
+              <div className="flex justify-between border-t border-line pt-3">
+                <dt className="text-muted-foreground">完了日時</dt>
+                <dd>{new Date(run.completed_at).toLocaleString("ja-JP")}</dd>
+              </div>
+            )}
+          </dl>
+        </article>
 
-      <Panel
-        description="LangSmith inspired graph view keeps all 16 AgentRun states visible without adding a 17th status or converting blocked_reason into statuses."
-        title="実行グラフ"
-        titleId="run-detail-execution-graph"
-      >
-        <AgentRunStateGraph />
-      </Panel>
+        <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+          <h2 className="text-lg font-semibold">コスト・トークン</h2>
+          <dl className="mt-4 grid gap-3 text-sm">
+            <div className="flex justify-between border-t border-line pt-3">
+              <dt className="text-muted-foreground">コスト</dt>
+              <dd>{run.cost_usd != null ? `$${run.cost_usd.toFixed(4)}` : "未計測"}</dd>
+            </div>
+            <div className="flex justify-between border-t border-line pt-3">
+              <dt className="text-muted-foreground">入力トークン</dt>
+              <dd>{run.tokens_input?.toLocaleString() ?? "未計測"}</dd>
+            </div>
+            <div className="flex justify-between border-t border-line pt-3">
+              <dt className="text-muted-foreground">出力トークン</dt>
+              <dd>{run.tokens_output?.toLocaleString() ?? "未計測"}</dd>
+            </div>
+            {run.error_code && (
+              <div className="flex justify-between border-t border-line pt-3">
+                <dt className="text-muted-foreground">エラーコード</dt>
+                <dd className="font-mono text-xs text-red-600">{run.error_code}</dd>
+              </div>
+            )}
+          </dl>
+        </article>
+      </div>
 
-      <Panel
-        description="Runner events expose bounded metadata only. Raw argv, raw stdout, raw stderr, secret values, and provider raw payloads are excluded."
-        title="ランナーイベント連携"
-        titleId="run-detail-runner-events"
-      >
-        <dl className="grid gap-2 md:grid-cols-3">
-          <div className="rounded-md border border-line bg-white p-3">
-            <dt>
-              <code className="font-mono text-xs font-semibold text-ink">
-                runner_started
-              </code>
-            </dt>
-            <dd className="mt-2 text-xs leading-5 text-muted-foreground">
-              workspace_id, argv_basename, argv_hash, and policy_version only.
-            </dd>
+      <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+        <h2 className="text-lg font-semibold">イベントタイムライン</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          追記専用。シークレットは表示されません。
+        </p>
+        {events.length > 0 ? (
+          <div className="mt-4 space-y-3">
+            {events.map((event, i) => (
+              <div key={event.id} className="flex items-start gap-3">
+                <div className="relative flex flex-col items-center">
+                  <div className="h-3 w-3 rounded-full border-2 border-accent bg-panel" />
+                  {i < events.length - 1 && (
+                    <div className="absolute top-3 h-full w-0.5 bg-line" />
+                  )}
+                </div>
+                <div className="flex-1 pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">
+                      {EVENT_LABELS[event.event_type] ?? event.event_type}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {event.created_at ? new Date(event.created_at).toLocaleString("ja-JP") : ""}
+                    </span>
+                  </div>
+                  {event.payload_keys?.length > 0 && (
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      keys: {event.payload_keys.join(", ")}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
-          <div className="rounded-md border border-line bg-white p-3">
-            <dt>
-              <code className="font-mono text-xs font-semibold text-ink">
-                runner_completed
-              </code>
-            </dt>
-            <dd className="mt-2 text-xs leading-5 text-muted-foreground">
-              exit_code, stdout_bytes, stderr_bytes, output_cap_exceeded, and
-              scrubbed_env_keys.
-            </dd>
-          </div>
-          <div className="rounded-md border border-line bg-white p-3">
-            <dt>
-              <code className="font-mono text-xs font-semibold text-ink">
-                runner_blocked
-              </code>
-            </dt>
-            <dd className="mt-2 text-xs leading-5 text-muted-foreground">
-              deny_category and reason_code only; maps to runtime_blocked when status
-              becomes blocked.
-            </dd>
-          </div>
-        </dl>
-      </Panel>
-
-      <Panel
-        description="ContextSnapshot references are shown as a fixed 10-column definition list. This supports graph inspection without time-travel mutation."
-        title="ContextSnapshot 10 カラム"
-        titleId="run-detail-context-snapshot"
-      >
-        <ContextSnapshotDefinitionList />
-      </Panel>
-
-      <Panel
-        description="この invariant is visible for reviewers and E2E checks while keeping all secret-bearing values out of the DOM."
-        title="シークレット非露出"
-        titleId="run-detail-secret-invariant"
-      >
-        <SecretBoundaryNotice title="AC-HARD-02 イベントマスク" />
-      </Panel>
-    </AdminPageShell>
+        ) : (
+          <p className="mt-4 text-sm text-muted-foreground">イベントはまだ記録されていません</p>
+        )}
+      </article>
+    </section>
   );
 }

@@ -1170,3 +1170,31 @@ async def bridge_workflow_status(
         "by_role": by_role,
         "success_rate": round(completed / (completed + failed) * 100, 1) if (completed + failed) > 0 else 0,
     }
+
+
+async def bridge_run_cost(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    run_id: UUID,
+    cost_usd: float,
+    tokens_input: int,
+    tokens_output: int,
+) -> dict[str, Any]:
+    result = await session.execute(
+        select(AgentRun).where(AgentRun.tenant_id == tenant_id, AgentRun.id == run_id)
+    )
+    run = result.scalar_one_or_none()
+    if run is None:
+        return {"error": "not_found", "run_id": str(run_id)}
+
+    run.cost_usd = cost_usd
+    run.tokens_input = tokens_input
+    run.tokens_output = tokens_output
+    await session.commit()
+    return {
+        "run_id": str(run.id),
+        "cost_usd": cost_usd,
+        "tokens_input": tokens_input,
+        "tokens_output": tokens_output,
+    }
