@@ -256,7 +256,7 @@ type GatedAcceptanceRowEntry = {
 };
 
 // F-PR65-004 P1 adopt: canonical gated row set per SP-012 lines 93-99.
-// 旧 sample list (BL-0140b / BL-0145 / BL-0149 / BL-0150) は internal core
+// ゲート付き受入基準の行データ (internal fixture ID)
 // rows、SP-012 表 2 の gated proof row 集合と drift していた.
 const GATED_ACCEPTANCE_ROWS: readonly GatedAcceptanceRowEntry[] = [
   {
