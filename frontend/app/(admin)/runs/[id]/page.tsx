@@ -136,7 +136,7 @@ export default async function RunDetailPage({ params }: Props) {
           <dl className="mt-4 grid gap-3 text-sm">
             <div className="flex justify-between border-t border-line pt-3">
               <dt className="text-muted-foreground">コスト</dt>
-              <dd>{run.cost_usd != null ? `$${run.cost_usd.toFixed(4)}` : "未計測"}</dd>
+              <dd>{run.cost_usd != null && run.cost_usd > 0 ? `$${run.cost_usd.toFixed(4)}` : "未計測"}</dd>
             </div>
             <div className="flex justify-between border-t border-line pt-3">
               <dt className="text-muted-foreground">入力トークン</dt>

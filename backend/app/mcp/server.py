@@ -737,8 +737,15 @@ async def run_cost(
     tokens_input: int = 0, tokens_output: int = 0,
 ) -> dict[str, Any]:
     """AgentRun のコスト・トークン使用量を記録。"""
+    import math
+
     from backend.app.mcp.api_bridge import bridge_run_cost
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    if not math.isfinite(cost_usd) or cost_usd < 0:
+        return {"error": "invalid_cost", "message": "cost_usd must be finite and non-negative"}
+    if tokens_input < 0 or tokens_output < 0:
+        return {"error": "invalid_tokens", "message": "tokens must be non-negative"}
 
     try:
         async with get_db_session() as session:
