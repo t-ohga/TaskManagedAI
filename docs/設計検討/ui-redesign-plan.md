@@ -244,5 +244,11 @@ const ROLE_CONFIG = {
 - マルチエージェントダッシュボード: 統合ビュー + フィルター
 
 ## 現在位置
-- Phase 0: Master Plan v2 策定完了
-- 次: Codex Phase 1 正式レビュー → findings 反映 → 実装開始
+- Phase 0: Master Plan v6 策定完了 (4 rounds Codex adversarial review, 13 findings adopted)
+- Unit 1: 共通コンポーネント完了 (TicketStatusIndicator/AgentRunStatusIndicator/RoleBadge/KanbanColumn/ProjectTab)
+- Unit 2: 看板ボード v2 完了 (3カラム + プロジェクトタブ + 優先度 + 説明プレビュー + ヒント)
+- Unit 3: ダッシュボード v2 完了 (KPI カード + クリック導線)
+- Unit 4: AI 実行ページ完了 (実 API + ステータスインジケーター + role バッジ)
+- Unit 5: 監査ログ完了 (実 API + イベントバッジ + AC-HARD-02)
+- Codex 最終レビュー: API path 修正 (agent_runs/audit_events) + KPI 虚偽値修正
+- STATUS: Unit 1-5 COMPLETE + Codex review clean
