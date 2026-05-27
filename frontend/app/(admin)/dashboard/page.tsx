@@ -50,7 +50,7 @@ async function readProjectSummaries(): Promise<ProjectSummary[]> {
         const pid = (p as any).project_id ?? (p as any).id;
         const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets?limit=200`) as Record<string, unknown>;
         const items = (ticketsRes?.items ?? []) as Array<{ status: string }>;
-        ticketCount = (ticketsRes?.total as number) ?? items.length;
+        ticketCount = items.length;
         for (const t of items) {
           if (t.status === "open") statusCounts.open++;
           else if (t.status === "in_progress" || t.status === "blocked" || t.status === "review") statusCounts.in_progress++;

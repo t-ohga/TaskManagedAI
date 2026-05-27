@@ -10,7 +10,7 @@ type NavLinkProps = {
 };
 
 export function NavLink({ href, label }: NavLinkProps) {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
   const isActive = pathname === href || pathname.startsWith(href + "/");
 
   return (

@@ -131,7 +131,7 @@ describe("TodayPage", () => {
     expect(within(region).getByRole("heading", { name: "Today / Inbox" })).toBeVisible();
 
     const kpiStrip = within(region).getByLabelText("Today KPI strip");
-    expect(within(kpiStrip).getByText("open_tickets")).toBeVisible();
+    expect(within(kpiStrip).getByText("未完了チケット")).toBeVisible();
     expect(within(kpiStrip).getByText("2")).toBeVisible();
     expect(within(kpiStrip).getByText("4/5")).toBeVisible();
 
