@@ -156,6 +156,23 @@ export default async function RunDetailPage({ params }: Props) {
         </article>
       </div>
 
+      {!["completed", "failed", "cancelled", "provider_refused", "repair_exhausted"].includes(run.status) && (
+        <div className="rounded-lg border border-orange-200 bg-orange-50 p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-orange-700">この実行をキャンセルしますか？</p>
+              <p className="mt-0.5 text-xs text-orange-600">キャンセルすると元に戻せません</p>
+            </div>
+            <a
+              href={`/api/v1/agent_runs/${run.id}/cancel`}
+              className="rounded-md bg-orange-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-700"
+            >
+              キャンセル
+            </a>
+          </div>
+        </div>
+      )}
+
       <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
         <h2 className="text-lg font-semibold">イベントタイムライン</h2>
         <p className="mt-1 text-xs text-muted-foreground">

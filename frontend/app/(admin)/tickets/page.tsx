@@ -225,7 +225,13 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
           全プロジェクト横断表示中。チケットの作成・更新するにはプロジェクトを選択してください。
         </div>
       ) : (
-        <TicketCreateDialog projectSlug={selectedProject} />
+        <TicketCreateDialog
+          projectSlug={selectedProject}
+          projectId={(() => {
+            const p = projects.find((p) => p.slug === selectedProject);
+            return p ? String((p as Record<string, unknown>).project_id ?? (p as Record<string, unknown>).id ?? "") : undefined;
+          })()}
+        />
       )}
 
       <div className="grid gap-4 lg:grid-cols-3">

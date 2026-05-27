@@ -6,7 +6,7 @@ import { createTicketAction, type CreateTicketState } from "@/app/(admin)/ticket
 
 const initialState: CreateTicketState = { kind: "idle" };
 
-export function TicketCreateDialog({ projectSlug }: { projectSlug: string }) {
+export function TicketCreateDialog({ projectSlug, projectId }: { projectSlug: string; projectId?: string | undefined }) {
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState(createTicketAction, initialState);
 
@@ -37,6 +37,7 @@ export function TicketCreateDialog({ projectSlug }: { projectSlug: string }) {
       )}
       <form action={formAction} className="grid gap-3">
         <input type="hidden" name="slug" value={`ticket-${Date.now()}`} />
+        {projectId && <input type="hidden" name="project_id" value={projectId} />}
         <div>
           <label htmlFor="title" className="text-xs font-medium text-muted-foreground">
             タイトル
