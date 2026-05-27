@@ -7,7 +7,7 @@ TaskManagedAI を「人間が直感的に理解でき、AI agent の動作を透
 ## 調査結果に基づくデザイン原則 (2026 ベストプラクティス)
 
 ### 1. 看板ボード (Kanban Board)
-- **3 カラム**: 未着手 (open) → 進行中 (in_progress) → 完了 (completed/closed)
+- **3 カラム**: 未着手 (open) → 進行中 (in_progress) → 完了 (closed)
 - **WIP 制限表示**: 各カラムにアイテム数カウント
 - **空カラム**: 「カードをここにドラッグ」のヒント表示
 - **カード設計**: タイトル + ステータスインジケーター + プロジェクトバッジ + 作成日
@@ -141,7 +141,9 @@ const ROLE_CONFIG = {
 
 ### プロジェクト切替 URL 契約
 - URL: `/tickets?project=<slug>` (query parameter)
-- デフォルト: `?project=all` (全プロジェクト横断)
+- デフォルト: `?project=all` (全プロジェクト横断、**read-only**)
+- `project=all` 時の mutation: **fail-closed** (作成・更新ボタン非表示、server action は拒否)
+- 作成時: プロジェクト選択を必須化 (all 選択中は作成不可、特定プロジェクトを選んでから作成)
 - チケット作成: server action は client から project_id を受け取らない。URL の slug → server 側で session の許可済み project list から解決
 - チケット詳細: `/tickets/[id]?project=<slug>` (パンくず用)
 - mutation: server action は slug → project_id 解決を server 内部で完結。client FormData に project_id を含めない
@@ -202,7 +204,7 @@ const ROLE_CONFIG = {
 | Unit | 追加検証 |
 |---|---|
 | 1 | TicketStatusIndicator: 正本 6 TicketStatus exact-set テスト + AgentRunStatusIndicator: 16 AgentRunStatus + blocked_reason 3 種 exact-set テスト (分離コンポーネント) |
-| 2 | 看板: 全 7 TicketStatus のカードが正しいカラムに配置される fixture テスト |
+| 2 | 看板: 正本 6 TicketStatus のカードが正しいカラムに配置される fixture テスト |
 | 3 | ダッシュボード→チケット→詳細の導線 E2E |
 | 4 | /runs: 実 API データ表示 + role バッジ + ステータスインジケーター |
 | 5 | /audit: 実 API データ表示 + イベントフィルター |
