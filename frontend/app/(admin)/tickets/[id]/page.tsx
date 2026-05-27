@@ -49,7 +49,7 @@ async function loadTicket(id: string): Promise<TicketDetail | null> {
     const projects = ((projectsRes as Record<string, unknown>)?.projects ?? []) as Array<Record<string, string>>;
 
     for (const p of projects) {
-      const pid = p.project_id ?? p.id;
+      const pid = String(p.project_id ?? p.id ?? "");
       try {
         const ticketsRes = await fetchBackendRaw(
           `/api/v1/projects/${pid}/tickets` as `/${string}`

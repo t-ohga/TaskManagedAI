@@ -129,9 +129,9 @@ const AGENT_RUN_STATE_DESCRIPTIONS: Record<AgentRunState, string> = {
 };
 
 const BLOCKED_REASON_DESCRIPTIONS: Record<BlockedReason, string> = {
-  policy_blocked: "Policy or data-class preflight denied the transition.",
+  policy_blocked: "ポリシーまたはデータクラスのプリフライトで遷移が拒否されました。",
   budget_blocked: "Cost or quota hard limit stopped execution.",
-  runtime_blocked: "Runner gateway denied command, path, resource, or egress."
+  runtime_blocked: "ランナーゲートウェイがコマンド、パス、リソース、または通信を拒否しました。"
 };
 
 // F-P3R1-003 fix: keep KEYBOARD_NAV_ITEMS as readonly + literal type so that

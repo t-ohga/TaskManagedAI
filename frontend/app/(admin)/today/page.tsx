@@ -234,17 +234,17 @@ export default async function TodayPage() {
           subtitle={todaySubtitle(state.tickets)}
           count={workTickets.length + activeRuns.length + pendingApprovals.length}
         >
-          <LaneGroup title="Open tickets" emptyLabel="進行中のチケットはありません。">
+          <LaneGroup title="未完了チケット" emptyLabel="進行中のチケットはありません。">
             {workTickets.slice(0, 8).map((ticket) => (
               <TicketRow key={ticket.id} ticket={ticket} />
             ))}
           </LaneGroup>
-          <LaneGroup title="Active runs" emptyLabel="進行中の AI 実行はありません。">
+          <LaneGroup title="実行中 AI" emptyLabel="進行中の AI 実行はありません。">
             {activeRuns.map((run) => (
               <RunRow key={run.id} run={run} />
             ))}
           </LaneGroup>
-          <LaneGroup title="Pending approvals" emptyLabel="承認待ちはありません。">
+          <LaneGroup title="承認待ち" emptyLabel="承認待ちはありません。">
             {pendingApprovals.slice(0, 8).map((approval) => (
               <ApprovalRow key={approval.id} approval={approval} />
             ))}
@@ -256,12 +256,12 @@ export default async function TodayPage() {
           subtitle="未割当チケットと queued run"
           count={inboxTickets.length + queuedRuns.length}
         >
-          <LaneGroup title="Unassigned tickets" emptyLabel="未割当チケットはありません。">
+          <LaneGroup title="未割当チケット" emptyLabel="未割当チケットはありません。">
             {inboxTickets.slice(0, 10).map((ticket) => (
               <TicketRow key={ticket.id} ticket={ticket} />
             ))}
           </LaneGroup>
-          <LaneGroup title="Queued runs" emptyLabel="queued の AI 実行はありません。">
+          <LaneGroup title="待機中 AI 実行" emptyLabel="queued の AI 実行はありません。">
             {queuedRuns.map((run) => (
               <RunRow key={run.id} run={run} />
             ))}
@@ -386,8 +386,8 @@ function TicketRow({ ticket }: { ticket: TicketRead }) {
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span className="font-mono">{ticket.slug}</span>
         <span>{formatTicketStatus(ticket.status)}</span>
-        <span>assignee:{ticket.assignee_actor_id ?? "unassigned"}</span>
-        <span>updated:{formatDate(ticket.updated_at)}</span>
+        <span>担当:{ticket.assignee_actor_id ?? "未割当"}</span>
+        <span>更新:{formatDate(ticket.updated_at)}</span>
       </div>
     </li>
   );
@@ -408,7 +408,7 @@ function RunRow({ run }: { run: AgentRunListItem }) {
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span>role:{run.role_id ?? "unassigned"}</span>
+        <span>role:{run.role_id ?? "未割当"}</span>
         <span>seq:{run.progress_seq}</span>
         <span>last:{run.last_progress_at ? formatDate(run.last_progress_at) : "—"}</span>
         {run.blocked_reason ? <span>blocked:{run.blocked_reason}</span> : null}
@@ -450,7 +450,7 @@ function collectErrors(state: TodayState): string[] {
 
 function todaySubtitle(tickets: SourceState<TicketSource>): string {
   if (tickets.kind === "ok") {
-    return `${tickets.data.project.name} / ${tickets.data.total} tickets`;
+    return `${tickets.data.project.name} / ${tickets.data.total} チケット`;
   }
   return "チケットデータを取得できません";
 }
