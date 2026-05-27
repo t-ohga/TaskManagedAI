@@ -5,6 +5,8 @@ import { fetchBackendRaw } from "@/lib/api/client";
 import { ProjectTab } from "@/components/project-tab";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { TicketCreateDialog } from "@/components/ticket-create-dialog";
+import { SearchBar } from "@/components/search-bar";
+import { StatusFilter } from "@/components/status-filter";
 
 export const dynamic = "force-dynamic";
 
@@ -153,12 +155,14 @@ function KanbanColumnEnhanced({
 }
 
 type Props = {
-  searchParams: Promise<{ project?: string }>;
+  searchParams: Promise<{ project?: string; q?: string; status?: string }>;
 };
 
 export default async function TicketsKanbanPage({ searchParams }: Props) {
   const params = await searchParams;
   const selectedProject = params.project ?? "all";
+  const searchQuery = params.q ?? "";
+  const statusFilter = params.status ?? "";
   const projects = await loadProjects();
 
   let allTickets: (TicketItem & { projectSlug: string })[] = [];
@@ -179,13 +183,26 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
     }
   }
 
+  let filteredTickets = allTickets;
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    filteredTickets = filteredTickets.filter((t) =>
+      t.title.toLowerCase().includes(q) || (t.description?.toLowerCase().includes(q) ?? false)
+    );
+  }
+  if (statusFilter) {
+    filteredTickets = filteredTickets.filter((t) => t.status === statusFilter);
+  }
+
   const grouped: Record<KanbanGroup, typeof allTickets> = { todo: [], active: [], done: [] };
-  for (const ticket of allTickets) {
+  for (const ticket of filteredTickets) {
     const group = STATUS_TO_KANBAN[ticket.status] ?? "todo";
     grouped[group].push(ticket);
   }
 
   const showProjectBadge = selectedProject === "all";
+  const totalFiltered = filteredTickets.length;
+  const totalAll = allTickets.length;
 
   return (
     <section aria-label="チケット看板ボード" className="grid gap-4">
@@ -193,7 +210,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
         <p className="text-sm font-medium text-accent">管理</p>
         <h1 className="text-3xl font-semibold tracking-normal">チケット</h1>
         <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <span>全 {allTickets.length} チケット</span>
+          <span>{totalFiltered === totalAll ? `全 ${totalAll}` : `${totalFiltered} / ${totalAll}`} チケット</span>
           <span className="text-muted-foreground/50">|</span>
           <span className="flex items-center gap-1">
             <span className="inline-block h-2 w-2 rounded-full bg-blue-500" />
@@ -218,6 +235,13 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             name: p.name,
           }))}
         />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex-1"><SearchBar /></div>
+          <StatusFilter />
+        </div>
       </Suspense>
 
       {selectedProject === "all" ? (

@@ -83,7 +83,7 @@ export default async function RunsPage() {
         <div>
           <h2 className="mb-3 text-lg font-semibold">完了した実行</h2>
           <div className="grid gap-2">
-            {terminal.slice(0, 20).map((run) => (
+            {terminal.map((run) => (
               <Link
                 key={run.id}
                 href={`/runs/${run.id}` as never}
