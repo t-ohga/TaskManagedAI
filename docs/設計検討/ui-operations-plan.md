@@ -18,7 +18,19 @@
 - 未認可 slug / 存在しない slug → 拒否 (403/404)
 - tenant/workspace/slug 一意制約で解決
 
-### negative テスト (必須)
+### negative テスト必須マトリクス (全 mutating Server Action)
+
+| Action | cross-project ID | foreign slug | missing slug | 二重 submit | 不正遷移 |
+|--------|-----------------|-------------|-------------|-----------|---------|
+| ticket_create | ✓ | ✓ | ✓ | idempotency_key | — |
+| ticket_update_status | ✓ | ✓ | ✓ | 冪等 | closed→open 拒否 |
+| ticket_edit | ✓ | ✓ | ✓ | 冪等 | — |
+| ticket_comment | ✓ | ✓ | ✓ | idempotency | — |
+| approval_approve | ✓ | — | — | 冪等 | approved→reject 拒否 |
+| approval_reject | ✓ | — | — | 冪等 | rejected→approve 拒否 |
+| run_cancel | ✓ | — | — | 冪等 | completed→cancel 拒否 |
+
+### negative テスト (旧、上記マトリクスに統合)
 - 他プロジェクトの ticket_id で更新 → 拒否
 - 他プロジェクトの approval_id で approve → 拒否
 - 他プロジェクトの run_id で cancel → 拒否
@@ -34,6 +46,30 @@
 | review | in_progress, closed, cancelled |
 | closed | (terminal — 再開不可) |
 | cancelled | (terminal — 再開不可) |
+
+### Approval 状態遷移表
+| from | allowed to |
+|------|-----------|
+| pending | approved, rejected, expired |
+| approved | (terminal) |
+| rejected | (terminal) |
+| expired | (terminal) |
+| invalidated | (terminal) |
+
+### AgentRun 状態遷移 (cancel 対象)
+| from | cancel allowed |
+|------|--------------|
+| queued | yes → cancelled |
+| running | yes → cancelled |
+| gathering_context | yes → cancelled |
+| waiting_approval | yes → cancelled |
+| blocked | yes → cancelled |
+| provider_incomplete | yes → cancelled |
+| completed | no (terminal) |
+| failed | no (terminal) |
+| cancelled | no (冪等: 既に cancelled) |
+| provider_refused | no (terminal) |
+| repair_exhausted | no (terminal) |
 
 ## 現在の問題
 - チケット作成: 作成ダイアログは実装したが、Server Action の project_id 解決が未確認
