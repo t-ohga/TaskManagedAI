@@ -357,9 +357,11 @@ async def run_create(
     project_id: str,
     ticket_id: str,
     purpose: str,
+    role_id: str | None = None,
+    parent_run_id: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
-    """AI 実行 (AgentRun) を開始。run_id を即時返却。"""
+    """AI 実行 (AgentRun) を開始。role_id で役割指定、parent_run_id で親子関係構築。"""
     from backend.app.mcp.api_bridge import bridge_run_create
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
 
@@ -367,6 +369,21 @@ async def run_create(
         parsed_ticket_id = UUID(ticket_id)
     except (ValueError, AttributeError):
         return {"error": "invalid_uuid", "field": "ticket_id"}
+
+    parsed_parent = None
+    if parent_run_id:
+        try:
+            parsed_parent = UUID(parent_run_id)
+        except (ValueError, AttributeError):
+            return {"error": "invalid_uuid", "field": "parent_run_id"}
+
+    valid_roles = {
+        "orchestrator", "dispatcher", "implementer", "reviewer",
+        "researcher", "tester", "security_agent", "repair_specialist",
+        "curator", "observer",
+    }
+    if role_id and role_id not in valid_roles:
+        return {"error": "invalid_role_id", "valid": sorted(valid_roles)}
 
     try:
         async with get_db_session() as session:
@@ -376,6 +393,8 @@ async def run_create(
                 project_id=UUID(project_id),
                 ticket_id=str(parsed_ticket_id),
                 purpose=purpose,
+                role_id=role_id,
+                parent_run_id=parsed_parent,
             )
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}

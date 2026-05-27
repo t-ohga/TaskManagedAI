@@ -173,12 +173,40 @@ async def bridge_run_show(
     run = result.scalar_one_or_none()
     if run is None:
         return {"error": "not_found", "run_id": str(run_id)}
+    # Fetch children runs
+    children_result = await session.execute(
+        select(AgentRun.id, AgentRun.status, AgentRun.role_id).where(
+            AgentRun.tenant_id == tenant_id,
+            AgentRun.parent_run_id == run_id,
+        )
+    )
+    children = [
+        {"run_id": str(c[0]), "status": c[1], "role_id": c[2]}
+        for c in children_result.fetchall()
+    ]
+
+    # Fetch ticket_id from run_queued event
+    from sqlalchemy import text as sa_text
+    ticket_result = await session.execute(
+        sa_text(
+            "SELECT event_payload->>'ticket_id' FROM agent_run_events "
+            "WHERE tenant_id = :tid AND run_id = :rid AND event_type = 'run_queued' LIMIT 1"
+        ),
+        {"tid": tenant_id, "rid": run_id},
+    )
+    ticket_row = ticket_result.fetchone()
+    ticket_id = ticket_row[0] if ticket_row else None
+
     return {
         "run_id": str(run.id),
         "project_id": str(run.project_id),
         "status": run.status,
         "blocked_reason": run.blocked_reason,
         "error_code": run.error_code,
+        "role_id": run.role_id,
+        "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
+        "ticket_id": ticket_id,
+        "children": children,
         "created_at": run.created_at.isoformat() if run.created_at else None,
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
     }
@@ -254,6 +282,8 @@ async def bridge_run_create(
     project_id: UUID,
     ticket_id: str,
     purpose: str,
+    role_id: str | None = None,
+    parent_run_id: UUID | None = None,
 ) -> dict[str, Any]:
     from backend.app.db.models.agent_run_event import AgentRunEvent
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
@@ -262,6 +292,9 @@ async def bridge_run_create(
         tenant_id=tenant_id,
         project_id=project_id,
         status="queued",
+        role_id=role_id,
+        role_scope="project" if role_id else None,
+        parent_run_id=parent_run_id,
     )
     session.add(run)
     await session.flush()
@@ -275,6 +308,8 @@ async def bridge_run_create(
             "ticket_id": ticket_id,
             "purpose": purpose,
             "project_id": str(project_id),
+            "role_id": role_id,
+            "parent_run_id": str(parent_run_id) if parent_run_id else None,
         },
         actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
     )
@@ -286,6 +321,8 @@ async def bridge_run_create(
         "project_id": str(project_id),
         "ticket_id": ticket_id,
         "purpose": purpose,
+        "role_id": role_id,
+        "parent_run_id": str(parent_run_id) if parent_run_id else None,
     }
 
 
