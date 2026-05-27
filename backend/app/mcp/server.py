@@ -1,4 +1,4 @@
-"""TaskManagedAI MCP Server — stdio transport, 35 tools (all DB-wired).
+"""TaskManagedAI MCP Server — stdio transport, 38 tools (all DB-wired).
 
 Security invariants:
 - approval_decide is human-only (not exposed)
@@ -670,6 +670,64 @@ async def delegation_review(
         return {"error": "invalid_uuid"}
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
+
+
+
+@mcp.tool()
+async def delegation_tree(run_id: str) -> dict[str, Any]:
+    """N 階層の delegation ツリーを表示 (再帰的 CTE)。"""
+    from backend.app.mcp.api_bridge import bridge_delegation_tree
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_delegation_tree(
+                session, tenant_id=DEFAULT_TENANT_ID, root_run_id=UUID(run_id),
+            )
+    except (ValueError, AttributeError):
+        return {"error": "invalid_uuid", "field": "run_id"}
+    except Exception as e:
+        return {"error": str(type(e).__name__)}
+
+
+@mcp.tool()
+async def delegation_cancel(run_id: str) -> dict[str, Any]:
+    """delegation をキャンセル (子 run も再帰的に cancelled)。"""
+    from backend.app.mcp.api_bridge import bridge_delegation_cancel
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_delegation_cancel(
+                session, tenant_id=DEFAULT_TENANT_ID, run_id=UUID(run_id),
+            )
+    except (ValueError, AttributeError):
+        return {"error": "invalid_uuid", "field": "run_id"}
+    except Exception as e:
+        return {"error": str(type(e).__name__)}
+
+
+
+@mcp.tool()
+async def workflow_status(project_id: str = "") -> dict[str, Any]:
+    """全体のワークフロー進捗サマリー。project_id 省略で全プロジェクト横断。"""
+    from backend.app.mcp.api_bridge import bridge_workflow_status
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    parsed_pid = None
+    if project_id:
+        try:
+            parsed_pid = UUID(project_id)
+        except (ValueError, AttributeError):
+            return {"error": "invalid_uuid", "field": "project_id"}
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_workflow_status(
+                session, tenant_id=DEFAULT_TENANT_ID, project_id=parsed_pid,
+            )
+    except Exception as e:
+        return {"error": str(type(e).__name__)}
 
 # --- Superintendent tools (SP-035) ---
 

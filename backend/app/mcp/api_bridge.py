@@ -1042,3 +1042,125 @@ async def bridge_delegation_review(
         "decision": decision,
         "quality_score": quality_score,
     }
+
+
+async def bridge_delegation_tree(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    root_run_id: UUID,
+) -> dict[str, Any]:
+    result = await session.execute(
+        sa.text("""
+            WITH RECURSIVE tree AS (
+                SELECT id, parent_run_id, project_id, status, role_id, 0 as depth
+                FROM agent_runs
+                WHERE tenant_id = :tid AND id = :rid
+                UNION ALL
+                SELECT ar.id, ar.parent_run_id, ar.project_id, ar.status, ar.role_id, t.depth + 1
+                FROM agent_runs ar
+                JOIN tree t ON ar.parent_run_id = t.id AND ar.tenant_id = :tid
+                WHERE t.depth < 10
+            )
+            SELECT id, parent_run_id, status, role_id, depth FROM tree ORDER BY depth, id
+        """),
+        {"tid": tenant_id, "rid": root_run_id},
+    )
+    rows = result.fetchall()
+    if not rows:
+        return {"error": "not_found", "run_id": str(root_run_id)}
+    return {
+        "tree": [
+            {
+                "run_id": str(r[0]),
+                "parent_run_id": str(r[1]) if r[1] else None,
+                "status": r[2],
+                "role_id": r[3],
+                "depth": r[4],
+            }
+            for r in rows
+        ],
+        "total_nodes": len(rows),
+        "max_depth": max(r[4] for r in rows),
+    }
+
+
+async def bridge_delegation_cancel(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    run_id: UUID,
+) -> dict[str, Any]:
+    result = await session.execute(
+        sa.text("""
+            WITH RECURSIVE tree AS (
+                SELECT id FROM agent_runs
+                WHERE tenant_id = :tid AND id = :rid
+                UNION ALL
+                SELECT ar.id FROM agent_runs ar
+                JOIN tree t ON ar.parent_run_id = t.id AND ar.tenant_id = :tid
+            )
+            UPDATE agent_runs SET status = 'cancelled', blocked_reason = NULL
+            WHERE tenant_id = :tid AND id IN (SELECT id FROM tree)
+              AND status NOT IN ('completed', 'failed', 'cancelled', 'provider_refused', 'repair_exhausted')
+            RETURNING id
+        """),
+        {"tid": tenant_id, "rid": run_id},
+    )
+    cancelled_ids = [str(r[0]) for r in result.fetchall()]
+    await session.commit()
+    return {
+        "cancelled": cancelled_ids,
+        "count": len(cancelled_ids),
+    }
+
+
+async def bridge_workflow_status(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    project_id: UUID | None = None,
+) -> dict[str, Any]:
+    if project_id:
+        result = await session.execute(
+            sa.text(
+                "SELECT status, role_id, count(*) as cnt FROM agent_runs "
+                "WHERE tenant_id = :tid AND project_id = :pid "
+                "GROUP BY status, role_id ORDER BY status, role_id"
+            ),
+            {"tid": tenant_id, "pid": project_id},
+        )
+    else:
+        result = await session.execute(
+            sa.text(
+                "SELECT status, role_id, count(*) as cnt FROM agent_runs "
+                "WHERE tenant_id = :tid "
+                "GROUP BY status, role_id ORDER BY status, role_id"
+            ),
+            {"tid": tenant_id},
+        )
+    rows = result.fetchall()
+
+    total = sum(r[2] for r in rows)
+    by_status: dict[str, int] = {}
+    by_role: dict[str, int] = {}
+    for r in rows:
+        by_status[r[0]] = by_status.get(r[0], 0) + r[2]
+        if r[1]:
+            by_role[r[1]] = by_role.get(r[1], 0) + r[2]
+
+    active = by_status.get("running", 0) + by_status.get("queued", 0) + by_status.get("gathering_context", 0)
+    completed = by_status.get("completed", 0)
+    failed = by_status.get("failed", 0)
+    cancelled = by_status.get("cancelled", 0)
+
+    return {
+        "total_runs": total,
+        "active": active,
+        "completed": completed,
+        "failed": failed,
+        "cancelled": cancelled,
+        "by_status": by_status,
+        "by_role": by_role,
+        "success_rate": round(completed / (completed + failed) * 100, 1) if (completed + failed) > 0 else 0,
+    }
