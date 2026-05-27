@@ -18,7 +18,7 @@ async function loadAuditEvents(): Promise<AuditEvent[]> {
     const raw = res as Record<string, unknown>;
     return ((raw?.items ?? raw?.events ?? []) as AuditEvent[]);
   } catch (e) {
-    console.error("Audit API error:", e);
+    // Audit API error — display empty state
     return [];
   }
 }
@@ -106,6 +106,9 @@ export default async function AuditPage() {
       ) : (
         <div className="rounded-lg border border-line bg-panel p-8 text-center">
           <p className="text-muted-foreground">監査イベントはまだありません</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            チケット操作や AI 実行を行うと、ここにイベントが記録されます
+          </p>
         </div>
       )}
     </section>

@@ -21,7 +21,7 @@ async function loadRuns(): Promise<AgentRunItem[]> {
     const raw = res as Record<string, unknown>;
     return ((raw?.items ?? []) as AgentRunItem[]);
   } catch (e) {
-    console.error("AgentRun API error:", e);
+    // AgentRun API error — display empty state
     return [];
   }
 }
@@ -106,9 +106,12 @@ export default async function RunsPage() {
       {runs.length === 0 && (
         <div className="rounded-lg border border-line bg-panel p-8 text-center">
           <p className="text-muted-foreground">AI 実行はまだありません</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            MCP 経由で run_create を実行するか、Superintendent から dispatch してください
+          <p className="mt-2 text-xs text-muted-foreground">
+            MCP 経由で run_create を実行するか、Superintendent から dispatch して AI 実行を開始できます。
           </p>
+          <a href="/dashboard" className="mt-3 inline-block rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90">
+            ダッシュボードへ
+          </a>
         </div>
       )}
     </section>
