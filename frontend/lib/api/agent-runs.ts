@@ -91,7 +91,7 @@ export type AgentRunEventType = z.infer<typeof AgentRunEventTypeEnum>;
 
 export const AgentRunListItemSchema = z.object({
   id: z.string().uuid(),
-  ticket_id: z.string().uuid(),
+  ticket_id: z.string().uuid().nullable().optional(),
   status: AgentRunStatusEnum,
   blocked_reason: BlockedReasonEnum.nullable(),
   role_id: z.string().nullable().optional(),

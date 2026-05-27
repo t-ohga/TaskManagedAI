@@ -1,53 +1,142 @@
-/**
- * Sprint 9 BL-0103: Ticket 一覧 (P0 UI skeleton)。
- *
- * 本ページは Sprint 9 batch 1 で読み取り専用 skeleton として実装。
- * 実 API integration (listTickets) と Ticket schema は Sprint 9 batch 2 で
- * `frontend/lib/api/tickets.ts` に追加予定。本 skeleton は P0 UI route
- * 構造と layout を確立し、Sprint 9 残 batch の incremental implementation
- * を可能にする。
- *
- * SP-009 §scope: Ticket / Approval / Run / Audit / Settings UI。
- * server-owned-boundary §1: project_id / tenant_id は Server Component
- * で session から resolve、caller-supplied 経路なし。
- */
+import Link from "next/link";
+
+import { fetchBackendRaw } from "@/lib/api/client";
 
 export const dynamic = "force-dynamic";
 
-export default function TicketsListPage() {
+type TicketItem = {
+  id: string;
+  title: string;
+  status: string;
+  priority: string | null;
+  created_at: string | null;
+};
+
+type ProjectItem = {
+  project_id?: string;
+  id?: string;
+  slug: string;
+  name: string;
+  status: string;
+};
+
+async function loadProjects(): Promise<ProjectItem[]> {
+  try {
+    const res = await fetchBackendRaw("/api/v1/me/projects");
+    const raw = res as Record<string, unknown>;
+    return (raw?.projects ?? raw?.items ?? []) as ProjectItem[];
+  } catch {
+    return [];
+  }
+}
+
+async function loadTickets(projectId: string): Promise<TicketItem[]> {
+  try {
+    const res = await fetchBackendRaw(
+      `/api/v1/projects/${projectId}/tickets` as `/${string}`
+    );
+    const raw = res as Record<string, unknown>;
+    return (raw?.items ?? []) as TicketItem[];
+  } catch {
+    return [];
+  }
+}
+
+function statusBadge(status: string) {
+  const colors: Record<string, string> = {
+    open: "bg-blue-50 text-blue-700",
+    in_progress: "bg-amber-50 text-amber-700",
+    closed: "bg-gray-100 text-gray-500",
+    cancelled: "bg-red-50 text-red-600",
+  };
+  const labels: Record<string, string> = {
+    open: "未着手",
+    in_progress: "進行中",
+    closed: "完了",
+    cancelled: "中止",
+  };
   return (
-    <section aria-label="チケット" className="grid gap-4">
-      <header>
-        <p className="text-sm font-medium text-accent">Admin</p>
-        <h1 className="text-3xl font-semibold tracking-normal">Tickets</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          チケット一覧 — Ticket 一覧 (Acceptance Criteria + Evidence
-          + AgentRun status を表示)。
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-medium ${colors[status] ?? "bg-gray-100 text-gray-600"}`}
+    >
+      {labels[status] ?? status}
+    </span>
+  );
+}
+
+export default async function TicketsListPage() {
+  const projects = await loadProjects();
+
+  const projectTickets: { project: ProjectItem; tickets: TicketItem[] }[] = [];
+  for (const p of projects) {
+    const pid = String((p as Record<string, unknown>).project_id ?? (p as Record<string, unknown>).id ?? "");
+    if (!pid) continue;
+    const tickets = await loadTickets(pid);
+    projectTickets.push({ project: p, tickets });
+  }
+
+  const totalTickets = projectTickets.reduce((sum, pt) => sum + pt.tickets.length, 0);
+
+  return (
+    <section aria-label="チケット一覧" className="grid gap-6">
+      <header className="grid gap-2">
+        <p className="text-sm font-medium text-accent">管理</p>
+        <h1 className="text-3xl font-semibold tracking-normal">チケット一覧</h1>
+        <p className="text-sm text-muted-foreground">
+          全 {projects.length} プロジェクト / {totalTickets} チケット
         </p>
       </header>
 
-      <article className="rounded-md border border-base p-4">
-        <h2 className="text-lg font-medium">Sprint 9 batch 1 進捗</h2>
-        <ul className="mt-2 list-disc pl-5 text-sm text-muted-foreground">
-          <li>BL-0103 Ticket 一覧 skeleton (本ページ)</li>
-          <li>BL-0104 Ticket 詳細: Sprint 9 batch 2 で実装</li>
-          <li>BL-0105 Approval Inbox: 既存実装 (Sprint 3 完成)</li>
-          <li>BL-0106 Agent Runs timeline: Sprint 9 batch 3 で実装</li>
-          <li>BL-0107 Audit Log: Sprint 9 batch 4 で実装</li>
-          <li>BL-0108 Project Settings: Sprint 9 batch 5 で実装</li>
-        </ul>
-      </article>
+      {projectTickets.length === 0 ? (
+        <div className="rounded-lg border border-line bg-panel p-8 text-center">
+          <p className="text-muted-foreground">プロジェクトが見つかりません</p>
+        </div>
+      ) : (
+        projectTickets.map(({ project, tickets }) => (
+          <article
+            key={String((project as Record<string, unknown>).project_id ?? (project as Record<string, unknown>).id)}
+            className="rounded-lg border border-line bg-panel shadow-sm"
+          >
+            <div className="flex items-center justify-between border-b border-line px-5 py-3">
+              <div className="flex items-center gap-3">
+                <h2 className="text-lg font-semibold">{project.name}</h2>
+                <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-muted-foreground">
+                  {project.slug}
+                </span>
+              </div>
+              <span className="text-sm text-muted-foreground">
+                {tickets.length} チケット
+              </span>
+            </div>
 
-      <article className="rounded-md border border-base p-4">
-        <h2 className="text-lg font-medium">P0 UI 設計 (SP-009 §scope)</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          - Server Component default (Next.js 16 App Router)
-          <br />- secret_ref / installation_token / capability token を DOM に出さない
-          <br />- AgentRun 16 状態 + blocked_reason 3 種を status と分離表示
-          <br />- payload_data_class と allowed_data_class を別 dimension で表示
-          <br />- audit log は raw secret なし (reason_code / hash / pattern hit 種別 のみ)
-        </p>
-      </article>
+            {tickets.length === 0 ? (
+              <div className="px-5 py-4 text-sm text-muted-foreground">
+                チケットはまだありません
+              </div>
+            ) : (
+              <div className="divide-y divide-line">
+                {tickets.map((ticket) => (
+                  <Link
+                    key={ticket.id}
+                    href={`/tickets/${ticket.id}` as never}
+                    className="flex items-center justify-between px-5 py-3 transition-colors hover:bg-slate-50"
+                  >
+                    <div className="flex items-center gap-3">
+                      {statusBadge(ticket.status)}
+                      <span className="text-sm font-medium">{ticket.title}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {ticket.created_at
+                        ? new Date(ticket.created_at).toLocaleDateString("ja-JP")
+                        : ""}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </article>
+        ))
+      )}
     </section>
   );
 }
