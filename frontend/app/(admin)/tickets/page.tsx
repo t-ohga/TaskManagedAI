@@ -7,6 +7,8 @@ import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { TicketCreateDialog } from "@/components/ticket-create-dialog";
 import { SearchBar } from "@/components/search-bar";
 import { StatusFilter } from "@/components/status-filter";
+import { PriorityFilter } from "@/components/priority-filter";
+import { DateRangeFilter } from "@/components/date-range-filter";
 import { ViewToggle } from "@/components/view-toggle";
 
 export const dynamic = "force-dynamic";
@@ -156,7 +158,7 @@ function KanbanColumnEnhanced({
 }
 
 type Props = {
-  searchParams: Promise<{ project?: string; q?: string; status?: string; view?: string; sort?: string }>;
+  searchParams: Promise<{ project?: string; q?: string; status?: string; priority?: string; range?: string; view?: string; sort?: string }>;
 };
 
 export default async function TicketsKanbanPage({ searchParams }: Props) {
@@ -164,6 +166,8 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   const selectedProject = params.project ?? "all";
   const searchQuery = params.q ?? "";
   const statusFilter = params.status ?? "";
+  const priorityFilter = params.priority ?? "";
+  const rangeFilter = params.range ?? "";
   const currentView = (params.view === "list" ? "list" : "kanban") as "kanban" | "list";
   const sortKey = params.sort ?? "created_desc";
   const projects = await loadProjects();
@@ -195,6 +199,20 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   }
   if (statusFilter) {
     filteredTickets = filteredTickets.filter((t) => t.status === statusFilter);
+  }
+  if (priorityFilter) {
+    filteredTickets = filteredTickets.filter((t) => t.priority === priorityFilter);
+  }
+  if (rangeFilter) {
+    const now = new Date();
+    const cutoff = new Date();
+    if (rangeFilter === "today") cutoff.setHours(0, 0, 0, 0);
+    else if (rangeFilter === "week") cutoff.setDate(now.getDate() - 7);
+    else if (rangeFilter === "month") cutoff.setMonth(now.getMonth() - 1);
+    else if (rangeFilter === "quarter") cutoff.setMonth(now.getMonth() - 3);
+    filteredTickets = filteredTickets.filter((t) =>
+      t.created_at ? new Date(t.created_at) >= cutoff : false
+    );
   }
 
   const grouped: Record<KanbanGroup, typeof allTickets> = { todo: [], active: [], done: [] };
@@ -255,6 +273,8 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex-1"><SearchBar /></div>
           <StatusFilter />
+          <PriorityFilter />
+          <DateRangeFilter />
           <ViewToggle currentView={currentView} />
         </div>
       </Suspense>
