@@ -1,5 +1,13 @@
 # Codex Usage Policy
 
+> **2026-05-27 Codex プラグイン移行**: Codex 呼び出しは公式プラグイン (`codex@openai-codex`) に移行。
+> - `/codex:review` — コードレビュー (working tree / branch diff)
+> - `/codex:adversarial-review` — 敵対レビュー (focus text 指定可能)
+> - `/codex:rescue` — タスク委譲 (調査・修正・バックグラウンド)
+> - `/codex:status` / `/codex:result` / `/codex:cancel` — ジョブ管理
+> 旧 `codex exec` + `launch-codex.sh` は互換として残すが、新規利用は非推奨。
+
+
 TaskManagedAI ハーネスにおける Codex 利用方針。  
 Claude 側の Codex skill 運用、Codex 自身の chain 禁止、3 連続失敗停止、採否判定、`workspace-write` 承認条件を定義する。
 
