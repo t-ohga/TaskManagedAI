@@ -1,10 +1,12 @@
 {
-  "_comment": "Phase 1 skeleton: project-scoped MCP は空とする。npx -y @latest は供給網 / 再現性 / deny-by-default 境界に違反するため、個別 MCP 追加は ADR Gate で承認後、バージョン固定済みローカル wrapper 経由で起動する (DD-04 / harness-phase0-mapping §6 参照)。drawio / next-devtools は user/global の ~/.claude.json で個別解決すること。",
+  "_comment": "TaskManagedAI MCP Server — stdio transport. DB接続はenv.TASKMANAGEDAI_DATABASE_URLで127.0.0.1に向ける (host上で実行されるため Docker internal hostname は不可)。",
   "mcpServers": {
     "taskmanagedai": {
       "command": "uv",
       "args": ["run", "python", "-m", "backend.app.mcp"],
-      "env": {}
+      "env": {
+        "TASKMANAGEDAI_DATABASE_URL": "postgresql+asyncpg://taskmanagedai:taskmanagedai_local_smoke_pwd@127.0.0.1:5432/taskmanagedai"
+      }
     }
   }
 }
