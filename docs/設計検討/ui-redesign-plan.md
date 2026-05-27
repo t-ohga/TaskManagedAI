@@ -23,8 +23,7 @@ TaskManagedAI を「人間が直感的に理解でき、AI agent の動作を透
 | blocked | 進行中 (ブロック表示) | ブロックインジケーター付き |
 | review | 進行中 (レビュー中) | レビューバッジ付き |
 | closed | 完了 | 完了カラム |
-
-| cancelled | 完了 (中止) | 中止バッジ付き、グレーアウト |
+| cancelled | 中止 | 中止バッジ付き、グレーアウト |
 
 → 3 カラム (未着手 / 進行中 / 完了) に正本 6 ステータスをマッピング。
 blocked/review は進行中カラム内でサブインジケーターで区別。
@@ -90,11 +89,15 @@ const TICKET_STATUS_CONFIG = {
 - `status` + `blocked_reason` を受け取る
 - blocked 時: policy_blocked (赤) / budget_blocked (黄) / runtime_blocked (橙) で色分け
 
-### StatusIndicator コンポーネント (レガシー互換)
+### StatusIndicator 統合ラッパー (discriminated union)
 ```tsx
 // 使い方: <StatusIndicator status="running" />
 // 出力: ● 進行中 (amber ドット + ラベル)
 
+// discriminated union: kind で分岐
+// <StatusIndicator kind="ticket" status="blocked" />
+// <StatusIndicator kind="agent_run" status="blocked" blockedReason="policy_blocked" />
+// ticket-only status が agent_run に入らないこと、その逆も exact-set test で検証
 const STATUS_CONFIG = {
   open:       { color: "bg-blue-500",    label: "未着手",   group: "todo" },
   queued:     { color: "bg-purple-500",  label: "待機中",   group: "todo" },
@@ -204,7 +207,7 @@ const ROLE_CONFIG = {
 | Unit | 追加検証 |
 |---|---|
 | 1 | TicketStatusIndicator: 正本 6 TicketStatus exact-set テスト + AgentRunStatusIndicator: 16 AgentRunStatus + blocked_reason 3 種 exact-set テスト (分離コンポーネント) |
-| 2 | 看板: 正本 6 TicketStatus のカードが正しいカラムに配置される fixture テスト |
+| 2 | 看板: 正本 6 TicketStatus fixture + `project=all` server action 拒否テスト + FormData tamper 拒否 + slug/ticket project_id 不一致拒否 |
 | 3 | ダッシュボード→チケット→詳細の導線 E2E |
 | 4 | /runs: 実 API データ表示 + role バッジ + ステータスインジケーター |
 | 5 | /audit: 実 API データ表示 + イベントフィルター |
