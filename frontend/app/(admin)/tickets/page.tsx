@@ -2,7 +2,6 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { fetchBackendRaw } from "@/lib/api/client";
-import { KanbanColumn } from "@/components/kanban-column";
 import { ProjectTab } from "@/components/project-tab";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 
@@ -36,7 +35,7 @@ async function loadProjects(): Promise<ProjectItem[]> {
 
 async function loadTickets(projectId: string): Promise<TicketItem[]> {
   try {
-    const res = await fetchBackendRaw(`/api/v1/projects/${projectId}/tickets` as `/${string}`);
+    const res = await fetchBackendRaw(`/api/v1/projects/${projectId}/tickets?limit=200` as `/${string}`);
     const raw = res as Record<string, unknown>;
     return ((raw?.items ?? []) as TicketItem[]);
   } catch {

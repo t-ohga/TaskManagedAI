@@ -149,8 +149,8 @@ export default async function DashboardPage() {
           <p className="mt-1 text-2xl font-bold text-blue-700">{projects.reduce((s: number, p: any) => s + p.ticketCount, 0)}</p>
         </article>
         <article className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-          <p className="text-xs text-emerald-600">アクティブプロジェクト</p>
-          <p className="mt-1 text-2xl font-bold text-emerald-700">{projects.filter((p: any) => p.ticketCount > 0).length}</p>
+          <p className="text-xs text-emerald-600">稼働中プロジェクト</p>
+          <p className="mt-1 text-2xl font-bold text-emerald-700">{projects.filter((p: any) => String(p.status ?? "active") === "active").length}</p>
         </article>
       </section>
 

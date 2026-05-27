@@ -17,7 +17,7 @@ type AgentRunItem = {
 
 async function loadRuns(): Promise<AgentRunItem[]> {
   try {
-    const res = await fetchBackendRaw("/api/v1/agent_runs" as `/${string}`);
+    const res = await fetchBackendRaw("/api/v1/agent_runs?limit=200" as `/${string}`);
     const raw = res as Record<string, unknown>;
     return ((raw?.items ?? []) as AgentRunItem[]);
   } catch (e) {

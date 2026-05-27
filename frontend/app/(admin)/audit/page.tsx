@@ -7,9 +7,8 @@ type AuditEvent = {
   event_type: string;
   actor_id: string | null;
   reason_code: string | null;
-  blocked_reason: string | null;
-  payload_data_class: string | null;
-  allowed_data_class: string | null;
+  payload_keys: string[];
+  payload_redaction_status: string | null;
   created_at: string | null;
 };
 
@@ -83,7 +82,7 @@ export default async function AuditPage() {
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">イベント種別</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">アクター</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">理由コード</th>
-                <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">データクラス</th>
+                <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">ペイロード</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">日時</th>
               </tr>
             </thead>
@@ -95,7 +94,7 @@ export default async function AuditPage() {
                     {e.actor_id ? e.actor_id.slice(0, 8) + "..." : "—"}
                   </td>
                   <td className="px-4 py-3 text-xs">{e.reason_code ?? "—"}</td>
-                  <td className="px-4 py-3 text-xs">{e.payload_data_class ?? "—"}</td>
+                  <td className="px-4 py-3 text-xs">{e.payload_keys?.length ? e.payload_keys.join(", ") : "—"}</td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
                     {e.created_at ? new Date(e.created_at).toLocaleString("ja-JP") : "—"}
                   </td>
