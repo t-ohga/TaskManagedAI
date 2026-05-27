@@ -1,176 +1,113 @@
-/**
- * Sprint 9 BL-0107: Audit Log (P0 UI skeleton).
- *
- * Append-only audit display. Raw secrets, raw provider responses, and
- * capability token values are excluded; only redacted metadata and reason codes
- * are shown.
- */
-
-import {
-  AdminPageShell,
-  KeyboardReadinessStrip,
-  Panel,
-  SecretBoundaryNotice
-} from "../_components/sprint9-admin-ui";
+import { fetchBackendRaw } from "@/lib/api/client";
 
 export const dynamic = "force-dynamic";
 
-// F-P2R1-006 fix: reason_code (Provider Compliance / event-level) and
-// blocked_reason (AgentRun status sub-category) are distinct invariants.
-// blocked_reason is null unless the resulting status is `blocked`, while
-// reason_code mirrors event-specific deny / allow codes (Provider Compliance
-// Matrix has 13 reason_code values, runner_blocked has its own deny_category).
-const AUDIT_EVENT_ROWS = [
-  {
-    event_type: "policy_decision_created",
-    actor_id: "actor:user:reviewer-001",
-    reason_code: "allow",
-    blocked_reason: null,
-    payload_data_class: "internal",
-    allowed_data_class: "confidential",
-    redaction: "hash references only"
-  },
-  {
-    event_type: "secret_canary_detected",
-    actor_id: "system/provider-preflight",
-    reason_code: "provider_request_preflight_violation",
-    blocked_reason: null,
-    payload_data_class: "confidential",
-    allowed_data_class: "confidential",
-    redaction: "pattern_hit only"
-  },
-  {
-    event_type: "runner_blocked",
-    actor_id: "system/runner-gateway",
-    reason_code: "dangerous_command",
-    blocked_reason: "runtime_blocked",
-    payload_data_class: "internal",
-    allowed_data_class: "internal",
-    redaction: "argv_hash and deny_category only"
-  },
-  {
-    event_type: "repo_pr_opened",
-    actor_id: "system/repo-proxy",
-    reason_code: "allow",
-    blocked_reason: null,
-    payload_data_class: "internal",
-    allowed_data_class: "confidential",
-    redaction: "branch and pr number metadata only"
+type AuditEvent = {
+  id: string;
+  event_type: string;
+  actor_id: string | null;
+  reason_code: string | null;
+  blocked_reason: string | null;
+  payload_data_class: string | null;
+  allowed_data_class: string | null;
+  created_at: string | null;
+};
+
+async function loadAuditEvents(): Promise<AuditEvent[]> {
+  try {
+    const res = await fetchBackendRaw("/api/v1/audit/events" as `/${string}`);
+    const raw = res as Record<string, unknown>;
+    return ((raw?.items ?? raw?.events ?? []) as AuditEvent[]);
+  } catch {
+    return [];
   }
-] as const;
+}
 
-export default function AuditLogPage() {
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  policy_decision_created: "ポリシー判定",
+  secret_canary_detected: "シークレット検出",
+  runner_blocked: "ランナーブロック",
+  repo_pr_opened: "PR 作成",
+  approval_requested: "承認要求",
+  approval_decided: "承認決定",
+  run_completed: "実行完了",
+  run_failed: "実行失敗",
+  run_cancelled: "実行キャンセル",
+};
+
+function eventTypeBadge(eventType: string) {
+  const label = EVENT_TYPE_LABELS[eventType] ?? eventType;
+  const colors: Record<string, string> = {
+    policy_decision_created: "bg-blue-50 text-blue-700",
+    secret_canary_detected: "bg-red-50 text-red-700",
+    runner_blocked: "bg-orange-50 text-orange-700",
+    repo_pr_opened: "bg-emerald-50 text-emerald-700",
+    approval_requested: "bg-purple-50 text-purple-700",
+    approval_decided: "bg-purple-50 text-purple-700",
+    run_completed: "bg-emerald-50 text-emerald-700",
+    run_failed: "bg-red-50 text-red-700",
+  };
   return (
-    <AdminPageShell
-      description="追記専用の監査イベントを reason_code、actor_id、データクラス分離で表示します。"
-      eyebrow="管理 / 監査"
-      regionLabel="監査ログ"
-      title="監査ログ"
-    >
-      <KeyboardReadinessStrip current="監査ログ" />
+    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${colors[eventType] ?? "bg-gray-100 text-gray-600"}`}>
+      {label}
+    </span>
+  );
+}
 
-      <Panel
-        description="イベントタイプは CI とオペレーターに表示され、ペイロード内容はマスクされます。"
-        title="監査イベントストリーム"
-        titleId="audit-event-stream"
-      >
-        <div className="overflow-x-auto rounded-md border border-line">
-          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
-            <caption className="sr-only">
-              Audit events with event_type, actor_id, reason_code, blocked_reason,
-              payload_data_class, allowed_data_class, and redaction status.
-            </caption>
-            <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted-foreground">
+export default async function AuditPage() {
+  const events = await loadAuditEvents();
+
+  return (
+    <section aria-label="監査ログ" className="grid gap-6">
+      <header className="grid gap-2">
+        <p className="text-sm font-medium text-accent">管理</p>
+        <h1 className="text-3xl font-semibold tracking-normal">監査ログ</h1>
+        <p className="text-sm text-muted-foreground">
+          追記専用の監査イベント ({events.length} 件)。シークレットやトークンの値は表示されません。
+        </p>
+      </header>
+
+      <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+        <p className="text-sm font-medium text-red-700">AC-HARD-02 監査マスク</p>
+        <p className="mt-1 text-xs text-red-600">
+          生のシークレット、トークン、プロバイダーキーは表示されません。reason_code、パターン検出、ハッシュ参照のみ。
+        </p>
+      </div>
+
+      {events.length > 0 ? (
+        <div className="overflow-x-auto rounded-lg border border-line">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-line bg-slate-50">
               <tr>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  event_type
-                </th>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  actor_id
-                </th>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  reason_code
-                </th>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  blocked_reason
-                </th>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  payload_data_class
-                </th>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  allowed_data_class
-                </th>
-                <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
-                  redaction
-                </th>
+                <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">イベント種別</th>
+                <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">アクター</th>
+                <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">理由コード</th>
+                <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">データクラス</th>
+                <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">日時</th>
               </tr>
             </thead>
-            <tbody>
-              {AUDIT_EVENT_ROWS.map((event) => (
-                <tr key={event.event_type} className="align-top">
-                  <th scope="row" className="border-b border-line px-3 py-2">
-                    <code className="font-mono text-xs font-semibold text-ink">
-                      {event.event_type}
-                    </code>
-                  </th>
-                  <td className="border-b border-line px-3 py-2">
-                    <code className="font-mono text-xs text-ink">{event.actor_id}</code>
+            <tbody className="divide-y divide-line">
+              {events.map((e) => (
+                <tr key={e.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3">{eventTypeBadge(e.event_type)}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                    {e.actor_id ? e.actor_id.slice(0, 8) + "..." : "—"}
                   </td>
-                  <td className="border-b border-line px-3 py-2">
-                    <code className="font-mono text-xs text-ink">{event.reason_code}</code>
-                  </td>
-                  <td className="border-b border-line px-3 py-2 text-muted-foreground">
-                    {event.blocked_reason === null ? (
-                      <span aria-label="not applicable" className="text-muted-foreground">
-                        —
-                      </span>
-                    ) : (
-                      <code className="font-mono text-xs text-attention">
-                        {event.blocked_reason}
-                      </code>
-                    )}
-                  </td>
-                  <td className="border-b border-line px-3 py-2 text-muted-foreground">
-                    {event.payload_data_class}
-                  </td>
-                  <td className="border-b border-line px-3 py-2 text-muted-foreground">
-                    {event.allowed_data_class}
-                  </td>
-                  <td className="border-b border-line px-3 py-2 text-muted-foreground">
-                    {event.redaction}
+                  <td className="px-4 py-3 text-xs">{e.reason_code ?? "—"}</td>
+                  <td className="px-4 py-3 text-xs">{e.payload_data_class ?? "—"}</td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">
+                    {e.created_at ? new Date(e.created_at).toLocaleString("ja-JP") : "—"}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      </Panel>
-
-      <Panel
-        description="AC-HARD-02 準拠: シークレットやトークンの値を露出せずに監査情報を表示します。"
-        title="シークレット非露出"
-        titleId="audit-secret-boundary"
-      >
-        <SecretBoundaryNotice title="AC-HARD-02 監査マスク" />
-      </Panel>
-
-      <Panel
-        description="監査行は表示専用です。AI 出力、ショートカット、UI 操作で監査履歴を変更することはできません。"
-        title="追記専用"
-        titleId="audit-append-only"
-      >
-        <ul className="grid gap-2 text-sm text-muted-foreground md:grid-cols-3">
-          <li className="rounded-md border border-line bg-white p-3">
-            すべての行に event_type と actor_id が必須です。
-          </li>
-          <li className="rounded-md border border-line bg-white p-3">
-            policy_decision_created はポリシー判定結果を記録します。
-          </li>
-          <li className="rounded-md border border-line bg-white p-3">
-            runner_blocked は deny_category と reason_code を記録します（生のコマンド入力は含みません）。
-          </li>
-        </ul>
-      </Panel>
-    </AdminPageShell>
+      ) : (
+        <div className="rounded-lg border border-line bg-panel p-8 text-center">
+          <p className="text-muted-foreground">監査イベントはまだありません</p>
+        </div>
+      )}
+    </section>
   );
 }
