@@ -1,4 +1,4 @@
-"""TaskManagedAI MCP Server — stdio transport, 32 tools (all DB-wired).
+"""TaskManagedAI MCP Server — stdio transport, 35 tools (all DB-wired).
 
 Security invariants:
 - approval_decide is human-only (not exposed)
@@ -589,6 +589,87 @@ async def delegation_inbox(run_id: str, limit: int = 20) -> dict[str, Any]:
         return {"error": "invalid_uuid", "field": "run_id"}
     except Exception as e:
         return {"error": str(type(e).__name__), "messages": []}
+
+
+
+@mcp.tool()
+async def delegation_accept(run_id: str, message_id: str) -> dict[str, Any]:
+    """委譲されたタスクを受諾。run を running に遷移し、メッセージを consumed にする。"""
+    from backend.app.mcp.api_bridge import bridge_delegation_accept
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_delegation_accept(
+                session, tenant_id=DEFAULT_TENANT_ID,
+                run_id=UUID(run_id), message_id=UUID(message_id),
+            )
+    except (ValueError, AttributeError):
+        return {"error": "invalid_uuid"}
+    except Exception as e:
+        return {"error": str(type(e).__name__), "message": str(e)[:200]}
+
+
+@mcp.tool()
+async def delegation_submit(
+    run_id: str, parent_run_id: str, project_id: str,
+    result_status: str = "completed", result_summary: str = "",
+    result_spec: str = "{}",
+) -> dict[str, Any]:
+    """タスク結果を親に提出。result_status: completed / failed / needs_review。"""
+    import json as json_mod
+
+    from backend.app.mcp.api_bridge import bridge_delegation_submit
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        spec = json_mod.loads(result_spec) if isinstance(result_spec, str) else result_spec
+    except json_mod.JSONDecodeError:
+        return {"error": "invalid_json", "field": "result_spec"}
+
+    try:
+        async with get_db_session() as session:
+            result = await bridge_delegation_submit(
+                session, tenant_id=DEFAULT_TENANT_ID,
+                run_id=UUID(run_id), parent_run_id=UUID(parent_run_id),
+                project_id=UUID(project_id),
+                result_status=result_status, result_summary=result_summary,
+                result_spec=spec, actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+            )
+            if result.get("submitted") and result_status in ("completed", "failed"):
+                try:
+                    from backend.app.mcp.discord_notify import notify_run_completed
+                    await notify_run_completed(run_id, result_status, result_summary)
+                except Exception:  # noqa: S110
+                    logging.getLogger(__name__).debug("Discord notification skipped")
+            return result
+    except (ValueError, AttributeError):
+        return {"error": "invalid_uuid"}
+    except Exception as e:
+        return {"error": str(type(e).__name__), "message": str(e)[:200]}
+
+
+@mcp.tool()
+async def delegation_review(
+    run_id: str, reviewer_run_id: str,
+    decision: str = "adopt", quality_score: float = 0.8,
+    findings: str = "",
+) -> dict[str, Any]:
+    """レビュー結果を記録。decision: adopt / reject。quality_score: 0.0-1.0。"""
+    from backend.app.mcp.api_bridge import bridge_delegation_review
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    try:
+        async with get_db_session() as session:
+            return await bridge_delegation_review(
+                session, tenant_id=DEFAULT_TENANT_ID,
+                run_id=UUID(run_id), reviewer_run_id=UUID(reviewer_run_id),
+                decision=decision, quality_score=quality_score, findings=findings,
+            )
+    except (ValueError, AttributeError):
+        return {"error": "invalid_uuid"}
+    except Exception as e:
+        return {"error": str(type(e).__name__), "message": str(e)[:200]}
 
 # --- Superintendent tools (SP-035) ---
 

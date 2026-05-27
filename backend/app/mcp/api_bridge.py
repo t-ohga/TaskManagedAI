@@ -869,3 +869,176 @@ async def bridge_delegation_inbox(
         ],
         "total": len(rows),
     }
+
+
+async def bridge_delegation_accept(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    run_id: UUID,
+    message_id: UUID,
+) -> dict[str, Any]:
+    result = await session.execute(
+        select(AgentRun).where(AgentRun.tenant_id == tenant_id, AgentRun.id == run_id)
+    )
+    run = result.scalar_one_or_none()
+    if run is None:
+        return {"error": "not_found", "run_id": str(run_id)}
+    if run.status != "queued":
+        return {"error": "invalid_state", "status": run.status, "expected": "queued"}
+
+    run.status = "running"
+    await session.execute(
+        sa.text(
+            "UPDATE inter_agent_messages SET consumed_at = now(), consumed_by_run_id = :rid "
+            "WHERE tenant_id = :tid AND id = :mid AND consumed_at IS NULL"
+        ),
+        {"tid": tenant_id, "rid": run_id, "mid": message_id},
+    )
+    await session.commit()
+    return {"run_id": str(run_id), "status": "running", "accepted": True}
+
+
+async def bridge_delegation_submit(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    run_id: UUID,
+    parent_run_id: UUID,
+    project_id: UUID,
+    result_status: str,
+    result_summary: str,
+    result_spec: dict[str, Any],
+    actor_id: UUID,
+) -> dict[str, Any]:
+    import hashlib
+    import json as json_mod
+    from datetime import UTC, datetime, timedelta
+
+    valid = {"completed", "failed", "needs_review"}
+    if result_status not in valid:
+        return {"error": "invalid_status", "valid": sorted(valid)}
+
+    result = await session.execute(
+        select(AgentRun).where(AgentRun.tenant_id == tenant_id, AgentRun.id == run_id)
+    )
+    run = result.scalar_one_or_none()
+    if run is None:
+        return {"error": "not_found", "run_id": str(run_id)}
+
+    run_status = "completed" if result_status == "completed" else "failed" if result_status == "failed" else "running"
+    run.status = run_status
+
+    spec_json = json_mod.dumps(result_spec, sort_keys=True, ensure_ascii=False)
+    payload_hash = hashlib.sha256(spec_json.encode()).hexdigest()
+
+    max_seq = await session.execute(
+        sa.text(
+            "SELECT COALESCE(MAX(seq_no), 0) FROM inter_agent_messages "
+            "WHERE tenant_id = :tid AND parent_run_id = :prid"
+        ),
+        {"tid": tenant_id, "prid": parent_run_id},
+    )
+    next_seq = (max_seq.scalar() or 0) + 1
+
+    msg_id = uuid4()
+    await session.execute(
+        sa.text("""
+            INSERT INTO inter_agent_messages (
+                id, tenant_id, project_id, parent_run_id, child_run_id,
+                sender_actor_id, sender_run_id, receiver_kind, receiver_ref,
+                payload_data_class, trust_level, payload_hash, artifact_ref,
+                seq_no, schema_version, idempotency_key, expires_at
+            ) VALUES (
+                :id, :tid, :pid, :prid, :crid,
+                :said, :srid, 'agent_run', NULL,
+                'internal', 'untrusted_content', :phash, :aref,
+                :seq, '1.0', :ikey, :exp
+            )
+        """),
+        {
+            "id": msg_id, "tid": tenant_id, "pid": project_id,
+            "prid": parent_run_id, "crid": run_id,
+            "said": actor_id, "srid": run_id,
+            "phash": payload_hash,
+            "aref": f"result:{run_id}:{result_status}",
+            "seq": next_seq,
+            "ikey": f"submit:{run_id}:{next_seq}",
+            "exp": datetime.now(UTC) + timedelta(hours=24),
+        },
+    )
+    await session.commit()
+    return {
+        "submitted": True,
+        "run_id": str(run_id),
+        "status": run_status,
+        "result_status": result_status,
+        "message_id": str(msg_id),
+    }
+
+
+async def bridge_delegation_review(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    run_id: UUID,
+    reviewer_run_id: UUID,
+    decision: str,
+    quality_score: float,
+    findings: str = "",
+) -> dict[str, Any]:
+    valid_decisions = {"adopt", "reject"}
+    if decision not in valid_decisions:
+        return {"error": "invalid_decision", "valid": sorted(valid_decisions)}
+    if not 0.0 <= quality_score <= 1.0:
+        return {"error": "invalid_quality_score", "range": "0.0-1.0"}
+
+    result = await session.execute(
+        select(AgentRun).where(AgentRun.tenant_id == tenant_id, AgentRun.id == run_id)
+    )
+    run = result.scalar_one_or_none()
+    if run is None:
+        return {"error": "not_found", "run_id": str(run_id)}
+
+    reviewer_result = await session.execute(
+        select(AgentRun).where(AgentRun.tenant_id == tenant_id, AgentRun.id == reviewer_run_id)
+    )
+    reviewer = reviewer_result.scalar_one_or_none()
+    if reviewer is None:
+        return {"error": "reviewer_not_found"}
+    if reviewer.parent_run_id == run.parent_run_id and reviewer_run_id == run_id:
+        return {"error": "self_review_forbidden"}
+
+    from backend.app.db.models.agent_run_event import AgentRunEvent
+
+    max_seq = await session.execute(
+        sa.text(
+            "SELECT COALESCE(MAX(seq_no), 0) FROM agent_run_events "
+            "WHERE tenant_id = :tid AND run_id = :rid"
+        ),
+        {"tid": tenant_id, "rid": run_id},
+    )
+    next_seq = (max_seq.scalar() or 0) + 1
+
+    event = AgentRunEvent(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        seq_no=next_seq,
+        event_type="approval_decided",
+        event_payload={
+            "decision": decision,
+            "quality_score": quality_score,
+            "reviewer_run_id": str(reviewer_run_id),
+            "findings": findings,
+        },
+        actor_id=UUID("00000000-0000-4000-8000-000000000001"),
+    )
+    session.add(event)
+    await session.commit()
+
+    return {
+        "reviewed": True,
+        "run_id": str(run_id),
+        "decision": decision,
+        "quality_score": quality_score,
+    }
