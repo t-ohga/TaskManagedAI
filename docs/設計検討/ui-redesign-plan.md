@@ -22,11 +22,11 @@ TaskManagedAI を「人間が直感的に理解でき、AI agent の動作を透
 | in_progress | 進行中 | アクティブカラム |
 | blocked | 進行中 (ブロック表示) | ブロックインジケーター付き |
 | review | 進行中 (レビュー中) | レビューバッジ付き |
-| completed | 完了 | 完了カラム |
-| closed | 完了 | 完了カラム (closed バッジ) |
+| closed | 完了 | 完了カラム |
+
 | cancelled | 完了 (中止) | 中止バッジ付き、グレーアウト |
 
-→ 3 カラム (未着手 / 進行中 / 完了) に全 7 ステータスをマッピング。
+→ 3 カラム (未着手 / 進行中 / 完了) に正本 6 ステータスをマッピング。
 blocked/review は進行中カラム内でサブインジケーターで区別。
 
 ### 2. ステータスインジケーター
@@ -81,7 +81,6 @@ const TICKET_STATUS_CONFIG = {
   in_progress: { color: "bg-amber-500",   label: "進行中" },
   blocked:     { color: "bg-orange-500",  label: "ブロック" },
   review:      { color: "bg-purple-500",  label: "レビュー中" },
-  completed:   { color: "bg-emerald-500", label: "完了" },
   closed:      { color: "bg-emerald-500", label: "完了" },
   cancelled:   { color: "bg-gray-400",    label: "中止" },
 };
@@ -143,18 +142,20 @@ const ROLE_CONFIG = {
 ### プロジェクト切替 URL 契約
 - URL: `/tickets?project=<slug>` (query parameter)
 - デフォルト: `?project=all` (全プロジェクト横断)
-- チケット作成: 選択中の project_id を server action に渡す
+- チケット作成: server action は client から project_id を受け取らない。URL の slug → server 側で session の許可済み project list から解決
 - チケット詳細: `/tickets/[id]?project=<slug>` (パンくず用)
-- mutation: URL の project slug → server 側で project_id に解決 (caller-supplied 禁止)
+- mutation: server action は slug → project_id 解決を server 内部で完結。client FormData に project_id を含めない
+- tamper 防止: server action で slug → project_id 解決時に tenant の許可済み project list と照合
+- workspace 衝突: slug は (tenant_id, workspace_id, slug) で一意。URL に workspace_slug は含めない (P0 は単一 workspace)
 - E2E: 非デフォルトプロジェクトでの作成・詳細・更新を完了条件に含める
 
 ## 実装 Units (codex-quality-loop で各 Unit を回す)
 
 ### Unit 1: 共通コンポーネント基盤
-- **scope**: StatusIndicator + RoleBadge + ProjectTab + KanbanColumn
+- **scope**: TicketStatusIndicator + AgentRunStatusIndicator + RoleBadge + ProjectTab + KanbanColumn
 - **phases**: 1 (Codex review), 2 (実装), 4 (最終確認)
 - **完了条件**: コンポーネントが独立してレンダリング可能
-- **files**: frontend/components/status-indicator.tsx, role-badge.tsx, project-tab.tsx, kanban-column.tsx
+- **files**: frontend/components/ticket-status-indicator.tsx, agent-run-status-indicator.tsx, role-badge.tsx, project-tab.tsx, kanban-column.tsx
 
 ### Unit 2: チケット看板ボード
 - **scope**: /tickets を看板ボードに全面改修
@@ -200,7 +201,7 @@ const ROLE_CONFIG = {
 ### 各 Unit 固有の完了条件
 | Unit | 追加検証 |
 |---|---|
-| 1 | StatusIndicator: 全 7 TicketStatus + 全 16 AgentRunStatus + blocked_reason 3 種の exact-set テスト |
+| 1 | TicketStatusIndicator: 正本 6 TicketStatus exact-set テスト + AgentRunStatusIndicator: 16 AgentRunStatus + blocked_reason 3 種 exact-set テスト (分離コンポーネント) |
 | 2 | 看板: 全 7 TicketStatus のカードが正しいカラムに配置される fixture テスト |
 | 3 | ダッシュボード→チケット→詳細の導線 E2E |
 | 4 | /runs: 実 API データ表示 + role バッジ + ステータスインジケーター |
