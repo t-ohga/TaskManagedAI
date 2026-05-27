@@ -15,10 +15,11 @@ type AuditEvent = {
 
 async function loadAuditEvents(): Promise<AuditEvent[]> {
   try {
-    const res = await fetchBackendRaw("/api/v1/audit/events" as `/${string}`);
+    const res = await fetchBackendRaw("/api/v1/audit_events" as `/${string}`);
     const raw = res as Record<string, unknown>;
     return ((raw?.items ?? raw?.events ?? []) as AuditEvent[]);
-  } catch {
+  } catch (e) {
+    console.error("Audit API error:", e);
     return [];
   }
 }
