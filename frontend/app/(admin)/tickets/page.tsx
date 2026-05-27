@@ -1,6 +1,10 @@
 import Link from "next/link";
+import { Suspense } from "react";
 
 import { fetchBackendRaw } from "@/lib/api/client";
+import { KanbanColumn } from "@/components/kanban-column";
+import { ProjectTab } from "@/components/project-tab";
+import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 
 export const dynamic = "force-dynamic";
 
@@ -17,14 +21,13 @@ type ProjectItem = {
   id?: string;
   slug: string;
   name: string;
-  status: string;
 };
 
 async function loadProjects(): Promise<ProjectItem[]> {
   try {
     const res = await fetchBackendRaw("/api/v1/me/projects");
     const raw = res as Record<string, unknown>;
-    return (raw?.projects ?? raw?.items ?? []) as ProjectItem[];
+    return ((raw?.projects ?? raw?.items ?? []) as ProjectItem[]);
   } catch {
     return [];
   }
@@ -32,111 +35,140 @@ async function loadProjects(): Promise<ProjectItem[]> {
 
 async function loadTickets(projectId: string): Promise<TicketItem[]> {
   try {
-    const res = await fetchBackendRaw(
-      `/api/v1/projects/${projectId}/tickets` as `/${string}`
-    );
+    const res = await fetchBackendRaw(`/api/v1/projects/${projectId}/tickets` as `/${string}`);
     const raw = res as Record<string, unknown>;
-    return (raw?.items ?? []) as TicketItem[];
+    return ((raw?.items ?? []) as TicketItem[]);
   } catch {
     return [];
   }
 }
 
-function statusBadge(status: string) {
-  const colors: Record<string, string> = {
-    open: "bg-blue-50 text-blue-700",
-    in_progress: "bg-amber-50 text-amber-700",
-    closed: "bg-gray-100 text-gray-500",
-    cancelled: "bg-red-50 text-red-600",
-  };
-  const labels: Record<string, string> = {
-    open: "未着手",
-    in_progress: "進行中",
-    closed: "完了",
-    cancelled: "中止",
-  };
+type KanbanGroup = "todo" | "active" | "done";
+
+const STATUS_TO_KANBAN: Record<string, KanbanGroup> = {
+  open: "todo",
+  in_progress: "active",
+  blocked: "active",
+  review: "active",
+  closed: "done",
+  cancelled: "done",
+};
+
+const KANBAN_COLUMNS: { key: KanbanGroup; title: string; color: string }[] = [
+  { key: "todo", title: "未着手", color: "bg-blue-50" },
+  { key: "active", title: "進行中", color: "bg-amber-50" },
+  { key: "done", title: "完了", color: "bg-emerald-50" },
+];
+
+function TicketCard({ ticket, projectSlug }: { ticket: TicketItem; projectSlug?: string | undefined }) {
   return (
-    <span
-      className={`rounded-full px-2 py-0.5 text-xs font-medium ${colors[status] ?? "bg-gray-100 text-gray-600"}`}
+    <Link
+      href={`/tickets/${ticket.id}` as never}
+      className="block rounded-md border border-line bg-panel p-3 shadow-sm transition-all hover:border-accent/30 hover:shadow-md"
     >
-      {labels[status] ?? status}
-    </span>
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-sm font-medium leading-tight">{ticket.title}</span>
+        <TicketStatusIndicator status={ticket.status} />
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        {projectSlug && (
+          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            {projectSlug}
+          </span>
+        )}
+        <span className="text-[10px] text-muted-foreground">
+          {ticket.created_at ? new Date(ticket.created_at).toLocaleDateString("ja-JP") : ""}
+        </span>
+      </div>
+    </Link>
   );
 }
 
-export default async function TicketsListPage() {
+type Props = {
+  searchParams: Promise<{ project?: string }>;
+};
+
+export default async function TicketsKanbanPage({ searchParams }: Props) {
+  const params = await searchParams;
+  const selectedProject = params.project ?? "all";
   const projects = await loadProjects();
 
-  const projectTickets: { project: ProjectItem; tickets: TicketItem[] }[] = [];
-  for (const p of projects) {
-    const pid = String((p as Record<string, unknown>).project_id ?? (p as Record<string, unknown>).id ?? "");
-    if (!pid) continue;
-    const tickets = await loadTickets(pid);
-    projectTickets.push({ project: p, tickets });
+  let allTickets: (TicketItem & { projectSlug: string })[] = [];
+
+  if (selectedProject === "all") {
+    for (const p of projects) {
+      const pid = String((p as Record<string, unknown>).project_id ?? (p as Record<string, unknown>).id ?? "");
+      if (!pid) continue;
+      const tickets = await loadTickets(pid);
+      allTickets.push(...tickets.map((t) => ({ ...t, projectSlug: p.slug })));
+    }
+  } else {
+    const project = projects.find((p) => p.slug === selectedProject);
+    if (project) {
+      const pid = String((project as Record<string, unknown>).project_id ?? (project as Record<string, unknown>).id ?? "");
+      const tickets = await loadTickets(pid);
+      allTickets = tickets.map((t) => ({ ...t, projectSlug: project.slug }));
+    }
   }
 
-  const totalTickets = projectTickets.reduce((sum, pt) => sum + pt.tickets.length, 0);
+  const grouped: Record<KanbanGroup, typeof allTickets> = { todo: [], active: [], done: [] };
+  for (const ticket of allTickets) {
+    const group = STATUS_TO_KANBAN[ticket.status] ?? "todo";
+    grouped[group].push(ticket);
+  }
+
+  const showProjectBadge = selectedProject === "all";
 
   return (
-    <section aria-label="チケット一覧" className="grid gap-6">
+    <section aria-label="チケット看板ボード" className="grid gap-4">
       <header className="grid gap-2">
         <p className="text-sm font-medium text-accent">管理</p>
-        <h1 className="text-3xl font-semibold tracking-normal">チケット一覧</h1>
+        <h1 className="text-3xl font-semibold tracking-normal">チケット</h1>
         <p className="text-sm text-muted-foreground">
-          全 {projects.length} プロジェクト / {totalTickets} チケット
+          全 {allTickets.length} チケット
+          {selectedProject !== "all" && ` — ${selectedProject}`}
         </p>
       </header>
 
-      {projectTickets.length === 0 ? (
-        <div className="rounded-lg border border-line bg-panel p-8 text-center">
-          <p className="text-muted-foreground">プロジェクトが見つかりません</p>
-        </div>
-      ) : (
-        projectTickets.map(({ project, tickets }) => (
-          <article
-            key={String((project as Record<string, unknown>).project_id ?? (project as Record<string, unknown>).id)}
-            className="rounded-lg border border-line bg-panel shadow-sm"
-          >
-            <div className="flex items-center justify-between border-b border-line px-5 py-3">
-              <div className="flex items-center gap-3">
-                <h2 className="text-lg font-semibold">{project.name}</h2>
-                <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-muted-foreground">
-                  {project.slug}
-                </span>
-              </div>
-              <span className="text-sm text-muted-foreground">
-                {tickets.length} チケット
-              </span>
-            </div>
+      <Suspense fallback={<div className="text-sm text-muted-foreground">読み込み中...</div>}>
+        <ProjectTab
+          projects={projects.map((p) => ({
+            id: String((p as Record<string, unknown>).project_id ?? (p as Record<string, unknown>).id ?? ""),
+            slug: p.slug,
+            name: p.name,
+          }))}
+        />
+      </Suspense>
 
-            {tickets.length === 0 ? (
-              <div className="px-5 py-4 text-sm text-muted-foreground">
-                チケットはまだありません
-              </div>
-            ) : (
-              <div className="divide-y divide-line">
-                {tickets.map((ticket) => (
-                  <Link
-                    key={ticket.id}
-                    href={`/tickets/${ticket.id}` as never}
-                    className="flex items-center justify-between px-5 py-3 transition-colors hover:bg-slate-50"
-                  >
-                    <div className="flex items-center gap-3">
-                      {statusBadge(ticket.status)}
-                      <span className="text-sm font-medium">{ticket.title}</span>
-                    </div>
-                    <span className="text-xs text-muted-foreground">
-                      {ticket.created_at
-                        ? new Date(ticket.created_at).toLocaleDateString("ja-JP")
-                        : ""}
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </article>
-        ))
+      {selectedProject !== "all" && (
+        <p className="text-xs text-muted-foreground">
+          ※ チケットの作成・更新はプロジェクトを選択してから行えます
+        </p>
       )}
+      {selectedProject === "all" && (
+        <p className="text-xs text-muted-foreground">
+          ※ 全プロジェクト横断表示中。作成・更新するにはプロジェクトを選択してください
+        </p>
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        {KANBAN_COLUMNS.map((col) => (
+          <KanbanColumn
+            key={col.key}
+            title={col.title}
+            count={grouped[col.key].length}
+            color={col.color}
+          >
+            {grouped[col.key].map((ticket) => (
+              <TicketCard
+                key={ticket.id}
+                ticket={ticket}
+                projectSlug={showProjectBadge ? ticket.projectSlug : undefined}
+              />
+            ))}
+          </KanbanColumn>
+        ))}
+      </div>
     </section>
   );
 }
