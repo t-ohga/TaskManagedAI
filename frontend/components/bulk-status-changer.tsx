@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 type BulkStatusChangerProps = {
   selectedIds: string[];
   onClear: () => void;
+  onSelectionChange?: (ids: string[]) => void;
 };
 
 const STATUSES = [
@@ -15,61 +16,77 @@ const STATUSES = [
   { value: "cancelled", label: "中止" },
 ];
 
-export function BulkStatusChanger({ selectedIds, onClear }: BulkStatusChangerProps) {
+export function BulkStatusChanger({ selectedIds, onClear, onSelectionChange }: BulkStatusChangerProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [targetStatus, setTargetStatus] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   if (selectedIds.length === 0) return null;
 
   function handleApply() {
     if (!targetStatus) return;
+    setError(null);
     startTransition(async () => {
+      const { updateTicketAction } = await import("@/app/(admin)/tickets/[id]/actions");
+      const failedIds: string[] = [];
       for (const id of selectedIds) {
         try {
           const fd = new FormData();
           fd.set("ticket_id", id);
           fd.set("status", targetStatus);
-          const { updateTicketAction } = await import("@/app/(admin)/tickets/[id]/actions");
-          await updateTicketAction({ kind: "idle" }, fd);
+          const result = await updateTicketAction({ kind: "idle" }, fd);
+          if (result.kind === "error") failedIds.push(id);
         } catch {
-          /* continue with remaining */
+          failedIds.push(id);
         }
       }
-      onClear();
       router.refresh();
+      if (failedIds.length > 0) {
+        setError(`${failedIds.length} 件の更新に失敗しました (権限またはプロジェクト境界を確認してください)`);
+        setSelectedIdsFromParent(failedIds);
+      } else {
+        onClear();
+      }
     });
   }
 
+  function setSelectedIdsFromParent(ids: string[]) {
+    onSelectionChange?.(ids);
+  }
+
   return (
-    <div className="flex items-center gap-3 rounded-md border border-accent/30 bg-accent/5 px-4 py-2">
-      <span className="text-sm font-medium">{selectedIds.length} 件選択中</span>
-      <select
-        value={targetStatus}
-        onChange={(e) => setTargetStatus(e.target.value)}
-        className="rounded-md border border-line px-2 py-1 text-sm"
-        aria-label="一括変更先ステータス"
-      >
-        <option value="">ステータスを選択</option>
-        {STATUSES.map((s) => (
-          <option key={s.value} value={s.value}>{s.label}</option>
-        ))}
-      </select>
-      <button
-        type="button"
-        onClick={handleApply}
-        disabled={!targetStatus || isPending}
-        className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
-      >
-        {isPending ? "処理中..." : "一括変更"}
-      </button>
-      <button
-        type="button"
-        onClick={onClear}
-        className="text-sm text-muted-foreground hover:text-ink"
-      >
-        選択解除
-      </button>
+    <div className="grid gap-2 rounded-md border border-accent/30 bg-accent/5 px-4 py-2">
+      <div className="flex items-center gap-3">
+        <span className="text-sm font-medium">{selectedIds.length} 件選択中</span>
+        <select
+          value={targetStatus}
+          onChange={(e) => setTargetStatus(e.target.value)}
+          className="rounded-md border border-line px-2 py-1 text-sm"
+          aria-label="一括変更先ステータス"
+        >
+          <option value="">ステータスを選択</option>
+          {STATUSES.map((s) => (
+            <option key={s.value} value={s.value}>{s.label}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={handleApply}
+          disabled={!targetStatus || isPending}
+          className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
+        >
+          {isPending ? "処理中..." : "一括変更"}
+        </button>
+        <button
+          type="button"
+          onClick={onClear}
+          className="text-sm text-muted-foreground hover:text-ink"
+        >
+          選択解除
+        </button>
+      </div>
+      {error && <p className="text-xs text-danger" role="alert">{error}</p>}
     </div>
   );
 }

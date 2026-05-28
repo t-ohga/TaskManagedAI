@@ -56,7 +56,13 @@ export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTi
 
   return (
     <div className="grid gap-3">
-      {bulkEnabled && <BulkStatusChanger selectedIds={selectedIds} onClear={clear} />}
+      {bulkEnabled && (
+        <BulkStatusChanger
+          selectedIds={selectedIds}
+          onClear={clear}
+          onSelectionChange={setSelectedIds}
+        />
+      )}
       <div className="overflow-x-auto rounded-lg border border-line">
         <table className="w-full text-sm">
           <thead className="bg-canvas text-left text-xs font-medium text-muted-foreground">
@@ -108,7 +114,7 @@ export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTi
                     <td className="px-4 py-3 text-xs text-muted-foreground">{ticket.projectSlug}</td>
                   )}
                   <td className="px-4 py-3 text-xs text-muted-foreground">
-                    {ticket.created_at ? new Date(ticket.created_at).toLocaleDateString("ja-JP") : ""}
+                    {ticket.created_at ? new Date(ticket.created_at).toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo" }) : ""}
                   </td>
                 </tr>
               );
