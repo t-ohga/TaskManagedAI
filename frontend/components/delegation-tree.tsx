@@ -39,7 +39,7 @@ function TreeNodeView({ node, depth }: { node: TreeNode; depth: number }) {
 
 export function DelegationTree({ root }: DelegationTreeProps) {
   return (
-    <div className="overflow-x-auto" role="tree" aria-label="Delegation ツリー">
+    <div className="overflow-x-auto" aria-label="Delegation ツリー">
       <TreeNodeView node={root} depth={0} />
     </div>
   );
