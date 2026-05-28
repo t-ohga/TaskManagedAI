@@ -10,7 +10,18 @@ const initialState: CreateTicketState = { kind: "idle" };
 export function TicketCreateDialog({ projectSlug, projectId }: { projectSlug: string; projectId?: string | undefined }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [titleError, setTitleError] = useState<string | null>(null);
+  const [slug, setSlug] = useState("ticket");
   const [state, formAction, pending] = useActionState(createTicketAction, initialState);
+
+  function deriveSlug(title: string): string {
+    const base = title
+      .toLowerCase()
+      .replace(/[^a-z0-9぀-ゟ゠-ヿ一-鿿]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 40) || "ticket";
+    return `${base}-${Date.now() % 100000}`;
+  }
 
   useEffect(() => {
     if (state.kind === "ok") {
@@ -48,30 +59,33 @@ export function TicketCreateDialog({ projectSlug, projectId }: { projectSlug: st
         </div>
       )}
       <form action={formAction} className="grid gap-3">
-        <input type="hidden" name="slug" value="ticket" />
+        <input type="hidden" name="slug" value={slug} />
         
         {projectId && <input type="hidden" name="project_id" value={projectId} />}
         <div>
           <label htmlFor="title" className="text-xs font-medium text-muted-foreground">
-            タイトル
+            タイトル <span className="text-danger">*</span>
           </label>
           <input
             id="title"
             name="title"
             type="text"
             required
+            aria-required="true"
+            aria-invalid={titleError ? "true" : undefined}
+            aria-describedby={titleError ? "title-error" : undefined}
             placeholder="チケットのタイトル"
             onChange={(e) => {
-              const slug = e.target.value
-                .toLowerCase()
-                .replace(/[^a-z0-9぀-ゟ゠-ヿ一-鿿]+/g, '-')
-                .replace(/^-|-$/g, '')
-                .slice(0, 40) || 'ticket';
-              const slugInput = e.target.form?.querySelector('input[name="slug"]') as HTMLInputElement;
-              if (slugInput) slugInput.value = slug + '-' + Date.now() % 100000;
+              setTitleError(e.target.value.trim() === "" ? "タイトルは必須です" : null);
+              setSlug(deriveSlug(e.target.value));
             }}
-            className="mt-1 w-full rounded-md border border-line px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            className={`mt-1 w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+              titleError ? "border-danger focus:border-danger focus:ring-danger" : "border-line focus:border-accent focus:ring-accent"
+            }`}
           />
+          {titleError && (
+            <p id="title-error" className="mt-1 text-xs text-danger" role="alert">{titleError}</p>
+          )}
         </div>
         <div>
           <label htmlFor="description" className="text-xs font-medium text-muted-foreground">

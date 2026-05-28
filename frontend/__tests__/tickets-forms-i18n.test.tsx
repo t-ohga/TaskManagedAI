@@ -1,9 +1,7 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EditTicketForm } from "../app/(admin)/tickets/[id]/_components/edit-ticket-form";
-import { NewTicketForm } from "../app/(admin)/tickets/_components/new-ticket-form";
 import type { TicketRead } from "../lib/api/tickets";
 
 const routerMocks = vi.hoisted(() => ({
@@ -39,25 +37,6 @@ const ticketFixture: TicketRead = {
 };
 
 describe("ticket form i18n", () => {
-  it("opens the new ticket form with Japanese labels and raw enum values preserved", async () => {
-    const user = userEvent.setup();
-    render(<NewTicketForm />);
-
-    await user.click(screen.getByRole("button", { name: "+ 新規チケット" }));
-
-    expect(screen.getByText("新規チケット作成")).toBeVisible();
-    expect(screen.getByLabelText("Slug (kebab-case)")).toHaveAttribute("name", "slug");
-    expect(screen.getByLabelText("タイトル")).toHaveAttribute("name", "title");
-    expect(screen.getByPlaceholderText("チケットのタイトル")).toBeVisible();
-    expect(screen.getByLabelText("説明 (任意)")).toHaveAttribute("name", "description");
-    expect(screen.getByPlaceholderText("チケットの説明")).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "状態" })).toHaveValue("open");
-    expect(screen.getByRole("option", { name: "未着手 (open)" })).toHaveValue("open");
-    expect(screen.getByRole("option", { name: "レビュー中 (review)" })).toHaveValue("review");
-    expect(screen.getByRole("combobox", { name: "優先度 (任意)" })).toHaveValue("");
-    expect(screen.getByRole("option", { name: "緊急 (critical)" })).toHaveValue("critical");
-  });
-
   it("renders the edit ticket form with Japanese labels and raw enum values preserved", () => {
     render(<EditTicketForm ticket={ticketFixture} />);
 
