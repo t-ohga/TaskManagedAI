@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ApprovalTimer } from "@/components/approval-timer";
 
 import {
   listApprovals,
@@ -113,6 +114,9 @@ export default async function ApprovalInboxPage({
                   >
                     {formatRiskLevel(approval.risk_level)}
                   </span>
+                  {approval.status === "pending" && approval.requested_at && (
+                    <ApprovalTimer requestedAt={approval.requested_at} />
+                  )}
                   <Link
                     href={`/approvals/${approval.id}`}
                     className="text-sm font-semibold text-accent outline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"

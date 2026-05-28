@@ -4,6 +4,9 @@ import { getFrontendHealth } from "@/lib/health";
 import { StatusDonutChart } from "@/components/status-donut-chart";
 import { ProgressBar } from "@/components/progress-bar";
 import { DateRangeFilter } from "@/components/date-range-filter";
+import { BarChart } from "@/components/bar-chart";
+import { WelcomeBanner } from "@/components/welcome-banner";
+import { ExportButton } from "@/components/export-button";
 
 export const dynamic = "force-dynamic";
 
@@ -120,6 +123,7 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
 
   return (
     <div className="grid gap-6">
+      <WelcomeBanner />
       <header className="grid gap-2">
         <p className="text-sm font-medium text-accent">管理</p>
         <h1 className="text-3xl font-semibold tracking-normal">ダッシュボード</h1>
@@ -236,6 +240,24 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
               <div>
                 <p className="text-muted-foreground">残り</p>
                 <p className="text-lg font-bold text-amber-600">{totalTickets - closedTickets}</p>
+              </div>
+            </div>
+          </article>
+        </section>
+      )}
+
+      {totalTickets > 0 && (
+        <section aria-label="トレンド" className="grid gap-4 md:grid-cols-2">
+          <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+            <h2 className="mb-4 text-base font-semibold">プロジェクト別チケット数</h2>
+            <BarChart data={projects.map((p) => ({ label: p.slug.slice(0, 8), value: p.ticketCount }))} />
+          </article>
+          <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold">データエクスポート</h2>
+              <div className="flex gap-2">
+                <ExportButton data={projects.map((p) => ({ name: p.name, slug: p.slug, tickets: p.ticketCount, status: p.status }))} filename="projects" />
+                <ExportButton data={projects.map((p) => ({ name: p.name, slug: p.slug, tickets: p.ticketCount, status: p.status }))} filename="projects" format="json" />
               </div>
             </div>
           </article>
