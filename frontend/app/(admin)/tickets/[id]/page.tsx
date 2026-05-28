@@ -4,6 +4,7 @@ import { fetchBackendRaw } from "@/lib/api/client";
 import { TicketStatusChanger } from "@/components/ticket-status-changer";
 import { Breadcrumb } from "@/components/breadcrumb";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
+import { ActivityTimeline } from "@/components/activity-timeline";
 
 export const dynamic = "force-dynamic";
 
@@ -164,6 +165,36 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           </div>
         </article>
       </div>
+
+      <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+        <h2 className="text-lg font-semibold">アクティビティ</h2>
+        <div className="mt-4">
+          <ActivityTimeline entries={[
+            ...(ticket.created_at ? [{
+              id: "created",
+              type: "event" as const,
+              actor: null,
+              body: "チケットが作成されました",
+              created_at: ticket.created_at,
+            }] : []),
+            ...(ticket.updated_at && ticket.updated_at !== ticket.created_at ? [{
+              id: "updated",
+              type: "event" as const,
+              actor: null,
+              body: "チケットが更新されました",
+              created_at: ticket.updated_at,
+            }] : []),
+          ]} />
+        </div>
+      </article>
     </section>
   );
+}
+
+function statusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    open: "未着手", in_progress: "進行中", closed: "完了", cancelled: "中止",
+    blocked: "ブロック", review: "レビュー",
+  };
+  return labels[status] ?? status;
 }

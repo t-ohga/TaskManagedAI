@@ -1,14 +1,26 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { createTicketAction, type CreateTicketState } from "@/app/(admin)/tickets/actions";
 
 const initialState: CreateTicketState = { kind: "idle" };
 
 export function TicketCreateDialog({ projectSlug, projectId }: { projectSlug: string; projectId?: string | undefined }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState(createTicketAction, initialState);
+
+  useEffect(() => {
+    if (state.kind === "ok") {
+      const timer = setTimeout(() => {
+        setOpen(false);
+        router.refresh();
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [state, router]);
 
   if (!open) {
     return (

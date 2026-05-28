@@ -3,6 +3,7 @@ import type { HealthResponse } from "@/lib/api/types";
 import { getFrontendHealth } from "@/lib/health";
 import { StatusDonutChart } from "@/components/status-donut-chart";
 import { ProgressBar } from "@/components/progress-bar";
+import { DateRangeFilter } from "@/components/date-range-filter";
 
 export const dynamic = "force-dynamic";
 
@@ -76,7 +77,23 @@ async function readProjectSummaries(): Promise<ProjectSummary[]> {
   }
 }
 
-export default async function DashboardPage() {
+type DashboardProps = {
+  searchParams: Promise<{ range?: string }>;
+};
+
+function getRangeCutoff(range: string): Date | null {
+  const now = new Date();
+  const cutoff = new Date();
+  if (range === "today") { cutoff.setHours(0, 0, 0, 0); return cutoff; }
+  if (range === "week") { cutoff.setDate(now.getDate() - 7); return cutoff; }
+  if (range === "month") { cutoff.setMonth(now.getMonth() - 1); return cutoff; }
+  if (range === "quarter") { cutoff.setMonth(now.getMonth() - 3); return cutoff; }
+  return null;
+}
+
+export default async function DashboardPage({ searchParams }: DashboardProps) {
+  const params = await searchParams;
+  const rangeFilter = params.range ?? "";
   const [backendHealth, projects] = await Promise.all([
     readBackendHealth(),
     readProjectSummaries(),
@@ -106,6 +123,14 @@ export default async function DashboardPage() {
       <header className="grid gap-2">
         <p className="text-sm font-medium text-accent">管理</p>
         <h1 className="text-3xl font-semibold tracking-normal">ダッシュボード</h1>
+        <div className="flex items-center gap-2">
+          <DateRangeFilter />
+          {rangeFilter && (
+            <span className="text-xs text-muted-foreground">
+              ※ 期間フィルターはチケット一覧ページで適用されます
+            </span>
+          )}
+        </div>
       </header>
 
       <section aria-label="サービス状態" className="grid gap-4 md:grid-cols-2">
