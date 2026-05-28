@@ -181,6 +181,34 @@ export async function listAgentRuns(
   return fetchBackendJson<AgentRunListResponse>(path, AgentRunListResponseSchema);
 }
 
+const CostSummaryResponseSchema = z.object({
+  total_cost_usd: z.number().nullable(),
+  total_tokens_input: z.number().int().nonnegative(),
+  total_tokens_output: z.number().int().nonnegative(),
+  run_count: z.number().int().nonnegative(),
+  measured_run_count: z.number().int().nonnegative(),
+  unmeasured_run_count: z.number().int().nonnegative(),
+  by_status: z.array(
+    z.object({
+      status: z.string(),
+      cost_usd: z.number(),
+      run_count: z.number().int().nonnegative()
+    })
+  ),
+  range: z.enum(["today", "week", "month", "quarter", "all"])
+});
+
+export type CostSummaryResponse = z.infer<typeof CostSummaryResponseSchema>;
+
+export async function getCostSummary(
+  range: "today" | "week" | "month" | "quarter" | "all" = "all"
+): Promise<CostSummaryResponse> {
+  return fetchBackendJson<CostSummaryResponse>(
+    `/api/v1/agent_runs/cost_summary?range=${range}` as `/${string}`,
+    CostSummaryResponseSchema
+  );
+}
+
 export async function getAgentRun(id: string): Promise<AgentRunDetail> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) {
     throw new Error("invalid agent run id format");

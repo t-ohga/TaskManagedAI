@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
@@ -62,6 +63,26 @@ class AgentRunListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+CostSummaryRange = Literal["today", "week", "month", "quarter", "all"]
+
+
+class CostSummaryByStatus(BaseModel):
+    status: str
+    cost_usd: float
+    run_count: int
+
+
+class CostSummaryResponse(BaseModel):
+    total_cost_usd: float | None
+    total_tokens_input: int
+    total_tokens_output: int
+    run_count: int
+    measured_run_count: int
+    unmeasured_run_count: int
+    by_status: list[CostSummaryByStatus]
+    range: CostSummaryRange
 
 
 class AgentRunEventRead(BaseModel):
@@ -244,6 +265,85 @@ async def list_agent_runs_endpoint(
         total=int(total or 0),
         limit=limit,
         offset=offset,
+    )
+
+
+def _cost_summary_cutoff(range_value: CostSummaryRange) -> datetime | None:
+    """range から created_at の cutoff を server 側で算出 (caller-supplied date 禁止)."""
+    now = datetime.now(UTC)
+    if range_value == "today":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if range_value == "week":
+        return now - timedelta(days=7)
+    if range_value == "month":
+        return now - timedelta(days=30)
+    if range_value == "quarter":
+        return now - timedelta(days=90)
+    return None
+
+
+@router.get("/cost_summary", response_model=CostSummaryResponse)
+async def cost_summary_endpoint(
+    range_value: CostSummaryRange = Query(default="all", alias="range"),
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> CostSummaryResponse:
+    """AgentRun のコスト/トークンを集計 (read-only、ADR-00033).
+
+    tenant 境界を強制し、cost_usd / tokens のみ返す (raw secret なし)。
+    `actor_id` は authenticated session 強制のため Depends で resolve。
+    """
+    conditions = [AgentRun.tenant_id == tenant_id]
+    cutoff = _cost_summary_cutoff(range_value)
+    if cutoff is not None:
+        conditions.append(AgentRun.created_at >= cutoff)
+
+    totals = (
+        await session.execute(
+            select(
+                func.coalesce(func.sum(AgentRun.cost_usd), Decimal(0)),
+                func.coalesce(func.sum(AgentRun.tokens_input), 0),
+                func.coalesce(func.sum(AgentRun.tokens_output), 0),
+                func.count(),
+                func.count(AgentRun.cost_usd),
+            ).where(*conditions)
+        )
+    ).one()
+    total_cost, total_in, total_out, run_count, measured_count = totals
+
+    by_status_rows = (
+        await session.execute(
+            select(
+                AgentRun.status,
+                func.coalesce(func.sum(AgentRun.cost_usd), Decimal(0)),
+                func.count(),
+            )
+            .where(*conditions)
+            .group_by(AgentRun.status)
+            .order_by(AgentRun.status)
+        )
+    ).all()
+
+    measured = int(measured_count or 0)
+    total = int(run_count or 0)
+    return CostSummaryResponse(
+        # 測定済み run が 0 件なら null (未計測を $0 と誤認させない、ADR-00033 / Codex adversarial)
+        total_cost_usd=float(total_cost) if measured > 0 else None,
+        total_tokens_input=int(total_in or 0),
+        total_tokens_output=int(total_out or 0),
+        run_count=total,
+        measured_run_count=measured,
+        unmeasured_run_count=total - measured,
+        by_status=[
+            CostSummaryByStatus(
+                status=str(row[0]),
+                cost_usd=float(row[1]),
+                run_count=int(row[2]),
+            )
+            for row in by_status_rows
+        ],
+        range=range_value,
     )
 
 
