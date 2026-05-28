@@ -6,6 +6,7 @@ import { ProgressBar } from "@/components/progress-bar";
 import { DateRangeFilter } from "@/components/date-range-filter";
 import { BarChart } from "@/components/bar-chart";
 import { WelcomeBanner } from "@/components/welcome-banner";
+import { RecentTicketsList } from "@/components/recent-tickets";
 // ExportButton は Tier 4 (設計承認後) に有効化
 
 export const dynamic = "force-dynamic";
@@ -289,6 +290,12 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
           </div>
         </section>
       )}
+      <aside className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+        <h2 className="text-base font-semibold">最近のチケット</h2>
+        <div className="mt-3">
+          <RecentTicketsList />
+        </div>
+      </aside>
     </div>
   );
 }
