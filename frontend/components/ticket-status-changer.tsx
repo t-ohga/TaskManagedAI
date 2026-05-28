@@ -67,12 +67,10 @@ export function TicketStatusChanger({ ticketId, currentStatus }: Props) {
           </button>
         ))}
       </div>
-      {error && (
-        <p className="mt-2 text-xs text-red-600">{error}</p>
-      )}
-      {isPending && (
-        <p className="mt-2 text-xs text-muted-foreground">更新中...</p>
-      )}
+      <div aria-live="polite" className="mt-2">
+        {error && <p className="text-xs text-red-600">{error}</p>}
+        {isPending && <p className="text-xs text-muted-foreground">更新中...</p>}
+      </div>
     </div>
   );
 }
