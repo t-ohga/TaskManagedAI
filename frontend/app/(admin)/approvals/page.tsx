@@ -115,7 +115,7 @@ export default async function ApprovalInboxPage({
                     {formatRiskLevel(approval.risk_level)}
                   </span>
                   {approval.status === "pending" && approval.requested_at && (
-                    <ApprovalTimer requestedAt={approval.requested_at} />
+                    <ApprovalTimer requestedAt={approval.requested_at} timeoutMinutes={240} />
                   )}
                   <Link
                     href={`/approvals/${approval.id}`}

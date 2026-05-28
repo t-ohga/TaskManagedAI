@@ -6,7 +6,7 @@ import { ProgressBar } from "@/components/progress-bar";
 import { DateRangeFilter } from "@/components/date-range-filter";
 import { BarChart } from "@/components/bar-chart";
 import { WelcomeBanner } from "@/components/welcome-banner";
-import { ExportButton } from "@/components/export-button";
+// ExportButton は Tier 4 (設計承認後) に有効化
 
 export const dynamic = "force-dynamic";
 
@@ -253,13 +253,8 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
             <BarChart data={projects.map((p) => ({ label: p.slug.slice(0, 8), value: p.ticketCount }))} />
           </article>
           <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold">データエクスポート</h2>
-              <div className="flex gap-2">
-                <ExportButton data={projects.map((p) => ({ name: p.name, slug: p.slug, tickets: p.ticketCount, status: p.status }))} filename="projects" />
-                <ExportButton data={projects.map((p) => ({ name: p.name, slug: p.slug, tickets: p.ticketCount, status: p.status }))} filename="projects" format="json" />
-              </div>
-            </div>
+            <h2 className="text-base font-semibold">ステータス別集計</h2>
+            <BarChart data={ticketStatusCounts.filter((d) => d.count > 0).map((d) => ({ label: d.label, value: d.count }))} />
           </article>
         </section>
       )}
