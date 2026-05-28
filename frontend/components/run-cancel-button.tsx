@@ -33,7 +33,13 @@ export function RunCancelButton({ runId }: Props) {
         onClick={() => {
           startTransition(async () => {
             try {
-              await fetch(`/api/proxy/agent_runs/${runId}/cancel`, { method: "POST" });
+              const res = await fetch(`/api/proxy/agent_runs/${runId}/cancel`, { method: "POST" });
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({ error: "キャンセルに失敗しました" }));
+                alert(data.error ?? data.detail ?? "キャンセルに失敗しました");
+                setConfirmed(false);
+                return;
+              }
               router.refresh();
             } catch {
               setConfirmed(false);
