@@ -23,10 +23,12 @@ export function TicketStatusChanger({ ticketId, currentStatus }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [optimisticStatus, setOptimisticStatus] = useState(currentStatus);
 
   function handleStatusChange(newStatus: string) {
-    if (newStatus === currentStatus || isPending) return;
+    if (newStatus === optimisticStatus || isPending) return;
     setError(null);
+    setOptimisticStatus(newStatus);
 
     const formData = new FormData();
     formData.set("ticket_id", ticketId);
@@ -36,6 +38,7 @@ export function TicketStatusChanger({ ticketId, currentStatus }: Props) {
       const result = await updateTicketAction({ kind: "idle" } as UpdateTicketState, formData);
       if (result.kind === "error") {
         setError(result.message);
+        setOptimisticStatus(currentStatus);
       } else {
         router.refresh();
       }
@@ -52,11 +55,11 @@ export function TicketStatusChanger({ ticketId, currentStatus }: Props) {
             disabled={isPending}
             onClick={() => handleStatusChange(value)}
             className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${color} ${
-              currentStatus === value ? "ring-2 ring-offset-1 ring-accent" : "opacity-60"
+              optimisticStatus === value ? "ring-2 ring-offset-1 ring-accent" : "opacity-60"
             } ${isPending ? "opacity-30 cursor-wait" : "cursor-pointer"}`}
           >
             {label}
-            {currentStatus === value && " ✓"}
+            {optimisticStatus === value && " ✓"}
           </button>
         ))}
       </div>
