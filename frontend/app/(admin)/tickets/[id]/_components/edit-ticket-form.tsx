@@ -59,6 +59,16 @@ export function EditTicketForm({ ticket }: EditTicketFormProps) {
           />
         </label>
 
+        <label className="grid gap-2 text-sm">
+          <span className="font-medium">期限</span>
+          <input
+            type="date"
+            name="due_date"
+            defaultValue={ticket.due_date ? ticket.due_date.slice(0, 10) : ""}
+            className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          />
+        </label>
+
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="grid gap-2 text-sm">
             <span className="font-medium">状態</span>

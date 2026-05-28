@@ -20,8 +20,19 @@ type TicketItem = {
   status: string;
   priority: string | null;
   description: string | null;
+  due_date: string | null;
   created_at: string | null;
 };
+
+// due_date は SQL date (YYYY-MM-DD) のプレーンな暦日。timezone を持たないため
+// new Date(...) を介さず文字列から直接整形し、JST 変換による日付ずれを防ぐ。
+function formatDueDate(value: string | null): string | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return value;
+  const [, , month, day] = match;
+  return `${Number(month)}/${Number(day)}`;
+}
 
 type ProjectItem = {
   project_id?: string;
@@ -114,6 +125,11 @@ function TicketCard({ ticket, projectSlug }: { ticket: TicketItem; projectSlug?:
             {projectSlug}
           </span>
         )}
+        {formatDueDate(ticket.due_date) ? (
+          <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+            期限 {formatDueDate(ticket.due_date)}
+          </span>
+        ) : null}
         <span className="ml-auto text-[10px] text-muted-foreground">
           {ticket.created_at ? new Date(ticket.created_at).toLocaleDateString("ja-JP") : ""}
         </span>
@@ -322,6 +338,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             status: t.status,
             priority: t.priority,
             projectSlug: t.projectSlug,
+            due_date: t.due_date,
             created_at: t.created_at,
           }))}
           showProjectBadge={showProjectBadge}

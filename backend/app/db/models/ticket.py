@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -100,6 +101,7 @@ class Ticket(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         server_default=sa.text("'open'"),
     )
     priority: Mapped[TicketPriority | None] = mapped_column(sa.Text, nullable=True)
+    due_date: Mapped[date | None] = mapped_column(sa.Date, nullable=True)
     assignee_actor_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     created_by_actor_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     metadata_: Mapped[JsonDict] = mapped_column(

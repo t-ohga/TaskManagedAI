@@ -36,6 +36,7 @@ describe("tickets schemas (SP-012-9 BL-UIW-003)", () => {
       description: null,
       status: "open",
       priority: null,
+      due_date: null,
       assignee_actor_id: null,
       created_by_actor_id: "00000000-0000-4000-8000-000000000001",
       metadata: { rls_ready: true },
@@ -43,6 +44,49 @@ describe("tickets schemas (SP-012-9 BL-UIW-003)", () => {
       updated_at: "2026-05-22T00:00:00+00:00",
     };
     expect(() => TicketReadSchema.parse(valid)).not.toThrow();
+  });
+
+  it("TicketReadSchema requires due_date field (contract drift guard)", () => {
+    const missingDueDate = {
+      id: "00000000-0000-4000-8000-000000000006",
+      tenant_id: 1,
+      project_id: DEFAULT_PROJECT_ID,
+      repository_id: null,
+      slug: "welcome",
+      title: "Welcome",
+      description: null,
+      status: "open",
+      priority: null,
+      // due_date 欠落 → backend 契約と drift、reject されるべき
+      assignee_actor_id: null,
+      created_by_actor_id: "00000000-0000-4000-8000-000000000001",
+      metadata: { rls_ready: true },
+      created_at: "2026-05-22T00:00:00+00:00",
+      updated_at: "2026-05-22T00:00:00+00:00",
+    };
+    expect(() => TicketReadSchema.parse(missingDueDate)).toThrow();
+  });
+
+  it("TicketReadSchema accepts due_date as YYYY-MM-DD date string", () => {
+    const withDue = {
+      id: "00000000-0000-4000-8000-000000000006",
+      tenant_id: 1,
+      project_id: DEFAULT_PROJECT_ID,
+      repository_id: null,
+      slug: "welcome",
+      title: "Welcome",
+      description: null,
+      status: "open",
+      priority: null,
+      due_date: "2026-06-30",
+      assignee_actor_id: null,
+      created_by_actor_id: "00000000-0000-4000-8000-000000000001",
+      metadata: { rls_ready: true },
+      created_at: "2026-05-22T00:00:00+00:00",
+      updated_at: "2026-05-22T00:00:00+00:00",
+    };
+    const parsed = TicketReadSchema.parse(withDue);
+    expect(parsed.due_date).toBe("2026-06-30");
   });
 
   it("TicketReadSchema rejects unknown status enum", () => {

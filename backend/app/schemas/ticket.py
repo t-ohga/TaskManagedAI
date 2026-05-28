@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -24,6 +24,7 @@ class TicketCreate(BaseModel):
     description: str | None = None
     status: TicketStatus = "open"
     priority: TicketPriority | None = None
+    due_date: date | None = None
     assignee_actor_id: UUID | None = None
     created_by_actor_id: UUID
     metadata: dict[str, Any] = Field(default_factory=_rls_ready_metadata)
@@ -36,6 +37,7 @@ class TicketUpdate(BaseModel):
     description: str | None = None
     status: TicketStatus | None = None
     priority: TicketPriority | None = None
+    due_date: date | None = None
     assignee_actor_id: UUID | None = None
     metadata: dict[str, Any] | None = None
 
@@ -52,6 +54,7 @@ class TicketRead(BaseModel):
     description: str | None
     status: TicketStatus
     priority: TicketPriority | None
+    due_date: date | None
     assignee_actor_id: UUID | None
     created_by_actor_id: UUID
     metadata: dict[str, Any] = Field(validation_alias="metadata_")
