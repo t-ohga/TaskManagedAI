@@ -79,6 +79,8 @@ class CostSummaryResponse(BaseModel):
     total_tokens_input: int
     total_tokens_output: int
     run_count: int
+    measured_run_count: int
+    unmeasured_run_count: int
     by_status: list[CostSummaryByStatus]
     range: CostSummaryRange
 
@@ -304,10 +306,11 @@ async def cost_summary_endpoint(
                 func.coalesce(func.sum(AgentRun.tokens_input), 0),
                 func.coalesce(func.sum(AgentRun.tokens_output), 0),
                 func.count(),
+                func.count(AgentRun.cost_usd),
             ).where(*conditions)
         )
     ).one()
-    total_cost, total_in, total_out, run_count = totals
+    total_cost, total_in, total_out, run_count, measured_count = totals
 
     by_status_rows = (
         await session.execute(
@@ -322,11 +325,16 @@ async def cost_summary_endpoint(
         )
     ).all()
 
+    measured = int(measured_count or 0)
+    total = int(run_count or 0)
     return CostSummaryResponse(
-        total_cost_usd=float(total_cost) if run_count else None,
+        # 測定済み run が 0 件なら null (未計測を $0 と誤認させない、ADR-00033 / Codex adversarial)
+        total_cost_usd=float(total_cost) if measured > 0 else None,
         total_tokens_input=int(total_in or 0),
         total_tokens_output=int(total_out or 0),
-        run_count=int(run_count or 0),
+        run_count=total,
+        measured_run_count=measured,
+        unmeasured_run_count=total - measured,
         by_status=[
             CostSummaryByStatus(
                 status=str(row[0]),

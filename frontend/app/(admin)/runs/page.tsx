@@ -141,6 +141,11 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
                 <dd className="text-lg font-bold text-accent">
                   {costSummary.total_cost_usd != null ? `$${costSummary.total_cost_usd.toFixed(4)}` : "未計測"}
                 </dd>
+                {costSummary.unmeasured_run_count > 0 && (
+                  <p className="text-[10px] text-muted-foreground">
+                    {costSummary.measured_run_count}/{costSummary.run_count} 件計測済
+                  </p>
+                )}
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">実行数</dt>

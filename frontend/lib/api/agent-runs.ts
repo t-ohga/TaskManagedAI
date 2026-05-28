@@ -186,6 +186,8 @@ const CostSummaryResponseSchema = z.object({
   total_tokens_input: z.number().int().nonnegative(),
   total_tokens_output: z.number().int().nonnegative(),
   run_count: z.number().int().nonnegative(),
+  measured_run_count: z.number().int().nonnegative(),
+  unmeasured_run_count: z.number().int().nonnegative(),
   by_status: z.array(
     z.object({
       status: z.string(),

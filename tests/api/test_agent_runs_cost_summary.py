@@ -65,6 +65,8 @@ def test_cost_summary_response_schema_has_no_secret_fields() -> None:
         "total_tokens_input",
         "total_tokens_output",
         "run_count",
+        "measured_run_count",
+        "unmeasured_run_count",
         "by_status",
         "range",
     }
