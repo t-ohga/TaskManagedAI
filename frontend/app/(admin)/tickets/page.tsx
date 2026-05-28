@@ -10,6 +10,7 @@ import { StatusFilter } from "@/components/status-filter";
 import { PriorityFilter } from "@/components/priority-filter";
 import { DateRangeFilter } from "@/components/date-range-filter";
 import { ViewToggle } from "@/components/view-toggle";
+import { SelectableTicketList } from "@/components/selectable-ticket-list";
 
 export const dynamic = "force-dynamic";
 
@@ -314,45 +315,17 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
           ))}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-line">
-          <table className="w-full text-sm">
-            <thead className="bg-canvas text-left text-xs font-medium text-muted-foreground">
-              <tr>
-                <th className="px-4 py-3">タイトル</th>
-                <th className="px-4 py-3">ステータス</th>
-                <th className="px-4 py-3">優先度</th>
-                {showProjectBadge && <th className="px-4 py-3">プロジェクト</th>}
-                <th className="px-4 py-3">作成日</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {filteredTickets.map((ticket) => (
-                <tr key={ticket.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3">
-                    <Link href={`/tickets/${ticket.id}` as never} className="font-medium text-accent hover:underline">
-                      {ticket.title}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3"><TicketStatusIndicator status={ticket.status} /></td>
-                  <td className="px-4 py-3">{priorityBadge(ticket.priority)}</td>
-                  {showProjectBadge && (
-                    <td className="px-4 py-3 text-xs text-muted-foreground">{ticket.projectSlug}</td>
-                  )}
-                  <td className="px-4 py-3 text-xs text-muted-foreground">
-                    {ticket.created_at ? new Date(ticket.created_at).toLocaleDateString("ja-JP") : ""}
-                  </td>
-                </tr>
-              ))}
-              {filteredTickets.length === 0 && (
-                <tr>
-                  <td colSpan={showProjectBadge ? 5 : 4} className="px-4 py-8 text-center text-muted-foreground">
-                    チケットがありません
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <SelectableTicketList
+          tickets={filteredTickets.map((t) => ({
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            priority: t.priority,
+            projectSlug: t.projectSlug,
+            created_at: t.created_at,
+          }))}
+          showProjectBadge={showProjectBadge}
+        />
       )}
     </section>
   );
