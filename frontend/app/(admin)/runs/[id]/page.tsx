@@ -4,6 +4,7 @@ import { fetchBackendRaw } from "@/lib/api/client";
 import { RunCancelButton } from "@/components/run-cancel-button";
 import { AgentRunStatusIndicator } from "@/components/agent-run-status-indicator-v2";
 import { RoleBadge } from "@/components/role-badge";
+import { Breadcrumb } from "@/components/breadcrumb";
 
 export const dynamic = "force-dynamic";
 
@@ -91,11 +92,11 @@ export default async function RunDetailPage({ params, searchParams }: Props) {
   return (
     <section aria-label="AI 実行詳細" className="grid gap-6">
       <header className="grid gap-2">
-        <div className="flex items-center gap-2 text-sm">
-          <a href="/runs" className="text-accent hover:underline">AI 実行一覧</a>
-          <span className="text-muted-foreground">/</span>
-          <span className="font-mono text-xs text-muted-foreground">{id.slice(0, 8)}...</span>
-        </div>
+        <Breadcrumb items={[
+          { label: "ダッシュボード", href: "/dashboard" },
+          { label: "AI 実行", href: "/runs" },
+          { label: id.slice(0, 8) + "..." },
+        ]} />
         <div className="flex items-center gap-4">
           <h1 className="text-3xl font-semibold tracking-normal">AI 実行詳細</h1>
           <AgentRunStatusIndicator status={run.status} blockedReason={run.blocked_reason} />

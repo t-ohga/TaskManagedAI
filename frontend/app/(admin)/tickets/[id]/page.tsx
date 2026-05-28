@@ -1,8 +1,9 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { fetchBackendRaw } from "@/lib/api/client";
 import { TicketStatusChanger } from "@/components/ticket-status-changer";
+import { Breadcrumb } from "@/components/breadcrumb";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 export const dynamic = "force-dynamic";
 
@@ -82,13 +83,11 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   return (
     <section aria-label="チケット詳細" className="grid gap-6">
       <header className="grid gap-2">
-        <div className="flex items-center gap-2 text-sm">
-          <Link href="/tickets" className="text-accent hover:underline">
-            チケット一覧
-          </Link>
-          <span className="text-muted-foreground">/</span>
-          <span className="text-muted-foreground">{ticket.slug}</span>
-        </div>
+        <Breadcrumb items={[
+          { label: "ダッシュボード", href: "/dashboard" },
+          { label: "チケット", href: "/tickets" },
+          { label: ticket.slug },
+        ]} />
         <div className="flex items-center gap-4">
           <h1 className="text-3xl font-semibold tracking-normal">{ticket.title}</h1>
           {statusBadge(ticket.status)}
@@ -138,7 +137,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           <h2 className="text-lg font-semibold">説明</h2>
           <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
             {ticket.description ? (
-              <p className="whitespace-pre-wrap">{ticket.description}</p>
+              <MarkdownRenderer content={ticket.description} />
             ) : (
               <p className="italic">説明はまだありません</p>
             )}
