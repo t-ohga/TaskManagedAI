@@ -6,6 +6,8 @@
  * SecretBroker remains the sole resolver.
  */
 
+import { SessionInfo } from "@/components/session-info";
+import { HelpLinks } from "@/components/help-links";
 import {
   AdminPageShell,
   KeyboardReadinessStrip,
@@ -78,6 +80,22 @@ export default function ProjectSettingsPage() {
         titleId="settings-secret-handling"
       >
         <SecretBoundaryNotice title="SecretBroker 境界" />
+      </Panel>
+
+      <Panel
+        description="現在のセッション情報。P0 は Dev Login + Tailscale 閉域を使用。"
+        title="セッション"
+        titleId="settings-session"
+      >
+        <SessionInfo actorId="dev-actor-default" />
+      </Panel>
+
+      <Panel
+        description="各機能へのクイックアクセス。"
+        title="ヘルプ"
+        titleId="settings-help"
+      >
+        <HelpLinks />
       </Panel>
     </AdminPageShell>
   );
