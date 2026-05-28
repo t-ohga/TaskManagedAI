@@ -1,6 +1,16 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/page-header";
+import { BarChart } from "@/components/bar-chart";
+import { ProgressBar } from "@/components/progress-bar";
+import { fetchKpiRollupOrFallback, type KpiRollupResponse } from "@/lib/api/eval-dashboard";
+
+export const dynamic = "force-dynamic";
+
+const KPI_FALLBACK: KpiRollupResponse = {
+  kpi_count: 5, met_count: 0, failed_count: 5, p0_accept: false, fail_tolerance: 1,
+  entries: [], corpus_loads: [],
+};
 
 const KPI_DEFINITIONS = [
   { id: "acceptance_pass_rate", label: "合格率", unit: "%", threshold: 60 },
@@ -40,7 +50,8 @@ function KpiSummaryCard({
   );
 }
 
-export default function AnalyticsPage() {
+export default async function AnalyticsPage() {
+  const kpiData = await fetchKpiRollupOrFallback(KPI_FALLBACK);
   return (
     <section aria-label="KPI Analytics" className="grid gap-6">
       <PageHeader
@@ -62,22 +73,25 @@ export default function AnalyticsPage() {
         </TabsList>
         <TabsContent value="7d">
           <Card>
-            <CardContent className="py-12 text-center text-muted-foreground">
-              7日間の推移グラフ (データ接続後に表示)
+            <CardContent className="py-6">
+              <BarChart data={kpiData.entries.map((e) => ({ label: e.kpi_id.replace("AC-KPI-", ""), value: e.metric_value ?? 0 }))} />
             </CardContent>
           </Card>
         </TabsContent>
         <TabsContent value="30d">
           <Card>
-            <CardContent className="py-12 text-center text-muted-foreground">
-              30日間の推移グラフ
+            <CardContent className="py-6">
+              <ProgressBar value={kpiData.met_count} max={kpiData.kpi_count} label="KPI 達成率" />
+              <div className="mt-4">
+                <BarChart data={kpiData.entries.map((e) => ({ label: e.kpi_id.replace("AC-KPI-", ""), value: e.metric_value ?? 0 }))} />
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
         <TabsContent value="90d">
           <Card>
-            <CardContent className="py-12 text-center text-muted-foreground">
-              90日間の推移グラフ
+            <CardContent className="py-6">
+              <ProgressBar value={kpiData.met_count} max={kpiData.kpi_count} label="KPI 達成率 (90日)" />
             </CardContent>
           </Card>
         </TabsContent>
