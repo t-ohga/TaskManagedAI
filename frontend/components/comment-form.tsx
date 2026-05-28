@@ -2,15 +2,18 @@
 
 import { useActionState, useState } from "react";
 
+type CommentResult = { kind: "ok" } | { kind: "error"; message: string };
+type CommentState = CommentResult | { kind: "idle" };
+
 type CommentFormProps = {
   ticketId: string;
-  onSubmit: (formData: FormData) => Promise<{ kind: "ok" } | { kind: "error"; message: string }>;
+  onSubmit: (formData: FormData) => Promise<CommentResult>;
 };
 
 export function CommentForm({ ticketId, onSubmit }: CommentFormProps) {
   const [body, setBody] = useState("");
-  const [state, formAction, pending] = useActionState(
-    async (_prev: { kind: string; message?: string }, formData: FormData) => {
+  const [state, formAction, pending] = useActionState<CommentState, FormData>(
+    async (_prev, formData) => {
       const result = await onSubmit(formData);
       if (result.kind === "ok") setBody("");
       return result;

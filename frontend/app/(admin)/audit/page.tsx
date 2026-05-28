@@ -18,7 +18,7 @@ type AuditResponse = {
 };
 
 async function loadAuditEvents(params: {
-  eventType?: string;
+  eventType?: string | undefined;
   limit: number;
   offset: number;
 }): Promise<AuditResponse> {
