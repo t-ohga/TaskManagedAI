@@ -174,7 +174,8 @@ export default async function RunDetailPage({ params, searchParams }: Props) {
         </p>
         {events.length > 0 ? (() => {
           const totalEventPages = Math.max(1, Math.ceil(events.length / EVENTS_PER_PAGE));
-          const paginatedEvents = events.slice((eventPage - 1) * EVENTS_PER_PAGE, eventPage * EVENTS_PER_PAGE);
+          const clampedPage = Math.min(eventPage, totalEventPages);
+          const paginatedEvents = events.slice((clampedPage - 1) * EVENTS_PER_PAGE, clampedPage * EVENTS_PER_PAGE);
           return (
           <>
           <div className="mt-4 space-y-3">
@@ -182,7 +183,7 @@ export default async function RunDetailPage({ params, searchParams }: Props) {
               <div key={event.id} className="flex items-start gap-3">
                 <div className="relative flex flex-col items-center">
                   <div className="h-3 w-3 rounded-full border-2 border-accent bg-panel" />
-                  {i < events.length - 1 && (
+                  {i < paginatedEvents.length - 1 && (
                     <div className="absolute top-3 h-full w-0.5 bg-line" />
                   )}
                 </div>
