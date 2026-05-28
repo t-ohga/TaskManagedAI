@@ -28,6 +28,7 @@ const ticketFixture: TicketRead = {
   description: "Sample description",
   status: "in_progress",
   priority: "high",
+  due_date: null,
   assignee_actor_id: null,
   created_by_actor_id: "00000000-0000-4000-8000-000000000001",
   metadata: { rls_ready: true },

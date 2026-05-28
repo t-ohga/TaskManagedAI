@@ -13,6 +13,7 @@ type TicketRow = {
   status: string;
   priority: string | null;
   projectSlug: string;
+  due_date: string | null;
   created_at: string | null;
 };
 
@@ -20,6 +21,16 @@ type SelectableTicketListProps = {
   tickets: TicketRow[];
   showProjectBadge: boolean;
 };
+
+// due_date は SQL date (YYYY-MM-DD) のプレーンな暦日。timezone を持たないため
+// new Date(...) を介さず文字列から直接整形し、JST 変換による日付ずれを防ぐ。
+function formatDueDate(value: string | null): string | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return value;
+  const [, year, month, day] = match;
+  return `${year}/${Number(month)}/${Number(day)}`;
+}
 
 const PRIORITY_LABELS: Record<string, { label: string; color: string }> = {
   critical: { label: "最優先", color: "bg-red-100 text-red-700" },
@@ -52,7 +63,7 @@ export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTi
 
   const clear = useCallback(() => setSelectedIds([]), []);
 
-  const colSpan = (showProjectBadge ? 5 : 4) + (bulkEnabled ? 1 : 0);
+  const colSpan = (showProjectBadge ? 6 : 5) + (bulkEnabled ? 1 : 0);
 
   return (
     <div className="grid gap-3">
@@ -81,6 +92,7 @@ export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTi
               <th className="px-4 py-3">ステータス</th>
               <th className="px-4 py-3">優先度</th>
               {showProjectBadge && <th className="px-4 py-3">プロジェクト</th>}
+              <th className="px-4 py-3">期限</th>
               <th className="px-4 py-3">作成日</th>
             </tr>
           </thead>
@@ -113,6 +125,15 @@ export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTi
                   {showProjectBadge && (
                     <td className="px-4 py-3 text-xs text-muted-foreground">{ticket.projectSlug}</td>
                   )}
+                  <td className="px-4 py-3 text-xs">
+                    {formatDueDate(ticket.due_date) ? (
+                      <span className="rounded bg-amber-50 px-1.5 py-0.5 font-medium text-amber-700">
+                        {formatDueDate(ticket.due_date)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
                     {ticket.created_at ? new Date(ticket.created_at).toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo" }) : ""}
                   </td>

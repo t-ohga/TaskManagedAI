@@ -20,6 +20,7 @@ invariant:
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -130,6 +131,7 @@ class TicketCreateRequest(BaseModel):
     description: str | None = None
     status: TicketStatus = "open"
     priority: TicketPriority | None = None
+    due_date: date | None = None
     assignee_actor_id: UUID | None = None
 
 
@@ -145,6 +147,7 @@ class TicketUpdateRequest(BaseModel):
     description: str | None = None
     status: TicketStatus | None = None
     priority: TicketPriority | None = None
+    due_date: date | None = None
     assignee_actor_id: UUID | None = None
 
 

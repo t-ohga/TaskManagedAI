@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator
+from datetime import date
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -408,3 +409,157 @@ async def test_update_in_project_cross_project_returns_none(
         )
         assert ticket is not None
         assert ticket.status == "open", "cross-project update で project_a ticket が変更された"
+
+
+# A-7 (ADR-00034): tickets.due_date column の persist contract test
+
+
+@pytest.mark.asyncio
+async def test_create_in_project_persists_due_date(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """create_in_project: due_date (calendar date) が persist + 再 fetch で同じ日付."""
+    from backend.app.repositories.ticket import TicketRepository
+
+    due = date(2026, 6, 30)
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        created = await repo.create_in_project(
+            tenant_id=1,
+            project_id=PROJECT_A_ID,
+            payload={
+                "slug": "ticket-with-due",
+                "title": "Ticket With Due Date",
+                "status": "open",
+                "due_date": due,
+                "created_by_actor_id": ACTOR_ID,
+                "metadata_": {"rls_ready": True, "user_edited": True},
+            },
+        )
+        await session.commit()
+        created_id = created.id
+        assert created.due_date == due
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        ticket = await repo.get_in_project(
+            tenant_id=1, project_id=PROJECT_A_ID, ticket_id=created_id
+        )
+        assert ticket is not None
+        # date 型: timezone shift がないため round-trip で同じ暦日が保たれる
+        assert ticket.due_date == due, "due_date が persist されていない"
+        assert isinstance(ticket.due_date, date), "due_date は date 型であるべき"
+
+
+@pytest.mark.asyncio
+async def test_due_date_round_trips_without_timezone_shift(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex adversarial finding: YYYY-MM-DD 文字列 PATCH が暦日をずらさず persist。
+
+    Pydantic TicketUpdateRequest が "2026-06-30" を date(2026,6,30) にパースし、
+    DB の date column に timezone 変換なしで保存され、再 fetch で同じ暦日が返る
+    ことを確認する (timestamptz 時代の JST 境界ずれ回帰防止)。
+    """
+    from backend.app.api.tickets import TicketUpdateRequest
+    from backend.app.repositories.ticket import TicketRepository
+
+    # date input が送る代表値 (UTC で扱うと前日にずれる境界)
+    parsed = TicketUpdateRequest.model_validate({"due_date": "2026-06-30"})
+    assert parsed.due_date == date(2026, 6, 30)
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        updated = await repo.update_in_project(
+            tenant_id=1,
+            project_id=PROJECT_A_ID,
+            ticket_id=TICKET_A1_ID,
+            payload=parsed.model_dump(exclude_unset=True),
+        )
+        await session.commit()
+        assert updated is not None
+        assert updated.due_date == date(2026, 6, 30), "PATCH 後に暦日がずれた"
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        ticket = await repo.get_in_project(
+            tenant_id=1, project_id=PROJECT_A_ID, ticket_id=TICKET_A1_ID
+        )
+        assert ticket is not None
+        assert ticket.due_date == date(2026, 6, 30), "再 fetch で暦日がずれた"
+
+
+@pytest.mark.asyncio
+async def test_create_in_project_due_date_defaults_to_null(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """due_date 未指定の create では NULL (nullable column、既存 ticket への後方互換)."""
+    from backend.app.repositories.ticket import TicketRepository
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        ticket = await repo.get_in_project(
+            tenant_id=1, project_id=PROJECT_A_ID, ticket_id=TICKET_A1_ID
+        )
+        assert ticket is not None
+        assert ticket.due_date is None, "fixture ticket の due_date が NULL でない"
+
+
+@pytest.mark.asyncio
+async def test_update_in_project_sets_then_clears_due_date(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """update_in_project: due_date を設定 → 明示 None で clear が persist (explicit clear)."""
+    from backend.app.repositories.ticket import TicketRepository
+
+    due = date(2026, 7, 15)
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    # set
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        updated = await repo.update_in_project(
+            tenant_id=1,
+            project_id=PROJECT_A_ID,
+            ticket_id=TICKET_A1_ID,
+            payload={"due_date": due},
+        )
+        await session.commit()
+        assert updated is not None
+        assert updated.due_date == due
+
+    # explicit clear (None)
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        cleared = await repo.update_in_project(
+            tenant_id=1,
+            project_id=PROJECT_A_ID,
+            ticket_id=TICKET_A1_ID,
+            payload={"due_date": None},
+        )
+        await session.commit()
+        assert cleared is not None
+        assert cleared.due_date is None, "explicit None で due_date が clear されない"
+
+    # 再 fetch で clear が persist
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        ticket = await repo.get_in_project(
+            tenant_id=1, project_id=PROJECT_A_ID, ticket_id=TICKET_A1_ID
+        )
+        assert ticket is not None
+        assert ticket.due_date is None

@@ -23,7 +23,8 @@ const TicketUpdateFormSchema = z.object({
   status: z
     .enum(["open", "in_progress", "blocked", "review", "closed", "cancelled"])
     .optional(),
-  priority: z.enum(["low", "medium", "high", "critical"]).nullable().optional()
+  priority: z.enum(["low", "medium", "high", "critical"]).nullable().optional(),
+  due_date: z.string().nullable().optional()
 });
 
 export type UpdateTicketState =
@@ -63,7 +64,8 @@ export async function updateTicketAction(
     title: nonEmpty(formData.get("title")),
     description: clearableField(formData.get("description")),
     status: nonEmpty(formData.get("status")),
-    priority: clearableField(formData.get("priority"))
+    priority: clearableField(formData.get("priority")),
+    due_date: clearableField(formData.get("due_date"))
   });
 
   if (!parsed.success) {

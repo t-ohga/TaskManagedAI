@@ -57,6 +57,11 @@ export const TicketListItemSchema = z.object({
   description: z.string().nullable().optional(),
   status: TicketStatusEnum,
   priority: TicketPriorityEnum.nullable(),
+  // backend TicketRead は due_date を必須 nullable で返す (date 型、YYYY-MM-DD)。
+  // optional にすると response から欠落しても検証が通り、編集フォームが空で開いて
+  // 次回保存で誤って null PATCH する drift 経路を生むため、必須 nullable で締める
+  // (Codex adversarial R2 F-MEDIUM)。
+  due_date: z.string().nullable(),
   assignee_actor_id: z.string().uuid().nullable(),
   created_by_actor_id: z.string().uuid().nullable().optional(),
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
