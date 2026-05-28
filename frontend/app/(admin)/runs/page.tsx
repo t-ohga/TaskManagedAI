@@ -1,9 +1,11 @@
 import Link from "next/link";
 
 import { fetchBackendRaw } from "@/lib/api/client";
+import { getCostSummary, type CostSummaryResponse } from "@/lib/api/agent-runs";
 import { AgentRunStatusIndicator } from "@/components/agent-run-status-indicator-v2";
 import { RoleBadge } from "@/components/role-badge";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { BarChart } from "@/components/bar-chart";
 
 export const dynamic = "force-dynamic";
 
@@ -70,12 +72,13 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
   const params = await searchParams;
   const statusFilter = params.status ?? "";
   const roleFilter = params.role ?? "";
-  const [filteredResult, allResult] = await Promise.all([
+  const [filteredResult, allResult, costSummary] = await Promise.all([
     loadRuns({
       status: statusFilter || undefined,
       role: roleFilter || undefined,
     }),
     (statusFilter || roleFilter) ? loadRuns() : Promise.resolve(null),
+    getCostSummary("all").catch((): CostSummaryResponse | null => null),
   ]);
   const filteredRuns = filteredResult.items;
   const totalRuns = filteredResult.total;
@@ -127,6 +130,42 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
           </div>
         )}
       </div>
+
+      {costSummary && costSummary.run_count > 0 && (
+        <section aria-label="コスト集計" className="grid gap-4 md:grid-cols-2">
+          <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+            <h2 className="text-base font-semibold">コスト・トークン集計</h2>
+            <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <dt className="text-xs text-muted-foreground">総コスト</dt>
+                <dd className="text-lg font-bold text-accent">
+                  {costSummary.total_cost_usd != null ? `$${costSummary.total_cost_usd.toFixed(4)}` : "未計測"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">実行数</dt>
+                <dd className="text-lg font-bold">{costSummary.run_count}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">入力トークン</dt>
+                <dd className="font-semibold">{costSummary.total_tokens_input.toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">出力トークン</dt>
+                <dd className="font-semibold">{costSummary.total_tokens_output.toLocaleString()}</dd>
+              </div>
+            </dl>
+          </article>
+          <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+            <h2 className="mb-4 text-base font-semibold">ステータス別コスト</h2>
+            <BarChart
+              data={costSummary.by_status
+                .filter((s) => s.cost_usd > 0)
+                .map((s) => ({ label: STATUS_LABELS[s.status] ?? s.status, value: Math.round(s.cost_usd * 10000) / 10000 }))}
+            />
+          </article>
+        </section>
+      )}
 
       {active.length > 0 && (
         <div>
