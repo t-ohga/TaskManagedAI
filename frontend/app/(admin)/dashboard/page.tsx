@@ -1,6 +1,8 @@
 import { getBackendHealth, fetchBackendRaw } from "@/lib/api/client";
 import type { HealthResponse } from "@/lib/api/types";
 import { getFrontendHealth } from "@/lib/health";
+import { StatusDonutChart } from "@/components/status-donut-chart";
+import { ProgressBar } from "@/components/progress-bar";
 
 export const dynamic = "force-dynamic";
 
@@ -8,12 +10,20 @@ type BackendHealthState =
   | { kind: "ok"; health: HealthResponse }
   | { kind: "error"; message: string };
 
+type TicketStatusCounts = {
+  open: number;
+  in_progress: number;
+  closed: number;
+  cancelled: number;
+};
+
 type ProjectSummary = {
   id: string;
   slug: string;
   name: string;
   status: string;
   ticketCount: number;
+  statusCounts: TicketStatusCounts;
 };
 
 async function readBackendHealth(): Promise<BackendHealthState> {
@@ -35,10 +45,19 @@ async function readProjectSummaries(): Promise<ProjectSummary[]> {
     const summaries: ProjectSummary[] = [];
     for (const p of projects.slice(0, 10)) {
       let ticketCount = 0;
+      const statusCounts: TicketStatusCounts = { open: 0, in_progress: 0, closed: 0, cancelled: 0 };
       try {
         const pid = (p as any).project_id ?? (p as any).id;
-        const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets`) as Record<string, unknown>;
-        ticketCount = (ticketsRes?.total as number) ?? ((ticketsRes?.items as unknown[])?.length ?? 0);
+        const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets?limit=200`) as Record<string, unknown>;
+        const items = (ticketsRes?.items ?? []) as Array<{ status: string }>;
+        ticketCount = typeof ticketsRes?.total === "number" ? (ticketsRes.total as number) : items.length;
+        for (const t of items) {
+          if (t.status === "open") statusCounts.open++;
+          else if (t.status === "in_progress" || t.status === "blocked" || t.status === "review") statusCounts.in_progress++;
+          else if (t.status === "closed") statusCounts.closed++;
+          else if (t.status === "cancelled") statusCounts.cancelled++;
+          else statusCounts.open++;
+        }
       } catch {
         ticketCount = 0;
       }
@@ -48,6 +67,7 @@ async function readProjectSummaries(): Promise<ProjectSummary[]> {
         name: String(p.name ?? ''),
         status: String(p.status ?? 'active'),
         ticketCount,
+        statusCounts,
       });
     }
     return summaries;
@@ -57,9 +77,29 @@ async function readProjectSummaries(): Promise<ProjectSummary[]> {
 }
 
 export default async function DashboardPage() {
-  const backendHealth = await readBackendHealth();
+  const [backendHealth, projects] = await Promise.all([
+    readBackendHealth(),
+    readProjectSummaries(),
+  ]);
   const frontendHealth = getFrontendHealth();
-  const projects = await readProjectSummaries();
+
+  const aggCounts = projects.reduce(
+    (acc, p) => ({
+      open: acc.open + p.statusCounts.open,
+      in_progress: acc.in_progress + p.statusCounts.in_progress,
+      closed: acc.closed + p.statusCounts.closed,
+      cancelled: acc.cancelled + p.statusCounts.cancelled,
+    }),
+    { open: 0, in_progress: 0, closed: 0, cancelled: 0 }
+  );
+  const ticketStatusCounts = [
+    { label: "未着手", count: aggCounts.open, color: "#3b82f6" },
+    { label: "進行中", count: aggCounts.in_progress, color: "#f59e0b" },
+    { label: "完了", count: aggCounts.closed, color: "#10b981" },
+    { label: "中止", count: aggCounts.cancelled, color: "#6b7280" },
+  ];
+  const totalTickets = projects.reduce((s, p) => s + p.ticketCount, 0);
+  const closedTickets = aggCounts.closed;
 
   return (
     <div className="grid gap-6">
@@ -154,6 +194,29 @@ export default async function DashboardPage() {
         </article>
       </section>
 
+      {totalTickets > 0 && (
+        <section aria-label="チケット分析" className="grid gap-4 md:grid-cols-2">
+          <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+            <h2 className="mb-4 text-base font-semibold">ステータス分布</h2>
+            <StatusDonutChart data={ticketStatusCounts} />
+          </article>
+          <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+            <h2 className="mb-4 text-base font-semibold">完了率</h2>
+            <ProgressBar value={closedTickets} max={totalTickets} label="チケット完了率" />
+            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <p className="text-muted-foreground">完了</p>
+                <p className="text-lg font-bold text-emerald-600">{closedTickets}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">残り</p>
+                <p className="text-lg font-bold text-amber-600">{totalTickets - closedTickets}</p>
+              </div>
+            </div>
+          </article>
+        </section>
+      )}
+
       {projects.length > 0 && (
         <section aria-label="プロジェクト横断サマリー">
           <h2 className="mb-4 text-lg font-semibold">プロジェクト一覧</h2>
@@ -170,7 +233,7 @@ export default async function DashboardPage() {
                     <p className="mt-0.5 text-xs text-muted-foreground">{p.slug}</p>
                   </div>
                   <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                    {p.status}
+                    {p.status === "active" ? "稼働中" : p.status}
                   </span>
                 </div>
                 <div className="mt-3 border-t border-line pt-3">

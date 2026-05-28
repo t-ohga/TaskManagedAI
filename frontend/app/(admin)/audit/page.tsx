@@ -12,27 +12,90 @@ type AuditEvent = {
   created_at: string | null;
 };
 
-async function loadAuditEvents(): Promise<AuditEvent[]> {
+type AuditResponse = {
+  items: AuditEvent[];
+  total: number;
+};
+
+async function loadAuditEvents(params: {
+  eventType?: string;
+  limit: number;
+  offset: number;
+}): Promise<AuditResponse> {
   try {
-    const res = await fetchBackendRaw("/api/v1/audit_events" as `/${string}`);
+    const query = new URLSearchParams();
+    query.set("limit", String(params.limit));
+    query.set("offset", String(params.offset));
+    if (params.eventType) query.set("event_type", params.eventType);
+    const res = await fetchBackendRaw(`/api/v1/audit_events?${query}` as `/${string}`);
     const raw = res as Record<string, unknown>;
-    return ((raw?.items ?? raw?.events ?? []) as AuditEvent[]);
-  } catch (e) {
-    // Audit API error — display empty state
-    return [];
+    const items = (raw?.items ?? raw?.events ?? []) as AuditEvent[];
+    const total = typeof raw?.total === "number" ? raw.total : items.length;
+    return { items, total };
+  } catch {
+    return { items: [], total: 0 };
   }
 }
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
+  run_queued: "実行待機",
+  context_gathered: "情報収集完了",
+  provider_requested: "プロバイダ要求",
+  provider_responded: "プロバイダ応答",
+  artifact_generated: "成果物生成",
+  schema_validated: "スキーマ検証",
+  validation_failed: "検証失敗",
+  repair_retry_scheduled: "修復リトライ",
+  repair_exhausted: "修復上限到達",
+  policy_linted: "ポリシーLint",
+  policy_blocked: "ポリシーブロック",
   policy_decision_created: "ポリシー判定",
-  secret_canary_detected: "シークレット検出",
-  runner_blocked: "ランナーブロック",
-  repo_pr_opened: "PR 作成",
+  budget_blocked: "予算ブロック",
+  budget_created: "予算作成",
+  budget_limits_updated: "予算上限更新",
+  budget_active_flag_updated: "予算有効化更新",
+  budget_soft_threshold_warning: "予算警告",
+  runtime_blocked: "ランタイムブロック",
+  diff_ready: "差分準備完了",
   approval_requested: "承認要求",
   approval_decided: "承認決定",
+  approval_pending: "承認待ち",
+  approval_revision_requested: "承認修正要求",
+  runner_started: "ランナー開始",
+  runner_completed: "ランナー完了",
+  runner_blocked: "ランナーブロック",
+  repo_pr_opened: "PR 作成",
   run_completed: "実行完了",
   run_failed: "実行失敗",
   run_cancelled: "実行キャンセル",
+  provider_blocked: "プロバイダブロック",
+  secret_canary_detected: "シークレット検出",
+  secret_capability_issued: "シークレット発行",
+  secret_capability_redeemed: "シークレット使用",
+  secret_capability_denied: "シークレット拒否",
+  secret_rotation_issue_new: "シークレットローテーション新規",
+  secret_rotation_promote: "シークレットローテーション昇格",
+  secret_rotation_revoke: "シークレットローテーション無効化",
+  secret_rotation_rollback: "シークレットローテーション巻戻し",
+  config_changed: "設定変更",
+  ticket_created: "チケット作成",
+  ticket_comment: "チケットコメント",
+  claim_created: "クレーム作成",
+  evidence_item_attached: "エビデンス添付",
+  notification_resolved: "通知解決",
+  notification_snoozed: "通知スヌーズ",
+  orchestrator_dispatched: "オーケストレータ配信",
+  orchestrator_lease_renewed: "リース更新",
+  orchestrator_lease_expired: "リース期限切れ",
+  orchestrator_failover_triggered: "フェイルオーバー",
+  orchestrator_kill_engaged: "キル実行",
+  inter_agent_message_sent: "エージェント間送信",
+  inter_agent_message_consumed: "エージェント間受信",
+  inter_agent_message_denied: "エージェント間拒否",
+  api_capability_token_issued: "APIトークン発行",
+  api_capability_token_denied: "APIトークン拒否",
+  api_capability_token_revoked: "APIトークン無効化",
+  api_capability_token_scope_mismatch: "APIトークン権限不一致",
 };
 
 function eventTypeBadge(eventType: string) {
@@ -54,8 +117,24 @@ function eventTypeBadge(eventType: string) {
   );
 }
 
-export default async function AuditPage() {
-  const events = await loadAuditEvents();
+type AuditPageProps = {
+  searchParams: Promise<{ type?: string; page?: string }>;
+};
+
+const PAGE_SIZE = 50;
+
+export default async function AuditPage({ searchParams }: AuditPageProps) {
+  const params = await searchParams;
+  const typeFilter = params.type ?? "";
+  const parsedPage = Number(params.page ?? "1");
+  const pageNum = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1;
+  const { items: events, total } = await loadAuditEvents({
+    eventType: typeFilter || undefined,
+    limit: PAGE_SIZE,
+    offset: (pageNum - 1) * PAGE_SIZE,
+  });
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const eventTypes = Object.keys(EVENT_TYPE_LABELS);
 
   return (
     <section aria-label="監査ログ" className="grid gap-6">
@@ -63,9 +142,30 @@ export default async function AuditPage() {
         <p className="text-sm font-medium text-accent">管理</p>
         <h1 className="text-3xl font-semibold tracking-normal">監査ログ</h1>
         <p className="text-sm text-muted-foreground">
-          追記専用の監査イベント ({events.length} 件)。シークレットやトークンの値は表示されません。
+          追記専用の監査イベント ({total} 件)。シークレットやトークンの値は表示されません。
         </p>
       </header>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="text-xs text-muted-foreground">イベント種別:</label>
+        <div className="flex flex-wrap gap-1">
+          <a
+            href="/audit"
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${!typeFilter ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+          >
+            すべて
+          </a>
+          {eventTypes.map((t) => (
+            <a
+              key={t}
+              href={`/audit?type=${t}`}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${typeFilter === t ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+            >
+              {EVENT_TYPE_LABELS[t] ?? t}
+            </a>
+          ))}
+        </div>
+      </div>
 
       <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
         <p className="text-sm font-medium text-red-700">AC-HARD-02 監査マスク</p>
@@ -110,6 +210,22 @@ export default async function AuditPage() {
             チケット操作や AI 実行を行うと、ここにイベントが記録されます
           </p>
         </div>
+      )}
+
+      {totalPages > 1 && (
+        <nav aria-label="ページネーション" className="flex items-center justify-center gap-2">
+          {pageNum > 1 && (
+            <a href={`/audit?${typeFilter ? `type=${typeFilter}&` : ""}page=${pageNum - 1}`} className="rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+              前へ
+            </a>
+          )}
+          <span className="text-sm text-muted-foreground">{pageNum} / {totalPages}</span>
+          {pageNum < totalPages && (
+            <a href={`/audit?${typeFilter ? `type=${typeFilter}&` : ""}page=${pageNum + 1}`} className="rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+              次へ
+            </a>
+          )}
+        </nav>
       )}
     </section>
   );
