@@ -68,12 +68,18 @@ const EVENT_LABELS: Record<string, string> = {
   run_cancelled: "実行キャンセル",
 };
 
+const EVENTS_PER_PAGE = 20;
+
 type Props = {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ epage?: string }>;
 };
 
-export default async function RunDetailPage({ params }: Props) {
+export default async function RunDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const sp = await searchParams;
+  const parsedEpage = Number(sp.epage ?? "1");
+  const eventPage = Number.isFinite(parsedEpage) && parsedEpage >= 1 ? Math.floor(parsedEpage) : 1;
   const data = await loadRun(id);
 
   if (!data) {
@@ -158,20 +164,7 @@ export default async function RunDetailPage({ params }: Props) {
       </div>
 
       {!["completed", "failed", "cancelled", "provider_refused", "repair_exhausted"].includes(run.status) && (
-        <div className="rounded-lg border border-orange-200 bg-orange-50 p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-orange-700">この実行をキャンセルしますか？</p>
-              <p className="mt-0.5 text-xs text-orange-600">キャンセルすると元に戻せません</p>
-            </div>
-            <a
-              href={`/api/v1/agent_runs/${run.id}/cancel`}
-              className="rounded-md bg-orange-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-700"
-            >
-              キャンセル
-            </a>
-          </div>
-        </div>
+        <RunCancelButton runId={run.id} />
       )}
 
       <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
@@ -179,9 +172,13 @@ export default async function RunDetailPage({ params }: Props) {
         <p className="mt-1 text-xs text-muted-foreground">
           追記専用。シークレットは表示されません。
         </p>
-        {events.length > 0 ? (
+        {events.length > 0 ? (() => {
+          const totalEventPages = Math.max(1, Math.ceil(events.length / EVENTS_PER_PAGE));
+          const paginatedEvents = events.slice((eventPage - 1) * EVENTS_PER_PAGE, eventPage * EVENTS_PER_PAGE);
+          return (
+          <>
           <div className="mt-4 space-y-3">
-            {events.map((event, i) => (
+            {paginatedEvents.map((event, i) => (
               <div key={event.id} className="flex items-start gap-3">
                 <div className="relative flex flex-col items-center">
                   <div className="h-3 w-3 rounded-full border-2 border-accent bg-panel" />
@@ -207,7 +204,20 @@ export default async function RunDetailPage({ params }: Props) {
               </div>
             ))}
           </div>
-        ) : (
+          {totalEventPages > 1 && (
+            <nav aria-label="イベントページネーション" className="mt-4 flex items-center justify-center gap-2">
+              {eventPage > 1 && (
+                <a href={`/runs/${id}?epage=${eventPage - 1}`} className="rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">前へ</a>
+              )}
+              <span className="text-sm text-muted-foreground">{eventPage} / {totalEventPages}</span>
+              {eventPage < totalEventPages && (
+                <a href={`/runs/${id}?epage=${eventPage + 1}`} className="rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">次へ</a>
+              )}
+            </nav>
+          )}
+          </>
+          );
+        })() : (
           <p className="mt-4 text-sm text-muted-foreground">イベントはまだ記録されていません</p>
         )}
       </article>
