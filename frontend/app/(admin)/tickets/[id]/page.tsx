@@ -168,16 +168,12 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
       </div>
 
       <EditTicketForm ticket={{
-        id: ticket.id,
-        title: ticket.title,
-        slug: ticket.slug,
-        status: ticket.status,
-        description: ticket.description,
-        priority: ticket.priority,
-        created_at: ticket.created_at,
-        updated_at: ticket.updated_at,
-        project_id: ticket.project_id,
-      }} />
+        ...ticket,
+        assignee_actor_id: null,
+        acceptance_criteria: null,
+        evidence_ids: [],
+        agent_run_ids: [],
+      } as Parameters<typeof EditTicketForm>[0]["ticket"]} />
 
       <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
         <h2 className="text-lg font-semibold">アクティビティ</h2>

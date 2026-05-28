@@ -27,11 +27,11 @@ export function BulkStatusChanger({ selectedIds, onClear }: BulkStatusChangerPro
     startTransition(async () => {
       for (const id of selectedIds) {
         try {
-          await fetch(`/api/proxy/tickets/${id}/status`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ status: targetStatus }),
-          });
+          const fd = new FormData();
+          fd.set("ticket_id", id);
+          fd.set("status", targetStatus);
+          const { updateTicketAction } = await import("@/app/(admin)/tickets/[id]/actions");
+          await updateTicketAction({ kind: "idle" }, fd);
         } catch {
           /* continue with remaining */
         }

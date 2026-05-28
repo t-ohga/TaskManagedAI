@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 
 import { updateTicketAction, type UpdateTicketState } from "@/app/(admin)/tickets/[id]/actions";
 
@@ -24,6 +24,10 @@ export function TicketStatusChanger({ ticketId, currentStatus }: Props) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [optimisticStatus, setOptimisticStatus] = useState(currentStatus);
+
+  useEffect(() => {
+    setOptimisticStatus(currentStatus);
+  }, [currentStatus]);
 
   function handleStatusChange(newStatus: string) {
     if (newStatus === optimisticStatus || isPending) return;
