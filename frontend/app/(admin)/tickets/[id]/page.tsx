@@ -179,9 +179,9 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
             }] : []),
             ...(ticket.updated_at && ticket.updated_at !== ticket.created_at ? [{
               id: "updated",
-              type: "status_change" as const,
+              type: "event" as const,
               actor: null,
-              body: `ステータスが「${statusLabel(ticket.status)}」に変更されました`,
+              body: "チケットが更新されました",
               created_at: ticket.updated_at,
             }] : []),
           ]} />

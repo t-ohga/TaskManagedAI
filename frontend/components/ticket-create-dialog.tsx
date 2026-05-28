@@ -20,7 +20,7 @@ export function TicketCreateDialog({ projectSlug, projectId }: { projectSlug: st
       }, 1500);
       return () => clearTimeout(timer);
     }
-  }, [state.kind, router]);
+  }, [state, router]);
 
   if (!open) {
     return (
