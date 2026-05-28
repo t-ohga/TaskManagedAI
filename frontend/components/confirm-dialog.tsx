@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type ConfirmDialogProps = {
   title: string;
@@ -27,8 +27,13 @@ export function ConfirmDialog({
 
   const open = useCallback(() => {
     setIsOpen(true);
-    dialogRef.current?.showModal();
   }, []);
+
+  useEffect(() => {
+    if (isOpen && dialogRef.current && !dialogRef.current.open) {
+      dialogRef.current.showModal();
+    }
+  }, [isOpen]);
 
   const close = useCallback(() => {
     setIsOpen(false);
