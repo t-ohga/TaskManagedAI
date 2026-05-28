@@ -3,6 +3,7 @@ import type { HealthResponse } from "@/lib/api/types";
 import { getFrontendHealth } from "@/lib/health";
 import { StatusDonutChart } from "@/components/status-donut-chart";
 import { ProgressBar } from "@/components/progress-bar";
+import { DateRangeFilter } from "@/components/date-range-filter";
 
 export const dynamic = "force-dynamic";
 
@@ -106,6 +107,9 @@ export default async function DashboardPage() {
       <header className="grid gap-2">
         <p className="text-sm font-medium text-accent">管理</p>
         <h1 className="text-3xl font-semibold tracking-normal">ダッシュボード</h1>
+        <div className="flex items-center gap-2">
+          <DateRangeFilter />
+        </div>
       </header>
 
       <section aria-label="サービス状態" className="grid gap-4 md:grid-cols-2">
