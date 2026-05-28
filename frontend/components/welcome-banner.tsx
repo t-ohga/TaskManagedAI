@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export function WelcomeBanner() {
-  const [dismissed, setDismissed] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return localStorage.getItem("taskmanagedai_welcome_dismissed") === "true";
-  });
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && localStorage.getItem("taskmanagedai_welcome_dismissed") === "true") {
+      setDismissed(true);
+    }
+  }, []);
 
   if (dismissed) return null;
 

@@ -20,7 +20,8 @@ export function ExportButton({ data, filename, format = "csv" }: ExportButtonPro
       const rows = data.map((row) =>
         headers.map((h) => {
           const val = String(row[h] ?? "");
-          return val.includes(",") || val.includes('"') ? `"${val.replace(/"/g, '""')}"` : val;
+          return val.includes(",") || val.includes('"') || val.includes("\n") || val.includes("\r")
+            ? `"${val.replace(/"/g, '""')}"` : val;
         }).join(",")
       );
       content = [headers.join(","), ...rows].join("\n");
