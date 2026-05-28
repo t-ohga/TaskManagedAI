@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { fetchBackendRaw } from "@/lib/api/client";
