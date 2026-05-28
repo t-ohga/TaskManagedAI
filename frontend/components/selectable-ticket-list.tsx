@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { Route } from "next";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { BulkStatusChanger } from "@/components/bulk-status-changer";
@@ -31,6 +31,17 @@ const PRIORITY_LABELS: Record<string, { label: string; color: string }> = {
 export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTicketListProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
+  // 横断表示 (project=all) では updateTicketAction が単一プロジェクトしか
+  // 解決できないため一括操作を無効化 (Codex R1 P2)
+  const bulkEnabled = !showProjectBadge;
+
+  // フィルタ / プロジェクト切替で表示チケットが変わったら、現在の一覧に
+  // 含まれない選択 ID を除去 (隠れたチケットの一括更新を防止、Codex R1 P2)
+  useEffect(() => {
+    const visibleIds = new Set(tickets.map((t) => t.id));
+    setSelectedIds((prev) => prev.filter((id) => visibleIds.has(id)));
+  }, [tickets]);
+
   const toggle = useCallback((id: string) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }, []);
@@ -41,23 +52,25 @@ export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTi
 
   const clear = useCallback(() => setSelectedIds([]), []);
 
-  const colSpan = showProjectBadge ? 6 : 5;
+  const colSpan = (showProjectBadge ? 5 : 4) + (bulkEnabled ? 1 : 0);
 
   return (
     <div className="grid gap-3">
-      <BulkStatusChanger selectedIds={selectedIds} onClear={clear} />
+      {bulkEnabled && <BulkStatusChanger selectedIds={selectedIds} onClear={clear} />}
       <div className="overflow-x-auto rounded-lg border border-line">
         <table className="w-full text-sm">
           <thead className="bg-canvas text-left text-xs font-medium text-muted-foreground">
             <tr>
-              <th className="px-4 py-3">
-                <input
-                  type="checkbox"
-                  checked={tickets.length > 0 && selectedIds.length === tickets.length}
-                  onChange={toggleAll}
-                  aria-label="すべて選択"
-                />
-              </th>
+              {bulkEnabled && (
+                <th className="px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={tickets.length > 0 && selectedIds.length === tickets.length}
+                    onChange={toggleAll}
+                    aria-label="すべて選択"
+                  />
+                </th>
+              )}
               <th className="px-4 py-3">タイトル</th>
               <th className="px-4 py-3">ステータス</th>
               <th className="px-4 py-3">優先度</th>
@@ -70,14 +83,16 @@ export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTi
               const pri = ticket.priority ? PRIORITY_LABELS[ticket.priority] : null;
               return (
                 <tr key={ticket.id} className={selectedIds.includes(ticket.id) ? "bg-accent/5" : "hover:bg-slate-50"}>
-                  <td className="px-4 py-3">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(ticket.id)}
-                      onChange={() => toggle(ticket.id)}
-                      aria-label={`${ticket.title} を選択`}
-                    />
-                  </td>
+                  {bulkEnabled && (
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(ticket.id)}
+                        onChange={() => toggle(ticket.id)}
+                        aria-label={`${ticket.title} を選択`}
+                      />
+                    </td>
+                  )}
                   <td className="px-4 py-3">
                     <Link href={`/tickets/${ticket.id}` as Route} className="font-medium text-accent hover:underline">
                       {ticket.title}

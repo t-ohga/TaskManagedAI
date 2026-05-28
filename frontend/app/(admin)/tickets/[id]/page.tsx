@@ -177,7 +177,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
         acceptance_criteria: null,
         evidence_ids: [],
         agent_run_ids: [],
-      } as Parameters<typeof EditTicketForm>[0]["ticket"]} />
+      } as unknown as Parameters<typeof EditTicketForm>[0]["ticket"]} />
 
       <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
         <h2 className="text-lg font-semibold">アクティビティ</h2>

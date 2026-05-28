@@ -21,7 +21,7 @@ type RunsResponse = {
   total: number;
 };
 
-async function loadRuns(params?: { status?: string; role?: string }): Promise<RunsResponse> {
+async function loadRuns(params?: { status?: string | undefined; role?: string | undefined }): Promise<RunsResponse> {
   try {
     const query = new URLSearchParams();
     query.set("limit", "200");

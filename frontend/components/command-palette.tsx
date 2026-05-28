@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { Route } from "next";
 
 const PAGES = [
   { label: "ダッシュボード", href: "/dashboard" },
@@ -48,7 +49,7 @@ export function CommandPalette() {
   const navigate = useCallback(
     (href: string) => {
       setOpen(false);
-      router.push(href);
+      router.push(href as Route);
     },
     [router]
   );
