@@ -22,7 +22,10 @@ export function TicketDeleteButton({ ticketId, projectId }: TicketDeleteButtonPr
     }
   }, [isOpen]);
 
+  const [error, setError] = useState<string | null>(null);
+
   const handleDelete = useCallback(() => {
+    setError(null);
     startTransition(async () => {
       const fd = new FormData();
       fd.set("ticket_id", ticketId);
@@ -31,10 +34,12 @@ export function TicketDeleteButton({ ticketId, projectId }: TicketDeleteButtonPr
       if (result.kind === "ok") {
         setIsOpen(false);
         dialogRef.current?.close();
-        router.push(`/tickets?project=${projectId}`);
+        router.push("/tickets");
+      } else if (result.kind === "error") {
+        setError(result.message);
       }
     });
-  }, [ticketId, projectId, router]);
+  }, [ticketId, router]);
 
   return (
     <>
@@ -56,6 +61,7 @@ export function TicketDeleteButton({ ticketId, projectId }: TicketDeleteButtonPr
             <p className="text-sm text-muted-foreground">
               チケットのステータスが「中止」に変更されます。この操作は看板から非表示になります。
             </p>
+            {error && <p className="text-sm text-danger">{error}</p>}
             <div className="flex justify-end gap-3">
               <button
                 type="button"

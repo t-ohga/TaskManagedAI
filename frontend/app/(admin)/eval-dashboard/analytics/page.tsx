@@ -51,7 +51,7 @@ function KpiSummaryCard({
 }
 
 export default async function AnalyticsPage() {
-  const kpiData = await fetchKpiRollupOrFallback(KPI_FALLBACK);
+  const { data: kpiData } = await fetchKpiRollupOrFallback(KPI_FALLBACK);
   return (
     <section aria-label="KPI Analytics" className="grid gap-6">
       <PageHeader
