@@ -6,6 +6,7 @@ import { Breadcrumb } from "@/components/breadcrumb";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { ActivityTimeline } from "@/components/activity-timeline";
 import { EditTicketForm } from "./_components/edit-ticket-form";
+import { TicketDeleteButton } from "@/components/ticket-delete-button";
 
 export const dynamic = "force-dynamic";
 
@@ -163,6 +164,9 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
             >
               プロジェクトの看板に戻る
             </a>
+            {ticket.status !== "cancelled" && (
+              <TicketDeleteButton ticketId={ticket.id} projectId={ticket.project_id} />
+            )}
           </div>
         </article>
       </div>
