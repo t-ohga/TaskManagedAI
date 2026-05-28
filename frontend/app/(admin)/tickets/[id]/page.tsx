@@ -5,6 +5,7 @@ import { TicketStatusChanger } from "@/components/ticket-status-changer";
 import { Breadcrumb } from "@/components/breadcrumb";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { ActivityTimeline } from "@/components/activity-timeline";
+import { EditTicketForm } from "./_components/edit-ticket-form";
 
 export const dynamic = "force-dynamic";
 
@@ -165,6 +166,14 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           </div>
         </article>
       </div>
+
+      <EditTicketForm ticket={{
+        ...ticket,
+        assignee_actor_id: null,
+        acceptance_criteria: null,
+        evidence_ids: [],
+        agent_run_ids: [],
+      } as Parameters<typeof EditTicketForm>[0]["ticket"]} />
 
       <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
         <h2 className="text-lg font-semibold">アクティビティ</h2>
