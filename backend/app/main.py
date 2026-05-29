@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from backend.app.api import agent_runs as agent_runs_api
@@ -114,6 +114,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from backend.app.db.session import configure_active_registry_db_gate
 
     configure_active_registry_db_gate(settings=resolved_settings)
+
+    # Q-4 (ADR-00037): archived project への child write は 409 で fail-closed。guard は
+    # TicketRepository mutation 境界 (create/update/create_in_project) で raise されるため、
+    # 全 HTTP 経路 (ticket create/update + Q-2 import + Q-3 bulk-delete/restore + ticket relation 等)
+    # をこの handler が統一的に 409 へ写像する。
+    from backend.app.repositories.ticket import ProjectArchivedError
+
+    async def _project_archived_handler(
+        _request: Request, exc: ProjectArchivedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": {
+                    "error_code": "project_archived",
+                    "error_summary": str(exc),
+                }
+            },
+            headers={"cache-control": "no-store"},
+        )
+
+    app.add_exception_handler(ProjectArchivedError, _project_archived_handler)  # type: ignore[arg-type]
 
     app.include_router(api_router)
     app.include_router(approval_inbox.router)

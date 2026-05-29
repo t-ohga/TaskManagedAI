@@ -46,15 +46,24 @@ async def bridge_ticket_list(
 
     from backend.app.db.models.ticket import Ticket
 
+    # Q-3 (ADR-00037): active scope。soft-deleted ticket は MCP の count / list からも除外する
+    # (repository だけでなく直接 query 経路も active-scope を適用、read path 漏れ防止)。
     count_result = await session.execute(
-        sa_text("SELECT count(*) FROM tickets WHERE tenant_id = :tid AND project_id = :pid"),
+        sa_text(
+            "SELECT count(*) FROM tickets "
+            "WHERE tenant_id = :tid AND project_id = :pid AND deleted_at IS NULL"
+        ),
         {"tid": tenant_id, "pid": project_id},
     )
     total = count_result.scalar() or 0
 
     result = await session.execute(
         select(Ticket)
-        .where(Ticket.tenant_id == tenant_id, Ticket.project_id == project_id)
+        .where(
+            Ticket.tenant_id == tenant_id,
+            Ticket.project_id == project_id,
+            Ticket.deleted_at.is_(None),
+        )
         .order_by(Ticket.created_at.desc())
         .limit(limit)
         .offset(offset)
