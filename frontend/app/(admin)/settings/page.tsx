@@ -8,7 +8,12 @@
 
 import { SessionInfo } from "@/components/session-info";
 import { HelpLinks } from "@/components/help-links";
-import { listCurrentProjects, type ProjectListItem } from "@/lib/api/session";
+import {
+  listCurrentProjects,
+  listSecretRefs,
+  type ProjectListItem,
+  type SecretRefListItem
+} from "@/lib/api/session";
 import {
   AdminPageShell,
   KeyboardReadinessStrip,
@@ -18,6 +23,7 @@ import {
   SecretBoundaryNotice
 } from "../_components/sprint9-admin-ui";
 import { ProjectSettingsForm } from "./_components/project-settings-form";
+import { SecretRefsInventory } from "./_components/secret-refs-inventory";
 
 export const dynamic = "force-dynamic";
 
@@ -34,8 +40,18 @@ async function loadCurrentProject(): Promise<ProjectListItem | null> {
   }
 }
 
+async function loadSecretRefs(): Promise<SecretRefListItem[] | null> {
+  try {
+    const res = await listSecretRefs();
+    return res.secret_refs;
+  } catch {
+    return null;
+  }
+}
+
 export default async function ProjectSettingsPage() {
   const project = await loadCurrentProject();
+  const secretRefs = await loadSecretRefs();
 
   return (
     <AdminPageShell
@@ -112,11 +128,20 @@ export default async function ProjectSettingsPage() {
       </Panel>
 
       <Panel
-        description="secret_ref のメタデータは参照可能。生のシークレット値は SecretBroker 内部でのみ解決されます。"
+        description="登録済シークレットのメタデータ (読み取り専用) を表示します。生のシークレット値は SecretBroker 内部でのみ解決され、UI には表示されません。"
         title="シークレット管理"
         titleId="settings-secret-handling"
       >
-        <SecretBoundaryNotice title="SecretBroker 境界" />
+        <div className="grid gap-4">
+          <SecretBoundaryNotice title="SecretBroker 境界" />
+          {secretRefs ? (
+            <SecretRefsInventory secretRefs={secretRefs} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              シークレット情報を読み込めませんでした。
+            </p>
+          )}
+        </div>
       </Panel>
 
       <Panel
