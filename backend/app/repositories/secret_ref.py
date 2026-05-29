@@ -16,6 +16,20 @@ class SecretRefRepository(BaseRepository[SecretRef]):
     async def get(self, tenant_id: int, id: UUID) -> SecretRef | None:
         return await super().get(tenant_id=tenant_id, id=id)
 
+    async def list_all(self, tenant_id: int) -> list[SecretRef]:
+        """tenant 内の全 secret_refs を安定順序 (scope, name, version) で返す。
+
+        R-3 (ADR-00036) の read-only インベントリ用。tenant-scoped。raw secret は model に
+        存在せず (DB CHECK)、本 method は metadata row を返すのみ。
+        """
+        await self._ensure_tenant_context(tenant_id)
+        result = await self.session.execute(
+            select(SecretRef)
+            .where(SecretRef.tenant_id == tenant_id)
+            .order_by(SecretRef.scope, SecretRef.name, SecretRef.version)
+        )
+        return list(result.scalars().all())
+
     async def list_by_status(
         self,
         tenant_id: int,

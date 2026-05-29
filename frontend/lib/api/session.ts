@@ -49,6 +49,38 @@ export const ProjectListResponseSchema = z.object({
 
 export type ProjectListResponse = z.infer<typeof ProjectListResponseSchema>;
 
+// R-3 (ADR-00036): secret_refs read-only インベントリ。backend は公開 metadata のみ返す
+// (secret_uri / allowed_consumers / allowed_operations / owner_actor_id / metadata_ /
+// runner_injectable は含めない)。raw secret は一切返らない。
+export const SecretRefStatusSchema = z.enum([
+  "pending",
+  "active",
+  "deprecated",
+  "revoked"
+]);
+export type SecretRefStatus = z.infer<typeof SecretRefStatusSchema>;
+
+export const SecretRefListItemSchema = z.object({
+  id: z.string().uuid(),
+  scope: z.string(),
+  name: z.string(),
+  version: z.string(),
+  status: SecretRefStatusSchema,
+  rotated: z.boolean(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  deprecated_at: z.string().nullable(),
+  revoked_at: z.string().nullable()
+});
+
+export type SecretRefListItem = z.infer<typeof SecretRefListItemSchema>;
+
+export const SecretRefListResponseSchema = z.object({
+  secret_refs: z.array(SecretRefListItemSchema)
+});
+
+export type SecretRefListResponse = z.infer<typeof SecretRefListResponseSchema>;
+
 /**
  * GET /api/v1/me/current_project — backend が session 経由で resolve した
  * current actor's project を返す。
@@ -76,6 +108,14 @@ export async function getCurrentProjectId(): Promise<string> {
 
 export async function listCurrentProjects(): Promise<ProjectListResponse> {
   return fetchBackendJson("/api/v1/me/projects", ProjectListResponseSchema);
+}
+
+/**
+ * R-3 (ADR-00036): tenant 内 secret_refs の read-only インベントリ。
+ * backend は公開 metadata のみ返す (raw secret / security topology は非含有)。
+ */
+export async function listSecretRefs(): Promise<SecretRefListResponse> {
+  return fetchBackendJson("/api/v1/me/secret-refs", SecretRefListResponseSchema);
 }
 
 /**

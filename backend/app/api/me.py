@@ -16,9 +16,10 @@ invariant:
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,10 +30,14 @@ from backend.app.api.approval_inbox import (
     get_tenant_id,
 )
 from backend.app.api.dependencies.api_capability_token import maybe_require_cli_capability
+from backend.app.config import get_settings
+from backend.app.db.models.actor import Actor
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.project import Project
+from backend.app.db.models.secret_ref import SecretRef, SecretRefScope, SecretRefStatus
 from backend.app.domain.policy.autonomy_level import AutonomyLevel
 from backend.app.repositories.project import ProjectRepository
+from backend.app.repositories.secret_ref import SecretRefRepository
 from backend.app.services.policy.autonomy_settings import (
     AutonomyExpectationMismatch,
     ProjectAutonomySettingsService,
@@ -368,3 +373,119 @@ async def update_project_profile_endpoint(
     session.add(audit_event)
     await session.commit()
     return _to_project_item(project)
+
+
+class SecretRefListItem(BaseModel):
+    """R-3 (ADR-00036): secret_refs の read-only インベントリ表示用 metadata。
+
+    raw secret は DB に存在せず、本 schema は **明示 allowlist された公開 metadata のみ** 持つ。
+    security topology (secret_uri / allowed_consumers / allowed_operations / owner_actor_id /
+    metadata_ / runner_injectable) は意図的に含めない (Codex plan review R1 HIGH/MEDIUM)。
+    SecretRef row からは ``_to_secret_ref_item`` で field 明示 mapping し、ORM/model dump は使わない
+    (新カラム追加時に自動露出させない)。
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID
+    scope: SecretRefScope
+    name: str
+    version: str
+    status: SecretRefStatus
+    rotated: bool
+    created_at: datetime
+    updated_at: datetime
+    deprecated_at: datetime | None
+    revoked_at: datetime | None
+
+
+class SecretRefListResponse(BaseModel):
+    secret_refs: list[SecretRefListItem]
+
+
+def _to_secret_ref_item(secret_ref: SecretRef) -> SecretRefListItem:
+    # 明示 allowlist mapping。secret_uri / allowed_consumers / allowed_operations /
+    # owner_actor_id / metadata_ / runner_injectable は意図的に写像しない。
+    return SecretRefListItem(
+        id=secret_ref.id,
+        scope=secret_ref.scope,
+        name=secret_ref.name,
+        version=secret_ref.version,
+        status=secret_ref.status,
+        rotated=secret_ref.rotated_from_id is not None,
+        created_at=secret_ref.created_at,
+        updated_at=secret_ref.updated_at,
+        deprecated_at=secret_ref.deprecated_at,
+        revoked_at=secret_ref.revoked_at,
+    )
+
+
+async def require_secret_refs_viewer(
+    request: Request,
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> UUID:
+    """R-3 (ADR-00036): secret inventory の閲覧境界を **実装で enforce** する (Codex R1/R2/R3 HIGH)。
+
+    secret_refs metadata は raw secret でなくとも高価値 (鍵の存在・命名・対象・rotation を列挙可)。
+    閲覧条件 (すべて満たす必要あり、fail-closed):
+
+    1. **認証済み session であること** (`request.state.authenticated is True`)。dev/test の
+       `DevActorContextMiddleware` は cookie 無しでも default actor を seed し authenticated=False と
+       するため、ここで明示的に弾く。これがないと local P0 path で未ログイン列挙ができる (R3)。
+    2. **構成済み P0 owner であること** (DB 上の actor_type=='human' AND stable actor_id ==
+       settings.default_actor_id)。同一 tenant の別 human / service / agent / provider / github_app は
+       403 (R2: actor_type=='human' だけでは別 human が列挙可)。
+
+    `get_current_actor_id` は tenant 在籍のみ確認し authenticated フラグも owner も見ないため、本 gate で
+    補う。P0.1 multi-user 化では本 gate を secrets-view role/permission に置換する (位置を予約)。
+    """
+    if getattr(request.state, "authenticated", False) is not True:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="secret inventory requires an authenticated owner session",
+        )
+    row = (
+        await session.execute(
+            select(Actor.actor_type, Actor.actor_id).where(
+                Actor.tenant_id == tenant_id,
+                Actor.id == actor_id,
+            )
+        )
+    ).one_or_none()
+    # Codex PR #298 (P2): owner 判定は session/actor context を確立した middleware と **同じ**
+    # resolved settings を使う。app が injected Settings で構築された場合 (create_app(settings))、
+    # middleware は app.state.settings の default_actor_id で actor を seed するため、ここで global
+    # singleton を読むと injected と不一致になり構成済み owner を誤って reject しうる。
+    # request.app.state.settings を優先し、無い場合のみ global にフォールバックする。
+    settings = getattr(request.app.state, "settings", None) or get_settings()
+    if (
+        row is None
+        or row.actor_type != "human"
+        or row.actor_id != settings.default_actor_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="secret inventory is restricted to the project owner",
+        )
+    return actor_id
+
+
+@router.get("/secret-refs", response_model=SecretRefListResponse)
+async def list_secret_refs_endpoint(
+    viewer_actor_id: UUID = Depends(require_secret_refs_viewer),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> SecretRefListResponse:
+    """R-3 (ADR-00036): tenant 内 secret_refs の read-only インベントリ。
+
+    raw secret は返さない (SecretBroker 非経由、capability token 発行なし)。明示 allowlist された
+    公開 metadata のみ返し、security topology は含めない。閲覧境界は ``require_secret_refs_viewer``
+    で enforce する (P0 human owner-only、service/agent 等は 403)。
+    """
+    repo = SecretRefRepository(session)
+    secret_refs = await repo.list_all(tenant_id=tenant_id)
+    return SecretRefListResponse(
+        secret_refs=[_to_secret_ref_item(secret_ref) for secret_ref in secret_refs],
+    )
