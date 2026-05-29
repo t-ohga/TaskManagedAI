@@ -106,7 +106,7 @@ def test_ticket_list_uses_project_route_and_non_bearer_operation_header() -> Non
         (["run", "cancel", _RUN_ID], "run_cancel"),
         (["secret", "use", "secret/ref", "--purpose", "test"], "secret_resolve"),
         (["provider", "call", "--provider", "openai", "--feature", "chat", "--payload-json", "{}"], "provider_call"),
-        (["settings", "autonomy", "--level", "L2"], "task_write"),
+        (["settings", "autonomy", "--level", "L2", "--expected-level", "L0"], "task_write"),
     ],
 )
 def test_command_surface_matches_13_capability_matrix(argv: list[str], capability: str) -> None:
@@ -136,15 +136,30 @@ def test_all_13_capabilities_are_exercised_by_command_surface() -> None:
     assert command_capabilities == set(ALL_CAPABILITIES)
 
 
-def test_settings_autonomy_updates_only_autonomy_level() -> None:
-    code, _out, err, requests = _run_cli(["settings", "autonomy", "--level", "L3"])
+def test_settings_autonomy_updates_autonomy_level_with_cas_baseline() -> None:
+    code, _out, err, requests = _run_cli(
+        ["settings", "autonomy", "--level", "L3", "--expected-level", "L1"]
+    )
 
     assert code == 0
     assert err == ""
     assert requests[0].method == "PATCH"
     assert requests[0].path == f"/api/v1/me/projects/{_PROJECT_ID}/autonomy"
     assert requests[0].capability == "task_write"
-    assert requests[0].json_body == {"autonomy_level": "L3"}
+    # Codex adversarial R8 (HIGH): compare-and-swap baseline (expected_autonomy_level) を
+    # 必ず送る。policy_profile などの server-owned field は送らない。
+    assert requests[0].json_body == {
+        "autonomy_level": "L3",
+        "expected_autonomy_level": "L1",
+    }
+
+
+def test_settings_autonomy_requires_expected_level() -> None:
+    # --expected-level を省略すると CLI が exit 2 (argparse required) で拒否する
+    code, _out, _err, requests = _run_cli(["settings", "autonomy", "--level", "L3"])
+
+    assert code != 0
+    assert requests == []
 
 
 def test_context_show_is_read_only_current_project_surface() -> None:

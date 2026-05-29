@@ -33,6 +33,8 @@ export const ProjectListItemSchema = z.object({
   workspace_id: z.string().uuid(),
   slug: z.string(),
   name: z.string(),
+  // M-3 (ADR-00035): backend ProjectListItem は description を必須 nullable で返す
+  description: z.string().nullable(),
   status: z.string(),
   policy_profile: z.string(),
   autonomy_level: AutonomyLevelSchema
@@ -76,9 +78,17 @@ export async function listCurrentProjects(): Promise<ProjectListResponse> {
   return fetchBackendJson("/api/v1/me/projects", ProjectListResponseSchema);
 }
 
+/**
+ * M-3 (ADR-00035): autonomy_level を更新。
+ *
+ * Codex adversarial R7/R8 (HIGH): `expectedAutonomyLevel` (編集の基にした現在値) は
+ * **必須**。backend が compare-and-swap を行い、別タブ / retry で値が変わっていた場合
+ * 409 を返す。stale な baseline からの AI 権限 re-escalation を防ぐ。
+ */
 export async function updateProjectAutonomyLevel(
   projectId: string,
-  autonomyLevel: AutonomyLevel
+  autonomyLevel: AutonomyLevel,
+  expectedAutonomyLevel: AutonomyLevel
 ): Promise<ProjectListItem> {
   return fetchBackendJson(
     `/api/v1/me/projects/${projectId}/autonomy` as `/${string}`,
@@ -86,7 +96,30 @@ export async function updateProjectAutonomyLevel(
     {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ autonomy_level: autonomyLevel })
+      body: JSON.stringify({
+        autonomy_level: autonomyLevel,
+        expected_autonomy_level: expectedAutonomyLevel
+      })
+    }
+  );
+}
+
+/**
+ * M-3 (ADR-00035): プロジェクト基本情報 (name / description) のみ更新。
+ * policy_profile / autonomy_level は本経路で扱わない (server-owned-boundary §1、
+ * backend ProjectRepository が caller-supplied policy controls を reject)。
+ */
+export async function updateProjectProfile(
+  projectId: string,
+  update: { name?: string; description?: string | null }
+): Promise<ProjectListItem> {
+  return fetchBackendJson(
+    `/api/v1/me/projects/${projectId}/profile` as `/${string}`,
+    ProjectListItemSchema,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(update)
     }
   );
 }

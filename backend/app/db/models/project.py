@@ -64,6 +64,7 @@ class Project(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
     workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     slug: Mapped[str] = mapped_column(sa.Text, nullable=False)
     name: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     status: Mapped[ProjectStatus] = mapped_column(
         sa.Text,
         nullable=False,

@@ -32,6 +32,8 @@ describe("session API client", () => {
           workspace_id: "00000000-0000-4000-8000-000000049002",
           slug: "taskmanagedai",
           name: "TaskManagedAI",
+          // M-3 (ADR-00035): ProjectListItem は description (nullable) を必須で返す
+          description: null,
           status: "active",
           policy_profile: "default",
           autonomy_level: "L2"
@@ -43,7 +45,7 @@ describe("session API client", () => {
       )
     );
 
-    await expect(updateProjectAutonomyLevel(projectId, "L2")).resolves.toMatchObject({
+    await expect(updateProjectAutonomyLevel(projectId, "L2", "L1")).resolves.toMatchObject({
       project_id: projectId,
       policy_profile: "default",
       autonomy_level: "L2"
@@ -61,7 +63,11 @@ describe("session API client", () => {
     const headers = init.headers as Headers;
     expect(headers.get("content-type")).toBe("application/json");
     expect(headers.get("cookie")).toBe("taskmanagedai_session=session-cookie-value");
-    expect(init.body).toBe(JSON.stringify({ autonomy_level: "L2" }));
+    // Codex adversarial R7/R8 (HIGH): autonomy 更新は compare-and-swap baseline
+    // (expected_autonomy_level) を必ず送る。policy_profile などの server-owned field は送らない。
+    expect(init.body).toBe(
+      JSON.stringify({ autonomy_level: "L2", expected_autonomy_level: "L1" })
+    );
     expect(String(init.body)).not.toContain("policy_profile");
   });
 });
