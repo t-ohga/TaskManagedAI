@@ -8,6 +8,7 @@
 
 import { SessionInfo } from "@/components/session-info";
 import { HelpLinks } from "@/components/help-links";
+import { listCurrentProjects, type ProjectListItem } from "@/lib/api/session";
 import {
   AdminPageShell,
   KeyboardReadinessStrip,
@@ -16,10 +17,26 @@ import {
   ProviderComplianceMatrixTable,
   SecretBoundaryNotice
 } from "../_components/sprint9-admin-ui";
+import { ProjectSettingsForm } from "./_components/project-settings-form";
 
 export const dynamic = "force-dynamic";
 
-export default function ProjectSettingsPage() {
+async function loadCurrentProject(): Promise<ProjectListItem | null> {
+  try {
+    const res = await listCurrentProjects();
+    return (
+      res.projects.find((p) => p.project_id === res.current_project_id) ??
+      res.projects[0] ??
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+export default async function ProjectSettingsPage() {
+  const project = await loadCurrentProject();
+
   return (
     <AdminPageShell
       description="プロバイダー準拠マトリクス、ポリシープロファイル、リポジトリ連携、シークレット管理の設定を表示します。"
@@ -28,6 +45,26 @@ export default function ProjectSettingsPage() {
       title="プロジェクト設定"
     >
       <KeyboardReadinessStrip current="プロジェクト設定" />
+
+      <Panel
+        description="プロジェクト名・説明・AI 自律レベルを編集できます。policy_profile は autonomy_level から自動導出され UI から直接変更できません。"
+        title="プロジェクト基本情報"
+        titleId="settings-project-profile"
+      >
+        {project ? (
+          <ProjectSettingsForm
+            projectId={project.project_id}
+            name={project.name}
+            description={project.description}
+            autonomyLevel={project.autonomy_level}
+            policyProfile={project.policy_profile}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            プロジェクト情報を読み込めませんでした。
+          </p>
+        )}
+      </Panel>
 
       <Panel
         description="P0 不変条件に準拠。allowed_data_class はマトリクス管理で、呼び出し元から入力不可。"
