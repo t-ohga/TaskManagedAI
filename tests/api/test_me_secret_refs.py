@@ -42,13 +42,26 @@ from backend.app.middleware.dev_actor import (
 )
 
 
+def _fake_request(*, authenticated: bool) -> object:
+    """gate が参照する `request.state.authenticated` と `request.app.state.settings` を持つ
+    最小 fake request (Codex PR #298 P2: gate は app の resolved settings を使う)。
+    """
+    return SimpleNamespace(
+        state=SimpleNamespace(authenticated=authenticated),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                settings=SimpleNamespace(default_actor_id="human:default")
+            )
+        ),
+    )
+
+
 def _authenticated_request() -> object:
-    """`request.state.authenticated is True` のみを参照する gate 用の最小 fake request."""
-    return SimpleNamespace(state=SimpleNamespace(authenticated=True))
+    return _fake_request(authenticated=True)
 
 
 def _unauthenticated_request() -> object:
-    return SimpleNamespace(state=SimpleNamespace(authenticated=False))
+    return _fake_request(authenticated=False)
 
 ACTOR_SERVICE_ID = UUID("00000000-0000-4000-8000-0000000bb002")
 ACTOR_AGENT_ID = UUID("00000000-0000-4000-8000-0000000bb003")

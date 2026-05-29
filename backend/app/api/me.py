@@ -454,7 +454,12 @@ async def require_secret_refs_viewer(
             )
         )
     ).one_or_none()
-    settings = get_settings()
+    # Codex PR #298 (P2): owner 判定は session/actor context を確立した middleware と **同じ**
+    # resolved settings を使う。app が injected Settings で構築された場合 (create_app(settings))、
+    # middleware は app.state.settings の default_actor_id で actor を seed するため、ここで global
+    # singleton を読むと injected と不一致になり構成済み owner を誤って reject しうる。
+    # request.app.state.settings を優先し、無い場合のみ global にフォールバックする。
+    settings = getattr(request.app.state, "settings", None) or get_settings()
     if (
         row is None
         or row.actor_type != "human"
