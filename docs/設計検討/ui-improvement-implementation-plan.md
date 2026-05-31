@@ -156,7 +156,27 @@ A-3 (チケット削除: soft delete + 認可 + 監査 + 復元手順 必須)
 A-4〜A-7 (一括操作/タグ/担当者/期限)
 その他 (リアルタイム/SSE/ガント)
 
-## 現在位置
-- 洗い出し: 92件完了
-- 計画: v2 (Codex R1 adopted)
-- 次: Codex R2 → 実装開始
+## 現在位置 (2026-05-31 git 実態に同期)
+
+- **洗い出し**: 92 件完了。**計画**: v2 (Codex R1 adopted)。
+- **実装**: Tier 1-3 (Unit 1-10) + Sprint R1-R5 **実装済**。Tier-4 の多くも ADR (design approval) 経由で前倒し実装済。
+
+### 実装済 (git/PR で確認、2026-05-31 時点)
+
+- **Tier 1-3 / Unit 1-10**: core workflow / toast・skeleton・empty state / search・filter / charts / mobile・dark mode /
+  activity timeline・breadcrumb・markdown / event pagination 等 (commit `f5bc4f2`〜`22ab143`, Sprint R1-R5
+  `ca6ac9b`/`60748f3`/`9a23c1d`)。
+  - **Unit 9 (残り Tier 3) も全項目実装済**: B-3〜B-6 フィルター / E-3 承認タイマー / E-4 NotificationBadge /
+    F-3 Cmd+K / H-4 楽観的更新 / J-2 focus / L-1 delegation ツリー / P-3 ヘルプ / T-7 期間フィルター。
+- **Tier-4 (design approval=ADR 経由で前倒し実装済)**:
+  - D-4 cost summary (ADR-00033, `c3c2e44`) / A-4 bulk status (`63b15ae`) / A-3 ticket delete (`8e49f5e`) /
+    A-7 due_date (ADR-00034, #296) / M-3 settings edit (ADR-00035, #297) / R-3 API キー管理 (ADR-00036, #298) /
+    **Q-2〜Q-4 import・soft-delete・archive (ADR-00037, #299)**。
+  - S 系 print CSS (`0932a9c`) 実装済。
+
+### 残 (genuinely 未実装)
+
+- **L-3 リアルタイム進捗 (SSE/WebSocket)**: Tier 4、**design approval 必須**。着手時は ADR-first で architecture
+  (SSE vs WebSocket / Tailscale 閉域境界 / AgentRun live state streaming) を設計 → 方針確認 → 実装。
+- その他 Tier-4 で未着手のものがあれば individual に design approval (ADR) 経由で前倒し可。
+- 各 Tier-3 実装済項目の polish (bug/a11y/security/edge case の adversarial 監査 = Unit 10 相当) は随時。
