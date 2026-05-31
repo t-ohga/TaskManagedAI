@@ -66,6 +66,7 @@ UI 改善計画の最後に残った genuinely 未実装項目 **L-3「リアル
    - **validation/auth/scope は FastAPI deps で response 前に確定**: `?last_event_id=` query param は整数 `seq_no` のみ受理 (非整数/UUID は `400/422`) / auth + active-scope (`404`) + tenant 照合。
    - **acquire と release を custom ASGI streaming response の単一 `__call__` 内 try/finally に収める (R3 HIGH fix)**: endpoint は (deps 通過後) custom response を return するだけ。response の `__call__(scope, receive, send)` 内で **(i) capacity 判定 → 満杯なら `503` + `Retry-After` を `__call__` 内から送出して return、(ii) 空きがあれば LISTEN connection を取得 → 200 SSE header 送出 → LISTEN → catch-up → stream、(iii) `finally` で listener remove + connection release + capacity slot 解放**。`StreamingResponse` factory への pre-response handoff (return 後〜body iterator 開始前に cancel されると generator `finally` が走らない leak 窓) を構造的に排除する。`__call__` に入った後の cancel は `await` を貫通して `finally` に到達するため release が保証される。
    - **capacity 判定は `timeout=0` を使わない (R5 HIGH fix)**: 枯渇判定は **明示的な capacity counter / `asyncio.Semaphore(max)` の非ブロッキング取得** (満杯のみ `503`) で行い、acquire は **短い正の timeout (例 250ms)** を使う。`pool.acquire(timeout=0)` / `asyncio.wait_for(..., timeout=0)` は空きがあっても即 `TimeoutError` になり、通常時も全接続 `503` 化する (= L-3 全面停止 + client backoff 連鎖) ため禁止。backend test で「空きがあれば 200 で開始」「枯渇時のみ 503」の両方を確認する。
+   - **main transactional pool を stream lifetime で保持しない (R6 HIGH fix)**: stream endpoint は **yield 型 `get_db_session` dependency を注入しない** (FastAPI の yield dependency cleanup は response 完了まで遅延し、streaming では preflight session が 30 分 stream / disconnect まで main pool connection を保持して通常 API を枯渇させる)。tenant/actor は **request state から解決**、run/scope preflight は **明示的な短命 session (`async with AsyncSessionFactory() as s: ...`) で実行し response return 前に close**。stream 中の tail/status query も LISTEN pool とは別に **per-query 短命 session** (取得→query→即 close) で行い、main pool checkout を stream 数でなく「実行中 query 数」に比例させる。LISTEN connection (専用 pool) だけが stream 持続中 held。受け入れ条件に「N 本 stream を開いたまま通常 AgentRun detail/list が main pool connection を取得できる」を追加。
 4. **listener → async generator bridge (bounded dirty-signal queue、R1 MEDIUM fix)**: `asyncio.Queue(maxsize=1)` を **dirty-signal** として使う。`add_listener` callback は payload の `tenant_id` + `run_id` を **両方** 照合し対象 run のみ `queue.put_nowait(None)` (full なら無視 = coalesce、payload を蓄積しない)。generator は `asyncio.wait_for(queue.get(), timeout=heartbeat)` で待機し、wake-up 時に DB 再 query (#2)。これにより無関係 notify の蓄積も、遅い client での queue 肥大も起きない (overflow しても次の DB query で回復)。
 5. **heartbeat + idle scope 再検証 (R2 HIGH fix)**: 約 15s の heartbeat timeout ごとに、keepalive (`: keepalive\n\n`) 送信前に **active-scope + status を再 query** する。NOTIFY 源は `agent_run_events` insert のみであり、ticket/project の soft-delete は event insert を伴わないため、idle (新 event 無し) stream では heartbeat が唯一の scope 再評価契機になる。これにより event を一切 append しなくても **heartbeat 以内に `stream_end(scope_revoked)`** を満たす。terminal 検知も同様に heartbeat 再 query で拾う。
 6. **terminal close**: run が terminal (`completed`/`failed`/`cancelled`/`provider_refused`/`repair_exhausted`) に達したら最終 status を流して `event: stream_end` で正常終了する (無限保持しない)。
@@ -114,6 +115,7 @@ UI 改善計画の最後に残った genuinely 未実装項目 **L-3「リアル
   - **R2 追加 (must_ship)**: event を一切 append せず ticket soft-delete → heartbeat 以内に `stream_end(scope_revoked)` / 1 dirty-signal に N 超 burst → drain-to-empty で全 `seq_no` 配信 / SSE `id:` は `agent_run_event` のみ seq_no・status/error は id なし / UUID や非整数 `?last_event_id=` を deps で 400 reject / stream 開始後 error は `agent_run_error` (reason/retryable/correlation_id のみ、exception message なし) で閉じる / generator factory 例外・初回 yield 前 cancel・response 構築失敗で LISTEN pool 使用数が戻る。
   - **R3 追加 (must_ship)**: client SSE wrapper が pool 枯渇 (`503`) で tight reconnect せず指数バックオフ / 恒久停止 (`204`) で再接続停止 (frontend Vitest) / custom ASGI response の `__call__` return 後・初回 iteration 前の client abort で LISTEN pool 使用数が戻る (backend、ASGI scope cancel 再現)。
   - **R4 追加 (must_ship)**: fetch-based client が切断後 `?last_event_id=<last seq_no>` 付きで再接続し欠落なく resume (seq 0 全再送にならない) / `?last_event_id=` 非整数・UUID を server が `400` reject / rollback flag-off で server が `204` を返し stale client が再接続停止 (already-created client の 204 受信 test)。
+  - **R6 追加 (must_ship)**: N 本の SSE stream を開いたまま通常 AgentRun detail/list endpoint が main DB connection を取得できる (pool starvation test、preflight session が stream lifetime に保持されない / main pool checkout が stream 数に比例しない)。
 
 ## Codex plan review R1 採否記録 (2026-06-01)
 
@@ -177,7 +179,17 @@ codex-adversarial-review R5 (job `review-mptzs6xr-ftan97`) で **CRITICAL=0 / HI
 
 reject / defer: なし。R6 で `timeout=0` / `EventSource` / `Last-Event-ID` 残存 sweep と CRITICAL/HIGH 不在を確認後、ADR を accepted へ昇格する。
 
-> **Note**: 以降の §R1〜R4 採否記録 table 内の `EventSource` / `Last-Event-ID` 語は **当該 round 時点の finding を記述した history** であり、現行 authoritative 設計 (fetch-based / `?last_event_id=`) ではない。実装は本 §採用案・堅牢化要件・テスト指針・受け入れ条件を正本とする。
+## Codex plan review R6 採否記録 (2026-06-01)
+
+codex-adversarial-review R6 (job `review-mpu01mvh-knbdk6`) で **CRITICAL=0 / HIGH=1** (`timeout=0` / 旧 client 契約は正本から一掃済を確認、新たに DB session lifetime を指摘)。**全件 adopt** し反映:
+
+| # | severity | finding | 反映先 |
+|---|---|---|---|
+| 1 | HIGH | FastAPI yield `get_db_session` は cleanup が response 完了まで遅延 → streaming で preflight session が main pool を stream lifetime 保持し pool 隔離破綻 | 堅牢化 #3 (yield session 不注入 / preflight 短命 session を return 前 close / tail-status は per-query 短命 session) + SP T3/受け入れ条件 (pool starvation test) |
+
+reject / defer: なし。R7 で main pool checkout が stream 数に比例しないことと CRITICAL/HIGH 不在を確認後、ADR を accepted へ昇格する。
+
+> **Note**: §R1〜R4 採否記録 table 内の `EventSource` / `Last-Event-ID` 語は **当該 round 時点の finding を記述した history** であり、現行 authoritative 設計 (fetch-based / `?last_event_id=`) ではない。実装は本 §採用案・堅牢化要件・テスト指針・受け入れ条件を正本とする。
 
 ## 却下案
 
