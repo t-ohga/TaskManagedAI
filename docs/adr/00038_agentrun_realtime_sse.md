@@ -40,6 +40,7 @@ UI 改善計画の最後に残った genuinely 未実装項目 **L-3「リアル
 - ★ **event 検知 = PostgreSQL LISTEN/NOTIFY** (push 型、新 infra なし): 「最善で最も品質の良いもの」(user design approval, 2026-06-01) として、poll ではなく **event-driven push** を採用。`agent_run_events` の `AFTER INSERT` trigger が `pg_notify` を発火し、SSE handler が専用接続で `LISTEN` する。単一 source of truth (PostgreSQL) のまま低 latency を得る。Redis を event-append path に挟まない。
 - ★ **scope = run 詳細画面** (`/runs/[id]`): live status + live event tail。runs 一覧 / dashboard の realtime 化は本 ADR の採用 architecture (SSE + NOTIFY) を自然に拡張できるため **follow-up** とし、最初の高品質 delivery を run 詳細に集中する。
 - ★ **status 変化も event-append notify 1 channel で検知**: rules/agentrun-state-machine.md §5「status update と AgentRunEvent append は同一 transaction」を前提に、event append を 1 つの notify channel とし、handler は notify 受信時に「新 event tail + 現在の run status snapshot」を再 query して stream する。status 専用 channel を増やさない。
+- ★ **LISTEN 確立 → catch-up → dirty-signal 再 query** (Codex plan review R1 CRITICAL fix): notify は **「DB に新 event がある」という dirty-signal** であり、payload を直接 stream に乗せない。順序は (1) LISTEN 登録 → (2) catch-up query (`seq_no > last`) → (3) wake-up ごとに必ず `seq_no > last_sent` を DB から再 query。catch-up を先に流してから LISTEN すると、両者の窓で insert された event の NOTIFY を取りこぼし (NOTIFY は listening 前に発火、その event は既に catch-up 対象外)、terminal event がこの窓に入ると UI 停止 + `stream_end` 不達になる。LISTEN を先に張ることでこの race を構造的に閉じる。
 
 ## 選択肢
 
@@ -59,15 +60,21 @@ UI 改善計画の最後に残った genuinely 未実装項目 **L-3「リアル
 ### 採用 architecture の堅牢化要件 (must_ship)
 
 1. **NOTIFY trigger (migration, additive)**: `agent_run_events` に `AFTER INSERT` trigger を追加し、`pg_notify('agent_run_event_appended', json_build_object('tenant_id', NEW.tenant_id, 'run_id', NEW.run_id, 'seq_no', NEW.seq_no)::text)` を発火。payload は最小 (8KB NOTIFY 上限に余裕)。event schema / 列は変更しない。downgrade は trigger + function を drop するだけの lossless。
-2. **catch-up-on-connect (Last-Event-ID resume)**: handler は接続時に `Last-Event-ID` header (client が最後に受けた `seq_no`、default 0) を読み、`seq_no > last` の event を redacted shape で先に流し切ってから LISTEN に入る。これにより接続前 / 切断中に発生した event の取りこぼしを構造的に防ぐ (NOTIFY 取りこぼしも catch-up query が吸収する)。
-3. **専用 bounded LISTEN pool + 上限**: LISTEN は接続を stream 持続中保持するため、transactional session pool と分離した **専用 asyncpg pool** (例: max 10) を使う。上限到達時は `503` (retry-after) で reject し、main pool 枯渇を防ぐ。同時 stream 数を bound する。
-4. **listener → async generator bridge**: `asyncio.Queue` を介す。`add_listener` callback が `queue.put_nowait(payload)`、generator は `asyncio.wait_for(queue.get(), timeout=heartbeat)` で待機。payload の `tenant_id` + `run_id` を **両方** 照合し、対象 run のみ反応 (UUID 衝突想定でも tenant 境界を二重に enforce)。
+2. **LISTEN-before-catch-up + dirty-signal 再 query (R1 CRITICAL fix)**: 順序は (1) `LISTEN agent_run_event_appended` を先に登録 → (2) `Last-Event-ID` header (client が最後に受けた `seq_no`、default 0) を読み `seq_no > last` を catch-up query → (3) 以後 wake-up ごとに **必ず `seq_no > last_sent` を DB 再 query** する。notify payload を直接 stream に乗せず、dirty-signal (再 query 契機) としてのみ扱う。これにより catch-up/LISTEN 境界で insert された event の取りこぼし (CRITICAL race) と NOTIFY 取りこぼしの両方を、DB query を真の source として構造的に吸収する。
+3. **専用 bounded LISTEN pool + pre-response 予約 + 上限 (R1 HIGH fix)**: LISTEN は接続を stream 持続中保持するため、transactional session pool と分離した **専用 asyncpg pool** (例: max 10) を使う。**LISTEN connection の予約は StreamingResponse を返す前に endpoint で行う**: 予約失敗 (pool 枯渇) なら `503` + `Retry-After` を返し、stream を開かない (HTTP 200 で開いた直後切断 → EventSource reconnect storm を防ぐ)。予約成功後のみ generator を `StreamingResponse` で返し、generator の `finally` で connection を必ず pool へ返却する。
+4. **listener → async generator bridge (bounded dirty-signal queue、R1 MEDIUM fix)**: `asyncio.Queue(maxsize=1)` を **dirty-signal** として使う。`add_listener` callback は payload の `tenant_id` + `run_id` を **両方** 照合し対象 run のみ `queue.put_nowait(None)` (full なら無視 = coalesce、payload を蓄積しない)。generator は `asyncio.wait_for(queue.get(), timeout=heartbeat)` で待機し、wake-up 時に DB 再 query (#2)。これにより無関係 notify の蓄積も、遅い client での queue 肥大も起きない (overflow しても次の DB query で回復)。
 5. **heartbeat**: 約 15s ごとに SSE comment (`: keepalive\n\n`) を送り、proxy の idle timeout 回避 + 死活検知。
 6. **terminal close**: run が terminal (`completed`/`failed`/`cancelled`/`provider_refused`/`repair_exhausted`) に達したら最終 status を流して `event: stream_end` で正常終了する (無限保持しない)。
 7. **max stream lifetime**: 上限 (例: 30 分) で server 側から close、client は `Last-Event-ID` 付きで自動再接続 → 長時間接続の滞留を防ぐ。
 8. **disconnect cleanup**: `request.is_disconnected()` / asyncio cancellation で LISTEN 接続を確実に pool へ返却。
-9. **redaction 再利用**: stream する event は `_to_event_read` (payload_keys のみ / `blocked_by_secret_scan` redaction status) を共用。raw payload / raw secret を絶対に stream に乗せない。
-10. **proxy buffering 無効化**: response に `Cache-Control: no-cache` / `X-Accel-Buffering: no` / `Content-Type: text/event-stream` を付与。Next.js proxy と Tailscale Serve が SSE を buffer せず pass-through することを検証する (検証項目、後述リスク)。
+9. **SSE 全 DTO allowlist + redaction (R1 HIGH fix)**: stream する **全 message 種別ごとに送信 DTO を明示** し、それ以外の AgentRun 本体 field を絶対に乗せない:
+   - `agent_run_event`: `_to_event_read` (id / seq_no / event_type / actor_id / `payload_keys` のみ / `payload_redaction_status`) を共用。raw payload を含めない。
+   - `agent_run_status`: 最小 allowlist (`status` / `blocked_reason` / `terminal` (bool) / `completed_at` / `error_code`) のみ。`error_summary` raw / provider metadata / input-output summary / cost 内訳は **乗せない** (status snapshot 経路が `_to_event_read` を通らず漏洩する R1 HIGH を塞ぐ)。
+   - `stream_end`: `reason` enum (`terminal` / `scope_revoked` / `max_lifetime` / `server_shutdown`) のみ。
+   - redaction test は `agent_run_event` に限らず `agent_run_status` / `stream_end` / error payload を含む **全 DTO** に広げる。
+10. **stream 中 active-scope 再評価 (R1 HIGH fix)**: active-scope は open 時だけでなく、catch-up / 各 wake-up の tail・status query 自体に `soft_deleted_ticket_run_exclusion()` を組み込む。stream 開始後に対象 ticket が soft-delete され scope 外になったら、即時に `stream_end` (`reason=scope_revoked`) で stream を終了する (削除済み scope の event/status をライブ配信し続けない)。
+11. **proxy buffering 無効化**: response に `Cache-Control: no-cache` / `X-Accel-Buffering: no` / `Content-Type: text/event-stream` を付与。Next.js proxy と Tailscale Serve が SSE を buffer せず pass-through することを検証する (検証項目、後述リスク)。
+12. **flag-off で frontend が SSE を開かない (R1 MEDIUM fix)**: SSR で取得した `sseEnabled` (feature flag) を Client Component に渡し、`false` なら EventSource を **生成しない** (static fallback)。endpoint 側が flag-off で 404 を返しても EventSource は error body を読めず reconnect storm になるため、client 側で「開かない」を一次防御にする。受け入れ条件に「flag-off で EventSource 非生成 / reconnect しない」test を含める。
 
 - 実装対象ファイル:
   - `migrations/versions/0041_agent_run_event_notify_trigger.py` (NOTIFY trigger + function、additive、両方向)
@@ -92,6 +99,22 @@ UI 改善計画の最後に残った genuinely 未実装項目 **L-3「リアル
   - trigger: `agent_run_events` insert で `pg_notify` が発火する (DB test、`TASKMANAGEDAI_RUN_DB_TESTS=1`)。
   - migration: `alembic upgrade head` → trigger 存在、`downgrade` → trigger/function drop の lossless。
   - frontend: EventSource mock で status/event 反映 + reconnect (Vitest)。
+  - **R1 追加 (must_ship)**: catch-up/LISTEN 境界 race 再現 (LISTEN 登録と catch-up の間に event insert → 取りこぼさない) / soft-delete 後 stream が `scope_revoked` で停止 / `agent_run_status` + `stream_end` の redaction (raw payload/secret なし) / pool 枯渇で HTTP 503 (stream 開始前) / bounded queue overflow 後も `seq_no > last_sent` で回復 / flag-off で frontend が EventSource 非生成・reconnect しない。
+
+## Codex plan review R1 採否記録 (2026-06-01)
+
+codex-adversarial-review R1 (job `review-mptytliv-4yxo2o`) で 6 findings、**全件 adopt** し本 ADR + SP-0046 に反映:
+
+| # | severity | finding | 反映先 |
+|---|---|---|---|
+| 1 | CRITICAL | catch-up→LISTEN 順序 race で接続開始中 event を恒久ロスト | 堅牢化 #2 (LISTEN-before-catch-up + dirty-signal 再 query) |
+| 2 | HIGH | stream 開始後 soft-delete で scope 外 run 配信継続 | 堅牢化 #10 (stream 中 active-scope 再評価) |
+| 3 | HIGH | status snapshot が redaction を通らず raw 漏洩余地 | 堅牢化 #9 (SSE 全 DTO allowlist) |
+| 4 | HIGH | LISTEN pool 503 が StreamingResponse 開始後で破綻 | 堅牢化 #3 (pre-response 予約 → 503) |
+| 5 | MEDIUM | 単一 channel unbounded queue が無関係 notify 蓄積 | 堅牢化 #4 (bounded dirty-signal queue) |
+| 6 | MEDIUM | flag-off で EventSource reconnect storm | 堅牢化 #12 (frontend が SSE を開かない) |
+
+reject / defer: なし。R2 で fix の整合と副作用を再確認してから ADR を accepted へ昇格する。
 
 ## 却下案
 
@@ -105,7 +128,10 @@ UI 改善計画の最後に残った genuinely 未実装項目 **L-3「リアル
 |--------|----------|--------|
 | LISTEN 接続が main pool を枯渇させる | 接続数監視 / pool timeout エラー | 専用 bounded asyncpg pool (max N) に分離 + 上限超過 `503` + max stream lifetime で滞留防止 |
 | reverse proxy (Tailscale Serve / Next.js) が SSE を buffer し realtime にならない | ブラウザ検証で event 到達が遅延/まとめ届き | `X-Accel-Buffering: no` + `Cache-Control: no-cache` + Next.js streaming response 確認。**ブラウザ側検証必須項目** (後述) |
-| NOTIFY 取りこぼし (接続断中の event) | catch-up query との突合 test | `Last-Event-ID` catch-up query が接続時に欠落分を必ず補填する設計 (NOTIFY は「起こせ」信号、真の source は DB query) |
+| NOTIFY 取りこぼし / catch-up-LISTEN 境界 race の event ロスト (R1 CRITICAL) | catch-up/LISTEN race 再現 test (境界で event insert) | **LISTEN を先に張ってから catch-up**、以後 wake-up ごとに `seq_no > last_sent` を DB 再 query。NOTIFY は dirty-signal、真の source は DB query (取りこぼしが次 query で必ず回復) |
+| stream 開始後の soft-delete で scope 外 run が配信継続 (R1 HIGH) | soft-delete 後 stream 停止 test | catch-up / 各 wake-up の tail・status query に `soft_deleted_ticket_run_exclusion()` を組み込み、scope 外検知で `stream_end(scope_revoked)` |
+| status snapshot 経路が redaction を通らず raw 漏洩 (R1 HIGH) | 全 SSE DTO の redaction test | SSE message 種別ごとに送信 DTO allowlist を明示、status snapshot は最小 field のみ (error_summary raw / provider metadata を乗せない) |
+| LISTEN pool 枯渇 503 が stream 開始後で破綻 (R1 HIGH) | pool 枯渇時に HTTP 503 を返す test | LISTEN connection を StreamingResponse 前に予約、失敗時のみ 503+Retry-After |
 | asyncpg listener → generator bridge の leak / 例外で接続返却漏れ | 接続数が減らない / pool 枯渇 | `try/finally` で remove_listener + 接続 return、disconnect 検知で確実に cleanup、test で接続返却を assert |
 | NOTIFY payload 8KB 上限 | trigger で大 payload を送ると失敗 | payload は `{tenant_id, run_id, seq_no}` のみ (数十 bytes)。event 本体は handler が query |
 | stream に raw payload/secret が漏れる | redaction test / `assert_no_raw_secret` | `_to_event_read` (payload_keys のみ) を共用、raw payload を stream に乗せる経路を作らない |
@@ -116,9 +142,9 @@ UI 改善計画の最後に残った genuinely 未実装項目 **L-3「リアル
 
 1. rollback trigger: SSE endpoint で接続滞留 / pool 枯渇 / proxy buffering 未解決 / realtime が不安定。
 2. rollback step:
-   - 即時: feature flag (env `AGENTRUN_SSE_ENABLED=false`) で endpoint を無効化 → frontend は static SSR + 手動更新に自動 fallback (機能停止のみ、データ影響なし)。
+   - 即時: feature flag (env `AGENTRUN_SSE_ENABLED=false`)。SSR の `sseEnabled=false` により frontend は **EventSource を生成せず** static SSR + 手動更新に fallback する (R1 MEDIUM fix: server が 404 を返しても client が開かないので reconnect storm にならない)。endpoint 自体も flag-off で 404 を返す (二重防御、機能停止のみ・データ影響なし)。
    - schema 戻し: `alembic downgrade -1` で `0041` の NOTIFY trigger + function を drop。trigger は additive かつ event data に触れないため **lossless** (event 行は不変、downgrade で realtime が止まるだけ)。
-3. verification after rollback: run 詳細が static で正しく表示される / `alembic check` clean / `agent_run_events` 件数・内容が rollback 前後で不変 (trigger は read-only side-effect のみ) / SSE endpoint が無効化され 404 or 503 を返す。
+3. verification after rollback: run 詳細が static で正しく表示される / `alembic check` clean / `agent_run_events` 件数・内容が rollback 前後で不変 (trigger は read-only side-effect のみ) / frontend が EventSource を開かない (Network tab に `text/event-stream` 接続が出ない) / endpoint が flag-off で 404。
 
 ## ブラウザ側検証必須項目 (実装後、所要 ~15 分)
 

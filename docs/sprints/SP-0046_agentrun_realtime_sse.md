@@ -46,9 +46,12 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 |---|---|---|
 | transport | SSE | 一方向 push / HTTP / Tailscale Serve ネイティブ / auto-reconnect / Last-Event-ID |
 | event 検知 | PostgreSQL LISTEN/NOTIFY (AFTER INSERT trigger) | push 型 / 新 infra なし / 単一 source of truth / append 経路非依存 |
-| catch-up | Last-Event-ID + `seq_no>last` query | NOTIFY 取りこぼし / 接続断中 event を構造的に吸収 |
-| 接続管理 | 専用 bounded asyncpg pool + 上限 503 | main session pool 枯渇防止 |
-| redaction | `_to_event_read` (payload_keys のみ) 共用 | raw payload / secret 非露出 |
+| catch-up | **LISTEN 確立 → catch-up → wake-up ごと `seq_no>last_sent` 再 query** (R1 CRITICAL) | NOTIFY を dirty-signal 化、catch-up/LISTEN race を構造的に閉じる |
+| 接続管理 | 専用 bounded asyncpg pool + **pre-response 予約** → 503 (R1 HIGH) | main session pool 枯渇防止 + stream 開始後切断を回避 |
+| redaction | **SSE 全 DTO allowlist** (event=`_to_event_read` / status=最小 field / stream_end=reason) (R1 HIGH) | status snapshot 経路の raw 漏洩を封じる |
+| stream 中 scope | tail/status query に active-scope 組み込み + `scope_revoked` 停止 (R1 HIGH) | soft-delete 後の配信継続を停止 |
+| queue | bounded dirty-signal (maxsize=1, coalesce) (R1 MEDIUM) | 無関係 notify 蓄積 / queue 肥大を回避 |
+| flag-off | frontend が EventSource を開かない (R1 MEDIUM) | reconnect storm 回避 |
 | scope 境界 | `soft_deleted_ticket_run_exclusion()` + tenant | 全 read path active-scope (ADR-00037) と整合 |
 
 ## 実装チケット
@@ -67,8 +70,8 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 
 1. ADR-00038 proposed → accepted 昇格 (codex-plan-review R1 + 採否判定後、実装着手直前)。
 2. T1 migration: `AFTER INSERT ON agent_run_events` trigger + function、`pg_notify('agent_run_event_appended', json{tenant_id,run_id,seq_no})`。upgrade で create、downgrade で drop。`alembic upgrade head` / `downgrade` を fresh DB で確認。
-3. T2 stream service: bounded asyncpg pool (lazy init)、`listen_run(tenant_id, run_id, last_event_id)` async generator、catch-up query → LISTEN bridge (asyncio.Queue) → heartbeat → terminal close → finally cleanup。
-4. T3 endpoint: `StreamingResponse(media_type="text/event-stream")` + `X-Accel-Buffering:no` / `Cache-Control:no-cache`。auth deps 再利用、active-scope 404、tenant + run_id 二重照合。
+3. T2 stream service: bounded asyncpg pool (lazy init)。`listen_run(tenant_id, run_id, last_event_id)` async generator は **(1) LISTEN 登録 → (2) catch-up query (`seq_no>last`, active-scope 組み込み) → (3) bounded dirty-signal queue (maxsize=1) で wake-up 待ち → 各 wake-up で `seq_no>last_sent` + status を active-scope 込みで再 query → scope 外なら `stream_end(scope_revoked)`** → heartbeat → terminal close → finally で listener remove + connection 返却。SSE DTO は event/status/stream_end ごとに allowlist。
+4. T3 endpoint: **StreamingResponse を返す前に** auth + active-scope (404) + tenant 照合 + LISTEN connection 予約 (枯渇なら 503+Retry-After) を行い、成功時のみ `StreamingResponse(media_type="text/event-stream")` + `X-Accel-Buffering:no` / `Cache-Control:no-cache`。予約済 connection を generator へ渡し finally で返却。
 5. T4 config: `agentrun_sse_enabled` (default True) / `agentrun_sse_listen_pool_max` / `agentrun_sse_heartbeat_seconds` / `agentrun_sse_max_lifetime_seconds`。
 6. T5 frontend: run 詳細を live 化。EventSource 接続、`agent_run_event` / `agent_run_status` / `stream_end` handling、reconnect、SSE 無効時 static fallback。
 7. T6/T7 test 群 (受け入れ条件に対応)。
@@ -79,10 +82,10 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 
 | 項目 | must_ship | defer_if_over_budget |
 |---|---|---|
-| NOTIFY trigger + catch-up + redaction + active-scope + tenant 境界 | ✅ | |
-| bounded LISTEN pool + 上限 503 + disconnect cleanup | ✅ | |
+| NOTIFY trigger + **LISTEN-before-catch-up + dirty-signal 再 query** + 全 DTO redaction + **stream 中 active-scope 再評価** + tenant 境界 | ✅ | |
+| bounded LISTEN pool + **pre-response 予約 503** + bounded dirty-signal queue + disconnect cleanup | ✅ | |
 | heartbeat + terminal close + max lifetime | ✅ | |
-| frontend live run 詳細 + reconnect + fallback | ✅ | |
+| frontend live run 詳細 + reconnect + **flag-off で EventSource 非生成** fallback | ✅ | |
 | 一覧 / dashboard realtime | | ✅ (follow-up) |
 | 詳細な接続 metrics (Prometheus) | | ✅ (Sprint 11.5) |
 
@@ -99,6 +102,12 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 - [ ] frontend が EventSource で status/event を live 反映、SSE 無効時 static fallback。
 - [ ] `alembic upgrade head` / `downgrade` lossless、event 行不変。
 - [ ] AgentRun 16 状態 / event_type / ContextSnapshot 10 列の 5+ source 整合 test を壊さない。
+- [ ] **(R1 CRITICAL)** LISTEN 登録と catch-up の境界で event を insert しても取りこぼさない (race 再現 test、wake-up ごとに `seq_no > last_sent` 再 query)。
+- [ ] **(R1 HIGH)** stream 開始後に対象 ticket が soft-delete されたら `stream_end(scope_revoked)` で停止 (tail/status query に active-scope 組み込み)。
+- [ ] **(R1 HIGH)** `agent_run_status` / `stream_end` / error payload に raw secret / raw payload / provider metadata / error_summary raw が乗らない (全 DTO redaction test)。
+- [ ] **(R1 HIGH)** LISTEN pool 枯渇時に **stream 開始前に** HTTP 503 + Retry-After を返す (StreamingResponse 後の切断にしない)。
+- [ ] **(R1 MEDIUM)** bounded dirty-signal queue (maxsize=1, coalesce)、overflow しても `seq_no > last_sent` 再 query で回復。
+- [ ] **(R1 MEDIUM)** flag-off で frontend が EventSource を生成せず reconnect ループしない。
 
 ## 検証手順
 
