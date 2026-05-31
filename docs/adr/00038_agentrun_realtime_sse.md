@@ -62,12 +62,9 @@ UI 改善計画の最後に残った genuinely 未実装項目 **L-3「リアル
 1. **NOTIFY trigger (migration, additive)**: `agent_run_events` に `AFTER INSERT` trigger を追加し、`pg_notify('agent_run_event_appended', json_build_object('tenant_id', NEW.tenant_id, 'run_id', NEW.run_id, 'seq_no', NEW.seq_no)::text)` を発火。payload は最小 (8KB NOTIFY 上限に余裕)。event schema / 列は変更しない。downgrade は trigger + function を drop するだけの lossless。
 2. **LISTEN-before-catch-up + dirty-signal 再 query + drain-to-empty (R1 CRITICAL + R2 HIGH fix)**: 順序は (1) `LISTEN agent_run_event_appended` を先に登録 → (2) `Last-Event-ID` header (client が最後に受けた `seq_no`、default 0) を読み `seq_no > last` を catch-up query → (3) 以後 wake-up ごとに **必ず `seq_no > last_sent` を DB 再 query** する。notify payload を直接 stream に乗せず、dirty-signal (再 query 契機) としてのみ扱う。これにより catch-up/LISTEN 境界で insert された event の取りこぼし (CRITICAL race) と NOTIFY 取りこぼしの両方を、DB query を真の source として構造的に吸収する。
    - **drain-to-empty (R2 HIGH fix)**: tail query は `seq_no > last_sent ORDER BY seq_no LIMIT N` を使うが、1 つの dirty-signal / catch-up につき **取得件数 < N になるまで loop で drain** する。queue が maxsize=1 で coalesce され、1 signal あたり N 超の event が溜まっても、全 `seq_no` を漏れなく配信してから wait に戻る (burst > N でも event 落とさない)。
-3. **専用 bounded LISTEN pool + pre-response 予約 + 所有権移譲保証 (R1 HIGH + R2 HIGH fix)**: LISTEN は接続を stream 持続中保持するため、transactional session pool と分離した **専用 asyncpg pool** (例: max 10) を使う。endpoint 側の確定順序:
-   - (a) **Last-Event-ID validation を pool acquire の前に完了** (非整数 / UUID 等 invalid は `400/422` で fail、acquire しない、R2 HIGH #3 と連動)。
-   - (b) auth + active-scope (404) + tenant 照合。
-   - (c) LISTEN connection を acquire (枯渇なら `503` + `Retry-After`、stream を開かない → reconnect storm 防止)。
-   - (d) **acquire から `StreamingResponse` return までを endpoint の try/except で囲み、generator へ所有権を移譲できなかった経路 (generator factory 例外 / response 構築失敗 / 初回 yield 前の disconnect・cancel) では必ず release** する (R2 HIGH fix: generator の `finally` が走らない窓での pool leak → 恒久 503 を防ぐ)。
-   - (e) 正常に iterate 開始した後は generator の `finally` で listener remove + connection 返却。
+3. **専用 bounded LISTEN pool + single-scope acquire/release (custom ASGI response、R1 HIGH + R2 HIGH + R3 HIGH fix)**: LISTEN は接続を stream 持続中保持するため、transactional session pool と分離した **専用 asyncpg pool** (例: max 10) を使う。
+   - **validation/auth/scope は FastAPI deps で response 前に確定**: Last-Event-ID は整数 `seq_no` のみ受理 (非整数/UUID は `400/422`、acquire しない) / auth + active-scope (`404`) + tenant 照合。
+   - **acquire と release を custom ASGI streaming response の単一 `__call__` 内 try/finally に収める (R3 HIGH fix)**: endpoint は (deps 通過後) custom response を return するだけ。response の `__call__(scope, receive, send)` 内で **(i) `pool.acquire(timeout=0)` → 枯渇なら `503` + `Retry-After` を `__call__` 内から送出して return、(ii) 成功なら 200 SSE header 送出 → LISTEN → catch-up → stream、(iii) `finally` で listener remove + connection release**。`StreamingResponse` factory への pre-response handoff (return 後〜body iterator 開始前に cancel されると generator `finally` が走らない leak 窓) を構造的に排除する。`__call__` に入った後の cancel は `await` を貫通して `finally` に到達するため release が保証される。
 4. **listener → async generator bridge (bounded dirty-signal queue、R1 MEDIUM fix)**: `asyncio.Queue(maxsize=1)` を **dirty-signal** として使う。`add_listener` callback は payload の `tenant_id` + `run_id` を **両方** 照合し対象 run のみ `queue.put_nowait(None)` (full なら無視 = coalesce、payload を蓄積しない)。generator は `asyncio.wait_for(queue.get(), timeout=heartbeat)` で待機し、wake-up 時に DB 再 query (#2)。これにより無関係 notify の蓄積も、遅い client での queue 肥大も起きない (overflow しても次の DB query で回復)。
 5. **heartbeat + idle scope 再検証 (R2 HIGH fix)**: 約 15s の heartbeat timeout ごとに、keepalive (`: keepalive\n\n`) 送信前に **active-scope + status を再 query** する。NOTIFY 源は `agent_run_events` insert のみであり、ticket/project の soft-delete は event insert を伴わないため、idle (新 event 無し) stream では heartbeat が唯一の scope 再評価契機になる。これにより event を一切 append しなくても **heartbeat 以内に `stream_end(scope_revoked)`** を満たす。terminal 検知も同様に heartbeat 再 query で拾う。
 6. **terminal close**: run が terminal (`completed`/`failed`/`cancelled`/`provider_refused`/`repair_exhausted`) に達したら最終 status を流して `event: stream_end` で正常終了する (無限保持しない)。
@@ -82,7 +79,12 @@ UI 改善計画の最後に残った genuinely 未実装項目 **L-3「リアル
    - redaction test は `agent_run_event` に限らず `agent_run_status` / `stream_end` / `agent_run_error` を含む **全 DTO** に広げる。
 10. **stream 中 active-scope 再評価 (R1 HIGH fix)**: active-scope は open 時だけでなく、catch-up / 各 wake-up の tail・status query 自体に `soft_deleted_ticket_run_exclusion()` を組み込む。stream 開始後に対象 ticket が soft-delete され scope 外になったら、即時に `stream_end` (`reason=scope_revoked`) で stream を終了する (削除済み scope の event/status をライブ配信し続けない)。
 11. **proxy buffering 無効化**: response に `Cache-Control: no-cache` / `X-Accel-Buffering: no` / `Content-Type: text/event-stream` を付与。Next.js proxy と Tailscale Serve が SSE を buffer せず pass-through することを検証する (検証項目、後述リスク)。
-12. **flag-off で frontend が SSE を開かない (R1 MEDIUM fix)**: SSR で取得した `sseEnabled` (feature flag) を Client Component に渡し、`false` なら EventSource を **生成しない** (static fallback)。endpoint 側が flag-off で 404 を返しても EventSource は error body を読めず reconnect storm になるため、client 側で「開かない」を一次防御にする。受け入れ条件に「flag-off で EventSource 非生成 / reconnect しない」test を含める。
+12. **client 側 reconnect 制御 (EventSource wrapper、R1 MEDIUM + R3 HIGH fix)**: native EventSource は失敗した HTTP response の status/body を app に渡さず自動再接続を続けるため、HTTP 400/503 だけでは reconnect storm を防げない (invalid resume 値ループ / 容量不足で auth/scope を叩き続ける)。client 側で storm を止める:
+   - **EventSource wrapper**: `onerror` で即 `close()` し、**app 管理の指数バックオフ (jitter 付き) + 最大試行回数 + 上限到達で停止 UI**。native の無制限 auto-reconnect に依存しない。
+   - **resume reset**: catch-up parse 失敗 / 一定回数連続失敗で、`Last-Event-ID` を捨てて fresh EventSource (seq 0 から catch-up) で復旧。invalid `Last-Event-ID` の永久ループを断つ。
+   - **server stop semantics**: flag-off / 恒久停止は server が **`204`** を返す (EventSource は 204 で **再接続を停止** する spec 動作)。transient (`503`) は wrapper のバックオフで間隔を空ける。
+   - **flag-off 一次防御**: SSR の `sseEnabled=false` なら wrapper を **生成しない** (static fallback)。
+   - 受け入れ条件: flag-off 非生成 / pool 枯渇 (`503`) で tight reconnect しない (バックオフ) / invalid `Last-Event-ID` で永久ループしない (reset) / 恒久停止 (`204`) で再接続停止。
 
 - 実装対象ファイル:
   - `migrations/versions/0041_agent_run_event_notify_trigger.py` (NOTIFY trigger + function、additive、両方向)
@@ -109,6 +111,7 @@ UI 改善計画の最後に残った genuinely 未実装項目 **L-3「リアル
   - frontend: EventSource mock で status/event 反映 + reconnect (Vitest)。
   - **R1 追加 (must_ship)**: catch-up/LISTEN 境界 race 再現 (LISTEN 登録と catch-up の間に event insert → 取りこぼさない) / soft-delete 後 stream が `scope_revoked` で停止 / `agent_run_status` + `stream_end` の redaction (raw payload/secret なし) / pool 枯渇で HTTP 503 (stream 開始前) / bounded queue overflow 後も `seq_no > last_sent` で回復 / flag-off で frontend が EventSource 非生成・reconnect しない。
   - **R2 追加 (must_ship)**: event を一切 append せず ticket soft-delete → heartbeat 以内に `stream_end(scope_revoked)` / 1 dirty-signal に N 超 burst → drain-to-empty で全 `seq_no` 配信 / SSE `id:` は `agent_run_event` のみ seq_no・status/error は id なし / UUID や非整数 `Last-Event-ID` を pool acquire 前に 400 reject / stream 開始後 error は `agent_run_error` (reason/retryable/correlation_id のみ、exception message なし) で閉じる / generator factory 例外・初回 yield 前 cancel・response 構築失敗で LISTEN pool 使用数が戻る。
+  - **R3 追加 (must_ship)**: client EventSource wrapper が pool 枯渇 (`503`) で tight reconnect せず指数バックオフ / invalid `Last-Event-ID` で永久ループせず resume reset / 恒久停止 (`204`) で再接続停止 (frontend Vitest) / custom ASGI response の `__call__` return 後・初回 iteration 前の client abort で LISTEN pool 使用数が戻る (backend、ASGI scope cancel 再現)。
 
 ## Codex plan review R1 採否記録 (2026-06-01)
 
@@ -138,6 +141,17 @@ codex-adversarial-review R2 (job `review-mptz30lr-rsw9xq`) で **CRITICAL=0** (R
 | 5 | HIGH | 予約 connection の generator 未到達時 release 未定義 → pool leak | 堅牢化 #3 (acquire→return を try/except、移譲失敗時 release) |
 
 reject / defer: なし。R3 で R2 fix の整合と新規 HIGH/CRITICAL 不在を確認後、ADR を accepted へ昇格する。
+
+## Codex plan review R3 採否記録 (2026-06-01)
+
+codex-adversarial-review R3 (job `review-mptzbu52-hsnvc6`) で **CRITICAL=0 / HIGH=2** (数値上 clean 閾値内だが、Codex は R2 fix の副作用を残穴と判定)。**全件 adopt** し反映:
+
+| # | severity | finding | 反映先 |
+|---|---|---|---|
+| 1 | HIGH | native EventSource が HTTP error を app に渡さず再接続継続 → 400/503 では storm を防げない | 堅牢化 #12 (client EventSource wrapper: backoff/max-attempts/resume-reset + 恒久停止 204) |
+| 2 | HIGH | StreamingResponse return 後〜body 開始前 cancel で generator finally 不実行 (pool leak 窓残存) | 堅牢化 #3 (custom ASGI response の単一 `__call__` 内で acquire/503/stream/release を try/finally) |
+
+reject / defer: なし。R4 で R3 fix の整合と CRITICAL/HIGH 不在を確認後、ADR を accepted へ昇格する。
 
 ## 却下案
 
