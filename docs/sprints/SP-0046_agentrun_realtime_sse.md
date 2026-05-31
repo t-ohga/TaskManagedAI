@@ -58,7 +58,7 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 
 | ID | 内容 | 主ファイル |
 |---|---|---|
-| T1 | NOTIFY trigger migration (additive, 両方向 lossless) | `migrations/versions/0041_agent_run_event_notify_trigger.py` |
+| T1 | NOTIFY trigger 2 系統 migration (events INSERT + agent_runs UPDATE、additive, 両方向 lossless) | `migrations/versions/0041_agent_run_event_notify_trigger.py` |
 | T2 | LISTEN pool + SSE event generator + catch-up + redaction 共用 | `backend/app/services/realtime/agent_run_stream.py` |
 | T3 | SSE endpoint `GET /{run_id}/events/stream` (auth + active-scope + 404) | `backend/app/api/agent_runs.py` |
 | T4 | config (pool max / heartbeat / max lifetime / enabled flag) | `backend/app/config.py` |
@@ -69,7 +69,7 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 ## タスク一覧
 
 1. ADR-00038 proposed → accepted 昇格 (codex-plan-review R1 + 採否判定後、実装着手直前)。
-2. T1 migration: `AFTER INSERT ON agent_run_events` trigger + function、`pg_notify('agent_run_event_appended', json{tenant_id,run_id,seq_no})`。upgrade で create、downgrade で drop。`alembic upgrade head` / `downgrade` を fresh DB で確認。
+2. T1 migration (2 trigger): (a) `AFTER INSERT ON agent_run_events` → `pg_notify('agent_run_event_appended', json{tenant_id,run_id,seq_no})`、(b) `AFTER UPDATE ON agent_runs WHEN status/blocked_reason/completed_at DISTINCT` → 同 channel `pg_notify(json{tenant_id,run_id})` (status-only 経路カバー、R9)。upgrade で 2 trigger+2 function create、downgrade で drop (lossless)。`alembic upgrade head` / `downgrade` を fresh DB で確認。
 3. T2 stream service: bounded asyncpg pool (lazy init)。`listen_run(...)` async generator は **(1) LISTEN 登録 → (2) catch-up query (`seq_no>last`, active-scope 組み込み, drain-to-empty: 取得 < N まで loop) → (3) bounded dirty-signal queue (maxsize=1, coalesce) で wake-up 待ち → 各 wake-up で `seq_no>last_sent` + status を active-scope 込みで drain-to-empty 再 query → scope 外なら `stream_end(scope_revoked)`** → **heartbeat timeout ごとに keepalive 前 scope/status 再検証** (idle 失効) → terminal close → 開始後例外は `agent_run_error` で閉じる → finally で listener remove + connection 返却。SSE DTO は event/status/stream_end/error ごとに allowlist、framing は event のみ `id:<seq_no>`。
 4. T3 endpoint: **(a) deps (DB 不使用): `?last_event_id=` validation (非整数/UUID は 400/422) + tenant/actor を新設 sessionless dep で request state から解決 (`get_db_session`/`get_current_actor_id` を dep graph に含めない、R6+R7) → (b) custom ASGI streaming response を return** (resource 未取得)。custom response の `__call__` 内で **(i) capacity slot 非ブロッキング取得 (Semaphore/counter、満杯のみ 503+Retry-After、DB を触らず拒否 = R8) → (ii) slot 取得後に短命 session で run/active-scope preflight (scope 外 404) → (iii) LISTEN connection 取得 (短い正の timeout、`timeout=0` 禁止) → 200 SSE header (`text/event-stream` + `X-Accel-Buffering:no` + `Cache-Control:no-cache`) → LISTEN → catch-up → stream (tail/status は per-query 短命 session + concurrency cap) → (iv) finally で LISTEN release + slot 解放** を単一 try/finally に収める (R3 handoff leak 窓 + R8 preflight-before-capacity 枯渇を排除)。flag-off / 恒久停止は 204。
 5. T4 config: `agentrun_sse_enabled` (default True) / `agentrun_sse_listen_pool_max` / `agentrun_sse_heartbeat_seconds` / `agentrun_sse_max_lifetime_seconds` / **`agentrun_sse_query_concurrency` (stream 由来 main query の同時実行 cap、R7)** / **`agentrun_sse_heartbeat_jitter_seconds` (R7)**。`listen_pool_max` は main pool 余力と独立に上げない制約を comment 明記。
@@ -92,6 +92,7 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 ## 受け入れ条件
 
 - [ ] `agent_run_events` insert で `pg_notify` 発火 (DB test)。
+- [ ] **(R9 HIGH)** `agent_runs` の status-only 更新 (event append 無し、例: MCP bridge cancel) でも `agent_runs` UPDATE trigger が `pg_notify` 発火し、SSE が heartbeat 待ちでなく dirty-signal で status を反映する (DB test + stream test)。
 - [ ] SSE endpoint が `?last_event_id=N` で `seq_no>N` の redacted event のみ catch-up。
 - [ ] stream payload に raw secret / raw payload が無い (redaction)。
 - [ ] soft-deleted ticket bound run の stream は `404` (active-scope)。
