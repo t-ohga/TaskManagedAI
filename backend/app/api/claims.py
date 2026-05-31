@@ -16,6 +16,7 @@ from backend.app.api.approval_inbox import (
     get_db_session,
     get_tenant_id,
 )
+from backend.app.api.dependencies.project_active_guard import require_active_project
 from backend.app.repositories.audit_event import AuditEventRepository
 from backend.app.repositories.claim import ClaimRepository
 from backend.app.schemas.claim import ClaimCreate, ClaimRead
@@ -80,6 +81,9 @@ async def create_claim_endpoint(
     research_task_id: UUID,
     body: ClaimCreate,
     request: Request,
+    # Codex adversarial R10 #1: archived project への claim 追加を 409 で凍結 (archive freeze は
+    # ticket だけでなく project child write 全体に適用)。
+    _active_project: None = Depends(require_active_project),  # noqa: B008
     actor_id: UUID = Depends(get_current_actor_id),
     tenant_id: int = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_db_session),

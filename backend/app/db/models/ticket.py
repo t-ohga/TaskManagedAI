@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -104,6 +104,13 @@ class Ticket(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
     due_date: Mapped[date | None] = mapped_column(sa.Date, nullable=True)
     assignee_actor_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     created_by_actor_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    # Q-3 (ADR-00037): soft-delete。deleted_at IS NULL が active ticket。deletion batch (run id) +
+    # 削除実行 actor を記録し、batch 単位 restore を可能にする。hard delete はしない。
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    deleted_batch_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    deleted_by_actor_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     metadata_: Mapped[JsonDict] = mapped_column(
         "metadata",
         JSONB,
