@@ -70,8 +70,8 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 
 1. ADR-00038 proposed → accepted 昇格 (codex-plan-review R1 + 採否判定後、実装着手直前)。
 2. T1 migration: `AFTER INSERT ON agent_run_events` trigger + function、`pg_notify('agent_run_event_appended', json{tenant_id,run_id,seq_no})`。upgrade で create、downgrade で drop。`alembic upgrade head` / `downgrade` を fresh DB で確認。
-3. T2 stream service: bounded asyncpg pool (lazy init)。`listen_run(tenant_id, run_id, last_event_id)` async generator は **(1) LISTEN 登録 → (2) catch-up query (`seq_no>last`, active-scope 組み込み) → (3) bounded dirty-signal queue (maxsize=1) で wake-up 待ち → 各 wake-up で `seq_no>last_sent` + status を active-scope 込みで再 query → scope 外なら `stream_end(scope_revoked)`** → heartbeat → terminal close → finally で listener remove + connection 返却。SSE DTO は event/status/stream_end ごとに allowlist。
-4. T3 endpoint: **StreamingResponse を返す前に** auth + active-scope (404) + tenant 照合 + LISTEN connection 予約 (枯渇なら 503+Retry-After) を行い、成功時のみ `StreamingResponse(media_type="text/event-stream")` + `X-Accel-Buffering:no` / `Cache-Control:no-cache`。予約済 connection を generator へ渡し finally で返却。
+3. T2 stream service: bounded asyncpg pool (lazy init)。`listen_run(...)` async generator は **(1) LISTEN 登録 → (2) catch-up query (`seq_no>last`, active-scope 組み込み, drain-to-empty: 取得 < N まで loop) → (3) bounded dirty-signal queue (maxsize=1, coalesce) で wake-up 待ち → 各 wake-up で `seq_no>last_sent` + status を active-scope 込みで drain-to-empty 再 query → scope 外なら `stream_end(scope_revoked)`** → **heartbeat timeout ごとに keepalive 前 scope/status 再検証** (idle 失効) → terminal close → 開始後例外は `agent_run_error` で閉じる → finally で listener remove + connection 返却。SSE DTO は event/status/stream_end/error ごとに allowlist、framing は event のみ `id:<seq_no>`。
+4. T3 endpoint: 順序を確定 — **(a) Last-Event-ID validation (非整数/UUID は 400/422、acquire しない) → (b) auth + active-scope 404 + tenant 照合 → (c) LISTEN connection acquire (枯渇 503+Retry-After) → (d) acquire〜StreamingResponse return を try/except で囲み移譲失敗時 release**。成功時のみ `StreamingResponse(media_type="text/event-stream")` + `X-Accel-Buffering:no` / `Cache-Control:no-cache`。
 5. T4 config: `agentrun_sse_enabled` (default True) / `agentrun_sse_listen_pool_max` / `agentrun_sse_heartbeat_seconds` / `agentrun_sse_max_lifetime_seconds`。
 6. T5 frontend: run 詳細を live 化。EventSource 接続、`agent_run_event` / `agent_run_status` / `stream_end` handling、reconnect、SSE 無効時 static fallback。
 7. T6/T7 test 群 (受け入れ条件に対応)。
@@ -108,6 +108,11 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 - [ ] **(R1 HIGH)** LISTEN pool 枯渇時に **stream 開始前に** HTTP 503 + Retry-After を返す (StreamingResponse 後の切断にしない)。
 - [ ] **(R1 MEDIUM)** bounded dirty-signal queue (maxsize=1, coalesce)、overflow しても `seq_no > last_sent` 再 query で回復。
 - [ ] **(R1 MEDIUM)** flag-off で frontend が EventSource を生成せず reconnect ループしない。
+- [ ] **(R2 HIGH)** event を一切 append せず ticket を soft-delete → heartbeat 以内に `stream_end(scope_revoked)` (idle scope 失効)。
+- [ ] **(R2 HIGH)** 1 dirty-signal に対し tail limit N 超の burst → drain-to-empty で全 `seq_no` を漏れなく配信。
+- [ ] **(R2 HIGH)** SSE frame `id:` は `agent_run_event` のみ `seq_no`、`agent_run_status`/`stream_end`/`agent_run_error` は `id:` を出さない。UUID/非整数 `Last-Event-ID` は pool acquire 前に `400` reject。
+- [ ] **(R2 HIGH)** stream 開始後の例外は `agent_run_error` (reason/retryable/correlation_id のみ、exception message/SQL detail なし) で閉じる (無言切断 reconnect storm にしない)。
+- [ ] **(R2 HIGH)** generator factory 例外 / 初回 yield 前 cancel / response 構築失敗で LISTEN pool 使用数が戻る (leak なし、恒久 503 防止)。
 
 ## 検証手順
 
