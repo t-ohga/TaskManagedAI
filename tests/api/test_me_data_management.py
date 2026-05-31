@@ -54,6 +54,7 @@ from backend.app.mcp.api_bridge import (
     bridge_delegation_create,
     bridge_delegation_inbox,
     bridge_delegation_review,
+    bridge_delegation_submit,
     bridge_delegation_tree,
     bridge_run_cost,
     bridge_run_create,
@@ -3359,3 +3360,86 @@ async def test_delegation_inbox_accept_reject_deleted_child(
             {"t": TENANT_1, "m": message_id},
         )
         assert consumed.scalar_one() is None
+
+
+# --------- R26 (Codex App PR review): import 404 + delegation_submit parent guard ---------
+
+
+@pytestmark_db
+@pytest.mark.asyncio
+async def test_import_nonexistent_project_returns_404(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """REGRESSION (Codex App PR review): 存在しない project への import は dry_run / 実行とも 404。
+    `assert_project_active` は missing project で no-op だったため、dry_run が valid を返し実 import が
+    ticket FK 違反まで進んで誤った 409 を返していた。bulk-delete と整合する 404 を slug/dry_run より前に返す。
+    """
+    missing_project = UUID("00000000-0000-4000-8000-0000000dd0ee")
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _seed_base(session)
+
+    # dry_run でも 404 (preview を返さない)
+    async with session_factory() as session:
+        with pytest.raises(HTTPException) as exc:
+            await import_tickets_endpoint(
+                project_id=missing_project,
+                payload=ImportTicketsRequest(
+                    tickets=[TicketImportItem(slug="x-1", title="x")], dry_run=True
+                ),
+                owner_actor_id=ACTOR_OWNER, tenant_id=TENANT_1, session=session,
+            )
+        assert exc.value.status_code == 404
+
+    # 実 import も 404 (FK 違反の 409 ではない)
+    async with session_factory() as session:
+        with pytest.raises(HTTPException) as exc:
+            await import_tickets_endpoint(
+                project_id=missing_project,
+                payload=ImportTicketsRequest(
+                    tickets=[TicketImportItem(slug="x-2", title="x")]
+                ),
+                owner_actor_id=ACTOR_OWNER, tenant_id=TENANT_1, session=session,
+            )
+        assert exc.value.status_code == 404
+
+
+@pytestmark_db
+@pytest.mark.asyncio
+async def test_delegation_submit_rejects_deleted_parent(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """REGRESSION (Codex App PR review): delegation_submit は child だけでなく **parent run** も actionable
+    か検証する。parent ticket が delegation 後に soft-delete された場合、child active のまま result message を
+    削除済 parent に提出できてしまう漏れ (accept/review と同じ parent active-scope) を塞ぐ。reject 時は
+    child status 不変 + result message 未生成。
+    """
+    parent_run_id, child_run_id, ticket_parent, _tc = await _make_parent_child(session_factory)
+
+    # parent の ticket **だけ** soft-delete (child ticket は active)
+    await _soft_delete_one_ticket(session_factory, PROJECT_ACTIVE, ticket_parent)
+
+    # submit は parent actionable 検証で reject
+    async with session_factory() as session:
+        result = await bridge_delegation_submit(
+            session, tenant_id=TENANT_1, run_id=child_run_id, parent_run_id=parent_run_id,
+            project_id=PROJECT_ACTIVE, result_status="completed", result_summary="done",
+            result_spec={"r": "x"}, actor_id=ACTOR_OWNER,
+        )
+        assert result.get("error") == "TicketNotActionableError"
+
+    # child status 不変 (queued) + result message 未生成
+    async with session_factory() as session:
+        st = await session.execute(
+            text("SELECT status FROM agent_runs WHERE tenant_id = :t AND id = :r"),
+            {"t": TENANT_1, "r": child_run_id},
+        )
+        assert st.scalar_one() == "queued"
+        msgs = await session.execute(
+            text(
+                "SELECT count(*) FROM inter_agent_messages "
+                "WHERE tenant_id = :t AND artifact_ref LIKE :pat"
+            ),
+            {"t": TENANT_1, "pat": f"result:{child_run_id}:%"},
+        )
+        assert msgs.scalar_one() == 0

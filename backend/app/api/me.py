@@ -830,8 +830,15 @@ async def import_tickets_endpoint(
     # Codex adversarial R7 #2: archive freeze を slug validation / dry_run より **前** に適用する。
     # archived project への import は slug conflict (422) や dry_run preview に関わらず常に 409 を返し、
     # archive freeze の contract を mutation 入口で一貫して fail-closed にする。
+    # R26 (Codex App PR review): nonexistent project は dry_run を valid と誤判定し実 import が ticket FK
+    # 違反まで進んで誤った 409 を返していたため、bulk-delete と整合する 404 を slug/dry_run より前に返す。
     try:
-        await repo.assert_project_active(tenant_id, project_id)
+        await repo.assert_project_exists_active(tenant_id, project_id)
+    except ProjectNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="project not found",
+        ) from exc
     except ProjectArchivedError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

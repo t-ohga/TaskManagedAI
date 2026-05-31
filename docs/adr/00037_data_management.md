@@ -171,8 +171,13 @@ UI 改善計画 Q-2〜Q-4 (データ管理、Tier 4「design approval 必須」)
   `require_active_project` (`api/dependencies/project_active_guard.py`) を HTTP child-write endpoint
   (claims `create_claim` / evidence_items `create_evidence_item`) に適用し、archived なら 409
   fail-closed。evidence_sources / research_tasks は read-only (GET のみ) で write 経路なし。
-  **残リスク (defer)**: 新規 project child-write endpoint を追加する際は本 dependency 適用を必須とする
-  運用 (根本解は前述 DB-level enforcement)。
+  **残リスク (defer、Codex App PR review #1)**: `MemoryRetrievalService.retrieve()` (memory API、GET
+  `/api/v1/projects/{project_id}/memory/retrievals`) は **write-on-read** で Artifact + MemoryRetrievalArtifact
+  行を作る child write だが `require_active_project` 未適用。ただし `memory_api_enabled` は **default False**
+  (config.py、`require_memory_api_enabled` gate) のため **P0 default config では到達不能** (P0-active でない、
+  別 feature)。memory feature を有効化する際は本 endpoint (および write-on-read を行う memory insight 系) に
+  `require_active_project` を適用する follow-up が必須。新規 project child-write endpoint 追加時も同 dependency
+  適用を必須とする運用 (根本解は前述 DB-level enforcement)。
 - **delegation_review run guard** (実装 adversarial R10 #2): `bridge_delegation_review` も R6 の
   `_assert_run_ticket_actionable` を通し、削除済 ticket / archived project の run に review
   (approval_decided) event を記録しない。

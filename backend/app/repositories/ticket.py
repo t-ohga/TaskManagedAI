@@ -204,6 +204,22 @@ class TicketRepository(BaseRepository[Ticket]):
         await self._ensure_tenant_context(tenant_id)
         await self._assert_project_active(tenant_id, project_id)
 
+    async def assert_project_exists_active(self, tenant_id: int, project_id: UUID) -> None:
+        """import 入口など、project の **存在** も要求する guard (R26 / Codex App PR review)。
+
+        ``assert_project_active`` は archived のみ raise し、**存在しない project は no-op** のため、
+        import で nonexistent project を渡すと dry_run が valid を返し、実 import が ticket FK 違反まで
+        進んで 409 (誤った concurrent write) を返していた。bulk-delete (``bulk_soft_delete_in_project``) が
+        ``ProjectNotFoundError`` (404) を返すのと非整合。project row を FOR UPDATE lock し、不在は
+        ``ProjectNotFoundError`` (404)、archived は ``ProjectArchivedError`` (409) を raise する。
+        """
+        await self._ensure_tenant_context(tenant_id)
+        project_status = await self._lock_project_status(tenant_id, project_id)
+        if project_status is None:
+            raise ProjectNotFoundError(project_id=project_id)
+        if project_status != "active":
+            raise ProjectArchivedError(project_id=project_id)
+
     async def assert_ticket_actionable(
         self,
         tenant_id: int,

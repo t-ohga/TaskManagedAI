@@ -1157,6 +1157,21 @@ async def bridge_delegation_submit(
     except (ProjectArchivedError, TicketNotActionableError) as exc:
         return {"error": str(type(exc).__name__), "run_id": str(run_id)}
 
+    # ADR-00037 R26 (Codex App PR review): child だけでなく **parent run 自体** も actionable か検証する。
+    # parent の ticket が delegation 後に soft-delete された場合、child active のまま result message を
+    # 削除済 parent (parent_run_id 宛) に提出できてしまう (accept/review と同じ parent active-scope 漏れ)。
+    parent_for_submit = await session.scalar(
+        select(AgentRun).where(
+            AgentRun.tenant_id == tenant_id, AgentRun.id == parent_run_id
+        )
+    )
+    if parent_for_submit is None:
+        return {"error": "parent_not_found", "parent_run_id": str(parent_run_id)}
+    try:
+        await _assert_run_ticket_actionable(session, tenant_id=tenant_id, run=parent_for_submit)
+    except (ProjectArchivedError, TicketNotActionableError) as exc:
+        return {"error": str(type(exc).__name__), "parent_run_id": str(parent_run_id)}
+
     run_status = "completed" if result_status == "completed" else "failed" if result_status == "failed" else "running"
     run.status = run_status
 
