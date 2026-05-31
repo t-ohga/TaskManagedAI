@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ from backend.app.api.approval_inbox import (
     get_db_session,
     get_tenant_id,
 )
+from backend.app.config import get_settings
 from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.agent_run_event import AgentRunEvent
 from backend.app.db.models.context_snapshot import ContextSnapshot
@@ -27,6 +28,7 @@ from backend.app.services.metrics.agent_run_kpi import (
     AgentRunKpiService,
     TimeToMergeProxySource,
 )
+from backend.app.services.realtime.agent_run_stream import AgentRunStreamResponse
 
 router = APIRouter(prefix="/api/v1/agent_runs", tags=["agent_runs"])
 
@@ -420,6 +422,33 @@ async def get_agent_run_kpi_endpoint(
             detail="agent run not found",
         )
     return _to_kpi_response(kpi)
+
+
+@router.get("/{run_id}/events/stream")
+async def stream_agent_run_events_endpoint(
+    run_id: UUID,
+    last_event_id: int = Query(default=0, ge=0),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+) -> Response:
+    """AgentRun 進捗の SSE stream (ADR-00038 / L-3 realtime)。
+
+    read-only。auth は **sessionless dep (`get_tenant_id`、request.state から解決)** のみで、
+    `get_db_session` / `get_current_actor_id` を dependency graph に含めない (R6/R7: yield session の
+    cleanup が stream 完了まで遅延し main transactional pool を枯渇させるのを防ぐ)。
+
+    `?last_event_id=<seq_no>` (int、非整数/UUID は FastAPI が 422) で resume する。capacity 判定 →
+    active-scope preflight (404) → LISTEN → stream → release は `AgentRunStreamResponse.__call__` が
+    単一 ASGI scope で所有する (capacity gate を DB preflight より前に置き、handoff leak 窓を排除、R3/R8)。
+
+    flag-off (`agentrun_sse_enabled=false`) は **204** を返す (client は spec 通り再接続を停止、R4)。
+    """
+    if not get_settings().agentrun_sse_enabled:
+        return Response(status_code=204)
+    return AgentRunStreamResponse(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        last_event_id=last_event_id,
+    )
 
 
 @router.post("/{run_id}/cancel", response_model=AgentRunResponse, status_code=200)

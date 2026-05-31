@@ -83,6 +83,21 @@ class Settings(BaseSettings):
     arq_queue_name: str = "taskmanagedai:jobs"
     worker_cancel_channel: str = "taskmanagedai:cancel"
 
+    # ADR-00038 (L-3 SSE realtime). AgentRun 進捗 SSE stream の運用パラメータ。
+    agentrun_sse_enabled: bool = True
+    # 専用 LISTEN connection pool 上限 (= 同時 SSE stream 上限)。main transactional
+    # pool の余力と独立に上げてはならない (R7/R8): 同時 stream の per-query checkout が
+    # main pool を枯渇させないよう、main pool_size+max_overflow より十分小さく保つ。
+    agentrun_sse_listen_pool_max: int = Field(default=10, ge=1, le=100)
+    # stream 由来 main DB query (tail/status) の同時実行上限 (R7)。通常 API 用の
+    # main pool 余力を常に残すため stream 群の同時 checkout を bound する。
+    agentrun_sse_query_concurrency: int = Field(default=4, ge=1, le=64)
+    # heartbeat 間隔 + jitter (R7): 全 stream の同時 wake を散らし main pool burst を防ぐ。
+    agentrun_sse_heartbeat_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
+    agentrun_sse_heartbeat_jitter_seconds: float = Field(default=3.0, ge=0.0, le=30.0)
+    # 1 stream の最大生存時間。超過で server から close、client は ?last_event_id= で再接続。
+    agentrun_sse_max_lifetime_seconds: float = Field(default=1800.0, ge=30.0, le=86400.0)
+
     @model_validator(mode="after")
     def validate_local_boundary(self) -> Self:
         if self.environment == "production":
