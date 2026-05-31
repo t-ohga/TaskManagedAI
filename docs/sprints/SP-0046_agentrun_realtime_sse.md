@@ -44,7 +44,7 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 
 | 判断 | 採用 | 根拠 |
 |---|---|---|
-| transport | SSE | 一方向 push / HTTP / Tailscale Serve ネイティブ / auto-reconnect / Last-Event-ID |
+| transport | SSE (fetch-based client) | 一方向 push / HTTP / Tailscale Serve ネイティブ / app 制御 reconnect + `?last_event_id=` resume |
 | event 検知 | PostgreSQL LISTEN/NOTIFY (AFTER INSERT trigger) | push 型 / 新 infra なし / 単一 source of truth / append 経路非依存 |
 | catch-up | **LISTEN 確立 → catch-up → wake-up ごと `seq_no>last_sent` 再 query** (R1 CRITICAL) | NOTIFY を dirty-signal 化、catch-up/LISTEN race を構造的に閉じる |
 | 接続管理 | 専用 bounded asyncpg pool + **custom ASGI response の単一 `__call__` で acquire/503/release** (R1+R2+R3 HIGH) | pool 枯渇防止 + handoff 窓の leak 排除 |
@@ -64,14 +64,14 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 | T4 | config (pool max / heartbeat / max lifetime / enabled flag) | `backend/app/config.py` |
 | T5 | frontend live Client Component (**fetch-based SSE client** / `?last_event_id=` resume / status・events 反映 / backoff reconnect / 204 停止 / terminal) | `frontend/app/(admin)/runs/[id]/` |
 | T6 | backend contract + negative test | `tests/api/test_agent_run_stream.py` |
-| T7 | frontend EventSource test (Vitest) | `frontend/app/(admin)/runs/[id]/__tests__/` |
+| T7 | frontend SSE client test (Vitest) | `frontend/app/(admin)/runs/[id]/__tests__/` |
 
 ## タスク一覧
 
 1. ADR-00038 proposed → accepted 昇格 (codex-plan-review R1 + 採否判定後、実装着手直前)。
 2. T1 migration: `AFTER INSERT ON agent_run_events` trigger + function、`pg_notify('agent_run_event_appended', json{tenant_id,run_id,seq_no})`。upgrade で create、downgrade で drop。`alembic upgrade head` / `downgrade` を fresh DB で確認。
 3. T2 stream service: bounded asyncpg pool (lazy init)。`listen_run(...)` async generator は **(1) LISTEN 登録 → (2) catch-up query (`seq_no>last`, active-scope 組み込み, drain-to-empty: 取得 < N まで loop) → (3) bounded dirty-signal queue (maxsize=1, coalesce) で wake-up 待ち → 各 wake-up で `seq_no>last_sent` + status を active-scope 込みで drain-to-empty 再 query → scope 外なら `stream_end(scope_revoked)`** → **heartbeat timeout ごとに keepalive 前 scope/status 再検証** (idle 失効) → terminal close → 開始後例外は `agent_run_error` で閉じる → finally で listener remove + connection 返却。SSE DTO は event/status/stream_end/error ごとに allowlist、framing は event のみ `id:<seq_no>`。
-4. T3 endpoint: **(a) Last-Event-ID validation (非整数/UUID は 400/422) + (b) auth + active-scope 404 + tenant 照合 を FastAPI deps で確定** → (c) **custom ASGI streaming response を return**。custom response の `__call__` 内で **`pool.acquire(timeout=0)` → 枯渇なら `__call__` から 503+Retry-After 送出 / 成功なら 200 SSE header (`text/event-stream` + `X-Accel-Buffering:no` + `Cache-Control:no-cache`) → LISTEN → catch-up → stream → finally release** を単一 try/finally に収める (return 後 cancel の leak 窓を排除)。flag-off / 恒久停止は 204。
+4. T3 endpoint: **(a) `?last_event_id=` validation (非整数/UUID は 400/422) + (b) auth + active-scope 404 + tenant 照合 を FastAPI deps で確定** → (c) **custom ASGI streaming response を return**。custom response の `__call__` 内で **capacity 判定 (Semaphore/counter、満杯のみ 503+Retry-After を `__call__` から送出) → 空きあれば LISTEN connection 取得 (短い正の timeout、`timeout=0` 禁止) → 200 SSE header (`text/event-stream` + `X-Accel-Buffering:no` + `Cache-Control:no-cache`) → LISTEN → catch-up → stream → finally release+slot 解放** を単一 try/finally に収める (return 後 cancel の leak 窓を排除)。flag-off / 恒久停止は 204。
 5. T4 config: `agentrun_sse_enabled` (default True) / `agentrun_sse_listen_pool_max` / `agentrun_sse_heartbeat_seconds` / `agentrun_sse_max_lifetime_seconds`。
 6. T5 frontend: run 詳細を live 化。**fetch-based SSE client** で接続 (受信 `seq_no` を追跡 → 再接続時 `?last_event_id=` 付与)、`agent_run_event` / `agent_run_status` / `stream_end` / `agent_run_error` handling、指数バックオフ reconnect (503=backoff / 204=停止 / 400=resume reset)、SSE 無効時 (`sseEnabled=false`) static fallback。
 7. T6/T7 test 群 (受け入れ条件に対応)。
@@ -92,14 +92,14 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 ## 受け入れ条件
 
 - [ ] `agent_run_events` insert で `pg_notify` 発火 (DB test)。
-- [ ] SSE endpoint が `Last-Event-ID=N` で `seq_no>N` の redacted event のみ catch-up。
+- [ ] SSE endpoint が `?last_event_id=N` で `seq_no>N` の redacted event のみ catch-up。
 - [ ] stream payload に raw secret / raw payload が無い (redaction)。
 - [ ] soft-deleted ticket bound run の stream は `404` (active-scope)。
 - [ ] 別 tenant の run_id を stream できない (negative)。
 - [ ] terminal run は `stream_end` で閉じ、再接続ループしない。
 - [ ] LISTEN pool 上限超過で `503`。
 - [ ] disconnect で LISTEN 接続が pool へ返却される (接続数 assert)。
-- [ ] frontend が EventSource で status/event を live 反映、SSE 無効時 static fallback。
+- [ ] frontend が fetch-based SSE client で status/event を live 反映、SSE 無効時 static fallback。
 - [ ] `alembic upgrade head` / `downgrade` lossless、event 行不変。
 - [ ] AgentRun 16 状態 / event_type / ContextSnapshot 10 列の 5+ source 整合 test を壊さない。
 - [ ] **(R1 CRITICAL)** LISTEN 登録と catch-up の境界で event を insert しても取りこぼさない (race 再現 test、wake-up ごとに `seq_no > last_sent` 再 query)。
@@ -107,10 +107,10 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 - [ ] **(R1 HIGH)** `agent_run_status` / `stream_end` / error payload に raw secret / raw payload / provider metadata / error_summary raw が乗らない (全 DTO redaction test)。
 - [ ] **(R1 HIGH)** LISTEN pool 枯渇時に **stream 開始前に** HTTP 503 + Retry-After を返す (StreamingResponse 後の切断にしない)。
 - [ ] **(R1 MEDIUM)** bounded dirty-signal queue (maxsize=1, coalesce)、overflow しても `seq_no > last_sent` 再 query で回復。
-- [ ] **(R1 MEDIUM)** flag-off で frontend が EventSource を生成せず reconnect ループしない。
+- [ ] **(R1 MEDIUM)** flag-off で frontend が SSE client を生成せず reconnect ループしない。
 - [ ] **(R2 HIGH)** event を一切 append せず ticket を soft-delete → heartbeat 以内に `stream_end(scope_revoked)` (idle scope 失効)。
 - [ ] **(R2 HIGH)** 1 dirty-signal に対し tail limit N 超の burst → drain-to-empty で全 `seq_no` を漏れなく配信。
-- [ ] **(R2 HIGH)** SSE frame `id:` は `agent_run_event` のみ `seq_no`、`agent_run_status`/`stream_end`/`agent_run_error` は `id:` を出さない。UUID/非整数 `Last-Event-ID` は pool acquire 前に `400` reject。
+- [ ] **(R2 HIGH)** SSE frame `id:` は `agent_run_event` のみ `seq_no`、`agent_run_status`/`stream_end`/`agent_run_error` は `id:` を出さない。UUID/非整数 `?last_event_id=` は deps で `400` reject。
 - [ ] **(R2 HIGH)** stream 開始後の例外は `agent_run_error` (reason/retryable/correlation_id のみ、exception message/SQL detail なし) で閉じる (無言切断 reconnect storm にしない)。
 - [ ] **(R2 HIGH)** generator factory 例外 / 初回 yield 前 cancel / response 構築失敗で LISTEN pool 使用数が戻る (leak なし、恒久 503 防止)。
 - [ ] **(R3 HIGH)** client SSE wrapper: pool 枯渇 (`503`) で tight reconnect せず指数バックオフ / 恒久停止 (`204`) で再接続停止。
@@ -122,7 +122,7 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 
 - Backend: `uv run ruff check backend tests` + `uv run mypy backend` + `uv run pytest tests/api/test_agent_run_stream.py` + `TASKMANAGEDAI_RUN_DB_TESTS=1` で trigger/migration DB test。
 - DB: `uv run alembic upgrade head` (fresh DB) + `downgrade` + `alembic check`。
-- Frontend: `cd frontend && pnpm exec eslint . --max-warnings=0` + `pnpm typecheck` + Vitest EventSource test。
+- Frontend: `cd frontend && pnpm exec eslint . --max-warnings=0` + `pnpm typecheck` + Vitest SSE client test。
 - regression: fresh DB + main 比較で既存 test の test-isolation hygiene 起因 failure と切り分け。
 - ブラウザ: ADR-00038 §ブラウザ側検証必須項目 (4 項目、~15 分、1 回まとめ依頼)。
 
