@@ -18,6 +18,9 @@ from backend.app.db.app_role import (
     set_tenant_context,
 )
 from backend.app.db.models.approval_request import ApprovalRequest
+from backend.app.services.policy.approval_active_scope import (
+    assert_approval_target_actionable_locked,
+)
 from backend.app.services.policy.self_approval_guard import SelfApprovalGuardService
 
 
@@ -42,6 +45,18 @@ class ApprovalDecisionService:
         decided_at: datetime | None = None,
     ) -> ApprovalRequest:
         """Transition approval to approved."""
+
+        # ADR-00037 R18/R19 (Codex adversarial): approve は bound ticket / project が still actionable な
+        # 場合のみ。Q-3 bulk soft-delete / Q-4 archive 後の stale approval を承認して削除済 work へ
+        # human authorization を付与する P0-active 経路を fail-closed で塞ぐ (reject は cleanup のため許可)。
+        # R19: 非ロック SELECT の TOCTOU を排除するため、project row を FOR UPDATE lock する locked guard を
+        # 使う (bulk_soft_delete / archive と同じ serialization boundary)。lock は本 transaction の
+        # approval UPDATE commit まで保持され、concurrent な soft-delete/archive と直列化される。
+        # soft-delete は可逆 (status 不変)、restore で再承認可能。
+        await self._ensure_tenant_context(tenant_id)
+        await assert_approval_target_actionable_locked(
+            self.session, tenant_id=tenant_id, resource_ref=approval.resource_ref
+        )
 
         return await self._decide(
             tenant_id=tenant_id,

@@ -35,7 +35,7 @@ from backend.app.api.approval_inbox import (
 )
 from backend.app.api.dependencies.api_capability_token import maybe_require_cli_capability
 from backend.app.db.models.audit_event import AuditEvent
-from backend.app.repositories.ticket import TicketRepository
+from backend.app.repositories.ticket import ProjectArchivedError, TicketRepository
 from backend.app.schemas.ticket import TicketPriority, TicketRead, TicketStatus
 
 router = APIRouter(
@@ -175,6 +175,13 @@ async def create_ticket_endpoint(
             project_id=project_id,
             payload=create_data,
         )
+    except ProjectArchivedError as exc:
+        # Q-4 (ADR-00037 / Codex adversarial R5 #3): archived project への ticket create は 409
+        # (create_in_project の archive freeze guard を HTTP contract に正しく写像する。未捕捉だと 500)。
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="project is archived; unarchive it before creating tickets",
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -255,6 +262,12 @@ async def update_ticket_endpoint(
             ticket_id=ticket_id,
             payload=update_data,
         )
+    except ProjectArchivedError as exc:
+        # Q-4 (ADR-00037 / Codex adversarial R5 #3): archived project への ticket update は 409。
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="project is archived; unarchive it before updating tickets",
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -8,9 +8,11 @@ import sqlalchemy as sa
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.db.models.project import Project
 from backend.app.db.models.ticket import Ticket
 from backend.app.db.models.ticket_relation import TicketRelation
 from backend.app.repositories.base import BaseRepository
+from backend.app.repositories.ticket import ProjectArchivedError
 
 
 class TicketRelationRepository(BaseRepository[TicketRelation]):
@@ -95,15 +97,32 @@ class TicketRelationRepository(BaseRepository[TicketRelation]):
         if source_id == target_id:
             raise ValueError("ticket relation source and target must differ.")
 
+        # Codex adversarial R5 #2: archived project への relation 作成を凍結する。project row を
+        # FOR UPDATE lock し archive toggle / bulk-soft-delete と直列化する (他 ticket mutation と同じ
+        # lock 順序)。
+        project_status = await self.session.scalar(
+            select(Project.status)
+            .where(Project.tenant_id == tenant_id, Project.id == project_id)
+            .with_for_update()
+        )
+        if project_status is not None and project_status != "active":
+            raise ProjectArchivedError(project_id=project_id)
+
+        # source/target が同一 project の **active** ticket であることを確認する。deleted_at IS NULL を
+        # 欠くと soft-deleted ticket 同士に relation を作れてしまう (R5 #2)。project lock 下で count する
+        # ため concurrent bulk-soft-delete と直列化される。
         ticket_count = await self.session.scalar(
             select(sa.func.count(Ticket.id)).where(
                 Ticket.tenant_id == tenant_id,
                 Ticket.project_id == project_id,
                 Ticket.id.in_([source_id, target_id]),
+                Ticket.deleted_at.is_(None),
             )
         )
         if ticket_count != 2:
-            raise ValueError("ticket relation source and target must be in the same project.")
+            raise ValueError(
+                "ticket relation source and target must be active tickets in the same project."
+            )
 
         relation = TicketRelation(
             tenant_id=tenant_id,

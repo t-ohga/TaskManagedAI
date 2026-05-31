@@ -16,6 +16,8 @@ from backend.app.db.models.actor import Actor
 from backend.app.db.models.approval_request import ApprovalRequest
 from backend.app.db.session import get_session
 from backend.app.repositories.approval_request import ApprovalRequestRepository
+from backend.app.repositories.ticket import ProjectArchivedError, TicketNotActionableError
+from backend.app.services.policy.approval_active_scope import is_approval_target_actionable
 from backend.app.services.policy.decision_service import ApprovalDecisionService
 
 router = APIRouter(prefix="/api/v1/approvals", tags=["approvals"])
@@ -163,7 +165,16 @@ async def list_pending_approvals(
 ) -> list[ApprovalListItem]:
     repo = ApprovalRequestRepository(session)
     approvals = await repo.list_by_status(tenant_id=tenant_id, status="pending")
-    return [_to_list_item(approval) for approval in approvals]
+    # ADR-00037 R18 (Codex adversarial): soft-deleted ticket / archived project に bound な stale approval を
+    # inbox から隠す (全 read path active-scope)。承認は decide guard で既に block されるが、列挙でも
+    # 露出させない。restore で再び現れる。非 ticket resource_ref の approval は対象外。
+    items: list[ApprovalListItem] = []
+    for approval in approvals:
+        if await is_approval_target_actionable(
+            session, tenant_id=tenant_id, resource_ref=approval.resource_ref
+        ):
+            items.append(_to_list_item(approval))
+    return items
 
 
 @router.get("/{approval_id}", response_model=ApprovalDetail)
@@ -175,6 +186,12 @@ async def get_approval_detail(
     repo = ApprovalRequestRepository(session)
     approval = await repo.get(tenant_id=tenant_id, id=approval_id)
     if approval is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="approval not found")
+    # ADR-00037 R18: soft-deleted ticket / archived project に bound な approval は detail からも隠す
+    # (restore で再表示)。
+    if not await is_approval_target_actionable(
+        session, tenant_id=tenant_id, resource_ref=approval.resource_ref
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="approval not found")
     return _to_detail(approval)
 
@@ -208,6 +225,9 @@ async def decide_approval(
                 decided_by_actor_id=actor_id,
                 rationale=body.rationale,
             )
+    except (TicketNotActionableError, ProjectArchivedError) as exc:
+        # ADR-00037 R18: stale (削除済 ticket / archived project bound) approval の approve は 409。
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 

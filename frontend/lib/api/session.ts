@@ -163,3 +163,133 @@ export async function updateProjectProfile(
     }
   );
 }
+
+// =====================================================================
+// Q-2〜Q-4 (ADR-00037): データ管理 (破壊的操作、owner-only)。
+// すべて owner gate (authenticated + human + 構成済み owner) を backend で enforce。
+// tenant_id / project_id は server resolve、caller-supplied 経路なし。
+// =====================================================================
+
+export const ProjectStatusSchema = z.enum(["active", "archived"]);
+export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
+
+// Q-2 import の caller 入力 1 件。created_by_actor_id / metadata / tenant_id / project_id は
+// server 注入 (server-owned-boundary §1)。slug 一意性は backend が検証 + DB unique で最終防衛。
+// ADR-00037 DoD / Codex adversarial R8: payload size 上限を backend (schemas/ticket.py の
+// IMPORT_*_MAX_LENGTH) と同値でミラーする。
+export const TicketImportItemSchema = z.object({
+  slug: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "slug は小文字英数字とハイフンのみ"),
+  title: z.string().min(1).max(200),
+  description: z.string().max(10000).nullable().optional(),
+  status: z
+    .enum(["open", "in_progress", "blocked", "review", "closed", "cancelled"])
+    .optional(),
+  priority: z.enum(["low", "medium", "high", "critical"]).nullable().optional()
+});
+export type TicketImportItem = z.infer<typeof TicketImportItemSchema>;
+
+export const BulkSoftDeleteResponseSchema = z.object({
+  // no-op (active 0 件) は batch を発行しないため null (ADR-00037 / Codex adversarial #3)。
+  deleted_batch_id: z.string().uuid().nullable(),
+  soft_deleted_count: z.number().int().nonnegative()
+});
+export type BulkSoftDeleteResponse = z.infer<typeof BulkSoftDeleteResponseSchema>;
+
+export const RestoreBatchResponseSchema = z.object({
+  restored_count: z.number().int().nonnegative()
+});
+export type RestoreBatchResponse = z.infer<typeof RestoreBatchResponseSchema>;
+
+export const ImportTicketsResponseSchema = z.object({
+  dry_run: z.boolean(),
+  valid: z.boolean(),
+  imported_count: z.number().int().nonnegative(),
+  in_payload_duplicate_slugs: z.array(z.string()),
+  existing_conflict_slugs: z.array(z.string())
+});
+export type ImportTicketsResponse = z.infer<typeof ImportTicketsResponseSchema>;
+
+/**
+ * Q-4 (ADR-00037): プロジェクトを archive/unarchive。reversible soft toggle (hard delete なし)。
+ * `expectedStatus` は If-Match 相当の compare-and-swap baseline (必須)。別操作で status が
+ * 変わっていれば backend が 409 を返す (二重 archive / 競合 unarchive 防止)。
+ */
+export async function archiveProject(
+  projectId: string,
+  archived: boolean,
+  expectedStatus: ProjectStatus
+): Promise<ProjectListItem> {
+  return fetchBackendJson(
+    `/api/v1/me/projects/${projectId}/archive` as `/${string}`,
+    ProjectListItemSchema,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ archived, expected_status: expectedStatus })
+    }
+  );
+}
+
+/**
+ * Q-3 (ADR-00037): project 内 active 全 ticket を一括 soft-delete (batch 発行)。
+ * `expectedActiveCount` は二段階確認の最終 CAS: UI が表示した active 件数を宣言し、backend の
+ * current と不一致なら 409 (concurrent 変更で意図しない件数を削除しない)。復元は restore で可能。
+ */
+export async function bulkSoftDeleteTickets(
+  projectId: string,
+  expectedActiveCount: number
+): Promise<BulkSoftDeleteResponse> {
+  return fetchBackendJson(
+    `/api/v1/me/projects/${projectId}/tickets/bulk-soft-delete` as `/${string}`,
+    BulkSoftDeleteResponseSchema,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expected_active_count: expectedActiveCount })
+    }
+  );
+}
+
+/**
+ * Q-3 (ADR-00037): 特定 deletion batch を復元。tenant + project + batch で限定 (越境復活なし)。
+ * 再 restore / 別 project / 空 batch は restored_count=0 (idempotent)。
+ */
+export async function restoreTicketBatch(
+  projectId: string,
+  deletedBatchId: string
+): Promise<RestoreBatchResponse> {
+  return fetchBackendJson(
+    `/api/v1/me/projects/${projectId}/tickets/restore` as `/${string}`,
+    RestoreBatchResponseSchema,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deleted_batch_id: deletedBatchId })
+    }
+  );
+}
+
+/**
+ * Q-2 (ADR-00037): validated JSON から ticket を一括インポート。
+ * `dryRun=true` は validation 結果のみ返し insert しない (preview)。実 import は all-or-nothing:
+ * in-payload / 既存 slug 衝突が 1 件でもあれば全体 reject (422)。AI 出力直結はしない。
+ */
+export async function importTickets(
+  projectId: string,
+  tickets: TicketImportItem[],
+  dryRun: boolean
+): Promise<ImportTicketsResponse> {
+  return fetchBackendJson(
+    `/api/v1/me/projects/${projectId}/tickets/import` as `/${string}`,
+    ImportTicketsResponseSchema,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tickets, dry_run: dryRun })
+    }
+  );
+}

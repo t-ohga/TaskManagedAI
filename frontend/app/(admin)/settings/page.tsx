@@ -14,6 +14,7 @@ import {
   type ProjectListItem,
   type SecretRefListItem
 } from "@/lib/api/session";
+import { listTickets } from "@/lib/api/tickets";
 import {
   AdminPageShell,
   KeyboardReadinessStrip,
@@ -22,6 +23,7 @@ import {
   ProviderComplianceMatrixTable,
   SecretBoundaryNotice
 } from "../_components/sprint9-admin-ui";
+import { DataManagementPanel } from "./_components/data-management-panel";
 import { ProjectSettingsForm } from "./_components/project-settings-form";
 import { SecretRefsInventory } from "./_components/secret-refs-inventory";
 
@@ -49,9 +51,23 @@ async function loadSecretRefs(): Promise<SecretRefListItem[] | null> {
   }
 }
 
+// Q-3 (ADR-00037): 一括削除 CAS の baseline として現在のアクティブ ticket 件数を取得。
+// total は active scope (deleted_at IS NULL) の全件 (pagination 前)。失敗時は null。
+async function loadActiveTicketCount(projectId: string): Promise<number | null> {
+  try {
+    const res = await listTickets(projectId, { limit: 1 });
+    return res.total;
+  } catch {
+    return null;
+  }
+}
+
 export default async function ProjectSettingsPage() {
   const project = await loadCurrentProject();
   const secretRefs = await loadSecretRefs();
+  const activeTicketCount = project
+    ? await loadActiveTicketCount(project.project_id)
+    : null;
 
   return (
     <AdminPageShell
@@ -74,6 +90,24 @@ export default async function ProjectSettingsPage() {
             description={project.description}
             autonomyLevel={project.autonomy_level}
             policyProfile={project.policy_profile}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            プロジェクト情報を読み込めませんでした。
+          </p>
+        )}
+      </Panel>
+
+      <Panel
+        description="プロジェクトのアーカイブ、ticket の一括削除・復元・インポート。いずれも owner のみ、監査に記録される破壊的操作です (soft / 可逆)。"
+        title="データ管理"
+        titleId="settings-data-management"
+      >
+        {project ? (
+          <DataManagementPanel
+            projectId={project.project_id}
+            status={project.status}
+            activeTicketCount={activeTicketCount ?? 0}
           />
         ) : (
           <p className="text-sm text-muted-foreground">

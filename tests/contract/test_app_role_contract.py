@@ -361,7 +361,10 @@ async def test_ticket_repository_in_project_statements_include_tenant_and_projec
         ticket_id=TENANT_ONE_TICKET_ID,
         payload={"title": "Updated title"},
     )
-    update_sql = _compile_sql(capture_session.only_statement())
+    # Q-4 (ADR-00037): TicketRepository の mutation は archive freeze guard
+    # (_assert_project_active) として project row を FOR UPDATE する SELECT を先に発行するため、
+    # 検証対象の UPDATE/DELETE は last_statement (guard SELECT の後に来る mutation) を見る。
+    update_sql = _compile_sql(capture_session.last_statement())
 
     capture_session.statements.clear()
     await repository.delete_in_project(
@@ -369,7 +372,7 @@ async def test_ticket_repository_in_project_statements_include_tenant_and_projec
         project_id=TENANT_ONE_PROJECT_ID,
         ticket_id=TENANT_ONE_TICKET_ID,
     )
-    delete_sql = _compile_sql(capture_session.only_statement())
+    delete_sql = _compile_sql(capture_session.last_statement())
 
     for sql in (list_sql, update_sql, delete_sql):
         _assert_sql_predicate(sql, table="tickets", column="tenant_id", value=1)

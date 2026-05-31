@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.app.config import get_settings
 from backend.app.db.models.ticket import Ticket, TicketStatus
 from backend.app.db.session import create_engine
+from backend.app.repositories.ticket import ProjectArchivedError, TicketRepository
 from backend.app.seeds.initial import (
     DEFAULT_ACTOR_ID,
     DEFAULT_PROJECT_ID,
@@ -271,11 +272,18 @@ async def _query_existing_dogfooding_tickets(
     *,
     slug_prefix: str = "dogfooding-",
 ) -> dict[str, Ticket]:
-    """既存 dogfooding ticket を slug → Ticket で索引化."""
+    """既存 dogfooding ticket を slug → Ticket で索引化 (active scope)。
+
+    Codex adversarial R9: ``deleted_at IS NULL`` を必須にする。これを欠くと bulk soft-delete 済みの
+    dogfooding ticket を「既存 active」として扱い、re-run で hidden (soft-deleted) row を更新・保持して
+    しまう (soft-delete active scope invariant 違反)。active のみを既存とし、soft-deleted slug は
+    「不在」として扱う (再投入時は slug unique が DB-level で衝突を止める = fail-closed)。
+    """
     stmt = select(Ticket).where(
         Ticket.tenant_id == DEFAULT_TENANT_ID,
         Ticket.project_id == DEFAULT_PROJECT_ID,
         Ticket.slug.like(f"{slug_prefix}%"),
+        Ticket.deleted_at.is_(None),
     )
     result = await session.execute(stmt)
     return {ticket.slug: ticket for ticket in result.scalars().all()}
@@ -630,6 +638,19 @@ async def _run(dry_run: bool) -> int:  # noqa: PLR0912, PLR0915  # CLI surface
 
     try:
         async with session_factory() as session, session.begin():
+            # Codex adversarial R9: dogfooding seed (直書き経路) も archive freeze を尊重する。apply
+            # (write) 時に対象 project が archived なら fail-closed (TicketRepository mutation 境界と同じ
+            # archive guard を seed CLI にも適用し、archived project への child write を全経路で凍結する)。
+            if not dry_run:
+                try:
+                    await TicketRepository(session).assert_project_active(
+                        DEFAULT_TENANT_ID, DEFAULT_PROJECT_ID
+                    )
+                except ProjectArchivedError as exc:
+                    raise RuntimeError(
+                        f"dogfooding seed refused: project {DEFAULT_PROJECT_ID} is archived; "
+                        "unarchive it before seeding."
+                    ) from exc
             sprint_report = await seed_sprint_packs(
                 session,
                 sprint_packs=sprint_parsed,

@@ -4,7 +4,15 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { BackendApiError } from "@/lib/api/client";
-import { updateProjectAutonomyLevel, updateProjectProfile } from "@/lib/api/session";
+import {
+  archiveProject,
+  bulkSoftDeleteTickets,
+  importTickets,
+  restoreTicketBatch,
+  TicketImportItemSchema,
+  updateProjectAutonomyLevel,
+  updateProjectProfile
+} from "@/lib/api/session";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -124,6 +132,271 @@ export async function updateAutonomyLevelAction(
     }
     const message =
       error instanceof Error ? error.message : "自律レベルの更新に失敗しました。";
+    return { kind: "error", message };
+  }
+}
+
+// =====================================================================
+// Q-2〜Q-4 (ADR-00037): データ管理 (破壊的操作)。owner gate は backend で enforce。
+// 全 mutation で revalidatePath。CAS / archived は 409 を user-facing message に写像。
+// =====================================================================
+
+const ArchiveFormSchema = z.object({
+  project_id: z.string().regex(UUID_PATTERN, "project_id の形式が不正です"),
+  archived: z.enum(["true", "false"]),
+  expected_status: z.enum(["active", "archived"])
+});
+
+export async function archiveProjectAction(
+  _prevState: SettingsActionState,
+  formData: FormData
+): Promise<SettingsActionState> {
+  const parsed = ArchiveFormSchema.safeParse({
+    project_id: formData.get("project_id"),
+    archived: formData.get("archived"),
+    expected_status: formData.get("expected_status")
+  });
+  if (!parsed.success) {
+    return {
+      kind: "error",
+      message: parsed.error.issues.map((issue) => issue.message).join(", ")
+    };
+  }
+
+  const archived = parsed.data.archived === "true";
+  try {
+    const updated = await archiveProject(
+      parsed.data.project_id,
+      archived,
+      parsed.data.expected_status
+    );
+    revalidatePath("/settings");
+    return {
+      kind: "ok",
+      message:
+        updated.status === "archived"
+          ? "プロジェクトをアーカイブしました"
+          : "プロジェクトのアーカイブを解除しました"
+    };
+  } catch (error: unknown) {
+    if (error instanceof BackendApiError && error.status === 409) {
+      return {
+        kind: "error",
+        message:
+          "プロジェクトの状態が別の操作で変更されました。最新の状態を再読み込みしてから操作してください。"
+      };
+    }
+    if (error instanceof BackendApiError && error.status === 404) {
+      return { kind: "error", message: "プロジェクトが見つかりませんでした。" };
+    }
+    const message =
+      error instanceof Error ? error.message : "アーカイブ操作に失敗しました。";
+    return { kind: "error", message };
+  }
+}
+
+const BulkSoftDeleteFormSchema = z.object({
+  project_id: z.string().regex(UUID_PATTERN, "project_id の形式が不正です"),
+  expected_active_count: z.coerce.number().int().nonnegative()
+});
+
+export async function bulkSoftDeleteAction(
+  _prevState: SettingsActionState,
+  formData: FormData
+): Promise<SettingsActionState> {
+  const parsed = BulkSoftDeleteFormSchema.safeParse({
+    project_id: formData.get("project_id"),
+    expected_active_count: formData.get("expected_active_count")
+  });
+  if (!parsed.success) {
+    return {
+      kind: "error",
+      message: parsed.error.issues.map((issue) => issue.message).join(", ")
+    };
+  }
+
+  try {
+    const result = await bulkSoftDeleteTickets(
+      parsed.data.project_id,
+      parsed.data.expected_active_count
+    );
+    revalidatePath("/settings");
+    if (result.soft_deleted_count === 0 || result.deleted_batch_id === null) {
+      // no-op (active 0 件): batch は発行されない。
+      return { kind: "ok", message: "削除対象のアクティブ ticket はありませんでした。" };
+    }
+    return {
+      kind: "ok",
+      message: `${result.soft_deleted_count} 件の ticket を削除しました (バッチ ${result.deleted_batch_id})。復元バッチ ID を控えてください。`
+    };
+  } catch (error: unknown) {
+    // 409: CAS 件数不一致 または archived project (どちらも再読み込みで解消)
+    if (error instanceof BackendApiError && error.status === 409) {
+      return {
+        kind: "error",
+        message:
+          "ticket 件数が変わったか、プロジェクトがアーカイブされています。最新の状態を再読み込みしてから操作してください。"
+      };
+    }
+    const message =
+      error instanceof Error ? error.message : "一括削除に失敗しました。";
+    return { kind: "error", message };
+  }
+}
+
+const RestoreFormSchema = z.object({
+  project_id: z.string().regex(UUID_PATTERN, "project_id の形式が不正です"),
+  deleted_batch_id: z
+    .string()
+    .regex(UUID_PATTERN, "復元バッチ ID (UUID) の形式が不正です")
+});
+
+export async function restoreBatchAction(
+  _prevState: SettingsActionState,
+  formData: FormData
+): Promise<SettingsActionState> {
+  const parsed = RestoreFormSchema.safeParse({
+    project_id: formData.get("project_id"),
+    deleted_batch_id:
+      typeof formData.get("deleted_batch_id") === "string"
+        ? (formData.get("deleted_batch_id") as string).trim()
+        : ""
+  });
+  if (!parsed.success) {
+    return {
+      kind: "error",
+      message: parsed.error.issues.map((issue) => issue.message).join(", ")
+    };
+  }
+
+  try {
+    const result = await restoreTicketBatch(
+      parsed.data.project_id,
+      parsed.data.deleted_batch_id
+    );
+    revalidatePath("/settings");
+    if (result.restored_count === 0) {
+      return {
+        kind: "ok",
+        message:
+          "復元対象がありませんでした (バッチ ID が一致しない / 既に復元済み)。"
+      };
+    }
+    return {
+      kind: "ok",
+      message: `${result.restored_count} 件の ticket を復元しました。`
+    };
+  } catch (error: unknown) {
+    if (error instanceof BackendApiError && error.status === 409) {
+      return {
+        kind: "error",
+        message:
+          "プロジェクトがアーカイブされています。アーカイブを解除してから復元してください。"
+      };
+    }
+    const message =
+      error instanceof Error ? error.message : "復元に失敗しました。";
+    return { kind: "error", message };
+  }
+}
+
+export type ImportActionState =
+  | { kind: "idle" }
+  | {
+      kind: "preview";
+      valid: boolean;
+      inPayloadDuplicateSlugs: string[];
+      existingConflictSlugs: string[];
+      parsedCount: number;
+      json: string;
+    }
+  | { kind: "ok"; message: string }
+  | { kind: "error"; message: string };
+
+const ImportFormSchema = z.object({
+  project_id: z.string().regex(UUID_PATTERN, "project_id の形式が不正です"),
+  dry_run: z.enum(["true", "false"]),
+  tickets_json: z.string()
+});
+
+export async function importTicketsAction(
+  _prevState: ImportActionState,
+  formData: FormData
+): Promise<ImportActionState> {
+  const parsed = ImportFormSchema.safeParse({
+    project_id: formData.get("project_id"),
+    dry_run: formData.get("dry_run"),
+    tickets_json: formData.get("tickets_json")
+  });
+  if (!parsed.success) {
+    return {
+      kind: "error",
+      message: parsed.error.issues.map((issue) => issue.message).join(", ")
+    };
+  }
+
+  const dryRun = parsed.data.dry_run === "true";
+
+  // JSON parse + client-side schema validation (untrusted boundary、AI 出力直結なし)。
+  let rawItems: unknown;
+  try {
+    rawItems = JSON.parse(parsed.data.tickets_json);
+  } catch {
+    return {
+      kind: "error",
+      message: "JSON の解析に失敗しました。形式を確認してください。"
+    };
+  }
+  const itemsParsed = z.array(TicketImportItemSchema).min(1).max(100).safeParse(rawItems);
+  if (!itemsParsed.success) {
+    return {
+      kind: "error",
+      message: `ticket データが不正です: ${itemsParsed.error.issues
+        .slice(0, 5)
+        .map((issue) => `${issue.path.join(".")} ${issue.message}`)
+        .join(" / ")}`
+    };
+  }
+
+  try {
+    const result = await importTickets(
+      parsed.data.project_id,
+      itemsParsed.data,
+      dryRun
+    );
+    if (dryRun) {
+      return {
+        kind: "preview",
+        valid: result.valid,
+        inPayloadDuplicateSlugs: result.in_payload_duplicate_slugs,
+        existingConflictSlugs: result.existing_conflict_slugs,
+        parsedCount: itemsParsed.data.length,
+        json: parsed.data.tickets_json
+      };
+    }
+    revalidatePath("/settings");
+    return {
+      kind: "ok",
+      message: `${result.imported_count} 件の ticket をインポートしました。`
+    };
+  } catch (error: unknown) {
+    // 422: slug 衝突 (in-payload / 既存) で全体 reject。409: archived / 並行 unique violation。
+    if (error instanceof BackendApiError && error.status === 422) {
+      return {
+        kind: "error",
+        message:
+          "slug の重複または既存 ticket との衝突によりインポートが拒否されました。先にプレビューで衝突を解消してください。"
+      };
+    }
+    if (error instanceof BackendApiError && error.status === 409) {
+      return {
+        kind: "error",
+        message:
+          "プロジェクトがアーカイブされているか、並行操作と競合しました。再読み込みしてから操作してください。"
+      };
+    }
+    const message =
+      error instanceof Error ? error.message : "インポートに失敗しました。";
     return { kind: "error", message };
   }
 }

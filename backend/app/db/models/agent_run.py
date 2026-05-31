@@ -61,6 +61,15 @@ class AgentRun(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             name="agent_runs_parent_run_fkey",
             ondelete="RESTRICT",
         ),
+        # ADR-00037 R13: run→ticket binding (server-owned ticket_id) は同一
+        # (tenant_id, project_id) の ticket のみ参照可 (cross-project/cross-tenant 禁止)。
+        # ticket_id IS NULL は MATCH SIMPLE で未強制 (ticket-less run)。
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "project_id", "ticket_id"],
+            ["tickets.tenant_id", "tickets.project_id", "tickets.id"],
+            name="agent_runs_ticket_fkey",
+            ondelete="RESTRICT",
+        ),
         sa.UniqueConstraint("tenant_id", "id", name="agent_runs_uq_tenant_id"),
         sa.UniqueConstraint(
             "tenant_id",
@@ -92,6 +101,9 @@ class AgentRun(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         server_default=sa.text("uuid_generate_v4()"),
     )
     project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    # ADR-00037 R12: run→ticket binding を server-owned column 化 (run_queued event payload 依存の
+    # fail-open 排除 + KPI active-scope の tickets JOIN を可能にする)。ticket-less run は NULL。
+    ticket_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     parent_run_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     status: Mapped[AgentRunStatus] = mapped_column(
         sa.Text,

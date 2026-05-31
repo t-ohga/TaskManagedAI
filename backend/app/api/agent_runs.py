@@ -18,6 +18,7 @@ from backend.app.api.approval_inbox import (
 from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.agent_run_event import AgentRunEvent
 from backend.app.db.models.context_snapshot import ContextSnapshot
+from backend.app.domain.agent_runtime.active_scope import soft_deleted_ticket_run_exclusion
 from backend.app.domain.agent_runtime.status import AgentRunStatus, BlockedReason
 from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 from backend.app.services.agent_runtime.cancel import cancel_agent_run
@@ -245,7 +246,9 @@ async def list_agent_runs_endpoint(
     `actor_id` is intentionally resolved via Depends to enforce authenticated
     session context even though list visibility is tenant-scoped in P0.1.
     """
-    conditions = [AgentRun.tenant_id == tenant_id]
+    # ADR-00037 R15 (Codex adversarial): soft-deleted ticket bound の run を default 一覧から除外する
+    # (全 read path active-scope)。ticket-less run は含む。restore で再び現れる。
+    conditions = [AgentRun.tenant_id == tenant_id, soft_deleted_ticket_run_exclusion()]
     if status_filter is not None:
         conditions.append(AgentRun.status == status_filter)
     if role is not None:
@@ -298,6 +301,9 @@ async def cost_summary_endpoint(
     cutoff = _cost_summary_cutoff(range_value)
     if cutoff is not None:
         conditions.append(AgentRun.created_at >= cutoff)
+    # ADR-00037 R12/R13/R15 (Codex adversarial): soft-deleted ticket bound の run を cost/KPI 集計から
+    # 除外する (全 read path active-scope の共通 predicate)。ticket-less run は含む、restore で復帰。
+    conditions.append(soft_deleted_ticket_run_exclusion())
 
     totals = (
         await session.execute(
@@ -355,8 +361,14 @@ async def get_agent_run_endpoint(
     session: AsyncSession = Depends(get_db_session),  # noqa: B008
 ) -> AgentRunDetailResponse:
     """Read one AgentRun plus redacted event/context metadata."""
+    # ADR-00037 R15 (Codex adversarial): soft-deleted ticket bound の run は default detail からも
+    # 隠す (全 read path active-scope)。除外条件込みで取得し、該当しなければ 404 (restore で復帰)。
     run = await session.scalar(
-        select(AgentRun).where(AgentRun.tenant_id == tenant_id, AgentRun.id == run_id)
+        select(AgentRun).where(
+            AgentRun.tenant_id == tenant_id,
+            AgentRun.id == run_id,
+            soft_deleted_ticket_run_exclusion(),
+        )
     )
     if run is None:
         raise HTTPException(
@@ -395,6 +407,11 @@ async def get_agent_run_kpi_endpoint(
 
     `actor_id` is resolved only for authentication. The response intentionally
     exposes timestamps and counts, not raw AgentRunEvent payloads.
+
+    Note (ADR-00037 R15): この kpi endpoint は AC-KPI-02 単一 run point-read であり、Codex は
+    agent_run_kpi.py を aggregation-scope 外として carve-out 済。soft-deleted ticket bound run の
+    metric 露出を塞ぐ場合は AgentRunKpiService の SQL に active-scope を入れる必要があり、AC-KPI-02
+    fixture 整合の確認を伴うため defer (ADR 残リスク §)。default run 露出は detail/list 側で active-scope 化済。
     """
     kpi = await AgentRunKpiService(session).fetch(tenant_id=tenant_id, run_id=run_id)
     if kpi is None:

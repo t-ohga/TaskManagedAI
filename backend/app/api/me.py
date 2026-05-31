@@ -22,6 +22,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.approval_inbox import (
@@ -33,11 +34,22 @@ from backend.app.api.dependencies.api_capability_token import maybe_require_cli_
 from backend.app.config import get_settings
 from backend.app.db.models.actor import Actor
 from backend.app.db.models.audit_event import AuditEvent
-from backend.app.db.models.project import Project
+from backend.app.db.models.project import Project, ProjectStatus
 from backend.app.db.models.secret_ref import SecretRef, SecretRefScope, SecretRefStatus
 from backend.app.domain.policy.autonomy_level import AutonomyLevel
 from backend.app.repositories.project import ProjectRepository
 from backend.app.repositories.secret_ref import SecretRefRepository
+from backend.app.repositories.ticket import (
+    BulkDeleteCountMismatch,
+    ProjectArchivedError,
+    ProjectNotFoundError,
+    TicketRepository,
+)
+from backend.app.schemas.ticket import TicketImportItem
+from backend.app.services.policy.archive_settings import (
+    ArchiveExpectationMismatch,
+    ProjectArchiveService,
+)
 from backend.app.services.policy.autonomy_settings import (
     AutonomyExpectationMismatch,
     ProjectAutonomySettingsService,
@@ -95,6 +107,75 @@ class ProjectAutonomySettingsUpdate(BaseModel):
     # If-Match 相当の concurrency token であり、server-owned-boundary に反しない (server が実値を
     # 所有し、caller は期待値を申告するだけ)。
     expected_autonomy_level: AutonomyLevel
+
+
+class ProjectArchiveUpdate(BaseModel):
+    """Q-4 (ADR-00037): プロジェクト archive/unarchive toggle。
+
+    ``archived=True`` で active->archived、``False`` で archived->active (reversible soft toggle、
+    hard delete しない)。``expected_status`` は M-3 autonomy CAS と同じ If-Match 相当の concurrency
+    token: 編集の基にした現在 status を申告し、row lock 後の DB current と不一致なら 409。stale
+    baseline からの誤 toggle (二重 archive / 競合 unarchive) を service 境界で防ぐ (authority 値では
+    なく server-owned-boundary に反しない)。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    archived: bool
+    expected_status: ProjectStatus
+
+
+class BulkSoftDeleteRequest(BaseModel):
+    """Q-3 (ADR-00037): project 内 active 全 ticket の一括 soft-delete request。
+
+    ``expected_active_count`` は二段階確認の最終段の CAS: UI で確認した active 件数を申告し、endpoint が
+    DB current と比較して mismatch なら 409 (concurrent な追加/削除で意図しない件数を削除するのを防ぐ)。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_active_count: int = Field(ge=0)
+
+
+class BulkSoftDeleteResponse(BaseModel):
+    # no-op (active 0 件) は batch を発行しないため None (Codex adversarial #3、phantom batch 防止)。
+    deleted_batch_id: UUID | None
+    soft_deleted_count: int
+
+
+class RestoreBatchRequest(BaseModel):
+    """Q-3 (ADR-00037): 特定 deletion batch の復元 request。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deleted_batch_id: UUID
+
+
+class RestoreBatchResponse(BaseModel):
+    restored_count: int
+
+
+class ImportTicketsRequest(BaseModel):
+    """Q-2 (ADR-00037): ticket 一括インポート request。
+
+    ``tickets`` は 1-100 件の検証済み TicketImportItem。``dry_run=True`` は validation 結果のみ返し
+    insert しない (preview)。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tickets: list[TicketImportItem] = Field(min_length=1, max_length=100)
+    dry_run: bool = False
+
+
+class ImportTicketsResponse(BaseModel):
+    """Q-2 import の結果。本文値は含めず件数と衝突 slug のみ返す。"""
+
+    dry_run: bool
+    valid: bool
+    imported_count: int
+    in_payload_duplicate_slugs: list[str]
+    existing_conflict_slugs: list[str]
 
 
 class ProjectProfileUpdate(BaseModel):
@@ -420,31 +501,34 @@ def _to_secret_ref_item(secret_ref: SecretRef) -> SecretRefListItem:
     )
 
 
-async def require_secret_refs_viewer(
+async def _require_authenticated_owner(
     request: Request,
-    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
-    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
-    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+    actor_id: UUID,
+    tenant_id: int,
+    session: AsyncSession,
+    *,
+    unauthenticated_detail: str,
+    forbidden_detail: str,
 ) -> UUID:
-    """R-3 (ADR-00036): secret inventory の閲覧境界を **実装で enforce** する (Codex R1/R2/R3 HIGH)。
+    """構成済み P0 owner のみを許可する共有 owner gate (fail-closed)。
 
-    secret_refs metadata は raw secret でなくとも高価値 (鍵の存在・命名・対象・rotation を列挙可)。
-    閲覧条件 (すべて満たす必要あり、fail-closed):
+    閲覧/破壊的操作の境界を実装で enforce する (Codex R1/R2/R3 HIGH)。条件 (すべて満たす必要あり):
 
     1. **認証済み session であること** (`request.state.authenticated is True`)。dev/test の
        `DevActorContextMiddleware` は cookie 無しでも default actor を seed し authenticated=False と
-       するため、ここで明示的に弾く。これがないと local P0 path で未ログイン列挙ができる (R3)。
+       するため、ここで明示的に弾く。これがないと local P0 path で未ログイン操作ができる。
     2. **構成済み P0 owner であること** (DB 上の actor_type=='human' AND stable actor_id ==
        settings.default_actor_id)。同一 tenant の別 human / service / agent / provider / github_app は
-       403 (R2: actor_type=='human' だけでは別 human が列挙可)。
+       403 (actor_type=='human' だけでは別 human が通過してしまう)。
 
-    `get_current_actor_id` は tenant 在籍のみ確認し authenticated フラグも owner も見ないため、本 gate で
-    補う。P0.1 multi-user 化では本 gate を secrets-view role/permission に置換する (位置を予約)。
+    R-3 (ADR-00036) の secret inventory 閲覧と Q-2〜Q-4 (ADR-00037) の破壊的データ管理操作で共有する。
+    `get_current_actor_id` は tenant 在籍のみ確認し authenticated フラグも owner も見ないため本 gate で
+    補う。P0.1 multi-user 化では role/permission に置換する (位置を予約)。
     """
     if getattr(request.state, "authenticated", False) is not True:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="secret inventory requires an authenticated owner session",
+            detail=unauthenticated_detail,
         )
     row = (
         await session.execute(
@@ -467,9 +551,52 @@ async def require_secret_refs_viewer(
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="secret inventory is restricted to the project owner",
+            detail=forbidden_detail,
         )
     return actor_id
+
+
+async def require_secret_refs_viewer(
+    request: Request,
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> UUID:
+    """R-3 (ADR-00036): secret inventory の閲覧境界を実装で enforce する (Codex R1/R2/R3 HIGH)。
+
+    secret_refs metadata は raw secret でなくとも高価値 (鍵の存在・命名・対象・rotation を列挙可)。
+    閲覧は構成済み P0 owner のみ (authenticated + human + default_actor_id)。owner 判定は共有
+    `_require_authenticated_owner` に委譲し fail-closed (別 human / service / agent / provider /
+    github_app / 未認証は 401/403)。
+    """
+    return await _require_authenticated_owner(
+        request,
+        actor_id,
+        tenant_id,
+        session,
+        unauthenticated_detail="secret inventory requires an authenticated owner session",
+        forbidden_detail="secret inventory is restricted to the project owner",
+    )
+
+
+async def require_project_owner(
+    request: Request,
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> UUID:
+    """Q-2〜Q-4 (ADR-00037): 破壊的データ管理操作 (archive / bulk-soft-delete / restore / import)
+    の owner gate。構成済み P0 owner のみ許可し、service / agent / provider / github_app / 別 human /
+    未認証は fail-closed (401/403)。R-3 と同じ owner 判定を共有する。
+    """
+    return await _require_authenticated_owner(
+        request,
+        actor_id,
+        tenant_id,
+        session,
+        unauthenticated_detail="this operation requires an authenticated owner session",
+        forbidden_detail="this operation is restricted to the project owner",
+    )
 
 
 @router.get("/secret-refs", response_model=SecretRefListResponse)
@@ -488,4 +615,308 @@ async def list_secret_refs_endpoint(
     secret_refs = await repo.list_all(tenant_id=tenant_id)
     return SecretRefListResponse(
         secret_refs=[_to_secret_ref_item(secret_ref) for secret_ref in secret_refs],
+    )
+
+
+@router.patch("/projects/{project_id}/archive", response_model=ProjectListItem)
+async def update_project_archive_endpoint(
+    project_id: UUID,
+    payload: ProjectArchiveUpdate,
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_write")),  # noqa: B008
+    owner_actor_id: UUID = Depends(require_project_owner),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> ProjectListItem:
+    """Q-4 (ADR-00037): プロジェクトを archive/unarchive する破壊的操作 (ADR Gate #8)。
+
+    owner gate (require_project_owner、構成済み P0 owner のみ) + compare-and-swap (expected_status)
+    + 実遷移時のみ config_changed audit。archived <-> active は reversible soft toggle で hard delete
+    しない。archived project への child-write (ticket create/update/import/bulk-delete/restore) の
+    凍結は ``TicketRepository._assert_project_active`` が全 mutation 境界 (HTTP / MCP bridge /
+    research-to-ticket) で enforce するため、本 endpoint は project.status の toggle のみを担う。
+
+    M-3 autonomy CAS と同じく、CAS は実際の mutation 境界 (``ProjectArchiveService.set_archived``) で
+    必須に強制し (row lock + expected との比較)、本 endpoint は単一 CAS writer に委譲して結果を HTTP
+    に写像する (None -> 404 / ``ArchiveExpectationMismatch`` -> 409)。
+    """
+    service = ProjectArchiveService(session)
+    try:
+        result = await service.set_archived(
+            tenant_id=tenant_id,
+            project_id=project_id,
+            archived=payload.archived,
+            expected_status=payload.expected_status,
+        )
+    except ArchiveExpectationMismatch as exc:
+        # stale な baseline からの誤 toggle (二重 archive / 競合 unarchive) を 409 で拒否する。
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "project status was changed by another update; "
+                "reload the current value and retry"
+            ),
+        ) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="project not found for tenant",
+        )
+
+    project = result.project
+    # 実際に status が遷移した場合のみ config_changed audit を残す (no-op / 同一値の再送では残さない、
+    # M-3 audit pattern と一致: audit は実遷移と 1:1)。
+    if result.changed:
+        audit_event = AuditEvent(
+            tenant_id=tenant_id,
+            event_type="config_changed",
+            actor_id=owner_actor_id,
+            event_payload={
+                "rls_ready": True,
+                "project_id": str(project_id),
+                "changed_fields": ["status"],
+                "previous_status": result.previous_status,
+                "new_status": project.status,
+            },
+        )
+        session.add(audit_event)
+    await session.commit()
+    return _to_project_item(project)
+
+
+@router.post(
+    "/projects/{project_id}/tickets/bulk-soft-delete",
+    response_model=BulkSoftDeleteResponse,
+)
+async def bulk_soft_delete_tickets_endpoint(
+    project_id: UUID,
+    payload: BulkSoftDeleteRequest,
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_write")),  # noqa: B008
+    owner_actor_id: UUID = Depends(require_project_owner),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> BulkSoftDeleteResponse:
+    """Q-3 (ADR-00037): project 内 active 全 ticket を soft-delete する破壊的操作 (ADR Gate #8)。
+
+    owner gate + ``expected_active_count`` CAS (二段階確認の最終段: UI で確認した件数と DB current が
+    不一致なら 409 で中断し再確認を要求、concurrent な追加/削除を検出)。archived project は 409
+    (``ProjectArchivedError``)。新 deletion batch を発行し ``tickets_bulk_soft_deleted`` audit
+    (batch_id + count + project_id、本文値は残さない) を残す。soft delete のみで hard delete せず、
+    ``restore`` で batch 単位に復元できる。
+    """
+    repo = TicketRepository(session)
+    # existence / archive freeze / CAS (expected_active_count) は repository 内で project row lock
+    # 保持下に atomic 判定する (Codex adversarial #1/#2/#3)。endpoint で count → 別 statement の
+    # update に分けると TOCTOU で stale baseline を 409 にできず、ユーザー未確認の ticket まで削除
+    # しうるため、count↔update を lock 下で直列化する。
+    try:
+        deleted_batch_id, soft_deleted_count = await repo.bulk_soft_delete_in_project(
+            tenant_id,
+            project_id,
+            expected_active_count=payload.expected_active_count,
+            deleted_by_actor_id=owner_actor_id,
+        )
+    except ProjectNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="project not found for tenant",
+        ) from exc
+    except ProjectArchivedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="project is archived; unarchive it before bulk-deleting tickets",
+        ) from exc
+    except BulkDeleteCountMismatch as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"expected {exc.expected} active tickets but found {exc.actual}; "
+                "reload the current count and retry"
+            ),
+        ) from exc
+    # 実際に削除した (soft_deleted_count > 0) ときのみ audit を残す。no-op (active 0 件) は batch を
+    # 発行せず audit も残さない (実遷移と 1:1、Codex adversarial #3)。
+    if soft_deleted_count > 0 and deleted_batch_id is not None:
+        audit_event = AuditEvent(
+            tenant_id=tenant_id,
+            event_type="tickets_bulk_soft_deleted",
+            actor_id=owner_actor_id,
+            event_payload={
+                "rls_ready": True,
+                "project_id": str(project_id),
+                "deleted_batch_id": str(deleted_batch_id),
+                "soft_deleted_count": soft_deleted_count,
+            },
+        )
+        session.add(audit_event)
+    await session.commit()
+    return BulkSoftDeleteResponse(
+        deleted_batch_id=deleted_batch_id,
+        soft_deleted_count=soft_deleted_count,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/tickets/restore",
+    response_model=RestoreBatchResponse,
+)
+async def restore_tickets_batch_endpoint(
+    project_id: UUID,
+    payload: RestoreBatchRequest,
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_write")),  # noqa: B008
+    owner_actor_id: UUID = Depends(require_project_owner),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> RestoreBatchResponse:
+    """Q-3 (ADR-00037): 特定 deletion batch を復元する破壊的操作の逆操作 (owner gate)。
+
+    repository が tenant + project + batch + ``deleted_at IS NOT NULL`` で限定し越境復活を防ぐ。
+    再 restore / 別 project の batch_id / 空 batch は ``restored_count=0`` で idempotent (二重復元で
+    件数 inflation しない)。archived project は 409 (unarchive 要求)。実際に復元した
+    (``restored_count > 0``) ときのみ ``tickets_restored`` audit を残す (audit は実遷移と 1:1)。
+    """
+    repo = TicketRepository(session)
+    try:
+        restored_count = await repo.restore_batch_in_project(
+            tenant_id,
+            project_id,
+            payload.deleted_batch_id,
+        )
+    except ProjectArchivedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="project is archived; unarchive it before restoring tickets",
+        ) from exc
+    # idempotent: 0 件復元 (再 restore / 越境 batch_id / 空 batch) では audit を残さない (実遷移と 1:1)。
+    if restored_count > 0:
+        audit_event = AuditEvent(
+            tenant_id=tenant_id,
+            event_type="tickets_restored",
+            actor_id=owner_actor_id,
+            event_payload={
+                "rls_ready": True,
+                "project_id": str(project_id),
+                "deleted_batch_id": str(payload.deleted_batch_id),
+                "restored_count": restored_count,
+            },
+        )
+        session.add(audit_event)
+    await session.commit()
+    return RestoreBatchResponse(restored_count=restored_count)
+
+
+@router.post(
+    "/projects/{project_id}/tickets/import",
+    response_model=ImportTicketsResponse,
+)
+async def import_tickets_endpoint(
+    project_id: UUID,
+    payload: ImportTicketsRequest,
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_write")),  # noqa: B008
+    owner_actor_id: UUID = Depends(require_project_owner),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> ImportTicketsResponse:
+    """Q-2 (ADR-00037): validated JSON から ticket を一括インポートする破壊的 write (ADR Gate #8)。
+
+    owner gate + untrusted boundary (各 item は ``TicketImportItem`` で schema validation 済、AI 出力
+    直結なし)。all-or-nothing: in-payload slug 重複 or 既存 (active+deleted) slug 衝突が 1 件でも
+    あれば 422 で全体 reject (原因 slug を列挙、partial write なし)。``dry_run=true`` は validation
+    結果のみ返し insert しない (preview)。検証通過時のみ単一 transaction で全件 insert し、並行 import
+    が pre-validation をすり抜けて DB unique violation を起こしたら全 rollback して 409 (DB-level 最終
+    防衛)。archived project は 409。``tickets_imported`` audit (件数 + project_id、本文値は残さない)。
+    """
+    repo = TicketRepository(session)
+
+    # Codex adversarial R7 #2: archive freeze を slug validation / dry_run より **前** に適用する。
+    # archived project への import は slug conflict (422) や dry_run preview に関わらず常に 409 を返し、
+    # archive freeze の contract を mutation 入口で一貫して fail-closed にする。
+    try:
+        await repo.assert_project_active(tenant_id, project_id)
+    except ProjectArchivedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="project is archived; unarchive it before importing tickets",
+        ) from exc
+
+    # (1) in-payload slug 重複検出 (同一 import 内で同 slug が複数)。
+    seen: set[str] = set()
+    in_payload_duplicates: set[str] = set()
+    for item in payload.tickets:
+        if item.slug in seen:
+            in_payload_duplicates.add(item.slug)
+        seen.add(item.slug)
+
+    # (2) 既存 slug 衝突検出 (active + soft-deleted、unique は全行予約のため deleted も衝突対象)。
+    existing_slugs = await repo.existing_slugs_in_project(tenant_id, project_id)
+    existing_conflicts = {item.slug for item in payload.tickets if item.slug in existing_slugs}
+
+    in_payload_dup_sorted = sorted(in_payload_duplicates)
+    existing_conflict_sorted = sorted(existing_conflicts)
+    valid = not in_payload_dup_sorted and not existing_conflict_sorted
+
+    # dry_run は insert せず結果のみ返す (preview)。実 import 要求で衝突ありなら 422 で全体 reject。
+    if payload.dry_run:
+        return ImportTicketsResponse(
+            dry_run=True,
+            valid=valid,
+            imported_count=0,
+            in_payload_duplicate_slugs=in_payload_dup_sorted,
+            existing_conflict_slugs=existing_conflict_sorted,
+        )
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "ticket import rejected due to slug conflicts",
+                "in_payload_duplicate_slugs": in_payload_dup_sorted,
+                "existing_conflict_slugs": existing_conflict_sorted,
+            },
+        )
+
+    # 検証通過 + 実 import: 単一 transaction で全件 insert。並行 import が pre-validation を
+    # すり抜けて slug unique violation を起こしたら全 rollback して 409 (DB-level 最終防衛、partial なし)。
+    item_payloads = [
+        {
+            "slug": item.slug,
+            "title": item.title,
+            "description": item.description,
+            "status": item.status,
+            "priority": item.priority,
+            "created_by_actor_id": owner_actor_id,
+            "metadata_": {"rls_ready": True},
+        }
+        for item in payload.tickets
+    ]
+    try:
+        imported = await repo.import_tickets_in_project(tenant_id, project_id, item_payloads)
+    except ProjectArchivedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="project is archived; unarchive it before importing tickets",
+        ) from exc
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="ticket import conflicted with a concurrent write; reload and retry",
+        ) from exc
+
+    audit_event = AuditEvent(
+        tenant_id=tenant_id,
+        event_type="tickets_imported",
+        actor_id=owner_actor_id,
+        event_payload={
+            "rls_ready": True,
+            "project_id": str(project_id),
+            "imported_count": len(imported),
+        },
+    )
+    session.add(audit_event)
+    await session.commit()
+    return ImportTicketsResponse(
+        dry_run=False,
+        valid=True,
+        imported_count=len(imported),
+        in_payload_duplicate_slugs=[],
+        existing_conflict_slugs=[],
     )

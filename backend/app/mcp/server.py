@@ -175,21 +175,28 @@ async def kpi_show() -> dict[str, Any]:
     from sqlalchemy import select
 
     from backend.app.db.models.agent_run import AgentRun
+    from backend.app.domain.agent_runtime.active_scope import soft_deleted_ticket_run_exclusion
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+
+    # ADR-00037 R12/R13/R15 (Codex adversarial): soft-deleted ticket bound の run を KPI 集計から
+    # 除外する (全 read path active-scope の共通 predicate)。ticket-less run は含む。
+    active_run = soft_deleted_ticket_run_exclusion()
 
     try:
         async with get_db_session() as session:
             total_runs = (await session.execute(
-                select(sa.func.count()).select_from(AgentRun).where(AgentRun.tenant_id == DEFAULT_TENANT_ID)
+                select(sa.func.count()).select_from(AgentRun).where(
+                    AgentRun.tenant_id == DEFAULT_TENANT_ID, active_run
+                )
             )).scalar() or 0
             completed = (await session.execute(
                 select(sa.func.count()).select_from(AgentRun).where(
-                    AgentRun.tenant_id == DEFAULT_TENANT_ID, AgentRun.status == "completed"
+                    AgentRun.tenant_id == DEFAULT_TENANT_ID, AgentRun.status == "completed", active_run
                 )
             )).scalar() or 0
             failed = (await session.execute(
                 select(sa.func.count()).select_from(AgentRun).where(
-                    AgentRun.tenant_id == DEFAULT_TENANT_ID, AgentRun.status == "failed"
+                    AgentRun.tenant_id == DEFAULT_TENANT_ID, AgentRun.status == "failed", active_run
                 )
             )).scalar() or 0
             return {
@@ -931,8 +938,12 @@ async def superintendent_dispatch(
                 project_id=UUID(project_id), ticket_id=ticket_id,
                 purpose=f"superintendent dispatch (awaiting approval): {action_class}",
             )
-    except Exception:
-        run_result = {}
+    except Exception as e:
+        # Codex adversarial R4: bridge_run_create の失敗 (guard 例外 ProjectArchivedError /
+        # TicketNotActionableError を含む) を成功応答に変換しない。削除済 / archived ticket への
+        # dispatch は error dict を返し、承認通知も dispatched:True も出さない (tool 境界で guard を
+        # 尊重する)。
+        return {"error": str(type(e).__name__), "dispatched": False, "ticket_id": ticket_id}
     try:
         from backend.app.mcp.discord_notify import notify_approval_needed
         await notify_approval_needed(action_class, ticket_id[:8])

@@ -13,6 +13,7 @@ from backend.app.api.approval_inbox import (
     get_db_session,
     get_tenant_id,
 )
+from backend.app.api.dependencies.project_active_guard import require_active_project
 from backend.app.repositories.audit_event import AuditEventRepository
 from backend.app.repositories.evidence_item import EvidenceItemRepository
 from backend.app.schemas.evidence_item import EvidenceItemCreate, EvidenceItemRead
@@ -66,6 +67,9 @@ async def create_evidence_item_endpoint(
     claim_id: UUID,
     body: EvidenceItemCreate,
     request: Request,
+    # Codex adversarial R10 #1: archived project への evidence 追加を 409 で凍結 (archive freeze は
+    # ticket だけでなく project child write 全体に適用)。
+    _active_project: None = Depends(require_active_project),  # noqa: B008
     actor_id: UUID = Depends(get_current_actor_id),
     tenant_id: int = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_db_session),
