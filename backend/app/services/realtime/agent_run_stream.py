@@ -241,7 +241,11 @@ class AgentRunStreamResponse(Response):
         conn: asyncpg.Connection | None = None
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[None] = asyncio.Queue(maxsize=1)
-        response_started = False
+        # response phase: ASGI http.response.start の二重送出を防ぐ (code-review #3)。
+        #   "none"       = まだ start 未送出 → 失敗時に 503 を送れる
+        #   "non_stream" = 404/503 を送出済 (非 stream) → 失敗時は再送せず cleanup のみ
+        #   "stream"     = 200 SSE header 送出済 → 失敗時は SSE agent_run_error + stream_end
+        phase = "none"
 
         def _on_notify(
             _conn: asyncpg.Connection, _pid: int, _channel: str, payload: str
@@ -266,10 +270,12 @@ class AgentRunStreamResponse(Response):
             # (iii) preflight: scope/存在判定 (active-scope)。scope 外/不在は 404。
             status_row = await _fetch_status(self.tenant_id, self.run_id, query_sem)
             if status_row is None:
+                phase = "non_stream"
                 await _send_simple(send, 404)
                 return
 
             # (iv) 200 SSE header。proxy buffering 無効化。これ以降は SSE frame で閉じる。
+            phase = "stream"
             await send(
                 {
                     "type": "http.response.start",
@@ -282,18 +288,15 @@ class AgentRunStreamResponse(Response):
                     ],
                 }
             )
-            response_started = True
-
             await self._run_stream(send, query_sem, queue, loop, status_row)
         except asyncio.CancelledError:
             raise  # client disconnect / shutdown → finally で cleanup
         except Exception:  # noqa: BLE001
             logger.exception("agent_run_stream_error", extra={"run_id": str(self.run_id)})
-            # 200 header 前なら HTTP 503、後なら SSE agent_run_error + stream_end (R2)。
             try:
-                if not response_started:
+                if phase == "none":
                     await _send_simple(send, 503, [(b"retry-after", b"5")])
-                else:
+                elif phase == "stream":
                     await _send_body(
                         send,
                         _frame(
@@ -303,16 +306,31 @@ class AgentRunStreamResponse(Response):
                     await _send_body(
                         send, _frame("stream_end", {"reason": "server_shutdown"}), more=False
                     )
+                # phase == "non_stream": start 送出済 → http.response.start を再送しない (二重 start 防止)。
             except Exception:  # noqa: BLE001, S110 - error 通知の best-effort (client 既切断等)
                 pass
         finally:
-            if conn is not None:
-                try:
-                    await conn.remove_listener(NOTIFY_CHANNEL, _on_notify)
-                except Exception:  # noqa: BLE001, S110 - cleanup の best-effort
-                    pass
-                await pool.release(conn)
-            _active_streams -= 1
+            # capacity slot は cleanup の成否に関わらず必ず戻す (code-review #1: release 例外/
+            # cancellation で decrement が skip されると slot leak → 恒久 503)。
+            try:
+                if conn is not None:
+                    try:
+                        await conn.remove_listener(NOTIFY_CHANNEL, _on_notify)
+                    except Exception:  # noqa: BLE001, S110 - cleanup の best-effort
+                        pass
+                    try:
+                        await pool.release(conn)
+                    except Exception:  # noqa: BLE001 - release 失敗は terminate + log
+                        logger.warning(
+                            "agent_run_stream_release_failed",
+                            extra={"run_id": str(self.run_id)},
+                        )
+                        try:
+                            conn.terminate()
+                        except Exception:  # noqa: BLE001, S110
+                            pass
+            finally:
+                _active_streams -= 1
 
     async def _run_stream(
         self,

@@ -166,3 +166,55 @@ async def test_stream_invalid_last_event_id_returns_422(client: AsyncClient) -> 
 async def test_stream_negative_last_event_id_returns_422(client: AsyncClient) -> None:
     resp = await client.get(f"/api/v1/agent_runs/{uuid4()}/events/stream?last_event_id=-1")
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# sessionless auth dependency (R6/R7 + code-review #2)
+# ---------------------------------------------------------------------------
+from fastapi import HTTPException  # noqa: E402
+
+from backend.app.api.agent_runs import get_stream_auth_context  # noqa: E402
+
+
+def test_stream_auth_requires_authenticated_actor() -> None:
+    # actor 不在 (未認証) は 401 (fail-closed)。
+    request = SimpleNamespace(state=SimpleNamespace(tenant_id=1))
+    with pytest.raises(HTTPException) as exc:
+        get_stream_auth_context(request)  # type: ignore[arg-type]
+    assert exc.value.status_code == 401
+
+
+def test_stream_auth_requires_tenant_context() -> None:
+    request = SimpleNamespace(state=SimpleNamespace(actor_id="human:x"))
+    with pytest.raises(HTTPException) as exc:
+        get_stream_auth_context(request)  # type: ignore[arg-type]
+    assert exc.value.status_code == 400
+
+
+def test_stream_auth_passes_with_actor_and_tenant() -> None:
+    request = SimpleNamespace(state=SimpleNamespace(actor_id="human:x", tenant_id=1))
+    assert get_stream_auth_context(request) == 1  # type: ignore[arg-type]
+
+
+def test_stream_route_dependency_graph_has_no_db_session() -> None:
+    # R7: stream route の dependency graph に get_db_session / get_current_actor_id を含めない
+    # (yield session の cleanup が stream lifetime まで遅延し main pool を枯渇させるのを防ぐ)。
+    from backend.app.api.approval_inbox import get_current_actor_id, get_db_session
+
+    app = create_app()
+    stream_routes = [
+        route
+        for route in app.routes
+        if getattr(route, "path", "") == "/api/v1/agent_runs/{run_id}/events/stream"
+    ]
+    assert len(stream_routes) == 1
+
+    def _collect_calls(dependant: object) -> set[object]:
+        calls: set[object] = {getattr(dependant, "call", None)}
+        for sub in getattr(dependant, "dependencies", []):
+            calls |= _collect_calls(sub)
+        return calls
+
+    calls = _collect_calls(stream_routes[0].dependant)  # type: ignore[attr-defined]
+    assert get_db_session not in calls
+    assert get_current_actor_id not in calls

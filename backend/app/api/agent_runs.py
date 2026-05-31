@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -424,17 +424,39 @@ async def get_agent_run_kpi_endpoint(
     return _to_kpi_response(kpi)
 
 
+def get_stream_auth_context(request: Request) -> int:
+    """SSE stream 用 **sessionless** auth dependency (ADR-00038 R6/R7、code-review #2)。
+
+    DB session を使わず request.state から **actor と tenant の両方** を fail-closed で検証する。
+    `get_db_session` / `get_current_actor_id` を dependency graph に含めない (yield session の
+    cleanup が stream 完了まで遅延し main pool を枯渇させるのを防ぐ)。未認証 (actor 不在) は 401。
+    """
+    actor_reference = getattr(request.state, "actor_id", None)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    if actor_reference is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="authentication required",
+        )
+    if not isinstance(tenant_id, int) or isinstance(tenant_id, bool) or tenant_id < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="tenant context missing",
+        )
+    return tenant_id
+
+
 @router.get("/{run_id}/events/stream")
 async def stream_agent_run_events_endpoint(
     run_id: UUID,
     last_event_id: int = Query(default=0, ge=0),  # noqa: B008
-    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    tenant_id: int = Depends(get_stream_auth_context),  # noqa: B008
 ) -> Response:
     """AgentRun 進捗の SSE stream (ADR-00038 / L-3 realtime)。
 
-    read-only。auth は **sessionless dep (`get_tenant_id`、request.state から解決)** のみで、
-    `get_db_session` / `get_current_actor_id` を dependency graph に含めない (R6/R7: yield session の
-    cleanup が stream 完了まで遅延し main transactional pool を枯渇させるのを防ぐ)。
+    read-only。auth は **sessionless dep (`get_stream_auth_context`、request.state から actor+tenant を
+    fail-closed 検証)** のみで、`get_db_session` / `get_current_actor_id` を dependency graph に含めない
+    (R6/R7: yield session の cleanup が stream 完了まで遅延し main transactional pool を枯渇させるのを防ぐ)。
 
     `?last_event_id=<seq_no>` (int、非整数/UUID は FastAPI が 422) で resume する。capacity 判定 →
     active-scope preflight (404) → LISTEN → stream → release は `AgentRunStreamResponse.__call__` が
