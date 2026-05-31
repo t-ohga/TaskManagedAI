@@ -65,6 +65,7 @@ UI 改善計画の最後に残った genuinely 未実装項目 **L-3「リアル
    - payload は最小 (8KB NOTIFY 上限に余裕)。event schema / 列は変更しない。重複 NOTIFY は handler の bounded queue + drain-to-empty で吸収。downgrade は 2 trigger + 2 function を drop するだけの lossless。
 2. **LISTEN-before-catch-up + dirty-signal 再 query + drain-to-empty (R1 CRITICAL + R2 HIGH fix)**: 順序は (1) `LISTEN agent_run_event_appended` を先に登録 → (2) **`?last_event_id=<seq_no>` query param** (client が最後に受けた `seq_no`、default 0、R4 HIGH fix で header から移行) を読み `seq_no > last` を catch-up query → (3) 以後 wake-up ごとに **必ず `seq_no > last_sent` を DB 再 query** する。notify payload を直接 stream に乗せず、dirty-signal (再 query 契機) としてのみ扱う。これにより catch-up/LISTEN 境界で insert された event の取りこぼし (CRITICAL race) と NOTIFY 取りこぼしの両方を、DB query を真の source として構造的に吸収する。
    - **drain-to-empty (R2 HIGH fix)**: tail query は `seq_no > last_sent ORDER BY seq_no LIMIT N` を使うが、1 つの dirty-signal / catch-up につき **取得件数 < N になるまで loop で drain** する。queue が maxsize=1 で coalesce され、1 signal あたり N 超の event が溜まっても、全 `seq_no` を漏れなく配信してから wait に戻る (burst > N でも event 落とさない)。
+   - **(re)connect 時に無条件 status snapshot (R10 HIGH fix)**: LISTEN 登録 + catch-up の直後に、**event tail の有無に関わらず active-scope 込みの current `agent_run_status` snapshot を必ず 1 回 query + 送信** する。`agent_runs` UPDATE trigger の NOTIFY は seq_no を持たず resume cursor (`?last_event_id=`) では回収できないため、status-only 更新が client disconnect 中 / SSR 取得後〜LISTEN 登録前に commit された場合でも、(再)接続直後に heartbeat 待ちなしで最新 status を届ける。terminal なら即 `stream_end` まで進める。これにより R9 の event-driven 保証を reconnect/cold-start 境界まで成立させる。
 3. **専用 bounded LISTEN pool + single-scope acquire/release (custom ASGI response、R1 HIGH + R2 HIGH + R3 HIGH fix)**: LISTEN は接続を stream 持続中保持するため、transactional session pool と分離した **専用 asyncpg pool** (例: max 10) を使う。
    - **DB を触らない validation/auth のみ deps で確定**: `?last_event_id=` query param は整数 `seq_no` のみ受理 (非整数/UUID は `400/422`) / tenant・actor は sessionless dep で request.state から解決。**scope (404) 判定は deps でやらない** (DB query = main pool checkout になり capacity 判定前に枯渇させるため、R8 HIGH)。
    - **capacity → preflight → stream → release を custom ASGI response の単一 `__call__` 内 try/finally に集約 (R3 + R8 HIGH fix)**: endpoint は (deps 通過後) custom response を return するだけ。response の `__call__(scope, receive, send)` 内で **(i) capacity slot を非ブロッキング取得 → 満杯なら `503` + `Retry-After` を送出して return (= DB を一切触らず拒否、over-capacity open storm が main pool を枯渇させない、R8 fix)、(ii) slot 取得後に短命 session で run/active-scope preflight → scope 外なら `404` 送出して return、(iii) LISTEN connection 取得 → 200 SSE header → LISTEN → catch-up → stream、(iv) `finally` で listener remove + LISTEN connection release + capacity slot 解放**。capacity slot は DB checkout より前に gate し、slot/connection の取得・解放を 1 つの `__call__` try/finally に収めることで、R3 の pre-response handoff leak 窓と R8 の preflight-before-capacity 枯渇の両方を排除する。404/例外/abort でも `finally` で slot を必ず解放。
@@ -112,7 +113,7 @@ UI 改善計画の最後に残った genuinely 未実装項目 **L-3「リアル
   - tenant isolation: 別 tenant の run_id を stream できない (negative)。
   - terminal close: terminal run は `stream_end` で閉じる。
   - bound: LISTEN pool 上限超過で `503`。
-  - trigger: `agent_run_events` insert で `pg_notify` が発火する (DB test、`TASKMANAGEDAI_RUN_DB_TESTS=1`)。**R9 追加**: `agent_runs` の status-only 更新 (event append 無し) でも `agent_runs` UPDATE trigger が `pg_notify` 発火し、SSE が dirty-signal で status 反映する。
+  - trigger: `agent_run_events` insert で `pg_notify` が発火する (DB test、`TASKMANAGEDAI_RUN_DB_TESTS=1`)。**R9 追加**: `agent_runs` の status-only 更新 (event append 無し) でも `agent_runs` UPDATE trigger が `pg_notify` 発火し、SSE が dirty-signal で status 反映する。**R10 追加**: status-only 更新が disconnect 中 / LISTEN 前に commit されても (再)接続直後の無条件 status snapshot で heartbeat 待ちなしに反映 (terminal なら即 stream_end)。
   - migration: `alembic upgrade head` → trigger 存在、`downgrade` → trigger/function drop の lossless。
   - frontend: fetch-based SSE client mock で status/event 反映 + backoff reconnect (Vitest)。
   - **R1 追加 (must_ship)**: catch-up/LISTEN 境界 race 再現 (LISTEN 登録と catch-up の間に event insert → 取りこぼさない) / soft-delete 後 stream が `scope_revoked` で停止 / `agent_run_status` + `stream_end` の redaction (raw payload/secret なし) / pool 枯渇で HTTP 503 (stream 開始前) / bounded queue overflow 後も `seq_no > last_sent` で回復 / flag-off で frontend が SSE client 非生成・reconnect しない。
@@ -225,6 +226,16 @@ codex-adversarial-review R9 (job `review-mpu0n6ic-iqu2ns`) で **CRITICAL=0 / HI
 | 1 | HIGH | event INSERT trigger のみ依存。status-only 更新経路 (MCP bridge cancel/delegation 等、event append なし) で pg_notify 不発 → heartbeat まで反映遅延、event-driven 保証が writer discipline 依存 | 設計前提 + 堅牢化 #1 (`agent_runs` AFTER UPDATE trigger を同一 channel へ追加、2 系統検知) + SP T1/受け入れ条件 (status-only 更新 dirty-signal test) |
 
 reject / defer: なし。R10 で 2 trigger 検知の整合と CRITICAL/HIGH 不在を確認後、ADR を accepted へ昇格する。
+
+## Codex plan review R10 採否記録 (2026-06-01)
+
+codex-adversarial-review R10 (job `review-mpu0un11-g0ym4e`) で **CRITICAL=0 / HIGH=1** (R9 検知完全性の reconnect 境界)。**adopt** し反映:
+
+| # | severity | finding | 反映先 |
+|---|---|---|---|
+| 1 | HIGH | `agent_runs` UPDATE trigger は seq_no 無し NOTIFY。status-only 更新が disconnect 中 / LISTEN 前に commit されると NOTIFY 消失 + event 行も無く `?last_event_id=` reconnect で回収不能 → terminal/cancel が heartbeat まで stale | 堅牢化 #2 ((re)connect 時に event tail 有無に関わらず無条件 status snapshot を query+送信、terminal なら即 stream_end) + SP 受け入れ条件 (reconnect/cold-start status 回収 test) |
+
+reject / defer: なし。R11 で reconnect 境界の status 回収を確認後、ADR を accepted へ昇格する。
 
 > **Note**: §R1〜R4 採否記録 table 内の `EventSource` / `Last-Event-ID` 語は **当該 round 時点の finding を記述した history** であり、現行 authoritative 設計 (fetch-based / `?last_event_id=`) ではない。実装は本 §採用案・堅牢化要件・テスト指針・受け入れ条件を正本とする。
 

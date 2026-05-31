@@ -93,6 +93,7 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 
 - [ ] `agent_run_events` insert で `pg_notify` 発火 (DB test)。
 - [ ] **(R9 HIGH)** `agent_runs` の status-only 更新 (event append 無し、例: MCP bridge cancel) でも `agent_runs` UPDATE trigger が `pg_notify` 発火し、SSE が heartbeat 待ちでなく dirty-signal で status を反映する (DB test + stream test)。
+- [ ] **(R10 HIGH)** status-only 更新が **client disconnect 中 / LISTEN 登録前**に発生しても、(再)接続直後に **無条件 status snapshot** で heartbeat 待ちなしで反映される (terminal なら即 `stream_end`)。reconnect/cold-start 境界の status 回収 test。
 - [ ] SSE endpoint が `?last_event_id=N` で `seq_no>N` の redacted event のみ catch-up。
 - [ ] stream payload に raw secret / raw payload が無い (redaction)。
 - [ ] soft-deleted ticket bound run の stream は `404` (active-scope)。
