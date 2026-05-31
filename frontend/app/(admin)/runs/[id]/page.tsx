@@ -133,6 +133,7 @@ export default async function RunDetailPage({ params }: Props) {
       {!["completed", "failed", "cancelled", "provider_refused", "repair_exhausted"].includes(run.status) ? <RunCancelButton runId={run.id} /> : null}
 
       <RunLiveTimeline
+        key={run.id}
         runId={run.id}
         initialStatus={run.status}
         initialBlockedReason={run.blocked_reason}

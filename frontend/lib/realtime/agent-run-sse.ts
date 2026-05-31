@@ -42,6 +42,10 @@ export type SubscribeOptions = {
 const MAX_ATTEMPTS = 6;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30000;
+// 200 stream がこの時間以上継続したら「安定」とみなし retry budget をリセットする。
+// 短命な flapping 200 stream (受理直後 close / server_shutdown 連発) では reset せず
+// attempts を増やし MAX_ATTEMPTS で停止させる (code-review #2: 無限 reconnect 防止)。
+const STABLE_STREAM_MS = 10000;
 
 type FrameAction = "continue" | "stop" | "reconnect";
 
@@ -172,12 +176,16 @@ export function subscribeAgentRunStream(runId: string, opts: SubscribeOptions): 
       }
 
       setState("open");
-      attempts = 0;
+      const streamStart = Date.now();
       const outcome = await readStream(response.body);
       if (stopped || controller.signal.aborted) return;
       if (outcome.permanentStop) {
         setState("closed");
         return;
+      }
+      // stream が安定継続した場合のみ retry budget をリセット (code-review #2)。
+      if (Date.now() - streamStart >= STABLE_STREAM_MS) {
+        attempts = 0;
       }
       if (!(await backoff())) return;
     }

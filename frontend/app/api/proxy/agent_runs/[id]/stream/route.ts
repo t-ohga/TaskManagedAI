@@ -4,11 +4,20 @@ import { cookies } from "next/headers";
 // browser は backend (Docker internal) に直接到達できないため、same-origin の本 route が
 // session cookie を転送しつつ backend の SSE stream を pass-through する。
 // request.signal を backend fetch に渡し、client 切断を backend まで伝播 (R3 cleanup chain)。
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://backend:8000";
+//
+// upstream は **fetchBackendRaw と同じ server-only internal API URL** (INTERNAL_API_URL) を使う
+// (code-review #1: NEXT_PUBLIC_BACKEND_URL fallback だと docker-compose の api:8000 と不整合で 502)。
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+function readInternalApiUrl(): string {
+  const value = process.env.INTERNAL_API_URL ?? process.env.TASKMANAGEDAI_INTERNAL_API_URL;
+  if (!value || value.trim().length === 0) {
+    throw new Error("INTERNAL_API_URL must be configured.");
+  }
+  return value;
+}
 
 export async function GET(
   request: Request,
@@ -26,9 +35,15 @@ export async function GET(
     headers["Cookie"] = `taskmanagedai_session=${sessionCookie.value}`;
   }
 
-  const backendUrl =
-    `${BACKEND_URL}/api/v1/agent_runs/${id}/events/stream` +
-    `?last_event_id=${encodeURIComponent(lastEventId)}`;
+  let backendUrl: string;
+  try {
+    backendUrl = new URL(
+      `/api/v1/agent_runs/${id}/events/stream?last_event_id=${encodeURIComponent(lastEventId)}`,
+      readInternalApiUrl()
+    ).toString();
+  } catch {
+    return new Response(null, { status: 500 }); // INTERNAL_API_URL 未設定 (deploy misconfig)
+  }
 
   let backendRes: Response;
   try {

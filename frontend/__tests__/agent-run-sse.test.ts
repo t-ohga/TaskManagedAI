@@ -145,4 +145,26 @@ describe("subscribeAgentRunStream", () => {
     const url = String(fetchMock.mock.calls[0]?.[0]);
     expect(url).toBe("/api/proxy/agent_runs/run-xyz/stream?last_event_id=7");
   });
+
+  it("flapping 200 stream (受理直後 close) で無限 reconnect せず上限で停止する", async () => {
+    // code-review #2: 200 を返すが即 close (frame 無し / stream_end 無し) を繰り返す flapping
+    // failure。attempts を 200 直後にリセットしない fix により、MAX_ATTEMPTS で error 停止する。
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(sseResponse([])));
+      vi.stubGlobal("fetch", fetchMock);
+      const states: SseStreamState[] = [];
+
+      const cleanup = subscribeAgentRunStream("run-flap", { onState: (s) => states.push(s) });
+      for (let i = 0; i < 12 && !states.includes("error"); i++) {
+        await vi.advanceTimersByTimeAsync(35000); // max backoff (30s) を超えて進める
+      }
+      cleanup();
+
+      expect(states).toContain("error"); // 無限ループでなく上限で停止
+      expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(8); // 初回 + MAX_ATTEMPTS(6) 程度に bounded
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
