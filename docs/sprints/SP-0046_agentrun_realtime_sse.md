@@ -161,4 +161,10 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 
 - **ADR-00038 accepted_at: 2026-06-01** (codex-plan-review R1-R11、累計 23 findings 全件 adopt、R11 = approve「実装着手可」)。
   - 各 round の fix domain: R1 catch-up/LISTEN race (CRITICAL) / R2 drain-to-empty・active-scope 再評価・全 DTO・agent_run_error / R3 custom ASGI single-`__call__` / R4 fetch-based resume・rollback 204 / R5 timeout=0 禁止・旧契約 sweep / R6 session lifetime / R7 sessionless auth・concurrency cap・jitter / R8 capacity-gate-first / R9 2系統 trigger / R10 reconnect 無条件 status snapshot。
-- (実装後に追記: Codex code-loop R{N} 採否 / 検証結果 / 残リスク)
+- **実装完了 (2026-06-01)**: T1 migration 0041 (2系統 trigger、upgrade/downgrade lossless 検証済) / T2 SSE service / T3 endpoint + sessionless auth / T4 config / T5 frontend (SSE proxy + fetch-based client + live component) / T6 backend fast test 16 / T7 frontend vitest 5。
+- **Codex code-loop (mode=code) R1-R3 全 adopt → R3 approve「出荷可」**:
+  - backend R1: HIGH capacity slot leak (独立 finally 化) / MED sessionless actor auth (get_stream_auth_context) / MED ASGI 二重 start (response phase enum)。
+  - frontend R1: HIGH SSE proxy URL 不整合 (INTERNAL_API_URL 統一) / HIGH flapping 200 stream 無限 reconnect (attempts reset を安定後のみ) / MED component state リセット (key=run.id)。
+  - R2: HIGH terminal close 境界 event-loss race (両 terminal 経路で stream_end 前 final drain)。
+- **検証**: ruff + mypy clean / 16 backend fast test (redaction allowlist + framing + endpoint contract + sessionless auth + dep-graph) / 5 frontend vitest (204 停止 / event parse / status / resume URL / flapping bounded) / migration upgrade→downgrade lossless (throwaway postgres)。
+- **残リスク / follow-up**: DB-backed 統合 test (catch-up race / scope_revoked / capacity 503 / pool starvation / trigger NOTIFY 発火) は `TASKMANAGEDAI_RUN_DB_TESTS` gate 下で未実装 (fast test + code-review で代替)。runs 一覧 realtime / 接続 metrics は対象外 (次スプリント候補)。proxy buffering はブラウザ検証必須 (ADR-00038 §ブラウザ側検証必須項目)。
