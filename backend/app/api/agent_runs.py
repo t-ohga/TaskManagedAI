@@ -378,12 +378,17 @@ async def get_agent_run_endpoint(
             detail="agent run not found",
         )
 
+    # 最新 200 件 (tail) を返す。SSE realtime (ADR-00038 / Codex PR #301 P2-1) では seed の最大
+    # seq_no を resume cursor にするため、先頭 200 件を返すと >200 event の run で 201 件目以降を
+    # 全 replay してしまう。tail を返すことで cursor=最新となり catch-up replay を避ける。
     events_result = await session.execute(
         select(AgentRunEvent)
         .where(AgentRunEvent.tenant_id == tenant_id, AgentRunEvent.run_id == run_id)
-        .order_by(AgentRunEvent.seq_no, AgentRunEvent.created_at, AgentRunEvent.id)
+        .order_by(AgentRunEvent.seq_no.desc(), AgentRunEvent.created_at.desc(), AgentRunEvent.id.desc())
         .limit(200)
     )
+    tail_events = list(events_result.scalars())
+    tail_events.reverse()  # 表示用に昇順 (chronological) へ
     snapshot = await session.scalar(
         select(ContextSnapshot)
         .where(ContextSnapshot.tenant_id == tenant_id, ContextSnapshot.run_id == run_id)
@@ -393,7 +398,7 @@ async def get_agent_run_endpoint(
     base = _to_read(run).model_dump()
     return AgentRunDetailResponse(
         **base,
-        events=[_to_event_read(event) for event in events_result.scalars()],
+        events=[_to_event_read(event) for event in tail_events],
         context_snapshot=_to_context_snapshot_read(snapshot) if snapshot is not None else None,
     )
 

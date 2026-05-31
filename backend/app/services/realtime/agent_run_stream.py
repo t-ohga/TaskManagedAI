@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from secrets import SystemRandom
@@ -288,7 +289,7 @@ class AgentRunStreamResponse(Response):
                     ],
                 }
             )
-            await self._run_stream(send, query_sem, queue, loop, status_row)
+            await self._run_stream(send, receive, query_sem, queue, loop, status_row)
         except asyncio.CancelledError:
             raise  # client disconnect / shutdown → finally で cleanup
         except Exception:  # noqa: BLE001
@@ -335,60 +336,91 @@ class AgentRunStreamResponse(Response):
     async def _run_stream(
         self,
         send: Send,
+        receive: Receive,
         query_sem: asyncio.Semaphore,
         queue: asyncio.Queue[None],
         loop: asyncio.AbstractEventLoop,
         status_row: Row[Any],
     ) -> None:
         settings = get_settings()
-        # catch-up (drain-to-empty)。
-        last_sent = await self._drain_events(send, query_sem, self.last_event_id)
-        # 無条件 status snapshot (R10)。
-        await _send_body(send, _frame("agent_run_status", _status_dto(status_row)))
-        last_status = _status_key(status_row)
-        if status_row.status in TERMINAL_STATUSES:
-            # terminal commit 後はその最終 event も可視。stream_end 前に final drain で取りこぼし防止
-            # (code-review R2: drain→status の間に terminal+event commit が入る READ COMMITTED race)。
-            await self._drain_events(send, query_sem, last_sent)
-            await _send_body(send, _frame("stream_end", {"reason": "terminal"}), more=False)
-            return
+        # client 切断 (http.disconnect) を監視し、idle 中でも heartbeat を待たず即 release する
+        # (Codex PR #301 P2-2: open/close storm で切断済 client が capacity slot を占有するのを防ぐ)。
+        disconnected = asyncio.Event()
 
-        deadline = loop.time() + settings.agentrun_sse_max_lifetime_seconds
-        while True:
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                await _send_body(send, _frame("stream_end", {"reason": "max_lifetime"}), more=False)
-                return
-            heartbeat = settings.agentrun_sse_heartbeat_seconds + _jitter.uniform(
-                0.0, settings.agentrun_sse_heartbeat_jitter_seconds
-            )
-            woke_by_signal = True
+        async def _watch_disconnect() -> None:
             try:
-                await asyncio.wait_for(queue.get(), timeout=min(heartbeat, remaining))
-            except TimeoutError:
-                woke_by_signal = False
-
-            # drain events (dirty-signal でも heartbeat でも DB を真の source に再 query)。
-            last_sent = await self._drain_events(send, query_sem, last_sent)
-
-            # status 再 query (scope 失効 / terminal を idle でも heartbeat 以内に検知、R2/R10)。
-            current_status = await _fetch_status(self.tenant_id, self.run_id, query_sem)
-            if current_status is None:
-                await _send_body(
-                    send, _frame("stream_end", {"reason": "scope_revoked"}), more=False
-                )
+                while not disconnected.is_set():
+                    message = await receive()
+                    if message.get("type") == "http.disconnect":
+                        disconnected.set()
+                        with contextlib.suppress(asyncio.QueueFull):
+                            queue.put_nowait(None)  # heartbeat wait を即起こす
+                        return
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
                 return
-            skey = _status_key(current_status)
-            if skey != last_status:
-                await _send_body(send, _frame("agent_run_status", _status_dto(current_status)))
-                last_status = skey
-            if current_status.status in TERMINAL_STATUSES:
-                # final drain で terminal commit 境界の最終 event 取りこぼしを防ぐ (code-review R2)。
-                last_sent = await self._drain_events(send, query_sem, last_sent)
+
+        disconnect_task = asyncio.create_task(_watch_disconnect())
+        try:
+            # catch-up (drain-to-empty)。
+            last_sent = await self._drain_events(send, query_sem, self.last_event_id)
+            # 無条件 status snapshot (R10)。
+            await _send_body(send, _frame("agent_run_status", _status_dto(status_row)))
+            last_status = _status_key(status_row)
+            if status_row.status in TERMINAL_STATUSES:
+                # terminal commit 後はその最終 event も可視。stream_end 前に final drain で取りこぼし防止
+                # (code-review R2: drain→status の間に terminal+event commit が入る READ COMMITTED race)。
+                await self._drain_events(send, query_sem, last_sent)
                 await _send_body(send, _frame("stream_end", {"reason": "terminal"}), more=False)
                 return
-            if not woke_by_signal:
-                await _send_body(send, _HEARTBEAT_FRAME)
+
+            deadline = loop.time() + settings.agentrun_sse_max_lifetime_seconds
+            while True:
+                if disconnected.is_set():
+                    return  # client 切断 → finally で即 release
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    await _send_body(
+                        send, _frame("stream_end", {"reason": "max_lifetime"}), more=False
+                    )
+                    return
+                heartbeat = settings.agentrun_sse_heartbeat_seconds + _jitter.uniform(
+                    0.0, settings.agentrun_sse_heartbeat_jitter_seconds
+                )
+                woke_by_signal = True
+                try:
+                    await asyncio.wait_for(queue.get(), timeout=min(heartbeat, remaining))
+                except TimeoutError:
+                    woke_by_signal = False
+                if disconnected.is_set():
+                    return  # 切断で起こされた → heartbeat 待たず即 release
+
+                # drain events (dirty-signal でも heartbeat でも DB を真の source に再 query)。
+                last_sent = await self._drain_events(send, query_sem, last_sent)
+
+                # status 再 query (scope 失効 / terminal を idle でも heartbeat 以内に検知、R2/R10)。
+                current_status = await _fetch_status(self.tenant_id, self.run_id, query_sem)
+                if current_status is None:
+                    await _send_body(
+                        send, _frame("stream_end", {"reason": "scope_revoked"}), more=False
+                    )
+                    return
+                skey = _status_key(current_status)
+                if skey != last_status:
+                    await _send_body(send, _frame("agent_run_status", _status_dto(current_status)))
+                    last_status = skey
+                if current_status.status in TERMINAL_STATUSES:
+                    # final drain で terminal commit 境界の最終 event 取りこぼしを防ぐ (R2)。
+                    last_sent = await self._drain_events(send, query_sem, last_sent)
+                    await _send_body(send, _frame("stream_end", {"reason": "terminal"}), more=False)
+                    return
+                if not woke_by_signal:
+                    await _send_body(send, _HEARTBEAT_FRAME)
+        finally:
+            disconnect_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await disconnect_task
 
     async def _drain_events(
         self, send: Send, query_sem: asyncio.Semaphore, after_seq: int
