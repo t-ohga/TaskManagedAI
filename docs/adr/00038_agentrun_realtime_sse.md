@@ -1,8 +1,9 @@
 ---
 id: "ADR-00038"
 title: "AgentRun リアルタイム進捗 (L-3 SSE + PostgreSQL LISTEN/NOTIFY)"
-status: "proposed"
+status: "accepted"
 date: "2026-06-01"
+accepted_at: "2026-06-01"
 deciders: ["t-ohga"]
 adr_gate_criteria: [2, 3]
 related_adr:

@@ -1,7 +1,7 @@
 ---
 id: "SP-0046_agentrun_realtime_sse"
 type: "heavy"
-status: "draft"
+status: "in_progress"
 sprint_no: 46
 created_at: "2026-06-01"
 updated_at: "2026-06-01"
@@ -159,4 +159,6 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
 
 ## Review
 
-(実装後に追記: ADR-00038 accepted_at / Codex R{N} 採否 / 検証結果 / 残リスク)
+- **ADR-00038 accepted_at: 2026-06-01** (codex-plan-review R1-R11、累計 23 findings 全件 adopt、R11 = approve「実装着手可」)。
+  - 各 round の fix domain: R1 catch-up/LISTEN race (CRITICAL) / R2 drain-to-empty・active-scope 再評価・全 DTO・agent_run_error / R3 custom ASGI single-`__call__` / R4 fetch-based resume・rollback 204 / R5 timeout=0 禁止・旧契約 sweep / R6 session lifetime / R7 sessionless auth・concurrency cap・jitter / R8 capacity-gate-first / R9 2系統 trigger / R10 reconnect 無条件 status snapshot。
+- (実装後に追記: Codex code-loop R{N} 採否 / 検証結果 / 残リスク)
