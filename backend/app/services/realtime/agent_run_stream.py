@@ -347,6 +347,9 @@ class AgentRunStreamResponse(Response):
         await _send_body(send, _frame("agent_run_status", _status_dto(status_row)))
         last_status = _status_key(status_row)
         if status_row.status in TERMINAL_STATUSES:
+            # terminal commit 後はその最終 event も可視。stream_end 前に final drain で取りこぼし防止
+            # (code-review R2: drain→status の間に terminal+event commit が入る READ COMMITTED race)。
+            await self._drain_events(send, query_sem, last_sent)
             await _send_body(send, _frame("stream_end", {"reason": "terminal"}), more=False)
             return
 
@@ -380,6 +383,8 @@ class AgentRunStreamResponse(Response):
                 await _send_body(send, _frame("agent_run_status", _status_dto(current_status)))
                 last_status = skey
             if current_status.status in TERMINAL_STATUSES:
+                # final drain で terminal commit 境界の最終 event 取りこぼしを防ぐ (code-review R2)。
+                last_sent = await self._drain_events(send, query_sem, last_sent)
                 await _send_body(send, _frame("stream_end", {"reason": "terminal"}), more=False)
                 return
             if not woke_by_signal:
