@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ from backend.app.api.approval_inbox import (
     get_db_session,
     get_tenant_id,
 )
+from backend.app.config import get_settings
 from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.agent_run_event import AgentRunEvent
 from backend.app.db.models.context_snapshot import ContextSnapshot
@@ -27,6 +28,7 @@ from backend.app.services.metrics.agent_run_kpi import (
     AgentRunKpiService,
     TimeToMergeProxySource,
 )
+from backend.app.services.realtime.agent_run_stream import AgentRunStreamResponse
 
 router = APIRouter(prefix="/api/v1/agent_runs", tags=["agent_runs"])
 
@@ -376,12 +378,17 @@ async def get_agent_run_endpoint(
             detail="agent run not found",
         )
 
+    # 最新 200 件 (tail) を返す。SSE realtime (ADR-00038 / Codex PR #301 P2-1) では seed の最大
+    # seq_no を resume cursor にするため、先頭 200 件を返すと >200 event の run で 201 件目以降を
+    # 全 replay してしまう。tail を返すことで cursor=最新となり catch-up replay を避ける。
     events_result = await session.execute(
         select(AgentRunEvent)
         .where(AgentRunEvent.tenant_id == tenant_id, AgentRunEvent.run_id == run_id)
-        .order_by(AgentRunEvent.seq_no, AgentRunEvent.created_at, AgentRunEvent.id)
+        .order_by(AgentRunEvent.seq_no.desc(), AgentRunEvent.created_at.desc(), AgentRunEvent.id.desc())
         .limit(200)
     )
+    tail_events = list(events_result.scalars())
+    tail_events.reverse()  # 表示用に昇順 (chronological) へ
     snapshot = await session.scalar(
         select(ContextSnapshot)
         .where(ContextSnapshot.tenant_id == tenant_id, ContextSnapshot.run_id == run_id)
@@ -391,7 +398,7 @@ async def get_agent_run_endpoint(
     base = _to_read(run).model_dump()
     return AgentRunDetailResponse(
         **base,
-        events=[_to_event_read(event) for event in events_result.scalars()],
+        events=[_to_event_read(event) for event in tail_events],
         context_snapshot=_to_context_snapshot_read(snapshot) if snapshot is not None else None,
     )
 
@@ -420,6 +427,55 @@ async def get_agent_run_kpi_endpoint(
             detail="agent run not found",
         )
     return _to_kpi_response(kpi)
+
+
+def get_stream_auth_context(request: Request) -> int:
+    """SSE stream 用 **sessionless** auth dependency (ADR-00038 R6/R7、code-review #2)。
+
+    DB session を使わず request.state から **actor と tenant の両方** を fail-closed で検証する。
+    `get_db_session` / `get_current_actor_id` を dependency graph に含めない (yield session の
+    cleanup が stream 完了まで遅延し main pool を枯渇させるのを防ぐ)。未認証 (actor 不在) は 401。
+    """
+    actor_reference = getattr(request.state, "actor_id", None)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    if actor_reference is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="authentication required",
+        )
+    if not isinstance(tenant_id, int) or isinstance(tenant_id, bool) or tenant_id < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="tenant context missing",
+        )
+    return tenant_id
+
+
+@router.get("/{run_id}/events/stream")
+async def stream_agent_run_events_endpoint(
+    run_id: UUID,
+    last_event_id: int = Query(default=0, ge=0),  # noqa: B008
+    tenant_id: int = Depends(get_stream_auth_context),  # noqa: B008
+) -> Response:
+    """AgentRun 進捗の SSE stream (ADR-00038 / L-3 realtime)。
+
+    read-only。auth は **sessionless dep (`get_stream_auth_context`、request.state から actor+tenant を
+    fail-closed 検証)** のみで、`get_db_session` / `get_current_actor_id` を dependency graph に含めない
+    (R6/R7: yield session の cleanup が stream 完了まで遅延し main transactional pool を枯渇させるのを防ぐ)。
+
+    `?last_event_id=<seq_no>` (int、非整数/UUID は FastAPI が 422) で resume する。capacity 判定 →
+    active-scope preflight (404) → LISTEN → stream → release は `AgentRunStreamResponse.__call__` が
+    単一 ASGI scope で所有する (capacity gate を DB preflight より前に置き、handoff leak 窓を排除、R3/R8)。
+
+    flag-off (`agentrun_sse_enabled=false`) は **204** を返す (client は spec 通り再接続を停止、R4)。
+    """
+    if not get_settings().agentrun_sse_enabled:
+        return Response(status_code=204)
+    return AgentRunStreamResponse(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        last_event_id=last_event_id,
+    )
 
 
 @router.post("/{run_id}/cancel", response_model=AgentRunResponse, status_code=200)

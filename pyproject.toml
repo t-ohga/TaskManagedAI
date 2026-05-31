@@ -96,5 +96,5 @@ mypy_path = "."
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["arq.*"]
+module = ["arq.*", "asyncpg.*"]
 ignore_missing_imports = true
