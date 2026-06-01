@@ -1,7 +1,7 @@
 ---
 id: "ADR-00042"
 title: "AgentRun Artifact 読み取り専用 REST endpoint (L-2、metadata-only)"
-status: "proposed"
+status: "accepted"
 created_at: "2026-06-01"
 updated_at: "2026-06-01"
 deciders:
