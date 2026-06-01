@@ -9,6 +9,7 @@ import { SearchBar } from "@/components/search-bar";
 import { StatusFilter } from "@/components/status-filter";
 import { PriorityFilter } from "@/components/priority-filter";
 import { DateRangeFilter } from "@/components/date-range-filter";
+import { SortControl } from "@/components/sort-control";
 import { ViewToggle } from "@/components/view-toggle";
 import { SelectableTicketList } from "@/components/selectable-ticket-list";
 
@@ -292,6 +293,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
           <StatusFilter />
           <PriorityFilter />
           <DateRangeFilter />
+          <SortControl />
           <ViewToggle currentView={currentView} />
         </div>
       </Suspense>

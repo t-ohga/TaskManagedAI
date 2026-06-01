@@ -21,6 +21,17 @@ export function useTrackRecentTicket(ticket: { id: string; title: string; slug: 
   }, [ticket]);
 }
 
+// F-4 (UI 監査 fix): ticket 詳細で閲覧を記録する thin Client Component (render なし)。
+// これが無いと useTrackRecentTicket の consumer が 0 で RecentTicketsList が常時空になる。
+export function TrackRecentTicket({
+  ticket,
+}: {
+  ticket: { id: string; title: string; slug: string };
+}) {
+  useTrackRecentTicket(ticket);
+  return null;
+}
+
 export function RecentTicketsList() {
   const [tickets, setTickets] = useState<RecentTicket[]>([]);
 

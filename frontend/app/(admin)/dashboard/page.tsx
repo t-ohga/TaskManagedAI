@@ -121,6 +121,9 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
   ];
   const totalTickets = projects.reduce((s, p) => s + p.ticketCount, 0);
   const closedTickets = aggCounts.closed;
+  const activeProjectCount = projects.filter(
+    (p) => String(p.status ?? "active") === "active"
+  ).length;
 
   return (
     <div className="grid gap-6">
@@ -208,19 +211,20 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
             <section aria-label="全体サマリー" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <article className="rounded-lg border border-line bg-panel p-4 shadow-sm">
           <p className="text-xs text-muted-foreground">総チケット数</p>
-          <p className="mt-1 text-2xl font-bold text-ink">{projects.reduce((s: number, p: any) => s + p.ticketCount, 0)}</p>
+          <p className="mt-1 text-2xl font-bold text-ink">{totalTickets}</p>
         </article>
         <article className="rounded-lg border border-line bg-panel p-4 shadow-sm">
           <p className="text-xs text-muted-foreground">プロジェクト数</p>
           <p className="mt-1 text-2xl font-bold text-ink">{projects.length}</p>
         </article>
-        <article className="rounded-lg border border-blue-200 bg-blue-50 p-4 shadow-sm">
-          <p className="text-xs text-blue-600">表示中チケット</p>
-          <p className="mt-1 text-2xl font-bold text-blue-700">{projects.reduce((s: number, p: any) => s + p.ticketCount, 0)}</p>
-        </article>
+        {/* D-5 (UI 監査 fix): 旧「表示中チケット」は「総チケット数」と同一式の重複だった → 完了チケットへ */}
         <article className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-          <p className="text-xs text-emerald-600">稼働中プロジェクト</p>
-          <p className="mt-1 text-2xl font-bold text-emerald-700">{projects.filter((p: any) => String(p.status ?? "active") === "active").length}</p>
+          <p className="text-xs text-emerald-600">完了チケット</p>
+          <p className="mt-1 text-2xl font-bold text-emerald-700">{closedTickets}</p>
+        </article>
+        <article className="rounded-lg border border-blue-200 bg-blue-50 p-4 shadow-sm">
+          <p className="text-xs text-blue-600">稼働中プロジェクト</p>
+          <p className="mt-1 text-2xl font-bold text-blue-700">{activeProjectCount}</p>
         </article>
       </section>
 
