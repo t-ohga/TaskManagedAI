@@ -115,15 +115,21 @@ run 詳細から artifact を読むための **read-only REST endpoint** と **r
    continuation/session/thread/provider ref / secret_ref を、**object key と string value の両方** で除去する。
    - **前処理 (R4 F-HIGH / R5 F-HIGH)**: 判定前に **NFKC 互換正規化** + trim + **制御 / format 文字 (Cc/Cf)
      除去** + **casefold (大文字小文字無視)** を行う (全角 / 互換幅 / zero-width / 大小文字のすり抜け防止)。
-   - **name denylist** — **object key と string value の両方** に同一判定 (R3 F-HIGH: key 経由露出も封鎖):
-     - continuation/session/thread/provider 系 (正規化後 casefold 一致): `provider_continuation_ref` /
-       `continuation_ref` / `continuation_id` / `provider_continuation` / `session_ref` / `session_id` /
-       `session_token` / `thread_ref` / `thread_id` / `provider_request` / `provider_request_body` /
-       `provider_response` / `raw_response` / `continuation` (+ camelCase variants)。
-     - **SecretBroker 参照系 (R5 F-HIGH)**: `secret_ref` / `secret_ref_id` / `secret_uri` /
-       `secret_capability` / `capability_token` (+ camelCase variants `secretRef` / `secretRefId` /
-       `secretUri` / `capabilityToken`)。SecretBroker 識別子 / トポロジは専用 secret_refs viewer
-       (R-3、owner-only gate) 経由のみで、artifact endpoint からは露出させない。
+   - **name denylist** — **object key と string value の両方** に同一判定 (R3 F-HIGH: key 経由露出も封鎖)。
+     **判定は exact 一致だけでなく segment/compound 一致 (R11 F-HIGH)**: 正規化後の名前を `_` / `-` /
+     camelCase 境界で分割し、denylist token が **segment として** 含まれる (= `(^|[_-])<token>([_-]|$)` または
+     camelCase boundary 相当) 場合に hit とする。これで `old_secret_ref_id` / `new_secret_ref_id` /
+     `matched_secret_ref_id` / `restored_secret_ref_id` / `demoted_secret_ref_id` / `secretRefId` のような
+     prefix/suffix 付き compound key も捕捉する:
+     - continuation/session/thread/provider 系: `provider_continuation_ref` / `continuation_ref` /
+       `continuation_id` / `provider_continuation` / `session_ref` / `session_id` / `session_token` /
+       `thread_ref` / `thread_id` / `provider_request` / `provider_request_body` / `provider_response` /
+       `raw_response` / `continuation`。
+     - **SecretBroker 参照系 (R5 F-HIGH / R11 F-HIGH)**: `secret_ref` / `secret_ref_id` / `secret_uri` /
+       `secret_capability` / `capability_token` (segment 一致で `old_secret_ref_id` 等 compound も hit。
+       camelCase `secretRef` / `secretRefId` / `secretUri` / `capabilityToken` も同様)。SecretBroker 識別子 /
+       トポロジ (SecretRef UUID / rotation 対象 / 一致情報) は専用 secret_refs viewer (R-3、owner-only gate)
+       経由のみで、artifact endpoint からは露出させない。
    - **forbidden URI token scan (R4 F-HIGH)** — **object key と string value の両方** に対し、正規化後の文字列の
      **任意位置 (substring)** で次の token を検出: `secret://` / `provider-continuation:`
      (自由文 cli_stdout/stderr/evidence に `failed to resolve secret://...` のように埋め込まれた場合も
@@ -261,6 +267,9 @@ select r.id as run_id,
       - **SecretBroker 参照 key / 構造 (R5 F-HIGH)**: `{"secret_ref_id":"..."}` /
         `{"target":{"secret_ref_id":"..."}}` / `{"secret_ref":{"scope":"project","name":"openai-api-key","version":"v1"}}`
         / camelCase (`secretRefId`)。
+      - **SecretBroker compound/派生 key (R11 F-HIGH)**: `{"old_secret_ref_id":"..."}` /
+        `{"new_secret_ref_id":"..."}` / `{"matched_secret_ref_id":"..."}` / `{"restored_secret_ref_id":"..."}` /
+        `{"demoted_secret_ref_id":"..."}` / camelCase → segment 一致で key-value ごと drop。
       - **自由文 token=value ログ (R6 F-HIGH-1)**: string value `cli_stdout: "failed to resolve secret_ref_id=sr_project_openai_v1"` /
         `cli_stderr: "use capability_token abc123"` → 値全体を redaction marker に置換。
       - **token=value を JSON key に埋めた露出 (R10 F-HIGH)**: `{"failed to resolve secret_ref_id=sr_project_openai_v1": true}` /
