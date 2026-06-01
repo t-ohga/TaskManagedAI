@@ -87,11 +87,15 @@ type DashboardProps = {
 export default async function DashboardPage({ searchParams }: DashboardProps) {
   const params = await searchParams;
   const rangeFilter = params.range ?? "";
-  const [backendHealth, projectData, ticketSummary] = await Promise.all([
+  const [backendHealth, projectData, ticketSummaryResult] = await Promise.all([
     readBackendHealth(),
     readProjectSummaries(),
-    // D-5 (ADR-00039): status 別母数は backend SQL 集計 (limit 非依存)。失敗時は空集計に倒す。
-    fetchTicketSummary().catch(() => ({ ticket_total: 0, status_counts: [] })),
+    // D-5 (ADR-00039): status 別母数は backend SQL 集計 (limit 非依存)。
+    // Codex R1-2: 失敗 (404/500/auth/schema drift) を ticket_total=0 の有効データに変換すると
+    // 「0 件」と「集計失敗」を混同するため、ok/error を区別して degraded 表示にする。
+    fetchTicketSummary()
+      .then((summary) => ({ ok: true as const, summary }))
+      .catch(() => ({ ok: false as const })),
   ]);
   const projects = projectData.summaries;
   const projectTotal = projectData.projectTotal;
@@ -100,14 +104,18 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
 
   // D-5 (ADR-00039 R2): backend の raw status_counts を表示 4 bucket に折り畳む
   // (in_progress = in_progress+blocked+review)。4 bucket 合計 == ticket_total。
-  const aggCounts = foldTicketDisplayCounts(ticketSummary.status_counts);
+  const ticketSummaryOk = ticketSummaryResult.ok;
+  const aggCounts = ticketSummaryOk
+    ? foldTicketDisplayCounts(ticketSummaryResult.summary.status_counts)
+    : { open: 0, in_progress: 0, closed: 0, cancelled: 0 };
   const ticketStatusCounts = [
     { label: "未着手", count: aggCounts.open, color: "#3b82f6" },
     { label: "進行中", count: aggCounts.in_progress, color: "#f59e0b" },
     { label: "完了", count: aggCounts.closed, color: "#10b981" },
     { label: "中止", count: aggCounts.cancelled, color: "#6b7280" },
   ];
-  const totalTickets = ticketSummary.ticket_total;
+  // 集計失敗時は 0 を「真の 0 件」として描画しない (donut/bar は totalTickets>0 guard で非表示)。
+  const totalTickets = ticketSummaryOk ? ticketSummaryResult.summary.ticket_total : 0;
   const closedTickets = aggCounts.closed;
 
   return (
@@ -196,7 +204,11 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
             <section aria-label="全体サマリー" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <article className="rounded-lg border border-line bg-panel p-4 shadow-sm">
           <p className="text-xs text-muted-foreground">総チケット数</p>
-          <p className="mt-1 text-2xl font-bold text-ink">{totalTickets}</p>
+          {/* 集計失敗時は 0 ではなく「—」を表示し、失敗を真の 0 件と誤認させない (Codex R1-2)。 */}
+          <p className="mt-1 text-2xl font-bold text-ink">{ticketSummaryOk ? totalTickets : "—"}</p>
+          {ticketSummaryOk ? null : (
+            <p className="mt-1 text-xs text-danger">集計を取得できませんでした</p>
+          )}
         </article>
         <article className="rounded-lg border border-line bg-panel p-4 shadow-sm">
           <p className="text-xs text-muted-foreground">プロジェクト数</p>

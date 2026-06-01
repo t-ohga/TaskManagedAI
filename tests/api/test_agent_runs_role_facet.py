@@ -4,17 +4,44 @@
   (UUID detail に食われて 422 にならないこと)
 - response schema が role_id / count / status のみ (raw secret なし)
 - status query は `AgentRunStatus` Literal で検証され、不正値は FastAPI が 422
-
-注: tenant 境界 + active-scope (`soft_deleted_ticket_run_exclusion`) + status predicate の
-DB 統合 negative は ADR-00039 テスト指針に従い CI (Compose postgres) で検証する。本 file は
-cost_summary (ADR-00033) と同じ no-DB の contract test。
+- **SQL introspection** (Codex R1): capturing session で endpoint を呼び、compile した SQL に
+  tenant 境界 / role_id null 除外 / active-scope (soft-deleted ticket 除外) / status predicate が
+  含まれることを assert する。predicate 削除を no-DB で catch する (full な seed-based DB negative は
+  CI Compose postgres で実行、host dev からは conftest の test-password 不一致で実行不可)。
 """
 
 from __future__ import annotations
 
+import asyncio
+from typing import cast
+from uuid import uuid4
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from backend.app.api import agent_runs as agent_runs_api
 from backend.app.config import Settings
 from backend.app.main import create_app
+
+
+class _CapturingResult:
+    def all(self) -> list[object]:
+        return []
+
+
+class _CapturingSession:
+    """endpoint が build した SQL statement を捕捉する fake session (no-DB)."""
+
+    def __init__(self) -> None:
+        self.statements: list[object] = []
+
+    async def execute(self, statement: object, *args: object, **kwargs: object) -> _CapturingResult:
+        self.statements.append(statement)
+        return _CapturingResult()
+
+
+def _compiled_sql(statement: object) -> str:
+    compiled = statement.compile(compile_kwargs={"literal_binds": False})  # type: ignore[attr-defined]
+    return " ".join(str(compiled).split())
 
 
 def _settings() -> Settings:
@@ -48,3 +75,43 @@ def test_role_facet_response_schema_has_no_secret_fields() -> None:
     assert resp_fields == {"roles", "status"}
     for forbidden in ("secret", "token_hash", "api_key", "provider_key", "capability"):
         assert not any(forbidden in f for f in entry_fields | resp_fields)
+
+
+def test_role_facet_query_applies_tenant_active_scope_and_null_exclusion() -> None:
+    # status 省略時: tenant 境界 + role_id null 除外 + active-scope (soft-deleted ticket bound 除外)
+    # が SQL に含まれ、status predicate は含まれないこと (ADR-00039 R1 / Codex R1)。
+    session = _CapturingSession()
+    asyncio.run(
+        agent_runs_api.role_facet_endpoint(
+            status_value=None,
+            actor_id=uuid4(),
+            tenant_id=1,
+            session=cast(AsyncSession, session),
+        )
+    )
+    assert len(session.statements) == 1
+    sql = _compiled_sql(session.statements[0])
+    assert "agent_runs.tenant_id =" in sql
+    assert "agent_runs.role_id IS NOT NULL" in sql
+    # soft_deleted_ticket_run_exclusion(): NOT EXISTS (... tickets.deleted_at IS NOT NULL)
+    assert "tickets.deleted_at IS NOT NULL" in sql
+    assert "GROUP BY agent_runs.role_id" in sql
+    # status 省略時は status predicate を含めない (tenant-wide facet)。
+    assert "agent_runs.status =" not in sql
+
+
+def test_role_facet_query_applies_status_predicate_when_filtered() -> None:
+    # status 指定時: list endpoint と同じ status predicate を含めること (status-scoped facet)。
+    session = _CapturingSession()
+    asyncio.run(
+        agent_runs_api.role_facet_endpoint(
+            status_value="running",
+            actor_id=uuid4(),
+            tenant_id=1,
+            session=cast(AsyncSession, session),
+        )
+    )
+    sql = _compiled_sql(session.statements[0])
+    assert "agent_runs.status =" in sql
+    # active-scope は status 指定時も維持。
+    assert "tickets.deleted_at IS NOT NULL" in sql
