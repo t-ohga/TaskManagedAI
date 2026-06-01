@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 
-import { fetchBackendRaw } from "@/lib/api/client";
+import { BackendApiError, fetchBackendRaw } from "@/lib/api/client";
 import { TicketStatusChanger } from "@/components/ticket-status-changer";
 import { Breadcrumb } from "@/components/breadcrumb";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
@@ -64,37 +64,54 @@ function statusBadge(status: string) {
 }
 
 async function loadTicket(id: string): Promise<TicketDetail | null> {
-  try {
-    const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
-    const projects = ((projectsRes as Record<string, unknown>)?.projects ?? []) as Record<string, string>[];
+  // /me/projects 取得失敗 (401 / 5xx 等) はそのまま throw して error boundary に流す
+  // (false 404 で backend / auth 障害を握りつぶさない、Codex B2b R3 finding)。
+  const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
+  const projects = ((projectsRes as Record<string, unknown>)?.projects ?? []) as Record<string, string>[];
 
-    // 各 project の by-id detail endpoint を直接叩く。
-    // 一覧 (default limit=50) を走査して find する旧実装だと、51 件以上ある project では
-    // 新規作成直後の ticket が先頭 50 件に入らず 404 になり得た (Codex B2b R2 finding)。
-    // by-id 取得なら project 内の件数に依存せず確実に解決する。
-    const results = await Promise.all(
-      projects.map(async (p) => {
-        const pid = String(p.project_id ?? p.id ?? "");
-        const slug = String(p.slug ?? "");
-        if (!pid) return null;
-        try {
-          const ticketRes = await fetchBackendRaw(
-            `/api/v1/projects/${pid}/tickets/${id}` as `/${string}`
-          );
-          const ticket = ticketRes as (TicketDetail & { id?: string }) | null;
-          if (ticket && ticket.id === id) {
-            return { ...ticket, project_id: pid, project_slug: slug };
-          }
-        } catch {
-          /* 404 (別 project) / inaccessible project は skip */
+  // 各 project の by-id detail endpoint を直接叩く。
+  // 一覧 (default limit=50) を走査して find する旧実装だと、51 件以上ある project では
+  // 新規作成直後の ticket が先頭 50 件に入らず 404 になり得た (R2 finding)。
+  // by-id 取得なら project 内の件数に依存せず確実に解決する。
+  // - 別 project に存在しない 404 だけ skip。
+  // - 401 / 403 / 5xx / network は「存在しない」と区別できないため rethrow (R3 finding)。
+  const settled = await Promise.allSettled(
+    projects.map(async (p): Promise<TicketDetail | null> => {
+      const pid = String(p.project_id ?? p.id ?? "");
+      const slug = String(p.slug ?? "");
+      if (!pid) return null;
+      try {
+        const ticketRes = await fetchBackendRaw(
+          `/api/v1/projects/${pid}/tickets/${id}` as `/${string}`
+        );
+        const ticket = ticketRes as (TicketDetail & { id?: string }) | null;
+        if (ticket && ticket.id === id) {
+          return { ...ticket, project_id: pid, project_slug: slug };
         }
         return null;
-      })
-    );
-    return results.find((r) => r !== null) ?? null;
-  } catch {
-    return null;
+      } catch (error) {
+        if (error instanceof BackendApiError && error.status === 404) {
+          return null;
+        }
+        throw error;
+      }
+    })
+  );
+
+  // 1) どれかの project で見つかればそれを返す (存在が確定するため他 project の error は無視)。
+  for (const result of settled) {
+    if (result.status === "fulfilled" && result.value !== null) {
+      return result.value;
+    }
   }
+  // 2) 見つからず、非 404 の失敗があれば存在判定不能として rethrow (error boundary へ)。
+  for (const result of settled) {
+    if (result.status === "rejected") {
+      throw result.reason;
+    }
+  }
+  // 3) 全 project が 404 / 該当なし → 本当に存在しない (notFound へ)。
+  return null;
 }
 
 export default async function TicketDetailPage({ params }: TicketDetailPageProps) {
@@ -186,7 +203,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           <h2 className="text-lg font-semibold">アクション</h2>
           <div className="mt-4 grid gap-2">
             <a
-              href={`/tickets?project=${ticket.project_slug}`}
+              href={`/tickets?project=${encodeURIComponent(ticket.project_slug)}`}
               className="rounded-md border border-line px-4 py-2 text-center text-sm font-medium text-muted-foreground transition-colors hover:bg-slate-50"
             >
               プロジェクトの看板に戻る
