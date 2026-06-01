@@ -90,9 +90,16 @@ Response (TicketSummaryResponse):
 
 - actor がアクセス可能な全 project の `tickets` を tenant / project 境界内で `GROUP BY status` 集計。
 - **`Ticket.deleted_at IS NULL` を必須条件**にし、soft-deleted ticket を母数に含めない (active-scope)。
-- status enum は ticket status の正本に一致 (frontend は open / in_progress / closed / cancelled を
-  表示に使い、残りは合算 or 非表示にできる)。
-- `ticket_total` は (active な) 全 status の合計 (= 既存 active list の `total` と整合)。
+- endpoint は **raw な per-status 件数** (ticket status 正本の全 enum) を返す。`status_counts` は
+  欠損 status を 0 で埋めず、出現した status のみ返してもよい (frontend で 0 補完)。
+- `ticket_total` は (active な) **全 status の合計** (= 既存 active list の `total` と整合)。
+- **表示 bucket mapping を固定 (Codex ADR R2)**: 既存 dashboard と同じ集約を維持する。frontend は
+  raw status_counts を次の 4 bucket に折り畳む。`ticket_total` と 4 bucket 合計は常に一致する
+  (どの status も必ずいずれかの bucket に入り、欠落・二重計上しない):
+  - `進行中 (in_progress)` = `in_progress + blocked + review`
+  - `未着手 (open)` = `open` (+ 未知 status の fallback)
+  - `完了 (closed)` = `closed`
+  - `中止 (cancelled)` = `cancelled`
 
 ### C-4: `GET /api/v1/agent_runs/role_facet`
 
@@ -114,6 +121,10 @@ Response (RoleFacetResponse):
   role 候補を作るため、status scoped facet を表現できないと「選択中 status に存在しない role chip
   をクリック → 空一覧」という facet drift が起きる。status 省略時は tenant-wide facet。
 - `role_id` 昇順 (安定した chip 並び)。null (single-agent) は facet に出さない。
+- **route 登録順序 (Codex ADR R2、必須)**: `agent_runs.py` には `@router.get("/{run_id}")` の UUID
+  detail route が既存。FastAPI/Starlette は定義順照合のため、`role_facet` を `/{run_id}` より **後**に
+  定義すると `/role_facet` が `run_id` として解釈され UUID 422 になる。`role_facet` は
+  **`cost_summary` と同じ静的 route block・`/{run_id}` より前**に定義する。
 
 ## 却下案
 
@@ -160,3 +171,8 @@ Response (RoleFacetResponse):
 - **status-scoped facet (Codex ADR R1)**: `role_facet?status=<X>` が list endpoint と同じ status
   predicate を適用し、当該 status に属する role だけを返すこと (status 省略時は tenant-wide)。
   不正な status 値は 422 で reject。
+- **route ordering (Codex ADR R2)**: `GET /api/v1/agent_runs/role_facet` が 200 を返し
+  (`/{run_id}` detail に食われない)、`?status=not-a-status` が 422 になる route-order regression test。
+- **表示 bucket 整合 (Codex ADR R2)**: `blocked` / `review` を含む fixture で、`ticket_total` が
+  raw status_counts 合計とも 4 表示 bucket (`in_progress = in_progress+blocked+review` 等) 合計とも
+  一致し、いずれの status も欠落・二重計上しないこと。
