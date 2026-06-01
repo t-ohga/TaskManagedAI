@@ -181,10 +181,12 @@ select r.id as run_id,
 - `lib/api/agent-runs.ts` (or 専用 module): `fetchRunArtifacts(runId)` + Zod schema (strict、content は
   optional/nullable、`content_redacted` / `redaction_reason` を持つ)。
 - run 詳細 (`app/(admin)/runs/[id]/`) に「生成物 (Artifact)」section。
-  - 各 artifact: kind / trust_level / payload_data_class バッジ + content (redacted 時は「機密分類のため
-    非表示 (hash: ...)」等の説明)。
+  - 各 artifact: kind / trust_level / payload_data_class バッジ + content。
+    **redacted 時 (R6/R7 F-HIGH)** は `redaction_reason` (例「機密分類のため非表示」「エクスポート不可のため非表示」)
+    と opaque `id` のみ表示し、**`content_hash` / digest らしき値は一切 DOM に描画しない**
+    (`content_redacted=true` のとき `content_hash` は API で null。UI も hash/digest を出さず hash oracle を作らない)。
   - 取得失敗は section 単位で degrade。run 詳細全体は落とさない。
-  - secret / raw provider response / continuation ref は DOM に出さない (projection で除去済)。
+  - secret / secret_ref / raw provider response / continuation ref / content_hash(redacted 時) は DOM に出さない。
 
 ## リスク
 
@@ -253,8 +255,10 @@ select r.id as run_id,
     `content_redacted=false` のときだけ `content_hash` が非 null。
   - response schema が secret / raw provider / continuation field を持たない。`provider_continuation_ref` 除外固定。
   - seed-based tenant/project 越境 + soft-delete + non-exportable negative は CI Compose postgres で検証 (host 不可)。
-- frontend: `fetchRunArtifacts` の Zod strict (content nullable + redaction フラグ) + run 詳細 artifact
-  section の表示 / redacted 表示 / degrade。
+- frontend: `fetchRunArtifacts` の Zod strict (content nullable + redaction フラグ、`content_hash` nullable) +
+  run 詳細 artifact section の表示 / redacted 表示 / degrade。
+  - **redacted card の DOM 非露出 (R7 F-HIGH)**: `content_redacted=true` の artifact card に
+    `content_hash` 文字列 / digest らしき hex 値 / content body が **描画されない** ことを assert (must-ship)。
 
 ## 不変条件 trace
 
