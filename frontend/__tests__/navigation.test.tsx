@@ -1,6 +1,8 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import type * as NextNavigation from "next/navigation";
+
 import { Navigation } from "../components/navigation";
 
 vi.mock("@/components/notification-badge", () => ({
@@ -9,6 +11,13 @@ vi.mock("@/components/notification-badge", () => ({
       通知
     </a>
   )
+}));
+
+// NavLink は usePathname() で active link を判定する (aria-current="page")。RTL には
+// App Router の pathname context がないため、dashboard を現在地として mock する。
+vi.mock("next/navigation", async (importActual) => ({
+  ...(await importActual<typeof NextNavigation>()),
+  usePathname: () => "/dashboard"
 }));
 
 describe("Navigation", () => {

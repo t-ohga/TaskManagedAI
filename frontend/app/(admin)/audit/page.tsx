@@ -117,6 +117,32 @@ function eventTypeBadge(eventType: string) {
   );
 }
 
+// AC-HARD-02 observability: per-row の payload redaction 状態を可視化する。これにより
+// operator は「安全に redaction 済の行」と「未検証 / backend redaction drift の行」を
+// 区別でき、redaction evidence の欠落を検知できる。canonical な backend enum なので
+// reason_code 同様に raw 値をそのまま表示し (翻訳しない)、安全な状態かどうかだけ色で示す。
+const SAFE_REDACTION_STATUSES = new Set(["keys_only", "redacted", "masked"]);
+
+function redactionStatusBadge(status: string | null) {
+  if (!status) {
+    return (
+      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+        未検証
+      </span>
+    );
+  }
+  const safe = SAFE_REDACTION_STATUSES.has(status);
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+        safe ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+      }`}
+    >
+      {status}
+    </span>
+  );
+}
+
 type AuditPageProps = {
   searchParams: Promise<{ type?: string; page?: string }>;
 };
@@ -199,6 +225,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">アクター</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">理由コード</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">ペイロード</th>
+                <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">マスク状態</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">日時</th>
               </tr>
             </thead>
@@ -211,6 +238,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
                   </td>
                   <td className="px-4 py-3 text-xs">{e.reason_code ?? "—"}</td>
                   <td className="px-4 py-3 text-xs">{e.payload_keys?.length ? e.payload_keys.join(", ") : "—"}</td>
+                  <td className="px-4 py-3">{redactionStatusBadge(e.payload_redaction_status)}</td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
                     {e.created_at ? new Date(e.created_at).toLocaleString("ja-JP") : "—"}
                   </td>

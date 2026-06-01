@@ -135,13 +135,15 @@ describe("TodayPage", () => {
     expect(within(kpiStrip).getByText("2")).toBeVisible();
     expect(within(kpiStrip).getByText("4/5")).toBeVisible();
 
-    const todayLane = within(region).getByRole("region", { name: "Today lane" });
+    // Lane component は aria-label={`${title} lane`} を出す。i18n で lane title が
+    // 日本語化済 ("今日の概要" / "受信箱") のため region 名も日本語 + " lane"。
+    const todayLane = within(region).getByRole("region", { name: "今日の概要 lane" });
     expect(within(todayLane).getByText("Critical open work")).toBeVisible();
     expect(within(todayLane).getByText("Unassigned inbox work")).toBeVisible();
     expect(within(todayLane).getByText("リポジトリ書込 (repo_write)")).toBeVisible();
     expect(within(todayLane).getByText("running")).toBeVisible();
 
-    const inboxLane = within(region).getByRole("region", { name: "Inbox lane" });
+    const inboxLane = within(region).getByRole("region", { name: "受信箱 lane" });
     expect(within(inboxLane).getByText("Unassigned inbox work")).toBeVisible();
     expect(within(inboxLane).getByText("queued")).toBeVisible();
     expect(within(region).queryByText("Closed work")).not.toBeInTheDocument();
