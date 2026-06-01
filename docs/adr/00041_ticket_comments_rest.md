@@ -1,8 +1,9 @@
 ---
 id: "ADR-00041"
 title: "Ticket コメント REST エンドポイント + activity timeline 実データ化 (N-1 / N-2)"
-status: "proposed"
+status: "accepted"
 date: "2026-06-01"
+accepted_at: "2026-06-01"
 deciders: ["t-ohga"]
 adr_gate_criteria: [3]
 related_adr:
