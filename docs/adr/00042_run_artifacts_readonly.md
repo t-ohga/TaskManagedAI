@@ -90,9 +90,17 @@ run 詳細から artifact を読むための **read-only REST endpoint** と **r
 
 ### display projection (R1/R2 F-HIGH-2 + R2 F-HIGH-1)
 
-各 artifact は **metadata は常時** 返す: `id` / `kind` / `content_hash` / `payload_data_class` /
+各 artifact は **metadata** を返す: `id` (opaque UUID) / `kind` / `payload_data_class` /
 `trust_level` / `exportable` / `parent_artifact_id` / `created_at` / `content_redacted` (bool) /
-`redaction_reason` (str|null)。`content`(表示用 body)は次の **優先順** projection で決める:
+`redaction_reason` (str|null)。
+
+**`content_hash` は `content_redacted=false` のときだけ返す (R6 F-HIGH-2)**。`content_hash` は保存済み raw
+`content_jsonb` の SHA-256 であり、redaction (exportable=false / confidential/pii / scrub hit) しても同一 hash を
+返すと、低エントロピー PII や既知候補の SecretBroker 参照を offline guess で確認できる hash oracle になる。
+よって **redacted artifact では `content_hash=null`** とし、deterministic digest を side-channel にしない
+(artifact 識別は opaque `id` で行う。監査用 raw hash が必要なら owner-only の別経路で分離、本 endpoint では出さない)。
+
+`content`(表示用 body)は次の **優先順** projection で決める:
 
 1. **kind 除外**: `provider_continuation_ref` は repository query で除外済 (返却対象に出ない、二重防御)。
 2. **`exportable == false` → 全面 redaction (R2 F-HIGH-1)**: kind / data_class に関係なく content を
@@ -121,6 +129,12 @@ run 詳細から artifact を読むための **read-only REST endpoint** と **r
      (自由文 cli_stdout/stderr/evidence に `failed to resolve secret://...` のように埋め込まれた場合も
      先頭でなく途中を検出して捕捉)。hit した key は key-value ごと drop、hit した string value は値全体を
      redaction marker (`"[redacted: forbidden URI token]"`) に置換。
+   - **自由文 token=value scan (R6 F-HIGH-1)** — string value 中に、denylist token
+     (`secret_ref_id` / `secret_ref` / `secret_uri` / `capability_token` / `secret_capability` /
+     `continuation_id` / `session_id` / `session_token` / `thread_id` 等) が `[:=]` または空白を挟んで
+     値を伴う自由文 (例 `failed to resolve secret_ref_id=sr_project_openai_v1` / `capability_token abc123`)
+     を正規化済み regex で検出し、**値全体を redaction marker に置換** (key 名でも shape でも URI でもない
+     ログ文字列経由の SecretBroker / continuation 識別子露出を封鎖)。
    - **shape denylist** (nested object 形状、再帰): ① `artifact_ref`/`artifactRef` + (`sha256` または
      `expires_at`/`expiresAt`) を持つ object (continuation ref 形状)、② `secret_ref_id` を持つ object、
      または `scope` + `name` + `version` を併せ持つ object (secret_ref メタデータ形状、R5 F-HIGH) を drop。
@@ -180,6 +194,8 @@ select r.id as run_id,
 | `exportable=false` artifact (inter-agent message / memory body) の raw body 露出 (R2 F-HIGH-1) | projection 優先順 2 で `exportable=false` を kind/data_class 問わず全面 redaction。`kind="other"` + `exportable=false` + public/internal fixture を必須 negative test |
 | continuation ref / SecretBroker secret_ref の key/value/shape/埋め込み すり抜け (R2-R5 F-HIGH) | 再帰 scrub を **object key と string value の両方** に適用 (continuation/session/provider + **SecretBroker 参照 (`secret_ref`/`secret_ref_id`/`secret_uri`/`capability_token`)** name 一致 + camelCase + `secret://`/`provider-continuation:` を **任意位置 substring** + shape (`artifact_ref`+`sha256`/`expires_at`、`secret_ref_id`、`scope`+`name`+`version`))。前処理 **NFKC + trim + Cc/Cf 除去 + casefold**。key 経由 / 埋め込み / 全角 / secret_ref 構造 fixture を negative test |
 | confidential/pii 本文の拡散 | projection 優先順 3 で content=null + redacted。badge 表示を access control の代替にしない |
+| 自由文ログ経由の secret_ref/continuation token 露出 (R6 F-HIGH-1) | string value の token=value 自由文 (`secret_ref_id=...` / `capability_token ...`) を regex で whole-value redaction。log 形式 fixture を must-ship negative test |
+| redacted artifact の content_hash hash-oracle side-channel (R6 F-HIGH-2) | `content_redacted=true` では `content_hash=null` (raw content の deterministic digest を出さない)。redacted response で hash 非露出の test |
 | `provider_continuation_ref` の UI 露出 (ContextSnapshot rule 違反) | repository query で kind 除外 + projection (exportable=false redaction + shape scrub) の三重防御 |
 | route 衝突 (`/{run_id}` と `/{run_id}/artifacts`) | route-order test |
 | tenant/project 越境 | run 起点 query の複合境界。seed-based negative は CI Compose |
@@ -228,8 +244,13 @@ select r.id as run_id,
       - **SecretBroker 参照 key / 構造 (R5 F-HIGH)**: `{"secret_ref_id":"..."}` /
         `{"target":{"secret_ref_id":"..."}}` / `{"secret_ref":{"scope":"project","name":"openai-api-key","version":"v1"}}`
         / camelCase (`secretRefId`)。
+      - **自由文 token=value ログ (R6 F-HIGH-1)**: `cli_stdout: "failed to resolve secret_ref_id=sr_project_openai_v1"` /
+        `cli_stderr: "use capability_token abc123"` → 値全体を redaction marker に置換。
       - shape (`{artifact_ref, sha256, expires_at}` / `{scope, name, version}`)。
     - clean な public/internal + exportable=true content → そのまま返る (`content_redacted=false`)。
+  - **redacted 時の hash 非露出 (R6 F-HIGH-2)**: `content_redacted=true` の全ケース (exportable=false /
+    confidential/pii / scrub hit) で response の `content_hash` が `null` (raw hash を side-channel として出さない)。
+    `content_redacted=false` のときだけ `content_hash` が非 null。
   - response schema が secret / raw provider / continuation field を持たない。`provider_continuation_ref` 除外固定。
   - seed-based tenant/project 越境 + soft-delete + non-exportable negative は CI Compose postgres で検証 (host 不可)。
 - frontend: `fetchRunArtifacts` の Zod strict (content nullable + redaction フラグ) + run 詳細 artifact
