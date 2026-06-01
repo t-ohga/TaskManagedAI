@@ -5,7 +5,7 @@
  * 1. dev login + Tickets list page 表示確認 (dogfooding seed 投入後の Ticket 一覧)
  * 2. 「+ 新規チケット」 button click → form 表示
  * 3. form 入力 (slug + title + status) → submit
- * 4. 一覧再表示で新 Ticket 出現確認 (router.refresh 経由 revalidatePath 連動)
+ * 4. 作成後、作成した Ticket の詳細 page へ自動遷移確認 (G-5、router.push 経由)
  * 5. 詳細 page 移動 → edit form 表示
  * 6. status 変更 → submit
  * 7. 詳細 page で status 変更反映確認
@@ -44,9 +44,10 @@ test.describe("Ticket CRUD E2E flow (SP-012-11.1 BL-TCU-018)", () => {
     await form.locator('select[name="status"]').selectOption("open");
     await form.getByRole("button", { name: /作成/u }).click();
 
-    // 4. 一覧再表示で新 Ticket 出現 (router.refresh + revalidatePath 連動)
-    // form 自動 close 後、一覧 table に新 slug が出現する
-    await expect(page.getByText(UNIQUE_SLUG)).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(UNIQUE_TITLE)).toBeVisible();
+    // 4. 作成後、作成した Ticket の詳細 page へ自動遷移 (G-5、router.push 経由)
+    // form 自動 close 後、/tickets/<id> へ遷移し詳細 (title + slug) が表示される
+    await page.waitForURL(/\/tickets\/[^/]+$/u, { timeout: 10_000 });
+    await expect(page.getByRole("heading", { name: UNIQUE_TITLE })).toBeVisible();
+    await expect(page.getByText(UNIQUE_SLUG)).toBeVisible();
   });
 });

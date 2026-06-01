@@ -13,6 +13,7 @@ import {
   type ResearchTaskListResponse
 } from "@/lib/api/research";
 import { formatResearchStatus } from "@/lib/i18n/research-labels";
+import { EmptyState } from "@/components/page-states";
 
 export const dynamic = "force-dynamic";
 
@@ -41,10 +42,14 @@ function StatusBadge({ status }: { readonly status: ResearchTask["status"] }) {
 
 function ResearchTaskTable({ tasks }: { readonly tasks: readonly ResearchTask[] }) {
   if (tasks.length === 0) {
+    // O-5 (UI 監査 fix): 空状態に次アクションの導線を付ける。リサーチ task は MCP 経由で
+    // 作成され、調査結果はチケットへ反映されるため、チケット一覧への遷移を促す。
     return (
-      <div className="rounded-md border border-dashed border-line bg-white p-4 text-sm text-muted-foreground">
-        リサーチ task はまだありません。
-      </div>
+      <EmptyState
+        title="リサーチ task はまだありません"
+        description="リサーチ task は MCP 経由で作成されます。調査結果はチケットの根拠として活用できます。"
+        action={{ label: "チケット一覧へ", href: "/tickets" }}
+      />
     );
   }
 

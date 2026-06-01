@@ -306,7 +306,6 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
         </div>
       ) : (
         <TicketCreateDialog
-          projectSlug={selectedProject}
           projectId={(() => {
             const p = projects.find((p) => p.slug === selectedProject);
             return p ? String((p as Record<string, unknown>).project_id ?? (p as Record<string, unknown>).id ?? "") : undefined;
