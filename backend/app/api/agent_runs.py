@@ -99,6 +99,25 @@ class RoleFacetResponse(BaseModel):
     status: AgentRunStatus | None
 
 
+ActivityBucketGranularity = Literal["day", "week"]
+
+
+class ActivityBucket(BaseModel):
+    bucket_start: datetime
+    run_count: int
+    # measured run (cost_usd not null) が 0 件なら null (未計測を $0 と誤認させない、ADR-00040 R1-2)。
+    cost_usd: float | None
+    measured_run_count: int
+    unmeasured_run_count: int
+
+
+class ActivityTimeseriesResponse(BaseModel):
+    # sparse: active run のある bucket のみ (run_count=0 bucket は返さない、ADR-00040 R1-3)。
+    buckets: list[ActivityBucket]
+    bucket: ActivityBucketGranularity
+    range: CostSummaryRange
+
+
 class AgentRunEventRead(BaseModel):
     id: UUID
     run_id: UUID
@@ -404,6 +423,63 @@ async def role_facet_endpoint(
         roles=[RoleFacetEntry(role_id=str(row[0]), count=int(row[1])) for row in rows],
         status=status_value,
     )
+
+
+# activity_timeseries も静的 route。`/{run_id}` より前に定義する (ADR-00040、route ordering)。
+@router.get("/activity_timeseries", response_model=ActivityTimeseriesResponse)
+async def activity_timeseries_endpoint(
+    bucket: ActivityBucketGranularity = Query(default="day"),  # noqa: B008
+    range_value: CostSummaryRange = Query(default="month", alias="range"),  # noqa: B008
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> ActivityTimeseriesResponse:
+    """AgentRun のアクティビティ / コスト時系列 (read-only、ADR-00040 D-3/D-4).
+
+    `date_trunc(bucket, created_at)` で bucket 集計。tenant 境界 + active-scope
+    (soft-deleted ticket bound run 除外) を強制し、range cutoff は server 側で算出する。
+    `bucket` は Literal[day,week] (FastAPI 検証、不正値 422)。SQLAlchemy が bind param 化するため
+    caller 文字列を SQL に直接展開しない。sparse: active run のある bucket のみ返す。
+    `cost_usd` は bucket 内 measured run (cost_usd not null) が 0 件なら null。
+    raw secret なし (件数・cost のみ)。`actor_id` は authenticated session 強制のため Depends で resolve。
+    """
+    conditions = [AgentRun.tenant_id == tenant_id]
+    cutoff = _cost_summary_cutoff(range_value)
+    if cutoff is not None:
+        conditions.append(AgentRun.created_at >= cutoff)
+    # cost_summary / list と同じ active-scope (soft-deleted ticket bound run を除外)。
+    conditions.append(soft_deleted_ticket_run_exclusion())
+
+    bucket_start = func.date_trunc(bucket, AgentRun.created_at).label("bucket_start")
+    rows = (
+        await session.execute(
+            select(
+                bucket_start,
+                func.count(),
+                func.coalesce(func.sum(AgentRun.cost_usd), Decimal(0)),
+                func.count(AgentRun.cost_usd),
+            )
+            .where(*conditions)
+            .group_by(bucket_start)
+            .order_by(bucket_start)
+        )
+    ).all()
+
+    buckets: list[ActivityBucket] = []
+    for start, run_count, cost_sum, measured_count in rows:
+        run_n = int(run_count or 0)
+        measured_n = int(measured_count or 0)
+        buckets.append(
+            ActivityBucket(
+                bucket_start=start,
+                run_count=run_n,
+                # measured 0 件なら null (未計測を $0 と誤認させない)。
+                cost_usd=float(cost_sum) if measured_n > 0 else None,
+                measured_run_count=measured_n,
+                unmeasured_run_count=run_n - measured_n,
+            )
+        )
+    return ActivityTimeseriesResponse(buckets=buckets, bucket=bucket, range=range_value)
 
 
 @router.get("/{run_id}", response_model=AgentRunDetailResponse)

@@ -68,3 +68,33 @@ export async function fetchRoleFacet(status?: string): Promise<RoleFacet> {
     : "/api/v1/agent_runs/role_facet";
   return fetchBackendJson(path, RoleFacetSchema);
 }
+
+// ADR-00040 D-3/D-4: AgentRun アクティビティ / コスト時系列 (date_trunc bucket、sparse)。
+const ActivityBucketSchema = z.object({
+  bucket_start: z.string(),
+  run_count: z.number().int(),
+  // measured run 0 件なら null (未計測)。0 に丸めず未計測として扱う。
+  cost_usd: z.number().nullable(),
+  measured_run_count: z.number().int(),
+  unmeasured_run_count: z.number().int()
+});
+
+const ActivityBucketGranularitySchema = z.enum(["day", "week"]);
+export type ActivityBucketGranularity = z.infer<typeof ActivityBucketGranularitySchema>;
+
+export const ActivityTimeseriesSchema = z.object({
+  buckets: z.array(ActivityBucketSchema),
+  bucket: ActivityBucketGranularitySchema,
+  range: z.string()
+});
+
+export type ActivityTimeseries = z.infer<typeof ActivityTimeseriesSchema>;
+
+export async function fetchActivityTimeseries(
+  bucket: ActivityBucketGranularity = "day",
+  range = "month"
+): Promise<ActivityTimeseries> {
+  const path =
+    `/api/v1/agent_runs/activity_timeseries?bucket=${bucket}&range=${encodeURIComponent(range)}` as `/${string}`;
+  return fetchBackendJson(path, ActivityTimeseriesSchema);
+}

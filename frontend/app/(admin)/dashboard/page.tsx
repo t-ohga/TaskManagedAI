@@ -1,5 +1,5 @@
 import { getBackendHealth, fetchBackendRaw } from "@/lib/api/client";
-import { fetchTicketSummary, foldTicketDisplayCounts } from "@/lib/api/dashboard";
+import { fetchTicketSummary, foldTicketDisplayCounts, fetchActivityTimeseries } from "@/lib/api/dashboard";
 import type { HealthResponse } from "@/lib/api/types";
 import { getFrontendHealth } from "@/lib/health";
 import { StatusDonutChart } from "@/components/status-donut-chart";
@@ -87,7 +87,7 @@ type DashboardProps = {
 export default async function DashboardPage({ searchParams }: DashboardProps) {
   const params = await searchParams;
   const rangeFilter = params.range ?? "";
-  const [backendHealth, projectData, ticketSummaryResult] = await Promise.all([
+  const [backendHealth, projectData, ticketSummaryResult, activityResult] = await Promise.all([
     readBackendHealth(),
     readProjectSummaries(),
     // D-5 (ADR-00039): status 別母数は backend SQL 集計 (limit 非依存)。
@@ -95,6 +95,10 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
     // 「0 件」と「集計失敗」を混同するため、ok/error を区別して degraded 表示にする。
     fetchTicketSummary()
       .then((summary) => ({ ok: true as const, summary }))
+      .catch(() => ({ ok: false as const })),
+    // D-3/D-4 (ADR-00040): AI 実行アクティビティ + コスト時系列。失敗は degraded 表示。
+    fetchActivityTimeseries("day", "month")
+      .then((timeseries) => ({ ok: true as const, timeseries }))
       .catch(() => ({ ok: false as const })),
   ]);
   const projects = projectData.summaries;
@@ -117,6 +121,22 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
   // 集計失敗時は 0 を「真の 0 件」として描画しない (donut/bar は totalTickets>0 guard で非表示)。
   const totalTickets = ticketSummaryOk ? ticketSummaryResult.summary.ticket_total : 0;
   const closedTickets = aggCounts.closed;
+
+  // D-3/D-4 (ADR-00040): bucket_start を MM/DD ラベルにして 2 系列を BarChart 用に整形。
+  // sparse series (active bucket のみ)。cost 系列は cost_usd=null (未計測) bucket を 0 に丸めず除外。
+  const activityOk = activityResult.ok;
+  const activityBuckets = activityOk ? activityResult.timeseries.buckets : [];
+  const formatBucketLabel = (iso: string): string => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? iso.slice(5, 10) : `${d.getMonth() + 1}/${d.getDate()}`;
+  };
+  const activityTrendData = activityBuckets.map((b) => ({
+    label: formatBucketLabel(b.bucket_start),
+    value: b.run_count,
+  }));
+  const costTrendData = activityBuckets
+    .filter((b) => b.cost_usd !== null)
+    .map((b) => ({ label: formatBucketLabel(b.bucket_start), value: b.cost_usd as number }));
 
   return (
     <div className="grid gap-6">
@@ -262,6 +282,34 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
           </article>
         </section>
       )}
+
+      {/* D-3/D-4 (ADR-00040): AI 実行アクティビティ + コスト推移 (日次、直近 1 ヶ月、sparse)。 */}
+      <section aria-label="AI 実行トレンド" className="grid gap-4 md:grid-cols-2">
+        <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+          <h2 className="mb-4 text-base font-semibold">AI 実行アクティビティ (日次)</h2>
+          {activityOk ? (
+            activityTrendData.length > 0 ? (
+              <BarChart data={activityTrendData} />
+            ) : (
+              <p className="text-sm text-muted-foreground">直近 1 ヶ月の AI 実行はありません</p>
+            )
+          ) : (
+            <p className="text-sm text-danger">トレンドを取得できませんでした</p>
+          )}
+        </article>
+        <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+          <h2 className="mb-4 text-base font-semibold">コスト推移 (日次, USD)</h2>
+          {activityOk ? (
+            costTrendData.length > 0 ? (
+              <BarChart data={costTrendData} />
+            ) : (
+              <p className="text-sm text-muted-foreground">計測済みのコストデータがありません</p>
+            )
+          ) : (
+            <p className="text-sm text-danger">トレンドを取得できませんでした</p>
+          )}
+        </article>
+      </section>
 
       {projects.length > 0 && (
         <section aria-label="プロジェクト横断サマリー">
