@@ -68,7 +68,11 @@ describe("ResearchListPage", () => {
 
     render(await ResearchListPage());
 
-    expect(screen.getByText("リサーチ task はまだありません。")).toBeVisible();
+    // O-5 (UI 監査 fix): 空状態は共通 EmptyState + 次アクション CTA を表示する。
+    expect(screen.getByText("リサーチ task はまだありません")).toBeVisible();
+    const cta = screen.getByRole("link", { name: "チケット一覧へ" });
+    expect(cta).toBeVisible();
+    expect(cta).toHaveAttribute("href", "/tickets");
     expect(screen.getByText("合計 0")).toBeVisible();
   });
 });

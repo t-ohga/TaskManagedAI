@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { fetchBackendRaw } from "@/lib/api/client";
+import { getCurrentProject } from "@/lib/api/session";
 import { ProjectTab } from "@/components/project-tab";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { TicketCreateDialog } from "@/components/ticket-create-dialog";
@@ -112,20 +113,16 @@ function TicketCard({ ticket, projectSlug }: { ticket: TicketItem; projectSlug?:
         </h4>
       </div>
 
-      {ticket.description && (
-        <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+      {ticket.description ? <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
           {ticket.description}
-        </p>
-      )}
+        </p> : null}
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <TicketStatusIndicator status={ticket.status} />
         {priorityBadge(ticket.priority)}
-        {projectSlug && (
-          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+        {projectSlug ? <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-muted-foreground">
             {projectSlug}
-          </span>
-        )}
+          </span> : null}
         {formatDueDate(ticket.due_date) ? (
           <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
             期限 {formatDueDate(ticket.due_date)}
@@ -189,6 +186,10 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   const currentView = (params.view === "list" ? "list" : "kanban") as "kanban" | "list";
   const sortKey = params.sort ?? "created_desc";
   const projects = await loadProjects();
+  // 作成先は server action が session の current_project から resolve する。
+  // 表示中 project (URL ?project=) と current_project が一致するときだけ作成 CTA を出す
+  // (Codex B2b finding: URL 選択と session current_project の乖離による wrong-project write 防止)。
+  const currentProject = await getCurrentProject().catch(() => null);
 
   let allTickets: (TicketItem & { projectSlug: string })[] = [];
 
@@ -304,14 +305,16 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
         <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
           全プロジェクト横断表示中。チケットの作成・更新するにはプロジェクトを選択してください。
         </div>
+      ) : currentProject && selectedProject === currentProject.slug ? (
+        <TicketCreateDialog />
       ) : (
-        <TicketCreateDialog
-          projectSlug={selectedProject}
-          projectId={(() => {
-            const p = projects.find((p) => p.slug === selectedProject);
-            return p ? String((p as Record<string, unknown>).project_id ?? (p as Record<string, unknown>).id ?? "") : undefined;
-          })()}
-        />
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+          チケットは現在のプロジェクト
+          {currentProject ? `「${currentProject.name}」` : ""}に作成されます。
+          {currentProject
+            ? `この project でチケットを作成するには、上のタブで「${currentProject.name}」を選択してください。`
+            : "現在のプロジェクトを取得できませんでした。再読み込みしてください。"}
+        </div>
       )}
 
       {currentView === "kanban" ? (

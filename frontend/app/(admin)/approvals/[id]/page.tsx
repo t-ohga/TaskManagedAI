@@ -1,5 +1,4 @@
-import Link from "next/link";
-
+import { Breadcrumb } from "@/components/breadcrumb";
 import { getApprovalDetail, type ApprovalDetail } from "@/lib/api/approvals";
 import {
   formatApprovalActionClass,
@@ -29,9 +28,13 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
   } catch (error: unknown) {
     return (
       <section aria-label="承認詳細" className="grid gap-4">
-        <Link className="text-sm font-semibold text-accent hover:underline" href="/approvals">
-          承認一覧へ戻る
-        </Link>
+        <Breadcrumb
+          items={[
+            { label: "ダッシュボード", href: "/dashboard" },
+            { label: "承認", href: "/approvals" },
+            { label: "詳細" },
+          ]}
+        />
         <h1 className="text-2xl font-semibold">承認詳細</h1>
         <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">
           承認詳細の取得に失敗しました: {error instanceof Error ? error.message : "不明なエラー"}
@@ -43,9 +46,13 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
   return (
     <section aria-label="承認詳細" className="grid gap-5">
       <header className="grid gap-2">
-        <Link className="text-sm font-semibold text-accent hover:underline" href="/approvals">
-          承認一覧へ戻る
-        </Link>
+        <Breadcrumb
+          items={[
+            { label: "ダッシュボード", href: "/dashboard" },
+            { label: "承認", href: "/approvals" },
+            { label: formatApprovalActionClass(approval.action_class) },
+          ]}
+        />
         <p className="text-sm font-medium text-accent">承認待ち</p>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">

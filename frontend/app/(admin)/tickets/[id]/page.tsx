@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
 
-import { fetchBackendRaw } from "@/lib/api/client";
 import { TicketStatusChanger } from "@/components/ticket-status-changer";
 import { Breadcrumb } from "@/components/breadcrumb";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
@@ -8,24 +7,14 @@ import { ActivityTimeline } from "@/components/activity-timeline";
 import { EditTicketForm } from "./_components/edit-ticket-form";
 import { TicketDeleteButton } from "@/components/ticket-delete-button";
 import { TrackRecentTicket } from "@/components/recent-tickets";
+import { getCurrentProject } from "@/lib/api/session";
+
+import { loadTicket } from "./load-ticket";
 
 export const dynamic = "force-dynamic";
 
 type TicketDetailPageProps = {
   params: Promise<{ id: string }>;
-};
-
-type TicketDetail = {
-  id: string;
-  title: string;
-  slug: string;
-  status: string;
-  description: string | null;
-  priority: string | null;
-  due_date: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-  project_id: string;
 };
 
 // due_date は SQL date (YYYY-MM-DD) のプレーンな日付。timezone を持たないため、
@@ -61,33 +50,6 @@ function statusBadge(status: string) {
   );
 }
 
-async function loadTicket(id: string): Promise<TicketDetail | null> {
-  try {
-    const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
-    const projects = ((projectsRes as Record<string, unknown>)?.projects ?? []) as Record<string, string>[];
-
-    const results = await Promise.all(
-      projects.map(async (p) => {
-        const pid = String(p.project_id ?? p.id ?? "");
-        try {
-          const ticketsRes = await fetchBackendRaw(
-            `/api/v1/projects/${pid}/tickets` as `/${string}`
-          );
-          const items = ((ticketsRes as Record<string, unknown>)?.items ?? []) as TicketDetail[];
-          const found = items.find((t) => t.id === id);
-          if (found) return { ...found, project_id: pid };
-        } catch {
-          /* skip inaccessible project */
-        }
-        return null;
-      })
-    );
-    return results.find((r) => r !== null) ?? null;
-  } catch {
-    return null;
-  }
-}
-
 export default async function TicketDetailPage({ params }: TicketDetailPageProps) {
   const { id } = await params;
   const ticket = await loadTicket(id);
@@ -95,6 +57,13 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   if (!ticket) {
     notFound();
   }
+
+  // mutation (ステータス変更 / 編集 / 中止) は updateTicketAction が session の
+  // current_project に PATCH するため、ticket の所有 project が current_project と
+  // 一致するときだけ書込 UI を出す。非一致時は wrong-project へ submit して 404 になる
+  // 編集 UI を出さず閲覧のみにする (Codex B2b R7 finding、create gating と同じ方針)。
+  const currentProject = await getCurrentProject().catch(() => null);
+  const isWritable = currentProject !== null && ticket.project_id === currentProject.project_id;
 
   return (
     <section aria-label="チケット詳細" className="grid gap-6">
@@ -165,11 +134,24 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           </div>
         </article>
       </div>
+      {!isWritable ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          このチケットは現在の作業プロジェクト外のため、ここでは閲覧のみ可能です。
+          ステータス変更・編集・中止は、そのチケットが属するプロジェクトを現在の
+          プロジェクトにしているときだけ行えます。
+        </div>
+      ) : null}
       <div className="grid gap-4 md:grid-cols-2">
         <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
           <h2 className="text-lg font-semibold">ステータス変更</h2>
           <div className="mt-4">
-            <TicketStatusChanger ticketId={ticket.id} currentStatus={ticket.status} />
+            {isWritable ? (
+              <TicketStatusChanger ticketId={ticket.id} currentStatus={ticket.status} />
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                現在のプロジェクト外のため変更できません。
+              </p>
+            )}
           </div>
         </article>
 
@@ -177,25 +159,27 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           <h2 className="text-lg font-semibold">アクション</h2>
           <div className="mt-4 grid gap-2">
             <a
-              href={`/tickets?project=${ticket.project_id}`}
+              href={`/tickets?project=${encodeURIComponent(ticket.project_slug)}`}
               className="rounded-md border border-line px-4 py-2 text-center text-sm font-medium text-muted-foreground transition-colors hover:bg-slate-50"
             >
               プロジェクトの看板に戻る
             </a>
-            {ticket.status !== "cancelled" ? (
+            {isWritable && ticket.status !== "cancelled" ? (
               <TicketDeleteButton ticketId={ticket.id} projectId={ticket.project_id} />
             ) : null}
           </div>
         </article>
       </div>
 
-      <EditTicketForm ticket={{
-        ...ticket,
-        assignee_actor_id: null,
-        acceptance_criteria: null,
-        evidence_ids: [],
-        agent_run_ids: [],
-      } as unknown as Parameters<typeof EditTicketForm>[0]["ticket"]} />
+      {isWritable ? (
+        <EditTicketForm ticket={{
+          ...ticket,
+          assignee_actor_id: null,
+          acceptance_criteria: null,
+          evidence_ids: [],
+          agent_run_ids: [],
+        } as unknown as Parameters<typeof EditTicketForm>[0]["ticket"]} />
+      ) : null}
 
       <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
         <h2 className="text-lg font-semibold">アクティビティ</h2>
