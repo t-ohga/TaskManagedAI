@@ -22,6 +22,7 @@ from backend.app.db.models.context_snapshot import ContextSnapshot
 from backend.app.domain.agent_runtime.active_scope import soft_deleted_ticket_run_exclusion
 from backend.app.domain.agent_runtime.status import AgentRunStatus, BlockedReason
 from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
+from backend.app.repositories.artifact import ArtifactRepository
 from backend.app.services.agent_runtime.cancel import cancel_agent_run
 from backend.app.services.metrics.agent_run_kpi import (
     AgentRunKpi,
@@ -483,6 +484,57 @@ async def activity_timeseries_endpoint(
             )
         )
     return ActivityTimeseriesResponse(buckets=buckets, bucket=bucket, range=range_value)
+
+
+class RunArtifact(BaseModel):
+    """ADR-00042 L-2: artifact inventory の metadata-only 表現 (content / content_hash なし)."""
+
+    id: UUID
+    kind: str
+    payload_data_class: str
+    trust_level: str
+    exportable: bool
+    parent_artifact_id: UUID | None
+    created_at: datetime
+
+
+class RunArtifactListResponse(BaseModel):
+    artifacts: list[RunArtifact]
+
+
+@router.get("/{run_id}/artifacts", response_model=RunArtifactListResponse)
+async def list_run_artifacts_endpoint(
+    run_id: UUID,
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> RunArtifactListResponse:
+    """ADR-00042 L-2: run が生成した artifact の metadata inventory (read-only).
+
+    content_jsonb / content_hash は返さない (metadata-only)。run 可視性 + active-scope
+    (soft-deleted ticket bound run 除外) を repository の単一 statement で enforce し、run 不可視は
+    404、run 可視・artifact 0 件は 200 empty。`provider_continuation_ref` は inventory / parent lineage
+    から除外する (ContextSnapshot UI 非露出 rule)。`actor_id` は authenticated session 強制のため Depends。
+    """
+    rows = await ArtifactRepository(session).list_run_artifacts(tenant_id, run_id)
+    if rows is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="agent run not found"
+        )
+    return RunArtifactListResponse(
+        artifacts=[
+            RunArtifact(
+                id=row.id,
+                kind=row.kind,
+                payload_data_class=row.payload_data_class,
+                trust_level=row.trust_level,
+                exportable=row.exportable,
+                parent_artifact_id=row.parent_artifact_id,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
+    )
 
 
 @router.get("/{run_id}", response_model=AgentRunDetailResponse)

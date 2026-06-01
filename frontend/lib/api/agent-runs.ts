@@ -218,3 +218,34 @@ export async function getAgentRun(id: string): Promise<AgentRunDetail> {
     AgentRunDetailSchema
   );
 }
+
+// ── ADR-00042 L-2: AgentRun artifact metadata inventory (read-only、metadata-only) ──
+// backend は content_jsonb / content_hash を一切返さない (漏洩面の構造排除)。schema にも
+// content / hash field を持たせない (strict validate で予期せぬ body 混入を drop)。
+export const RunArtifactSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.string(),
+  payload_data_class: z.string(),
+  trust_level: z.string(),
+  exportable: z.boolean(),
+  parent_artifact_id: z.string().uuid().nullable(),
+  created_at: z.string()
+});
+
+export type RunArtifact = z.infer<typeof RunArtifactSchema>;
+
+export const RunArtifactListResponseSchema = z.object({
+  artifacts: z.array(RunArtifactSchema)
+});
+
+export type RunArtifactListResponse = z.infer<typeof RunArtifactListResponseSchema>;
+
+export async function fetchRunArtifacts(id: string): Promise<RunArtifactListResponse> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+    throw new Error("invalid agent run id format");
+  }
+  return fetchBackendJson<RunArtifactListResponse>(
+    `/api/v1/agent_runs/${id}/artifacts` as `/${string}`,
+    RunArtifactListResponseSchema
+  );
+}
