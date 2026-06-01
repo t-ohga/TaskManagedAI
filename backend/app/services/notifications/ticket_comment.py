@@ -27,30 +27,42 @@ from backend.app.repositories.notification_event import (
     NotificationEventRepository,
 )
 
-# 一覧 response の message 長さ上限 (空 / 超過は API schema 側で 422)。
+# message 長さ contract (REST `CreateTicketCommentRequest` の min_length=1 / max_length と一致)。
+# MCP は本 helper を直接呼ぶため、REST と同一の長さ境界を write 経路で共有する (Codex R2 F-MEDIUM)。
 TICKET_COMMENT_MESSAGE_MAX_LENGTH = 4000
 
-# provider preflight (`services/providers/preflight.py` の `_CANARY_PATTERNS`) と同一の
-# secret canary marker。`assert_no_raw_secret` は実 secret pattern (sk-/ghp_/PEM 等) のみ検出し
-# canary fixture marker を含まないため、comment 経路では canary も明示的に reject する
-# (ADR-00041 secret 境界 = canary も永続化前 reject、Codex adversarial R1 F-HIGH)。
-_CANARY_PATTERN = re.compile(r"CANARY-FIXTURE-[A-Z0-9]{16,}")
+# comment 専用 secret pattern。`assert_no_raw_secret` (project 共通) は legacy
+# `sk-[A-Za-z0-9]{20,}` のみで、modern OpenAI project key (`sk-proj-...` / `sk-svcacct-...` 等
+# hyphen / underscore を含む) や GitHub fine-grained PAT を見逃す。comment は user 自由入力で
+# leak risk が高いため、eval scanner (`services/eval/anti_gaming.py` / `loader.py`) と同一の
+# 広い provider-key pattern + provider preflight (`_CANARY_PATTERNS`) と同一の canary marker を
+# 追加で検証する (Codex adversarial R1 F-HIGH / R2 F-HIGH)。
+_COMMENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("openai_api_key", re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b")),
+    ("github_fine_grained_pat", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
+    ("secret_canary", re.compile(r"CANARY-FIXTURE-[A-Z0-9]{16,}")),
+)
 
 
 def assert_comment_message_safe(message: str) -> None:
     """comment message に raw secret / canary marker が無いか検証する。
 
-    raw secret (sk-/ghp_/PEM 等) は ``assert_no_raw_secret``、secret canary
-    (`CANARY-FIXTURE-...`) は provider preflight と同一 regex で検出する。どちらか hit で
-    ``ValueError`` を raise (REST=422、MCP=error)。両 write 経路 (REST POST / MCP) は本 helper の
-    ``create_ticket_comment_event`` を通るため、ここが secret/canary 永続化の単一防御点。
+    project 共通の ``assert_no_raw_secret`` (sk-ant-/ghs_/gho_/ghp_/tskey-/age/PEM 等) に加え、
+    comment 専用に modern OpenAI key (hyphen/underscore 含む) / GitHub fine-grained PAT /
+    secret canary を検出する。いずれか hit で ``ValueError`` を raise (REST=422、MCP=error)。
+    両 write 経路 (REST POST / MCP) は本 helper を通る ``create_ticket_comment_event`` 経由のため、
+    ここが secret/canary 永続化の単一防御点。長さ contract は write 専用 (read redaction では
+    適用しない) のため本 function には含めない。
 
     Raises:
         ValueError: raw secret / canary marker / prohibited key を検出した場合。
     """
     assert_no_raw_secret({"message": message})
-    if _CANARY_PATTERN.search(message) is not None:
-        raise ValueError("comment message contains a secret canary marker")
+    for hit_kind, regex in _COMMENT_SECRET_PATTERNS:
+        if regex.search(message) is not None:
+            raise ValueError(
+                f"comment message contains a forbidden secret pattern ({hit_kind})"
+            )
 
 
 def redact_comment_message(message: str) -> str:
@@ -78,11 +90,20 @@ async def create_ticket_comment_event(
     """ticket コメントを notification_events event として保存する。
 
     呼び出し側は事前に actionable guard (POST=assert_ticket_actionable) を済ませること。
-    本 helper は **永続化前 secret scan** と **author server-owned 保存** を担保する。
+    本 helper は **長さ contract**、**永続化前 secret scan**、**author server-owned 保存** を担保する。
 
     Raises:
-        ValueError: payload (message 含む) に raw secret / canary / prohibited key を検出した場合。
+        ValueError: message が長さ contract (1..MAX) 外、または payload (message 含む) に
+            raw secret / canary / prohibited key を検出した場合。
     """
+    # REST は Pydantic min_length=1/max_length で reject するが、MCP は本 helper を直接呼ぶため、
+    # write 経路の単一防御点で長さ境界を共有する (空 / 巨大 comment の DB bloat 防止、R2 F-MEDIUM)。
+    if not 1 <= len(message) <= TICKET_COMMENT_MESSAGE_MAX_LENGTH:
+        raise ValueError(
+            "comment message length must be between 1 and "
+            f"{TICKET_COMMENT_MESSAGE_MAX_LENGTH} characters"
+        )
+
     payload: dict[str, Any] = {
         "project_id": str(project_id),
         "ticket_id": str(ticket_id),
@@ -90,7 +111,7 @@ async def create_ticket_comment_event(
         "actor_id": str(actor_id),
     }
     # raw secret / provider token / private key marker を DB / UI に流さない (fail-closed、R2-1)。
-    # payload 全体を raw secret scan し、message は canary marker も含めて検証する (R1 F-HIGH)。
+    # payload 全体を raw secret scan し、message は modern provider key / canary も検証する (R1/R2 F-HIGH)。
     assert_no_raw_secret(payload)
     assert_comment_message_safe(message)
 

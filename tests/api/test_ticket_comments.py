@@ -171,6 +171,71 @@ def test_redact_comment_message_hides_canary_marker() -> None:
     assert "CANARY-FIXTURE" not in tickets_api._redacted_message(_CANARY_MESSAGE)
 
 
+# ── Codex adversarial R2 F-HIGH: 共通 assert_no_raw_secret は legacy sk-[A-Za-z0-9]{20,} のみで、
+#    modern OpenAI project key (sk-proj-...、hyphen/underscore 含む) / GitHub fine-grained PAT を
+#    見逃す。comment 経路は broader provider-key pattern を追加で検証する。
+
+# modern OpenAI project key 形式 (hyphen/underscore を含むため legacy pattern では捕捉されない)。
+_MODERN_OPENAI_KEY = "key sk-proj-AbCd_efGh-IjKlMnOpQrStUvWx0123456789 leaked"
+_GITHUB_FINE_GRAINED_PAT = "pat github_pat_11ABCDEFG0aBcDeFgHiJkL_mnopqrstuvwxyz tail"
+
+
+@pytest.mark.parametrize("secret", [_MODERN_OPENAI_KEY, _GITHUB_FINE_GRAINED_PAT])
+def test_assert_comment_message_safe_rejects_modern_provider_keys(secret: str) -> None:
+    with pytest.raises(ValueError):
+        assert_comment_message_safe(secret)
+
+
+def test_redact_comment_message_hides_modern_openai_key() -> None:
+    redacted = redact_comment_message(_MODERN_OPENAI_KEY)
+    assert "sk-proj-" not in redacted
+    # tickets.py 委譲経路も同じ broad pattern で redaction する。
+    assert "sk-proj-" not in tickets_api._redacted_message(_MODERN_OPENAI_KEY)
+
+
+def test_create_ticket_comment_event_rejects_modern_openai_key() -> None:
+    # write 経路 (REST/MCP 共通 helper) も modern key を永続化前に reject する。
+    dummy_session = cast(AsyncSession, object())
+    with pytest.raises(ValueError):
+        asyncio.run(
+            create_ticket_comment_event(
+                dummy_session,
+                tenant_id=1,
+                project_id=uuid4(),
+                ticket_id=uuid4(),
+                message=_MODERN_OPENAI_KEY,
+                actor_id=uuid4(),
+            )
+        )
+
+
+# ── Codex adversarial R2 F-MEDIUM: REST は Pydantic min_length=1/max_length=4000 で reject するが、
+#    MCP は helper を直接呼ぶため、write choke point (create_ticket_comment_event) で長さ境界を共有。
+
+@pytest.mark.parametrize("message", ["", "x" * 4001])
+def test_create_ticket_comment_event_enforces_length_bounds(message: str) -> None:
+    # 空 / 上限超過は永続化前に reject (DB bloat 防止)。session に到達しない。
+    dummy_session = cast(AsyncSession, object())
+    with pytest.raises(ValueError):
+        asyncio.run(
+            create_ticket_comment_event(
+                dummy_session,
+                tenant_id=1,
+                project_id=uuid4(),
+                ticket_id=uuid4(),
+                message=message,
+                actor_id=uuid4(),
+            )
+        )
+
+
+def test_assert_comment_message_safe_ignores_length() -> None:
+    # 長さ contract は write 専用。read redaction で legitimate な長文コメントを誤 redaction しない。
+    long_clean = "あ" * 5000
+    assert_comment_message_safe(long_clean)  # raise しない
+    assert redact_comment_message(long_clean) == long_clean
+
+
 # ── Codex adversarial R1 F-MEDIUM: MCP notification_resolve が repo.resolve()→mark_read() を
 #    直接呼んで ticket_comment の direct-id 拒否を迂回する経路を、repository 層の単一防御点で塞ぐ。
 #    mark_read の UPDATE WHERE に event_type 除外を入れ、REST/MCP 双方で ticket_comment を claim
