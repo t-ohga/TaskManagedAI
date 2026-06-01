@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { fetchBackendRaw } from "@/lib/api/client";
 import { getCostSummary, type CostSummaryResponse } from "@/lib/api/agent-runs";
+import { fetchRoleFacet, type RoleFacet } from "@/lib/api/dashboard";
 import { AgentRunStatusIndicator } from "@/components/agent-run-status-indicator-v2";
 import { RoleBadge } from "@/components/role-badge";
 import { AutoRefresh } from "@/components/auto-refresh";
@@ -91,9 +92,10 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
       offset: (page - 1) * RUNS_PER_PAGE,
     }),
     (statusFilter || roleFilter) ? loadRuns() : Promise.resolve(null),
-    // C-4 (Codex review fix): role 候補は paginated items でなく非 paginated source から作る
-    // (status 内 facet)。現在ページ 50 件限定だと 51 件目以降のロールが filter chip に出ない。
-    loadRuns({ status: statusFilter || undefined, limit: 200 }),
+    // C-4 (ADR-00039): role 候補は backend role_facet endpoint (SQL distinct、limit 非依存) から作る。
+    // status scoped (list と同じ status predicate) なので選択中 status に存在しない role chip を
+    // クリックして空一覧になる facet drift が起きない。失敗時は空 facet に倒す。
+    fetchRoleFacet(statusFilter || undefined).catch((): RoleFacet => ({ roles: [], status: null })),
     getCostSummary("all").catch((): CostSummaryResponse | null => null),
   ]);
   const filteredRuns = filteredResult.items;
@@ -102,8 +104,8 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
 
   const { active, terminal } = groupByStatus(filteredRuns);
   const statuses = Object.keys(STATUS_LABELS);
-  const roleSet = new Set(roleFacetResult.items.map((r) => r.role_id).filter(Boolean));
-  if (roleFilter) roleSet.add(roleFilter); // 選択中ロールは現在ページが空でも chip に保持
+  const roleSet = new Set(roleFacetResult.roles.map((r) => r.role_id).filter(Boolean));
+  if (roleFilter) roleSet.add(roleFilter); // 選択中ロールは facet に無くても chip に保持
   const roles = [...roleSet].sort();
   const totalPages = Math.max(1, Math.ceil(totalRuns / RUNS_PER_PAGE));
   const runsPageHref = (targetPage: number): string => {
