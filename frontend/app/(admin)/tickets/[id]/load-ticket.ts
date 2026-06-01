@@ -1,6 +1,11 @@
+import { z } from "zod";
+
 import { BackendApiError, fetchBackendRaw } from "@/lib/api/client";
 
-import { UUID_V1_TO_V5_PATTERN } from "../../_lib/route-id";
+// ticket_id の検証は TicketReadSchema.id (z.string().uuid()) と同一契約に揃える。
+// 狭い v1-5 限定 validator だと UUIDv7 等の backend-valid な id を frontend が false
+// notFound にしてしまうため (Codex B2b R6 finding)。Zod 4 の uuid() は v1-8 + nil/max を許可。
+const TICKET_ID_SCHEMA = z.uuid();
 
 export type TicketDetail = {
   id: string;
@@ -36,9 +41,12 @@ export async function loadTicket(id: string): Promise<TicketDetail | null> {
   // slash / dot segment を含む値を path に通すと new URL 正規化で別の内部 endpoint へ
   // traversal され得るため、非 UUID は notFound 契約に倒す (Codex B2b R5 finding,
   // server-owned-boundary: dynamic route id は forward 前に検証必須)。
-  if (!UUID_V1_TO_V5_PATTERN.test(id)) {
+  if (!TICKET_ID_SCHEMA.safeParse(id).success) {
     return null;
   }
+  // UUID は case-insensitive。backend は canonical lowercase を返すため、path 連結 /
+  // 照合とも lowercase に正規化して大小不一致による false notFound を防ぐ (R6 finding)。
+  const normalizedId = id.toLowerCase();
 
   const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
   const projects = ((projectsRes as Record<string, unknown>)?.projects ?? []) as Record<
@@ -53,10 +61,10 @@ export async function loadTicket(id: string): Promise<TicketDetail | null> {
       if (!pid) return null;
       try {
         const ticketRes = await fetchBackendRaw(
-          `/api/v1/projects/${encodeURIComponent(pid)}/tickets/${encodeURIComponent(id)}` as `/${string}`
+          `/api/v1/projects/${encodeURIComponent(pid)}/tickets/${encodeURIComponent(normalizedId)}` as `/${string}`
         );
         const ticket = ticketRes as (TicketDetail & { id?: string }) | null;
-        if (ticket && ticket.id === id) {
+        if (ticket && ticket.id?.toLowerCase() === normalizedId) {
           return { ...ticket, project_id: pid, project_slug: slug };
         }
         return null;

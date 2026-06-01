@@ -111,4 +111,34 @@ describe("loadTicket (Codex B2b R2/R3/R4/R5 contract)", () => {
     // 検証で短絡するため fetchBackendRaw は一度も呼ばれない。
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  it("UUIDv7 等 v1-8 の id も ticket 契約どおり受理する (R6、契約 drift 防止)", async () => {
+    // version nibble = 7 (3rd group 先頭), variant = 8 (4th group 先頭) の有効な UUIDv7。
+    const uuidV7 = "01890a5d-ac96-7af0-8c3a-1234567890ab";
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/me/projects") return PROJECTS;
+      if (path === `/api/v1/projects/p-aaa/tickets/${uuidV7}`) throw new BackendApiError(404, "nf");
+      if (path === `/api/v1/projects/p-bbb/tickets/${uuidV7}`) return ticketPayload(uuidV7);
+      throw new BackendApiError(500, "unexpected");
+    });
+
+    const result = await loadTicket(uuidV7);
+    expect(result?.id).toBe(uuidV7);
+    expect(result?.project_slug).toBe("beta");
+  });
+
+  it("大文字 route id は lowercase 正規化して backend 応答と照合する (R6)", async () => {
+    // backend は canonical lowercase を返す。route param が大文字でも found 扱いにする。
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/me/projects") return PROJECTS;
+      // path には lowercase で連結される。
+      if (path === `/api/v1/projects/p-aaa/tickets/${VALID_UUID}`) throw new BackendApiError(404, "nf");
+      if (path === `/api/v1/projects/p-bbb/tickets/${VALID_UUID}`) return ticketPayload(VALID_UUID);
+      throw new BackendApiError(500, "unexpected");
+    });
+
+    const result = await loadTicket(VALID_UUID.toUpperCase());
+    expect(result?.id).toBe(VALID_UUID);
+    expect(result?.project_id).toBe("p-bbb");
+  });
 });
