@@ -1,8 +1,9 @@
 ---
 id: "ADR-00040"
 title: "AgentRun アクティビティ時系列エンドポイント (read-only、D-3 / D-4)"
-status: "proposed"
+status: "accepted"
 date: "2026-06-01"
+accepted_at: "2026-06-01"
 deciders: ["t-ohga"]
 adr_gate_criteria: [3]
 related_adr:
