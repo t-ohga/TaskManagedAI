@@ -118,14 +118,14 @@ input {
   }
 }
 
-/* S-1 印刷ビュー: chrome (管理ナビ / footer / aside / 明示 .no-print) のみを隠し、
-   内容を綺麗に印刷する。generic な header / form / button を一律に隠すと、意味を持つ
-   コンテンツ (チケットタイトルの <header>、設定フォーム内の現在値) まで消えるため、
-   非表示は明示クラスとランドマークに限定する (Codex adversarial R1 F-MEDIUM)。
-   個別の操作系 (ステータス変更 / 編集 / コメント欄 等) は各ページで .no-print を付ける。 */
+/* S-1 印刷ビュー: chrome は明示クラス .no-print のみで隠し、内容を綺麗に印刷する。
+   generic な header / form / button / footer / aside を一律に隠すと、意味を持つコンテンツ
+   (チケットタイトルの <header>、設定フォームの現在値、承認詳細の <aside> 内の判定メタデータ)
+   まで消えるため、非表示は明示クラス .no-print に限定する (Codex adversarial R1/R2 F-MEDIUM)。
+   chrome (管理ナビ) は Navigation root に no-print 済。個別の操作系 (ステータス変更 / 編集 /
+   コメント欄 / フィルタ等) は各ページで .no-print を付ける。 */
 @media print {
-  .no-print, footer, aside,
-  nav[aria-label="管理ナビゲーション"] {
+  .no-print {
     display: none !important;
   }
   main {

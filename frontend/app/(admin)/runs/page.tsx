@@ -139,11 +139,11 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex flex-wrap gap-1">
-          <a href="/runs" className={`rounded-full px-3 py-1 text-xs font-medium ${!statusFilter ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+          <a href="/runs" className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${!statusFilter ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
             すべて
           </a>
           {statuses.map((s) => (
-            <a key={s} href={`/runs?status=${s}${roleFilter ? `&role=${roleFilter}` : ""}`} className={`rounded-full px-3 py-1 text-xs font-medium ${statusFilter === s ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+            <a key={s} href={`/runs?status=${s}${roleFilter ? `&role=${roleFilter}` : ""}`} className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${statusFilter === s ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
               {STATUS_LABELS[s] ?? s}
             </a>
           ))}
@@ -152,7 +152,7 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
           <div className="flex flex-wrap gap-1">
             <span className="text-xs text-muted-foreground">ロール:</span>
             {roles.map((r) => (
-              <a key={r} href={`/runs?${statusFilter ? `status=${statusFilter}&` : ""}role=${r}`} className={`rounded-full px-3 py-1 text-xs font-medium ${roleFilter === r ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+              <a key={r} href={`/runs?${statusFilter ? `status=${statusFilter}&` : ""}role=${r}`} className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${roleFilter === r ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                 {r}
               </a>
             ))}
@@ -276,13 +276,13 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
       {totalRuns > RUNS_PER_PAGE && (
         <nav aria-label="ページネーション" className="flex items-center justify-center gap-2">
           {page > 1 ? (
-            <a href={runsPageHref(page - 1)} className="rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+            <a href={runsPageHref(page - 1)} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
               前へ
             </a>
           ) : null}
           <span className="text-sm text-muted-foreground">{page} / {totalPages}</span>
           {page < totalPages ? (
-            <a href={runsPageHref(page + 1)} className="rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+            <a href={runsPageHref(page + 1)} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
               次へ
             </a>
           ) : null}

@@ -78,15 +78,15 @@ describe("print CSS scope (Codex adversarial R1 F-MEDIUM regression guard)", () 
     expect(printBlock).toContain(".no-print");
   });
 
-  it("does not blanket-hide semantic header/form/button/input in print", () => {
-    // display:none 対象セレクタに bare な header,/form,/button,/input, が無いこと。
+  it("does not blanket-hide semantic landmarks/controls in print", () => {
+    // display:none 対象セレクタに bare な header/form/button/input/footer/aside/nav が無いこと
+    // (これらは意味コンテンツ = チケットタイトル / 設定フォーム値 / 承認 aside 判定メタデータ等を含む)。
     const hideSelectorLines = printBlock
       .split("\n")
       .filter((line) => !line.trim().startsWith("*")); // print-color-adjust の * は除外
     const joined = hideSelectorLines.join("\n");
-    expect(joined).not.toMatch(/(^|\s)header\s*,/);
-    expect(joined).not.toMatch(/(^|[,\s])form\s*[,{]/);
-    expect(joined).not.toMatch(/(^|[,\s])button\s*[,{]/);
-    expect(joined).not.toMatch(/(^|[,\s])input\s*[,{]/);
+    for (const bare of ["header", "form", "button", "input", "footer", "aside", "nav"]) {
+      expect(joined).not.toMatch(new RegExp(`(^|[,\\s])${bare}\\s*[,{]`, "m"));
+    }
   });
 });

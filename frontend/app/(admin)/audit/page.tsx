@@ -215,13 +215,13 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
       {totalPages > 1 && (
         <nav aria-label="ページネーション" className="flex items-center justify-center gap-2">
           {pageNum > 1 && (
-            <a href={`/audit?${typeFilter ? `type=${typeFilter}&` : ""}page=${pageNum - 1}`} className="rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+            <a href={`/audit?${typeFilter ? `type=${typeFilter}&` : ""}page=${pageNum - 1}`} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
               前へ
             </a>
           )}
           <span className="text-sm text-muted-foreground">{pageNum} / {totalPages}</span>
           {pageNum < totalPages && (
-            <a href={`/audit?${typeFilter ? `type=${typeFilter}&` : ""}page=${pageNum + 1}`} className="rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+            <a href={`/audit?${typeFilter ? `type=${typeFilter}&` : ""}page=${pageNum + 1}`} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
               次へ
             </a>
           )}
