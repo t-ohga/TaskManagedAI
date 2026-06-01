@@ -58,7 +58,16 @@ export function CommandPalette() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]">
-      <div className="fixed inset-0 bg-black/40" onClick={() => setOpen(false)} />
+      {/* a11y: 背景クリックで閉じる overlay を semantic な button にする
+          (jsx-a11y/click-events-have-key-events + no-static-element-interactions)。
+          keyboard では Escape でも閉じられる (上部 keydown handler)。tabIndex={-1} で tab 順序からは外す。 */}
+      <button
+        type="button"
+        aria-label="コマンドパレットを閉じる"
+        tabIndex={-1}
+        className="fixed inset-0 bg-black/40"
+        onClick={() => setOpen(false)}
+      />
       <div className="relative z-10 w-full max-w-md rounded-lg border border-line bg-panel shadow-2xl">
         <input
           ref={inputRef}
