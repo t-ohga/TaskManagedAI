@@ -155,8 +155,16 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
       {/* S-1: 監査ログは証跡として印刷価値が高い。絞り込み / ページ移動の操作子は印刷物に出さず、
           ヘッダー / マスク注意 / テーブル本体だけを残す (.no-print)。チップは画面では 44px tap target。 */}
       <div className="no-print flex flex-wrap items-center gap-3">
-        <label className="text-xs text-muted-foreground">イベント種別:</label>
-        <div className="flex flex-wrap gap-1">
+        {/* a11y: フィルタチップ群のグループラベル。単一 control 用の <label> ではなく
+            role="group" + aria-labelledby でラベル付けする (jsx-a11y/label-has-associated-control)。 */}
+        <span className="text-xs text-muted-foreground" id="audit-event-type-filter-label">
+          イベント種別:
+        </span>
+        <div
+          className="flex flex-wrap gap-1"
+          role="group"
+          aria-labelledby="audit-event-type-filter-label"
+        >
           <a
             href="/audit"
             className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium transition-colors ${!typeFilter ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}

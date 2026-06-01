@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { Breadcrumb } from "@/components/breadcrumb";
 import { BackendApiError } from "@/lib/api/client";
 import {
   getResearchTask,
@@ -155,6 +156,15 @@ export default async function ResearchDetailPage({ params }: ResearchDetailPageP
       regionLabel="リサーチ詳細"
       title="リサーチ詳細"
     >
+      {/* F-2 (nav 一貫化): drill-down 詳細 page に clickable back-nav を追加 (tickets/runs/approvals
+          詳細と同じ Breadcrumb component。eyebrow は静的表示のため一覧へ戻れなかった)。 */}
+      <Breadcrumb
+        items={[
+          { label: "ダッシュボード", href: "/dashboard" },
+          { label: "リサーチ", href: "/research" },
+          { label: "リサーチ詳細" },
+        ]}
+      />
       <KeyboardReadinessStrip current="リサーチ" />
 
       {detail === null ? (
