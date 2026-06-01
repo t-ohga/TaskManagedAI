@@ -187,4 +187,15 @@ describe("list page print scope (Codex adversarial R5 F-MEDIUM regression guard)
     expect(runs).toContain("no-print flex flex-wrap items-center gap-3");
     expect(runs).toMatch(/aria-label="ページネーション"\s+className="no-print/);
   });
+
+  it("approvals inbox status filter and per-row review link are .no-print", () => {
+    const inbox = readFileSync(join(process.cwd(), "app/(admin)/approvals/page.tsx"), "utf8");
+    // ステータス絞り込み nav は印刷除外。
+    expect(inbox).toMatch(/aria-label="承認ステータス"\s+className="no-print/);
+    // 各 row の「レビュー」リンクは印刷除外 (承認メタデータは印刷に残す)。
+    const reviewIndex = inbox.indexOf("レビュー");
+    expect(reviewIndex).toBeGreaterThanOrEqual(0);
+    const before = inbox.slice(Math.max(0, reviewIndex - 400), reviewIndex);
+    expect(before).toContain('className="no-print');
+  });
 });

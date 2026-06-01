@@ -61,7 +61,8 @@ export default async function ApprovalInboxPage({
         </p>
       </header>
 
-      <nav aria-label="承認ステータス" className="flex flex-wrap gap-2">
+      {/* S-1: 承認一覧 (証跡) は印刷に残すが、ステータス絞り込み操作子は印刷除外 (.no-print) */}
+      <nav aria-label="承認ステータス" className="no-print flex flex-wrap gap-2">
         {APPROVAL_STATUSES.map((statusValue) => {
           const isActive = statusValue === selectedStatus;
           return (
@@ -119,7 +120,7 @@ export default async function ApprovalInboxPage({
                   )}
                   <Link
                     href={`/approvals/${approval.id}`}
-                    className="text-sm font-semibold text-accent outline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                    className="no-print text-sm font-semibold text-accent outline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                     data-testid={`approval-link-${approval.id}`}
                   >
                     レビュー
