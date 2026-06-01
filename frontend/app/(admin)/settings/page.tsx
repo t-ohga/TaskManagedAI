@@ -142,23 +142,27 @@ export default async function ProjectSettingsPage() {
         )}
       </Panel>
 
-      <Panel
-        description="プロジェクトのアーカイブ、ticket の一括削除・復元・インポート。いずれも owner のみ、監査に記録される破壊的操作です (soft / 可逆)。"
-        title="データ管理"
-        titleId="settings-data-management"
-      >
-        {project ? (
-          <DataManagementPanel
-            projectId={project.project_id}
-            status={project.status}
-            activeTicketCount={activeTicketCount ?? 0}
-          />
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            プロジェクト情報を読み込めませんでした。
-          </p>
-        )}
-      </Panel>
+      {/* S-1: データ管理は破壊的操作 (アーカイブ / 一括削除・復元・インポート) のみの操作 UI。
+          印刷物 (設定スナップショット / 監査出力) には出さない (.no-print)。 */}
+      <div className="no-print">
+        <Panel
+          description="プロジェクトのアーカイブ、ticket の一括削除・復元・インポート。いずれも owner のみ、監査に記録される破壊的操作です (soft / 可逆)。"
+          title="データ管理"
+          titleId="settings-data-management"
+        >
+          {project ? (
+            <DataManagementPanel
+              projectId={project.project_id}
+              status={project.status}
+              activeTicketCount={activeTicketCount ?? 0}
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              プロジェクト情報を読み込めませんでした。
+            </p>
+          )}
+        </Panel>
+      </div>
 
       <Panel
         description="P0 不変条件に準拠。allowed_data_class はマトリクス管理で、呼び出し元から入力不可。"

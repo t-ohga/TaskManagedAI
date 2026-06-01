@@ -151,7 +151,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
         <div className="flex flex-wrap gap-1">
           <a
             href="/audit"
-            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${!typeFilter ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+            className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium transition-colors ${!typeFilter ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
           >
             すべて
           </a>
@@ -159,7 +159,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
             <a
               key={t}
               href={`/audit?type=${t}`}
-              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${typeFilter === t ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+              className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium transition-colors ${typeFilter === t ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
             >
               {EVENT_TYPE_LABELS[t] ?? t}
             </a>

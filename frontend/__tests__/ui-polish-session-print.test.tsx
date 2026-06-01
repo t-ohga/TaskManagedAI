@@ -119,3 +119,50 @@ describe("approvals print scope (Codex adversarial R3 F-MEDIUM regression guard)
     expect(wrapped).toContain("ApprovalRevisionRequestForm");
   });
 });
+
+describe("I-3 inline anchor tap targets (Codex adversarial R2/R4 regression guard)", () => {
+  // inline 非置換 <a> は min-height/width が効かないため、操作 anchor (filter chip / pagination)
+  // は inline-flex 化して coarse pointer の 44px が効くようにする。runs だけでなく audit の
+  // event-type filter anchor も対象 (R4 F-MEDIUM)。
+  it("runs filter chips and pagination anchors are inline-flex", () => {
+    const runs = readFileSync(join(process.cwd(), "app/(admin)/runs/page.tsx"), "utf8");
+    expect(runs).toContain("inline-flex items-center justify-center rounded-full px-3 py-1");
+    expect(runs).toContain(
+      "inline-flex items-center justify-center rounded border border-line px-3 py-1"
+    );
+  });
+
+  it("audit filter chips and pagination anchors are inline-flex", () => {
+    const audit = readFileSync(join(process.cwd(), "app/(admin)/audit/page.tsx"), "utf8");
+    expect(audit).toContain(
+      "inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium transition-colors"
+    );
+    expect(audit).toContain(
+      "inline-flex items-center justify-center rounded border border-line px-3 py-1"
+    );
+  });
+});
+
+describe("settings print scope (Codex adversarial R4 F-MEDIUM regression guard)", () => {
+  // 設定スナップショット / 監査出力には現在値を残し、操作 UI (保存ボタン / データ管理の破壊的操作)
+  // は印刷物に出さない。
+  it("wraps the destructive DataManagementPanel in .no-print", () => {
+    const page = readFileSync(join(process.cwd(), "app/(admin)/settings/page.tsx"), "utf8");
+    const wrapStart = page.indexOf('<div className="no-print">');
+    expect(wrapStart).toBeGreaterThanOrEqual(0);
+    // no-print 直後の Panel ブロックに DataManagementPanel が含まれる。
+    const slice = page.slice(wrapStart, wrapStart + 600);
+    expect(slice).toContain("DataManagementPanel");
+  });
+
+  it("marks the project settings save button .no-print", () => {
+    const form = readFileSync(
+      join(process.cwd(), "app/(admin)/settings/_components/project-settings-form.tsx"),
+      "utf8"
+    );
+    const noPrintIndex = form.indexOf('className="no-print"');
+    expect(noPrintIndex).toBeGreaterThanOrEqual(0);
+    const slice = form.slice(noPrintIndex, noPrintIndex + 200);
+    expect(slice).toContain('type="submit"');
+  });
+});
