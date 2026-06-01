@@ -32,14 +32,18 @@ from backend.app.repositories.notification_event import (
 TICKET_COMMENT_MESSAGE_MAX_LENGTH = 4000
 
 # comment 専用 secret pattern。`assert_no_raw_secret` (project 共通) は legacy
-# `sk-[A-Za-z0-9]{20,}` のみで、modern OpenAI project key (`sk-proj-...` / `sk-svcacct-...` 等
-# hyphen / underscore を含む) や GitHub fine-grained PAT を見逃す。comment は user 自由入力で
-# leak risk が高いため、eval scanner (`services/eval/anti_gaming.py` / `loader.py`) と同一の
-# 広い provider-key pattern + provider preflight (`_CANARY_PATTERNS`) と同一の canary marker を
-# 追加で検証する (Codex adversarial R1 F-HIGH / R2 F-HIGH)。
+# `sk-[A-Za-z0-9]{20,}` / `ghp_` / `gho_` / `ghs_` のみで、modern OpenAI project key
+# (`sk-proj-...` 等 hyphen/underscore 含む) / GitHub fine-grained PAT / `ghu_` / `ghr_` /
+# AWS access key (`AKIA...`) を見逃す。comment は user 自由入力で leak risk が高いため、
+# repo の eval scanner (`services/eval/anti_gaming.py` / `loader.py` の `_RAW_SECRET_VALUE_PATTERNS`)
+# と **同一の** provider-token 集合 + provider preflight (`_CANARY_PATTERNS`) と同一の canary marker を
+# 追加で検証する (Codex adversarial R1/R2/R3 F-HIGH)。eval scanner との drift は
+# `tests/api/test_ticket_comments.py::test_comment_secret_patterns_cover_eval_scanner` が検出する。
 _COMMENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("openai_api_key", re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b")),
+    ("github_pat", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b")),
     ("github_fine_grained_pat", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
+    ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("secret_canary", re.compile(r"CANARY-FIXTURE-[A-Z0-9]{16,}")),
 )
 

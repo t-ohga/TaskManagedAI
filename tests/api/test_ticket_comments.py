@@ -30,6 +30,7 @@ from backend.app.db.models.notification_event import NotificationEvent
 from backend.app.main import create_app
 from backend.app.repositories.notification_event import NotificationEventRepository
 from backend.app.services.notifications.ticket_comment import (
+    _COMMENT_SECRET_PATTERNS,
     assert_comment_message_safe,
     create_ticket_comment_event,
     redact_comment_message,
@@ -236,6 +237,46 @@ def test_assert_comment_message_safe_ignores_length() -> None:
     assert redact_comment_message(long_clean) == long_clean
 
 
+# ── Codex adversarial R3 F-HIGH: comment scan が eval scanner の扱う ghu_/ghr_/AKIA を見逃す。
+#    eval scanner (anti_gaming/loader の _RAW_SECRET_VALUE_PATTERNS) と同一 token 集合に揃える。
+
+_R3_PROVIDER_TOKENS = [
+    "user token ghu_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 here",  # GitHub user-to-server
+    "refresh ghr_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 token",  # GitHub refresh
+    "aws key AKIAIOSFODNN7EXAMPLE end",  # AWS access key id
+]
+
+
+@pytest.mark.parametrize("secret", _R3_PROVIDER_TOKENS)
+def test_assert_comment_message_safe_rejects_additional_provider_tokens(secret: str) -> None:
+    with pytest.raises(ValueError):
+        assert_comment_message_safe(secret)
+
+
+@pytest.mark.parametrize("secret", _R3_PROVIDER_TOKENS)
+def test_redact_comment_message_hides_additional_provider_tokens(secret: str) -> None:
+    redacted = redact_comment_message(secret)
+    assert "redacted" in redacted.lower() or "非表示" in redacted
+    # 委譲経路も同一。raw token marker が残らない。
+    assert "ghu_" not in tickets_api._redacted_message(secret) or "ghu_" not in secret
+    for marker in ("ghu_", "ghr_", "AKIA"):
+        assert marker not in redacted or marker not in secret
+
+
+def test_comment_secret_patterns_cover_eval_scanner() -> None:
+    """drift guard: comment secret pattern は eval scanner の raw secret 集合を完全に包含する。
+
+    eval scanner (`anti_gaming` / `loader` の `_RAW_SECRET_VALUE_PATTERNS`) に将来 token 形式が
+    追加されたら、comment helper 側で同期されるまで本 test が落ちる (cross-source integrity)。
+    """
+    from backend.app.services.eval.anti_gaming import _RAW_SECRET_VALUE_PATTERNS
+
+    eval_pattern_strings = {regex.pattern for _name, regex in _RAW_SECRET_VALUE_PATTERNS}
+    comment_pattern_strings = {regex.pattern for _name, regex in _COMMENT_SECRET_PATTERNS}
+    missing = eval_pattern_strings - comment_pattern_strings
+    assert not missing, f"comment helper is missing eval scanner secret patterns: {missing}"
+
+
 # ── Codex adversarial R1 F-MEDIUM: MCP notification_resolve が repo.resolve()→mark_read() を
 #    直接呼んで ticket_comment の direct-id 拒否を迂回する経路を、repository 層の単一防御点で塞ぐ。
 #    mark_read の UPDATE WHERE に event_type 除外を入れ、REST/MCP 双方で ticket_comment を claim
@@ -266,29 +307,33 @@ def _compiled_sql(statement: Any) -> str:
     return str(statement.compile(compile_kwargs={"literal_binds": True}))
 
 
-def test_mark_read_update_excludes_ticket_comment() -> None:
-    session = _CaptureSession(tenant_id=1)
-    repo = NotificationEventRepository(cast(AsyncSession, session))
-    result = asyncio.run(repo.mark_read(tenant_id=1, event_id=uuid4()))
-    assert result is None
-    # 最後の execute が UPDATE (mark_read 本体)。tenant + id に加え event_type 除外があること。
-    update_stmt = session.executed[-1]
-    sql = _compiled_sql(update_stmt).lower()
+def _assert_mark_read_guard(executed_stmt: Any) -> None:
+    # mark_read 本体の UPDATE が tenant + id に加え event_type 除外を持つこと。
+    sql = _compiled_sql(executed_stmt).lower()
     assert "update notification_events" in sql
     assert "event_type" in sql
     assert "ticket_comment" in sql
 
 
-def test_snooze_and_resolve_delegate_to_guarded_mark_read() -> None:
-    # snooze / resolve は mark_read に委譲するため、同じ event_type guard を継承する。
-    for invoke in (
-        lambda r: r.snooze(tenant_id=1, event_id=uuid4()),
-        lambda r: r.resolve(tenant_id=1, event_id=uuid4()),
-    ):
-        session = _CaptureSession(tenant_id=1)
-        repo = NotificationEventRepository(cast(AsyncSession, session))
-        result = asyncio.run(invoke(repo))
-        assert result is None
-        sql = _compiled_sql(session.executed[-1]).lower()
-        assert "update notification_events" in sql
-        assert "ticket_comment" in sql
+def test_mark_read_update_excludes_ticket_comment() -> None:
+    session = _CaptureSession(tenant_id=1)
+    repo = NotificationEventRepository(cast(AsyncSession, session))
+    result = asyncio.run(repo.mark_read(tenant_id=1, event_id=uuid4()))
+    assert result is None
+    _assert_mark_read_guard(session.executed[-1])
+
+
+def test_snooze_delegates_to_guarded_mark_read() -> None:
+    # snooze は mark_read に委譲するため同じ event_type guard を継承する。
+    session = _CaptureSession(tenant_id=1)
+    repo = NotificationEventRepository(cast(AsyncSession, session))
+    assert asyncio.run(repo.snooze(tenant_id=1, event_id=uuid4())) is None
+    _assert_mark_read_guard(session.executed[-1])
+
+
+def test_resolve_delegates_to_guarded_mark_read() -> None:
+    # resolve も mark_read に委譲するため同じ event_type guard を継承する。
+    session = _CaptureSession(tenant_id=1)
+    repo = NotificationEventRepository(cast(AsyncSession, session))
+    assert asyncio.run(repo.resolve(tenant_id=1, event_id=uuid4())) is None
+    _assert_mark_read_guard(session.executed[-1])
