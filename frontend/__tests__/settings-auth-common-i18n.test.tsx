@@ -2,6 +2,8 @@ import { render, screen, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type * as NextNavigation from "next/navigation";
+
 import type { HealthResponse } from "@/lib/api/types";
 
 const apiMocks = vi.hoisted(() => ({
@@ -22,6 +24,17 @@ vi.mock("@/lib/api/notifications", () => ({
 vi.mock("@/lib/api/session", () => ({
   getCurrentProject: apiMocks.getCurrentProject,
   listCurrentProjects: apiMocks.listCurrentProjects
+}));
+
+// settings / dashboard は useRouter を使う client component (AutoRefresh 等) を含む。
+// App Router context のない RTL 環境では useRouter が "app router to be mounted" invariant
+// を投げるため、no-op router を mock する。usePathname など他 export は importActual で残す。
+vi.mock("next/navigation", async (importActual) => ({
+  ...(await importActual<typeof NextNavigation>()),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+  // dashboard の range selector client component は useSearchParams().get() を呼ぶ。
+  // RTL では実 useSearchParams が null を返すため空の URLSearchParams を返す。
+  useSearchParams: () => new URLSearchParams()
 }));
 
 import DashboardPage from "../app/(admin)/dashboard/page";
@@ -66,18 +79,22 @@ describe("settings/auth/common i18n", () => {
       ]
     });
 
-    render(ProjectSettingsPage());
+    // ProjectSettingsPage は async Server Component なので await してから render する。
+    render(await ProjectSettingsPage());
 
-    const region = screen.getByRole("region", { name: "Project Settings" });
-    expect(within(region).getByRole("heading", { name: "Project Settings" })).toBeVisible();
+    // region / heading は i18n で日本語化済 (regionLabel / title="プロジェクト設定")。
+    const region = screen.getByRole("region", { name: "プロジェクト設定" });
+    expect(within(region).getByRole("heading", { name: "プロジェクト設定" })).toBeVisible();
+    // allowed_data_class は canonical な technical identifier として保持する (翻訳しない)。
     expect(within(region).getByText("allowed_data_class")).toBeVisible();
-    expect(within(region).getByRole("heading", { name: "Provider Compliance Matrix" })).toBeVisible();
+    expect(within(region).getByRole("heading", { name: "プロバイダー準拠マトリクス" })).toBeVisible();
   });
 
   it("renders Japanese dashboard labels and backend unavailable state", async () => {
     apiMocks.getBackendHealth.mockRejectedValueOnce(new Error("Backend healthcheck に失敗しました。"));
 
-    await renderAsync(DashboardPage());
+    // DashboardPage は searchParams (range filter) を必須 prop に持つ async Server Component。
+    await renderAsync(DashboardPage({ searchParams: Promise.resolve({}) }));
 
     expect(screen.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
     expect(screen.getByRole("region", { name: "サービス状態" })).toBeVisible();

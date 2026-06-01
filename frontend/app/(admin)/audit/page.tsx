@@ -117,6 +117,31 @@ function eventTypeBadge(eventType: string) {
   );
 }
 
+// AC-HARD-02 observability: per-row の payload redaction 状態を可視化する。これにより
+// operator は redaction evidence の欠落 / drift を検知できる。canonical な値は backend
+// audit route (backend/app/api/audit.py) の PayloadRedactionStatus = keys_only /
+// blocked_by_secret_scan の 2 値のみ。**fail-closed** 設計で扱う:
+//   - keys_only            : payload key 名のみ表示の通常 redaction → safe (emerald)
+//   - blocked_by_secret_scan: raw secret 検出で payload 全体を block した警告イベント
+//                             (payload_keys は空) → attention (red、目立たせる)
+//   - null / 未知値 (API skew / backend drift): fail-closed で attention (amber)。
+//     未知の raw 値は固定ラベルに畳んで DOM へそのまま出さない (drift 値の露出防止)。
+const KNOWN_REDACTION_STATUSES = new Set(["keys_only", "blocked_by_secret_scan"]);
+
+function redactionStatusBadge(status: string | null) {
+  const isRoutineSafe = status === "keys_only";
+  const isKnown = status != null && KNOWN_REDACTION_STATUSES.has(status);
+  // 既知の canonical enum のみ raw 値を表示。null は「未検証」、未知 (drift) 値は「不明」に
+  // 畳み、未知 raw 値を DOM に出さない。
+  const label = status == null ? "未検証" : isKnown ? status : "不明";
+  const tone = isRoutineSafe
+    ? "bg-emerald-50 text-emerald-700"
+    : status === "blocked_by_secret_scan"
+      ? "bg-red-50 text-red-700"
+      : "bg-amber-50 text-amber-700";
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}>{label}</span>;
+}
+
 type AuditPageProps = {
   searchParams: Promise<{ type?: string; page?: string }>;
 };
@@ -199,6 +224,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">アクター</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">理由コード</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">ペイロード</th>
+                <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">マスク状態</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">日時</th>
               </tr>
             </thead>
@@ -211,6 +237,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
                   </td>
                   <td className="px-4 py-3 text-xs">{e.reason_code ?? "—"}</td>
                   <td className="px-4 py-3 text-xs">{e.payload_keys?.length ? e.payload_keys.join(", ") : "—"}</td>
+                  <td className="px-4 py-3">{redactionStatusBadge(e.payload_redaction_status)}</td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
                     {e.created_at ? new Date(e.created_at).toLocaleString("ja-JP") : "—"}
                   </td>

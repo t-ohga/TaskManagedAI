@@ -57,7 +57,7 @@ describe("EvalDashboardPage (Sprint 12 batch 9 skeleton + SP-022 T08 batch 6 liv
   it("renders P0 Exit verdict section with READY when p0_exit_decision is true", async () => {
     await renderAsync();
     expect(
-      screen.getByRole("heading", { name: "P0 Exit verdict" }),
+      screen.getByRole("heading", { name: "P0 出口判定" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/READY\./)).toBeInTheDocument();
   });
@@ -120,10 +120,10 @@ describe("EvalDashboardPage (Sprint 12 batch 9 skeleton + SP-022 T08 batch 6 liv
 
   it("renders SecretBoundaryNotice indicating no raw secret in DOM", async () => {
     await renderAsync();
+    // SecretBoundaryNotice は title prop を <h3> heading として描画する。eval-dashboard は
+    // title="シークレット・トークン非表示" を渡す (i18n 日本語化済)。
     expect(
-      screen.getByRole("heading", {
-        name: /No secret \/ token \/ raw provider response is rendered/i,
-      }),
+      screen.getByRole("heading", { name: "シークレット・トークン非表示" }),
     ).toBeInTheDocument();
   });
 
@@ -135,7 +135,7 @@ describe("EvalDashboardPage (Sprint 12 batch 9 skeleton + SP-022 T08 batch 6 liv
 
   it("renders PASS badge for every Hard Gate (all threshold_met=true in skeleton)", async () => {
     await renderAsync();
-    const hardGatesSection = screen.getByRole("heading", { name: "Hard Gates 7" }).closest("section");
+    const hardGatesSection = screen.getByRole("heading", { name: "ハードゲート 7" }).closest("section");
     expect(hardGatesSection).not.toBeNull();
     if (hardGatesSection) {
       const passBadges = within(hardGatesSection).getAllByText("PASS");
@@ -146,7 +146,7 @@ describe("EvalDashboardPage (Sprint 12 batch 9 skeleton + SP-022 T08 batch 6 liv
   it("renders all 7 P0 sources in verdict (F-PR65-001 P1 adopt)", async () => {
     await renderAsync();
     const verdictSection = screen
-      .getByRole("heading", { name: "P0 Exit verdict" })
+      .getByRole("heading", { name: "P0 出口判定" })
       .closest("section");
     expect(verdictSection).not.toBeNull();
     if (verdictSection) {
@@ -168,7 +168,7 @@ describe("EvalDashboardPage (Sprint 12 batch 9 skeleton + SP-022 T08 batch 6 liv
     // canonical values from backend/app/services/eval/kpis/*.py:
     // AC-KPI-01: 0.6 / AC-KPI-02: 2 / AC-KPI-03: 14,400,000 / AC-KPI-04: 0.9 / AC-KPI-05: 0.5
     const kpiSection = screen
-      .getByRole("heading", { name: "Quality KPIs 5" })
+      .getByRole("heading", { name: "品質 KPI 5" })
       .closest("section");
     expect(kpiSection).not.toBeNull();
     if (kpiSection) {
@@ -185,10 +185,10 @@ describe("EvalDashboardPage (Sprint 12 batch 9 skeleton + SP-022 T08 batch 6 liv
 
   it("renders Ticket-to-PR smoke section + private staging section + gated rows", async () => {
     await renderAsync();
-    expect(screen.getByRole("heading", { name: "Ticket-to-PR smoke" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Private staging" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "チケット→PR スモークテスト" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "プライベートステージング" })).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Gated acceptance rows" }),
+      screen.getByRole("heading", { name: "ゲート付き受入基準" }),
     ).toBeInTheDocument();
   });
 
@@ -243,7 +243,7 @@ describe("EvalDashboardPage (Sprint 12 batch 9 skeleton + SP-022 T08 batch 6 liv
     mockFetch.mockRejectedValueOnce(new BackendApiError(401, "Unauthorized"));
     await renderAsync();
     // route が crash しないこと
-    expect(screen.getByRole("heading", { name: "P0 Exit verdict" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "P0 出口判定" })).toBeInTheDocument();
     // verdict は BLOCKED (kpi source unavailable)
     expect(screen.getByText(/BLOCKED\./)).toBeInTheDocument();
     // deficiency_reasons に kpi_fetch_error が含まれる
@@ -258,7 +258,7 @@ describe("EvalDashboardPage (Sprint 12 batch 9 skeleton + SP-022 T08 batch 6 liv
     const mockFetch = vi.mocked(fetchKpiRollupOrFallback);
     mockFetch.mockRejectedValueOnce(new Error("INTERNAL_API_URL must be configured"));
     await renderAsync();
-    expect(screen.getByRole("heading", { name: "P0 Exit verdict" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "P0 出口判定" })).toBeInTheDocument();
     expect(screen.getByText(/BLOCKED\./)).toBeInTheDocument();
     // error class 名のみ (Error) で raw message を embed しない
     expect(screen.getByText(/kpi fetch failed: Error/)).toBeInTheDocument();
