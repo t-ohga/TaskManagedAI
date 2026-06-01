@@ -408,10 +408,10 @@ function RunRow({ run }: { run: AgentRunListItem }) {
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span>role:{run.role_id ?? "未割当"}</span>
-        <span>seq:{run.progress_seq}</span>
-        <span>last:{run.last_progress_at ? formatDate(run.last_progress_at) : "—"}</span>
-        {run.blocked_reason ? <span>blocked:{run.blocked_reason}</span> : null}
+        <span>役割: {run.role_id ?? "未割当"}</span>
+        <span>進捗 #{run.progress_seq}</span>
+        <span>最終更新: {run.last_progress_at ? formatDate(run.last_progress_at) : "—"}</span>
+        {run.blocked_reason ? <span>ブロック: {run.blocked_reason}</span> : null}
       </div>
     </li>
   );
@@ -432,8 +432,8 @@ function ApprovalRow({ approval }: { approval: ApprovalListItem }) {
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span className="break-all">resource:{approval.resource_ref}</span>
-        <span>requested:{formatDate(approval.requested_at)}</span>
+        <span className="break-all">対象: {approval.resource_ref}</span>
+        <span>要求日時: {formatDate(approval.requested_at)}</span>
       </div>
     </li>
   );
