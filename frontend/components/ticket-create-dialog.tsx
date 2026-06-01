@@ -8,7 +8,10 @@ import { createTicketAction, type CreateTicketState } from "@/app/(admin)/ticket
 
 const initialState: CreateTicketState = { kind: "idle" };
 
-export function TicketCreateDialog({ projectId }: { projectId?: string | undefined }) {
+// 作成先 project は server action が session の current_project から resolve する
+// (server-owned-boundary §1: project_id は caller-supplied 禁止)。本 dialog は
+// 呼び出し側で「現在の project を表示中のときだけ」mount される (tickets/page.tsx)。
+export function TicketCreateDialog() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [titleError, setTitleError] = useState<string | null>(null);
@@ -59,8 +62,6 @@ export function TicketCreateDialog({ projectId }: { projectId?: string | undefin
         </div> : null}
       <form action={formAction} className="grid gap-3">
         <input type="hidden" name="slug" value={slug} />
-        
-        {projectId ? <input type="hidden" name="project_id" value={projectId} /> : null}
         <div>
           <label htmlFor="title" className="text-xs font-medium text-muted-foreground">
             タイトル <span className="text-danger">*</span>

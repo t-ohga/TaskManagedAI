@@ -3,7 +3,12 @@
 import { useEffect } from "react";
 
 // O-4 (UI 監査 fix): raw な error.message (技術的文字列) をそのまま表示せず、人間可読な
-// メッセージに mapping する。詳細は console に残す (デバッグ用)。
+// メッセージに mapping する。
+//
+// error.message には provider raw response / secret_ref / token / PII を含む例外が
+// 流れ込む可能性があるため、画面表示にも browser console にも raw message を出さない
+// (rendering.md §8 / Codex B2b finding)。技術的な相関は Next.js が server-side で
+// 記録する error.digest (hash) で追跡する。
 function humanizeError(error: Error): string {
   const message = error.message ?? "";
   if (/failed with 401|unauthor/i.test(message)) {
@@ -29,8 +34,9 @@ export default function AdminError({
   reset: () => void;
 }) {
   useEffect(() => {
-    // 技術的詳細は console に残す (画面には人間可読メッセージのみ表示)。
-    console.error("AdminError:", error.message, error.digest ?? "");
+    // raw error.message は browser console にも出さない (secret / PII 露出防止)。
+    // 相関は server-side ログと突き合わせ可能な digest (hash) のみ残す。
+    console.error("AdminError digest:", error.digest ?? "(none)");
   }, [error]);
 
   return (
