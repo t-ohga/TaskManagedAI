@@ -25,7 +25,7 @@ type NavigationProps = {
 
 export function Navigation({ actorLabel }: NavigationProps) {
   return (
-    <header className="border-b border-line bg-panel">
+    <header className="no-print border-b border-line bg-panel">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
         <div className="flex items-center justify-between gap-4">
           <Link

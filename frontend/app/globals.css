@@ -101,17 +101,41 @@ input {
   }
 }
 
+/* I-3 タッチ操作最適化: coarse pointer (タッチ) では tap target を 44px 以上にする。
+   標準コントロールに加え、role / summary ベースの custom clickable も対象にする
+   (CSS 仕様上 inline 非置換要素は min-width/height を無視するため inline text link は歪まない)。 */
 @media (pointer: coarse) {
-  button, a, select, input[type="checkbox"], input[type="radio"] {
+  button,
+  a,
+  select,
+  summary,
+  [role="button"],
+  [role="tab"],
+  input[type="checkbox"],
+  input[type="radio"] {
     min-height: 44px;
     min-width: 44px;
   }
 }
 
+/* S-1 印刷ビュー: chrome は明示クラス .no-print のみで隠し、内容を綺麗に印刷する。
+   generic な header / form / button / footer / aside を一律に隠すと、意味を持つコンテンツ
+   (チケットタイトルの <header>、設定フォームの現在値、承認詳細の <aside> 内の判定メタデータ)
+   まで消えるため、非表示は明示クラス .no-print に限定する (Codex adversarial R1/R2 F-MEDIUM)。
+   chrome (管理ナビ) は Navigation root に no-print 済。個別の操作系 (ステータス変更 / 編集 /
+   コメント欄 / フィルタ等) は各ページで .no-print を付ける。 */
+/* S-1: 画面では非表示、印刷時のみ表示する要素 (.no-print の逆)。フィルタ操作子を印刷で隠す際に、
+   有効フィルタ / ページの print-visible なサマリを出して証跡の scope を保つために使う。 */
+.print-only {
+  display: none;
+}
+
 @media print {
-  header, nav, footer, aside,
-  .no-print, [aria-label="管理ナビゲーション"] {
+  .no-print {
     display: none !important;
+  }
+  .print-only {
+    display: block !important;
   }
   main {
     padding: 0 !important;
@@ -120,6 +144,11 @@ input {
   body {
     background: white !important;
     color: black !important;
+  }
+  /* ステータスバッジ等の背景色を印刷でも保持する */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }
 

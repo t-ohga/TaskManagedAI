@@ -94,11 +94,14 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
             </dl>
           </article>
 
+          {/* S-1: 判定メタデータ (上の article) は印刷に残し、pending の操作フォーム
+              (承認 / 却下 / 修正依頼) は印刷物に出さない (.no-print)。承認パケット / 監査用出力を
+              操作 UI 混じりにしない (Codex adversarial R3 F-MEDIUM)。 */}
           {approval.status === "pending" ? (
-            <>
+            <div className="no-print grid gap-4">
               <ApprovalDecideForm approvalId={approval.id} initialStatus={approval.status} />
               <ApprovalRevisionRequestForm approvalId={approval.id} initialStatus={approval.status} />
-            </>
+            </div>
           ) : null}
         </aside>
       </div>
