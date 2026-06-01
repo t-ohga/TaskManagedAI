@@ -125,13 +125,22 @@ artifact だけ本文表示を許可する設計が前提。ADR-00042 の scope 
 ```sql
 select r.id as run_id,
        a.id as artifact_id, a.kind,
-       a.payload_data_class, a.trust_level, a.exportable, a.parent_artifact_id, a.created_at
+       a.payload_data_class, a.trust_level, a.exportable, a.created_at,
+       -- parent_artifact_id は parent が「可視 artifact」(= provider_continuation_ref でない) のときだけ返す。
+       -- 除外済 provider_continuation_ref を親に持つ child から、その UUID / lineage を漏らさない (R15 F-HIGH)。
+       case when pa.id is not null then a.parent_artifact_id else null end as parent_artifact_id
   from agent_runs r
   left join artifacts a
     on a.tenant_id = r.tenant_id
    and a.project_id = r.project_id
    and a.run_id = r.id
    and a.kind <> 'provider_continuation_ref'
+  left join artifacts pa
+    on pa.tenant_id = a.tenant_id
+   and pa.project_id = a.project_id
+   and pa.run_id = a.run_id
+   and pa.id = a.parent_artifact_id
+   and pa.kind <> 'provider_continuation_ref'   -- 親も可視種別のときだけ join 成立
  where r.tenant_id = :tenant_id
    and r.id = :run_id
    and not exists (
@@ -146,6 +155,10 @@ select r.id as run_id,
 
 - **content_jsonb / content_hash は SELECT しない** (metadata column のみ)。本文を DB から API layer へも
   運ばないことで漏洩面を構造的にゼロにする。
+- **parent edge 可視性 (R15 F-HIGH)**: `parent_artifact_id` は parent を self-join (`pa`) し、parent が
+  `provider_continuation_ref` でない (= inventory に出る可視 artifact) ときだけ返す。親が除外済
+  provider_continuation_ref / 不存在なら `parent_artifact_id=null` (除外 artifact の UUID / lineage を
+  child 経由で漏らさない)。
 - **run 起点の inner 条件** (`r.tenant_id` + `r.id` + soft-delete NOT EXISTS) が run 可視性を決め、
   `LEFT JOIN artifacts` が artifact を集める。0 rows → run 不可視 → 404。run 行 + artifact null →
   200 empty。**404/200-empty の区別と active-scope を同一 statement** で閉じる (TOCTOU / 将来再利用でも
@@ -171,6 +184,7 @@ select r.id as run_id,
 | active-scope TOCTOU + 404/200-empty 判別不可 | `agent_runs` 起点 LEFT JOIN artifacts の単一 statement で run 可視性 (soft-delete 除外) と artifact 集約を同時に行い、0 rows→404 / run 行+artifact null→200-empty。SQL introspection + 404/empty negative test |
 | content_jsonb 経由の SecretBroker ref / continuation ref / PII / raw secret 露出 | **content / content_hash を返さない** ことで漏洩面を構造的にゼロ化 (denylist scrub の fail-open を回避。content drill-down は P0.1 defer) |
 | `provider_continuation_ref` の inventory 露出 (ContextSnapshot rule 違反) | repository query で kind 除外 + schema に該当 metadata を出さない |
+| 除外済 provider_continuation_ref の `parent_artifact_id` 経由 lineage 露出 (R15 F-HIGH) | parent を self-join し parent.kind が可視種別のときだけ `parent_artifact_id` を返す (provider_continuation_ref 親は null)。child の親が provider_continuation_ref の場合に parent_artifact_id=null の negative test を must-ship |
 | route 衝突 (`/{run_id}` と `/{run_id}/artifacts`) | route-order test |
 | tenant/project 越境 | run 起点 query の複合境界。seed-based negative は CI Compose |
 | inventory の肥大化 | P0 は単一 run の metadata 一覧で実用上問題なし。pagination は独立 endpoint で将来拡張余地 |
@@ -212,6 +226,10 @@ select r.id as run_id,
     `content` / `content_jsonb` / `content_hash` を **持たない** (OpenAPI schema / model_fields で assert)。
   - response mapping: fake rows (各 kind / trust_level / data_class) → metadata が正しく写像される。
     `provider_continuation_ref` を含む fake rows でも query 除外により返らない (introspection で固定)。
+  - **parent edge 可視性 (R15 F-HIGH、must-ship)**: SQL に parent self-join (`pa`) +
+    `pa.kind <> 'provider_continuation_ref'` + `case when pa.id is not null ... else null` が含まれること
+    (introspection)。fake rows で「親が provider_continuation_ref の child」→ `parent_artifact_id=null`、
+    「親が可視 artifact の child」→ `parent_artifact_id` 非 null を検証。
   - seed-based tenant/project 越境 + soft-delete negative は CI Compose postgres で検証 (host 不可)。
 - frontend: `fetchRunArtifacts` の Zod strict (content/content_hash field を持たない) + run 詳細 artifact
   インベントリ section の表示 / 空状態 / degrade。
