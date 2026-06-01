@@ -113,8 +113,14 @@ run 詳細から artifact を読むための **read-only REST endpoint** と **r
 4. **再帰 shape/value-aware scrub (R2 F-HIGH-2 / R3 F-HIGH / R4 F-HIGH)**: 残り (`exportable=true` かつ
    public/internal) の content は表示前に **再帰 scrub** を適用。別 artifact の content_jsonb に混入し得る
    continuation/session/thread/provider ref / secret_ref を、**object key と string value の両方** で除去する。
-   - **前処理 (R4 F-HIGH / R5 F-HIGH)**: 判定前に **NFKC 互換正規化** + trim + **制御 / format 文字 (Cc/Cf)
-     除去** + **casefold (大文字小文字無視)** を行う (全角 / 互換幅 / zero-width / 大小文字のすり抜け防止)。
+   - **前処理 (R4/R5/R12 F-HIGH、順序重要)**: 判定前に次の順で正規化する —
+     ① **NFKC 互換正規化** + trim + **制御 / format 文字 (Cc/Cf) 除去** →
+     ② **camelCase boundary canonicalization**: lower→upper / acronym / digit 境界に `_` を挿入
+     (`secretRefId` → `secret_Ref_Id`、`oldSecretRefId` → `old_Secret_Ref_Id`) →
+     ③ **casefold** (大文字小文字無視)。
+     **camelCase 境界の検出は casefold の前に行う (R12 F-HIGH)**: casefold を先にすると `secretRefId` が
+     `secretrefid` になり境界が消えて segment 判定に落ちないため。これで全角 / 互換幅 / zero-width /
+     大小文字 / camelCase compound のすり抜けを防ぐ。
    - **name denylist** — **object key と string value の両方** に同一判定 (R3 F-HIGH: key 経由露出も封鎖)。
      **判定は exact 一致だけでなく segment/compound 一致 (R11 F-HIGH)**: 正規化後の名前を `_` / `-` /
      camelCase 境界で分割し、denylist token が **segment として** 含まれる (= `(^|[_-])<token>([_-]|$)` または
@@ -269,7 +275,11 @@ select r.id as run_id,
         / camelCase (`secretRefId`)。
       - **SecretBroker compound/派生 key (R11 F-HIGH)**: `{"old_secret_ref_id":"..."}` /
         `{"new_secret_ref_id":"..."}` / `{"matched_secret_ref_id":"..."}` / `{"restored_secret_ref_id":"..."}` /
-        `{"demoted_secret_ref_id":"..."}` / camelCase → segment 一致で key-value ごと drop。
+        `{"demoted_secret_ref_id":"..."}` → segment 一致で key-value ごと drop。
+      - **camelCase compound key (R12 F-HIGH)**: `{"secretRefId":...}` / `{"oldSecretRefId":...}` /
+        `{"providerResponse":...}` / `{"capabilityToken":...}` / `{"continuationId":...}` を key / value /
+        token=value-key の各経路で → 全て key-value drop または whole-value redaction
+        (camelCase 境界 canonicalization が casefold 前に効くこと)。
       - **自由文 token=value ログ (R6 F-HIGH-1)**: string value `cli_stdout: "failed to resolve secret_ref_id=sr_project_openai_v1"` /
         `cli_stderr: "use capability_token abc123"` → 値全体を redaction marker に置換。
       - **token=value を JSON key に埋めた露出 (R10 F-HIGH)**: `{"failed to resolve secret_ref_id=sr_project_openai_v1": true}` /
