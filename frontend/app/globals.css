@@ -124,9 +124,18 @@ input {
    まで消えるため、非表示は明示クラス .no-print に限定する (Codex adversarial R1/R2 F-MEDIUM)。
    chrome (管理ナビ) は Navigation root に no-print 済。個別の操作系 (ステータス変更 / 編集 /
    コメント欄 / フィルタ等) は各ページで .no-print を付ける。 */
+/* S-1: 画面では非表示、印刷時のみ表示する要素 (.no-print の逆)。フィルタ操作子を印刷で隠す際に、
+   有効フィルタ / ページの print-visible なサマリを出して証跡の scope を保つために使う。 */
+.print-only {
+  display: none;
+}
+
 @media print {
   .no-print {
     display: none !important;
+  }
+  .print-only {
+    display: block !important;
   }
   main {
     padding: 0 !important;

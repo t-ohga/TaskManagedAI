@@ -198,4 +198,23 @@ describe("list page print scope (Codex adversarial R5 F-MEDIUM regression guard)
     const before = inbox.slice(Math.max(0, reviewIndex - 400), reviewIndex);
     expect(before).toContain('className="no-print');
   });
+
+  it("audit and runs keep a print-only active-filter summary (Codex App P2)", () => {
+    // フィルタ操作子を印刷で隠す代わりに、有効フィルタ + ページを print-only サマリで残し、
+    // 印刷された証跡が「全件 / 全ログ」に誤読されないようにする。
+    const audit = readFileSync(join(process.cwd(), "app/(admin)/audit/page.tsx"), "utf8");
+    expect(audit).toMatch(/className="print-only[^"]*"[\s\S]{0,80}フィルタ/);
+    const runs = readFileSync(join(process.cwd(), "app/(admin)/runs/page.tsx"), "utf8");
+    expect(runs).toMatch(/className="print-only[^"]*"[\s\S]{0,80}フィルタ/);
+  });
+
+  it("globals.css defines a .print-only utility shown only in print", () => {
+    const css = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
+    // 既定で非表示。
+    expect(css).toMatch(/\.print-only\s*\{\s*display:\s*none/);
+    // @media print 内で表示。
+    const printStart = css.indexOf("@media print");
+    const printBlock = css.slice(printStart, printStart + 600);
+    expect(printBlock).toMatch(/\.print-only\s*\{\s*display:\s*block/);
+  });
 });

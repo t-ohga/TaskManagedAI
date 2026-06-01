@@ -146,6 +146,12 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
         </p>
       </header>
 
+      {/* S-1: 印刷時は filter 操作子を隠すが、印刷された証跡が「全ログ」に誤読されないよう、
+          有効なイベント種別フィルタとページ番号を print 専用サマリで残す (Codex App P2)。 */}
+      <p className="print-only text-sm text-ink">
+        フィルタ: イベント種別 = {typeFilter ? (EVENT_TYPE_LABELS[typeFilter] ?? typeFilter) : "すべて"}
+        {" ・ "}ページ {pageNum} / {totalPages}
+      </p>
       {/* S-1: 監査ログは証跡として印刷価値が高い。絞り込み / ページ移動の操作子は印刷物に出さず、
           ヘッダー / マスク注意 / テーブル本体だけを残す (.no-print)。チップは画面では 44px tap target。 */}
       <div className="no-print flex flex-wrap items-center gap-3">

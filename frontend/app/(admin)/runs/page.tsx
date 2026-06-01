@@ -137,6 +137,13 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
         </div>
       </header>
 
+      {/* S-1: 印刷時は filter 操作子を隠すが、印刷された一覧が「全件」に誤読されないよう、
+          有効な status / role フィルタとページ番号を print 専用サマリで残す (Codex App P2)。 */}
+      <p className="print-only text-sm text-ink">
+        フィルタ: ステータス = {statusFilter ? (STATUS_LABELS[statusFilter] ?? statusFilter) : "すべて"}
+        {" ・ "}ロール = {roleFilter || "すべて"}
+        {" ・ "}ページ {page} / {totalPages}
+      </p>
       {/* S-1: フィルタ操作子は印刷物に出さない (.no-print)。チップは画面では 44px tap target (I-3)。 */}
       <div className="no-print flex flex-wrap items-center gap-3">
         <div className="flex flex-wrap gap-1">
