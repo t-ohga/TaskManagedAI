@@ -7,6 +7,7 @@ import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { ActivityTimeline } from "@/components/activity-timeline";
 import { EditTicketForm } from "./_components/edit-ticket-form";
 import { TicketDeleteButton } from "@/components/ticket-delete-button";
+import { TrackRecentTicket } from "@/components/recent-tickets";
 
 export const dynamic = "force-dynamic";
 
@@ -97,6 +98,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
 
   return (
     <section aria-label="チケット詳細" className="grid gap-6">
+      <TrackRecentTicket ticket={{ id: ticket.id, title: ticket.title, slug: ticket.slug }} />
       <header className="grid gap-2">
         <Breadcrumb items={[
           { label: "ダッシュボード", href: "/dashboard" },

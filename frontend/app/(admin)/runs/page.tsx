@@ -23,10 +23,16 @@ type RunsResponse = {
   total: number;
 };
 
-async function loadRuns(params?: { status?: string | undefined; role?: string | undefined }): Promise<RunsResponse> {
+async function loadRuns(params?: {
+  status?: string | undefined;
+  role?: string | undefined;
+  limit?: number;
+  offset?: number;
+}): Promise<RunsResponse> {
   try {
     const query = new URLSearchParams();
-    query.set("limit", "200");
+    query.set("limit", String(params?.limit ?? 200));
+    if (params?.offset) query.set("offset", String(params.offset));
     if (params?.status) query.set("status", params.status);
     if (params?.role) query.set("role", params.role);
     const res = await fetchBackendRaw(`/api/v1/agent_runs?${query}` as `/${string}`);
@@ -46,8 +52,11 @@ function groupByStatus(runs: AgentRunItem[]) {
 }
 
 type RunsPageProps = {
-  searchParams: Promise<{ status?: string; role?: string }>;
+  searchParams: Promise<{ status?: string; role?: string; page?: string }>;
 };
+
+// C-4 (UI 監査 fix): AI実行一覧は limit=200 固定でページネーション無しだった。
+const RUNS_PER_PAGE = 50;
 
 const STATUS_LABELS: Record<string, string> = {
   queued: "待機中",
@@ -72,12 +81,19 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
   const params = await searchParams;
   const statusFilter = params.status ?? "";
   const roleFilter = params.role ?? "";
-  const [filteredResult, allResult, costSummary] = await Promise.all([
+  const parsedPage = Number(params.page ?? "1");
+  const page = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1;
+  const [filteredResult, allResult, roleFacetResult, costSummary] = await Promise.all([
     loadRuns({
       status: statusFilter || undefined,
       role: roleFilter || undefined,
+      limit: RUNS_PER_PAGE,
+      offset: (page - 1) * RUNS_PER_PAGE,
     }),
     (statusFilter || roleFilter) ? loadRuns() : Promise.resolve(null),
+    // C-4 (Codex review fix): role 候補は paginated items でなく非 paginated source から作る
+    // (status 内 facet)。現在ページ 50 件限定だと 51 件目以降のロールが filter chip に出ない。
+    loadRuns({ status: statusFilter || undefined, limit: 200 }),
     getCostSummary("all").catch((): CostSummaryResponse | null => null),
   ]);
   const filteredRuns = filteredResult.items;
@@ -86,7 +102,18 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
 
   const { active, terminal } = groupByStatus(filteredRuns);
   const statuses = Object.keys(STATUS_LABELS);
-  const roles = [...new Set(filteredRuns.map((r) => r.role_id).filter(Boolean))].sort();
+  const roleSet = new Set(roleFacetResult.items.map((r) => r.role_id).filter(Boolean));
+  if (roleFilter) roleSet.add(roleFilter); // 選択中ロールは現在ページが空でも chip に保持
+  const roles = [...roleSet].sort();
+  const totalPages = Math.max(1, Math.ceil(totalRuns / RUNS_PER_PAGE));
+  const runsPageHref = (targetPage: number): string => {
+    const q = new URLSearchParams();
+    if (statusFilter) q.set("status", statusFilter);
+    if (roleFilter) q.set("role", roleFilter);
+    if (targetPage > 1) q.set("page", String(targetPage));
+    const qs = q.toString();
+    return qs ? `/runs?${qs}` : "/runs";
+  };
 
   return (
     <section aria-label="AI 実行一覧" className="grid gap-6">
@@ -242,6 +269,22 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
             フィルターをリセット
           </a>
         </div>
+      )}
+
+      {totalRuns > RUNS_PER_PAGE && (
+        <nav aria-label="ページネーション" className="flex items-center justify-center gap-2">
+          {page > 1 ? (
+            <a href={runsPageHref(page - 1)} className="rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+              前へ
+            </a>
+          ) : null}
+          <span className="text-sm text-muted-foreground">{page} / {totalPages}</span>
+          {page < totalPages ? (
+            <a href={runsPageHref(page + 1)} className="rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+              次へ
+            </a>
+          ) : null}
+        </nav>
       )}
     </section>
   );

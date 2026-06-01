@@ -40,13 +40,24 @@ async function readBackendHealth(): Promise<BackendHealthState> {
   }
 }
 
-async function readProjectSummaries(): Promise<ProjectSummary[]> {
+// D-5 (Codex review R2 fix): project-count card は全 project list の status から正確に出せる
+// (ticket fetch 不要)。ticket-level 集計だけ先頭 10 project に bound する (pre-existing、
+// 完全な ticket 総数は backend aggregate endpoint が必要 = follow-up)。
+async function readProjectSummaries(): Promise<{
+  summaries: ProjectSummary[];
+  projectTotal: number;
+  activeProjectTotal: number;
+}> {
   try {
     const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
     const rawRes = projectsRes as Record<string, unknown> | null;
     const projects = (Array.isArray(rawRes) ? rawRes : ((rawRes as any)?.projects ?? (rawRes as any)?.items ?? [])) as Array<Record<string, string>>;
-    if (!Array.isArray(projects)) return [];
+    if (!Array.isArray(projects)) return { summaries: [], projectTotal: 0, activeProjectTotal: 0 };
 
+    const projectTotal = projects.length;
+    const activeProjectTotal = projects.filter(
+      (p) => String(p.status ?? "active") === "active"
+    ).length;
     const summaries: ProjectSummary[] = [];
     for (const p of projects.slice(0, 10)) {
       let ticketCount = 0;
@@ -75,9 +86,9 @@ async function readProjectSummaries(): Promise<ProjectSummary[]> {
         statusCounts,
       });
     }
-    return summaries;
+    return { summaries, projectTotal, activeProjectTotal };
   } catch {
-    return [];
+    return { summaries: [], projectTotal: 0, activeProjectTotal: 0 };
   }
 }
 
@@ -98,10 +109,13 @@ function getRangeCutoff(range: string): Date | null {
 export default async function DashboardPage({ searchParams }: DashboardProps) {
   const params = await searchParams;
   const rangeFilter = params.range ?? "";
-  const [backendHealth, projects] = await Promise.all([
+  const [backendHealth, projectData] = await Promise.all([
     readBackendHealth(),
     readProjectSummaries(),
   ]);
+  const projects = projectData.summaries;
+  const projectTotal = projectData.projectTotal;
+  const activeProjectTotal = projectData.activeProjectTotal;
   const frontendHealth = getFrontendHealth();
 
   const aggCounts = projects.reduce(
@@ -208,19 +222,22 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
             <section aria-label="全体サマリー" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <article className="rounded-lg border border-line bg-panel p-4 shadow-sm">
           <p className="text-xs text-muted-foreground">総チケット数</p>
-          <p className="mt-1 text-2xl font-bold text-ink">{projects.reduce((s: number, p: any) => s + p.ticketCount, 0)}</p>
+          <p className="mt-1 text-2xl font-bold text-ink">{totalTickets}</p>
         </article>
         <article className="rounded-lg border border-line bg-panel p-4 shadow-sm">
           <p className="text-xs text-muted-foreground">プロジェクト数</p>
-          <p className="mt-1 text-2xl font-bold text-ink">{projects.length}</p>
+          <p className="mt-1 text-2xl font-bold text-ink">{projectTotal}</p>
         </article>
+        {/* D-5 (UI 監査 fix): 旧「表示中チケット」は「総チケット数」と同一式の重複だった。完了チケット
+            (statusCounts) は 200 件 client 集計で総数と不整合のため、全 project list の status から正確に
+            出せる active/archived に分ける (Codex review R1#2/R2: project-count は ticket fetch 不要)。 */}
         <article className="rounded-lg border border-blue-200 bg-blue-50 p-4 shadow-sm">
-          <p className="text-xs text-blue-600">表示中チケット</p>
-          <p className="mt-1 text-2xl font-bold text-blue-700">{projects.reduce((s: number, p: any) => s + p.ticketCount, 0)}</p>
+          <p className="text-xs text-blue-600">稼働中プロジェクト</p>
+          <p className="mt-1 text-2xl font-bold text-blue-700">{activeProjectTotal}</p>
         </article>
-        <article className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-          <p className="text-xs text-emerald-600">稼働中プロジェクト</p>
-          <p className="mt-1 text-2xl font-bold text-emerald-700">{projects.filter((p: any) => String(p.status ?? "active") === "active").length}</p>
+        <article className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
+          <p className="text-xs text-amber-600">アーカイブ済プロジェクト</p>
+          <p className="mt-1 text-2xl font-bold text-amber-700">{projectTotal - activeProjectTotal}</p>
         </article>
       </section>
 
