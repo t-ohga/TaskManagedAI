@@ -118,16 +118,14 @@ input {
   }
 }
 
-/* S-1 印刷ビュー: ナビ / 操作系を隠し、内容のみを綺麗に印刷する。
-   バッジ等の色は print-color-adjust で保持する。 */
+/* S-1 印刷ビュー: chrome (管理ナビ / footer / aside / 明示 .no-print) のみを隠し、
+   内容を綺麗に印刷する。generic な header / form / button を一律に隠すと、意味を持つ
+   コンテンツ (チケットタイトルの <header>、設定フォーム内の現在値) まで消えるため、
+   非表示は明示クラスとランドマークに限定する (Codex adversarial R1 F-MEDIUM)。
+   個別の操作系 (ステータス変更 / 編集 / コメント欄 等) は各ページで .no-print を付ける。 */
 @media print {
-  header, nav, footer, aside,
-  .no-print, [aria-label="管理ナビゲーション"] {
-    display: none !important;
-  }
-  /* 印刷物には操作系 (ボタン / フォーム / 入力 / コメント欄) を出さず内容に集中させる */
-  button, form, input, textarea, select,
-  [role="button"], [role="tablist"] {
+  .no-print, footer, aside,
+  nav[aria-label="管理ナビゲーション"] {
     display: none !important;
   }
   main {

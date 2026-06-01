@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -54,5 +57,36 @@ describe("PrintButton (S-1 チケット印刷ビュー)", () => {
     expect(printSpy).toHaveBeenCalledTimes(1);
 
     vi.unstubAllGlobals();
+  });
+});
+
+describe("print CSS scope (Codex adversarial R1 F-MEDIUM regression guard)", () => {
+  // @media print が generic な header/form/button を一律 display:none すると、意味を持つ
+  // コンテンツ (チケットタイトルの <header>、設定フォームの現在値) まで消える。非表示は
+  // 明示クラス (.no-print) とランドマークに限定されていることを CSS 内容で固定する。
+  const css = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
+  const printBlock = (() => {
+    const start = css.indexOf("@media print");
+    expect(start).toBeGreaterThanOrEqual(0);
+    // 対応する閉じ括弧までを粗く抽出 (次の "@media" / "@theme" / EOF まで)。
+    const rest = css.slice(start + "@media print".length);
+    const nextAt = rest.search(/@media|@theme|@layer/);
+    return nextAt >= 0 ? rest.slice(0, nextAt) : rest;
+  })();
+
+  it("hides explicit chrome (.no-print) in print", () => {
+    expect(printBlock).toContain(".no-print");
+  });
+
+  it("does not blanket-hide semantic header/form/button/input in print", () => {
+    // display:none 対象セレクタに bare な header,/form,/button,/input, が無いこと。
+    const hideSelectorLines = printBlock
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("*")); // print-color-adjust の * は除外
+    const joined = hideSelectorLines.join("\n");
+    expect(joined).not.toMatch(/(^|\s)header\s*,/);
+    expect(joined).not.toMatch(/(^|[,\s])form\s*[,{]/);
+    expect(joined).not.toMatch(/(^|[,\s])button\s*[,{]/);
+    expect(joined).not.toMatch(/(^|[,\s])input\s*[,{]/);
   });
 });

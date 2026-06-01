@@ -219,13 +219,14 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
         </article>
       </div>
       {!isWritable ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+        <div className="no-print rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
           このチケットは現在の作業プロジェクト外のため、ここでは閲覧のみ可能です。
           ステータス変更・編集・中止は、そのチケットが属するプロジェクトを現在の
           プロジェクトにしているときだけ行えます。
         </div>
       ) : null}
-      <div className="grid gap-4 md:grid-cols-2">
+      {/* S-1: 操作系 (ステータス変更 / アクション) は印刷物には出さない (.no-print) */}
+      <div className="no-print grid gap-4 md:grid-cols-2">
         <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
           <h2 className="text-lg font-semibold">ステータス変更</h2>
           <div className="mt-4">
@@ -255,20 +256,24 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
         </article>
       </div>
 
+      {/* S-1: 編集フォームは印刷物には出さない (.no-print) */}
       {isWritable ? (
-        <EditTicketForm ticket={{
-          ...ticket,
-          assignee_actor_id: null,
-          acceptance_criteria: null,
-          evidence_ids: [],
-          agent_run_ids: [],
-        } as unknown as Parameters<typeof EditTicketForm>[0]["ticket"]} />
+        <div className="no-print">
+          <EditTicketForm ticket={{
+            ...ticket,
+            assignee_actor_id: null,
+            acceptance_criteria: null,
+            evidence_ids: [],
+            agent_run_ids: [],
+          } as unknown as Parameters<typeof EditTicketForm>[0]["ticket"]} />
+        </div>
       ) : null}
 
       <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
         <h2 className="text-lg font-semibold">アクティビティ</h2>
+        {/* S-1: コメント入力欄は印刷物には出さない。コメント履歴 (timeline) は印刷する */}
         {isWritable ? (
-          <div className="mt-4">
+          <div className="no-print mt-4">
             <CommentForm ticketId={ticket.id} onSubmit={addTicketCommentAction} />
           </div>
         ) : null}
