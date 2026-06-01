@@ -23,16 +23,14 @@ function TreeNodeView({ node, depth }: { node: TreeNode; depth: number }) {
     <div className={depth > 0 ? "ml-6 border-l-2 border-line pl-4" : ""}>
       <div className={`inline-flex items-center gap-2 rounded-md border-2 px-3 py-1.5 text-xs ${color}`}>
         <span className="font-mono">{node.id.slice(0, 6)}</span>
-        {node.role && <span className="rounded bg-white/60 px-1.5 py-0.5 text-[10px] font-medium">{node.role}</span>}
+        {node.role ? <span className="rounded bg-white/60 px-1.5 py-0.5 text-[10px] font-medium">{node.role}</span> : null}
         <span className="text-muted-foreground">{node.status}</span>
       </div>
-      {node.children.length > 0 && (
-        <div className="mt-2 grid gap-2">
+      {node.children.length > 0 ? <div className="mt-2 grid gap-2">
           {node.children.map((child) => (
             <TreeNodeView key={child.id} node={child} depth={depth + 1} />
           ))}
-        </div>
-      )}
+        </div> : null}
     </div>
   );
 }

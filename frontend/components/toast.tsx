@@ -12,7 +12,11 @@ type ToastContextType = {
   toast: (message: string, type?: Toast["type"]) => void;
 };
 
-const ToastContext = createContext<ToastContextType>({ toast: () => {} });
+const ToastContext = createContext<ToastContextType>({
+  toast: () => {
+    /* no-op default; 実 impl は ToastProvider が供給する (Provider 外で呼ばれた場合の安全弁) */
+  },
+});
 
 export function useToast() {
   return useContext(ToastContext);

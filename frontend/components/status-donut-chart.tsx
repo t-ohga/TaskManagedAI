@@ -23,33 +23,36 @@ export function StatusDonutChart({ data, size = 120 }: StatusDonutChartProps) {
   const cx = size / 2;
   const cy = size / 2;
   const circumference = 2 * Math.PI * r;
-  let offset = 0;
+  const segments = data.filter((d) => d.count > 0);
+  // 各セグメントの dash 長と開始 offset (= 自身より前の dash の総和) を arc オブジェクト配列に
+  // 事前計算する。render 中に let 変数を map 内で += する mutation を避けるための prefix-sum
+  // (react-hooks/immutability)。index access ではなく値を持つ配列を map する。
+  const arcs = segments.map((d, i, arr) => {
+    const dash = circumference * (d.count / total);
+    const offset = arr
+      .slice(0, i)
+      .reduce((sum, prev) => sum + circumference * (prev.count / total), 0);
+    return { label: d.label, color: d.color, dash, gap: circumference - dash, offset };
+  });
 
   return (
     <div className="flex items-center gap-4">
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-label="ステータス分布">
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--tm-line)" strokeWidth="12" />
-        {data.filter((d) => d.count > 0).map((d) => {
-          const pct = d.count / total;
-          const dash = circumference * pct;
-          const gap = circumference - dash;
-          const currentOffset = offset;
-          offset += dash;
-          return (
-            <circle
-              key={d.label}
-              cx={cx}
-              cy={cy}
-              r={r}
-              fill="none"
-              stroke={d.color}
-              strokeWidth="12"
-              strokeDasharray={`${dash} ${gap}`}
-              strokeDashoffset={-currentOffset}
-              transform={`rotate(-90 ${cx} ${cy})`}
-            />
-          );
-        })}
+        {arcs.map((arc) => (
+          <circle
+            key={arc.label}
+            cx={cx}
+            cy={cy}
+            r={r}
+            fill="none"
+            stroke={arc.color}
+            strokeWidth="12"
+            strokeDasharray={`${arc.dash} ${arc.gap}`}
+            strokeDashoffset={-arc.offset}
+            transform={`rotate(-90 ${cx} ${cy})`}
+          />
+        ))}
         <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" className="text-lg font-bold" fill="var(--tm-ink)">
           {total}
         </text>

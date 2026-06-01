@@ -1,4 +1,6 @@
-import { getBackendHealth, fetchBackendRaw } from "@/lib/api/client";
+import { getBackendHealth } from "@/lib/api/client";
+import { listCurrentProjects } from "@/lib/api/session";
+import { listTickets } from "@/lib/api/tickets";
 import { fetchTicketSummary, foldTicketDisplayCounts, fetchActivityTimeseries, buildActivityTrendSeries } from "@/lib/api/dashboard";
 import type { HealthResponse } from "@/lib/api/types";
 import { getFrontendHealth } from "@/lib/health";
@@ -21,7 +23,8 @@ type ProjectSummary = {
   slug: string;
   name: string;
   status: string;
-  ticketCount: number;
+  // per-project の /tickets fetch が失敗した場合は null。取得失敗 (—) と真の 0 件を区別する。
+  ticketCount: number | null;
 };
 
 async function readBackendHealth(): Promise<BackendHealthState> {
@@ -36,47 +39,51 @@ async function readBackendHealth(): Promise<BackendHealthState> {
 // D-5 (Codex review R2 fix): project-count card は全 project list の status から正確に出せる
 // (ticket fetch 不要)。ticket-level 集計だけ先頭 10 project に bound する (pre-existing、
 // 完全な ticket 総数は backend aggregate endpoint が必要 = follow-up)。
-async function readProjectSummaries(): Promise<{
-  summaries: ProjectSummary[];
-  projectTotal: number;
-  activeProjectTotal: number;
-}> {
+async function readProjectSummaries(): Promise<
+  | { ok: true; summaries: ProjectSummary[]; projectTotal: number; activeProjectTotal: number }
+  | { ok: false }
+> {
   try {
-    const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
-    const rawRes = projectsRes as Record<string, unknown> | null;
-    const projects = (Array.isArray(rawRes) ? rawRes : ((rawRes as any)?.projects ?? (rawRes as any)?.items ?? [])) as Array<Record<string, string>>;
-    if (!Array.isArray(projects)) return { summaries: [], projectTotal: 0, activeProjectTotal: 0 };
-
+    // /api/v1/me/projects は zod-backed な listCurrentProjects() で取得する (raw fetch +
+    // unchecked cast を避ける)。schema drift / malformed response / auth 失効では
+    // fetchBackendJson が throw し、下の catch で degraded ({ok:false}) に倒れる (fail-closed)。
+    // backend は tenant に project が無いとき 200+empty ではなく 404 ("no project found for
+    // tenant") を返す (backend/app/api/me.py)。P0 は単一 tenant + seed project 前提で
+    // no-project は edge/impossible のため、404→degraded で扱う (200+empty の真の 0 件は
+    // 防御的に下流で 0 表示可能だが production では発生しない)。
+    const { projects } = await listCurrentProjects();
     const projectTotal = projects.length;
-    const activeProjectTotal = projects.filter(
-      (p) => String(p.status ?? "active") === "active"
-    ).length;
+    const activeProjectTotal = projects.filter((p) => p.status === "active").length;
     // H-2 (UI 監査 fix): 各 project の tickets fetch を逐次 await から Promise.all 並列化 (N+1 解消)。
     const summaries: ProjectSummary[] = await Promise.all(
       projects.slice(0, 10).map(async (p): Promise<ProjectSummary> => {
         // per-project ticketCount は BarChart / project card 表示用 (total は accurate)。
         // status 別母数は ticket_summary endpoint (全 project SQL 集計) に移譲済 (D-5)。
-        let ticketCount = 0;
+        // per-project ticket 件数も zod-validated な listTickets で取得する。malformed success
+        // (total 欠落 / 非数値 / items 非配列) は schema parse で throw し、fetch 失敗と同様に
+        // ticketCount=null (取得失敗) として 0 (真の 0 件) と区別する (Codex R4)。
+        let ticketCount: number | null = null;
         try {
-          const pid = (p as any).project_id ?? (p as any).id;
-          const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets?limit=1`) as Record<string, unknown>;
-          const items = (ticketsRes?.items ?? []) as Array<{ status: string }>;
-          ticketCount = typeof ticketsRes?.total === "number" ? (ticketsRes.total as number) : items.length;
+          const ticketsRes = await listTickets(p.project_id, { limit: 1 });
+          ticketCount = ticketsRes.total;
         } catch {
-          ticketCount = 0;
+          ticketCount = null;
         }
         return {
-          id: String((p as any).project_id ?? (p as any).id ?? ''),
-          slug: String(p.slug ?? ''),
-          name: String(p.name ?? ''),
-          status: String(p.status ?? 'active'),
+          id: p.project_id,
+          slug: p.slug,
+          name: p.name,
+          status: p.status,
           ticketCount,
         };
       })
     );
-    return { summaries, projectTotal, activeProjectTotal };
+    return { ok: true, summaries, projectTotal, activeProjectTotal };
   } catch {
-    return { summaries: [], projectTotal: 0, activeProjectTotal: 0 };
+    // 取得失敗 (auth 失効 / schema drift / backend down) を空配列 + 0 として返すと「真の 0 件」と
+    // 区別できないため、ok:false を返して render 側で degraded (—) 表示にする (Codex R2、ticket
+    // summary 側と同じ ok/error 方針)。
+    return { ok: false };
   }
 }
 
@@ -101,9 +108,11 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
       .then((timeseries) => ({ ok: true as const, timeseries }))
       .catch(() => ({ ok: false as const })),
   ]);
-  const projects = projectData.summaries;
-  const projectTotal = projectData.projectTotal;
-  const activeProjectTotal = projectData.activeProjectTotal;
+  // 取得失敗時は null にして count cards を「—」表示にする (失敗を真の 0 件と誤認させない)。
+  const projectDataOk = projectData.ok;
+  const projects = projectDataOk ? projectData.summaries : [];
+  const projectTotal = projectDataOk ? projectData.projectTotal : null;
+  const activeProjectTotal = projectDataOk ? projectData.activeProjectTotal : null;
   const frontendHealth = getFrontendHealth();
 
   // D-5 (ADR-00039 R2): backend の raw status_counts を表示 4 bucket に折り畳む
@@ -137,11 +146,9 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
         <h1 className="text-3xl font-semibold tracking-normal">ダッシュボード</h1>
         <div className="flex items-center gap-2">
           <DateRangeFilter />
-          {rangeFilter && (
-            <span className="text-xs text-muted-foreground">
+          {rangeFilter ? <span className="text-xs text-muted-foreground">
               ※ 期間フィルターはチケット一覧ページで適用されます
-            </span>
-          )}
+            </span> : null}
         </div>
       </header>
 
@@ -223,23 +230,28 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
         </article>
         <article className="rounded-lg border border-line bg-panel p-4 shadow-sm">
           <p className="text-xs text-muted-foreground">プロジェクト数</p>
-          <p className="mt-1 text-2xl font-bold text-ink">{projectTotal}</p>
+          {/* 取得失敗時は 0 ではなく「—」を表示し、失敗を真の 0 件と誤認させない (Codex R2)。 */}
+          <p className="mt-1 text-2xl font-bold text-ink">{projectTotal ?? "—"}</p>
+          {projectDataOk ? null : (
+            <p className="mt-1 text-xs text-danger">プロジェクト一覧を取得できませんでした</p>
+          )}
         </article>
         {/* D-5 (UI 監査 fix): 旧「表示中チケット」は「総チケット数」と同一式の重複だった。完了チケット
             (statusCounts) は 200 件 client 集計で総数と不整合のため、全 project list の status から正確に
             出せる active/archived に分ける (Codex review R1#2/R2: project-count は ticket fetch 不要)。 */}
         <article className="rounded-lg border border-blue-200 bg-blue-50 p-4 shadow-sm">
           <p className="text-xs text-blue-600">稼働中プロジェクト</p>
-          <p className="mt-1 text-2xl font-bold text-blue-700">{activeProjectTotal}</p>
+          <p className="mt-1 text-2xl font-bold text-blue-700">{activeProjectTotal ?? "—"}</p>
         </article>
         <article className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
           <p className="text-xs text-amber-600">アーカイブ済プロジェクト</p>
-          <p className="mt-1 text-2xl font-bold text-amber-700">{projectTotal - activeProjectTotal}</p>
+          <p className="mt-1 text-2xl font-bold text-amber-700">
+            {projectTotal != null && activeProjectTotal != null ? projectTotal - activeProjectTotal : "—"}
+          </p>
         </article>
       </section>
 
-      {totalTickets > 0 && (
-        <section aria-label="チケット分析" className="grid gap-4 md:grid-cols-2">
+      {totalTickets > 0 ? <section aria-label="チケット分析" className="grid gap-4 md:grid-cols-2">
           <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
             <h2 className="mb-4 text-base font-semibold">ステータス分布</h2>
             <StatusDonutChart data={ticketStatusCounts} />
@@ -258,21 +270,24 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
               </div>
             </div>
           </article>
-        </section>
-      )}
+        </section> : null}
 
-      {totalTickets > 0 && (
-        <section aria-label="トレンド" className="grid gap-4 md:grid-cols-2">
+      {totalTickets > 0 ? <section aria-label="トレンド" className="grid gap-4 md:grid-cols-2">
           <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
             <h2 className="mb-4 text-base font-semibold">プロジェクト別チケット数</h2>
-            <BarChart data={projects.map((p) => ({ label: p.slug.slice(0, 8), value: p.ticketCount }))} />
+            {/* ticketCount=null (取得失敗) の project は chart から除外し、失敗を 0 件として
+                プロット表示しない (取得失敗と真の 0 件を混同させない、Codex R3)。 */}
+            <BarChart
+              data={projects.flatMap((p) =>
+                p.ticketCount == null ? [] : [{ label: p.slug.slice(0, 8), value: p.ticketCount }]
+              )}
+            />
           </article>
           <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
             <h2 className="text-base font-semibold">ステータス別集計</h2>
             <BarChart data={ticketStatusCounts.filter((d) => d.count > 0).map((d) => ({ label: d.label, value: d.count }))} />
           </article>
-        </section>
-      )}
+        </section> : null}
 
       {/* D-3/D-4 (ADR-00040): AI 実行アクティビティ + コスト推移 (日次、直近 1 ヶ月、sparse)。 */}
       <section aria-label="AI 実行トレンド" className="grid gap-4 md:grid-cols-2">
@@ -302,8 +317,7 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
         </article>
       </section>
 
-      {projects.length > 0 && (
-        <section aria-label="プロジェクト横断サマリー">
+      {projects.length > 0 ? <section aria-label="プロジェクト横断サマリー">
           <h2 className="mb-4 text-lg font-semibold">プロジェクト一覧</h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((p) => (
@@ -334,15 +348,15 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
                 </div>
                 <div className="mt-3 border-t border-line pt-3">
                   <p className="text-sm">
-                    <span className="font-semibold text-accent">{p.ticketCount}</span>
+                    {/* 取得失敗 (null) は「—」、成功時のみ件数 (0 を含む) を表示 (Codex R3)。 */}
+                    <span className="font-semibold text-accent">{p.ticketCount ?? "—"}</span>
                     <span className="ml-1 text-muted-foreground">チケット</span>
                   </p>
                 </div>
               </a>
             ))}
           </div>
-        </section>
-      )}
+        </section> : null}
       <aside className="rounded-lg border border-line bg-panel p-5 shadow-sm">
         <h2 className="text-base font-semibold">最近のチケット</h2>
         <div className="mt-3">

@@ -36,7 +36,11 @@ export function CommandPalette() {
   }, []);
 
   useEffect(() => {
+    // パレットを開いた瞬間に前回の検索語をクリアし入力欄へ focus する。open への遷移は
+    // 複数箇所 (⌘K / 各 setOpen) から起き、query state は閉じても保持されるため、開いた
+    // タイミングで集約的にリセットするこの setState-in-effect は意図的。
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setQuery("");
       inputRef.current?.focus();
     }
@@ -91,11 +95,9 @@ export function CommandPalette() {
               </button>
             </li>
           ))}
-          {filtered.length === 0 && (
-            <li className="px-4 py-3 text-center text-xs text-muted-foreground">
+          {filtered.length === 0 ? <li className="px-4 py-3 text-center text-xs text-muted-foreground">
               一致するページがありません
-            </li>
-          )}
+            </li> : null}
         </ul>
       </div>
     </div>

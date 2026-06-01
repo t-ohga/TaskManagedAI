@@ -10,11 +10,16 @@ const apiMocks = vi.hoisted(() => ({
   getBackendHealth: vi.fn<() => Promise<HealthResponse>>(),
   getCurrentProject: vi.fn(),
   listCurrentProjects: vi.fn(),
+  listTickets: vi.fn(),
   listNotificationTriage: vi.fn()
 }));
 
 vi.mock("@/lib/api/client", () => ({
   getBackendHealth: apiMocks.getBackendHealth
+}));
+
+vi.mock("@/lib/api/tickets", () => ({
+  listTickets: apiMocks.listTickets
 }));
 
 vi.mock("@/lib/api/notifications", () => ({
@@ -50,6 +55,7 @@ beforeEach(() => {
   apiMocks.getBackendHealth.mockReset();
   apiMocks.getCurrentProject.mockReset();
   apiMocks.listCurrentProjects.mockReset();
+  apiMocks.listTickets.mockReset();
   apiMocks.listNotificationTriage.mockReset();
 });
 
@@ -100,6 +106,44 @@ describe("settings/auth/common i18n", () => {
     expect(screen.getByRole("region", { name: "サービス状態" })).toBeVisible();
     expect(screen.getByText("利用不可")).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent("Backend healthcheck に失敗しました。");
+    // listCurrentProjects 未 mock → 取得失敗 → project counts は degraded 表示にし、
+    // 「真の 0 件」と区別する (Codex adversarial R2)。
+    expect(screen.getByText("プロジェクト一覧を取得できませんでした")).toBeVisible();
+  });
+
+  // NOTE: backend /api/v1/me/projects は no-project tenant に 200+empty ではなく 404 を返す
+  // (backend/app/api/me.py)。そのため「validated 空配列 → 真の 0 件」は production では発生せず、
+  // その経路の test は架空になるため置かない。no-project は 404→degraded 経路 (上の test) で覆う。
+
+  it("shows — (not 0) for a project whose per-project ticket count fetch fails", async () => {
+    apiMocks.getBackendHealth.mockRejectedValueOnce(new Error("ignored for this assertion"));
+    // listCurrentProjects は成功 (1 project)。ただし per-project の listTickets が失敗する
+    // (auth 失効 / schema drift / network)。ticket_summary 等の他経路が非ゼロでも、該当
+    // project の件数は「0」ではなく「—」で degraded 表示にする (Codex R3/R4)。
+    apiMocks.listCurrentProjects.mockResolvedValueOnce({
+      current_project_id: "00000000-0000-4000-8000-00000000c001",
+      projects: [
+        {
+          tenant_id: 1,
+          project_id: "00000000-0000-4000-8000-00000000c001",
+          workspace_id: "00000000-0000-4000-8000-00000000c002",
+          slug: "taskmanagedai",
+          name: "TaskManagedAI",
+          description: null,
+          status: "active",
+          policy_profile: "default",
+          autonomy_level: "L0"
+        }
+      ]
+    });
+    apiMocks.listTickets.mockRejectedValueOnce(new Error("per-project ticket fetch failed"));
+
+    await renderAsync(DashboardPage({ searchParams: Promise.resolve({}) }));
+
+    // プロジェクト一覧 section 内の該当 project card は件数を「—」で表示し、「0」は出さない。
+    const projectSection = screen.getByRole("region", { name: "プロジェクト横断サマリー" });
+    expect(within(projectSection).getByText("—")).toBeVisible();
+    expect(within(projectSection).queryByText("0")).not.toBeInTheDocument();
   });
 
   it("renders Japanese empty state on notifications", async () => {

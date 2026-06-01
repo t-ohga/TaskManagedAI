@@ -147,29 +147,26 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
       {/* S-1: フィルタ操作子は印刷物に出さない (.no-print)。チップは画面では 44px tap target (I-3)。 */}
       <div className="no-print flex flex-wrap items-center gap-3">
         <div className="flex flex-wrap gap-1">
-          <a href="/runs" className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${!statusFilter ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+          <Link href="/runs" className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${!statusFilter ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
             すべて
-          </a>
+          </Link>
           {statuses.map((s) => (
             <a key={s} href={`/runs?status=${s}${roleFilter ? `&role=${roleFilter}` : ""}`} className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${statusFilter === s ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
               {STATUS_LABELS[s] ?? s}
             </a>
           ))}
         </div>
-        {roles.length > 0 && (
-          <div className="flex flex-wrap gap-1">
+        {roles.length > 0 ? <div className="flex flex-wrap gap-1">
             <span className="text-xs text-muted-foreground">ロール:</span>
             {roles.map((r) => (
               <a key={r} href={`/runs?${statusFilter ? `status=${statusFilter}&` : ""}role=${r}`} className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${roleFilter === r ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                 {r}
               </a>
             ))}
-          </div>
-        )}
+          </div> : null}
       </div>
 
-      {costSummary && costSummary.run_count > 0 && (
-        <section aria-label="コスト集計" className="grid gap-4 md:grid-cols-2">
+      {costSummary && costSummary.run_count > 0 ? <section aria-label="コスト集計" className="grid gap-4 md:grid-cols-2">
           <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
             <h2 className="text-base font-semibold">コスト・トークン集計</h2>
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
@@ -178,11 +175,9 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
                 <dd className="text-lg font-bold text-accent">
                   {costSummary.total_cost_usd != null ? `$${costSummary.total_cost_usd.toFixed(4)}` : "未計測"}
                 </dd>
-                {costSummary.unmeasured_run_count > 0 && (
-                  <p className="text-[10px] text-muted-foreground">
+                {costSummary.unmeasured_run_count > 0 ? <p className="text-[10px] text-muted-foreground">
                     {costSummary.measured_run_count}/{costSummary.run_count} 件計測済
-                  </p>
-                )}
+                  </p> : null}
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">実行数</dt>
@@ -206,11 +201,9 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
                 .map((s) => ({ label: STATUS_LABELS[s.status] ?? s.status, value: Math.round(s.cost_usd * 10000) / 10000 }))}
             />
           </article>
-        </section>
-      )}
+        </section> : null}
 
-      {active.length > 0 && (
-        <div>
+      {active.length > 0 ? <div>
           <h2 className="mb-3 text-lg font-semibold">アクティブな実行</h2>
           <div className="grid gap-2">
             {active.map((run) => (
@@ -230,11 +223,9 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
               </Link>
             ))}
           </div>
-        </div>
-      )}
+        </div> : null}
 
-      {terminal.length > 0 && (
-        <div>
+      {terminal.length > 0 ? <div>
           <h2 className="mb-3 text-lg font-semibold">完了した実行</h2>
           <div className="grid gap-2">
             {terminal.map((run) => (
@@ -254,11 +245,9 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
               </Link>
             ))}
           </div>
-        </div>
-      )}
+        </div> : null}
 
-      {totalAllRuns === 0 && (
-        <div className="rounded-lg border border-line bg-panel p-8 text-center">
+      {totalAllRuns === 0 ? <div className="rounded-lg border border-line bg-panel p-8 text-center">
           <p className="text-muted-foreground">AI 実行はまだありません</p>
           <p className="mt-2 text-xs text-muted-foreground">
             MCP 経由で run_create を実行するか、Superintendent から dispatch して AI 実行を開始できます。
@@ -266,23 +255,19 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
           <a href="/dashboard" className="mt-3 inline-block rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90">
             ダッシュボードへ
           </a>
-        </div>
-      )}
+        </div> : null}
 
-      {totalAllRuns > 0 && filteredRuns.length === 0 && (
-        <div className="rounded-lg border border-line bg-panel p-8 text-center">
+      {totalAllRuns > 0 && filteredRuns.length === 0 ? <div className="rounded-lg border border-line bg-panel p-8 text-center">
           <p className="text-muted-foreground">条件に一致する実行がありません</p>
           <p className="mt-2 text-xs text-muted-foreground">
             フィルターを変更するか、すべて表示に切り替えてください。
           </p>
-          <a href="/runs" className="mt-3 inline-block rounded-md border border-line px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-slate-50">
+          <Link href="/runs" className="mt-3 inline-block rounded-md border border-line px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-slate-50">
             フィルターをリセット
-          </a>
-        </div>
-      )}
+          </Link>
+        </div> : null}
 
-      {totalRuns > RUNS_PER_PAGE && (
-        <nav aria-label="ページネーション" className="no-print flex items-center justify-center gap-2">
+      {totalRuns > RUNS_PER_PAGE ? <nav aria-label="ページネーション" className="no-print flex items-center justify-center gap-2">
           {page > 1 ? (
             <a href={runsPageHref(page - 1)} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
               前へ
@@ -294,8 +279,7 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
               次へ
             </a>
           ) : null}
-        </nav>
-      )}
+        </nav> : null}
     </section>
   );
 }
