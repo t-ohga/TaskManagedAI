@@ -90,3 +90,32 @@ describe("print CSS scope (Codex adversarial R1 F-MEDIUM regression guard)", () 
     }
   });
 });
+
+describe("approvals print scope (Codex adversarial R3 F-MEDIUM regression guard)", () => {
+  // print hide を .no-print 限定にしたため、各操作フォームは個別に .no-print が必要。
+  // 承認詳細は「判定者/判定日時/理由 (判定メタデータ) は印刷に残るが、pending の判定/修正依頼
+  // フォームは印刷物から消える」ことを source 構造で固定する (パケット/監査出力に操作 UI を混ぜない)。
+  const src = readFileSync(
+    join(process.cwd(), "app/(admin)/approvals/[id]/page.tsx"),
+    "utf8"
+  );
+
+  it("keeps decision metadata printable (not wrapped in .no-print)", () => {
+    // 判定メタデータの DetailRow (判定者) は no-print より前に現れる = 印刷対象。
+    const metaIndex = src.indexOf('label="判定者"');
+    const noPrintIndex = src.indexOf("no-print");
+    expect(metaIndex).toBeGreaterThanOrEqual(0);
+    expect(noPrintIndex).toBeGreaterThanOrEqual(0);
+    expect(metaIndex).toBeLessThan(noPrintIndex);
+  });
+
+  it("wraps the pending decision/revision forms in a .no-print container", () => {
+    // pending branch の操作フォームは no-print の div 内に置かれる。
+    const wrapStart = src.indexOf('className="no-print grid gap-4"');
+    expect(wrapStart).toBeGreaterThanOrEqual(0);
+    const wrapEnd = src.indexOf("</div>", wrapStart);
+    const wrapped = src.slice(wrapStart, wrapEnd);
+    expect(wrapped).toContain("ApprovalDecideForm");
+    expect(wrapped).toContain("ApprovalRevisionRequestForm");
+  });
+});
