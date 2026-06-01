@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -28,7 +28,15 @@ from backend.app.api import tickets as tickets_api
 from backend.app.config import Settings
 from backend.app.db.models.notification_event import NotificationEvent
 from backend.app.main import create_app
-from backend.app.services.notifications.ticket_comment import create_ticket_comment_event
+from backend.app.repositories.notification_event import NotificationEventRepository
+from backend.app.services.notifications.ticket_comment import (
+    assert_comment_message_safe,
+    create_ticket_comment_event,
+    redact_comment_message,
+)
+
+# provider preflight `_CANARY_PATTERNS` と同一 marker (16 char 以上の英数字)。
+_CANARY_MESSAGE = "leak CANARY-FIXTURE-ABCDEFGH01234567 here"
 
 
 def _settings() -> Settings:
@@ -118,3 +126,104 @@ def test_assert_not_ticket_comment_rejects_comment_only() -> None:
     assert excinfo.value.status_code == 404
     # 他 event_type は通す。
     notifications_api._assert_not_ticket_comment(_other_event())
+
+
+# ── Codex adversarial R1 F-HIGH: canary marker は raw secret scanner に含まれないため、
+#    comment 経路 (write / read 両方) で別途検出する。assert_no_raw_secret だけでは抜ける。
+
+def test_assert_comment_message_safe_rejects_canary_marker() -> None:
+    with pytest.raises(ValueError):
+        assert_comment_message_safe(_CANARY_MESSAGE)
+
+
+def test_assert_comment_message_safe_rejects_raw_secret() -> None:
+    with pytest.raises(ValueError):
+        assert_comment_message_safe("token ghp_abcdefghijklmnopqrstuvwxyz12345")
+
+
+def test_assert_comment_message_safe_allows_clean_message() -> None:
+    # clean な日本語コメントは raise しない。
+    assert_comment_message_safe("レビューありがとうございます。修正しました。")
+
+
+def test_create_ticket_comment_event_rejects_canary_marker() -> None:
+    # write 経路 (REST/MCP 共通 helper) は canary を永続化前に reject する (session に到達しない)。
+    dummy_session = cast(AsyncSession, object())
+    with pytest.raises(ValueError):
+        asyncio.run(
+            create_ticket_comment_event(
+                dummy_session,
+                tenant_id=1,
+                project_id=uuid4(),
+                ticket_id=uuid4(),
+                message=_CANARY_MESSAGE,
+                actor_id=uuid4(),
+            )
+        )
+
+
+def test_redact_comment_message_hides_canary_marker() -> None:
+    # read 経路 (一覧 / activity) の legacy row defensive redaction も canary を raw 表示しない。
+    redacted = redact_comment_message(_CANARY_MESSAGE)
+    assert "CANARY-FIXTURE" not in redacted
+    assert "redacted" in redacted.lower() or "非表示" in redacted
+    # tickets.py の薄い委譲 _redacted_message も同じく canary を redaction する。
+    assert "CANARY-FIXTURE" not in tickets_api._redacted_message(_CANARY_MESSAGE)
+
+
+# ── Codex adversarial R1 F-MEDIUM: MCP notification_resolve が repo.resolve()→mark_read() を
+#    直接呼んで ticket_comment の direct-id 拒否を迂回する経路を、repository 層の単一防御点で塞ぐ。
+#    mark_read の UPDATE WHERE に event_type 除外を入れ、REST/MCP 双方で ticket_comment を claim
+#    させない (host dev は DB 不可のため、生成 SQL を introspect して guard を検証)。
+
+class _CaptureSession:
+    """_ensure_tenant_context を満たしつつ execute された statement を捕捉する fake session。"""
+
+    def __init__(self, tenant_id: int) -> None:
+        self._tenant_id = tenant_id
+        self.executed: list[Any] = []
+
+    async def scalar(self, *_args: Any, **_kwargs: Any) -> str:
+        # get_tenant_context / assert_tenant_context が現在 tenant を読む。
+        return str(self._tenant_id)
+
+    async def execute(self, statement: Any) -> _FakeResult:
+        self.executed.append(statement)
+        return _FakeResult()
+
+
+class _FakeResult:
+    def scalar_one_or_none(self) -> None:
+        return None
+
+
+def _compiled_sql(statement: Any) -> str:
+    return str(statement.compile(compile_kwargs={"literal_binds": True}))
+
+
+def test_mark_read_update_excludes_ticket_comment() -> None:
+    session = _CaptureSession(tenant_id=1)
+    repo = NotificationEventRepository(cast(AsyncSession, session))
+    result = asyncio.run(repo.mark_read(tenant_id=1, event_id=uuid4()))
+    assert result is None
+    # 最後の execute が UPDATE (mark_read 本体)。tenant + id に加え event_type 除外があること。
+    update_stmt = session.executed[-1]
+    sql = _compiled_sql(update_stmt).lower()
+    assert "update notification_events" in sql
+    assert "event_type" in sql
+    assert "ticket_comment" in sql
+
+
+def test_snooze_and_resolve_delegate_to_guarded_mark_read() -> None:
+    # snooze / resolve は mark_read に委譲するため、同じ event_type guard を継承する。
+    for invoke in (
+        lambda r: r.snooze(tenant_id=1, event_id=uuid4()),
+        lambda r: r.resolve(tenant_id=1, event_id=uuid4()),
+    ):
+        session = _CaptureSession(tenant_id=1)
+        repo = NotificationEventRepository(cast(AsyncSession, session))
+        result = asyncio.run(invoke(repo))
+        assert result is None
+        sql = _compiled_sql(session.executed[-1]).lower()
+        assert "update notification_events" in sql
+        assert "ticket_comment" in sql

@@ -62,12 +62,18 @@ class NotificationEventRepository:
         )
 
     async def mark_read(self, tenant_id: int, event_id: UUID) -> NotificationEvent | None:
+        # ADR-00041 R1 F-MEDIUM (Codex adversarial): snooze / resolve は本 method に委譲するため、
+        # ここを ticket_comment の単一防御点にする。WHERE に event_type 除外を入れることで、
+        # REST (mark_read/snooze/resolve) と MCP (notification_resolve→repo.resolve) の双方で
+        # ticket_comment id は claim されず None を返す (REST=404、MCP=not_found に倒れる)。
+        # コメントは notification ではないため direct-id 操作対象から外す (read_at 改変 / 状態汚染を塞ぐ)。
         await self._ensure_tenant_context(tenant_id)
         result = await self.session.execute(
             update(NotificationEvent)
             .where(
                 NotificationEvent.tenant_id == tenant_id,
                 NotificationEvent.id == event_id,
+                NotificationEvent.event_type != TICKET_COMMENT_EVENT_TYPE,
             )
             .values(
                 read_at=func.coalesce(

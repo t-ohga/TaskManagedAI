@@ -35,7 +35,6 @@ from backend.app.api.approval_inbox import (
 )
 from backend.app.api.dependencies.api_capability_token import maybe_require_cli_capability
 from backend.app.db.models.audit_event import AuditEvent
-from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 from backend.app.repositories.audit_event import AuditEventRepository
 from backend.app.repositories.notification_event import NotificationEventRepository
 from backend.app.repositories.ticket import (
@@ -47,6 +46,7 @@ from backend.app.schemas.ticket import TicketPriority, TicketRead, TicketStatus
 from backend.app.services.notifications.ticket_comment import (
     TICKET_COMMENT_MESSAGE_MAX_LENGTH,
     create_ticket_comment_event,
+    redact_comment_message,
 )
 
 router = APIRouter(
@@ -367,12 +367,12 @@ def _comment_author(payload: dict[str, Any], recipient_actor_id: UUID) -> UUID |
 
 
 def _redacted_message(message: str) -> str:
-    """legacy row に secret が残っていても raw 表示しない defensive redaction (R2-1)."""
-    try:
-        assert_no_raw_secret({"message": message})
-    except ValueError:
-        return "[redacted: 機密情報が検出されたため非表示]"
-    return message
+    """legacy row に secret / canary が残っていても raw 表示しない defensive redaction (R2-1).
+
+    canary-aware な共通 helper に委譲する (raw secret + `CANARY-FIXTURE-...` を同一判定で
+    redaction、Codex adversarial R1 F-HIGH)。
+    """
+    return redact_comment_message(message)
 
 
 async def _assert_ticket_readable(
