@@ -20,7 +20,7 @@ invariant:
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -35,8 +35,19 @@ from backend.app.api.approval_inbox import (
 )
 from backend.app.api.dependencies.api_capability_token import maybe_require_cli_capability
 from backend.app.db.models.audit_event import AuditEvent
-from backend.app.repositories.ticket import ProjectArchivedError, TicketRepository
+from backend.app.repositories.audit_event import AuditEventRepository
+from backend.app.repositories.notification_event import NotificationEventRepository
+from backend.app.repositories.ticket import (
+    ProjectArchivedError,
+    TicketNotActionableError,
+    TicketRepository,
+)
 from backend.app.schemas.ticket import TicketPriority, TicketRead, TicketStatus
+from backend.app.services.notifications.ticket_comment import (
+    TICKET_COMMENT_MESSAGE_MAX_LENGTH,
+    create_ticket_comment_event,
+    redact_comment_message,
+)
 
 router = APIRouter(
     prefix="/api/v1/projects/{project_id}/tickets",
@@ -304,3 +315,225 @@ async def update_ticket_endpoint(
     await session.commit()
 
     return TicketRead.model_validate(ticket)
+
+
+# ---------------------------------------------------------------------------
+# ADR-00041 N-1 / N-2: ticket コメント + activity timeline
+# ---------------------------------------------------------------------------
+
+
+class TicketComment(BaseModel):
+    id: UUID
+    message: str
+    # legacy row は payload.actor_id を持たないため recipient_actor_id fallback (R2-2)。
+    actor_id: UUID | None
+    created_at: datetime
+
+
+class TicketCommentListResponse(BaseModel):
+    comments: list[TicketComment]
+
+
+class CreateTicketCommentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, max_length=TICKET_COMMENT_MESSAGE_MAX_LENGTH)
+
+
+class TicketActivityEntry(BaseModel):
+    id: str
+    # "created" | "comment" | "status_change" | "updated"
+    type: str
+    message: str | None = None
+    actor_id: UUID | None = None
+    created_at: datetime
+    previous_status: str | None = None
+    new_status: str | None = None
+
+
+class TicketActivityListResponse(BaseModel):
+    entries: list[TicketActivityEntry]
+
+
+def _comment_author(payload: dict[str, Any], recipient_actor_id: UUID) -> UUID | None:
+    """payload.actor_id を優先、無ければ recipient_actor_id fallback (legacy row、R2-2)."""
+    raw = payload.get("actor_id")
+    if isinstance(raw, str) and raw:
+        try:
+            return UUID(raw)
+        except ValueError:
+            return None
+    return recipient_actor_id
+
+
+def _redacted_message(message: str) -> str:
+    """legacy row に secret / canary が残っていても raw 表示しない defensive redaction (R2-1).
+
+    canary-aware な共通 helper に委譲する (raw secret + `CANARY-FIXTURE-...` を同一判定で
+    redaction、Codex adversarial R1 F-HIGH)。
+    """
+    return redact_comment_message(message)
+
+
+async def _assert_ticket_readable(
+    session: AsyncSession, tenant_id: int, project_id: UUID, ticket_id: UUID
+) -> None:
+    """GET 用 read guard: deleted_at IS NULL のみ確認 (archived は許可、R1-1)。"""
+    ticket = await TicketRepository(session).get_in_project(
+        tenant_id=tenant_id, project_id=project_id, ticket_id=ticket_id
+    )
+    if ticket is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ticket not found")
+
+
+@router.get("/{ticket_id}/comments", response_model=TicketCommentListResponse)
+async def list_ticket_comments_endpoint(
+    project_id: UUID,
+    ticket_id: UUID,
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_show")),  # noqa: B008
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> TicketCommentListResponse:
+    """ADR-00041 N-1: ticket コメント一覧 (read-only)。archived 許可 / deleted は 404 (R1-1)。"""
+    await _assert_ticket_readable(session, tenant_id, project_id, ticket_id)
+    events = await NotificationEventRepository(session).list_ticket_comments(
+        tenant_id, ticket_id
+    )
+    return TicketCommentListResponse(
+        comments=[
+            TicketComment(
+                id=event.id,
+                message=_redacted_message(str(event.payload.get("message", ""))),
+                actor_id=_comment_author(event.payload, event.recipient_actor_id),
+                created_at=event.created_at,
+            )
+            for event in events
+        ]
+    )
+
+
+@router.post(
+    "/{ticket_id}/comments",
+    response_model=TicketComment,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_ticket_comment_endpoint(
+    project_id: UUID,
+    ticket_id: UUID,
+    payload: CreateTicketCommentRequest,
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_write")),  # noqa: B008
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> TicketComment:
+    """ADR-00041 N-1: ticket コメント作成 (human task-write 相当)。
+
+    write guard は assert_ticket_actionable (soft-deleted / archived を拒否、R1-1)。
+    message の raw secret / canary は共通 helper が永続化前に検出し ValueError → 422 (R1-2 / R2-1)。
+    """
+    try:
+        await TicketRepository(session).assert_ticket_actionable(
+            tenant_id, project_id, str(ticket_id)
+        )
+    except ProjectArchivedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="project is archived"
+        ) from exc
+    except TicketNotActionableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="ticket not found"
+        ) from exc
+
+    try:
+        event = await create_ticket_comment_event(
+            session,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            ticket_id=ticket_id,
+            message=payload.message,
+            actor_id=actor_id,
+        )
+    except ValueError as exc:
+        # secret canary / token / private key marker hit (fail-closed、R1-2)。raw 値は返さない。
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="comment rejected: message contains a forbidden secret pattern",
+        ) from exc
+
+    await session.commit()
+    return TicketComment(
+        id=event.id,
+        message=payload.message,
+        actor_id=actor_id,
+        created_at=event.created_at,
+    )
+
+
+@router.get("/{ticket_id}/activity", response_model=TicketActivityListResponse)
+async def list_ticket_activity_endpoint(
+    project_id: UUID,
+    ticket_id: UUID,
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_show")),  # noqa: B008
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> TicketActivityListResponse:
+    """ADR-00041 N-2: comment + status 変更 audit event + 作成 を created_at 昇順でマージ。
+
+    archived 許可 / deleted は 404 (R1-1)。既存 ticket_status_changed / ticket_updated audit event を
+    含める (R1-4)。
+    """
+    ticket = await TicketRepository(session).get_in_project(
+        tenant_id=tenant_id, project_id=project_id, ticket_id=ticket_id
+    )
+    if ticket is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ticket not found")
+
+    comments = await NotificationEventRepository(session).list_ticket_comments(
+        tenant_id, ticket_id
+    )
+    activity = await AuditEventRepository(session).list_ticket_activity(tenant_id, ticket_id)
+
+    entries: list[TicketActivityEntry] = []
+    if ticket.created_at is not None:
+        entries.append(
+            TicketActivityEntry(
+                id=f"created:{ticket.id}",
+                type="created",
+                actor_id=ticket.created_by_actor_id,
+                created_at=ticket.created_at,
+            )
+        )
+    for comment in comments:
+        entries.append(
+            TicketActivityEntry(
+                id=f"comment:{comment.id}",
+                type="comment",
+                message=_redacted_message(str(comment.payload.get("message", ""))),
+                actor_id=_comment_author(comment.payload, comment.recipient_actor_id),
+                created_at=comment.created_at,
+            )
+        )
+    for event in activity:
+        is_status = event.event_type == "ticket_status_changed"
+        entries.append(
+            TicketActivityEntry(
+                id=f"audit:{event.id}",
+                type="status_change" if is_status else "updated",
+                actor_id=event.actor_id,
+                created_at=event.created_at,
+                previous_status=(
+                    str(event.event_payload.get("previous_status"))
+                    if event.event_payload.get("previous_status") is not None
+                    else None
+                ),
+                new_status=(
+                    str(event.event_payload.get("new_status"))
+                    if event.event_payload.get("new_status") is not None
+                    else None
+                ),
+            )
+        )
+    entries.sort(key=lambda e: e.created_at)
+    return TicketActivityListResponse(entries=entries)

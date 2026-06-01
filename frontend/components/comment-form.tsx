@@ -34,9 +34,7 @@ export function CommentForm({ ticketId, onSubmit }: CommentFormProps) {
         className="w-full rounded-md border border-line bg-transparent px-3 py-2 text-sm outline-none focus:border-accent"
         aria-label="コメント本文"
       />
-      {state.kind === "error" && (
-        <p className="text-xs text-danger">{state.message}</p>
-      )}
+      {state.kind === "error" ? <p className="text-xs text-danger">{state.message}</p> : null}
       <div className="flex justify-end">
         <button
           type="submit"

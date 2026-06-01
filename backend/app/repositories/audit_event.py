@@ -51,6 +51,28 @@ class AuditEventRepository:
         await self.session.flush()
         return event
 
+    async def list_ticket_activity(
+        self,
+        tenant_id: int,
+        ticket_id: UUID,
+    ) -> list[AuditEvent]:
+        """ADR-00041 N-2: ticket の status 変更 / 更新 audit event を created_at 昇順で返す。
+
+        tenant 境界 + event_type in (ticket_status_changed, ticket_updated) +
+        event_payload.ticket_id filter。activity timeline でコメントとマージして表示する。
+        """
+        await self._ensure_tenant_context(tenant_id)
+        result = await self.session.execute(
+            select(AuditEvent)
+            .where(
+                AuditEvent.tenant_id == tenant_id,
+                AuditEvent.event_type.in_(("ticket_status_changed", "ticket_updated")),
+                AuditEvent.event_payload["ticket_id"].astext == str(ticket_id),
+            )
+            .order_by(AuditEvent.created_at, AuditEvent.id)
+        )
+        return list(result.scalars().all())
+
     async def _assert_principal_matches_actor(
         self,
         *,

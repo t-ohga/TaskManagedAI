@@ -4,11 +4,14 @@ import { TicketStatusChanger } from "@/components/ticket-status-changer";
 import { Breadcrumb } from "@/components/breadcrumb";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { ActivityTimeline } from "@/components/activity-timeline";
+import { CommentForm } from "@/components/comment-form";
 import { EditTicketForm } from "./_components/edit-ticket-form";
 import { TicketDeleteButton } from "@/components/ticket-delete-button";
 import { TrackRecentTicket } from "@/components/recent-tickets";
 import { getCurrentProject } from "@/lib/api/session";
+import { getTicketActivity, type TicketActivityEntry } from "@/lib/api/tickets";
 
+import { addTicketCommentAction } from "../actions";
 import { loadTicket } from "./load-ticket";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +19,50 @@ export const dynamic = "force-dynamic";
 type TicketDetailPageProps = {
   params: Promise<{ id: string }>;
 };
+
+const STATUS_LABELS: Record<string, string> = {
+  open: "未着手",
+  in_progress: "進行中",
+  blocked: "ブロック",
+  review: "レビュー",
+  closed: "完了",
+  cancelled: "中止",
+};
+
+function statusLabel(value: string | null | undefined): string {
+  if (!value) return "不明";
+  return STATUS_LABELS[value] ?? value;
+}
+
+// ADR-00041 N-2: backend activity entry を ActivityTimeline の表示 entry へ写像する。
+// actor / message は server-owned (backend が redaction + author 解決済) をそのまま使う。
+type TimelineEntryView = {
+  id: string;
+  type: "comment" | "status_change" | "event";
+  actor: string | null;
+  body: string;
+  created_at: string;
+};
+
+function toTimelineEntry(entry: TicketActivityEntry): TimelineEntryView {
+  const actor = entry.actor_id ?? null;
+  if (entry.type === "comment") {
+    return { id: entry.id, type: "comment", actor, body: entry.message ?? "", created_at: entry.created_at };
+  }
+  if (entry.type === "status_change") {
+    return {
+      id: entry.id,
+      type: "status_change",
+      actor,
+      body: `ステータスを「${statusLabel(entry.previous_status)}」から「${statusLabel(entry.new_status)}」に変更しました`,
+      created_at: entry.created_at,
+    };
+  }
+  if (entry.type === "created") {
+    return { id: entry.id, type: "event", actor, body: "チケットが作成されました", created_at: entry.created_at };
+  }
+  return { id: entry.id, type: "event", actor, body: "チケットが更新されました", created_at: entry.created_at };
+}
 
 // due_date は SQL date (YYYY-MM-DD) のプレーンな日付。timezone を持たないため、
 // new Date(...) / toLocaleDateString による変換は使わず文字列を直接整形する
@@ -64,6 +111,38 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   // 編集 UI を出さず閲覧のみにする (Codex B2b R7 finding、create gating と同じ方針)。
   const currentProject = await getCurrentProject().catch(() => null);
   const isWritable = currentProject !== null && ticket.project_id === currentProject.project_id;
+
+  // ADR-00041 N-2: comment + status 変更 + created を backend 集約 endpoint から取得。
+  // 取得失敗 (backend 障害 / 一時的 5xx) はページ全体を落とさず、作成/更新の合成 entry に
+  // degrade する (timeline は補助情報、章単位で fail-soft)。
+  let activityEntries: TimelineEntryView[] | null = null;
+  try {
+    const activity = await getTicketActivity(ticket.project_id, ticket.id);
+    activityEntries = activity.entries.map(toTimelineEntry);
+  } catch {
+    activityEntries = null;
+  }
+
+  const fallbackEntries: TimelineEntryView[] = [
+    ...(ticket.created_at
+      ? [{
+          id: "created",
+          type: "event" as const,
+          actor: null,
+          body: "チケットが作成されました",
+          created_at: ticket.created_at,
+        }]
+      : []),
+    ...(ticket.updated_at && ticket.updated_at !== ticket.created_at
+      ? [{
+          id: "updated",
+          type: "event" as const,
+          actor: null,
+          body: "チケットが更新されました",
+          created_at: ticket.updated_at,
+        }]
+      : []),
+  ];
 
   return (
     <section aria-label="チケット詳細" className="grid gap-6">
@@ -183,23 +262,18 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
 
       <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
         <h2 className="text-lg font-semibold">アクティビティ</h2>
+        {isWritable ? (
+          <div className="mt-4">
+            <CommentForm ticketId={ticket.id} onSubmit={addTicketCommentAction} />
+          </div>
+        ) : null}
+        {activityEntries === null ? (
+          <p className="mt-4 text-sm text-amber-700">
+            アクティビティを読み込めませんでした。基本的な履歴のみ表示しています。
+          </p>
+        ) : null}
         <div className="mt-4">
-          <ActivityTimeline entries={[
-            ...(ticket.created_at ? [{
-              id: "created",
-              type: "event" as const,
-              actor: null,
-              body: "チケットが作成されました",
-              created_at: ticket.created_at,
-            }] : []),
-            ...(ticket.updated_at && ticket.updated_at !== ticket.created_at ? [{
-              id: "updated",
-              type: "event" as const,
-              actor: null,
-              body: "チケットが更新されました",
-              created_at: ticket.updated_at,
-            }] : []),
-          ]} />
+          <ActivityTimeline entries={activityEntries ?? fallbackEntries} />
         </div>
       </article>
     </section>

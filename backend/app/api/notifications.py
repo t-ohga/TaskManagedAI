@@ -17,7 +17,10 @@ from backend.app.api.approval_inbox import (
 )
 from backend.app.db.models.notification_event import NotificationEvent
 from backend.app.repositories.audit_event import AuditEventRepository
-from backend.app.repositories.notification_event import NotificationEventRepository
+from backend.app.repositories.notification_event import (
+    TICKET_COMMENT_EVENT_TYPE,
+    NotificationEventRepository,
+)
 
 router = APIRouter(prefix="/api/v1/notifications", tags=["notifications"])
 
@@ -70,13 +73,34 @@ class NotificationResolveRequest(BaseModel):
 
 
 def _to_item(notification: NotificationEvent) -> NotificationItem:
+    # ADR-00041 R3-1: ticket_comment は notification ではない。万一 direct-id 経由で本変換に
+    # 到達しても、message 等を含む raw payload を返さず keys-only に redaction する (legacy secret
+    # comment の id を mark_read しても raw message を返さない、defense-in-depth)。
+    payload = (
+        {"_redacted_keys": sorted(str(key) for key in notification.payload.keys())}
+        if notification.event_type == TICKET_COMMENT_EVENT_TYPE
+        else notification.payload
+    )
     return NotificationItem(
         id=notification.id,
         event_type=notification.event_type,
-        payload=notification.payload,
+        payload=payload,
         created_at=notification.created_at,
         read_at=notification.read_at,
     )
+
+
+def _assert_not_ticket_comment(notification: NotificationEvent) -> None:
+    """ADR-00041 R3-1: ticket_comment は notification ではないため direct-id endpoint から拒否。
+
+    list 系では除外済だが、mark_read / snooze / resolve は id 指定で row に到達できるため、
+    comment を 404 で拒否し notification 操作対象から外す (raw payload 露出 / 状態汚染を塞ぐ)。
+    """
+    if notification.event_type == TICKET_COMMENT_EVENT_TYPE:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="notification not found",
+        )
 
 
 def _to_triage_item(notification: NotificationEvent) -> NotificationTriageItem:
@@ -182,6 +206,7 @@ async def snooze_notification(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="notification not found",
         )
+    _assert_not_ticket_comment(notification)
     _assert_owned(notification, actor_id)
     if notification.resolved_at is not None:
         raise HTTPException(
@@ -233,6 +258,7 @@ async def resolve_notification(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="notification not found",
         )
+    _assert_not_ticket_comment(notification)
     _assert_owned(notification, actor_id)
     if notification.resolved_at is not None:
         raise HTTPException(
@@ -283,6 +309,7 @@ async def mark_read(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="notification not found",
         )
+    _assert_not_ticket_comment(notification)
     _assert_owned(notification, actor_id)
 
     if notification.read_at is None:

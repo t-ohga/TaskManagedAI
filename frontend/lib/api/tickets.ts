@@ -138,3 +138,79 @@ export async function getTicket(projectId: string, id: string): Promise<TicketDe
     TicketDetailSchema
   );
 }
+
+// ── ADR-00041 N-1 / N-2: ticket コメント + activity timeline ──────────────
+// backend schema は tickets.py TicketComment / TicketActivityEntry と整合 (Sprint 11
+// と同様、drift は contract test で検証)。response は server-owned (actor_id は backend
+// が payload.actor_id ?? recipient で解決、message は redaction 済) を strict validate。
+
+export const TicketCommentSchema = z.object({
+  id: z.string().uuid(),
+  message: z.string(),
+  // legacy row は actor_id を持たない場合があるため nullable (backend R2-2 fallback)。
+  actor_id: z.string().uuid().nullable(),
+  created_at: z.string()
+});
+
+export type TicketComment = z.infer<typeof TicketCommentSchema>;
+
+export const TicketCommentListResponseSchema = z.object({
+  comments: z.array(TicketCommentSchema)
+});
+
+export type TicketCommentListResponse = z.infer<typeof TicketCommentListResponseSchema>;
+
+export const TicketActivityEntrySchema = z.object({
+  id: z.string(),
+  // "created" | "comment" | "status_change" | "updated"
+  type: z.string(),
+  message: z.string().nullable().optional(),
+  actor_id: z.string().uuid().nullable().optional(),
+  created_at: z.string(),
+  previous_status: z.string().nullable().optional(),
+  new_status: z.string().nullable().optional()
+});
+
+export type TicketActivityEntry = z.infer<typeof TicketActivityEntrySchema>;
+
+export const TicketActivityListResponseSchema = z.object({
+  entries: z.array(TicketActivityEntrySchema)
+});
+
+export type TicketActivityListResponse = z.infer<typeof TicketActivityListResponseSchema>;
+
+export async function listTicketComments(
+  projectId: string,
+  ticketId: string
+): Promise<TicketCommentListResponse> {
+  return fetchBackendJson<TicketCommentListResponse>(
+    `/api/v1/projects/${projectId}/tickets/${ticketId}/comments` as `/${string}`,
+    TicketCommentListResponseSchema
+  );
+}
+
+export async function getTicketActivity(
+  projectId: string,
+  ticketId: string
+): Promise<TicketActivityListResponse> {
+  return fetchBackendJson<TicketActivityListResponse>(
+    `/api/v1/projects/${projectId}/tickets/${ticketId}/activity` as `/${string}`,
+    TicketActivityListResponseSchema
+  );
+}
+
+export async function createTicketComment(
+  projectId: string,
+  ticketId: string,
+  message: string
+): Promise<TicketComment> {
+  return fetchBackendJson<TicketComment>(
+    `/api/v1/projects/${projectId}/tickets/${ticketId}/comments` as `/${string}`,
+    TicketCommentSchema,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message })
+    }
+  );
+}
