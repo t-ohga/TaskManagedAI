@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { Route } from "next";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { BulkStatusChanger } from "@/components/bulk-status-changer";
@@ -46,34 +46,35 @@ export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTi
   // 解決できないため一括操作を無効化 (Codex R1 P2)
   const bulkEnabled = !showProjectBadge;
 
-  // フィルタ / プロジェクト切替で表示チケットが変わったら、現在の一覧に
-  // 含まれない選択 ID を除去 (隠れたチケットの一括更新を防止、Codex R1 P2)。
-  // tickets prop の変化に追従して外部 selection state を prune する意図的な sync。
-  useEffect(() => {
-    const visibleIds = new Set(tickets.map((t) => t.id));
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSelectedIds((prev) => prev.filter((id) => visibleIds.has(id)));
-  }, [tickets]);
-
   const toggle = useCallback((id: string) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }, []);
 
   const toggleAll = useCallback(() => {
-    setSelectedIds((prev) => (prev.length === tickets.length ? [] : tickets.map((t) => t.id)));
+    // 全 visible チケットが選択済なら解除、そうでなければ全 visible を選択 (stale ID 非依存)。
+    setSelectedIds((prev) =>
+      tickets.length > 0 && tickets.every((t) => prev.includes(t.id)) ? [] : tickets.map((t) => t.id)
+    );
   }, [tickets]);
 
   const clear = useCallback(() => setSelectedIds([]), []);
 
   const colSpan = (showProjectBadge ? 6 : 5) + (bulkEnabled ? 1 : 0);
-  // checked は boolean prop なので JSX 内の && を避け、ここで boolean を確定する
-  // (jsx-no-leaked-render の ternary 自動修正は checked に boolean|null を入れて型崩れする)。
-  const allSelected = tickets.length > 0 && selectedIds.length === tickets.length;
+
+  // フィルタ / プロジェクト切替で tickets が変わったとき、隠れたチケット ID が mutation 境界
+  // (BulkStatusChanger → updateTicketAction) へ渡らないよう、表示中チケットに含まれる選択 ID
+  // だけを render 時に純粋導出する。effect での後追い prune だと、prune 前の最初の render で
+  // stale ID が BulkStatusChanger へ渡り、隠れたチケットを一括更新できる race が起きるため
+  // (Codex adversarial review HIGH / 元 Codex R1 P2)、derive-during-render で境界を閉じる。
+  const visibleIdSet = new Set(tickets.map((t) => t.id));
+  const visibleSelectedIds = selectedIds.filter((id) => visibleIdSet.has(id));
+  // checked は boolean prop なので JSX 内の && を避け、ここで boolean を確定する。
+  const allSelected = tickets.length > 0 && visibleSelectedIds.length === tickets.length;
 
   return (
     <div className="grid gap-3">
       {bulkEnabled ? <BulkStatusChanger
-          selectedIds={selectedIds}
+          selectedIds={visibleSelectedIds}
           onClear={clear}
           onSelectionChange={setSelectedIds}
         /> : null}

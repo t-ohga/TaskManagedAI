@@ -1,4 +1,5 @@
 import { getBackendHealth, fetchBackendRaw } from "@/lib/api/client";
+import { listCurrentProjects } from "@/lib/api/session";
 import { fetchTicketSummary, foldTicketDisplayCounts, fetchActivityTimeseries, buildActivityTrendSeries } from "@/lib/api/dashboard";
 import type { HealthResponse } from "@/lib/api/types";
 import { getFrontendHealth } from "@/lib/health";
@@ -42,15 +43,12 @@ async function readProjectSummaries(): Promise<{
   activeProjectTotal: number;
 }> {
   try {
-    const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
-    const rawRes = projectsRes as Record<string, unknown> | null;
-    const projects = (Array.isArray(rawRes) ? rawRes : (rawRes?.projects ?? rawRes?.items ?? [])) as Record<string, string>[];
-    if (!Array.isArray(projects)) return { summaries: [], projectTotal: 0, activeProjectTotal: 0 };
-
+    // /api/v1/me/projects は zod-backed な listCurrentProjects() で取得する (raw fetch +
+    // unchecked cast を避ける)。schema drift / malformed response では fetchBackendJson が
+    // throw し、下の catch で degraded 空状態に倒れる (fail-closed)。
+    const { projects } = await listCurrentProjects();
     const projectTotal = projects.length;
-    const activeProjectTotal = projects.filter(
-      (p) => String(p.status ?? "active") === "active"
-    ).length;
+    const activeProjectTotal = projects.filter((p) => p.status === "active").length;
     // H-2 (UI 監査 fix): 各 project の tickets fetch を逐次 await から Promise.all 並列化 (N+1 解消)。
     const summaries: ProjectSummary[] = await Promise.all(
       projects.slice(0, 10).map(async (p): Promise<ProjectSummary> => {
@@ -58,18 +56,17 @@ async function readProjectSummaries(): Promise<{
         // status 別母数は ticket_summary endpoint (全 project SQL 集計) に移譲済 (D-5)。
         let ticketCount = 0;
         try {
-          const pid = p.project_id ?? p.id;
-          const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets?limit=1`) as Record<string, unknown>;
+          const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${p.project_id}/tickets?limit=1`) as Record<string, unknown>;
           const items = (ticketsRes?.items ?? []) as { status: string }[];
           ticketCount = typeof ticketsRes?.total === "number" ? (ticketsRes.total as number) : items.length;
         } catch {
           ticketCount = 0;
         }
         return {
-          id: String(p.project_id ?? p.id ?? ''),
-          slug: String(p.slug ?? ''),
-          name: String(p.name ?? ''),
-          status: String(p.status ?? 'active'),
+          id: p.project_id,
+          slug: p.slug,
+          name: p.name,
+          status: p.status,
           ticketCount,
         };
       })
