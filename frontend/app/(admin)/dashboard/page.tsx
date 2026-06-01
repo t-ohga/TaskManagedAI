@@ -58,34 +58,36 @@ async function readProjectSummaries(): Promise<{
     const activeProjectTotal = projects.filter(
       (p) => String(p.status ?? "active") === "active"
     ).length;
-    const summaries: ProjectSummary[] = [];
-    for (const p of projects.slice(0, 10)) {
-      let ticketCount = 0;
-      const statusCounts: TicketStatusCounts = { open: 0, in_progress: 0, closed: 0, cancelled: 0 };
-      try {
-        const pid = (p as any).project_id ?? (p as any).id;
-        const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets?limit=200`) as Record<string, unknown>;
-        const items = (ticketsRes?.items ?? []) as Array<{ status: string }>;
-        ticketCount = typeof ticketsRes?.total === "number" ? (ticketsRes.total as number) : items.length;
-        for (const t of items) {
-          if (t.status === "open") statusCounts.open++;
-          else if (t.status === "in_progress" || t.status === "blocked" || t.status === "review") statusCounts.in_progress++;
-          else if (t.status === "closed") statusCounts.closed++;
-          else if (t.status === "cancelled") statusCounts.cancelled++;
-          else statusCounts.open++;
+    // H-2 (UI 監査 fix): 各 project の tickets fetch を逐次 await から Promise.all 並列化 (N+1 解消)。
+    const summaries: ProjectSummary[] = await Promise.all(
+      projects.slice(0, 10).map(async (p): Promise<ProjectSummary> => {
+        let ticketCount = 0;
+        const statusCounts: TicketStatusCounts = { open: 0, in_progress: 0, closed: 0, cancelled: 0 };
+        try {
+          const pid = (p as any).project_id ?? (p as any).id;
+          const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets?limit=200`) as Record<string, unknown>;
+          const items = (ticketsRes?.items ?? []) as Array<{ status: string }>;
+          ticketCount = typeof ticketsRes?.total === "number" ? (ticketsRes.total as number) : items.length;
+          for (const t of items) {
+            if (t.status === "open") statusCounts.open++;
+            else if (t.status === "in_progress" || t.status === "blocked" || t.status === "review") statusCounts.in_progress++;
+            else if (t.status === "closed") statusCounts.closed++;
+            else if (t.status === "cancelled") statusCounts.cancelled++;
+            else statusCounts.open++;
+          }
+        } catch {
+          ticketCount = 0;
         }
-      } catch {
-        ticketCount = 0;
-      }
-      summaries.push({
-        id: String((p as any).project_id ?? (p as any).id ?? ''),
-        slug: String(p.slug ?? ''),
-        name: String(p.name ?? ''),
-        status: String(p.status ?? 'active'),
-        ticketCount,
-        statusCounts,
-      });
-    }
+        return {
+          id: String((p as any).project_id ?? (p as any).id ?? ''),
+          slug: String(p.slug ?? ''),
+          name: String(p.name ?? ''),
+          status: String(p.status ?? 'active'),
+          ticketCount,
+          statusCounts,
+        };
+      })
+    );
     return { summaries, projectTotal, activeProjectTotal };
   } catch {
     return { summaries: [], projectTotal: 0, activeProjectTotal: 0 };
@@ -292,8 +294,19 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
                     <h3 className="font-semibold">{p.name}</h3>
                     <p className="mt-0.5 text-xs text-muted-foreground">{p.slug}</p>
                   </div>
-                  <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                    {p.status === "active" ? "稼働中" : p.status}
+                  <span
+                    className={`rounded px-2 py-0.5 text-xs font-medium ${
+                      p.status === "active"
+                        ? "bg-emerald-50 text-emerald-700"
+                        : "bg-amber-50 text-amber-700"
+                    }`}
+                  >
+                    {/* K-3 (UI 監査 fix): archived 等の英語 fallback を日本語化 */}
+                    {p.status === "active"
+                      ? "稼働中"
+                      : p.status === "archived"
+                        ? "アーカイブ済"
+                        : p.status}
                   </span>
                 </div>
                 <div className="mt-3 border-t border-line pt-3">
