@@ -123,6 +123,22 @@ def test_activity_timeseries_query_applies_tenant_active_scope_and_bucketing() -
     # bucket 化 + GROUP BY
     assert "date_trunc(" in sql
     assert "GROUP BY date_trunc" in sql
+    # UTC 固定 bucket (3 引数 date_trunc(bucket, created_at, 'UTC'))。session TimeZone 非依存 (R2)。
+    # literal_binds で 'UTC' を確認 (range='all' で cutoff datetime bind を避ける)。
+    session_utc = _CapturingSession()
+    asyncio.run(
+        agent_runs_api.activity_timeseries_endpoint(
+            bucket="day",
+            range_value="all",
+            actor_id=uuid4(),
+            tenant_id=1,
+            session=cast(AsyncSession, session_utc),
+        )
+    )
+    sql_literal = str(
+        session_utc.statements[0].compile(compile_kwargs={"literal_binds": True})  # type: ignore[attr-defined]
+    )
+    assert "'UTC'" in sql_literal
 
 
 def test_activity_timeseries_row_mapping_null_zero_and_measured_math() -> None:

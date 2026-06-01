@@ -450,7 +450,10 @@ async def activity_timeseries_endpoint(
     # cost_summary / list と同じ active-scope (soft-deleted ticket bound run を除外)。
     conditions.append(soft_deleted_ticket_run_exclusion())
 
-    bucket_start = func.date_trunc(bucket, AgentRun.created_at).label("bucket_start")
+    # date_trunc は timestamptz を **DB session TimeZone** で切り詰めるため、session が非 UTC だと
+    # bucket 境界がずれる (Codex ADR-00040 R2)。PostgreSQL 16 の 3 引数形で UTC を明示し、session
+    # TimeZone 非依存の UTC bucket にする。bucket / 'UTC' とも SQLAlchemy が bind param 化する。
+    bucket_start = func.date_trunc(bucket, AgentRun.created_at, "UTC").label("bucket_start")
     rows = (
         await session.execute(
             select(

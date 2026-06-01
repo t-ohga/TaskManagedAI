@@ -49,8 +49,11 @@ ADR Gate Criteria #3 (API 契約) に該当。
 - tenant 境界を強制 (`tenant_id` を session から resolve、caller-supplied 禁止)。
 - **active-scope**: `soft_deleted_ticket_run_exclusion()` を適用 (cost_summary / list と同経路。
   soft-deleted ticket bound run を時系列から除外、ticket-less run は含む)。
-- **bucket は `Literal["day","week"]`** (FastAPI が検証、不正値は 422)。`date_trunc(bucket, created_at)`
-  の第 1 引数は **enum 値のみ**を渡し caller 文字列を SQL に直接展開しない (injection 防止)。
+- **bucket は `Literal["day","week"]`** (FastAPI が検証、不正値は 422)。`date_trunc` の第 1 引数は
+  **enum 値のみ**を渡し caller 文字列を SQL に直接展開しない (injection 防止)。
+- **bucket 境界は UTC 固定 (Codex ADR R2)**: `date_trunc` は timestamptz を DB session TimeZone で
+  切り詰めるため、PostgreSQL 16 の 3 引数形 `date_trunc(bucket, created_at, 'UTC')` を使い、session
+  TimeZone 非依存の UTC bucket にする。frontend も `bucket_start` を UTC で整形する (両端 UTC 固定)。
 - **range cutoff は server 側で算出** (`_cost_summary_cutoff` を再利用、caller-supplied date 禁止)。
 - 集計は SQL `date_trunc` + `GROUP BY bucket` + `SUM/COUNT`、unbounded materialize を避ける。
 - raw secret / provider key は含まない (件数・cost のみ)。
