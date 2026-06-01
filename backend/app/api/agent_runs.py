@@ -88,6 +88,17 @@ class CostSummaryResponse(BaseModel):
     range: CostSummaryRange
 
 
+class RoleFacetEntry(BaseModel):
+    role_id: str
+    count: int
+
+
+class RoleFacetResponse(BaseModel):
+    roles: list[RoleFacetEntry]
+    # 適用された status filter (省略時 null = tenant-wide facet)。
+    status: AgentRunStatus | None
+
+
 class AgentRunEventRead(BaseModel):
     id: UUID
     run_id: UUID
@@ -352,6 +363,46 @@ async def cost_summary_endpoint(
             for row in by_status_rows
         ],
         range=range_value,
+    )
+
+
+# role_facet は静的 route。`/{run_id}` (UUID detail) より **前** に定義しないと
+# `/role_facet` が run_id として解釈され UUID 422 になる (ADR-00039 R2、route ordering)。
+@router.get("/role_facet", response_model=RoleFacetResponse)
+async def role_facet_endpoint(
+    status_value: AgentRunStatus | None = Query(default=None, alias="status"),  # noqa: B008
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> RoleFacetResponse:
+    """AgentRun の role_id facet (read-only、ADR-00039 C-4).
+
+    tenant 境界 + active-scope (soft-deleted ticket bound run 除外) を強制し、
+    `role_id is not null` の distinct facet を返す (null = single-agent run は出さない)。
+    任意 `status` で list endpoint と同じ status predicate を適用 (status-scoped facet、
+    選択中 status に存在しない role chip をクリックして空一覧になる facet drift を防ぐ)。
+    不正な status 値は FastAPI が 422 で reject。raw secret なし (件数のみ)。
+    """
+    conditions = [
+        AgentRun.tenant_id == tenant_id,
+        AgentRun.role_id.is_not(None),
+        soft_deleted_ticket_run_exclusion(),
+    ]
+    if status_value is not None:
+        conditions.append(AgentRun.status == status_value)
+
+    rows = (
+        await session.execute(
+            select(AgentRun.role_id, func.count())
+            .where(*conditions)
+            .group_by(AgentRun.role_id)
+            .order_by(AgentRun.role_id)
+        )
+    ).all()
+
+    return RoleFacetResponse(
+        roles=[RoleFacetEntry(role_id=str(row[0]), count=int(row[1])) for row in rows],
+        status=status_value,
     )
 
 

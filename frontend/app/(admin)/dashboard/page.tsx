@@ -1,4 +1,5 @@
 import { getBackendHealth, fetchBackendRaw } from "@/lib/api/client";
+import { fetchTicketSummary, foldTicketDisplayCounts } from "@/lib/api/dashboard";
 import type { HealthResponse } from "@/lib/api/types";
 import { getFrontendHealth } from "@/lib/health";
 import { StatusDonutChart } from "@/components/status-donut-chart";
@@ -15,20 +16,12 @@ type BackendHealthState =
   | { kind: "ok"; health: HealthResponse }
   | { kind: "error"; message: string };
 
-type TicketStatusCounts = {
-  open: number;
-  in_progress: number;
-  closed: number;
-  cancelled: number;
-};
-
 type ProjectSummary = {
   id: string;
   slug: string;
   name: string;
   status: string;
   ticketCount: number;
-  statusCounts: TicketStatusCounts;
 };
 
 async function readBackendHealth(): Promise<BackendHealthState> {
@@ -61,20 +54,14 @@ async function readProjectSummaries(): Promise<{
     // H-2 (UI 監査 fix): 各 project の tickets fetch を逐次 await から Promise.all 並列化 (N+1 解消)。
     const summaries: ProjectSummary[] = await Promise.all(
       projects.slice(0, 10).map(async (p): Promise<ProjectSummary> => {
+        // per-project ticketCount は BarChart / project card 表示用 (total は accurate)。
+        // status 別母数は ticket_summary endpoint (全 project SQL 集計) に移譲済 (D-5)。
         let ticketCount = 0;
-        const statusCounts: TicketStatusCounts = { open: 0, in_progress: 0, closed: 0, cancelled: 0 };
         try {
           const pid = (p as any).project_id ?? (p as any).id;
-          const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets?limit=200`) as Record<string, unknown>;
+          const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets?limit=1`) as Record<string, unknown>;
           const items = (ticketsRes?.items ?? []) as Array<{ status: string }>;
           ticketCount = typeof ticketsRes?.total === "number" ? (ticketsRes.total as number) : items.length;
-          for (const t of items) {
-            if (t.status === "open") statusCounts.open++;
-            else if (t.status === "in_progress" || t.status === "blocked" || t.status === "review") statusCounts.in_progress++;
-            else if (t.status === "closed") statusCounts.closed++;
-            else if (t.status === "cancelled") statusCounts.cancelled++;
-            else statusCounts.open++;
-          }
         } catch {
           ticketCount = 0;
         }
@@ -84,7 +71,6 @@ async function readProjectSummaries(): Promise<{
           name: String(p.name ?? ''),
           status: String(p.status ?? 'active'),
           ticketCount,
-          statusCounts,
         };
       })
     );
@@ -98,44 +84,30 @@ type DashboardProps = {
   searchParams: Promise<{ range?: string }>;
 };
 
-function getRangeCutoff(range: string): Date | null {
-  const now = new Date();
-  const cutoff = new Date();
-  if (range === "today") { cutoff.setHours(0, 0, 0, 0); return cutoff; }
-  if (range === "week") { cutoff.setDate(now.getDate() - 7); return cutoff; }
-  if (range === "month") { cutoff.setMonth(now.getMonth() - 1); return cutoff; }
-  if (range === "quarter") { cutoff.setMonth(now.getMonth() - 3); return cutoff; }
-  return null;
-}
-
 export default async function DashboardPage({ searchParams }: DashboardProps) {
   const params = await searchParams;
   const rangeFilter = params.range ?? "";
-  const [backendHealth, projectData] = await Promise.all([
+  const [backendHealth, projectData, ticketSummary] = await Promise.all([
     readBackendHealth(),
     readProjectSummaries(),
+    // D-5 (ADR-00039): status 別母数は backend SQL 集計 (limit 非依存)。失敗時は空集計に倒す。
+    fetchTicketSummary().catch(() => ({ ticket_total: 0, status_counts: [] })),
   ]);
   const projects = projectData.summaries;
   const projectTotal = projectData.projectTotal;
   const activeProjectTotal = projectData.activeProjectTotal;
   const frontendHealth = getFrontendHealth();
 
-  const aggCounts = projects.reduce(
-    (acc, p) => ({
-      open: acc.open + p.statusCounts.open,
-      in_progress: acc.in_progress + p.statusCounts.in_progress,
-      closed: acc.closed + p.statusCounts.closed,
-      cancelled: acc.cancelled + p.statusCounts.cancelled,
-    }),
-    { open: 0, in_progress: 0, closed: 0, cancelled: 0 }
-  );
+  // D-5 (ADR-00039 R2): backend の raw status_counts を表示 4 bucket に折り畳む
+  // (in_progress = in_progress+blocked+review)。4 bucket 合計 == ticket_total。
+  const aggCounts = foldTicketDisplayCounts(ticketSummary.status_counts);
   const ticketStatusCounts = [
     { label: "未着手", count: aggCounts.open, color: "#3b82f6" },
     { label: "進行中", count: aggCounts.in_progress, color: "#f59e0b" },
     { label: "完了", count: aggCounts.closed, color: "#10b981" },
     { label: "中止", count: aggCounts.cancelled, color: "#6b7280" },
   ];
-  const totalTickets = projects.reduce((s, p) => s + p.ticketCount, 0);
+  const totalTickets = ticketSummary.ticket_total;
   const closedTickets = aggCounts.closed;
 
   return (

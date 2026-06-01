@@ -21,7 +21,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +36,7 @@ from backend.app.db.models.actor import Actor
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.project import Project, ProjectStatus
 from backend.app.db.models.secret_ref import SecretRef, SecretRefScope, SecretRefStatus
+from backend.app.db.models.ticket import Ticket
 from backend.app.domain.policy.autonomy_level import AutonomyLevel
 from backend.app.repositories.project import ProjectRepository
 from backend.app.repositories.secret_ref import SecretRefRepository
@@ -93,6 +94,18 @@ class ProjectListItem(BaseModel):
 class ProjectListResponse(BaseModel):
     current_project_id: UUID
     projects: list[ProjectListItem]
+
+
+class TicketStatusCount(BaseModel):
+    status: str
+    count: int
+
+
+class TicketSummaryResponse(BaseModel):
+    # active (deleted_at IS NULL) な全 status 件数の合計。
+    ticket_total: int
+    # raw な per-status 件数 (出現した status のみ、frontend で 0 補完 + 表示 bucket 折り畳み)。
+    status_counts: list[TicketStatusCount]
 
 
 class ProjectAutonomySettingsUpdate(BaseModel):
@@ -287,6 +300,35 @@ async def list_current_actor_projects_endpoint(
         current_project_id=projects[0].id,
         projects=[_to_project_item(project) for project in projects],
     )
+
+
+@router.get("/ticket_summary", response_model=TicketSummaryResponse)
+async def ticket_summary_endpoint(
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> TicketSummaryResponse:
+    """tenant 内の active ticket を status 別集計 (read-only、ADR-00039 D-5).
+
+    `Ticket.deleted_at IS NULL` で soft-deleted を除外 (active-scope)。soft-deleted ticket を
+    母数に復活させない (D-5 の母数正確性目的)。projects は単一 tenant membership のため
+    tenant 境界が project 境界を兼ねる (`list_current_actor_projects_endpoint` と同方針)。
+    raw secret なし (件数のみ)。`actor_id` は authenticated session 強制のため Depends で resolve。
+    """
+    conditions = [Ticket.tenant_id == tenant_id, Ticket.deleted_at.is_(None)]
+    rows = (
+        await session.execute(
+            select(Ticket.status, func.count())
+            .where(*conditions)
+            .group_by(Ticket.status)
+            .order_by(Ticket.status)
+        )
+    ).all()
+    status_counts = [
+        TicketStatusCount(status=str(row[0]), count=int(row[1])) for row in rows
+    ]
+    ticket_total = sum(count.count for count in status_counts)
+    return TicketSummaryResponse(ticket_total=ticket_total, status_counts=status_counts)
 
 
 @router.patch("/projects/{project_id}/autonomy", response_model=ProjectListItem)
