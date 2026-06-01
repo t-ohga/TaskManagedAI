@@ -233,12 +233,8 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
     );
   }
 
-  const grouped: Record<KanbanGroup, typeof allTickets> = { todo: [], active: [], done: [] };
-  for (const ticket of filteredTickets) {
-    const group = STATUS_TO_KANBAN[ticket.status] ?? "todo";
-    grouped[group].push(ticket);
-  }
-
+  // C-3 (Codex review fix): sort を grouped 構築の前に適用する。grouped (Kanban) は filteredTickets
+  // から作られるため、後でソートすると Kanban カード順が変わらず list 表示しか並ばなかった。
   const PRIORITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
   if (sortKey === "priority") {
     filteredTickets.sort((a, b) => (PRIORITY_RANK[a.priority ?? ""] ?? 99) - (PRIORITY_RANK[b.priority ?? ""] ?? 99));
@@ -248,6 +244,12 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
     filteredTickets.sort((a, b) => a.status.localeCompare(b.status));
   } else {
     filteredTickets.sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+  }
+
+  const grouped: Record<KanbanGroup, typeof allTickets> = { todo: [], active: [], done: [] };
+  for (const ticket of filteredTickets) {
+    const group = STATUS_TO_KANBAN[ticket.status] ?? "todo";
+    grouped[group].push(ticket);
   }
 
   const showProjectBadge = selectedProject === "all";

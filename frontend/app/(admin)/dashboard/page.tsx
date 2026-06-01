@@ -217,14 +217,16 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
           <p className="text-xs text-muted-foreground">プロジェクト数</p>
           <p className="mt-1 text-2xl font-bold text-ink">{projects.length}</p>
         </article>
-        {/* D-5 (UI 監査 fix): 旧「表示中チケット」は「総チケット数」と同一式の重複だった → 完了チケットへ */}
-        <article className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-          <p className="text-xs text-emerald-600">完了チケット</p>
-          <p className="mt-1 text-2xl font-bold text-emerald-700">{closedTickets}</p>
-        </article>
+        {/* D-5 (UI 監査 fix): 旧「表示中チケット」は「総チケット数」と同一式の重複だった。
+            完了チケットは statusCounts が 200 件 client 集計で総数 (ticketsRes.total) と不整合になる
+            (Codex review #2) ため、project data から正確に出せる active/archived に分ける。 */}
         <article className="rounded-lg border border-blue-200 bg-blue-50 p-4 shadow-sm">
           <p className="text-xs text-blue-600">稼働中プロジェクト</p>
           <p className="mt-1 text-2xl font-bold text-blue-700">{activeProjectCount}</p>
+        </article>
+        <article className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
+          <p className="text-xs text-amber-600">アーカイブ済プロジェクト</p>
+          <p className="mt-1 text-2xl font-bold text-amber-700">{projects.length - activeProjectCount}</p>
         </article>
       </section>
 

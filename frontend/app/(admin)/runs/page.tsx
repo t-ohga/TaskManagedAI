@@ -83,7 +83,7 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
   const roleFilter = params.role ?? "";
   const parsedPage = Number(params.page ?? "1");
   const page = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1;
-  const [filteredResult, allResult, costSummary] = await Promise.all([
+  const [filteredResult, allResult, roleFacetResult, costSummary] = await Promise.all([
     loadRuns({
       status: statusFilter || undefined,
       role: roleFilter || undefined,
@@ -91,6 +91,9 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
       offset: (page - 1) * RUNS_PER_PAGE,
     }),
     (statusFilter || roleFilter) ? loadRuns() : Promise.resolve(null),
+    // C-4 (Codex review fix): role 候補は paginated items でなく非 paginated source から作る
+    // (status 内 facet)。現在ページ 50 件限定だと 51 件目以降のロールが filter chip に出ない。
+    loadRuns({ status: statusFilter || undefined, limit: 200 }),
     getCostSummary("all").catch((): CostSummaryResponse | null => null),
   ]);
   const filteredRuns = filteredResult.items;
@@ -99,7 +102,9 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
 
   const { active, terminal } = groupByStatus(filteredRuns);
   const statuses = Object.keys(STATUS_LABELS);
-  const roles = [...new Set(filteredRuns.map((r) => r.role_id).filter(Boolean))].sort();
+  const roleSet = new Set(roleFacetResult.items.map((r) => r.role_id).filter(Boolean));
+  if (roleFilter) roleSet.add(roleFilter); // 選択中ロールは現在ページが空でも chip に保持
+  const roles = [...roleSet].sort();
   const totalPages = Math.max(1, Math.ceil(totalRuns / RUNS_PER_PAGE));
   const runsPageHref = (targetPage: number): string => {
     const q = new URLSearchParams();
