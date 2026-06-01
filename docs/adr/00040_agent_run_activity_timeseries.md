@@ -54,7 +54,10 @@ ADR Gate Criteria #3 (API 契約) に該当。
 - 集計は SQL `date_trunc` + `GROUP BY bucket` + `SUM/COUNT`、unbounded materialize を避ける。
 - raw secret / provider key は含まない (件数・cost のみ)。
 - cost_usd は bucket 内に measured run (cost_usd not null) が 0 件なら **null** (未計測を $0 と
-  誤認させない、ADR-00033 / Codex の cost_summary 教訓を踏襲)。
+  誤認させない、ADR-00033 / Codex の cost_summary 教訓を踏襲)。各 bucket に
+  `measured_run_count` / `unmeasured_run_count` を併記する。
+- **sparse series**: server は active run が 1 件以上ある bucket のみ返す (`run_count=0` bucket を
+  生成しない)。frontend は欠損 bucket を 0 補完しない (詳細は採用案)。
 
 ## 採用案
 
@@ -64,19 +67,29 @@ GET /api/v1/agent_runs/activity_timeseries?bucket=day&range=month
 Response (ActivityTimeseriesResponse):
 {
   "buckets": [
-    { "bucket_start": "2026-05-01T00:00:00Z", "run_count": 12, "cost_usd": 3.21 },
-    { "bucket_start": "2026-05-02T00:00:00Z", "run_count": 0,  "cost_usd": null }
+    { "bucket_start": "2026-05-01T00:00:00Z", "run_count": 12,
+      "cost_usd": 3.21, "measured_run_count": 12, "unmeasured_run_count": 0 },
+    { "bucket_start": "2026-05-03T00:00:00Z", "run_count": 4,
+      "cost_usd": null, "measured_run_count": 0,  "unmeasured_run_count": 4 }
   ],
   "bucket": "day",
   "range": "month"
 }
 ```
 
-- `bucket_start` は `date_trunc(bucket, created_at)` の昇順。range cutoff 内に run がある bucket のみ
-  返す (欠損日は frontend で 0 補完するか、そのまま gap として描画)。
-- `run_count` = bucket 内 active run 件数 (D-3)。`cost_usd` = bucket 内 cost_usd 合計、measured 0 件で null (D-4)。
+- **sparse series (Codex ADR R1-3、固定)**: `bucket_start` は `date_trunc(bucket, created_at)` の昇順で、
+  **range cutoff 内に active run が 1 件以上ある bucket のみ**返す。`run_count: 0` の bucket は返さない
+  (空 bucket を server が生成しない、`generate_series` 不使用 = `range=all` でも有界)。frontend は
+  返ってきた bucket を **そのまま離散バーとして描画し、欠損 bucket を 0 補完しない** (無活動期間は
+  バー間の gap として表現)。dense series が必要になれば別 ADR で range_start/range_end + generate_series
+  を契約化する。
+- `run_count` = bucket 内 active run 件数 (D-3)。
+- `cost_usd` = bucket 内 cost_usd 合計、**measured run (cost_usd not null) が 0 件なら null** (D-4)。
+  `measured_run_count` / `unmeasured_run_count` を併記し (ADR-00033 と同契約)、frontend は
+  **null / unmeasured を 0 として描画しない** (「測定済み 0 件」と「一部測定で合計 0」を区別)。
 - frontend は `bucket_start` をラベル、`run_count` / `cost_usd` を value にして既存 `BarChart` で
-  2 系列 (アクティビティ / コスト) を描画する。
+  2 系列 (アクティビティ / コスト) を描画する。cost 系列は cost_usd=null の bucket を value=0 にせず
+  「未計測」として除外 or 別表現する。
 
 ## 却下案
 
@@ -112,8 +125,20 @@ Response (ActivityTimeseriesResponse):
 
 - route 登録 + `/{run_id}` より前の route ordering。
 - bucket=day/week は 200、`bucket=hour` 等は 422。
-- response schema が bucket_start / run_count / cost_usd のみ (raw secret なし、`assert_no_raw_secret` 相当)。
-- SQL introspection: tenant 境界 / active-scope (`tickets.deleted_at IS NOT NULL` 除外) /
-  `date_trunc` / `GROUP BY` が compile SQL に含まれること (predicate 削除を no-DB で catch)。
-- cost_usd の null (measured 0) と 0 (cost=0 の measured run) を区別すること。
+- response schema が bucket_start / run_count / cost_usd / measured_run_count / unmeasured_run_count
+  のみ (raw secret なし、`assert_no_raw_secret` 相当)。
+- **SQL introspection (Codex ADR R1-1、強化)**: compile SQL に次をすべて固定で含むこと:
+  - tenant 境界 (`agent_runs.tenant_id =`)
+  - **active-scope の極性と相関**: `NOT (EXISTS` (NOT EXISTS の極性) +
+    `tickets.tenant_id = agent_runs.tenant_id` + `tickets.project_id = agent_runs.project_id` +
+    `tickets.id = agent_runs.ticket_id` + その内側に `tickets.deleted_at IS NOT NULL`
+    (EXISTS / 非相関 JOIN / 極性反転を catch する)
+  - `date_trunc(` による bucket 化 + `GROUP BY` (bucket 式)
+- **active-scope DB negative (CI Compose)**: soft-deleted ticket bound run は除外、ticket-less run は
+  含む、restore 後は再集計される (host dev では test-password 不一致で実行不可、CI Compose で実行)。
+- **cost measurement 契約 (Codex ADR R1-2)**: mixed bucket / measured-zero / all-unmeasured の各 case で
+  `cost_usd` の null (measured 0) と 0 (cost=0 の measured run) を区別し、`measured_run_count` /
+  `unmeasured_run_count` が整合すること。frontend が null/unmeasured を value=0 に丸めないこと。
+- **sparse 契約 (Codex ADR R1-3)**: server は `run_count=0` の bucket を返さない (sparse)。
+  frontend が欠損 bucket を 0 補完しないこと。
 - 取得失敗時に dashboard が時系列を「空/0」でなく degraded 表示にすること (ADR-00039 R1-2 踏襲)。
