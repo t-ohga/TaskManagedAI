@@ -213,9 +213,10 @@ def test_create_ticket_comment_event_rejects_modern_openai_key() -> None:
 # ── Codex adversarial R2 F-MEDIUM: REST は Pydantic min_length=1/max_length=4000 で reject するが、
 #    MCP は helper を直接呼ぶため、write choke point (create_ticket_comment_event) で長さ境界を共有。
 
-@pytest.mark.parametrize("message", ["", "x" * 4001])
+@pytest.mark.parametrize("message", ["", "   ", "\t\n  ", "x" * 4001])
 def test_create_ticket_comment_event_enforces_length_bounds(message: str) -> None:
-    # 空 / 上限超過は永続化前に reject (DB bloat 防止)。session に到達しない。
+    # 空 / 空白のみ / 上限超過は永続化前に reject (DB bloat + blank entry 防止、Codex App P2)。
+    # session に到達しない。
     dummy_session = cast(AsyncSession, object())
     with pytest.raises(ValueError):
         asyncio.run(

@@ -100,12 +100,15 @@ async def create_ticket_comment_event(
         ValueError: message が長さ contract (1..MAX) 外、または payload (message 含む) に
             raw secret / canary / prohibited key を検出した場合。
     """
-    # REST は Pydantic min_length=1/max_length で reject するが、MCP は本 helper を直接呼ぶため、
-    # write 経路の単一防御点で長さ境界を共有する (空 / 巨大 comment の DB bloat 防止、R2 F-MEDIUM)。
-    if not 1 <= len(message) <= TICKET_COMMENT_MESSAGE_MAX_LENGTH:
+    # REST は Pydantic min_length=1/max_length で reject、frontend action は .trim().min(1) で
+    # 空白のみを弾くが、REST/MCP 直接経路は raw length しか見ないと "   " のような空白のみ comment が
+    # 通り activity に blank entry が残る。write 単一防御点で「非空白を 1 文字以上 + 上限」を共有し、
+    # 全経路で contract を揃える (空 / 空白のみ / 巨大 comment の DB bloat 防止、R2 F-MEDIUM + Codex App P2)。
+    if not message.strip():
+        raise ValueError("comment message must contain at least one non-whitespace character")
+    if len(message) > TICKET_COMMENT_MESSAGE_MAX_LENGTH:
         raise ValueError(
-            "comment message length must be between 1 and "
-            f"{TICKET_COMMENT_MESSAGE_MAX_LENGTH} characters"
+            f"comment message must be at most {TICKET_COMMENT_MESSAGE_MAX_LENGTH} characters"
         )
 
     payload: dict[str, Any] = {
