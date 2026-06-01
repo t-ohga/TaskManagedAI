@@ -129,12 +129,14 @@ run 詳細から artifact を読むための **read-only REST endpoint** と **r
      (自由文 cli_stdout/stderr/evidence に `failed to resolve secret://...` のように埋め込まれた場合も
      先頭でなく途中を検出して捕捉)。hit した key は key-value ごと drop、hit した string value は値全体を
      redaction marker (`"[redacted: forbidden URI token]"`) に置換。
-   - **自由文 token=value scan (R6 F-HIGH-1)** — string value 中に、denylist token
-     (`secret_ref_id` / `secret_ref` / `secret_uri` / `capability_token` / `secret_capability` /
-     `continuation_id` / `session_id` / `session_token` / `thread_id` 等) が `[:=]` または空白を挟んで
-     値を伴う自由文 (例 `failed to resolve secret_ref_id=sr_project_openai_v1` / `capability_token abc123`)
-     を正規化済み regex で検出し、**値全体を redaction marker に置換** (key 名でも shape でも URI でもない
-     ログ文字列経由の SecretBroker / continuation 識別子露出を封鎖)。
+   - **自由文 token=value scan (R6 F-HIGH-1 / R10 F-HIGH)** — **object key と string value の両方** に対し、
+     denylist token (`secret_ref_id` / `secret_ref` / `secret_uri` / `capability_token` / `secret_capability` /
+     `continuation_id` / `session_id` / `session_token` / `thread_id` 等 + camelCase variant) が `[:=]` または
+     空白を挟んで値を伴う自由文 (例 `failed to resolve secret_ref_id=sr_project_openai_v1` /
+     `capability_token abc123`) を正規化済み regex で検出する。**string value hit は値全体を redaction marker に
+     置換**、**object key hit は key-value ごと drop** (R10 F-HIGH: `{"... secret_ref_id=sr_...": true}` のように
+     token=value を JSON key に埋めた露出も封鎖。key 名 exact / URI substring / shape / raw-secret のどれにも
+     当たらない経路を塞ぐ)。
    - **shape denylist** (nested object 形状、再帰): ① `artifact_ref`/`artifactRef` + (`sha256` または
      `expires_at`/`expiresAt`) を持つ object (continuation ref 形状)、② `secret_ref_id` を持つ object、
      または `scope` + `name` + `version` を併せ持つ object (secret_ref メタデータ形状、R5 F-HIGH) を drop。
@@ -259,8 +261,10 @@ select r.id as run_id,
       - **SecretBroker 参照 key / 構造 (R5 F-HIGH)**: `{"secret_ref_id":"..."}` /
         `{"target":{"secret_ref_id":"..."}}` / `{"secret_ref":{"scope":"project","name":"openai-api-key","version":"v1"}}`
         / camelCase (`secretRefId`)。
-      - **自由文 token=value ログ (R6 F-HIGH-1)**: `cli_stdout: "failed to resolve secret_ref_id=sr_project_openai_v1"` /
+      - **自由文 token=value ログ (R6 F-HIGH-1)**: string value `cli_stdout: "failed to resolve secret_ref_id=sr_project_openai_v1"` /
         `cli_stderr: "use capability_token abc123"` → 値全体を redaction marker に置換。
+      - **token=value を JSON key に埋めた露出 (R10 F-HIGH)**: `{"failed to resolve secret_ref_id=sr_project_openai_v1": true}` /
+        `{"capability_token abc123": "..."}` / `{"session_id=...": ...}` / camelCase variant → key-value ごと drop。
       - shape (`{artifact_ref, sha256, expires_at}` / `{scope, name, version}`)。
     - **read-side raw-secret 再スキャン (R9 F-HIGH)**: benign key / 自由文 value に raw token を入れた
       exportable=true + public/internal artifact (`{"stdout":"sk-abcdefghijklmnopqrstuvwxyz123"}` /
