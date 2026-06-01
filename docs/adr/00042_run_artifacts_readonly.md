@@ -1,6 +1,6 @@
 ---
 id: "ADR-00042"
-title: "AgentRun Artifact 読み取り専用 REST endpoint (L-2)"
+title: "AgentRun Artifact 読み取り専用 REST endpoint (L-2、metadata-only)"
 status: "proposed"
 created_at: "2026-06-01"
 updated_at: "2026-06-01"
@@ -13,7 +13,7 @@ gate_criteria:
 supersedes: []
 ---
 
-# ADR-00042: AgentRun Artifact 読み取り専用 REST endpoint (L-2)
+# ADR-00042: AgentRun Artifact 読み取り専用 REST endpoint (L-2、metadata-only)
 
 ## 背景
 
@@ -31,8 +31,6 @@ plan / patch / evidence / citation / CLI 出力等) は `artifacts` table に保
 - `ArtifactKind` (11 種): `plan` / `patch` / `evidence` / `citation` / `provider_continuation_ref` /
   `other` / `cli_input` / `cli_stdout` / `cli_stderr` / `cli_exit` / `cli_result_summary`。
 - `TrustLevel` (3 種): `untrusted_content` / `validated_artifact` / `trusted_instruction`。
-- **write 時 contract** (`ArtifactRepository._assert_artifact_contract`): `assert_no_raw_secret(content_jsonb)` +
-  21 prohibited key + content_hash 一致検証。**保存済 artifact は raw secret 非含有が保証される**。
 - `ArtifactRepository` に **read-by-run method は無い** → 追加が必要。
 
 ## 決定対象
@@ -40,38 +38,67 @@ plan / patch / evidence / citation / CLI 出力等) は `artifacts` table に保
 run 詳細から artifact を読むための **read-only REST endpoint** と **repository read method** と
 **frontend 配線** の契約。AI 権限の追加・mutation は一切含まない (read-only)。
 
+## 設計判断: metadata-only (content body は返さない)
+
+**本 ADR は artifact の `content_jsonb` (本文) を API 境界外に出さない。返すのは metadata
+(`kind` / `payload_data_class` / `trust_level` / `exportable` / `parent_artifact_id` / `created_at`) のみ。**
+
+### 根拠 (plan-review R1-R14、2026-06-01)
+
+当初は content_jsonb を display projection (denylist scrub) で表示する設計だったが、codex-plan-review を
+14 round 重ねた結果、**任意 content_jsonb を表示しつつ全漏洩経路を denylist で塞ぐのは構造的に fail-open** で
+provably 安全にできないと判明した。具体的に塞ぎ切れなかった経路:
+
+- SecretBroker `secret_ref` / `secret_ref_id` / `secret_uri` / `capability_token` (compound key
+  `old_secret_ref_id`、camelCase `secretRefId`、hyphen `secret-ref-id`、JSON key 埋め込み、discriminator
+  object `{"type":"secretRefId","value":...}` の兄弟 field)。
+- provider continuation ref (`secret://` / `provider-continuation:` の URI、自由文埋め込み、shape)。
+- PII (`payload_data_class` を信用するしかなく、misclassify した `internal` + `{"customer_email":...}` が露出)。
+- raw secret (legacy / import / scanner gap)。
+
+これらは ContextSnapshot UI 非露出 rule / SecretBroker secret_ref 非露出 (R-3 専用 viewer 経由のみ) /
+PII 非拡散の不変条件に直結する。**content を返さなければこの漏洩面は構造的にゼロになる**ため、L-2 は
+metadata-only に縮小する (user 決定 2026-06-01)。
+
+「AI が何を生成したか」の可視化価値 (生成物の種別・信頼度・分類・系譜・件数) は metadata で達成できる。
+**content drill-down は P0.1 に defer** (専用 sanitizer / server-owned `display_safe` provenance を持つ
+artifact だけ本文表示を許可する設計が前提。ADR-00042 の scope 外)。
+
 ## 前提 / 制約
 
 - P0 個人専用・単一 tenant。ただし tenant / project boundary は schema・repository contract で維持。
 - AI 出力直結禁止: 本 endpoint は **read-only**。artifact の生成・昇格・実行は対象外。
-- secret 非露出: artifact content_jsonb は write contract で raw secret 非含有保証済だが、
-  **`provider_continuation_ref` は内部 continuation 参照 (exportable=false、ContextSnapshot UI 非露出 rule)**
-  のため、L-2 表示からは **除外** する。
-- `payload_data_class` は表示する (sensitivity の明示)。caller からは受け取らない (Matrix / metadata 由来)。
+- **content_jsonb / content_hash は返さない**。content_hash も SHA-256 hash oracle (低エントロピー PII /
+  既知 secret_ref の offline guess) になるため metadata から除外する。artifact 識別は opaque `id`。
+- `provider_continuation_ref` kind は内部 continuation 参照 (ContextSnapshot UI 非露出 rule) のため、
+  metadata であっても **L-2 表示から除外** する (repository query で除外)。
+- `payload_data_class` / `trust_level` は分類 metadata として表示する (caller 入力なし、artifact row 由来)。
 - active-scope: soft-deleted ticket に紐づく run は既存 run 詳細経路と同じ可視性に従う。
 
 ## 選択肢
 
-### 案 A (採用): 専用 read-only endpoint `GET /agent_runs/{run_id}/artifacts`
+### 案 A (採用): 専用 read-only endpoint `GET /agent_runs/{run_id}/artifacts` (metadata-only)
 
-- `GET /api/v1/agent_runs/{run_id}/artifacts` を追加。run の可視性を確認 → artifact 一覧を返す。
-- repository に `list_for_run(tenant_id, run_id)` を追加 (`provider_continuation_ref` 除外、created_at 昇順)。
-- frontend: lib client + run 詳細に artifact section。
+- `GET /api/v1/agent_runs/{run_id}/artifacts` を追加。run 可視性確認 + artifact metadata 一覧を返す。
+- repository に `list_run_artifacts(tenant_id, run_id)` を追加 (metadata column のみ select、content_jsonb /
+  content_hash は fetch しない、`provider_continuation_ref` 除外、active-scope)。
+- frontend: lib client + run 詳細に artifact インベントリ section。
 
-### 案 B (却下): run 詳細 endpoint (`GET /{run_id}`) の response に artifacts を inline 埋め込み
+### 案 B (却下): content_jsonb を denylist scrub で表示
 
-- 既存 `AgentRunDetailResponse` に `artifacts: [...]` を追加。
-- 却下理由: ① 既存 run 詳細契約 (AgentRunDetailResponse) を破壊的に拡張する。② artifact が多い run で
-  run 詳細 payload が肥大化し、artifact 不要な呼出にもコストが乗る。③ pagination / 段階取得の余地が無い。
-  read 専用の独立 endpoint の方が契約が clean で SSE/段階ロードにも将来拡張しやすい。
+- 却下理由: plan-review R1-R14 で fail-open と判明 (上記「設計判断」根拠)。P0.1 で専用 sanitizer 前提に再検討。
 
-### 案 C (却下): MCP のみ (REST endpoint なし)
+### 案 C (却下): run 詳細 `GET /{run_id}` の response に inline 埋め込み
 
-- 既存 MCP `run_show` 等の拡張で済ませる。
-- 却下理由: UI (Next.js Server Component) は内部 REST API 経由でデータ取得する設計 (既存 ticket / run /
+- 却下理由: 既存 `AgentRunDetailResponse` 契約を破壊的拡張 + payload 肥大化 + pagination 余地なし。
+  独立 read-only endpoint の方が契約が clean。
+
+### 案 D (却下): MCP のみ
+
+- 却下理由: UI (Next.js Server Component) は内部 REST API 経由でデータ取得する設計 (ticket / run /
   cost_summary 等と同じ)。UI からの read は REST endpoint が正本経路。
 
-## 採用案 (案 A) 詳細契約 (plan-review R1 反映: active-scope 単一 query + display projection)
+## 採用案 (案 A) 詳細契約
 
 ### endpoint
 
@@ -80,81 +107,24 @@ run 詳細から artifact を読むための **read-only REST endpoint** と **r
 - deps: `get_current_actor_id` / `get_tenant_id` / `get_db_session` (既存 run endpoint と同一)。
 - route ordering: `/{run_id}/artifacts` は `/{run_id}` より具体的なため衝突しない。静的 route
   (`/cost_summary` 等) と同じ block 近傍に定義し、`/{run_id}` より前に置く (route-order test)。
-- 手順: **run 可視性 + artifact 取得を単一 statement** で行う (R2 F-HIGH-3)。`agent_runs` 起点の
-  active-scope SELECT に `LEFT JOIN artifacts` し、結果を解釈する:
+- 手順: **run 可視性 + artifact 取得を単一 statement** で行う。`agent_runs` 起点の active-scope SELECT に
+  `LEFT JOIN artifacts` し、結果を解釈する:
   - **0 rows** (run 行が無い = 不存在 / tenant 外 / soft-deleted ticket bound) → **404**。
   - **run 行あり + artifact null** → run visible・artifact 0 件 → **200 empty**。
   - **run 行あり + artifact** → **200** list。
-- response (`RunArtifactListResponse`): `{ "artifacts": [RunArtifact, ...] }`
-  - **content_jsonb を無条件で返さない (R1/R2 F-HIGH-2)**。API layer で **display projection** を適用する。
+- response (`RunArtifactListResponse`): `{ "artifacts": [RunArtifact, ...] }`。
+  - `RunArtifact` (metadata-only): `id` (opaque UUID) / `kind` (str) / `payload_data_class` (str) /
+    `trust_level` (str) / `exportable` (bool) / `parent_artifact_id` (UUID|null) / `created_at` (datetime)。
+  - **`content` / `content_jsonb` / `content_hash` は schema に含めない** (content body / hash を一切返さない)。
 
-### display projection (R1/R2 F-HIGH-2 + R2 F-HIGH-1)
-
-各 artifact は **metadata** を返す: `id` (opaque UUID) / `kind` / `payload_data_class` /
-`trust_level` / `exportable` / `parent_artifact_id` / `created_at` / `content_redacted` (bool) /
-`redaction_reason` (str|null)。
-
-**`content_hash` は `content_redacted=false` のときだけ返す (R6 F-HIGH-2)**。`content_hash` は保存済み raw
-`content_jsonb` の SHA-256 であり、redaction (exportable=false / confidential/pii / scrub hit) しても同一 hash を
-返すと、低エントロピー PII や既知候補の SecretBroker 参照を offline guess で確認できる hash oracle になる。
-よって **redacted artifact では `content_hash=null`** とし、deterministic digest を side-channel にしない
-(artifact 識別は opaque `id` で行う。監査用 raw hash が必要なら owner-only の別経路で分離、本 endpoint では出さない)。
-
-`content`(表示用 body)は次の **優先順** projection で決める:
-
-1. **kind 除外**: `provider_continuation_ref` は repository query で除外済 (返却対象に出ない、二重防御)。
-2. **`exportable == false` → 全面 redaction (R2 F-HIGH-1)**: kind / data_class に関係なく content を
-   返さない (`content=null` / `content_redacted=true` / `redaction_reason="non_exportable"`)。
-   inter-agent message body / memory store / memory retrieval は `kind="other"` + `exportable=false` +
-   public/internal で保存され得るため、これらの raw body を `exportable` flag で一律遮断する
-   (ref-only / raw message body 非露出の境界。data_class 判定では防げない)。
-3. **data class redaction**: `payload_data_class` が `confidential` / `pii` (ordinal >= 2) →
-   `content=null` / `content_redacted=true` / `redaction_reason="data_class_confidential_or_pii"`。
-4. **再帰 forbidden-pattern スキャン (fail-closed、whole-content redaction、R2-R13)**: 残り
-   (`exportable=true` かつ public/internal) の content_jsonb を **再帰的に走査** し、以下を **任意位置で 1 つでも
-   検出したら content 全体を redaction** する。surgical な部分削除 (value 置換 / key drop) は **行わない**
-   — discriminator object (`{"type":"secretRefId","value":"<uuid>"}`) の兄弟 field 残存 (R13 F-HIGH) や
-   sibling leak を構造的に排除するため、**「どこかに 1 つでも疑わしいパターンがあれば artifact 本文全体を
-   出さない」** という fail-closed 方針にする。
-   - **前処理 (R4/R5/R12 F-HIGH、順序重要、object key と string value の両方に適用)**: 判定前に
-     ① **NFKC 互換正規化** + trim + **制御 / format 文字 (Cc/Cf) 除去** →
-     ② **camelCase boundary canonicalization** (lower→upper / acronym / digit 境界に `_` 挿入:
-     `secretRefId` → `secret_Ref_Id`) → ③ **casefold**。camelCase 境界検出は casefold の前 (R12 F-HIGH)。
-   - **検出条件 (object key と string value の両方、R3/R10 F-HIGH)** — いずれか hit で whole-content redaction:
-     - **name segment 一致 (R5/R11 F-HIGH)**: 正規化後の名前を `_`/`-`/camelCase 境界で分割し、denylist token が
-       **segment として** 含まれる (`(^|[_-])<token>([_-]|$)`)。token =
-       continuation/session/thread/provider 系 (`provider_continuation_ref` / `continuation_ref` /
-       `continuation_id` / `provider_continuation` / `session_ref` / `session_id` / `session_token` /
-       `thread_ref` / `thread_id` / `provider_request` / `provider_request_body` / `provider_response` /
-       `raw_response` / `continuation`) + **SecretBroker 参照系** (`secret_ref` / `secret_ref_id` /
-       `secret_uri` / `secret_capability` / `capability_token`)。compound (`old_secret_ref_id` /
-       `matched_secret_ref_id` / `secretRefId` 等) も segment 一致で hit。
-     - **URI substring (R4 F-HIGH)**: 正規化後の **任意位置** に `secret://` / `provider-continuation:`。
-     - **token=value 自由文 (R6/R10 F-HIGH)**: denylist token が `[:=]` / 空白を挟んで値を伴う
-       (`secret_ref_id=sr_...` / `capability_token abc123`)。
-     - **shape (R5 F-HIGH)**: nested object が `artifact_ref`(+`sha256`/`expires_at`) / `secret_ref_id` /
-       `scope`+`name`+`version` を持つ continuation/secret_ref 形状。
-   - hit したら artifact 本文を出さない: `content=null` / `content_redacted=true` /
-     `redaction_reason="forbidden_content_detected"` / `content_hash=null`。
-5. **read-side raw-secret/canary 再スキャン (R9 F-HIGH、fail-closed)**: step 4 で hit しなかった content にも、
-   返却直前に **共有 `assert_no_raw_secret`** (N-1/N-2 と同じ `_payload_secret_scan` + comment helper の broad
-   provider-key / canary 判定相当) を再実行する。write-time contract に依存せず read path でも fail-closed
-   (legacy / direct insert / import / scanner gap の benign key・自由文 value の `sk-...` / `ghp_...` /
-   PEM marker を表示直前に捕捉)。hit したら **content 全面 redaction**: `content=null` /
-   `content_redacted=true` / `redaction_reason="raw_secret_detected"` / `content_hash=null`。
-6. step 4/5 で hit しなかった content のみ `content` として返す (`exportable=true` + public/internal +
-   forbidden-pattern clean + raw-secret clean)。**部分編集ではなく all-or-nothing** で本文を出す。
-
-> projection は **API layer (response 構築)** で行い、`content_jsonb` raw は API 境界を越えない。
-
-### repository read method (R2 F-HIGH-3: run-visible sentinel + active-scope 単一 statement)
+### repository read method (run-visible sentinel + active-scope 単一 statement、content 非 fetch)
 
 `ArtifactRepository.list_run_artifacts(tenant_id: int, run_id: UUID) -> RunArtifactRows | None`
 (`agent_runs` 起点。`None` = run 不可視 → 404、`RunArtifactRows` (空 list 可) = visible):
 
 ```sql
 select r.id as run_id,
-       a.id as artifact_id, a.kind, a.content_hash, a.content_jsonb,
+       a.id as artifact_id, a.kind,
        a.payload_data_class, a.trust_level, a.exportable, a.parent_artifact_id, a.created_at
   from agent_runs r
   left join artifacts a
@@ -174,39 +144,36 @@ select r.id as run_id,
  order by a.created_at, a.id;
 ```
 
+- **content_jsonb / content_hash は SELECT しない** (metadata column のみ)。本文を DB から API layer へも
+  運ばないことで漏洩面を構造的にゼロにする。
 - **run 起点の inner 条件** (`r.tenant_id` + `r.id` + soft-delete NOT EXISTS) が run 可視性を決め、
   `LEFT JOIN artifacts` が artifact を集める。0 rows → run 不可視 → 404。run 行 + artifact null →
   200 empty。**404/200-empty の区別と active-scope を同一 statement** で閉じる (TOCTOU / 将来再利用でも
   fail-closed)。`project_id` は run 行から導出 (caller 入力不要)。`_ensure_tenant_context` 経由。
 - runs に ticket_id が無い (null) 場合は NOT EXISTS が真 = visible (既存 active-scope helper と同義)。
+- `provider_continuation_ref` 除外で ContextSnapshot 内部 ref を inventory にも出さない。
 
 ### frontend
 
-- `lib/api/agent-runs.ts` (or 専用 module): `fetchRunArtifacts(runId)` + Zod schema (strict、content は
-  optional/nullable、`content_redacted` / `redaction_reason` を持つ)。
-- run 詳細 (`app/(admin)/runs/[id]/`) に「生成物 (Artifact)」section。
-  - 各 artifact: kind / trust_level / payload_data_class バッジ + content。
-    **redacted 時 (R6/R7 F-HIGH)** は `redaction_reason` (例「機密分類のため非表示」「エクスポート不可のため非表示」)
-    と opaque `id` のみ表示し、**`content_hash` / digest らしき値は一切 DOM に描画しない**
-    (`content_redacted=true` のとき `content_hash` は API で null。UI も hash/digest を出さず hash oracle を作らない)。
-  - 取得失敗は section 単位で degrade。run 詳細全体は落とさない。
-  - secret / secret_ref / raw provider response / continuation ref / content_hash(redacted 時) は DOM に出さない。
+- `lib/api/agent-runs.ts` (or 専用 module): `fetchRunArtifacts(runId)` + Zod schema (strict、content/
+  content_hash field は **存在しない**)。
+- run 詳細 (`app/(admin)/runs/[id]/`) に「生成物 (Artifact)」インベントリ section。
+  - 各 artifact card: kind / trust_level / payload_data_class バッジ + parent 系譜 + created_at。
+    **content body / hash は表示しない** (metadata-only。content drill-down は P0.1)。
+  - 0 件は空状態文言、取得失敗は section 単位で degrade (run 詳細全体は落とさない)。
+  - secret / secret_ref / provider response / continuation ref / content body / hash は DOM に出さない
+    (API がそもそも返さない)。
 
 ## リスク
 
 | リスク | 対策 |
 |---|---|
-| active-scope TOCTOU + 404/200-empty 判別不可 (R1 F-HIGH-1 / R2 F-HIGH-3) | `agent_runs` 起点 LEFT JOIN artifacts の単一 statement で run 可視性 (soft-delete 除外) と artifact 集約を同時に行い、0 rows→404 / run 行+artifact null→200-empty を判定。SQL introspection + 404/empty negative |
-| `exportable=false` artifact (inter-agent message / memory body) の raw body 露出 (R2 F-HIGH-1) | projection 優先順 2 で `exportable=false` を kind/data_class 問わず全面 redaction。`kind="other"` + `exportable=false` + public/internal fixture を必須 negative test |
-| continuation ref / SecretBroker secret_ref の key/value/shape/埋め込み すり抜け (R2-R5 F-HIGH) | 再帰 scrub を **object key と string value の両方** に適用 (continuation/session/provider + **SecretBroker 参照 (`secret_ref`/`secret_ref_id`/`secret_uri`/`capability_token`)** name 一致 + camelCase + `secret://`/`provider-continuation:` を **任意位置 substring** + shape (`artifact_ref`+`sha256`/`expires_at`、`secret_ref_id`、`scope`+`name`+`version`))。前処理 **NFKC + trim + Cc/Cf 除去 + casefold**。key 経由 / 埋め込み / 全角 / secret_ref 構造 fixture を negative test |
-| confidential/pii 本文の拡散 | projection 優先順 3 で content=null + redacted。badge 表示を access control の代替にしない |
-| legacy / import / scanner gap の raw secret が benign key で read path をすり抜ける (R9 F-HIGH) | projection 優先順 5 で返却直前に共有 `assert_no_raw_secret` を再実行 (read-side fail-closed)。hit で content=null + `raw_secret_detected` + hash=null。benign key / 自由文 raw token fixture を must-ship |
-| 自由文ログ経由の secret_ref/continuation token 露出 (R6 F-HIGH-1) | string value の token=value 自由文 (`secret_ref_id=...` / `capability_token ...`) を regex で whole-value redaction。log 形式 fixture を must-ship negative test |
-| redacted artifact の content_hash hash-oracle side-channel (R6 F-HIGH-2) | `content_redacted=true` では `content_hash=null` (raw content の deterministic digest を出さない)。redacted response で hash 非露出の test |
-| `provider_continuation_ref` の UI 露出 (ContextSnapshot rule 違反) | repository query で kind 除外 + projection (exportable=false redaction + shape scrub) の三重防御 |
+| active-scope TOCTOU + 404/200-empty 判別不可 | `agent_runs` 起点 LEFT JOIN artifacts の単一 statement で run 可視性 (soft-delete 除外) と artifact 集約を同時に行い、0 rows→404 / run 行+artifact null→200-empty。SQL introspection + 404/empty negative test |
+| content_jsonb 経由の SecretBroker ref / continuation ref / PII / raw secret 露出 | **content / content_hash を返さない** ことで漏洩面を構造的にゼロ化 (denylist scrub の fail-open を回避。content drill-down は P0.1 defer) |
+| `provider_continuation_ref` の inventory 露出 (ContextSnapshot rule 違反) | repository query で kind 除外 + schema に該当 metadata を出さない |
 | route 衝突 (`/{run_id}` と `/{run_id}/artifacts`) | route-order test |
 | tenant/project 越境 | run 起点 query の複合境界。seed-based negative は CI Compose |
-| content の肥大化 | P0 は単一 run の artifact 一覧で実用上問題なし。pagination は独立 endpoint で将来拡張余地 |
+| inventory の肥大化 | P0 は単一 run の metadata 一覧で実用上問題なし。pagination は独立 endpoint で将来拡張余地 |
 
 ## rollback 手順
 
@@ -216,14 +183,14 @@ select r.id as run_id,
 
 ## 実装対象ファイル
 
-- `backend/app/repositories/artifact.py`: `list_for_run` read method 追加。
+- `backend/app/repositories/artifact.py`: `list_run_artifacts` read method 追加 (metadata column のみ)。
 - `backend/app/api/agent_runs.py`: `GET /{run_id}/artifacts` endpoint + `RunArtifact` /
-  `RunArtifactListResponse` Pydantic schema。
-- `frontend/lib/api/agent-runs.ts` (or 新 module): `fetchRunArtifacts` + Zod schema。
-- `frontend/app/(admin)/runs/[id]/`: artifact section component + 配線。
+  `RunArtifactListResponse` Pydantic schema (content/content_hash なし)。
+- `frontend/lib/api/agent-runs.ts` (or 新 module): `fetchRunArtifacts` + Zod schema (content/hash なし)。
+- `frontend/app/(admin)/runs/[id]/`: artifact インベントリ section component + 配線。
 - test: **`tests/api/test_run_artifacts.py` (新)** — repo の pytest は `testpaths=["tests"]` で collect する
-  ため `backend/tests/` ではなく **`tests/api/`** 配下に置く (R8 F-HIGH。`backend/tests/` は collection 外で
-  critical negative test が未実行になる)。frontend test は `frontend/__tests__/run-artifacts.test.tsx`。
+  ため **`tests/api/`** 配下に置く (`backend/tests/` は collection 外)。frontend test は
+  `frontend/__tests__/run-artifacts.test.tsx`。
 - 検証コマンド: `cd backend && uv run pytest ../tests/api/test_run_artifacts.py -q` /
   `cd backend && uv run ruff check ../tests/api/test_run_artifacts.py app/api/agent_runs.py app/repositories/artifact.py` /
   `cd backend && uv run mypy app/api/agent_runs.py app/repositories/artifact.py` /
@@ -234,56 +201,31 @@ select r.id as run_id,
 - backend (host は conftest test-password 不一致で seed-based DB 不可 → **SQL introspection + capturing
   session に fake rows** pattern を踏襲、ADR-00039/00040/00041 と同経路):
   - route 登録 (`/{run_id}/artifacts`) + route-order (run 詳細 `/{run_id}` に飲み込まれない)。
-  - **active-scope + sentinel SQL introspection (R1 F-HIGH-1 / R2 F-HIGH-3)**: `list_run_artifacts` の生成
-    SQL が `agent_runs` 起点 + `left join artifacts` + `tenant_id` + `run_id` +
-    `kind <> 'provider_continuation_ref'` + soft-delete 除外 (`tickets ... deleted_at is not null` の
-    NOT EXISTS) を **同一 statement** に含む (compile SQL に全 predicate が出ることを assert)。
-  - **404 vs 200-empty (R2 F-HIGH-3)** — fake rows を capturing session に返して区別を検証:
-    run 0 rows → 404、run 行 + artifact null → 200 empty list、run 行 + artifact → 200 list。
-  - **display projection (R2 F-HIGH-1/2)** — fake rows を返して response を検証:
-    - `exportable=false` (kind=other / public) → `content=null` / `content_redacted=true` /
-      `redaction_reason="non_exportable"` (inter-agent / memory body の遮断)。
-    - `payload_data_class` ∈ {confidential, pii} → `content=null` / `redaction_reason="data_class_confidential_or_pii"`。
-    - public/internal + exportable=true の content に次のいずれかを混入 → **whole-content redaction**
-      (`content=null` / `content_redacted=true` / `redaction_reason="forbidden_content_detected"` /
-      `content_hash=null`)。must-ship negative fixtures (部分編集ではなく本文全体が出ないことを assert):
-      - denylist key / camelCase (`session_token` / `provider_response` / `providerResponse` / `secretRefId`)。
-      - URI token を持つ JSON key / 自由文 value (先頭でも途中でも): `{"secret://sops/...": true}` /
-        `cli_stdout:"failed to resolve secret://sops/..."` / `provider-continuation:openai:abcd`。
-      - 全角 / 互換幅 / zero-width / 大小文字 variant の token / URI (NFKC + Cc/Cf 除去 + casefold)。
-      - SecretBroker 参照 key/構造: `{"secret_ref_id":"..."}` / `{"target":{"secret_ref_id":"..."}}` /
-        `{"secret_ref":{"scope","name","version"}}` / compound (`old_secret_ref_id` / `matched_secret_ref_id`) /
-        camelCase (`secretRefId` / `oldSecretRefId`)。
-      - token=value 自由文 (string value / JSON key の両方): `secret_ref_id=sr_...` / `capability_token abc123` /
-        `{"... secret_ref_id=sr_...": true}`。
-      - **discriminator object (R13 F-HIGH)**: `{"type":"secretRefId","value":"<uuid>"}` /
-        `{"kind":"providerResponse","body":{...}}` / `{"ref_type":"continuationId","id":"..."}` / camelCase →
-        **value 局所置換でなく包含 object (兄弟 field 含む) ごと content 全体 redaction** (兄弟 `value`/`body`/`id`
-        が残らないこと)。
-      - shape (`{artifact_ref, sha256, expires_at}` / `{scope, name, version}`)。
-    - **read-side raw-secret 再スキャン (R9 F-HIGH)**: benign key / 自由文 value に raw token を入れた
-      exportable=true + public/internal artifact (`{"stdout":"sk-abcdefghijklmnopqrstuvwxyz123"}` /
-      `{"log":"token ghp_..."}` / PEM marker) → `content=null` / `content_redacted=true` /
-      `redaction_reason="raw_secret_detected"` / `content_hash=null` (fail-closed、write contract 非依存)。
-    - clean な public/internal + exportable=true content → そのまま返る (`content_redacted=false`、
-      `content_hash` 非 null)。
-  - **redacted 時の hash 非露出 (R6 F-HIGH-2)**: `content_redacted=true` の全ケース (exportable=false /
-    confidential/pii / scrub hit) で response の `content_hash` が `null` (raw hash を side-channel として出さない)。
-    `content_redacted=false` のときだけ `content_hash` が非 null。
-  - response schema が secret / raw provider / continuation field を持たない。`provider_continuation_ref` 除外固定。
-  - seed-based tenant/project 越境 + soft-delete + non-exportable negative は CI Compose postgres で検証 (host 不可)。
-- frontend: `fetchRunArtifacts` の Zod strict (content nullable + redaction フラグ、`content_hash` nullable) +
-  run 詳細 artifact section の表示 / redacted 表示 / degrade。
-  - **redacted card の DOM 非露出 (R7 F-HIGH)**: `content_redacted=true` の artifact card に
-    `content_hash` 文字列 / digest らしき hex 値 / content body が **描画されない** ことを assert (must-ship)。
+  - **active-scope + sentinel SQL introspection**: `list_run_artifacts` の生成 SQL が `agent_runs` 起点 +
+    `left join artifacts` + `tenant_id` + `run_id` + `kind <> 'provider_continuation_ref'` + soft-delete 除外
+    (`tickets ... deleted_at is not null` の NOT EXISTS) を **同一 statement** に含み、**`content_jsonb` /
+    `content_hash` を SELECT しない** (compile SQL に content/hash column が出ないことを assert)。
+  - **404 vs 200-empty** — fake rows を capturing session に返して区別を検証: run 0 rows → 404、
+    run 行 + artifact null → 200 empty list、run 行 + artifact → 200 list。
+  - **metadata-only schema (must-ship)**: `RunArtifact` の field が
+    `{id, kind, payload_data_class, trust_level, exportable, parent_artifact_id, created_at}` のみで、
+    `content` / `content_jsonb` / `content_hash` を **持たない** (OpenAPI schema / model_fields で assert)。
+  - response mapping: fake rows (各 kind / trust_level / data_class) → metadata が正しく写像される。
+    `provider_continuation_ref` を含む fake rows でも query 除外により返らない (introspection で固定)。
+  - seed-based tenant/project 越境 + soft-delete negative は CI Compose postgres で検証 (host 不可)。
+- frontend: `fetchRunArtifacts` の Zod strict (content/content_hash field を持たない) + run 詳細 artifact
+  インベントリ section の表示 / 空状態 / degrade。
+  - **content/hash 非露出 (must-ship)**: artifact card の DOM に content body / hash 文字列 / digest らしき
+    hex 値が **描画されない** ことを assert。
 
 ## 不変条件 trace
 
 - AI 出力直結禁止: read-only、mutation/昇格/実行なし。
-- secret / 非露出データ非拡散: content_jsonb raw を API 境界外に出さない。display projection で
-  confidential/pii redaction + 再帰 denylist scrub + `provider_continuation_ref` kind 除外。
-  ContextSnapshot UI 非露出 rule と PII 非拡散を artifact 経路でも維持。
+- secret / 非露出データ非拡散: **content_jsonb / content_hash を API 境界外に一切出さない** ことで、
+  SecretBroker secret_ref / continuation ref / PII / raw secret の漏洩面を構造的にゼロ化。ContextSnapshot
+  UI 非露出 rule・SecretBroker 非露出・PII 非拡散を artifact 経路でも維持。
 - tenant / project boundary: repository が `AgentRun` join で複合境界 + active-scope を同一 statement で enforce。
 - active-scope: soft-deleted ticket run は 404、artifact query 単体でも fail-closed。
-- `payload_data_class` は Matrix/metadata 由来を表示、caller 入力なし。
-- AgentRun 16 状態 / Provider Compliance / SecretBroker に変更なし。migration なし (read + projection のみ)。
+- `payload_data_class` / `trust_level` は artifact row 由来を表示、caller 入力なし。
+- AgentRun 16 状態 / Provider Compliance / SecretBroker に変更なし。migration なし (read のみ)。
+- content drill-down は P0.1 defer (専用 sanitizer / `display_safe` provenance 前提)。
