@@ -80,57 +80,62 @@ run 詳細から artifact を読むための **read-only REST endpoint** と **r
 - deps: `get_current_actor_id` / `get_tenant_id` / `get_db_session` (既存 run endpoint と同一)。
 - route ordering: `/{run_id}/artifacts` は `/{run_id}` より具体的なため衝突しない。静的 route
   (`/cost_summary` 等) と同じ block 近傍に定義し、`/{run_id}` より前に置く (route-order test)。
-- 手順:
-  1. **run 可視性 + active-scope 確認**: 既存 run 詳細経路と同じ active-scope (soft-deleted ticket
-     run の不可視) で run を取得。不存在 / tenant 外 / soft-deleted ticket bound → **404** (200-empty と区別)。
-  2. `ArtifactRepository.list_for_run(...)` で artifact を取得。**この SELECT 自体が `AgentRun` と join し、
-     `tenant_id` + `run_id` + `soft_deleted_ticket_run_exclusion()` 相当を同一 statement で満たす場合だけ返す**
-     (R1 F-HIGH-1: 可視性確認と取得を分離せず、artifact query 単体でも fail-closed。step 1 後の
-     soft-delete / 将来 preflight なし再利用でも不可視 run の body を返さない)。`provider_continuation_ref`
-     除外、created_at 昇順。
+- 手順: **run 可視性 + artifact 取得を単一 statement** で行う (R2 F-HIGH-3)。`agent_runs` 起点の
+  active-scope SELECT に `LEFT JOIN artifacts` し、結果を解釈する:
+  - **0 rows** (run 行が無い = 不存在 / tenant 外 / soft-deleted ticket bound) → **404**。
+  - **run 行あり + artifact null** → run visible・artifact 0 件 → **200 empty**。
+  - **run 行あり + artifact** → **200** list。
 - response (`RunArtifactListResponse`): `{ "artifacts": [RunArtifact, ...] }`
-  - **content_jsonb を無条件で返さない (R1 F-HIGH-2)**。API layer で **display projection** を適用する。
+  - **content_jsonb を無条件で返さない (R1/R2 F-HIGH-2)**。API layer で **display projection** を適用する。
 
-### display projection (R1 F-HIGH-2)
+### display projection (R1/R2 F-HIGH-2 + R2 F-HIGH-1)
 
 各 artifact は **metadata は常時** 返す: `id` / `kind` / `content_hash` / `payload_data_class` /
 `trust_level` / `exportable` / `parent_artifact_id` / `created_at` / `content_redacted` (bool) /
-`redaction_reason` (str|null)。
+`redaction_reason` (str|null)。`content`(表示用 body)は次の **優先順** projection で決める:
 
-`content`(表示用 body)は projection で決める:
-
-1. **kind 除外**: `provider_continuation_ref` は repository query で除外済 (返却対象に出ない)。
-2. **data class redaction**: `payload_data_class` が `confidential` / `pii` (ordinal >= 2) の artifact は
-   **content を返さない** (`content=null` / `content_redacted=true` / `redaction_reason="data_class_confidential_or_pii"`)。
-   metadata + content_hash のみ表示し、本文は出さない (PII / confidential 非拡散、badge 表示を
-   access control の代替にしない)。privileged reveal は P0 では実装せず将来拡張余地。
-3. **recursive key denylist scrub**: `public` / `internal` の content は、表示前に **再帰 denylist scrub** を
-   適用する。別 kind の content_jsonb に混入し得る continuation / session / thread / provider ref 系の
-   キーを除去する。denylist (再帰、object key 一致):
-   `provider_continuation_ref` / `continuation_ref` / `continuation_id` / `provider_continuation` /
-   `session_ref` / `session_id` / `session_token` / `thread_ref` / `thread_id` /
-   `provider_request` / `provider_request_body` / `provider_response` / `raw_response` /
-   `continuation`。hit key は再帰的に drop し、`content_redacted=true` /
-   `redaction_reason="forbidden_keys_scrubbed"` を立てる。
-4. 上記を満たした残りを `content` として返す (`public`/`internal` のみ、scrub 済)。
+1. **kind 除外**: `provider_continuation_ref` は repository query で除外済 (返却対象に出ない、二重防御)。
+2. **`exportable == false` → 全面 redaction (R2 F-HIGH-1)**: kind / data_class に関係なく content を
+   返さない (`content=null` / `content_redacted=true` / `redaction_reason="non_exportable"`)。
+   inter-agent message body / memory store / memory retrieval は `kind="other"` + `exportable=false` +
+   public/internal で保存され得るため、これらの raw body を `exportable` flag で一律遮断する
+   (ref-only / raw message body 非露出の境界。data_class 判定では防げない)。
+3. **data class redaction**: `payload_data_class` が `confidential` / `pii` (ordinal >= 2) →
+   `content=null` / `content_redacted=true` / `redaction_reason="data_class_confidential_or_pii"`。
+4. **再帰 shape/value-aware scrub (R2 F-HIGH-2)**: 残り (`exportable=true` かつ public/internal) の content は
+   表示前に **再帰 scrub** を適用。別 artifact の content_jsonb に混入し得る continuation/session/thread/
+   provider ref を、**key 完全一致だけでなく shape / value でも** 除去する:
+   - **key denylist** (object key 一致): `provider_continuation_ref` / `continuation_ref` /
+     `continuation_id` / `provider_continuation` / `session_ref` / `session_id` / `session_token` /
+     `thread_ref` / `thread_id` / `provider_request` / `provider_request_body` / `provider_response` /
+     `raw_response` / `continuation` (+ camelCase variants: `continuationId` / `sessionId` / `threadId` /
+     `artifactRef` / `providerResponse` 等)。
+   - **value prefix denylist** (string value 先頭一致): `provider-continuation:` / `secret://` で始まる
+     文字列値を drop。
+   - **shape denylist** (nested object 形状): `artifact_ref`/`artifactRef` を持ち、かつ `sha256` または
+     `expires_at`/`expiresAt` を併せ持つ object (continuation ref 形状) を再帰的に drop。
+   - 何か drop した場合 `content_redacted=true` / `redaction_reason="forbidden_content_scrubbed"`。
+5. 上記を全て満たした残りを `content` として返す (`exportable=true` + public/internal + scrub 済)。
 
 > projection は **API layer (response 構築)** で行い、`content_jsonb` raw は API 境界を越えない。
 
-### repository read method
+### repository read method (R2 F-HIGH-3: run-visible sentinel + active-scope 単一 statement)
 
-`ArtifactRepository.list_for_run(tenant_id: int, project_id: UUID, run_id: UUID) -> list[Artifact]`
-(R1 F-HIGH-1: `project_id` を受け取り、active-scope を同一 statement で enforce):
+`ArtifactRepository.list_run_artifacts(tenant_id: int, run_id: UUID) -> RunArtifactRows | None`
+(`agent_runs` 起点。`None` = run 不可視 → 404、`RunArtifactRows` (空 list 可) = visible):
 
 ```sql
-select a.* from artifacts a
-  join agent_runs r
+select r.id as run_id,
+       a.id as artifact_id, a.kind, a.content_hash, a.content_jsonb,
+       a.payload_data_class, a.trust_level, a.exportable, a.parent_artifact_id, a.created_at
+  from agent_runs r
+  left join artifacts a
     on a.tenant_id = r.tenant_id
    and a.project_id = r.project_id
    and a.run_id = r.id
- where a.tenant_id = :tenant_id
-   and a.project_id = :project_id
-   and a.run_id = :run_id
    and a.kind <> 'provider_continuation_ref'
+ where r.tenant_id = :tenant_id
+   and r.id = :run_id
    and not exists (
      select 1 from tickets dt
       where dt.tenant_id = r.tenant_id
@@ -141,9 +146,11 @@ select a.* from artifacts a
  order by a.created_at, a.id;
 ```
 
-- tenant + project + run の複合境界 + soft-deleted ticket run 除外を **同一 statement** で enforce。
-  `_ensure_tenant_context` 経由。`project_id` は step 1 で解決した run の project_id を渡す
-  (run 不可視なら step 1 で 404、artifact query も join で fail-closed)。
+- **run 起点の inner 条件** (`r.tenant_id` + `r.id` + soft-delete NOT EXISTS) が run 可視性を決め、
+  `LEFT JOIN artifacts` が artifact を集める。0 rows → run 不可視 → 404。run 行 + artifact null →
+  200 empty。**404/200-empty の区別と active-scope を同一 statement** で閉じる (TOCTOU / 将来再利用でも
+  fail-closed)。`project_id` は run 行から導出 (caller 入力不要)。`_ensure_tenant_context` 経由。
+- runs に ticket_id が無い (null) 場合は NOT EXISTS が真 = visible (既存 active-scope helper と同義)。
 
 ### frontend
 
@@ -159,11 +166,13 @@ select a.* from artifacts a
 
 | リスク | 対策 |
 |---|---|
-| 可視性確認と artifact 取得の分離による active-scope TOCTOU (R1 F-HIGH-1) | `list_for_run` が `AgentRun` join + `tenant_id`/`project_id`/`run_id`/soft-delete 除外を同一 statement で enforce。SQL introspection test + soft-deleted run 404/empty negative |
-| content_jsonb の非露出データ漏洩 (continuation/session/thread ref、confidential/pii 本文) (R1 F-HIGH-2) | API layer の display projection: kind 除外 + confidential/pii redaction + 再帰 key denylist scrub。fixture (継続 ref 風 key 混入 / confidential / pii) で negative test |
-| `provider_continuation_ref` の UI 露出 (ContextSnapshot rule 違反) | repository query で kind 除外 + projection denylist の二重防御 + endpoint test で固定 |
-| route 衝突 (`/{run_id}` と `/{run_id}/artifacts`) | route-order test (`/{run_id}/artifacts` → 200、run 詳細に飲み込まれない) |
-| tenant/project 越境 | repository 複合境界 + run 可視性確認 (404)。seed-based negative は CI Compose |
+| active-scope TOCTOU + 404/200-empty 判別不可 (R1 F-HIGH-1 / R2 F-HIGH-3) | `agent_runs` 起点 LEFT JOIN artifacts の単一 statement で run 可視性 (soft-delete 除外) と artifact 集約を同時に行い、0 rows→404 / run 行+artifact null→200-empty を判定。SQL introspection + 404/empty negative |
+| `exportable=false` artifact (inter-agent message / memory body) の raw body 露出 (R2 F-HIGH-1) | projection 優先順 2 で `exportable=false` を kind/data_class 問わず全面 redaction。`kind="other"` + `exportable=false` + public/internal fixture を必須 negative test |
+| continuation ref の shape/value すり抜け (R2 F-HIGH-2) | 再帰 scrub を key 完全一致だけでなく value prefix (`provider-continuation:`/`secret://`) + shape (`artifact_ref`+`sha256`/`expires_at`) + camelCase variants まで拡張。中立 key 配下の continuation object fixture を negative test |
+| confidential/pii 本文の拡散 | projection 優先順 3 で content=null + redacted。badge 表示を access control の代替にしない |
+| `provider_continuation_ref` の UI 露出 (ContextSnapshot rule 違反) | repository query で kind 除外 + projection (exportable=false redaction + shape scrub) の三重防御 |
+| route 衝突 (`/{run_id}` と `/{run_id}/artifacts`) | route-order test |
+| tenant/project 越境 | run 起点 query の複合境界。seed-based negative は CI Compose |
 | content の肥大化 | P0 は単一 run の artifact 一覧で実用上問題なし。pagination は独立 endpoint で将来拡張余地 |
 
 ## rollback 手順
@@ -185,20 +194,23 @@ select a.* from artifacts a
 
 - backend (host は conftest test-password 不一致で seed-based DB 不可 → **SQL introspection + capturing
   session に fake rows** pattern を踏襲、ADR-00039/00040/00041 と同経路):
-  - route 登録 (`/{run_id}/artifacts`) + route-order (run 詳細 `/{run_id}` に飲み込まれない、`?` 等)。
-  - **active-scope SQL introspection (R1 F-HIGH-1)**: `list_for_run` の生成 SQL が `agent_runs` join +
-    `tenant_id` + `project_id` + `run_id` + `kind <> 'provider_continuation_ref'` +
-    soft-delete 除外 (`tickets ... deleted_at is not null` の NOT EXISTS) を **同一 statement** に含む
-    (compile SQL に全 predicate が出ることを assert)。
-  - run 不存在 / tenant 外 / soft-deleted ticket run → **404** (capturing session で run 取得 None → 404)。
-  - **display projection (R1 F-HIGH-2)** — fake rows を capturing session に返して response を検証:
-    - `payload_data_class` ∈ {confidential, pii} の artifact → `content=null` / `content_redacted=true` /
-      `redaction_reason="data_class_confidential_or_pii"`。
-    - public/internal の content に denylist key (例 `continuation_id` / `session_token` / `provider_response`)
-      を混入 → 再帰 scrub で除去 + `content_redacted=true` / `redaction_reason="forbidden_keys_scrubbed"`。
-    - clean な public/internal content → そのまま返る (`content_redacted=false`)。
-  - response schema が secret / raw provider field を持たない。`provider_continuation_ref` 除外を固定。
-  - seed-based tenant/project 越境 + soft-delete negative は CI Compose postgres で検証 (host 不可を明記)。
+  - route 登録 (`/{run_id}/artifacts`) + route-order (run 詳細 `/{run_id}` に飲み込まれない)。
+  - **active-scope + sentinel SQL introspection (R1 F-HIGH-1 / R2 F-HIGH-3)**: `list_run_artifacts` の生成
+    SQL が `agent_runs` 起点 + `left join artifacts` + `tenant_id` + `run_id` +
+    `kind <> 'provider_continuation_ref'` + soft-delete 除外 (`tickets ... deleted_at is not null` の
+    NOT EXISTS) を **同一 statement** に含む (compile SQL に全 predicate が出ることを assert)。
+  - **404 vs 200-empty (R2 F-HIGH-3)** — fake rows を capturing session に返して区別を検証:
+    run 0 rows → 404、run 行 + artifact null → 200 empty list、run 行 + artifact → 200 list。
+  - **display projection (R2 F-HIGH-1/2)** — fake rows を返して response を検証:
+    - `exportable=false` (kind=other / public) → `content=null` / `content_redacted=true` /
+      `redaction_reason="non_exportable"` (inter-agent / memory body の遮断)。
+    - `payload_data_class` ∈ {confidential, pii} → `content=null` / `redaction_reason="data_class_confidential_or_pii"`。
+    - public/internal + exportable=true の content に denylist key (`session_token` / `provider_response`)、
+      value prefix (`provider-continuation:...`)、shape (`{artifact_ref, sha256, expires_at}`) を混入 →
+      再帰 scrub で除去 + `content_redacted=true` / `redaction_reason="forbidden_content_scrubbed"`。
+    - clean な public/internal + exportable=true content → そのまま返る (`content_redacted=false`)。
+  - response schema が secret / raw provider / continuation field を持たない。`provider_continuation_ref` 除外固定。
+  - seed-based tenant/project 越境 + soft-delete + non-exportable negative は CI Compose postgres で検証 (host 不可)。
 - frontend: `fetchRunArtifacts` の Zod strict (content nullable + redaction フラグ) + run 詳細 artifact
   section の表示 / redacted 表示 / degrade。
 
