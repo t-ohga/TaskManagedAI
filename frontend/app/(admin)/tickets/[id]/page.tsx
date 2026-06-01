@@ -7,6 +7,7 @@ import { ActivityTimeline } from "@/components/activity-timeline";
 import { EditTicketForm } from "./_components/edit-ticket-form";
 import { TicketDeleteButton } from "@/components/ticket-delete-button";
 import { TrackRecentTicket } from "@/components/recent-tickets";
+import { getCurrentProject } from "@/lib/api/session";
 
 import { loadTicket } from "./load-ticket";
 
@@ -56,6 +57,13 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   if (!ticket) {
     notFound();
   }
+
+  // mutation (ステータス変更 / 編集 / 中止) は updateTicketAction が session の
+  // current_project に PATCH するため、ticket の所有 project が current_project と
+  // 一致するときだけ書込 UI を出す。非一致時は wrong-project へ submit して 404 になる
+  // 編集 UI を出さず閲覧のみにする (Codex B2b R7 finding、create gating と同じ方針)。
+  const currentProject = await getCurrentProject().catch(() => null);
+  const isWritable = currentProject !== null && ticket.project_id === currentProject.project_id;
 
   return (
     <section aria-label="チケット詳細" className="grid gap-6">
@@ -126,11 +134,24 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           </div>
         </article>
       </div>
+      {!isWritable ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          このチケットは現在の作業プロジェクト外のため、ここでは閲覧のみ可能です。
+          ステータス変更・編集・中止は、そのチケットが属するプロジェクトを現在の
+          プロジェクトにしているときだけ行えます。
+        </div>
+      ) : null}
       <div className="grid gap-4 md:grid-cols-2">
         <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
           <h2 className="text-lg font-semibold">ステータス変更</h2>
           <div className="mt-4">
-            <TicketStatusChanger ticketId={ticket.id} currentStatus={ticket.status} />
+            {isWritable ? (
+              <TicketStatusChanger ticketId={ticket.id} currentStatus={ticket.status} />
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                現在のプロジェクト外のため変更できません。
+              </p>
+            )}
           </div>
         </article>
 
@@ -143,20 +164,22 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
             >
               プロジェクトの看板に戻る
             </a>
-            {ticket.status !== "cancelled" ? (
+            {isWritable && ticket.status !== "cancelled" ? (
               <TicketDeleteButton ticketId={ticket.id} projectId={ticket.project_id} />
             ) : null}
           </div>
         </article>
       </div>
 
-      <EditTicketForm ticket={{
-        ...ticket,
-        assignee_actor_id: null,
-        acceptance_criteria: null,
-        evidence_ids: [],
-        agent_run_ids: [],
-      } as unknown as Parameters<typeof EditTicketForm>[0]["ticket"]} />
+      {isWritable ? (
+        <EditTicketForm ticket={{
+          ...ticket,
+          assignee_actor_id: null,
+          acceptance_criteria: null,
+          evidence_ids: [],
+          agent_run_ids: [],
+        } as unknown as Parameters<typeof EditTicketForm>[0]["ticket"]} />
+      ) : null}
 
       <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
         <h2 className="text-lg font-semibold">アクティビティ</h2>
