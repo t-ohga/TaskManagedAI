@@ -35,6 +35,9 @@ class DevSessionClaims:
     actor_id: Literal["human:default"]
     principal_type: Literal["session"]
     exp: int
+    # ADR-00043 (R-2): issued-at (= login 時刻)。表示専用 (最終ログイン日時)。auth / expiry 判定には
+    # 一切使わない。既存 cookie (iat 無) は None。HMAC 署名対象に含めるため改ざん不可。
+    iat: int | None = None
 
 
 def _base64url_encode(value: bytes) -> str:
@@ -47,15 +50,16 @@ def _base64url_decode(value: str) -> bytes:
 
 
 def _claims_json(claims: DevSessionClaims) -> str:
-    return json.dumps(
-        {
-            "actor_id": claims.actor_id,
-            "exp": claims.exp,
-            "principal_type": claims.principal_type,
-        },
-        separators=(",", ":"),
-        sort_keys=True,
-    )
+    payload: dict[str, object] = {
+        "actor_id": claims.actor_id,
+        "exp": claims.exp,
+        "principal_type": claims.principal_type,
+    }
+    # ADR-00043: iat は not None のときだけ含める。iat 無 cookie (旧) は iat key 無しで署名されている
+    # ため、付与すると signature 再現が壊れる。新規発行 cookie は常に iat を持つ。
+    if claims.iat is not None:
+        payload["iat"] = claims.iat
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
 def _sign_payload(payload_segment: str, secret: str) -> str:
@@ -79,6 +83,8 @@ def create_signed_session_cookie(
         actor_id=DEFAULT_ACTOR_ID,
         principal_type=DEFAULT_PRINCIPAL_TYPE,
         exp=int(expires_at.timestamp()),
+        # ADR-00043: login 時刻 = issued_at。表示専用 (最終ログイン日時)。exp = iat + TTL は不変。
+        iat=int(issued_at.timestamp()),
     )
     payload_segment = _base64url_encode(_claims_json(claims).encode("utf-8"))
     signature_segment = _sign_payload(payload_segment, secret)
@@ -98,10 +104,16 @@ def _parse_claims(payload: object) -> DevSessionClaims | None:
     if not isinstance(exp, int):
         return None
 
+    # ADR-00043: iat は optional (旧 cookie は無)。int でなければ None として扱い、session 有効性には
+    # 影響させない (iat 欠如/不正で reject しない、表示専用)。bool は int subclass のため除外。
+    iat_raw = payload.get("iat")
+    iat = iat_raw if isinstance(iat_raw, int) and not isinstance(iat_raw, bool) else None
+
     return DevSessionClaims(
         actor_id=DEFAULT_ACTOR_ID,
         principal_type=DEFAULT_PRINCIPAL_TYPE,
         exp=exp,
+        iat=iat,
     )
 
 

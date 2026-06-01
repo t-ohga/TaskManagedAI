@@ -14,6 +14,7 @@ describe("SessionInfo (R-1 セッションタイムアウト表示)", () => {
         actorId="human-actor-abcdef-0123456789"
         expiresAt="2026-06-01T18:30:00.000Z"
         remainingLabel="あと約 3 時間 12 分"
+        lastLoginAt="2026-06-01T06:30:00.000Z"
       />
     );
     // actor id は先頭 12 文字 + 省略記号で表示。
@@ -21,13 +22,22 @@ describe("SessionInfo (R-1 セッションタイムアウト表示)", () => {
     expect(screen.getByText("セッション有効期限")).toBeInTheDocument();
     expect(screen.getByText("(あと約 3 時間 12 分)")).toBeInTheDocument();
     expect(screen.getByText("Tailscale 閉域")).toBeInTheDocument();
+    // R-2: 最終ログイン日時の行が出る。
+    expect(screen.getByText("最終ログイン日時")).toBeInTheDocument();
   });
 
   it("degrades to placeholders when session cannot be resolved", () => {
-    render(<SessionInfo actorId={null} expiresAt={null} remainingLabel={null} />);
-    // actor id / 有効期限とも null のとき em-dash を表示し、残り時間ラベルは出さない。
+    render(
+      <SessionInfo
+        actorId={null}
+        expiresAt={null}
+        remainingLabel={null}
+        lastLoginAt={null}
+      />
+    );
+    // actor id / 有効期限 / 最終ログインとも null のとき em-dash を表示し、残り時間ラベルは出さない。
     const dashes = screen.getAllByText("—");
-    expect(dashes.length).toBeGreaterThanOrEqual(2);
+    expect(dashes.length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByText(/あと約/)).not.toBeInTheDocument();
   });
 
@@ -37,6 +47,7 @@ describe("SessionInfo (R-1 セッションタイムアウト表示)", () => {
         actorId="x"
         expiresAt="2026-06-01T18:30:00.000Z"
         remainingLabel={null}
+        lastLoginAt={null}
       />
     );
     expect(screen.queryByText(/あと約|期限切れ/)).not.toBeInTheDocument();

@@ -83,7 +83,12 @@ function formatSessionRemaining(remainingMs: number): string {
 // R-1 セッションタイムアウト表示: dev session cookie を検証し、実 actorId と有効期限を取得する
 // (これまで SessionInfo に hardcode の "dev-actor-default" を渡していた)。失敗時は null。
 async function loadSessionInfo(): Promise<
-  { actorId: string; expiresAt: string; remainingLabel: string } | null
+  {
+    actorId: string;
+    expiresAt: string;
+    remainingLabel: string;
+    lastLoginAt: string | null;
+  } | null
 > {
   try {
     const cookieStore = await cookies();
@@ -98,7 +103,9 @@ async function loadSessionInfo(): Promise<
     return {
       actorId: session.actor.actorId,
       expiresAt: session.expiresAt.toISOString(),
-      remainingLabel: formatSessionRemaining(remainingMs)
+      remainingLabel: formatSessionRemaining(remainingMs),
+      // R-2 (ADR-00043): iat 由来の最終ログイン日時。iat 無 cookie は null。
+      lastLoginAt: session.issuedAt ? session.issuedAt.toISOString() : null
     };
   } catch {
     return null;
@@ -235,6 +242,7 @@ export default async function ProjectSettingsPage() {
           actorId={sessionInfo?.actorId ?? null}
           expiresAt={sessionInfo?.expiresAt ?? null}
           remainingLabel={sessionInfo?.remainingLabel ?? null}
+          lastLoginAt={sessionInfo?.lastLoginAt ?? null}
         />
       </Panel>
 
