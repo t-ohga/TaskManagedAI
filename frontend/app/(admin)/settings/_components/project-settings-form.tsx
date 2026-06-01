@@ -229,7 +229,8 @@ export function ProjectSettingsForm({
             </p>
           </div>
 
-          <div>
+          {/* S-1: 自律レベルの現在値は印刷に残し、保存ボタン (mutation trigger) は印刷物に出さない */}
+          <div className="no-print">
             <button
               type="submit"
               className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-accent/90 disabled:opacity-60"

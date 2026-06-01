@@ -137,7 +137,8 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
         </div>
       </header>
 
-      <div className="flex flex-wrap items-center gap-3">
+      {/* S-1: フィルタ操作子は印刷物に出さない (.no-print)。チップは画面では 44px tap target (I-3)。 */}
+      <div className="no-print flex flex-wrap items-center gap-3">
         <div className="flex flex-wrap gap-1">
           <a href="/runs" className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${!statusFilter ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
             すべて
@@ -274,7 +275,7 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
       )}
 
       {totalRuns > RUNS_PER_PAGE && (
-        <nav aria-label="ページネーション" className="flex items-center justify-center gap-2">
+        <nav aria-label="ページネーション" className="no-print flex items-center justify-center gap-2">
           {page > 1 ? (
             <a href={runsPageHref(page - 1)} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
               前へ

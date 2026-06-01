@@ -155,14 +155,36 @@ describe("settings print scope (Codex adversarial R4 F-MEDIUM regression guard)"
     expect(slice).toContain("DataManagementPanel");
   });
 
-  it("marks the project settings save button .no-print", () => {
+  it("marks every project settings save button .no-print", () => {
     const form = readFileSync(
       join(process.cwd(), "app/(admin)/settings/_components/project-settings-form.tsx"),
       "utf8"
     );
-    const noPrintIndex = form.indexOf('className="no-print"');
-    expect(noPrintIndex).toBeGreaterThanOrEqual(0);
-    const slice = form.slice(noPrintIndex, noPrintIndex + 200);
-    expect(slice).toContain('type="submit"');
+    // フォーム内の submit ボタンはすべて no-print の div 内に置かれる (基本情報 + 自律レベル)。
+    const submitCount = form.split('type="submit"').length - 1;
+    expect(submitCount).toBeGreaterThanOrEqual(2);
+    for (const label of ["基本情報を保存", "自律レベルを保存"]) {
+      const labelIndex = form.indexOf(label);
+      expect(labelIndex).toBeGreaterThanOrEqual(0);
+      // ボタン直前 (button の長い className を跨ぐため ~400 字) に no-print wrapper があること。
+      const before = form.slice(Math.max(0, labelIndex - 400), labelIndex);
+      expect(before).toContain('className="no-print"');
+    }
+  });
+});
+
+describe("list page print scope (Codex adversarial R5 F-MEDIUM regression guard)", () => {
+  // 監査ログ / AI 実行ログは一覧 (証跡) としての印刷価値があるため、テーブル本体は印刷に残し、
+  // フィルタ / ページネーションの操作子は .no-print で印刷から除外する。
+  it("audit filter bar and pagination are .no-print", () => {
+    const audit = readFileSync(join(process.cwd(), "app/(admin)/audit/page.tsx"), "utf8");
+    expect(audit).toContain("no-print flex flex-wrap items-center gap-3");
+    expect(audit).toMatch(/aria-label="ページネーション"\s+className="no-print/);
+  });
+
+  it("runs filter bar and pagination are .no-print", () => {
+    const runs = readFileSync(join(process.cwd(), "app/(admin)/runs/page.tsx"), "utf8");
+    expect(runs).toContain("no-print flex flex-wrap items-center gap-3");
+    expect(runs).toMatch(/aria-label="ページネーション"\s+className="no-print/);
   });
 });

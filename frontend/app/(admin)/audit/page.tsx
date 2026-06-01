@@ -146,7 +146,9 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
         </p>
       </header>
 
-      <div className="flex flex-wrap items-center gap-3">
+      {/* S-1: 監査ログは証跡として印刷価値が高い。絞り込み / ページ移動の操作子は印刷物に出さず、
+          ヘッダー / マスク注意 / テーブル本体だけを残す (.no-print)。チップは画面では 44px tap target。 */}
+      <div className="no-print flex flex-wrap items-center gap-3">
         <label className="text-xs text-muted-foreground">イベント種別:</label>
         <div className="flex flex-wrap gap-1">
           <a
@@ -213,7 +215,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
       )}
 
       {totalPages > 1 && (
-        <nav aria-label="ページネーション" className="flex items-center justify-center gap-2">
+        <nav aria-label="ページネーション" className="no-print flex items-center justify-center gap-2">
           {pageNum > 1 && (
             <a href={`/audit?${typeFilter ? `type=${typeFilter}&` : ""}page=${pageNum - 1}`} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
               前へ
