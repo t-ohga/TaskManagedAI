@@ -139,7 +139,13 @@ run 詳細から artifact を読むための **read-only REST endpoint** と **r
      `expires_at`/`expiresAt`) を持つ object (continuation ref 形状)、② `secret_ref_id` を持つ object、
      または `scope` + `name` + `version` を併せ持つ object (secret_ref メタデータ形状、R5 F-HIGH) を drop。
    - いずれか hit で `content_redacted=true` / `redaction_reason="forbidden_content_scrubbed"`。
-5. 上記を全て満たした残りを `content` として返す (`exportable=true` + public/internal + scrub 済)。
+5. **read-side raw-secret/canary 再スキャン (R9 F-HIGH、fail-closed)**: 返却直前に、scrub 後の content に対し
+   **共有 `assert_no_raw_secret`** (N-1/N-2 と同じ `_payload_secret_scan` + comment helper の broad
+   provider-key / canary 判定相当) を再実行する。write-time contract に依存せず read path でも fail-closed に
+   する (legacy / direct insert / import / 過去 scanner gap で benign key・自由文 value に入った `sk-...` /
+   `ghp_...` / PEM marker 等を表示直前に捕捉)。hit したら **content 全面 redaction**:
+   `content=null` / `content_redacted=true` / `redaction_reason="raw_secret_detected"` / `content_hash=null`。
+6. 上記を全て満たした残りを `content` として返す (`exportable=true` + public/internal + scrub 済 + raw-secret clean)。
 
 > projection は **API layer (response 構築)** で行い、`content_jsonb` raw は API 境界を越えない。
 
@@ -196,6 +202,7 @@ select r.id as run_id,
 | `exportable=false` artifact (inter-agent message / memory body) の raw body 露出 (R2 F-HIGH-1) | projection 優先順 2 で `exportable=false` を kind/data_class 問わず全面 redaction。`kind="other"` + `exportable=false` + public/internal fixture を必須 negative test |
 | continuation ref / SecretBroker secret_ref の key/value/shape/埋め込み すり抜け (R2-R5 F-HIGH) | 再帰 scrub を **object key と string value の両方** に適用 (continuation/session/provider + **SecretBroker 参照 (`secret_ref`/`secret_ref_id`/`secret_uri`/`capability_token`)** name 一致 + camelCase + `secret://`/`provider-continuation:` を **任意位置 substring** + shape (`artifact_ref`+`sha256`/`expires_at`、`secret_ref_id`、`scope`+`name`+`version`))。前処理 **NFKC + trim + Cc/Cf 除去 + casefold**。key 経由 / 埋め込み / 全角 / secret_ref 構造 fixture を negative test |
 | confidential/pii 本文の拡散 | projection 優先順 3 で content=null + redacted。badge 表示を access control の代替にしない |
+| legacy / import / scanner gap の raw secret が benign key で read path をすり抜ける (R9 F-HIGH) | projection 優先順 5 で返却直前に共有 `assert_no_raw_secret` を再実行 (read-side fail-closed)。hit で content=null + `raw_secret_detected` + hash=null。benign key / 自由文 raw token fixture を must-ship |
 | 自由文ログ経由の secret_ref/continuation token 露出 (R6 F-HIGH-1) | string value の token=value 自由文 (`secret_ref_id=...` / `capability_token ...`) を regex で whole-value redaction。log 形式 fixture を must-ship negative test |
 | redacted artifact の content_hash hash-oracle side-channel (R6 F-HIGH-2) | `content_redacted=true` では `content_hash=null` (raw content の deterministic digest を出さない)。redacted response で hash 非露出の test |
 | `provider_continuation_ref` の UI 露出 (ContextSnapshot rule 違反) | repository query で kind 除外 + projection (exportable=false redaction + shape scrub) の三重防御 |
@@ -255,7 +262,12 @@ select r.id as run_id,
       - **自由文 token=value ログ (R6 F-HIGH-1)**: `cli_stdout: "failed to resolve secret_ref_id=sr_project_openai_v1"` /
         `cli_stderr: "use capability_token abc123"` → 値全体を redaction marker に置換。
       - shape (`{artifact_ref, sha256, expires_at}` / `{scope, name, version}`)。
-    - clean な public/internal + exportable=true content → そのまま返る (`content_redacted=false`)。
+    - **read-side raw-secret 再スキャン (R9 F-HIGH)**: benign key / 自由文 value に raw token を入れた
+      exportable=true + public/internal artifact (`{"stdout":"sk-abcdefghijklmnopqrstuvwxyz123"}` /
+      `{"log":"token ghp_..."}` / PEM marker) → `content=null` / `content_redacted=true` /
+      `redaction_reason="raw_secret_detected"` / `content_hash=null` (fail-closed、write contract 非依存)。
+    - clean な public/internal + exportable=true content → そのまま返る (`content_redacted=false`、
+      `content_hash` 非 null)。
   - **redacted 時の hash 非露出 (R6 F-HIGH-2)**: `content_redacted=true` の全ケース (exportable=false /
     confidential/pii / scrub hit) で response の `content_hash` が `null` (raw hash を side-channel として出さない)。
     `content_redacted=false` のときだけ `content_hash` が非 null。
