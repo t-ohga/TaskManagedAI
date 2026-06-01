@@ -216,7 +216,13 @@ select r.id as run_id,
   `RunArtifactListResponse` Pydantic schema。
 - `frontend/lib/api/agent-runs.ts` (or 新 module): `fetchRunArtifacts` + Zod schema。
 - `frontend/app/(admin)/runs/[id]/`: artifact section component + 配線。
-- test: `backend/tests/api/test_run_artifacts.py` (新) + frontend test。
+- test: **`tests/api/test_run_artifacts.py` (新)** — repo の pytest は `testpaths=["tests"]` で collect する
+  ため `backend/tests/` ではなく **`tests/api/`** 配下に置く (R8 F-HIGH。`backend/tests/` は collection 外で
+  critical negative test が未実行になる)。frontend test は `frontend/__tests__/run-artifacts.test.tsx`。
+- 検証コマンド: `cd backend && uv run pytest ../tests/api/test_run_artifacts.py -q` /
+  `cd backend && uv run ruff check ../tests/api/test_run_artifacts.py app/api/agent_runs.py app/repositories/artifact.py` /
+  `cd backend && uv run mypy app/api/agent_runs.py app/repositories/artifact.py` /
+  `cd frontend && pnpm exec vitest run __tests__/run-artifacts.test.tsx` / `pnpm typecheck`。
 
 ## テスト指針
 
