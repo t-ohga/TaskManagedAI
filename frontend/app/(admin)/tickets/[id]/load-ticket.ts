@@ -1,5 +1,7 @@
 import { BackendApiError, fetchBackendRaw } from "@/lib/api/client";
 
+import { UUID_V1_TO_V5_PATTERN } from "../../_lib/route-id";
+
 export type TicketDetail = {
   id: string;
   title: string;
@@ -30,6 +32,14 @@ export type TicketDetail = {
  * - 全 project が 404 / 該当なしのときだけ null を返す (page 側で notFound())。
  */
 export async function loadTicket(id: string): Promise<TicketDetail | null> {
+  // route param (caller-supplied) を内部 API path に連結する前に UUID として検証する。
+  // slash / dot segment を含む値を path に通すと new URL 正規化で別の内部 endpoint へ
+  // traversal され得るため、非 UUID は notFound 契約に倒す (Codex B2b R5 finding,
+  // server-owned-boundary: dynamic route id は forward 前に検証必須)。
+  if (!UUID_V1_TO_V5_PATTERN.test(id)) {
+    return null;
+  }
+
   const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
   const projects = ((projectsRes as Record<string, unknown>)?.projects ?? []) as Record<
     string,
@@ -43,7 +53,7 @@ export async function loadTicket(id: string): Promise<TicketDetail | null> {
       if (!pid) return null;
       try {
         const ticketRes = await fetchBackendRaw(
-          `/api/v1/projects/${pid}/tickets/${id}` as `/${string}`
+          `/api/v1/projects/${encodeURIComponent(pid)}/tickets/${encodeURIComponent(id)}` as `/${string}`
         );
         const ticket = ticketRes as (TicketDetail & { id?: string }) | null;
         if (ticket && ticket.id === id) {
