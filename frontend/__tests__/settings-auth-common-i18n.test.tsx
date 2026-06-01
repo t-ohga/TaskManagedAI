@@ -100,6 +100,28 @@ describe("settings/auth/common i18n", () => {
     expect(screen.getByRole("region", { name: "サービス状態" })).toBeVisible();
     expect(screen.getByText("利用不可")).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent("Backend healthcheck に失敗しました。");
+    // listCurrentProjects 未 mock → 取得失敗 → project counts は degraded 表示にし、
+    // 「真の 0 件」と区別する (Codex adversarial R2)。
+    expect(screen.getByText("プロジェクト一覧を取得できませんでした")).toBeVisible();
+  });
+
+  it("distinguishes a real-empty project list (0) from a project fetch failure (—)", async () => {
+    apiMocks.getBackendHealth.mockRejectedValueOnce(new Error("ignored for this assertion"));
+    // validated response が空配列 = 真に 0 件 (取得失敗ではない)。
+    apiMocks.listCurrentProjects.mockResolvedValueOnce({
+      current_project_id: "00000000-0000-4000-8000-00000000c001",
+      projects: []
+    });
+
+    await renderAsync(DashboardPage({ searchParams: Promise.resolve({}) }));
+
+    // 「プロジェクト数」card は 0 を表示し、failure 用の degraded メッセージは出さない。
+    const projectCountCard = screen.getByText("プロジェクト数").closest("article");
+    expect(projectCountCard).not.toBeNull();
+    if (projectCountCard) {
+      expect(within(projectCountCard).getByText("0")).toBeVisible();
+    }
+    expect(screen.queryByText("プロジェクト一覧を取得できませんでした")).not.toBeInTheDocument();
   });
 
   it("renders Japanese empty state on notifications", async () => {

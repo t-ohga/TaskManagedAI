@@ -37,11 +37,10 @@ async function readBackendHealth(): Promise<BackendHealthState> {
 // D-5 (Codex review R2 fix): project-count card は全 project list の status から正確に出せる
 // (ticket fetch 不要)。ticket-level 集計だけ先頭 10 project に bound する (pre-existing、
 // 完全な ticket 総数は backend aggregate endpoint が必要 = follow-up)。
-async function readProjectSummaries(): Promise<{
-  summaries: ProjectSummary[];
-  projectTotal: number;
-  activeProjectTotal: number;
-}> {
+async function readProjectSummaries(): Promise<
+  | { ok: true; summaries: ProjectSummary[]; projectTotal: number; activeProjectTotal: number }
+  | { ok: false }
+> {
   try {
     // /api/v1/me/projects は zod-backed な listCurrentProjects() で取得する (raw fetch +
     // unchecked cast を避ける)。schema drift / malformed response では fetchBackendJson が
@@ -71,9 +70,12 @@ async function readProjectSummaries(): Promise<{
         };
       })
     );
-    return { summaries, projectTotal, activeProjectTotal };
+    return { ok: true, summaries, projectTotal, activeProjectTotal };
   } catch {
-    return { summaries: [], projectTotal: 0, activeProjectTotal: 0 };
+    // 取得失敗 (auth 失効 / schema drift / backend down) を空配列 + 0 として返すと「真の 0 件」と
+    // 区別できないため、ok:false を返して render 側で degraded (—) 表示にする (Codex R2、ticket
+    // summary 側と同じ ok/error 方針)。
+    return { ok: false };
   }
 }
 
@@ -98,9 +100,11 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
       .then((timeseries) => ({ ok: true as const, timeseries }))
       .catch(() => ({ ok: false as const })),
   ]);
-  const projects = projectData.summaries;
-  const projectTotal = projectData.projectTotal;
-  const activeProjectTotal = projectData.activeProjectTotal;
+  // 取得失敗時は null にして count cards を「—」表示にする (失敗を真の 0 件と誤認させない)。
+  const projectDataOk = projectData.ok;
+  const projects = projectDataOk ? projectData.summaries : [];
+  const projectTotal = projectDataOk ? projectData.projectTotal : null;
+  const activeProjectTotal = projectDataOk ? projectData.activeProjectTotal : null;
   const frontendHealth = getFrontendHealth();
 
   // D-5 (ADR-00039 R2): backend の raw status_counts を表示 4 bucket に折り畳む
@@ -218,18 +222,24 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
         </article>
         <article className="rounded-lg border border-line bg-panel p-4 shadow-sm">
           <p className="text-xs text-muted-foreground">プロジェクト数</p>
-          <p className="mt-1 text-2xl font-bold text-ink">{projectTotal}</p>
+          {/* 取得失敗時は 0 ではなく「—」を表示し、失敗を真の 0 件と誤認させない (Codex R2)。 */}
+          <p className="mt-1 text-2xl font-bold text-ink">{projectTotal ?? "—"}</p>
+          {projectDataOk ? null : (
+            <p className="mt-1 text-xs text-danger">プロジェクト一覧を取得できませんでした</p>
+          )}
         </article>
         {/* D-5 (UI 監査 fix): 旧「表示中チケット」は「総チケット数」と同一式の重複だった。完了チケット
             (statusCounts) は 200 件 client 集計で総数と不整合のため、全 project list の status から正確に
             出せる active/archived に分ける (Codex review R1#2/R2: project-count は ticket fetch 不要)。 */}
         <article className="rounded-lg border border-blue-200 bg-blue-50 p-4 shadow-sm">
           <p className="text-xs text-blue-600">稼働中プロジェクト</p>
-          <p className="mt-1 text-2xl font-bold text-blue-700">{activeProjectTotal}</p>
+          <p className="mt-1 text-2xl font-bold text-blue-700">{activeProjectTotal ?? "—"}</p>
         </article>
         <article className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
           <p className="text-xs text-amber-600">アーカイブ済プロジェクト</p>
-          <p className="mt-1 text-2xl font-bold text-amber-700">{projectTotal - activeProjectTotal}</p>
+          <p className="mt-1 text-2xl font-bold text-amber-700">
+            {projectTotal != null && activeProjectTotal != null ? projectTotal - activeProjectTotal : "—"}
+          </p>
         </article>
       </section>
 
