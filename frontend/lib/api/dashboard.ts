@@ -98,3 +98,30 @@ export async function fetchActivityTimeseries(
     `/api/v1/agent_runs/activity_timeseries?bucket=${bucket}&range=${encodeURIComponent(range)}` as `/${string}`;
   return fetchBackendJson(path, ActivityTimeseriesSchema);
 }
+
+type TrendPoint = { label: string; value: number };
+
+// bucket は UTC (date_trunc on timestamptz)。Server Component の frontend サーバー timezone で
+// 前日にずれないよう **UTC で整形** する (Codex ADR-00040 R1-1)。
+function formatBucketLabelUtc(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(5, 10);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+}
+
+// activity (run_count) と cost (cost_usd) の 2 系列を BarChart 用に整形する pure 関数。
+// cost 系列は cost_usd=null (未計測) bucket を **value=0 に丸めず除外** する (ADR-00040 R1-2:
+// 「測定済み 0 件」と「一部測定で合計 0」を区別)。
+export function buildActivityTrendSeries(
+  buckets: ActivityTimeseries["buckets"]
+): { activity: TrendPoint[]; cost: TrendPoint[] } {
+  return {
+    activity: buckets.map((b) => ({
+      label: formatBucketLabelUtc(b.bucket_start),
+      value: b.run_count
+    })),
+    cost: buckets
+      .filter((b) => b.cost_usd !== null)
+      .map((b) => ({ label: formatBucketLabelUtc(b.bucket_start), value: b.cost_usd as number }))
+  };
+}

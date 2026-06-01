@@ -1,5 +1,5 @@
 import { getBackendHealth, fetchBackendRaw } from "@/lib/api/client";
-import { fetchTicketSummary, foldTicketDisplayCounts, fetchActivityTimeseries } from "@/lib/api/dashboard";
+import { fetchTicketSummary, foldTicketDisplayCounts, fetchActivityTimeseries, buildActivityTrendSeries } from "@/lib/api/dashboard";
 import type { HealthResponse } from "@/lib/api/types";
 import { getFrontendHealth } from "@/lib/health";
 import { StatusDonutChart } from "@/components/status-donut-chart";
@@ -122,21 +122,12 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
   const totalTickets = ticketSummaryOk ? ticketSummaryResult.summary.ticket_total : 0;
   const closedTickets = aggCounts.closed;
 
-  // D-3/D-4 (ADR-00040): bucket_start を MM/DD ラベルにして 2 系列を BarChart 用に整形。
+  // D-3/D-4 (ADR-00040): bucket_start を UTC で MM/DD ラベル化し 2 系列を BarChart 用に整形。
   // sparse series (active bucket のみ)。cost 系列は cost_usd=null (未計測) bucket を 0 に丸めず除外。
   const activityOk = activityResult.ok;
   const activityBuckets = activityOk ? activityResult.timeseries.buckets : [];
-  const formatBucketLabel = (iso: string): string => {
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? iso.slice(5, 10) : `${d.getMonth() + 1}/${d.getDate()}`;
-  };
-  const activityTrendData = activityBuckets.map((b) => ({
-    label: formatBucketLabel(b.bucket_start),
-    value: b.run_count,
-  }));
-  const costTrendData = activityBuckets
-    .filter((b) => b.cost_usd !== null)
-    .map((b) => ({ label: formatBucketLabel(b.bucket_start), value: b.cost_usd as number }));
+  const { activity: activityTrendData, cost: costTrendData } =
+    buildActivityTrendSeries(activityBuckets);
 
   return (
     <div className="grid gap-6">

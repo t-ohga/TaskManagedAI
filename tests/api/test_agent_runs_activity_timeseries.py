@@ -16,6 +16,8 @@ measurement の null vs 0) は ADR-00040 テスト指針に従い CI Compose pos
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
+from decimal import Decimal
 from typing import cast
 from uuid import uuid4
 
@@ -27,17 +29,21 @@ from backend.app.main import create_app
 
 
 class _CapturingResult:
+    def __init__(self, rows: list[object] | None = None) -> None:
+        self._rows = rows or []
+
     def all(self) -> list[object]:
-        return []
+        return self._rows
 
 
 class _CapturingSession:
-    def __init__(self) -> None:
+    def __init__(self, rows: list[object] | None = None) -> None:
         self.statements: list[object] = []
+        self._rows = rows or []
 
     async def execute(self, statement: object, *args: object, **kwargs: object) -> _CapturingResult:
         self.statements.append(statement)
-        return _CapturingResult()
+        return _CapturingResult(self._rows)
 
 
 def _compiled_sql(statement: object) -> str:
@@ -117,3 +123,42 @@ def test_activity_timeseries_query_applies_tenant_active_scope_and_bucketing() -
     # bucket 化 + GROUP BY
     assert "date_trunc(" in sql
     assert "GROUP BY date_trunc" in sql
+
+
+def test_activity_timeseries_row_mapping_null_zero_and_measured_math() -> None:
+    # response 変換を fake rows で検証 (Codex R1-2、no-DB):
+    # cost_usd の null (measured 0) vs 0、measured + unmeasured == run_count、sparse 保持。
+    # 各 row = (bucket_start, run_count, cost_sum, measured_count)。
+    rows: list[object] = [
+        (datetime(2026, 5, 1, tzinfo=UTC), 5, Decimal("3.21"), 5),  # all measured
+        (datetime(2026, 5, 3, tzinfo=UTC), 4, Decimal("0"), 0),  # all unmeasured → cost null
+        (datetime(2026, 5, 4, tzinfo=UTC), 6, Decimal("2.00"), 2),  # mixed (2 measured / 4 unmeasured)
+    ]
+    session = _CapturingSession(rows)
+    resp = asyncio.run(
+        agent_runs_api.activity_timeseries_endpoint(
+            bucket="day",
+            range_value="month",
+            actor_id=uuid4(),
+            tenant_id=1,
+            session=cast(AsyncSession, session),
+        )
+    )
+    assert len(resp.buckets) == 3
+    # all measured
+    assert resp.buckets[0].run_count == 5
+    assert resp.buckets[0].cost_usd == 3.21
+    assert resp.buckets[0].measured_run_count == 5
+    assert resp.buckets[0].unmeasured_run_count == 0
+    # all unmeasured → cost_usd は null (0 に丸めない)
+    assert resp.buckets[1].run_count == 4
+    assert resp.buckets[1].cost_usd is None
+    assert resp.buckets[1].measured_run_count == 0
+    assert resp.buckets[1].unmeasured_run_count == 4
+    # mixed
+    assert resp.buckets[2].cost_usd == 2.0
+    assert resp.buckets[2].measured_run_count == 2
+    assert resp.buckets[2].unmeasured_run_count == 4
+    # measured + unmeasured == run_count (不変条件)
+    for b in resp.buckets:
+        assert b.measured_run_count + b.unmeasured_run_count == b.run_count
