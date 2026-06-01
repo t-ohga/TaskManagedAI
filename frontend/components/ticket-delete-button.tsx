@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { useToast } from "@/components/toast";
 import { updateTicketAction, type UpdateTicketState } from "@/app/(admin)/tickets/[id]/actions";
 
 type TicketDeleteButtonProps = {
@@ -10,78 +11,42 @@ type TicketDeleteButtonProps = {
   projectId: string;
 };
 
-export function TicketDeleteButton({ ticketId, projectId }: TicketDeleteButtonProps) {
+// O-2 (UI 監査 fix): bespoke native <dialog> を共通 ConfirmDialog + トーストに統一 (E-1/O-1/O-2)。
+export function TicketDeleteButton({ ticketId }: TicketDeleteButtonProps) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-  const [isOpen, setIsOpen] = useState(false);
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  const { toast } = useToast();
 
-  useEffect(() => {
-    if (isOpen && dialogRef.current && !dialogRef.current.open) {
-      dialogRef.current.showModal();
+  async function handleDelete(): Promise<void> {
+    const fd = new FormData();
+    fd.set("ticket_id", ticketId);
+    fd.set("status", "cancelled");
+    const result = await updateTicketAction({ kind: "idle" } as UpdateTicketState, fd);
+    if (result.kind === "ok") {
+      toast("チケットを中止しました", "success");
+      router.push("/tickets");
+    } else if (result.kind === "error") {
+      toast(result.message, "error");
     }
-  }, [isOpen]);
-
-  const [error, setError] = useState<string | null>(null);
-
-  const handleDelete = useCallback(() => {
-    setError(null);
-    startTransition(async () => {
-      const fd = new FormData();
-      fd.set("ticket_id", ticketId);
-      fd.set("status", "cancelled");
-      const result = await updateTicketAction({ kind: "idle" } as UpdateTicketState, fd);
-      if (result.kind === "ok") {
-        setIsOpen(false);
-        dialogRef.current?.close();
-        router.push("/tickets");
-      } else if (result.kind === "error") {
-        setError(result.message);
-      }
-    });
-  }, [ticketId, router]);
+  }
 
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => setIsOpen(true)}
-        className="rounded-md border border-danger/30 px-4 py-2 text-center text-sm font-medium text-danger transition-colors hover:bg-red-50"
-      >
-        チケットを中止
-      </button>
-      {isOpen && (
-        <dialog
-          ref={dialogRef}
-          className="fixed inset-0 z-50 m-auto rounded-lg border border-line bg-panel p-0 shadow-2xl backdrop:bg-black/40"
-          onClose={() => setIsOpen(false)}
+    <ConfirmDialog
+      title="チケットを中止しますか？"
+      message="チケットのステータスが「中止」に変更されます。看板から非表示になります。"
+      confirmLabel="中止する"
+      cancelLabel="キャンセル"
+      variant="danger"
+      onConfirm={handleDelete}
+    >
+      {(open) => (
+        <button
+          type="button"
+          onClick={open}
+          className="rounded-md border border-danger/30 px-4 py-2 text-center text-sm font-medium text-danger transition-colors hover:bg-red-50"
         >
-          <div className="grid gap-4 p-6">
-            <h2 className="text-lg font-semibold">チケットを中止しますか？</h2>
-            <p className="text-sm text-muted-foreground">
-              チケットのステータスが「中止」に変更されます。この操作は看板から非表示になります。
-            </p>
-            {error && <p className="text-sm text-danger">{error}</p>}
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => { setIsOpen(false); dialogRef.current?.close(); }}
-                className="rounded-md border border-line px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-slate-50"
-              >
-                キャンセル
-              </button>
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={isPending}
-                className="rounded-md bg-danger px-4 py-2 text-sm font-medium text-white hover:bg-danger/90 disabled:opacity-50"
-              >
-                {isPending ? "処理中..." : "中止する"}
-              </button>
-            </div>
-          </div>
-        </dialog>
+          チケットを中止
+        </button>
       )}
-    </>
+    </ConfirmDialog>
   );
 }

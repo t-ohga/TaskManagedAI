@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
+import { useToast } from "@/components/toast";
+
 type BulkStatusChangerProps = {
   selectedIds: string[];
   onClear: () => void;
@@ -18,6 +20,7 @@ const STATUSES = [
 
 export function BulkStatusChanger({ selectedIds, onClear, onSelectionChange }: BulkStatusChangerProps) {
   const router = useRouter();
+  const { toast } = useToast();
   const [isPending, startTransition] = useTransition();
   const [targetStatus, setTargetStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -43,9 +46,15 @@ export function BulkStatusChanger({ selectedIds, onClear, onSelectionChange }: B
       }
       router.refresh();
       if (failedIds.length > 0) {
+        const succeeded = selectedIds.length - failedIds.length;
         setError(`${failedIds.length} 件の更新に失敗しました (権限またはプロジェクト境界を確認してください)`);
+        toast(
+          `${failedIds.length} 件の更新に失敗${succeeded > 0 ? ` (${succeeded} 件成功)` : ""}`,
+          "error"
+        );
         setSelectedIdsFromParent(failedIds);
       } else {
+        toast(`${selectedIds.length} 件のステータスを更新しました`, "success");
         onClear();
       }
     });
@@ -86,7 +95,7 @@ export function BulkStatusChanger({ selectedIds, onClear, onSelectionChange }: B
           選択解除
         </button>
       </div>
-      {error && <p className="text-xs text-danger" role="alert">{error}</p>}
+      {error ? <p className="text-xs text-danger" role="alert">{error}</p> : null}
     </div>
   );
 }
