@@ -1,8 +1,9 @@
 ---
 id: "ADR-00039"
 title: "Dashboard / Runs 集計エンドポイント (read-only、D-5 / C-4)"
-status: "proposed"
+status: "accepted"
 date: "2026-06-01"
+accepted_at: "2026-06-01"
 deciders: ["t-ohga"]
 adr_gate_criteria: [3]
 related_adr:
