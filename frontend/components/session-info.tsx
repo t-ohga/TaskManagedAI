@@ -6,10 +6,18 @@ type SessionInfoProps = {
   // R-1: 有効期限までの残り時間ラベル (例「あと約 3 時間 12 分」)。impure な現在時刻計算は
   // data loader 側で行い、本 component は pure に保つ (render body で Date.now() を呼ばない)。
   remainingLabel: string | null;
+  // R-2 (ADR-00043): 最終ログイン日時 (iat 由来、ISO 文字列)。iat 無 cookie は null。
+  lastLoginAt: string | null;
 };
 
-export function SessionInfo({ actorId, expiresAt, remainingLabel }: SessionInfoProps) {
+export function SessionInfo({
+  actorId,
+  expiresAt,
+  remainingLabel,
+  lastLoginAt,
+}: SessionInfoProps) {
   const expiry = expiresAt ? new Date(expiresAt) : null;
+  const lastLogin = lastLoginAt ? new Date(lastLoginAt) : null;
 
   return (
     <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
@@ -28,6 +36,11 @@ export function SessionInfo({ actorId, expiresAt, remainingLabel }: SessionInfoP
         <div className="flex justify-between border-t border-line pt-3">
           <dt className="text-muted-foreground">ネットワーク</dt>
           <dd>Tailscale 閉域</dd>
+        </div>
+        {/* R-2 最終ログイン日時 (ADR-00043、iat 由来) */}
+        <div className="flex justify-between border-t border-line pt-3">
+          <dt className="text-muted-foreground">最終ログイン日時</dt>
+          <dd>{lastLogin ? lastLogin.toLocaleString("ja-JP") : "—"}</dd>
         </div>
         {/* R-1 セッションタイムアウト表示 */}
         <div className="flex justify-between border-t border-line pt-3">

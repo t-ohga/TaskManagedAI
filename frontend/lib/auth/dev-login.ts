@@ -69,10 +69,18 @@ function parseClaims(payload: unknown): SessionClaims | null {
     return null;
   }
 
+  // ADR-00043 (R-2): iat は optional。present かつ整数のときだけ採用、無効/欠如は undefined。
+  // iat 欠如/不正で session を invalid にしない (表示専用、有効性は exp のみ)。
+  const iat =
+    typeof payload.iat === "number" && Number.isInteger(payload.iat)
+      ? payload.iat
+      : undefined;
+
   return {
     actor_id: payload.actor_id,
     principal_type: payload.principal_type,
-    exp: payload.exp
+    exp: payload.exp,
+    ...(iat !== undefined ? { iat } : {})
   };
 }
 
@@ -91,6 +99,8 @@ function sessionFromClaims(claims: SessionClaims): DevSession {
     actor,
     principal,
     expiresAt: new Date(claims.exp * 1000),
+    // ADR-00043 (R-2): iat (login 時刻)。iat 無 cookie は null。
+    issuedAt: claims.iat !== undefined ? new Date(claims.iat * 1000) : null,
     claims
   };
 }
