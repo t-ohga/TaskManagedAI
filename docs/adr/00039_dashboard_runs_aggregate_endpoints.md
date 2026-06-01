@@ -51,6 +51,17 @@ read-only な集計エンドポイントを 2 本新設する。ADR Gate Criteri
 - raw secret / provider key は含まない (件数のみ)。
 - `agent_runs.role_id` は nullable (single-agent run は null)。facet は **null を除外**し、
   P0.1 multi-agent 前提を持ち込まない (既存 P0 カラムの read-only 集計に閉じる)。
+- **active-scope 整合 (Codex ADR R1、必須)**: 集計エンドポイントは既存の default read path と
+  **同一の active-scope predicate** を適用する。集計が一覧から隠れている削除済みデータを
+  母数に復活させてはならない (D-5/C-4 の「母数正確性」目的と矛盾するため)。
+  - `ticket_summary`: 既存の default ticket read path と同じ active-scope を適用する。
+    `Ticket.deleted_at IS NULL` (Q-3 / ADR-00037 soft-delete) を必須条件とし、soft-deleted
+    ticket を `ticket_total` / `status_counts` に含めない。archived ticket の扱いは既存 list
+    read path の convention に合わせる (archive = read-only-visible のため list と同方針)。
+  - `role_facet`: 既存 `list_agent_runs_endpoint` / cost_summary と同じ
+    `soft_deleted_ticket_run_exclusion()` (`backend.app.domain.agent_runtime.active_scope`) を
+    適用し、soft-deleted ticket に bound する run の role を facet に含めない
+    (ticket-less run は含む、restore で復帰、という既存方針と一致)。
 
 ## 選択肢
 
@@ -78,22 +89,30 @@ Response (TicketSummaryResponse):
 ```
 
 - actor がアクセス可能な全 project の `tickets` を tenant / project 境界内で `GROUP BY status` 集計。
+- **`Ticket.deleted_at IS NULL` を必須条件**にし、soft-deleted ticket を母数に含めない (active-scope)。
 - status enum は ticket status の正本に一致 (frontend は open / in_progress / closed / cancelled を
   表示に使い、残りは合算 or 非表示にできる)。
-- `ticket_total` は全 status の合計 (= 既存 `total` と整合)。
+- `ticket_total` は (active な) 全 status の合計 (= 既存 active list の `total` と整合)。
 
 ### C-4: `GET /api/v1/agent_runs/role_facet`
 
 ```
-GET /api/v1/agent_runs/role_facet
+GET /api/v1/agent_runs/role_facet?status=<AgentRunStatus | omitted>
 
 Response (RoleFacetResponse):
 {
-  "roles": [ { "role_id": string, "count": number } ]
+  "roles": [ { "role_id": string, "count": number } ],
+  "status": string | null
 }
 ```
 
-- `agent_runs` を tenant 境界内で `role_id is not null` に絞り `GROUP BY role_id` 集計。
+- `agent_runs` を tenant 境界内で集計。`role_id is not null` に絞り `GROUP BY role_id`。
+- **`soft_deleted_ticket_run_exclusion()` を適用** (list / cost_summary と同じ active-scope。
+  soft-deleted ticket bound run の role を facet に出さない)。
+- **任意 `status` query param** (Codex ADR R1): 指定時は `AgentRunStatus` enum で検証し、
+  list endpoint と **同じ status predicate** を適用する。既存 runs UI は statusFilter ありで
+  role 候補を作るため、status scoped facet を表現できないと「選択中 status に存在しない role chip
+  をクリック → 空一覧」という facet drift が起きる。status 省略時は tenant-wide facet。
 - `role_id` 昇順 (安定した chip 並び)。null (single-agent) は facet に出さない。
 
 ## 却下案
@@ -116,8 +135,11 @@ Response (RoleFacetResponse):
 ## 実装対象ファイル
 
 - `backend/app/api/me.py`: `ticket_summary` endpoint + `TicketSummaryResponse` schema
+  (`Ticket.deleted_at IS NULL` active-scope 込み)
 - `backend/app/api/agent_runs.py`: `role_facet` endpoint + `RoleFacetResponse` schema
-- backend repository / service: project 横断チケット集計 + run role 集計 (tenant / project 境界 SQL)
+  (`soft_deleted_ticket_run_exclusion()` + 任意 status predicate 込み)
+- backend repository / service: project 横断チケット集計 + run role 集計 (tenant / project 境界 SQL、
+  `backend.app.domain.agent_runtime.active_scope.soft_deleted_ticket_run_exclusion` を再利用)
 - `backend/tests/api/test_ticket_summary.py` / `test_agent_runs_role_facet.py`:
   tenant・project 越境 negative + 集計正確性 + null role 除外
 - `frontend/app/(admin)/dashboard/page.tsx`: status 内訳を `ticket_summary` に置換
@@ -130,3 +152,11 @@ Response (RoleFacetResponse):
 - `role_id is null` の run が role_facet に出ないこと
 - raw secret が response に含まれないこと (`assert_no_raw_secret`)
 - 空集合 (ticket 0 件 / role 0 件) で安全に空配列を返すこと
+- **active-scope negative (Codex ADR R1、必須)**:
+  - `ticket_summary`: 同一 tenant / project 内の **soft-deleted (deleted_at IS NOT NULL) ticket が
+    `ticket_total` / `status_counts` に含まれない**こと。restore 後は再び含まれること。
+  - `role_facet`: **soft-deleted ticket bound run の role が facet に出ない**こと。
+    ticket-less run の role は **出る**こと (既存 active-scope 方針と一致)。
+- **status-scoped facet (Codex ADR R1)**: `role_facet?status=<X>` が list endpoint と同じ status
+  predicate を適用し、当該 status に属する role だけを返すこと (status 省略時は tenant-wide)。
+  不正な status 値は 422 で reject。
