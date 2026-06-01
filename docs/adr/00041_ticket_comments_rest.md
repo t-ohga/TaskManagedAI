@@ -49,13 +49,21 @@ activity-timeline を実データに配線する。ADR Gate Criteria #3 (API 契
     **archived project は許可** (archive 後もチケット本文同様にコメント履歴を read 可能)。
   - **POST comment**: `TicketRepository.assert_ticket_actionable(tenant_id, project_id, ticket_id)` で
     soft-deleted / archived ticket への write を拒否 (bridge_ticket_comment と統一)。
-- **message の raw secret / canary 拒否 (Codex ADR R1-2、fail-closed)**: `CreateTicketCommentRequest.message`
-  は永続化前に既存 `assert_no_raw_secret` 相当 (secret canary / provider token / private key marker pattern)
-  に通し、hit 時は **422 で reject** (DB / UI へ raw secret を流さない、AC-HARD-02 系)。
-- **notification inbox 非汚染 (Codex ADR R1-3)**: comment event の author を payload (`actor_id`) に
-  server-owned で保存する。`notification_events` の inbox query (`list_unread` / `list_for_recipient` /
-  `count_unread`) に **`event_type != 'ticket_comment'`** を追加し、comment が投稿者の未読通知 / badge /
-  triage に混入しないようにする (既存 bridge_ticket_comment 由来の汚染も同時に解消)。
+- **共通 comment creation helper + 両経路 secret scan (Codex ADR R1-2 + R2-1、fail-closed)**:
+  REST `POST` と既存 MCP `bridge_ticket_comment` の **両方が通る共通 helper**
+  (`create_ticket_comment_event(session, tenant_id, project_id, ticket_id, message, actor_id)`) を設け、
+  **永続化前に message (および payload 全体) を `assert_no_raw_secret` 相当に通す**。secret canary /
+  provider token / private key marker hit 時は reject (REST=422、MCP=error)。REST だけに scan を置くと
+  MCP 経由のコメントが secret を notification_events に残し GET で UI 再露出するため、両経路必須。
+  read 側も defensive に redaction (legacy row に secret が残っていても raw 表示しない)。
+- **author 保存 + legacy 互換 (Codex ADR R1-3 + R2-2)**: 新規 comment は payload `actor_id` に
+  author を server-owned 保存する。**既存 (legacy) ticket_comment row は payload.actor_id を持たない**
+  ため、GET の author は **`payload.actor_id ?? recipient_actor_id`** で fallback する (legacy row も
+  200 で read 可能、no-migration と後方互換を両立)。
+- **notification 全 read surface で非汚染 (Codex ADR R1-3 + R2-3)**: comment が投稿者の通知に混入しない
+  よう、`notification_events` の **全 inbox / triage read query** に `event_type != 'ticket_comment'` を
+  追加する: `list_unread` / `list_for_recipient` / `count_unread` / **`list_triage`** (`/api/v1/notifications/triage`)。
+  既存 bridge_ticket_comment 由来の汚染も同時解消。
 - write は **human actor の task-write 相当**で、AI 出力ではないため approval pipeline は不要
   (既存 ticket create / update と同じ直接 human mutation)。`message` は長さ上限を持つ。
 - read は tenant + `event_type="ticket_comment"` + `payload->>'ticket_id' = ticket_id` で絞り、
@@ -77,7 +85,8 @@ Response (TicketCommentListResponse):
 - `notification_events` を `tenant_id` + `event_type='ticket_comment'` +
   `payload['ticket_id'].astext == ticket_id` で select、`created_at` 昇順。GET は `deleted_at IS NULL`
   のみ確認 (archived 許可、R1-1)。
-- `actor_id` = payload の author (server-owned、R1-3)。
+- `actor_id` = `payload.actor_id ?? recipient_actor_id` (legacy row fallback、R2-2)。
+- read は message を defensive redaction (legacy secret 残留を raw 表示しない、R2-1)。
 
 ### N-1 write: `POST .../comments`
 
@@ -86,11 +95,12 @@ Request: { "message": "<1-4000 chars>" }
 Response: TicketComment (作成された 1 件)
 ```
 
-- message を `assert_no_raw_secret` 相当に通し、secret canary / token hit 時は **422 reject** (R1-2)。
-- `assert_ticket_actionable` guard 後、`NotificationEventRepository.append(event_type='ticket_comment',
-  payload={project_id, ticket_id, message, actor_id}, recipient_actor_id=actor_id)` + commit。
-- `bridge_ticket_comment` と同一の保存形式 (MCP / REST どちらからでも同じ event 形)。bridge 側も
-  payload に actor_id を持たせ inbox 除外を共有 (重複ロジック回避のため共通 helper に寄せる)。
+- `assert_ticket_actionable` guard 後、**共通 helper** `create_ticket_comment_event(...)` を呼ぶ。
+  helper は message/payload を `assert_no_raw_secret` に通し (hit→reject、R2-1)、
+  `append(event_type='ticket_comment', payload={project_id, ticket_id, message, actor_id},
+  recipient_actor_id=actor_id)` + commit。REST=secret hit で 422。
+- `bridge_ticket_comment` (MCP) も同じ helper を呼び、両経路で secret scan + actor_id 保存を共有
+  (重複ロジック回避、MCP 経路の secret bypass を塞ぐ、R2-1)。
 
 ### N-2 timeline (Codex ADR R1-4 修正)
 
@@ -131,11 +141,15 @@ Response: TicketComment (作成された 1 件)
 - `backend/app/api/tickets.py`: `list_ticket_comments` (GET) + `create_ticket_comment` (POST) +
   `list_ticket_activity` (GET、merged timeline) + 各 schema。read は deleted_at のみ guard、POST は
   assert_ticket_actionable + message secret scan。
+- backend 共通 helper (`services/ticket/comment.py` 等): `create_ticket_comment_event(...)` —
+  secret scan + actor_id payload 保存 + append。REST `create_ticket_comment` と
+  `bridge_ticket_comment` の両方が呼ぶ (R2-1)。
 - `backend/app/repositories/notification_event.py`: ticket コメント list query (tenant + event_type +
-  payload ticket_id filter) + **inbox query 3 種に `event_type != 'ticket_comment'` 追加** (R1-3)。
+  payload ticket_id filter、author fallback) + **inbox/triage query 4 種に `event_type != 'ticket_comment'`
+  追加** (`list_unread` / `list_for_recipient` / `count_unread` / `list_triage`、R1-3 + R2-3)。
 - `backend/app/repositories/audit_event.py`: ticket activity (ticket_status_changed / ticket_updated) の
   payload.ticket_id filter list query (R1-4)。
-- `backend/app/mcp/api_bridge.py`: `bridge_ticket_comment` の payload に actor_id 追加 (共通 helper 化)。
+- `backend/app/mcp/api_bridge.py`: `bridge_ticket_comment` を共通 helper 呼び出しに変更 (R2-1)。
 - `tests/api/test_ticket_comments.py`: route 登録 + schema no-secret + SQL introspection
   (tenant / event_type / payload ticket_id filter) + message 長さ validation。
 - `frontend/lib/api/tickets.ts` (or comments.ts): `fetchTicketComments` + `createTicketComment`。
@@ -153,8 +167,13 @@ Response: TicketComment (作成された 1 件)
   含む POST は 422 で reject し、notification_events に永続化されないこと (assert_no_raw_secret negative)。
 - write: message 長さ validation (空 / 超過は 422) + author server-resolve (caller payload で上書き不可) +
   作成後に read で取得できる。
-- **inbox 非汚染 (R1-3)**: ticket_comment event 作成後、投稿者の `list_unread` / `count_unread` /
-  `list_for_recipient` に当該 comment が **出ない**こと。
+- **inbox / triage 非汚染 (R1-3 + R2-3)**: ticket_comment event 作成後、投稿者の `list_unread` /
+  `count_unread` / `list_for_recipient` / **`list_triage` (`/api/v1/notifications/triage`)** に当該
+  comment が **出ない**こと (全 notification read surface)。
+- **MCP bridge secret reject (R2-1)**: `bridge_ticket_comment` も message に secret/canary を含むと
+  reject し、notification_events に永続化されないこと (REST と同じ共通 helper)。
+- **legacy payload 読取 (R2-2)**: payload.actor_id が無い旧 ticket_comment row も GET comments /
+  activity で **200**、author は recipient_actor_id fallback で返ること。
 - **timeline に status event (R1-4)**: ticket status を変更すると activity に `ticket_status_changed`
   (previous/new status) が出ること。comment + status + created が created_at 昇順でマージされること。
 - SQL introspection (no-DB): comment list / activity query の compile SQL に tenant 境界 / `event_type` /
