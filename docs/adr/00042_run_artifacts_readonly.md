@@ -105,21 +105,25 @@ run 詳細から artifact を読むための **read-only REST endpoint** と **r
 4. **再帰 shape/value-aware scrub (R2 F-HIGH-2 / R3 F-HIGH / R4 F-HIGH)**: 残り (`exportable=true` かつ
    public/internal) の content は表示前に **再帰 scrub** を適用。別 artifact の content_jsonb に混入し得る
    continuation/session/thread/provider ref / secret_ref を、**object key と string value の両方** で除去する。
-   - **前処理 (R4 F-HIGH)**: 判定前に **NFKC 互換正規化** + trim + **制御 / format 文字 (Cc/Cf) 除去** を行う
-     (全角 / 互換幅 / zero-width のすり抜け防止。NFC は互換文字を畳まないため NFKC を使う)。
+   - **前処理 (R4 F-HIGH / R5 F-HIGH)**: 判定前に **NFKC 互換正規化** + trim + **制御 / format 文字 (Cc/Cf)
+     除去** + **casefold (大文字小文字無視)** を行う (全角 / 互換幅 / zero-width / 大小文字のすり抜け防止)。
    - **name denylist** — **object key と string value の両方** に同一判定 (R3 F-HIGH: key 経由露出も封鎖):
-     - 完全一致 (正規化後の key 名 / value): `provider_continuation_ref` / `continuation_ref` /
-       `continuation_id` / `provider_continuation` / `session_ref` / `session_id` / `session_token` /
-       `thread_ref` / `thread_id` / `provider_request` / `provider_request_body` / `provider_response` /
-       `raw_response` / `continuation` (+ camelCase variants: `continuationId` / `sessionId` / `threadId` /
-       `artifactRef` / `providerResponse` / `providerRequest` 等)。
+     - continuation/session/thread/provider 系 (正規化後 casefold 一致): `provider_continuation_ref` /
+       `continuation_ref` / `continuation_id` / `provider_continuation` / `session_ref` / `session_id` /
+       `session_token` / `thread_ref` / `thread_id` / `provider_request` / `provider_request_body` /
+       `provider_response` / `raw_response` / `continuation` (+ camelCase variants)。
+     - **SecretBroker 参照系 (R5 F-HIGH)**: `secret_ref` / `secret_ref_id` / `secret_uri` /
+       `secret_capability` / `capability_token` (+ camelCase variants `secretRef` / `secretRefId` /
+       `secretUri` / `capabilityToken`)。SecretBroker 識別子 / トポロジは専用 secret_refs viewer
+       (R-3、owner-only gate) 経由のみで、artifact endpoint からは露出させない。
    - **forbidden URI token scan (R4 F-HIGH)** — **object key と string value の両方** に対し、正規化後の文字列の
      **任意位置 (substring)** で次の token を検出: `secret://` / `provider-continuation:`
-     (cli_stdout/stderr/evidence 等の自由文に `failed to resolve secret://...` のように埋め込まれる場合も
+     (自由文 cli_stdout/stderr/evidence に `failed to resolve secret://...` のように埋め込まれた場合も
      先頭でなく途中を検出して捕捉)。hit した key は key-value ごと drop、hit した string value は値全体を
      redaction marker (`"[redacted: forbidden URI token]"`) に置換。
-   - **shape denylist** (nested object 形状): `artifact_ref`/`artifactRef` を持ち、かつ `sha256` または
-     `expires_at`/`expiresAt` を併せ持つ object (continuation ref 形状) を再帰的に drop。
+   - **shape denylist** (nested object 形状、再帰): ① `artifact_ref`/`artifactRef` + (`sha256` または
+     `expires_at`/`expiresAt`) を持つ object (continuation ref 形状)、② `secret_ref_id` を持つ object、
+     または `scope` + `name` + `version` を併せ持つ object (secret_ref メタデータ形状、R5 F-HIGH) を drop。
    - いずれか hit で `content_redacted=true` / `redaction_reason="forbidden_content_scrubbed"`。
 5. 上記を全て満たした残りを `content` として返す (`exportable=true` + public/internal + scrub 済)。
 
@@ -174,7 +178,7 @@ select r.id as run_id,
 |---|---|
 | active-scope TOCTOU + 404/200-empty 判別不可 (R1 F-HIGH-1 / R2 F-HIGH-3) | `agent_runs` 起点 LEFT JOIN artifacts の単一 statement で run 可視性 (soft-delete 除外) と artifact 集約を同時に行い、0 rows→404 / run 行+artifact null→200-empty を判定。SQL introspection + 404/empty negative |
 | `exportable=false` artifact (inter-agent message / memory body) の raw body 露出 (R2 F-HIGH-1) | projection 優先順 2 で `exportable=false` を kind/data_class 問わず全面 redaction。`kind="other"` + `exportable=false` + public/internal fixture を必須 negative test |
-| continuation ref / secret_ref の shape/value/key/埋め込み すり抜け (R2 F-HIGH-2 / R3 F-HIGH / R4 F-HIGH) | 再帰 scrub を **object key と string value の両方** に適用 (name 完全一致 + camelCase + `secret://`/`provider-continuation:` を **任意位置 substring** で検出 + shape `artifact_ref`+`sha256`/`expires_at`)。前処理は **NFKC + trim + Cc/Cf 除去**。key 経由 / 埋め込み (先頭でない) / 全角 variant fixture を negative test |
+| continuation ref / SecretBroker secret_ref の key/value/shape/埋め込み すり抜け (R2-R5 F-HIGH) | 再帰 scrub を **object key と string value の両方** に適用 (continuation/session/provider + **SecretBroker 参照 (`secret_ref`/`secret_ref_id`/`secret_uri`/`capability_token`)** name 一致 + camelCase + `secret://`/`provider-continuation:` を **任意位置 substring** + shape (`artifact_ref`+`sha256`/`expires_at`、`secret_ref_id`、`scope`+`name`+`version`))。前処理 **NFKC + trim + Cc/Cf 除去 + casefold**。key 経由 / 埋め込み / 全角 / secret_ref 構造 fixture を negative test |
 | confidential/pii 本文の拡散 | projection 優先順 3 で content=null + redacted。badge 表示を access control の代替にしない |
 | `provider_continuation_ref` の UI 露出 (ContextSnapshot rule 違反) | repository query で kind 除外 + projection (exportable=false redaction + shape scrub) の三重防御 |
 | route 衝突 (`/{run_id}` と `/{run_id}/artifacts`) | route-order test |
@@ -212,15 +216,19 @@ select r.id as run_id,
       `redaction_reason="non_exportable"` (inter-agent / memory body の遮断)。
     - `payload_data_class` ∈ {confidential, pii} → `content=null` / `redaction_reason="data_class_confidential_or_pii"`。
     - public/internal + exportable=true の content に次を混入 → 再帰 scrub で除去 + `content_redacted=true` /
-      `redaction_reason="forbidden_content_scrubbed"`:
-      - denylist key (`session_token` / `provider_response`) / camelCase (`providerResponse`)。
+      `redaction_reason="forbidden_content_scrubbed"` (must-ship negative fixtures):
+      - denylist key (`session_token` / `provider_response` / **`secret_ref_id`** / **`secret_uri`**) /
+        camelCase (`providerResponse` / **`secretRefId`**)。
       - **URI token を持つ JSON key (R3 F-HIGH)**: `{"secret://sops/project/openai-api-key#v1": true}` /
         `{"provider-continuation:openai:abcd": {...}}` (key 経由の secret_ref / continuation 露出)。
       - **埋め込み URI token を持つ自由文 value (R4 F-HIGH、先頭でない位置)**:
         `cli_stdout: "failed to resolve secret://sops/project/openai-api-key#v1"` /
         `cli_stderr: "retry provider-continuation:openai:abcd"` → 値全体を redaction marker に置換。
-      - **全角 / 互換幅 / zero-width variant** の URI token (NFKC + Cc/Cf 除去ですり抜け防止)。
-      - shape (`{artifact_ref, sha256, expires_at}`)。
+      - **全角 / 互換幅 / zero-width / 大小文字 variant** の URI token (NFKC + Cc/Cf 除去 + casefold)。
+      - **SecretBroker 参照 key / 構造 (R5 F-HIGH)**: `{"secret_ref_id":"..."}` /
+        `{"target":{"secret_ref_id":"..."}}` / `{"secret_ref":{"scope":"project","name":"openai-api-key","version":"v1"}}`
+        / camelCase (`secretRefId`)。
+      - shape (`{artifact_ref, sha256, expires_at}` / `{scope, name, version}`)。
     - clean な public/internal + exportable=true content → そのまま返る (`content_redacted=false`)。
   - response schema が secret / raw provider / continuation field を持たない。`provider_continuation_ref` 除外固定。
   - seed-based tenant/project 越境 + soft-delete + non-exportable negative は CI Compose postgres で検証 (host 不可)。
