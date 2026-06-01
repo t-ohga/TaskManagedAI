@@ -50,6 +50,32 @@ describe("SelectableTicketList", () => {
     expect(captured.selectedIds).not.toContain("b");
   });
 
+  it("does not let a hidden selection re-enter the boundary after hide → uncheck → re-show", () => {
+    const { rerender } = render(
+      <SelectableTicketList tickets={[ticket("a", "チケットA"), ticket("b", "チケットB")]} showProjectBadge={false} />
+    );
+
+    // A+B を選択。
+    fireEvent.click(screen.getByLabelText("チケットA を選択"));
+    fireEvent.click(screen.getByLabelText("チケットB を選択"));
+    expect([...captured.selectedIds].sort()).toEqual(["a", "b"]);
+
+    // B が一覧から消える → cleanup effect が canonical state からも B を prune する。
+    rerender(<SelectableTicketList tickets={[ticket("a", "チケットA")]} showProjectBadge={false} />);
+    expect(captured.selectedIds).toEqual(["a"]);
+
+    // 表示中の A を外す。
+    fireEvent.click(screen.getByLabelText("チケットA を選択"));
+    expect(captured.selectedIds).toEqual([]);
+
+    // B が再び表示されても、prune 済なので自動再選択されない (re-entry なし)。
+    rerender(
+      <SelectableTicketList tickets={[ticket("a", "チケットA"), ticket("b", "チケットB")]} showProjectBadge={false} />
+    );
+    expect(captured.selectedIds).toEqual([]);
+    expect(captured.selectedIds).not.toContain("b");
+  });
+
   it("disables bulk selection (no checkboxes) when project badge is shown (横断表示)", () => {
     render(
       <SelectableTicketList tickets={[ticket("a", "チケットA")]} showProjectBadge={true} />

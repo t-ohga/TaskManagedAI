@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { Route } from "next";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { BulkStatusChanger } from "@/components/bulk-status-changer";
@@ -58,6 +58,20 @@ export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTi
   }, [tickets]);
 
   const clear = useCallback(() => setSelectedIds([]), []);
+
+  // tickets が変わったら canonical な selectedIds から隠れた ID を prune する。これは
+  // cleanup であり、「隠れ選択が state に残り、後で再表示されたとき自動的に再選択されて
+  // mutation 境界に再侵入する」ことを防ぐ (Codex adversarial review)。mutation 境界の
+  // 即時 race (effect 実行前の最初の render) は下の visibleSelectedIds (derive-during-render)
+  // が担い、本 effect と併用して first-render race と re-entry の両方を閉じる。
+  useEffect(() => {
+    const visible = new Set(tickets.map((t) => t.id));
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedIds((prev) => {
+      const pruned = prev.filter((id) => visible.has(id));
+      return pruned.length === prev.length ? prev : pruned;
+    });
+  }, [tickets]);
 
   const colSpan = (showProjectBadge ? 6 : 5) + (bulkEnabled ? 1 : 0);
 

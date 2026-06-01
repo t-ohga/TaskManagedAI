@@ -1,5 +1,6 @@
-import { getBackendHealth, fetchBackendRaw } from "@/lib/api/client";
+import { getBackendHealth } from "@/lib/api/client";
 import { listCurrentProjects } from "@/lib/api/session";
+import { listTickets } from "@/lib/api/tickets";
 import { fetchTicketSummary, foldTicketDisplayCounts, fetchActivityTimeseries, buildActivityTrendSeries } from "@/lib/api/dashboard";
 import type { HealthResponse } from "@/lib/api/types";
 import { getFrontendHealth } from "@/lib/health";
@@ -44,8 +45,12 @@ async function readProjectSummaries(): Promise<
 > {
   try {
     // /api/v1/me/projects は zod-backed な listCurrentProjects() で取得する (raw fetch +
-    // unchecked cast を避ける)。schema drift / malformed response では fetchBackendJson が
-    // throw し、下の catch で degraded 空状態に倒れる (fail-closed)。
+    // unchecked cast を避ける)。schema drift / malformed response / auth 失効では
+    // fetchBackendJson が throw し、下の catch で degraded ({ok:false}) に倒れる (fail-closed)。
+    // backend は tenant に project が無いとき 200+empty ではなく 404 ("no project found for
+    // tenant") を返す (backend/app/api/me.py)。P0 は単一 tenant + seed project 前提で
+    // no-project は edge/impossible のため、404→degraded で扱う (200+empty の真の 0 件は
+    // 防御的に下流で 0 表示可能だが production では発生しない)。
     const { projects } = await listCurrentProjects();
     const projectTotal = projects.length;
     const activeProjectTotal = projects.filter((p) => p.status === "active").length;
@@ -54,12 +59,13 @@ async function readProjectSummaries(): Promise<
       projects.slice(0, 10).map(async (p): Promise<ProjectSummary> => {
         // per-project ticketCount は BarChart / project card 表示用 (total は accurate)。
         // status 別母数は ticket_summary endpoint (全 project SQL 集計) に移譲済 (D-5)。
-        // per-project fetch 失敗時は ticketCount=null (取得失敗) とし、0 (真の 0 件) と区別する。
+        // per-project ticket 件数も zod-validated な listTickets で取得する。malformed success
+        // (total 欠落 / 非数値 / items 非配列) は schema parse で throw し、fetch 失敗と同様に
+        // ticketCount=null (取得失敗) として 0 (真の 0 件) と区別する (Codex R4)。
         let ticketCount: number | null = null;
         try {
-          const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${p.project_id}/tickets?limit=1`) as Record<string, unknown>;
-          const items = (ticketsRes?.items ?? []) as { status: string }[];
-          ticketCount = typeof ticketsRes?.total === "number" ? (ticketsRes.total as number) : items.length;
+          const ticketsRes = await listTickets(p.project_id, { limit: 1 });
+          ticketCount = ticketsRes.total;
         } catch {
           ticketCount = null;
         }

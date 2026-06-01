@@ -10,11 +10,16 @@ const apiMocks = vi.hoisted(() => ({
   getBackendHealth: vi.fn<() => Promise<HealthResponse>>(),
   getCurrentProject: vi.fn(),
   listCurrentProjects: vi.fn(),
+  listTickets: vi.fn(),
   listNotificationTriage: vi.fn()
 }));
 
 vi.mock("@/lib/api/client", () => ({
   getBackendHealth: apiMocks.getBackendHealth
+}));
+
+vi.mock("@/lib/api/tickets", () => ({
+  listTickets: apiMocks.listTickets
 }));
 
 vi.mock("@/lib/api/notifications", () => ({
@@ -50,6 +55,7 @@ beforeEach(() => {
   apiMocks.getBackendHealth.mockReset();
   apiMocks.getCurrentProject.mockReset();
   apiMocks.listCurrentProjects.mockReset();
+  apiMocks.listTickets.mockReset();
   apiMocks.listNotificationTriage.mockReset();
 });
 
@@ -105,30 +111,15 @@ describe("settings/auth/common i18n", () => {
     expect(screen.getByText("プロジェクト一覧を取得できませんでした")).toBeVisible();
   });
 
-  it("distinguishes a real-empty project list (0) from a project fetch failure (—)", async () => {
-    apiMocks.getBackendHealth.mockRejectedValueOnce(new Error("ignored for this assertion"));
-    // validated response が空配列 = 真に 0 件 (取得失敗ではない)。
-    apiMocks.listCurrentProjects.mockResolvedValueOnce({
-      current_project_id: "00000000-0000-4000-8000-00000000c001",
-      projects: []
-    });
-
-    await renderAsync(DashboardPage({ searchParams: Promise.resolve({}) }));
-
-    // 「プロジェクト数」card は 0 を表示し、failure 用の degraded メッセージは出さない。
-    const projectCountCard = screen.getByText("プロジェクト数").closest("article");
-    expect(projectCountCard).not.toBeNull();
-    if (projectCountCard) {
-      expect(within(projectCountCard).getByText("0")).toBeVisible();
-    }
-    expect(screen.queryByText("プロジェクト一覧を取得できませんでした")).not.toBeInTheDocument();
-  });
+  // NOTE: backend /api/v1/me/projects は no-project tenant に 200+empty ではなく 404 を返す
+  // (backend/app/api/me.py)。そのため「validated 空配列 → 真の 0 件」は production では発生せず、
+  // その経路の test は架空になるため置かない。no-project は 404→degraded 経路 (上の test) で覆う。
 
   it("shows — (not 0) for a project whose per-project ticket count fetch fails", async () => {
     apiMocks.getBackendHealth.mockRejectedValueOnce(new Error("ignored for this assertion"));
-    // listCurrentProjects は成功 (1 project)。ただし per-project /tickets fetch は失敗する
-    // (この test では fetchBackendRaw 未 mock → throw → ticketCount=null)。ticket_summary 等の
-    // 他経路が非ゼロでも、該当 project の件数は「0」ではなく「—」で degraded 表示にする。
+    // listCurrentProjects は成功 (1 project)。ただし per-project の listTickets が失敗する
+    // (auth 失効 / schema drift / network)。ticket_summary 等の他経路が非ゼロでも、該当
+    // project の件数は「0」ではなく「—」で degraded 表示にする (Codex R3/R4)。
     apiMocks.listCurrentProjects.mockResolvedValueOnce({
       current_project_id: "00000000-0000-4000-8000-00000000c001",
       projects: [
@@ -145,6 +136,7 @@ describe("settings/auth/common i18n", () => {
         }
       ]
     });
+    apiMocks.listTickets.mockRejectedValueOnce(new Error("per-project ticket fetch failed"));
 
     await renderAsync(DashboardPage({ searchParams: Promise.resolve({}) }));
 
