@@ -61,6 +61,62 @@ describe("AuditLogPage i18n", () => {
     // AC-HARD-02 observability: payload_redaction_status を per-row で surface する。
     // canonical な backend enum を raw 値で表示し (keys_only)、operator が redaction の
     // 欠落 / drift を検知できる。この列が消えると本 assertion が落ち regression を捕捉する。
-    expect(within(table).getByText("keys_only")).toBeVisible();
+    const keysOnly = within(table).getByText("keys_only");
+    expect(keysOnly).toBeVisible();
+    // keys_only (通常 redaction) のみ safe (emerald) 表示。
+    expect(keysOnly.className).toMatch(/emerald/);
+  });
+
+  it("surfaces non-safe / drifted payload redaction status as fail-closed (AC-HARD-02)", async () => {
+    // backend PayloadRedactionStatus は keys_only / blocked_by_secret_scan の 2 値のみ。
+    // fail-closed: keys_only 以外 (secret 検出 block / API skew で来た未知値) は safe 表示にしない。
+    apiMocks.fetchBackendRaw.mockResolvedValue({
+      items: [
+        {
+          id: "00000000-0000-4000-8000-00000000b101",
+          event_type: "run_completed",
+          actor_id: null,
+          reason_code: null,
+          payload_keys: ["status"],
+          payload_redaction_status: "keys_only",
+          created_at: "2026-05-22T00:00:00Z"
+        },
+        {
+          id: "00000000-0000-4000-8000-00000000b102",
+          event_type: "secret_canary_detected",
+          actor_id: null,
+          reason_code: "secret_canary",
+          payload_keys: [],
+          payload_redaction_status: "blocked_by_secret_scan",
+          created_at: "2026-05-22T00:01:00Z"
+        },
+        {
+          id: "00000000-0000-4000-8000-00000000b103",
+          event_type: "run_failed",
+          actor_id: null,
+          reason_code: null,
+          payload_keys: [],
+          payload_redaction_status: "drifted_unknown_value",
+          created_at: "2026-05-22T00:02:00Z"
+        }
+      ],
+      total: 3
+    });
+
+    render(await AuditLogPage({ searchParams: Promise.resolve({}) }));
+    const table = screen.getByRole("table");
+
+    // keys_only のみ safe (emerald)。
+    expect(within(table).getByText("keys_only").className).toMatch(/emerald/);
+
+    // blocked_by_secret_scan は raw secret 検出の警告イベント。safe (emerald) 扱いしない。
+    const blocked = within(table).getByText("blocked_by_secret_scan");
+    expect(blocked.className).not.toMatch(/emerald/);
+    expect(blocked.className).toMatch(/red/);
+
+    // 未知 / drift した status は raw 値を DOM に出さず固定ラベル "不明" + fail-closed (非 emerald)。
+    expect(within(table).queryByText("drifted_unknown_value")).not.toBeInTheDocument();
+    const unknown = within(table).getByText("不明");
+    expect(unknown.className).not.toMatch(/emerald/);
   });
 });

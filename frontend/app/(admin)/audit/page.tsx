@@ -118,29 +118,28 @@ function eventTypeBadge(eventType: string) {
 }
 
 // AC-HARD-02 observability: per-row の payload redaction 状態を可視化する。これにより
-// operator は「安全に redaction 済の行」と「未検証 / backend redaction drift の行」を
-// 区別でき、redaction evidence の欠落を検知できる。canonical な backend enum なので
-// reason_code 同様に raw 値をそのまま表示し (翻訳しない)、安全な状態かどうかだけ色で示す。
-const SAFE_REDACTION_STATUSES = new Set(["keys_only", "redacted", "masked"]);
+// operator は redaction evidence の欠落 / drift を検知できる。canonical な値は backend
+// audit route (backend/app/api/audit.py) の PayloadRedactionStatus = keys_only /
+// blocked_by_secret_scan の 2 値のみ。**fail-closed** 設計で扱う:
+//   - keys_only            : payload key 名のみ表示の通常 redaction → safe (emerald)
+//   - blocked_by_secret_scan: raw secret 検出で payload 全体を block した警告イベント
+//                             (payload_keys は空) → attention (red、目立たせる)
+//   - null / 未知値 (API skew / backend drift): fail-closed で attention (amber)。
+//     未知の raw 値は固定ラベルに畳んで DOM へそのまま出さない (drift 値の露出防止)。
+const KNOWN_REDACTION_STATUSES = new Set(["keys_only", "blocked_by_secret_scan"]);
 
 function redactionStatusBadge(status: string | null) {
-  if (!status) {
-    return (
-      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
-        未検証
-      </span>
-    );
-  }
-  const safe = SAFE_REDACTION_STATUSES.has(status);
-  return (
-    <span
-      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-        safe ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-      }`}
-    >
-      {status}
-    </span>
-  );
+  const isRoutineSafe = status === "keys_only";
+  const isKnown = status != null && KNOWN_REDACTION_STATUSES.has(status);
+  // 既知の canonical enum のみ raw 値を表示。null は「未検証」、未知 (drift) 値は「不明」に
+  // 畳み、未知 raw 値を DOM に出さない。
+  const label = status == null ? "未検証" : isKnown ? status : "不明";
+  const tone = isRoutineSafe
+    ? "bg-emerald-50 text-emerald-700"
+    : status === "blocked_by_secret_scan"
+      ? "bg-red-50 text-red-700"
+      : "bg-amber-50 text-amber-700";
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}>{label}</span>;
 }
 
 type AuditPageProps = {
