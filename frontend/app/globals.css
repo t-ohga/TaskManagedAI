@@ -101,16 +101,33 @@ input {
   }
 }
 
+/* I-3 タッチ操作最適化: coarse pointer (タッチ) では tap target を 44px 以上にする。
+   標準コントロールに加え、role / summary ベースの custom clickable も対象にする
+   (CSS 仕様上 inline 非置換要素は min-width/height を無視するため inline text link は歪まない)。 */
 @media (pointer: coarse) {
-  button, a, select, input[type="checkbox"], input[type="radio"] {
+  button,
+  a,
+  select,
+  summary,
+  [role="button"],
+  [role="tab"],
+  input[type="checkbox"],
+  input[type="radio"] {
     min-height: 44px;
     min-width: 44px;
   }
 }
 
+/* S-1 印刷ビュー: ナビ / 操作系を隠し、内容のみを綺麗に印刷する。
+   バッジ等の色は print-color-adjust で保持する。 */
 @media print {
   header, nav, footer, aside,
   .no-print, [aria-label="管理ナビゲーション"] {
+    display: none !important;
+  }
+  /* 印刷物には操作系 (ボタン / フォーム / 入力 / コメント欄) を出さず内容に集中させる */
+  button, form, input, textarea, select,
+  [role="button"], [role="tablist"] {
     display: none !important;
   }
   main {
@@ -120,6 +137,11 @@ input {
   body {
     background: white !important;
     color: black !important;
+  }
+  /* ステータスバッジ等の背景色を印刷でも保持する */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }
 

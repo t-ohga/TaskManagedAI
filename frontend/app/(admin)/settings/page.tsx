@@ -6,8 +6,15 @@
  * SecretBroker remains the sole resolver.
  */
 
+import { cookies } from "next/headers";
+
 import { SessionInfo } from "@/components/session-info";
 import { HelpLinks } from "@/components/help-links";
+import {
+  DEV_SESSION_COOKIE_NAME,
+  readDevLoginCookieSecret,
+  verifyDevSessionCookie
+} from "@/lib/auth/dev-login";
 import {
   listCurrentProjects,
   listSecretRefs,
@@ -62,9 +69,46 @@ async function loadActiveTicketCount(projectId: string): Promise<number | null> 
   }
 }
 
+// R-1 残り時間ラベルを組み立てる。現在時刻計算 (impure) は data loader 内に閉じ、
+// SessionInfo component は pure に保つ。
+function formatSessionRemaining(remainingMs: number): string {
+  if (remainingMs <= 0) return "期限切れ";
+  const totalMinutes = Math.floor(remainingMs / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0) return `あと約 ${hours} 時間 ${minutes} 分`;
+  return `あと約 ${minutes} 分`;
+}
+
+// R-1 セッションタイムアウト表示: dev session cookie を検証し、実 actorId と有効期限を取得する
+// (これまで SessionInfo に hardcode の "dev-actor-default" を渡していた)。失敗時は null。
+async function loadSessionInfo(): Promise<
+  { actorId: string; expiresAt: string; remainingLabel: string } | null
+> {
+  try {
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get(DEV_SESSION_COOKIE_NAME);
+    if (!sessionCookie) return null;
+    const session = await verifyDevSessionCookie(
+      sessionCookie.value,
+      readDevLoginCookieSecret()
+    );
+    if (!session) return null;
+    const remainingMs = session.expiresAt.getTime() - Date.now();
+    return {
+      actorId: session.actor.actorId,
+      expiresAt: session.expiresAt.toISOString(),
+      remainingLabel: formatSessionRemaining(remainingMs)
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default async function ProjectSettingsPage() {
   const project = await loadCurrentProject();
   const secretRefs = await loadSecretRefs();
+  const sessionInfo = await loadSessionInfo();
   const activeTicketCount = project
     ? await loadActiveTicketCount(project.project_id)
     : null;
@@ -183,7 +227,11 @@ export default async function ProjectSettingsPage() {
         title="セッション"
         titleId="settings-session"
       >
-        <SessionInfo actorId="dev-actor-default" />
+        <SessionInfo
+          actorId={sessionInfo?.actorId ?? null}
+          expiresAt={sessionInfo?.expiresAt ?? null}
+          remainingLabel={sessionInfo?.remainingLabel ?? null}
+        />
       </Panel>
 
       <Panel

@@ -5,6 +5,7 @@ import { Breadcrumb } from "@/components/breadcrumb";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { ActivityTimeline } from "@/components/activity-timeline";
 import { CommentForm } from "@/components/comment-form";
+import { PrintButton } from "@/components/print-button";
 import { EditTicketForm } from "./_components/edit-ticket-form";
 import { TicketDeleteButton } from "@/components/ticket-delete-button";
 import { TrackRecentTicket } from "@/components/recent-tickets";
@@ -153,9 +154,13 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           { label: "チケット", href: "/tickets" },
           { label: ticket.slug },
         ]} />
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <h1 className="text-3xl font-semibold tracking-normal">{ticket.title}</h1>
           {statusBadge(ticket.status)}
+          {/* S-1: チケット印刷ビュー。印刷 CSS が操作系を隠し内容のみを出す */}
+          <div className="ml-auto">
+            <PrintButton label="印刷" />
+          </div>
         </div>
       </header>
 
