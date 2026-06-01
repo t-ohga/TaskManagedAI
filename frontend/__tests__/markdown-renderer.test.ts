@@ -35,9 +35,22 @@ describe("sanitizeMarkdownHtml (DOMPurify allowlist の defense-in-depth)", () =
     expect(out).not.toMatch(/style=/i);
   });
 
-  it("allowlist タグと許可属性 (class) は保持する", () => {
-    const out = sanitizeMarkdownHtml('<code class="font-mono">x</code>');
-    expect(out).toContain('class="font-mono"');
-    expect(out).toContain("<code");
+  it("class は <code> でのみ保持し、他タグの class は除去する (閉じた allowlist)", () => {
+    const code = sanitizeMarkdownHtml('<code class="font-mono">x</code>');
+    expect(code).toContain('class="font-mono"');
+    expect(code).toContain("<code");
+
+    const para = sanitizeMarkdownHtml('<p class="hidden">x</p>');
+    expect(para).toMatch(/<p[^>]*>x<\/p>/i);
+    expect(para).not.toMatch(/class=/i);
+  });
+
+  it("data-* / aria-* 属性を除去する (DOMPurify 既定の暗黙許可を無効化、R1)", () => {
+    const out = sanitizeMarkdownHtml('<p data-x="1" aria-label="x" class="y">z</p>');
+    expect(out).toMatch(/<p[^>]*>z<\/p>/i);
+    expect(out).not.toMatch(/data-x/i);
+    expect(out).not.toMatch(/aria-label/i);
+    // class も <p> では除去される。
+    expect(out).not.toMatch(/class=/i);
   });
 });
