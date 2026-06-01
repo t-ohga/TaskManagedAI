@@ -110,56 +110,40 @@ run 詳細から artifact を読むための **read-only REST endpoint** と **r
    (ref-only / raw message body 非露出の境界。data_class 判定では防げない)。
 3. **data class redaction**: `payload_data_class` が `confidential` / `pii` (ordinal >= 2) →
    `content=null` / `content_redacted=true` / `redaction_reason="data_class_confidential_or_pii"`。
-4. **再帰 shape/value-aware scrub (R2 F-HIGH-2 / R3 F-HIGH / R4 F-HIGH)**: 残り (`exportable=true` かつ
-   public/internal) の content は表示前に **再帰 scrub** を適用。別 artifact の content_jsonb に混入し得る
-   continuation/session/thread/provider ref / secret_ref を、**object key と string value の両方** で除去する。
-   - **前処理 (R4/R5/R12 F-HIGH、順序重要)**: 判定前に次の順で正規化する —
+4. **再帰 forbidden-pattern スキャン (fail-closed、whole-content redaction、R2-R13)**: 残り
+   (`exportable=true` かつ public/internal) の content_jsonb を **再帰的に走査** し、以下を **任意位置で 1 つでも
+   検出したら content 全体を redaction** する。surgical な部分削除 (value 置換 / key drop) は **行わない**
+   — discriminator object (`{"type":"secretRefId","value":"<uuid>"}`) の兄弟 field 残存 (R13 F-HIGH) や
+   sibling leak を構造的に排除するため、**「どこかに 1 つでも疑わしいパターンがあれば artifact 本文全体を
+   出さない」** という fail-closed 方針にする。
+   - **前処理 (R4/R5/R12 F-HIGH、順序重要、object key と string value の両方に適用)**: 判定前に
      ① **NFKC 互換正規化** + trim + **制御 / format 文字 (Cc/Cf) 除去** →
-     ② **camelCase boundary canonicalization**: lower→upper / acronym / digit 境界に `_` を挿入
-     (`secretRefId` → `secret_Ref_Id`、`oldSecretRefId` → `old_Secret_Ref_Id`) →
-     ③ **casefold** (大文字小文字無視)。
-     **camelCase 境界の検出は casefold の前に行う (R12 F-HIGH)**: casefold を先にすると `secretRefId` が
-     `secretrefid` になり境界が消えて segment 判定に落ちないため。これで全角 / 互換幅 / zero-width /
-     大小文字 / camelCase compound のすり抜けを防ぐ。
-   - **name denylist** — **object key と string value の両方** に同一判定 (R3 F-HIGH: key 経由露出も封鎖)。
-     **判定は exact 一致だけでなく segment/compound 一致 (R11 F-HIGH)**: 正規化後の名前を `_` / `-` /
-     camelCase 境界で分割し、denylist token が **segment として** 含まれる (= `(^|[_-])<token>([_-]|$)` または
-     camelCase boundary 相当) 場合に hit とする。これで `old_secret_ref_id` / `new_secret_ref_id` /
-     `matched_secret_ref_id` / `restored_secret_ref_id` / `demoted_secret_ref_id` / `secretRefId` のような
-     prefix/suffix 付き compound key も捕捉する:
-     - continuation/session/thread/provider 系: `provider_continuation_ref` / `continuation_ref` /
+     ② **camelCase boundary canonicalization** (lower→upper / acronym / digit 境界に `_` 挿入:
+     `secretRefId` → `secret_Ref_Id`) → ③ **casefold**。camelCase 境界検出は casefold の前 (R12 F-HIGH)。
+   - **検出条件 (object key と string value の両方、R3/R10 F-HIGH)** — いずれか hit で whole-content redaction:
+     - **name segment 一致 (R5/R11 F-HIGH)**: 正規化後の名前を `_`/`-`/camelCase 境界で分割し、denylist token が
+       **segment として** 含まれる (`(^|[_-])<token>([_-]|$)`)。token =
+       continuation/session/thread/provider 系 (`provider_continuation_ref` / `continuation_ref` /
        `continuation_id` / `provider_continuation` / `session_ref` / `session_id` / `session_token` /
        `thread_ref` / `thread_id` / `provider_request` / `provider_request_body` / `provider_response` /
-       `raw_response` / `continuation`。
-     - **SecretBroker 参照系 (R5 F-HIGH / R11 F-HIGH)**: `secret_ref` / `secret_ref_id` / `secret_uri` /
-       `secret_capability` / `capability_token` (segment 一致で `old_secret_ref_id` 等 compound も hit。
-       camelCase `secretRef` / `secretRefId` / `secretUri` / `capabilityToken` も同様)。SecretBroker 識別子 /
-       トポロジ (SecretRef UUID / rotation 対象 / 一致情報) は専用 secret_refs viewer (R-3、owner-only gate)
-       経由のみで、artifact endpoint からは露出させない。
-   - **forbidden URI token scan (R4 F-HIGH)** — **object key と string value の両方** に対し、正規化後の文字列の
-     **任意位置 (substring)** で次の token を検出: `secret://` / `provider-continuation:`
-     (自由文 cli_stdout/stderr/evidence に `failed to resolve secret://...` のように埋め込まれた場合も
-     先頭でなく途中を検出して捕捉)。hit した key は key-value ごと drop、hit した string value は値全体を
-     redaction marker (`"[redacted: forbidden URI token]"`) に置換。
-   - **自由文 token=value scan (R6 F-HIGH-1 / R10 F-HIGH)** — **object key と string value の両方** に対し、
-     denylist token (`secret_ref_id` / `secret_ref` / `secret_uri` / `capability_token` / `secret_capability` /
-     `continuation_id` / `session_id` / `session_token` / `thread_id` 等 + camelCase variant) が `[:=]` または
-     空白を挟んで値を伴う自由文 (例 `failed to resolve secret_ref_id=sr_project_openai_v1` /
-     `capability_token abc123`) を正規化済み regex で検出する。**string value hit は値全体を redaction marker に
-     置換**、**object key hit は key-value ごと drop** (R10 F-HIGH: `{"... secret_ref_id=sr_...": true}` のように
-     token=value を JSON key に埋めた露出も封鎖。key 名 exact / URI substring / shape / raw-secret のどれにも
-     当たらない経路を塞ぐ)。
-   - **shape denylist** (nested object 形状、再帰): ① `artifact_ref`/`artifactRef` + (`sha256` または
-     `expires_at`/`expiresAt`) を持つ object (continuation ref 形状)、② `secret_ref_id` を持つ object、
-     または `scope` + `name` + `version` を併せ持つ object (secret_ref メタデータ形状、R5 F-HIGH) を drop。
-   - いずれか hit で `content_redacted=true` / `redaction_reason="forbidden_content_scrubbed"`。
-5. **read-side raw-secret/canary 再スキャン (R9 F-HIGH、fail-closed)**: 返却直前に、scrub 後の content に対し
-   **共有 `assert_no_raw_secret`** (N-1/N-2 と同じ `_payload_secret_scan` + comment helper の broad
-   provider-key / canary 判定相当) を再実行する。write-time contract に依存せず read path でも fail-closed に
-   する (legacy / direct insert / import / 過去 scanner gap で benign key・自由文 value に入った `sk-...` /
-   `ghp_...` / PEM marker 等を表示直前に捕捉)。hit したら **content 全面 redaction**:
-   `content=null` / `content_redacted=true` / `redaction_reason="raw_secret_detected"` / `content_hash=null`。
-6. 上記を全て満たした残りを `content` として返す (`exportable=true` + public/internal + scrub 済 + raw-secret clean)。
+       `raw_response` / `continuation`) + **SecretBroker 参照系** (`secret_ref` / `secret_ref_id` /
+       `secret_uri` / `secret_capability` / `capability_token`)。compound (`old_secret_ref_id` /
+       `matched_secret_ref_id` / `secretRefId` 等) も segment 一致で hit。
+     - **URI substring (R4 F-HIGH)**: 正規化後の **任意位置** に `secret://` / `provider-continuation:`。
+     - **token=value 自由文 (R6/R10 F-HIGH)**: denylist token が `[:=]` / 空白を挟んで値を伴う
+       (`secret_ref_id=sr_...` / `capability_token abc123`)。
+     - **shape (R5 F-HIGH)**: nested object が `artifact_ref`(+`sha256`/`expires_at`) / `secret_ref_id` /
+       `scope`+`name`+`version` を持つ continuation/secret_ref 形状。
+   - hit したら artifact 本文を出さない: `content=null` / `content_redacted=true` /
+     `redaction_reason="forbidden_content_detected"` / `content_hash=null`。
+5. **read-side raw-secret/canary 再スキャン (R9 F-HIGH、fail-closed)**: step 4 で hit しなかった content にも、
+   返却直前に **共有 `assert_no_raw_secret`** (N-1/N-2 と同じ `_payload_secret_scan` + comment helper の broad
+   provider-key / canary 判定相当) を再実行する。write-time contract に依存せず read path でも fail-closed
+   (legacy / direct insert / import / scanner gap の benign key・自由文 value の `sk-...` / `ghp_...` /
+   PEM marker を表示直前に捕捉)。hit したら **content 全面 redaction**: `content=null` /
+   `content_redacted=true` / `redaction_reason="raw_secret_detected"` / `content_hash=null`。
+6. step 4/5 で hit しなかった content のみ `content` として返す (`exportable=true` + public/internal +
+   forbidden-pattern clean + raw-secret clean)。**部分編集ではなく all-or-nothing** で本文を出す。
 
 > projection は **API layer (response 構築)** で行い、`content_jsonb` raw は API 境界を越えない。
 
@@ -260,30 +244,22 @@ select r.id as run_id,
     - `exportable=false` (kind=other / public) → `content=null` / `content_redacted=true` /
       `redaction_reason="non_exportable"` (inter-agent / memory body の遮断)。
     - `payload_data_class` ∈ {confidential, pii} → `content=null` / `redaction_reason="data_class_confidential_or_pii"`。
-    - public/internal + exportable=true の content に次を混入 → 再帰 scrub で除去 + `content_redacted=true` /
-      `redaction_reason="forbidden_content_scrubbed"` (must-ship negative fixtures):
-      - denylist key (`session_token` / `provider_response` / **`secret_ref_id`** / **`secret_uri`**) /
-        camelCase (`providerResponse` / **`secretRefId`**)。
-      - **URI token を持つ JSON key (R3 F-HIGH)**: `{"secret://sops/project/openai-api-key#v1": true}` /
-        `{"provider-continuation:openai:abcd": {...}}` (key 経由の secret_ref / continuation 露出)。
-      - **埋め込み URI token を持つ自由文 value (R4 F-HIGH、先頭でない位置)**:
-        `cli_stdout: "failed to resolve secret://sops/project/openai-api-key#v1"` /
-        `cli_stderr: "retry provider-continuation:openai:abcd"` → 値全体を redaction marker に置換。
-      - **全角 / 互換幅 / zero-width / 大小文字 variant** の URI token (NFKC + Cc/Cf 除去 + casefold)。
-      - **SecretBroker 参照 key / 構造 (R5 F-HIGH)**: `{"secret_ref_id":"..."}` /
-        `{"target":{"secret_ref_id":"..."}}` / `{"secret_ref":{"scope":"project","name":"openai-api-key","version":"v1"}}`
-        / camelCase (`secretRefId`)。
-      - **SecretBroker compound/派生 key (R11 F-HIGH)**: `{"old_secret_ref_id":"..."}` /
-        `{"new_secret_ref_id":"..."}` / `{"matched_secret_ref_id":"..."}` / `{"restored_secret_ref_id":"..."}` /
-        `{"demoted_secret_ref_id":"..."}` → segment 一致で key-value ごと drop。
-      - **camelCase compound key (R12 F-HIGH)**: `{"secretRefId":...}` / `{"oldSecretRefId":...}` /
-        `{"providerResponse":...}` / `{"capabilityToken":...}` / `{"continuationId":...}` を key / value /
-        token=value-key の各経路で → 全て key-value drop または whole-value redaction
-        (camelCase 境界 canonicalization が casefold 前に効くこと)。
-      - **自由文 token=value ログ (R6 F-HIGH-1)**: string value `cli_stdout: "failed to resolve secret_ref_id=sr_project_openai_v1"` /
-        `cli_stderr: "use capability_token abc123"` → 値全体を redaction marker に置換。
-      - **token=value を JSON key に埋めた露出 (R10 F-HIGH)**: `{"failed to resolve secret_ref_id=sr_project_openai_v1": true}` /
-        `{"capability_token abc123": "..."}` / `{"session_id=...": ...}` / camelCase variant → key-value ごと drop。
+    - public/internal + exportable=true の content に次のいずれかを混入 → **whole-content redaction**
+      (`content=null` / `content_redacted=true` / `redaction_reason="forbidden_content_detected"` /
+      `content_hash=null`)。must-ship negative fixtures (部分編集ではなく本文全体が出ないことを assert):
+      - denylist key / camelCase (`session_token` / `provider_response` / `providerResponse` / `secretRefId`)。
+      - URI token を持つ JSON key / 自由文 value (先頭でも途中でも): `{"secret://sops/...": true}` /
+        `cli_stdout:"failed to resolve secret://sops/..."` / `provider-continuation:openai:abcd`。
+      - 全角 / 互換幅 / zero-width / 大小文字 variant の token / URI (NFKC + Cc/Cf 除去 + casefold)。
+      - SecretBroker 参照 key/構造: `{"secret_ref_id":"..."}` / `{"target":{"secret_ref_id":"..."}}` /
+        `{"secret_ref":{"scope","name","version"}}` / compound (`old_secret_ref_id` / `matched_secret_ref_id`) /
+        camelCase (`secretRefId` / `oldSecretRefId`)。
+      - token=value 自由文 (string value / JSON key の両方): `secret_ref_id=sr_...` / `capability_token abc123` /
+        `{"... secret_ref_id=sr_...": true}`。
+      - **discriminator object (R13 F-HIGH)**: `{"type":"secretRefId","value":"<uuid>"}` /
+        `{"kind":"providerResponse","body":{...}}` / `{"ref_type":"continuationId","id":"..."}` / camelCase →
+        **value 局所置換でなく包含 object (兄弟 field 含む) ごと content 全体 redaction** (兄弟 `value`/`body`/`id`
+        が残らないこと)。
       - shape (`{artifact_ref, sha256, expires_at}` / `{scope, name, version}`)。
     - **read-side raw-secret 再スキャン (R9 F-HIGH)**: benign key / 自由文 value に raw token を入れた
       exportable=true + public/internal artifact (`{"stdout":"sk-abcdefghijklmnopqrstuvwxyz123"}` /
