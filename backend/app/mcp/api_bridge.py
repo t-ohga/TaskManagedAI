@@ -660,7 +660,9 @@ async def bridge_ticket_comment(
     message: str,
     actor_id: UUID,
 ) -> dict[str, Any]:
-    from backend.app.repositories.notification_event import NotificationEventRepository
+    from backend.app.services.notifications.ticket_comment import (
+        create_ticket_comment_event,
+    )
 
     # Q-3/Q-4 (ADR-00037 / Codex adversarial R4 #2): 削除済 ticket / archived project への comment
     # (作業ログ相当 event) を拒否する。notification_events は ticket FK を持たないため、guard が
@@ -669,16 +671,15 @@ async def bridge_ticket_comment(
         tenant_id, project_id, str(ticket_id)
     )
 
-    repo = NotificationEventRepository(session)
-    event = await repo.append(
+    # ADR-00041 R2-1: REST と共通の helper で永続化前に secret scan + actor_id payload 保存を担保
+    # (MCP 経路の secret bypass / inbox 汚染を REST と同じ contract で塞ぐ)。
+    event = await create_ticket_comment_event(
+        session,
         tenant_id=tenant_id,
-        event_type="ticket_comment",
-        payload={
-            "project_id": str(project_id),
-            "ticket_id": str(ticket_id),
-            "message": message,
-        },
-        recipient_actor_id=actor_id,
+        project_id=project_id,
+        ticket_id=ticket_id,
+        message=message,
+        actor_id=actor_id,
     )
     await session.commit()
     return {

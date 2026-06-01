@@ -14,6 +14,10 @@ from backend.app.db.app_role import (
 )
 from backend.app.db.models.notification_event import NotificationEvent
 
+# ADR-00041: ticket コメントは notification_events に保存されるが、通知 (inbox / triage) では
+# ない。全 notification read surface から除外し、投稿者の未読 / badge / triage を汚染しない (R1-3 / R2-3)。
+TICKET_COMMENT_EVENT_TYPE = "ticket_comment"
+
 
 class NotificationEventRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -87,6 +91,7 @@ class NotificationEventRepository:
                 NotificationEvent.tenant_id == tenant_id,
                 NotificationEvent.recipient_actor_id == recipient_actor_id,
                 NotificationEvent.read_at.is_(None),
+                NotificationEvent.event_type != TICKET_COMMENT_EVENT_TYPE,
             )
             .order_by(NotificationEvent.created_at, NotificationEvent.id)
         )
@@ -106,6 +111,7 @@ class NotificationEventRepository:
             .where(
                 NotificationEvent.tenant_id == tenant_id,
                 NotificationEvent.recipient_actor_id == recipient_actor_id,
+                NotificationEvent.event_type != TICKET_COMMENT_EVENT_TYPE,
             )
             .order_by(NotificationEvent.created_at.desc(), NotificationEvent.id.desc())
             .limit(bounded_limit)
@@ -119,6 +125,7 @@ class NotificationEventRepository:
                 NotificationEvent.tenant_id == tenant_id,
                 NotificationEvent.recipient_actor_id == recipient_actor_id,
                 NotificationEvent.read_at.is_(None),
+                NotificationEvent.event_type != TICKET_COMMENT_EVENT_TYPE,
             )
         )
         return int(count or 0)
@@ -139,9 +146,32 @@ class NotificationEventRepository:
                 NotificationEvent.tenant_id == tenant_id,
                 NotificationEvent.recipient_actor_id == recipient_actor_id,
                 NotificationEvent.read_at.is_(None),
+                NotificationEvent.event_type != TICKET_COMMENT_EVENT_TYPE,
             )
             .order_by(NotificationEvent.created_at.desc(), NotificationEvent.id.desc())
             .limit(bounded_limit)
+        )
+        return list(result.scalars().all())
+
+    async def list_ticket_comments(
+        self,
+        tenant_id: int,
+        ticket_id: UUID,
+    ) -> list[NotificationEvent]:
+        """ADR-00041 N-1: ticket のコメント (event_type=ticket_comment) を created_at 昇順で返す。
+
+        tenant 境界 + payload.ticket_id filter。recipient_actor_id では絞らない (コメントは
+        通知ではなく ticket 紐付き)。GET 側は archived 許可 = active-scope (deleted_at) は呼出側で確認。
+        """
+        await self._ensure_tenant_context(tenant_id)
+        result = await self.session.execute(
+            select(NotificationEvent)
+            .where(
+                NotificationEvent.tenant_id == tenant_id,
+                NotificationEvent.event_type == TICKET_COMMENT_EVENT_TYPE,
+                NotificationEvent.payload["ticket_id"].astext == str(ticket_id),
+            )
+            .order_by(NotificationEvent.created_at, NotificationEvent.id)
         )
         return list(result.scalars().all())
 
