@@ -8,8 +8,11 @@ export function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>("system");
 
   useEffect(() => {
+    // localStorage は SSR で読めないため、hydration 後の effect で保存済テーマを反映する
+    // (initializer で読むと server="system" と client=stored で hydration mismatch になる)。
     const stored = localStorage.getItem("theme") as Theme | null;
     if (stored) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTheme(stored);
       applyTheme(stored);
     } else {

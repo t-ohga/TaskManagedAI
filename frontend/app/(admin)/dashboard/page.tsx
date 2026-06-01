@@ -44,7 +44,7 @@ async function readProjectSummaries(): Promise<{
   try {
     const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
     const rawRes = projectsRes as Record<string, unknown> | null;
-    const projects = (Array.isArray(rawRes) ? rawRes : ((rawRes as any)?.projects ?? (rawRes as any)?.items ?? [])) as Array<Record<string, string>>;
+    const projects = (Array.isArray(rawRes) ? rawRes : (rawRes?.projects ?? rawRes?.items ?? [])) as Record<string, string>[];
     if (!Array.isArray(projects)) return { summaries: [], projectTotal: 0, activeProjectTotal: 0 };
 
     const projectTotal = projects.length;
@@ -58,15 +58,15 @@ async function readProjectSummaries(): Promise<{
         // status 別母数は ticket_summary endpoint (全 project SQL 集計) に移譲済 (D-5)。
         let ticketCount = 0;
         try {
-          const pid = (p as any).project_id ?? (p as any).id;
+          const pid = p.project_id ?? p.id;
           const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${pid}/tickets?limit=1`) as Record<string, unknown>;
-          const items = (ticketsRes?.items ?? []) as Array<{ status: string }>;
+          const items = (ticketsRes?.items ?? []) as { status: string }[];
           ticketCount = typeof ticketsRes?.total === "number" ? (ticketsRes.total as number) : items.length;
         } catch {
           ticketCount = 0;
         }
         return {
-          id: String((p as any).project_id ?? (p as any).id ?? ''),
+          id: String(p.project_id ?? p.id ?? ''),
           slug: String(p.slug ?? ''),
           name: String(p.name ?? ''),
           status: String(p.status ?? 'active'),
@@ -137,11 +137,9 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
         <h1 className="text-3xl font-semibold tracking-normal">ダッシュボード</h1>
         <div className="flex items-center gap-2">
           <DateRangeFilter />
-          {rangeFilter && (
-            <span className="text-xs text-muted-foreground">
+          {rangeFilter ? <span className="text-xs text-muted-foreground">
               ※ 期間フィルターはチケット一覧ページで適用されます
-            </span>
-          )}
+            </span> : null}
         </div>
       </header>
 
@@ -238,8 +236,7 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
         </article>
       </section>
 
-      {totalTickets > 0 && (
-        <section aria-label="チケット分析" className="grid gap-4 md:grid-cols-2">
+      {totalTickets > 0 ? <section aria-label="チケット分析" className="grid gap-4 md:grid-cols-2">
           <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
             <h2 className="mb-4 text-base font-semibold">ステータス分布</h2>
             <StatusDonutChart data={ticketStatusCounts} />
@@ -258,11 +255,9 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
               </div>
             </div>
           </article>
-        </section>
-      )}
+        </section> : null}
 
-      {totalTickets > 0 && (
-        <section aria-label="トレンド" className="grid gap-4 md:grid-cols-2">
+      {totalTickets > 0 ? <section aria-label="トレンド" className="grid gap-4 md:grid-cols-2">
           <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
             <h2 className="mb-4 text-base font-semibold">プロジェクト別チケット数</h2>
             <BarChart data={projects.map((p) => ({ label: p.slug.slice(0, 8), value: p.ticketCount }))} />
@@ -271,8 +266,7 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
             <h2 className="text-base font-semibold">ステータス別集計</h2>
             <BarChart data={ticketStatusCounts.filter((d) => d.count > 0).map((d) => ({ label: d.label, value: d.count }))} />
           </article>
-        </section>
-      )}
+        </section> : null}
 
       {/* D-3/D-4 (ADR-00040): AI 実行アクティビティ + コスト推移 (日次、直近 1 ヶ月、sparse)。 */}
       <section aria-label="AI 実行トレンド" className="grid gap-4 md:grid-cols-2">
@@ -302,8 +296,7 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
         </article>
       </section>
 
-      {projects.length > 0 && (
-        <section aria-label="プロジェクト横断サマリー">
+      {projects.length > 0 ? <section aria-label="プロジェクト横断サマリー">
           <h2 className="mb-4 text-lg font-semibold">プロジェクト一覧</h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((p) => (
@@ -341,8 +334,7 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
               </a>
             ))}
           </div>
-        </section>
-      )}
+        </section> : null}
       <aside className="rounded-lg border border-line bg-panel p-5 shadow-sm">
         <h2 className="text-base font-semibold">最近のチケット</h2>
         <div className="mt-3">

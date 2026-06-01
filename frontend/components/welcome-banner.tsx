@@ -1,12 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 export function WelcomeBanner() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
+    // localStorage は SSR では読めないため、hydration 後の effect で dismiss 状態を反映する。
+    // useState initializer で読むと server (未 dismiss) と client (dismiss 済) で hydration
+    // mismatch になるため、この setState-in-effect は意図的。
     if (typeof window !== "undefined" && localStorage.getItem("taskmanagedai_welcome_dismissed") === "true") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDismissed(true);
     }
   }, []);
@@ -27,12 +32,12 @@ export function WelcomeBanner() {
             AI-native な開発タスク管理ツールです。チケットの作成、AI 実行の管理、承認ワークフローを統合的に扱えます。
           </p>
           <div className="mt-3 flex flex-wrap gap-2 text-xs">
-            <a href="/tickets" className="rounded-md bg-accent px-3 py-1.5 font-medium text-white hover:bg-accent/90">
+            <Link href="/tickets" className="rounded-md bg-accent px-3 py-1.5 font-medium text-white hover:bg-accent/90">
               チケットを見る
-            </a>
-            <a href="/runs" className="rounded-md border border-line px-3 py-1.5 font-medium text-muted-foreground hover:bg-slate-50">
+            </Link>
+            <Link href="/runs" className="rounded-md border border-line px-3 py-1.5 font-medium text-muted-foreground hover:bg-slate-50">
               AI 実行を確認
-            </a>
+            </Link>
           </div>
         </div>
         <button

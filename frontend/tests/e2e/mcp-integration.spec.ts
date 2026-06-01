@@ -29,7 +29,7 @@ test.describe("MCP integration", () => {
       { path: "/notifications", heading: /通知/u },
     ];
 
-    for (const { path, heading } of navLinks) {
+    for (const { path } of navLinks) {
       await page.goto(path);
       await expect(page.getByRole("heading").first()).toBeVisible();
       await assertPageNoSecretCanary(page, path);

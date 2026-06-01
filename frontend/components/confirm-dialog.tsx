@@ -58,8 +58,7 @@ export function ConfirmDialog({
   return (
     <>
       {children(open)}
-      {isOpen && (
-        <dialog
+      {isOpen ? <dialog
           ref={dialogRef}
           className="fixed inset-0 z-50 m-auto rounded-lg border border-line bg-panel p-0 shadow-2xl backdrop:bg-black/40"
           onClose={close}
@@ -86,8 +85,7 @@ export function ConfirmDialog({
               </button>
             </div>
           </div>
-        </dialog>
-      )}
+        </dialog> : null}
     </>
   );
 }

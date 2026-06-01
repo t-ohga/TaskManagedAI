@@ -15,7 +15,7 @@ export function Breadcrumb({ items }: BreadcrumbProps) {
       <ol className="flex items-center gap-1.5">
         {items.map((item, i) => (
           <li key={item.label} className="flex items-center gap-1.5">
-            {i > 0 && <span className="text-muted-foreground">/</span>}
+            {i > 0 ? <span className="text-muted-foreground">/</span> : null}
             {item.href ? (
               <Link href={item.href as never} className="text-accent hover:underline">
                 {item.label}

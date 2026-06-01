@@ -36,8 +36,11 @@ export function RecentTicketsList() {
   const [tickets, setTickets] = useState<RecentTicket[]>([]);
 
   useEffect(() => {
+    // localStorage は SSR で読めないため、hydration 後の effect で最近のチケットを読み込む
+    // (initializer で読むと server=[] と client=stored で hydration mismatch になる)。
     try {
       const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as RecentTicket[];
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTickets(stored.slice(0, MAX_ITEMS));
     } catch { /* ignore */ }
   }, []);

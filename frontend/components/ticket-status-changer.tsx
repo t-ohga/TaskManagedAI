@@ -26,6 +26,10 @@ export function TicketStatusChanger({ ticketId, currentStatus }: Props) {
   const [optimisticStatus, setOptimisticStatus] = useState(currentStatus);
 
   useEffect(() => {
+    // optimistic UI 用の local state を、server 更新後 (router.refresh で currentStatus prop が
+    // 変わったとき) に canonical な値へ再同期する。optimistic 更新で一時的に prop と乖離するため
+    // derive ではなく local state を持ち、prop 変化時にこの effect で同期する。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setOptimisticStatus(currentStatus);
   }, [currentStatus]);
 
@@ -63,13 +67,13 @@ export function TicketStatusChanger({ ticketId, currentStatus }: Props) {
             } ${isPending ? "opacity-30 cursor-wait" : "cursor-pointer"}`}
           >
             {label}
-            {optimisticStatus === value && " ✓"}
+            {optimisticStatus === value ? " ✓" : null}
           </button>
         ))}
       </div>
       <div aria-live="polite" className="mt-2">
-        {error && <p className="text-xs text-red-600">{error}</p>}
-        {isPending && <p className="text-xs text-muted-foreground">更新中...</p>}
+        {error ? <p className="text-xs text-red-600">{error}</p> : null}
+        {isPending ? <p className="text-xs text-muted-foreground">更新中...</p> : null}
       </div>
     </div>
   );

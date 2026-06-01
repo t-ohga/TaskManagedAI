@@ -37,9 +37,7 @@ export function ActivityTimeline({ entries }: ActivityTimelineProps) {
     <div className="grid gap-0" role="list" aria-label="アクティビティタイムライン">
       {entries.map((entry, i) => (
         <div key={entry.id} className="relative flex gap-3 pb-6" role="listitem">
-          {i < entries.length - 1 && (
-            <div className="absolute left-[7px] top-4 h-full w-px bg-line" aria-hidden="true" />
-          )}
+          {i < entries.length - 1 ? <div className="absolute left-[7px] top-4 h-full w-px bg-line" aria-hidden="true" /> : null}
           <div className="relative z-10 mt-1 flex-shrink-0">
             <div className={`h-4 w-4 rounded-full ${TYPE_COLORS[entry.type] ?? "bg-gray-400"}`} />
           </div>
