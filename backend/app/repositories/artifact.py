@@ -4,12 +4,19 @@ import hashlib
 import json
 import re
 import unicodedata
-from typing import Any, NoReturn, cast
+from datetime import datetime
+from typing import Any, NamedTuple, NoReturn, cast
 from uuid import UUID
 
+from sqlalchemy import and_, case, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
+from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.artifact import ALL_ARTIFACT_KINDS, Artifact, ArtifactKind
+from backend.app.domain.agent_runtime.active_scope import (
+    soft_deleted_ticket_run_exclusion,
+)
 from backend.app.domain.artifact.data_class import (
     ALL_PAYLOAD_DATA_CLASSES,
     PayloadDataClass,
@@ -22,6 +29,22 @@ from backend.app.repositories._payload_secret_scan import (
 from backend.app.repositories.base import BaseRepository
 
 _SHA256_HEX_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+# ADR-00042: provider_continuation_ref は内部 continuation 参照 (ContextSnapshot UI 非露出 rule)。
+# L-2 inventory からは child としても parent lineage としても除外する。
+_PROVIDER_CONTINUATION_REF_KIND = "provider_continuation_ref"
+
+
+class RunArtifactRow(NamedTuple):
+    """ADR-00042 L-2: run artifact inventory の metadata-only 行 (content / content_hash なし)。"""
+
+    id: UUID
+    kind: str
+    payload_data_class: str
+    trust_level: str
+    exportable: bool
+    parent_artifact_id: UUID | None
+    created_at: datetime
 
 
 def is_sha256_hex(value: str) -> bool:
@@ -216,6 +239,88 @@ class ArtifactRepository(BaseRepository[Artifact]):
         self.session.add(artifact)
         await self.session.flush()
         return artifact
+
+    async def list_run_artifacts(
+        self, tenant_id: int, run_id: UUID
+    ) -> list[RunArtifactRow] | None:
+        """ADR-00042 L-2: run の artifact metadata 一覧 (metadata-only、content/hash 非 fetch)。
+
+        `agent_runs` 起点の active-scope SELECT に `LEFT JOIN artifacts` し、**run 可視性と
+        artifact 集約を同一 statement** で行う (TOCTOU / 将来再利用でも fail-closed):
+
+        - run 行が無い (不存在 / tenant 外 / soft-deleted ticket bound) → ``None`` (呼出側 404)。
+        - run 行あり + artifact 0 件 → 空 list (200 empty)。
+        - run 行あり + artifact → metadata 行 list。
+
+        `provider_continuation_ref` は child としても parent lineage としても除外 (ContextSnapshot
+        UI 非露出 rule)。`parent_artifact_id` は parent が可視種別のときだけ返す (除外 ref の UUID /
+        lineage を child 経由で漏らさない)。`content_jsonb` / `content_hash` は SELECT しない。
+        """
+        await self._ensure_tenant_context(tenant_id)
+
+        a = aliased(Artifact, name="a")
+        pa = aliased(Artifact, name="pa")
+        stmt = (
+            select(
+                AgentRun.id.label("run_id"),
+                a.id.label("artifact_id"),
+                a.kind.label("kind"),
+                a.payload_data_class.label("payload_data_class"),
+                a.trust_level.label("trust_level"),
+                a.exportable.label("exportable"),
+                a.created_at.label("created_at"),
+                case(
+                    (pa.id.is_not(None), a.parent_artifact_id),
+                    else_=None,
+                ).label("parent_artifact_id"),
+            )
+            .select_from(AgentRun)
+            .join(
+                a,
+                and_(
+                    a.tenant_id == AgentRun.tenant_id,
+                    a.project_id == AgentRun.project_id,
+                    a.run_id == AgentRun.id,
+                    a.kind != _PROVIDER_CONTINUATION_REF_KIND,
+                ),
+                isouter=True,
+            )
+            .join(
+                pa,
+                and_(
+                    pa.tenant_id == a.tenant_id,
+                    pa.project_id == a.project_id,
+                    pa.run_id == a.run_id,
+                    pa.id == a.parent_artifact_id,
+                    pa.kind != _PROVIDER_CONTINUATION_REF_KIND,
+                ),
+                isouter=True,
+            )
+            .where(
+                AgentRun.tenant_id == tenant_id,
+                AgentRun.id == run_id,
+                soft_deleted_ticket_run_exclusion(),
+            )
+            .order_by(a.created_at, a.id)
+        )
+        result = await self.session.execute(stmt)
+        rows = result.all()
+        if not rows:
+            # run 行が無い = run 不可視 (404)。run 可視 + artifact 0 件は 1 行 (artifact null) が返る。
+            return None
+        return [
+            RunArtifactRow(
+                id=row.artifact_id,
+                kind=row.kind,
+                payload_data_class=row.payload_data_class,
+                trust_level=row.trust_level,
+                exportable=row.exportable,
+                parent_artifact_id=row.parent_artifact_id,
+                created_at=row.created_at,
+            )
+            for row in rows
+            if row.artifact_id is not None
+        ]
 
     @classmethod
     def _assert_artifact_contract(
