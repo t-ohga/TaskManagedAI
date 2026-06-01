@@ -124,6 +124,36 @@ describe("settings/auth/common i18n", () => {
     expect(screen.queryByText("プロジェクト一覧を取得できませんでした")).not.toBeInTheDocument();
   });
 
+  it("shows — (not 0) for a project whose per-project ticket count fetch fails", async () => {
+    apiMocks.getBackendHealth.mockRejectedValueOnce(new Error("ignored for this assertion"));
+    // listCurrentProjects は成功 (1 project)。ただし per-project /tickets fetch は失敗する
+    // (この test では fetchBackendRaw 未 mock → throw → ticketCount=null)。ticket_summary 等の
+    // 他経路が非ゼロでも、該当 project の件数は「0」ではなく「—」で degraded 表示にする。
+    apiMocks.listCurrentProjects.mockResolvedValueOnce({
+      current_project_id: "00000000-0000-4000-8000-00000000c001",
+      projects: [
+        {
+          tenant_id: 1,
+          project_id: "00000000-0000-4000-8000-00000000c001",
+          workspace_id: "00000000-0000-4000-8000-00000000c002",
+          slug: "taskmanagedai",
+          name: "TaskManagedAI",
+          description: null,
+          status: "active",
+          policy_profile: "default",
+          autonomy_level: "L0"
+        }
+      ]
+    });
+
+    await renderAsync(DashboardPage({ searchParams: Promise.resolve({}) }));
+
+    // プロジェクト一覧 section 内の該当 project card は件数を「—」で表示し、「0」は出さない。
+    const projectSection = screen.getByRole("region", { name: "プロジェクト横断サマリー" });
+    expect(within(projectSection).getByText("—")).toBeVisible();
+    expect(within(projectSection).queryByText("0")).not.toBeInTheDocument();
+  });
+
   it("renders Japanese empty state on notifications", async () => {
     apiMocks.listNotificationTriage.mockResolvedValueOnce([]);
 

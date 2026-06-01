@@ -22,7 +22,8 @@ type ProjectSummary = {
   slug: string;
   name: string;
   status: string;
-  ticketCount: number;
+  // per-project の /tickets fetch が失敗した場合は null。取得失敗 (—) と真の 0 件を区別する。
+  ticketCount: number | null;
 };
 
 async function readBackendHealth(): Promise<BackendHealthState> {
@@ -53,13 +54,14 @@ async function readProjectSummaries(): Promise<
       projects.slice(0, 10).map(async (p): Promise<ProjectSummary> => {
         // per-project ticketCount は BarChart / project card 表示用 (total は accurate)。
         // status 別母数は ticket_summary endpoint (全 project SQL 集計) に移譲済 (D-5)。
-        let ticketCount = 0;
+        // per-project fetch 失敗時は ticketCount=null (取得失敗) とし、0 (真の 0 件) と区別する。
+        let ticketCount: number | null = null;
         try {
           const ticketsRes = await fetchBackendRaw(`/api/v1/projects/${p.project_id}/tickets?limit=1`) as Record<string, unknown>;
           const items = (ticketsRes?.items ?? []) as { status: string }[];
           ticketCount = typeof ticketsRes?.total === "number" ? (ticketsRes.total as number) : items.length;
         } catch {
-          ticketCount = 0;
+          ticketCount = null;
         }
         return {
           id: p.project_id,
@@ -267,7 +269,13 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
       {totalTickets > 0 ? <section aria-label="トレンド" className="grid gap-4 md:grid-cols-2">
           <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
             <h2 className="mb-4 text-base font-semibold">プロジェクト別チケット数</h2>
-            <BarChart data={projects.map((p) => ({ label: p.slug.slice(0, 8), value: p.ticketCount }))} />
+            {/* ticketCount=null (取得失敗) の project は chart から除外し、失敗を 0 件として
+                プロット表示しない (取得失敗と真の 0 件を混同させない、Codex R3)。 */}
+            <BarChart
+              data={projects.flatMap((p) =>
+                p.ticketCount == null ? [] : [{ label: p.slug.slice(0, 8), value: p.ticketCount }]
+              )}
+            />
           </article>
           <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
             <h2 className="text-base font-semibold">ステータス別集計</h2>
@@ -334,7 +342,8 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
                 </div>
                 <div className="mt-3 border-t border-line pt-3">
                   <p className="text-sm">
-                    <span className="font-semibold text-accent">{p.ticketCount}</span>
+                    {/* 取得失敗 (null) は「—」、成功時のみ件数 (0 を含む) を表示 (Codex R3)。 */}
+                    <span className="font-semibold text-accent">{p.ticketCount ?? "—"}</span>
                     <span className="ml-1 text-muted-foreground">チケット</span>
                   </p>
                 </div>
