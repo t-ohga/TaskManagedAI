@@ -1,7 +1,7 @@
 ---
 id: "ADR-00043"
 title: "dev session claims に iat (最終ログイン日時) を追加 (R-2)"
-status: "proposed"
+status: "accepted"
 created_at: "2026-06-01"
 updated_at: "2026-06-01"
 deciders:
