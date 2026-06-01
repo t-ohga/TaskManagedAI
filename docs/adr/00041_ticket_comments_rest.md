@@ -64,6 +64,12 @@ activity-timeline を実データに配線する。ADR Gate Criteria #3 (API 契
   よう、`notification_events` の **全 inbox / triage read query** に `event_type != 'ticket_comment'` を
   追加する: `list_unread` / `list_for_recipient` / `count_unread` / **`list_triage`** (`/api/v1/notifications/triage`)。
   既存 bridge_ticket_comment 由来の汚染も同時解消。
+- **direct notification-id endpoint も非対象 (Codex ADR R3-1、迂回封鎖)**: ticket_comment は
+  notification_events 行として残るため、list 除外だけでは
+  `POST /api/v1/notifications/{notification_id}/mark_read` 等の **direct-id endpoint** が `_to_item` で
+  payload を raw 返却し迂回経路になる。ticket_comment event を direct notification endpoint から
+  **404 で拒否** (comment は notification ではない) し、加えて `_to_item` 変換は ticket_comment payload を
+  **keys-only / redacted** にする (legacy secret comment の id を mark_read しても raw message を返さない)。
 - write は **human actor の task-write 相当**で、AI 出力ではないため approval pipeline は不要
   (既存 ticket create / update と同じ直接 human mutation)。`message` は長さ上限を持つ。
 - read は tenant + `event_type="ticket_comment"` + `payload->>'ticket_id' = ticket_id` で絞り、
@@ -150,6 +156,8 @@ Response: TicketComment (作成された 1 件)
 - `backend/app/repositories/audit_event.py`: ticket activity (ticket_status_changed / ticket_updated) の
   payload.ticket_id filter list query (R1-4)。
 - `backend/app/mcp/api_bridge.py`: `bridge_ticket_comment` を共通 helper 呼び出しに変更 (R2-1)。
+- `backend/app/api/notifications.py`: `mark_read` 等 direct-id endpoint で ticket_comment を 404 拒否 +
+  `_to_item` が ticket_comment payload を keys-only/redacted 化 (R3-1、迂回封鎖)。
 - `tests/api/test_ticket_comments.py`: route 登録 + schema no-secret + SQL introspection
   (tenant / event_type / payload ticket_id filter) + message 長さ validation。
 - `frontend/lib/api/tickets.ts` (or comments.ts): `fetchTicketComments` + `createTicketComment`。
@@ -174,6 +182,9 @@ Response: TicketComment (作成された 1 件)
   reject し、notification_events に永続化されないこと (REST と同じ共通 helper)。
 - **legacy payload 読取 (R2-2)**: payload.actor_id が無い旧 ticket_comment row も GET comments /
   activity で **200**、author は recipient_actor_id fallback で返ること。
+- **direct-id 迂回封鎖 (R3-1)**: legacy secret 入り ticket_comment の notification id を
+  `POST /api/v1/notifications/{id}/mark_read` に渡しても **404** (or redacted) で、payload.message の
+  raw が返らないこと。`_to_item` が ticket_comment payload を keys-only/redacted にする regression。
 - **timeline に status event (R1-4)**: ticket status を変更すると activity に `ticket_status_changed`
   (previous/new status) が出ること。comment + status + created が created_at 昇順でマージされること。
 - SQL introspection (no-DB): comment list / activity query の compile SQL に tenant 境界 / `event_type` /
