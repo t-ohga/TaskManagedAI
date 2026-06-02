@@ -22,8 +22,8 @@ const VALID_UUID = "11111111-2222-4333-8444-555555555555";
 
 const PROJECTS = {
   projects: [
-    { project_id: "p-aaa", slug: "alpha", name: "Alpha" },
-    { project_id: "p-bbb", slug: "beta", name: "Beta" }
+    { project_id: "p-aaa", slug: "alpha", name: "Alpha", status: "active" },
+    { project_id: "p-bbb", slug: "beta", name: "Beta", status: "active" }
   ]
 };
 

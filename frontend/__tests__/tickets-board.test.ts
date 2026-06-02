@@ -190,11 +190,11 @@ describe("loadProjects fail-closed boundary (Codex frontend R5 HIGH)", () => {
   });
 
   it("returns projects on success", async () => {
-    fetchBackendRaw.mockResolvedValue({ projects: [{ id: PID, slug: "p", name: "P" }] });
+    fetchBackendRaw.mockResolvedValue({ projects: [{ id: PID, slug: "p", name: "P", status: "active" }] });
     await expect(loadProjects(true)).resolves.toHaveLength(1);
   });
 
-  it("captures project status when present (A-7: archived 強調ゲート用)", async () => {
+  it("captures project status (A-7: archived 強調ゲート用、active/archived enum)", async () => {
     fetchBackendRaw.mockResolvedValue({
       projects: [
         { id: PID, slug: "active-p", name: "A", status: "active" },
@@ -205,10 +205,16 @@ describe("loadProjects fail-closed boundary (Codex frontend R5 HIGH)", () => {
     expect(projects.map((p) => p.status)).toEqual(["active", "archived"]);
   });
 
-  it("status は optional (欠落 row も成功扱い、後方互換)", async () => {
+  it("status 欠落は failClosed で reject (R5 F-001: unknown を archived と誤マップせず degraded に倒す)", async () => {
+    // status 欠落を非 active に潰すと active project の reminder 強調が silent に消える。
+    // schema failure として throw し、degraded/error に倒す (fail-closed)。
     fetchBackendRaw.mockResolvedValue({ projects: [{ id: PID, slug: "p", name: "P" }] });
-    const projects = await loadProjects(true);
-    expect(projects[0]?.status).toBeUndefined();
+    await expect(loadProjects(true)).rejects.toThrow();
+  });
+
+  it("不正な status enum は failClosed で reject", async () => {
+    fetchBackendRaw.mockResolvedValue({ projects: [{ id: PID, slug: "p", name: "P", status: "weird" }] });
+    await expect(loadProjects(true)).rejects.toThrow();
   });
 
   it("throws when failClosed and a project row is missing slug (degraded response)", async () => {

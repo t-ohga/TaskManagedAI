@@ -87,10 +87,12 @@ const ProjectBoardItemSchema = z
     id: z.string().min(1).optional(),
     slug: z.string().min(1),
     name: z.string(),
-    // A-7 (ADR-00045 R4 F-001): project の archive 状態。期限強調を active project のみに
-    // ゲートする (backend reminders の projects.status='active' と整合)。optional で受け、
-    // 欠落 / 'active' 以外は非 active 扱い (archived project の urgent 誤強調を防ぐ fail-safe)。
-    status: z.string().optional()
+    // A-7 (ADR-00045 R4/R5 F-001): project の archive 状態。期限強調を active project のみに
+    // ゲートする (backend reminders の projects.status='active' と整合)。**required + enum**
+    // (backend ProjectStatus = active/archived と同一)。`status` 欠落 / 不正値は schema failure に倒し、
+    // unknown を archived (非 active) と誤マップして active project の reminder を silent に消さない
+    // (R5 F-001: unknown ≠ archived、欠落は failClosed で degraded/error、fail-soft view では omission)。
+    status: z.enum(["active", "archived"])
   })
   .refine((p) => Boolean(p.project_id ?? p.id), {
     message: "project row must include project_id or id"

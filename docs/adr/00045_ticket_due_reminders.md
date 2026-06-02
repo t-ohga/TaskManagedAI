@@ -232,8 +232,11 @@ client では "today" を独立算出しない (JST 深夜 0 時境界で同一 
    強調にも適用する:
    - **非 active project (archived)** → bucket=null (neutral)。archived は write 凍結で非 actionable
      (R4 F-001: backend reminders が archived を除外するのに一覧/Kanban が urgent 表示する不整合を防ぐ)。
-     project 状態は `/me/projects` の `status` を一覧 page が各 ticket row に `projectActive` として渡す
-     (`ProjectBoardItemSchema.status` を optional 追加、欠落 / 'active' 以外は非 active 扱いの fail-safe)。
+     project 状態は `/me/projects` の `status` を一覧 page が各 ticket row に `projectActive` として渡す。
+     `ProjectBoardItemSchema.status` は **required + enum (`active`/`archived`、backend ProjectStatus と
+     同一)** とし、`status` 欠落 / 不正値は schema failure に倒す (R5 F-001: unknown を archived と誤マップ
+     して active project の reminder 強調を silent に消さない。failClosed (具体 project) では throw →
+     degraded/error、fail-soft (all view) では omission として扱い、silent neutral にしない)。
    - **非 actionable status (closed/cancelled)** → bucket=null (neutral、R3 F-001)。
    - frontend の actionable 集合 (`REMINDER_ACTIONABLE_STATUSES`) は backend `_REMINDER_ACTIONABLE_STATUSES`
      と同一に揃える。一覧 (SelectableTicketList) と Kanban (TicketCard) の両 view が同 helper を使う。
@@ -406,5 +409,13 @@ R3 fix 後の **adversarial-review R4** verdict=needs-attention、1 finding、**
 |---|---|---|---|---|
 | F-A7-CODE-R4-001 | MEDIUM | `ticketDueBucket` が ticket status だけゲートし project status を見ないため、**archived project の actionable ticket** (open/in_progress 等) で過去/本日 due_date が赤/橙強調される。backend reminders は `projects.status='active'` も要求し archived を除外するので、dashboard panel が除外するのに一覧/Kanban が urgent 表示する R3 と同クラスの画面間不整合 | ADOPT | `ticketDueBucket` に `projectActive` 引数を追加し非 active project は null (neutral)。`ProjectBoardItemSchema.status` を optional 追加し一覧 page が各 row に `projectActive` を渡す。archived project の actionable overdue が赤/橙にならない frontend test (unit + 一覧 component) + loadProjects status 捕捉 test を追加。 |
 
-reject / defer: なし。R4 全 adopt 反映後、R5 で clean を確認してから merge。検証: backend ruff/mypy +
-16 pytest、frontend 337 vitest + typecheck + lint 全 green。
+reject / defer: なし。
+
+R4 fix 後の **adversarial-review R5** verdict=needs-attention、1 finding、**ADOPT**:
+
+| id | severity | 指摘 | 判定 | 反映 |
+|---|---|---|---|---|
+| F-A7-CODE-R5-001 | MEDIUM | R4 で `ProjectBoardItemSchema.status` を optional にし `p.status === "active"` で `projectActive` を導出したため、`/me/projects` が version-skew で `status` を omit すると active project が非 active 扱いになり全 due ticket が silent に neutral 化。dashboard reminder は依然 count するので逆方向の silent 不整合。unknown ≠ archived で fail-closed data 完全性に反する | ADOPT | `status` を **required + enum (`active`/`archived`)** に厳格化。欠落 / 不正は schema failure → failClosed (具体 project) で throw → degraded/error、fail-soft (all view) で omission。silent neutral にしない。load-ticket / tickets-board の test fixture に status を追加 (実 backend は常に返す)、欠落 / 不正 enum reject の regression を追加。 |
+
+reject / defer: なし。R5 全 adopt 反映後、R6 で clean を確認してから merge。検証: backend ruff/mypy +
+16 pytest、frontend 338 vitest + typecheck + lint 全 green。
