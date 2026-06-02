@@ -56,6 +56,41 @@ function addDaysYmd(ymd: string, days: number): string {
  *
  * いずれかの入力が `YYYY-MM-DD` 形式でない場合は `null` (誤分類せず強調なしに倒す、fail-safe)。
  */
+// A-7 (ADR-00045): 期限強調の対象 status。backend reminders query の
+// `_REMINDER_ACTIONABLE_STATUSES` (backend/app/domain/reminders.py 参照経由、me.py で定義) と
+// 同一集合に揃える。closed / cancelled は終了済で期限が actionable でないため強調しない
+// (adversarial R3 F-001: dashboard reminder panel が除外するのに一覧/Kanban が赤/橙表示する
+// 画面間不整合を防ぐ)。
+export const REMINDER_ACTIONABLE_STATUSES: ReadonlySet<string> = new Set([
+  "open",
+  "in_progress",
+  "blocked",
+  "review"
+]);
+
+export function isReminderActionableStatus(status: string): boolean {
+  return REMINDER_ACTIONABLE_STATUSES.has(status);
+}
+
+/**
+ * ticket の status + 期限から強調用 bucket を返す共有 helper (一覧 / Kanban 共通)。
+ *
+ * - due_date なし / referenceDate・thresholdDays 未取得 (date_context 失敗) -> `null` (neutral)。
+ * - **非 actionable status (closed / cancelled)** -> `null` (neutral)。backend reminders と同じ
+ *   actionable 集合でゲートし、終了済 ticket を赤/橙の期限強調にしない (R3 F-001)。
+ * - それ以外は `dueDateBucket` に委譲。
+ */
+export function ticketDueBucket(
+  dueDate: string | null,
+  status: string,
+  referenceDate: string | undefined,
+  thresholdDays: number | undefined
+): DueDateBucket | null {
+  if (!dueDate || referenceDate === undefined || thresholdDays === undefined) return null;
+  if (!isReminderActionableStatus(status)) return null;
+  return dueDateBucket(dueDate, referenceDate, thresholdDays);
+}
+
 export function dueDateBucket(
   dueDate: string,
   referenceDate: string,

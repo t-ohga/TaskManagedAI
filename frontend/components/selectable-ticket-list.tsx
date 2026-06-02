@@ -8,7 +8,7 @@ import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { BulkStatusChanger } from "@/components/bulk-status-changer";
 import { TagChip } from "@/components/tag-chip";
 import type { TagRead } from "@/lib/domain/tag";
-import { dueDateBucket, type DueDateBucket } from "@/lib/domain/due-date";
+import { ticketDueBucket, type DueDateBucket } from "@/lib/domain/due-date";
 
 type TicketRow = {
   id: string;
@@ -181,12 +181,15 @@ export function SelectableTicketList({
                       if (!formatted || !ticket.due_date) {
                         return <span className="text-muted-foreground">—</span>;
                       }
-                      // referenceDate (date_context 由来) が無いときは bucket=null → neutral 表示
-                      // (基準日不明で誤分類しない、R2 F-002 fail-closed)。
-                      const bucket =
-                        referenceDate !== undefined && thresholdDays !== undefined
-                          ? dueDateBucket(ticket.due_date, referenceDate, thresholdDays)
-                          : null;
+                      // status + 期限から強調 bucket を導出。非 actionable (closed/cancelled) /
+                      // 基準日不明 (date_context 失敗) は bucket=null → neutral (R2 F-002 / R3 F-001、
+                      // backend reminders の actionable 集合と揃え画面間不整合・誤分類を防ぐ)。
+                      const bucket = ticketDueBucket(
+                        ticket.due_date,
+                        ticket.status,
+                        referenceDate,
+                        thresholdDays
+                      );
                       return (
                         <span className={`rounded px-1.5 py-0.5 ${dueChipClass(bucket)}`}>
                           {dueChipLabel(bucket, formatted)}

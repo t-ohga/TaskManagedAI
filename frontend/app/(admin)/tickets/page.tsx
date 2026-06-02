@@ -12,7 +12,7 @@ import {
   type TicketItem
 } from "@/lib/api/tickets-board";
 import type { TagRead } from "@/lib/domain/tag";
-import { dueDateBucket, type DueDateBucket } from "@/lib/domain/due-date";
+import { ticketDueBucket, type DueDateBucket } from "@/lib/domain/due-date";
 import { ProjectTab } from "@/components/project-tab";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { TicketCreateDialog } from "@/components/ticket-create-dialog";
@@ -108,11 +108,14 @@ function TicketCard({
   thresholdDays?: number | undefined;
 }) {
   const formattedDue = formatDueDate(ticket.due_date);
-  // referenceDate (date_context 由来) が無いときは bucket=null → neutral (基準日不明で誤分類しない)。
-  const dueBucket =
-    ticket.due_date && referenceDate !== undefined && thresholdDays !== undefined
-      ? dueDateBucket(ticket.due_date, referenceDate, thresholdDays)
-      : null;
+  // status + 期限から強調 bucket を導出。非 actionable (closed/cancelled) / 基準日不明は null
+  // → neutral (backend reminders の actionable 集合と揃え、画面間不整合・誤分類を防ぐ、R3 F-001)。
+  const dueBucket = ticketDueBucket(
+    ticket.due_date,
+    ticket.status,
+    referenceDate,
+    thresholdDays
+  );
   return (
     <Link
       href={`/tickets/${ticket.id}` as never}

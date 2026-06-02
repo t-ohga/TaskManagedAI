@@ -226,6 +226,12 @@ client では "today" を独立算出しない (JST 深夜 0 時境界で同一 
    list 呼びでも単一基準、"today" 権威を backend に一本化)。date_context の取得失敗 / schema 不正は
    一覧 page で fail-closed (強調なし neutral fallback or degraded notice、不完全な基準日で誤分類
    しない)。一覧 endpoint (`TicketListResponse`) 自体は変更しない。
+   **actionable status ゲート (adversarial R3 F-001)**: 強調は共有 helper `ticketDueBucket(due, status,
+   ref, threshold)` 経由で適用し、**actionable status (open/in_progress/blocked/review) のみ**強調する。
+   `closed` / `cancelled` は backend reminders query と同じく非 actionable として bucket=null (neutral)
+   にし、dashboard reminder panel が除外するのに一覧/Kanban が赤/橙表示する画面間不整合を防ぐ。
+   frontend の actionable 集合 (`REMINDER_ACTIONABLE_STATUSES`) は backend `_REMINDER_ACTIONABLE_STATUSES`
+   と同一に揃える。一覧 (SelectableTicketList) と Kanban (TicketCard) の両 view が同 helper を使う。
 
 ## 却下案
 
@@ -379,5 +385,13 @@ R1 fix 後の **adversarial-review R2** verdict=needs-attention、1 finding、**
 |---|---|---|---|---|
 | F-A7-CODE-R2-001 | MEDIUM | R1 の `isValidYmd` が `value.slice(0,10)` 検証のため、`2026-06-01T23:30:00Z` / `2026-06-01junk` の timestamp / junk suffix を通す。due_date は backend の `date` 型 (厳密に `YYYY-MM-DD`) なので timestamp は schema drift であり、JST 深夜境界で別暦日に誤分類しうる (R1 の full-match 意図を満たさない) | ADOPT | `isValidYmd` を **全文字列 full-match** に厳格化 (slice 廃止)。timestamp / junk suffix を null / parse 失敗に倒す。dueDateBucket / addDaysYmd の slice も廃止。timestamp / junk suffix の negative test を dueDateBucket / 両 schema に追加。 |
 
-reject / defer: なし。R2 全 adopt 反映後、R3 で clean を確認してから merge。検証: backend ruff/mypy +
-16 pytest、frontend 326 vitest + typecheck + lint 全 green。
+reject / defer: なし。
+
+R2 fix 後の **adversarial-review R3** verdict=needs-attention、1 finding、**ADOPT**:
+
+| id | severity | 指摘 | 判定 | 反映 |
+|---|---|---|---|---|
+| F-A7-CODE-R3-001 | MEDIUM | 一覧/Kanban が `ticket.status` を見ずに全 row へ `dueDateBucket` を適用するため、`closed` / `cancelled` で過去/本日 due_date の ticket も赤/橙 (超過/本日) 強調される。backend reminders query は actionable status (open/in_progress/blocked/review) のみなので、dashboard reminder panel が除外するのに一覧/Kanban が urgent 表示する画面間不整合 | ADOPT | 共有 helper `ticketDueBucket(due, status, ref, threshold)` + `REMINDER_ACTIONABLE_STATUSES` (backend と同一集合) を domain module に追加。非 actionable は bucket=null (neutral)。SelectableTicketList / TicketCard 両 view を helper 経由に。closed/cancelled の overdue/today が赤/橙にならない frontend test 追加。 |
+
+reject / defer: なし。R3 全 adopt 反映後、R4 で clean を確認してから merge。検証: backend ruff/mypy +
+16 pytest、frontend 333 vitest + typecheck + lint 全 green。

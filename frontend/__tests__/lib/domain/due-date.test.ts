@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dueDateBucket } from "@/lib/domain/due-date";
+import { dueDateBucket, isReminderActionableStatus, ticketDueBucket } from "@/lib/domain/due-date";
 
 // A-7 (ADR-00045): dueDateBucket は backend compute_reminder_bucket と同一 semantics。
 // 暦日文字列比較で overdue / due_today / upcoming / null を返す (window 外 = null)。
@@ -69,5 +69,34 @@ describe("dueDateBucket (ADR-00045 期限 bucket)", () => {
   it("不正な threshold (負 / 非整数) は null", () => {
     expect(dueDateBucket("2026-06-03", REF, -1)).toBeNull();
     expect(dueDateBucket("2026-06-03", REF, 1.5)).toBeNull();
+  });
+});
+
+describe("isReminderActionableStatus / ticketDueBucket (R3 F-001 actionable ゲート)", () => {
+  it("actionable status は open/in_progress/blocked/review のみ", () => {
+    for (const s of ["open", "in_progress", "blocked", "review"]) {
+      expect(isReminderActionableStatus(s)).toBe(true);
+    }
+    for (const s of ["closed", "cancelled", "unknown"]) {
+      expect(isReminderActionableStatus(s)).toBe(false);
+    }
+  });
+
+  it("closed / cancelled は過去/本日期限でも null (neutral、backend reminders と整合)", () => {
+    expect(ticketDueBucket("2026-05-01", "closed", REF, THRESHOLD)).toBeNull();
+    expect(ticketDueBucket("2026-06-02", "cancelled", REF, THRESHOLD)).toBeNull();
+    expect(ticketDueBucket("2026-05-01", "closed", REF, THRESHOLD)).not.toBe("overdue");
+  });
+
+  it("actionable status は通常通り bucket を返す", () => {
+    expect(ticketDueBucket("2026-05-01", "open", REF, THRESHOLD)).toBe("overdue");
+    expect(ticketDueBucket("2026-06-02", "in_progress", REF, THRESHOLD)).toBe("due_today");
+    expect(ticketDueBucket("2026-06-04", "review", REF, THRESHOLD)).toBe("upcoming");
+  });
+
+  it("due_date なし / 基準日未取得 (date_context 失敗) は null", () => {
+    expect(ticketDueBucket(null, "open", REF, THRESHOLD)).toBeNull();
+    expect(ticketDueBucket("2026-05-01", "open", undefined, THRESHOLD)).toBeNull();
+    expect(ticketDueBucket("2026-05-01", "open", REF, undefined)).toBeNull();
   });
 });
