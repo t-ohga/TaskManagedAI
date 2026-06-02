@@ -31,7 +31,7 @@ beforeEach(() => {
 
 describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
   it("uses ?tag_id= query when a tag is given", async () => {
-    fetchBackendRaw.mockResolvedValue({ items: [] });
+    fetchBackendRaw.mockResolvedValue({ items: [], total: 0 });
     await loadTickets(PID, TAG_ID);
     expect(fetchBackendRaw).toHaveBeenCalledWith(
       `/api/v1/projects/${PID}/tickets?limit=200&tag_id=${TAG_ID}`
@@ -145,6 +145,20 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
     });
     await expect(loadTickets(PID)).rejects.toThrow();
   });
+
+  it("throws when items envelope is omitted or null (degraded board response, R8 HIGH)", async () => {
+    fetchBackendRaw.mockResolvedValueOnce({ total: 0 });
+    await expect(loadTickets(PID, TAG_ID)).rejects.toThrow();
+    fetchBackendRaw.mockResolvedValueOnce({ items: null, total: 0 });
+    await expect(loadTickets(PID, TAG_ID)).rejects.toThrow();
+  });
+
+  it("throws when total is omitted or non-numeric (R8 HIGH)", async () => {
+    fetchBackendRaw.mockResolvedValueOnce({ items: [] });
+    await expect(loadTickets(PID, TAG_ID)).rejects.toThrow();
+    fetchBackendRaw.mockResolvedValueOnce({ items: [], total: "5" });
+    await expect(loadTickets(PID, TAG_ID)).rejects.toThrow();
+  });
 });
 
 describe("loadProjectTags fail-closed boundary (Codex frontend R4 HIGH)", () => {
@@ -194,5 +208,17 @@ describe("loadProjects fail-closed boundary (Codex frontend R5 HIGH)", () => {
   it("returns [] for malformed project rows when not failClosed (all view)", async () => {
     fetchBackendRaw.mockResolvedValue({ projects: [{ name: "P" }] });
     await expect(loadProjects(false)).resolves.toEqual([]);
+  });
+
+  it("throws when the projects/items envelope is absent or null (failClosed, R8 HIGH)", async () => {
+    fetchBackendRaw.mockResolvedValueOnce({});
+    await expect(loadProjects(true)).rejects.toThrow();
+    fetchBackendRaw.mockResolvedValueOnce({ projects: null });
+    await expect(loadProjects(true)).rejects.toThrow();
+  });
+
+  it("accepts an explicit empty projects array", async () => {
+    fetchBackendRaw.mockResolvedValue({ projects: [] });
+    await expect(loadProjects(true)).resolves.toEqual([]);
   });
 });

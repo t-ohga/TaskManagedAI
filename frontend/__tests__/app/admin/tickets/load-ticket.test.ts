@@ -22,8 +22,8 @@ const VALID_UUID = "11111111-2222-4333-8444-555555555555";
 
 const PROJECTS = {
   projects: [
-    { project_id: "p-aaa", slug: "alpha" },
-    { project_id: "p-bbb", slug: "beta" }
+    { project_id: "p-aaa", slug: "alpha", name: "Alpha" },
+    { project_id: "p-bbb", slug: "beta", name: "Beta" }
   ]
 };
 
@@ -73,6 +73,22 @@ describe("loadTicket (Codex B2b R2/R3/R4/R5 contract)", () => {
     });
 
     await expect(loadTicket(VALID_UUID)).resolves.toBeNull();
+  });
+
+  it("degraded /me/projects (projects 欠落) を false 404 にせず throw する (R8 HIGH)", async () => {
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/me/projects") return {}; // projects envelope 欠落
+      throw new BackendApiError(500, "unexpected");
+    });
+    await expect(loadTicket(VALID_UUID)).rejects.toThrow();
+  });
+
+  it("project row が id を欠く degraded response で throw する (R8 HIGH)", async () => {
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/me/projects") return { projects: [{ slug: "alpha", name: "Alpha" }] };
+      throw new BackendApiError(500, "unexpected");
+    });
+    await expect(loadTicket(VALID_UUID)).rejects.toThrow();
   });
 
   it("malformed tag metadata は [] に潰さず throw する (fail-closed、Codex R6 HIGH)", async () => {

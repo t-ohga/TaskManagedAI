@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { BackendApiError, fetchBackendRaw } from "@/lib/api/client";
+import { loadProjects } from "@/lib/api/tickets-board";
 import { TagReadSchema, type TagRead } from "@/lib/domain/tag";
 
 // ticket_id の検証は TicketReadSchema.id (z.string().uuid()) と同一契約に揃える。
@@ -51,16 +52,15 @@ export async function loadTicket(id: string): Promise<TicketDetail | null> {
   // 照合とも lowercase に正規化して大小不一致による false notFound を防ぐ (R6 finding)。
   const normalizedId = id.toLowerCase();
 
-  const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
-  const projects = ((projectsRes as Record<string, unknown>)?.projects ?? []) as Record<
-    string,
-    string
-  >[];
+  // project list を envelope + row shape まで fail-closed validate する (Codex R8 HIGH)。
+  // degraded /me/projects (projects 欠落/null、id 欠落 row、slug 欠落) を空 probe set に潰して
+  // 実 ticket を false 404 / broken back-link にしない。loadProjects(true) が schema 不正/障害を throw する。
+  const projects = await loadProjects(true);
 
   const settled = await Promise.allSettled(
     projects.map(async (p): Promise<TicketDetail | null> => {
       const pid = String(p.project_id ?? p.id ?? "");
-      const slug = String(p.slug ?? "");
+      const slug = p.slug;
       if (!pid) return null;
       try {
         const ticketRes = await fetchBackendRaw(

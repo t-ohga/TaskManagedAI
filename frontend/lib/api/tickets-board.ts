@@ -16,16 +16,28 @@ import { TagReadSchema, type TagRead } from "@/lib/domain/tag";
  * boundary に流す。tag 指定なしの通常取得は従来通り fail-soft (all view で 1 project の一時障害が
  * 全体を落とさない)。
  */
-export type TicketItem = {
-  id: string;
-  title: string;
-  status: string;
-  priority: string | null;
-  description: string | null;
-  due_date: string | null;
-  created_at: string | null;
-  tags: TagRead[];
-};
+// ticket row schema。enum 系は drift で過剰 throw しないよう緩めの string で受けるが、tags は必須
+// (absent/null は metadata 不在として fail-closed、Codex R7)。backend の余分 field は strip される。
+const TicketItemSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: z.string(),
+  priority: z.string().nullable(),
+  description: z.string().nullable(),
+  due_date: z.string().nullable(),
+  created_at: z.string().nullable(),
+  tags: z.array(TagReadSchema)
+});
+
+export type TicketItem = z.infer<typeof TicketItemSchema>;
+
+// board response 全体を fail-closed validate (Codex R8 HIGH)。items は明示 array、total は number が
+// 必須。absent/null items や total 欠落を `{items:[], total:0}` に潰して complete empty board / non-
+// truncated filtered result と誤表示しない (explicit items:[] は有効なので array 自体は許容)。
+const TicketBoardResponseSchema = z.object({
+  items: z.array(TicketItemSchema),
+  total: z.number()
+});
 
 export const TICKET_BOARD_PAGE_LIMIT = 200;
 
@@ -56,20 +68,14 @@ export async function loadTickets(
   if (tagId) params.set("tag_id", tagId);
   const path = `/api/v1/projects/${projectId}/tickets?${params.toString()}` as `/${string}`;
   const res = await fetchBackendRaw(path);
-  const raw = res as Record<string, unknown>;
-  const rawItems = (raw?.items ?? []) as (TicketItem & { tags?: unknown })[];
-  // tags は backend が常に inject する (TicketRead は default_factory=list)。Zod で strict validate し、
-  // **malformed / absent / null は [] に潰さず throw する** (Codex R6/R7 HIGH)。`?? []` を使わず t.tags を
-  // 直接 parse することで、explicit `tags: []` (タグなし、有効) と、version skew / degraded serializer で
-  // tags が欠落/null になった metadata 不在 (tag 付き ticket を「タグなし」と silent 誤表示する) を区別する。
-  const items = rawItems.map((t) => {
-    const tagsParsed = z.array(TagReadSchema).safeParse(t.tags);
-    if (!tagsParsed.success) {
-      throw new Error("ticket tag metadata missing or failed schema validation");
-    }
-    return { ...t, tags: tagsParsed.data };
-  });
-  const total = typeof raw?.total === "number" ? raw.total : items.length;
+  // response 全体 (items 配列 + total number + 各 row の tags) を fail-closed validate。
+  // items / total / tags の absent / null / malformed を complete empty board に潰さず throw する
+  // (Codex R6/R7/R8 HIGH)。caller が intent で fail-closed / omission に倒す。
+  const parsed = TicketBoardResponseSchema.safeParse(res);
+  if (!parsed.success) {
+    throw new Error("ticket board response missing or failed schema validation");
+  }
+  const { items, total } = parsed.data;
   return { items, total, truncated: total > items.length };
 }
 
@@ -100,7 +106,16 @@ export async function loadProjects(failClosed: boolean): Promise<ProjectBoardIte
   try {
     const res = await fetchBackendRaw("/api/v1/me/projects");
     const raw = res as Record<string, unknown>;
-    const rawList = (raw?.projects ?? raw?.items ?? []) as unknown[];
+    const rawList = raw?.projects ?? raw?.items;
+    // envelope (projects or items) が absent/null なら degraded response (Codex R8 HIGH)。`?? []` で
+    // 空配列に潰すと slug 解決できないまま 0 件扱いになるため、failClosed では throw。explicit `projects:[]`
+    // (= 配列) は valid。
+    if (!Array.isArray(rawList)) {
+      if (failClosed) {
+        throw new Error("project list envelope missing or not an array");
+      }
+      return [];
+    }
     const parsed = z.array(ProjectBoardItemSchema).safeParse(rawList);
     if (!parsed.success) {
       if (failClosed) {
