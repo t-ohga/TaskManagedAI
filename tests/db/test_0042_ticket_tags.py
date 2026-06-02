@@ -208,6 +208,25 @@ async def test_cross_project_attach_rejected(
 
 
 @pytest.mark.asyncio
+async def test_get_tag_rejects_cross_project_tag(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """tag filter の fail-closed 検証元: project A scope で project B の tag を get_tag すると None
+    (endpoint は 404 に倒す、Codex R4 HIGH)。同 project では取得できる。"""
+    from uuid import UUID
+
+    from backend.app.repositories.tag import TagRepository
+
+    project_a, project_b, tag_b = str(uuid4()), str(uuid4()), str(uuid4())
+    async with session_factory() as session:
+        await _seed_project_ticket_tag(session, project_id=project_a, ticket_id=None, tag_id=None)
+        await _seed_project_ticket_tag(session, project_id=project_b, ticket_id=None, tag_id=tag_b)
+        repo = TagRepository(session)
+        assert await repo.get_tag(1, UUID(project_a), UUID(tag_b)) is None
+        assert await repo.get_tag(1, UUID(project_b), UUID(tag_b)) is not None
+
+
+@pytest.mark.asyncio
 async def test_raw_delete_of_attached_tag_rejected(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

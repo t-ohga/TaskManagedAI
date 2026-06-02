@@ -97,6 +97,14 @@ async def list_tickets_endpoint(
     tag_repo = TagRepository(session)
     tickets = await repo.list_in_project(tenant_id=tenant_id, project_id=project_id)
     if tag_id is not None:
+        # tag が path project に属することを先に検証する。cross-project / nonexistent tag を
+        # 「有効だが ticket 0 件」と取り違えて全件を silent に隠さないよう fail-closed で 404 にする
+        # (Codex code-review R4 HIGH、ADR-00044 path/target mismatch=404)。
+        if await tag_repo.get_tag(tenant_id, project_id, tag_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="tag not found for project",
+            )
         # 同 project scope の ticket_tags join で絞り込む (cross-project tag は構造的に無効)
         allowed = set(await tag_repo.ticket_ids_with_tag(tenant_id, project_id, tag_id))
         tickets = [t for t in tickets if t.id in allowed]
