@@ -227,6 +227,31 @@ async def test_get_tag_rejects_cross_project_tag(
 
 
 @pytest.mark.asyncio
+async def test_detach_rejects_cross_project_tag(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """detach も attach と対称に cross-project tag を 404 fail-closed する (R5 HIGH)。
+
+    project A の ticket に対し project B の tag_id を detach すると、0 rows no-op で
+    隠さず ``TagNotFoundError`` (→ endpoint 404) を raise する。
+    """
+    from uuid import UUID
+
+    from backend.app.repositories.tag import TagNotFoundError, TagRepository
+
+    project_a, ticket_a = str(uuid4()), str(uuid4())
+    project_b, tag_b = str(uuid4()), str(uuid4())
+    async with session_factory() as session:
+        await _seed_project_ticket_tag(
+            session, project_id=project_a, ticket_id=ticket_a, tag_id=None
+        )
+        await _seed_project_ticket_tag(session, project_id=project_b, ticket_id=None, tag_id=tag_b)
+        repo = TagRepository(session)
+        with pytest.raises(TagNotFoundError):
+            await repo.detach_tag(1, UUID(project_a), UUID(ticket_a), UUID(tag_b))
+
+
+@pytest.mark.asyncio
 async def test_raw_delete_of_attached_tag_rejected(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

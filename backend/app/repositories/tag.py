@@ -254,6 +254,13 @@ class TagRepository:
         tag_id: UUID,
     ) -> None:
         await self._tickets.assert_ticket_actionable(tenant_id, project_id, str(ticket_id))
+        # attach と対称に tag の project 所属を検証する (Codex adversarial R5 HIGH)。
+        # cross-project / nonexistent tag_id は path/target mismatch として 404 に fail-close し、
+        # 0 rows delete を「成功」と取り違えて stale/越境 caller state を隠さない。
+        # valid tag の未付与 detach は get_tag が通り 0 rows delete で idempotent 204 を維持する。
+        tag = await self.get_tag(tenant_id, project_id, tag_id)
+        if tag is None:
+            raise TagNotFoundError(tag_id=tag_id)
         await self.session.execute(
             delete(TicketTag).where(
                 TicketTag.tenant_id == tenant_id,
