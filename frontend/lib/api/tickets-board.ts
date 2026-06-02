@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { fetchBackendRaw } from "@/lib/api/client";
+import { listTags } from "@/lib/api/tags";
 import { TagReadSchema, type TagRead } from "@/lib/domain/tag";
 
 /**
@@ -65,5 +66,28 @@ export async function loadTickets(
     }
     // 通常取得 (tag なし / all view) は fail-soft (1 project の一時障害で全体を落とさない)。
     return { items: [], total: 0, truncated: false };
+  }
+}
+
+/**
+ * project の tag 一覧 (TagFilter / 付与候補 用)。
+ *
+ * **fail-closed 分岐 (Codex frontend R4 HIGH)**: `failClosed=true` (tag filter 適用中) のとき
+ * listTags の失敗を [] に潰すと、TagFilter / clear / notice が描画されないまま絞り込み済み subset を
+ * 「全件」と誤認させる (どの tag で絞っているか UI で示せない)。そのため失敗を caller へ伝播し
+ * error boundary に流す。tag filter なし (`failClosed=false`) のときは tag metadata が付加機能なので
+ * fail-soft ([])。
+ */
+export async function loadProjectTags(
+  projectId: string,
+  failClosed: boolean
+): Promise<TagRead[]> {
+  try {
+    return (await listTags(projectId)).items;
+  } catch (error) {
+    if (failClosed) {
+      throw error;
+    }
+    return [];
   }
 }

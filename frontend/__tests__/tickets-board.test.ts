@@ -13,13 +13,20 @@ vi.mock("@/lib/api/client", async () => {
   };
 });
 
-import { loadTickets } from "@/lib/api/tickets-board";
+// listTags を mock し、loadProjectTags の fail-closed / fail-soft 境界を検証する。
+const listTags = vi.fn();
+vi.mock("@/lib/api/tags", () => ({
+  listTags: (...args: unknown[]) => listTags(...args)
+}));
+
+import { loadProjectTags, loadTickets } from "@/lib/api/tickets-board";
 
 const PID = "00000000-0000-4000-8000-000000000004";
 const TAG_ID = "00000000-0000-4000-8000-00000000a001";
 
 beforeEach(() => {
   fetchBackendRaw.mockReset();
+  listTags.mockReset();
 });
 
 describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
@@ -105,5 +112,22 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
     const result = await loadTickets(PID);
     // palette 外 color (magenta) を含む配列は strict validate 失敗 → [] に倒す
     expect(result.items[0]?.tags).toEqual([]);
+  });
+});
+
+describe("loadProjectTags fail-closed boundary (Codex frontend R4 HIGH)", () => {
+  it("rethrows when failClosed (tag filter active) so a degraded tag list cannot hide the filter", async () => {
+    listTags.mockRejectedValue(new BackendApiError(500, "boom"));
+    await expect(loadProjectTags(PID, true)).rejects.toBeInstanceOf(BackendApiError);
+  });
+
+  it("returns [] when not failClosed (no tag filter) so tag UI degrades softly", async () => {
+    listTags.mockRejectedValue(new BackendApiError(500, "boom"));
+    await expect(loadProjectTags(PID, false)).resolves.toEqual([]);
+  });
+
+  it("returns tag items on success", async () => {
+    listTags.mockResolvedValue({ items: [{ id: TAG_ID, name: "bug", color: "red" }] });
+    await expect(loadProjectTags(PID, true)).resolves.toHaveLength(1);
   });
 });

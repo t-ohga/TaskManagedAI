@@ -3,8 +3,7 @@ import { Suspense } from "react";
 
 import { BackendApiError, fetchBackendRaw } from "@/lib/api/client";
 import { getCurrentProject } from "@/lib/api/session";
-import { listTags } from "@/lib/api/tags";
-import { loadTickets, type TicketItem } from "@/lib/api/tickets-board";
+import { loadProjectTags, loadTickets, type TicketItem } from "@/lib/api/tickets-board";
 import type { TagRead } from "@/lib/domain/tag";
 import { ProjectTab } from "@/components/project-tab";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
@@ -186,7 +185,8 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   const currentProject = await getCurrentProject().catch(() => null);
 
   // ADR-00044 (A-5): tag filter 用に specific project の tags を取得 (all view は project 混在で
-  // tag scope が曖昧なため非表示)。取得失敗は filter 非表示に degrade (fail-soft)。
+  // tag scope が曖昧なため非表示)。tagFilter 適用中は fail-closed (tag metadata が読めない状態で
+  // 絞り込み済み subset を「全件」と誤認させない、Codex R4 HIGH)、未適用時は fail-soft。
   let projectTags: TagRead[] = [];
   if (selectedProject !== "all") {
     const selProject = projects.find((p) => p.slug === selectedProject);
@@ -197,11 +197,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
           ""
       );
       if (pid) {
-        try {
-          projectTags = (await listTags(pid)).items;
-        } catch {
-          projectTags = [];
-        }
+        projectTags = await loadProjectTags(pid, Boolean(tagFilter));
       }
     }
   }
