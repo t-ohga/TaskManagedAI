@@ -56,7 +56,10 @@ function inlineFormat(escaped: string): string {
 // 段落 / 見出しの content は escape 済 + inline 装飾のみで属性 / URL / script を生成しない
 // (XSS surface は J-4 と同一)。
 function markdownToHtml(md: string): string {
-  const escaped = escapeHtml(md);
+  // 改行を LF に正規化してから処理する (code-reviewer LOW: CRLF / CR だと行末 \r が残り、
+  // `$` アンカーの都合で list / heading 行の regex match が失敗して preview が崩れる。backend
+  // 保存値や copy-paste の CRLF を吸収する)。
+  const escaped = escapeHtml(md.replace(/\r\n?/g, "\n"));
   const lines = escaped.split("\n");
   const out: string[] = [];
   let para: string[] = [];

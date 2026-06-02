@@ -64,6 +64,12 @@ describe("markdownToHtml (J-4 DOMPurify sanitize)", () => {
     const out = markdownToHtml("- a\n1. b");
     expect(out).toBe("<ul><li>a</li></ul><ol><li>b</li></ol>");
   });
+
+  it("CRLF / CR の改行でも list / heading を正しく検出する (code-reviewer LOW)", () => {
+    expect(markdownToHtml("- a\r\n- b")).toBe("<ul><li>a</li><li>b</li></ul>");
+    expect(markdownToHtml("## 見出し\r\n本文")).toBe("<h2>見出し</h2><p>本文</p>");
+    expect(markdownToHtml("- a\r- b")).toBe("<ul><li>a</li><li>b</li></ul>");
+  });
 });
 
 describe("sanitizeMarkdownHtml (DOMPurify allowlist の defense-in-depth)", () => {
