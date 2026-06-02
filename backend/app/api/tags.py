@@ -10,7 +10,6 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.approval_inbox import (
@@ -19,7 +18,7 @@ from backend.app.api.approval_inbox import (
     get_tenant_id,
 )
 from backend.app.api.dependencies.api_capability_token import maybe_require_cli_capability
-from backend.app.db.models.tag import Tag, TagColor
+from backend.app.db.models.tag import Tag
 from backend.app.repositories.tag import (
     TagColorInvalidError,
     TagInUseError,
@@ -28,43 +27,18 @@ from backend.app.repositories.tag import (
     TagRepository,
 )
 from backend.app.repositories.ticket import ProjectArchivedError, TicketNotActionableError
+from backend.app.schemas.tag import (
+    TagCreate,
+    TagListResponse,
+    TagRead,
+    TagUpdate,
+    TicketTagAttach,
+)
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/tags", tags=["tags"])
 ticket_tags_router = APIRouter(
     prefix="/api/v1/projects/{project_id}/tickets/{ticket_id}/tags", tags=["tags"]
 )
-
-
-class TagRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
-    name: str
-    color: TagColor
-
-
-class TagListResponse(BaseModel):
-    items: list[TagRead]
-
-
-class TagCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")  # body の project_id / tenant_id を reject (R2)
-
-    name: str = Field(min_length=1, max_length=50)
-    color: TagColor
-
-
-class TagUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = Field(default=None, min_length=1, max_length=50)
-    color: TagColor | None = None
-
-
-class TicketTagAttach(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    tag_id: UUID
 
 
 def _to_read(tag: Tag) -> TagRead:

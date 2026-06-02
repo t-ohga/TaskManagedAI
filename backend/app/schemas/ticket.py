@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.app.schemas.tag import TagRead
+
 TicketStatus = Literal["open", "in_progress", "blocked", "review", "closed", "cancelled"]
 TicketPriority = Literal["low", "medium", "high", "critical"]
 
@@ -86,6 +88,9 @@ class TicketRead(BaseModel):
     metadata: dict[str, Any] = Field(validation_alias="metadata_")
     created_at: datetime
     updated_at: datetime
+    # ADR-00044 (A-5): per-ticket tag。endpoint が TagRepository.tags_for_tickets で inject する
+    # (Ticket ORM の relationship ではないため default は空、from_attributes では設定されない)。
+    tags: list[TagRead] = Field(default_factory=list)
 
 
 __all__ = [
