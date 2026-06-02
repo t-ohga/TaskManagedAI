@@ -8,6 +8,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.models.tag import TAG_COLORS, Tag, TicketTag
+from backend.app.db.models.ticket import Ticket
 from backend.app.domain.tag import assert_tag_name_safe
 from backend.app.repositories.audit_event import AuditEventRepository
 from backend.app.repositories.ticket import TicketRepository
@@ -315,11 +316,23 @@ class TagRepository:
         tag = await self.get_tag(tenant_id, project_id, tag_id)  # 兼 _ensure_tenant_context
         if tag is None:
             raise TagNotFoundError(tag_id=tag_id)
+        # active ticket のみ返す (Codex adversarial R7 HIGH)。ticket soft-delete は
+        # tickets.deleted_at で表現され ticket_tags 行は残るため、raw join では deleted ticket の
+        # id が漏れる。filter primitive は共有境界なので deleted_at IS NULL を repository 側で enforce し、
+        # direct caller (MCP / script) が削除済 ticket を tag 経由で後続 flow に戻せないようにする。
         result = await self.session.execute(
-            select(TicketTag.ticket_id).where(
+            select(TicketTag.ticket_id)
+            .join(
+                Ticket,
+                (Ticket.tenant_id == TicketTag.tenant_id)
+                & (Ticket.project_id == TicketTag.project_id)
+                & (Ticket.id == TicketTag.ticket_id),
+            )
+            .where(
                 TicketTag.tenant_id == tenant_id,
                 TicketTag.project_id == project_id,
                 TicketTag.tag_id == tag_id,
+                Ticket.deleted_at.is_(None),
             )
         )
         return list(result.scalars().all())

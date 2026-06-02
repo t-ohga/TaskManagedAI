@@ -250,6 +250,46 @@ async def test_ticket_ids_with_tag_rejects_cross_project(
 
 
 @pytest.mark.asyncio
+async def test_ticket_ids_with_tag_excludes_soft_deleted(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """filter primitive は soft-deleted ticket を除外する (R7 HIGH)。
+
+    tag を付与した ticket を soft-delete (deleted_at セット) すると、ticket_tags 行は残るが
+    ``ticket_ids_with_tag`` は active ticket join + deleted_at IS NULL で除外する。direct caller が
+    削除済 ticket を tag 経由で取り戻せない。
+    """
+    from uuid import UUID
+
+    from backend.app.repositories.tag import TagRepository
+
+    project_id, ticket_id, tag_id = str(uuid4()), str(uuid4()), str(uuid4())
+    async with session_factory() as session:
+        await _seed_project_ticket_tag(
+            session, project_id=project_id, ticket_id=ticket_id, tag_id=tag_id
+        )
+        await session.execute(
+            text(
+                "insert into ticket_tags (tenant_id, project_id, ticket_id, tag_id) "
+                "values (1, :pid, :tid, :tag)"
+            ),
+            {"pid": project_id, "tid": ticket_id, "tag": tag_id},
+        )
+        await session.flush()
+        repo = TagRepository(session)
+        active = await repo.ticket_ids_with_tag(1, UUID(project_id), UUID(tag_id))
+        assert UUID(ticket_id) in active
+        # soft-delete (deletion batch model: deleted_at セット、join row は残る)
+        await session.execute(
+            text("update tickets set deleted_at = now() where id = :id"),
+            {"id": ticket_id},
+        )
+        await session.flush()
+        after_delete = await repo.ticket_ids_with_tag(1, UUID(project_id), UUID(tag_id))
+        assert UUID(ticket_id) not in after_delete
+
+
+@pytest.mark.asyncio
 async def test_detach_rejects_cross_project_tag(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
