@@ -73,10 +73,14 @@ notification_events への materialization は **行わない** (純粋派生、
 - raw secret / provider key は含まない。response が運ぶ ticket metadata (slug / title / status /
   priority / due_date) は **既存の ticket 一覧 endpoint が露出済の field のみ** であり、新規の
   情報露出面を作らない。
-- **bounded materialize**: bucket 別件数は SQL `COUNT` で **正確** に返す。reminder リストは
-  `due_date` 昇順で **上限件数 (REMINDER_LIST_LIMIT) に capped**。overdue は下限なし (古い超過も
-  超過) のため、stale overdue が大量にある環境でも unbounded 行 materialize を避ける。リストが
-  capped されたかは件数合計とリスト長の比較で frontend が判定できる (silent truncation を作らない)。
+- **bounded materialize + bucket 別 cap (plan-review R1 F-001 ADOPT)**: bucket 別件数は SQL `COUNT`
+  で **正確** に返す。reminder リストは **bucket ごとに独立して** `due_date` 順で上限件数
+  (`REMINDER_BUCKET_LIST_LIMIT`) に capped する。**全 bucket 横断の単一 LIMIT は採らない**:
+  overdue は下限なし (古い超過も超過) のため、stale overdue が大量にあると単一 LIMIT が overdue で
+  枯渇し、`due_today` / `upcoming` の件数が非ゼロでも items が 1 件も出ない bucket 単位の silent
+  truncation が起きる (最も見せるべき「今日 / 近日」が隠れる)。bucket ごとに count + capped items +
+  truncated を返すことで、overdue が due_today / upcoming の表示枠を枯渇させない。各 bucket の
+  `truncated` (= `count > len(items)`) で frontend は bucket 単位の欠落を明示できる。
 
 ## 選択肢
 
@@ -100,14 +104,20 @@ notification_events への materialization は **行わない** (純粋派生、
 ```
 GET /api/v1/me/reminders
 
-Response (ReminderSummaryResponse):
+Response (ReminderSummaryResponse):  // bucket 別 cap (plan-review R1 F-001 ADOPT)
 {
-  "reference_date": "YYYY-MM-DD",   // server 算出の today (Asia/Tokyo 暦日)
+  "reference_date": "YYYY-MM-DD",   // server 算出の today (Asia/Tokyo 暦日、"today" 唯一権威)
   "threshold_days": 7,              // upcoming 窓 (REMINDER_UPCOMING_WINDOW_DAYS)
-  "overdue_count": number,          // SQL COUNT (正確)
-  "due_today_count": number,        // SQL COUNT (正確)
-  "upcoming_count": number,         // SQL COUNT (正確)
-  "reminders": [                    // due_date 昇順、REMINDER_LIST_LIMIT で capped
+  "overdue":   ReminderBucket,
+  "due_today": ReminderBucket,
+  "upcoming":  ReminderBucket
+}
+
+ReminderBucket:
+{
+  "count": number,        // SQL COUNT (正確、capped と無関係)
+  "truncated": boolean,   // count > len(items)
+  "items": [              // bucket 内で order、REMINDER_BUCKET_LIST_LIMIT で独立 cap
     {
       "ticket_id": "uuid",
       "project_id": "uuid",
@@ -116,8 +126,7 @@ Response (ReminderSummaryResponse):
       "status": "open" | "in_progress" | "blocked" | "review",
       "priority": "low" | "medium" | "high" | "critical" | null,
       "due_date": "YYYY-MM-DD",
-      "bucket": "overdue" | "due_today" | "upcoming",
-      "days_until": number          // signed: <0 超過 / 0 当日 / >0 近接
+      "days_until": number   // signed: <0 超過 / 0 当日 / >0 近接
     }
   ]
 }
@@ -135,12 +144,34 @@ Response (ReminderSummaryResponse):
   - `due_date < reference_date` → `overdue` (`days_until = (due_date - reference_date).days < 0`)
   - `due_date == reference_date` → `due_today` (`days_until = 0`)
   - `due_date > reference_date` → `upcoming` (`0 < days_until <= threshold_days`)
-- **件数は SQL COUNT で正確** (bucket 別 `GROUP BY` または条件別 COUNT)。
-- **reminder リストは `ORDER BY due_date ASC, slug ASC` で決定的**、`LIMIT REMINDER_LIST_LIMIT`。
-  due_date 昇順により overdue (最古=最も超過) → due_today → upcoming (近い順) の自然な緊急度順。
-- `reference_date` を response に含め、UI が基準日を明示できるようにする (server 権威の "today")。
-- 定数: `REMINDER_UPCOMING_WINDOW_DAYS = 7` / `REMINDER_LIST_LIMIT = 200` (backend 固定、caller 入力
-  不可)。閾値変更は本 ADR の更新を要する。
+- **件数は bucket ごとに SQL COUNT で正確** (条件別 COUNT、list cap に依存しない)。
+- **items は bucket ごとに独立して cap** (`REMINDER_BUCKET_LIST_LIMIT`)。bucket 内 order:
+  - `overdue`: `due_date ASC, slug ASC` (最古 = 最も超過 = 最も放置 を先頭。最長 overdue を優先表示)。
+  - `due_today`: `slug ASC` (単一 due_date のため slug 決定順)。
+  - `upcoming`: `due_date ASC, slug ASC` (期限が近い順)。
+  - 各 bucket の意図した緊急度順を上記で固定 (plan-review R1 F-001: 並び順を ADR で明文化)。
+- **全 bucket 横断の単一 LIMIT は採らない** (overdue が due_today / upcoming の表示枠を枯渇させる
+  silent truncation を防ぐ、F-001 ADOPT)。各 bucket の `truncated` で欠落を明示。
+- `reference_date` は **server (FastAPI backend) 算出の "today" 唯一権威** (Asia/Tokyo 暦日)。
+  この値が bucket / count / list の API 契約の基準。UI はこの値で基準日を表示する。
+- 定数: `REMINDER_UPCOMING_WINDOW_DAYS = 7` / `REMINDER_BUCKET_LIST_LIMIT = 50` (backend 固定、
+  caller 入力不可)。閾値変更は本 ADR の更新を要する。
+
+### "today" 権威の一本化 (plan-review R1 F-002 ADOPT)
+
+reminder endpoint と ticket 一覧の期限強調が **同一の基準日 (Asia/Tokyo 暦日) を共有** することを
+API 契約で保証する。FastAPI backend を "today" の唯一権威とし、Next.js server / client では
+"today" を独立算出しない (JST 深夜 0 時境界で同一 ticket の bucket が画面間で矛盾するのを防ぐ)。
+
+- backend 共有 helper `_today_jst(now: datetime | None = None) -> date` を 1 つ定義し、reminder
+  endpoint と **ticket 一覧 endpoint の両方** がこれを使う。
+- `GET /api/v1/projects/{project_id}/tickets` の `TicketListResponse` に **`reference_date`
+  (Asia/Tokyo 暦日) を追加** (additive、ADR Gate #3、本 ADR scope)。一覧 page はこの backend 由来の
+  `reference_date` を `SelectableTicketList` に渡し、それだけで赤/橙/neutral を分類する。
+- reminder response の `reference_date` と 一覧 response の `reference_date` は同一 backend helper
+  由来のため、同一 backend clock で算出され、Next.js server / client clock の drift を受けない。
+  (異なる HTTP request 間の sub-second 差は許容 — 別画面であり、同一 backend clock のため境界での
+  恒常的矛盾は起きない。)
 
 ### Frontend
 
@@ -151,19 +182,21 @@ Response (ReminderSummaryResponse):
 
 2. **dashboard reminder section** (`dashboard/page.tsx`): `fetchReminders()` を `ticket_summary` と
    同じ ok/error fail-closed pattern で呼ぶ。取得失敗は「—」/「取得できませんでした」表示にし、
-   真の 0 件 (reminder なし) と区別する。overdue → due_today → upcoming の順に件数 + 上位リンクを
-   表示。リストが capped されている場合 (件数合計 > リスト長) は「他に N 件」を明示する
-   (silent truncation 回避)。
+   真の 0 件 (reminder なし) と区別する。overdue → due_today → upcoming の順に **bucket 別 count +
+   上位 items リンク** を表示。各 bucket の `truncated` が true なら「他に N 件」(N = count - items 長)
+   を明示する (bucket 単位の silent truncation 回避、F-001)。
 
-3. **ticket 一覧の期限強調** (`selectable-ticket-list.tsx`): 既存の amber 一律 chip を、基準日
-   (Asia/Tokyo 暦日) との **文字列比較** (`YYYY-MM-DD` lexicographic) で 3 段階に強調する:
-   - `overdue` (due_date < today): 赤 (danger)
-   - `due-soon` (today <= due_date <= today + threshold): 橙 (attention)
-   - `future` (due_date > today + threshold): neutral (既存の控えめ表示)
-   "today" は一覧 page (Server Component) が **server 側で Asia/Tokyo 暦日を算出** して
-   `referenceDate` prop で渡す (client clock 非依存、reminder endpoint と同一の暦日 semantics)。
-   bucket 判定は純粋関数 `dueDateBucket(due_date, referenceDate)` (`new Date(due_date)` を介さず
-   文字列比較で TZ ずれを排除、ADR-00034 と整合)。
+3. **ticket 一覧の期限強調** (`selectable-ticket-list.tsx`): 既存の amber 一律 chip を、backend 由来
+   `referenceDate` との **文字列比較** (`YYYY-MM-DD` lexicographic) で 3 段階に強調する:
+   - `overdue` (due_date < referenceDate): 赤 (danger)
+   - `due-soon` (referenceDate <= due_date <= referenceDate + threshold): 橙 (attention)
+   - `future` (due_date > referenceDate + threshold): neutral (既存の控えめ表示)
+   `referenceDate` は一覧 endpoint (`TicketListResponse.reference_date`) **backend 算出値**を一覧
+   page が `SelectableTicketList` に prop で渡す (F-002: "today" 権威を backend に一本化、Next.js
+   server / client で独立算出しない)。bucket 判定は純粋関数 `dueDateBucket(due_date, referenceDate,
+   thresholdDays)` (`new Date(due_date)` を介さず文字列比較で TZ ずれを排除、ADR-00034 と整合)。
+   `referenceDate` が欠落/不正な response (schema parse 失敗) では一覧自体が degraded に倒れる
+   (data 完全性: 不完全な基準日で誤分類しない)。
 
 ## 却下案
 
@@ -182,34 +215,45 @@ Response (ReminderSummaryResponse):
 - LOW。read-only、既存カラムのみ、tenant / project 境界強制、migration なし、副作用なし。
 - 集計クエリ性能: `tickets(tenant_id, project_id)` index が既存。tickets→projects は複合 FK で
   JOIN 軽量。P0 規模 (個人 dogfooding) では COUNT / GROUP BY + bounded SELECT は軽量。
-- **"today" の境界 (深夜)**: reminder endpoint と一覧 page が別々に Asia/Tokyo 暦日を算出するため、
-  同一 request 内では一致する。深夜 0 時直後の数 ms のずれは個人ツールで実害なし、かつ視覚強調のみ。
-  server-authoritative な同一 timezone のため client clock drift の影響を受けない。
+- **"today" の境界 (深夜、F-002 適用後)**: reminder endpoint と tickets list endpoint が **同一の
+  backend helper `_today_jst()`** から `reference_date` を算出する (権威一本化)。Next.js server /
+  client では "today" を独立算出しない。異なる HTTP request 間の sub-second 差は許容 (別画面であり、
+  同一 backend clock のため境界での恒常的な画面間矛盾は起きない)。視覚強調・件数表示のみで write
+  境界ではない。
 - rollback は endpoint + schema + frontend section/emphasis の削除で完結 (DB 変更なし)。
 
 ## rollback 手順
 
-1. `me.py` の `reminders` endpoint + `ReminderSummaryResponse` / `ReminderItem` schema を削除。
+1. `me.py` の `reminders` endpoint + `ReminderSummaryResponse` / `ReminderBucket` / `ReminderItem`
+   schema を削除。`tickets.py` の `TicketListResponse.reference_date` を revert (F-002)。
 2. frontend: `lib/api/reminders.ts` 削除、`dashboard/page.tsx` の reminder section 削除、
-   `selectable-ticket-list.tsx` の 3 段階強調を旧 amber 一律 chip に revert、`tickets/page.tsx` の
-   `referenceDate` prop 受け渡しを revert。
+   `tickets-board.ts` の `reference_date` を revert、`selectable-ticket-list.tsx` の 3 段階強調を旧
+   amber 一律 chip に revert、`tickets/page.tsx` の `referenceDate` prop 受け渡しを revert。
 3. DB 変更なし (due_date カラムは ADR-00034 管理、本 ADR では触れない)。
 
 ## 実装対象ファイル
 
-- `backend/app/api/me.py`: `reminders` endpoint + `ReminderSummaryResponse` / `ReminderItem` schema
-  (active-scope + active-project + actionable + due_date NOT NULL + bucket window 込み)
-- `backend/app/domain/...` (または me.py 内): `compute_reminder_bucket(due_date, reference_date)`
-  純粋関数 + `REMINDER_UPCOMING_WINDOW_DAYS` / `REMINDER_LIST_LIMIT` 定数 + `_today_jst()` helper
-- `backend/tests/...`: 純粋関数 unit (overdue/due_today/upcoming/window 境界) +
-  DB-gated 集約 integration (tenant/project 越境 negative + active-scope + archived 除外 +
-  closed/cancelled 除外 + due_date NULL 除外 + 件数正確性 + capped truncation)
-- `frontend/lib/api/reminders.ts`: zod schema + `fetchReminders()` loader
-- `frontend/app/(admin)/dashboard/page.tsx`: reminder section (fail-closed ok/error)
+- `backend/app/api/me.py`: `reminders` endpoint + `ReminderSummaryResponse` / `ReminderBucket` /
+  `ReminderItem` schema (active-scope + active-project + actionable + due_date NOT NULL +
+  bucket window + bucket 別 cap 込み)。`TicketListResponse` に `reference_date` を追加する箇所は
+  `backend/app/api/tickets.py` (F-002)。
+- `backend/app/domain/...` (または共有 module): `compute_reminder_bucket(due_date, reference_date)`
+  純粋関数 + `_today_jst(now=None)` helper (reminder endpoint と tickets endpoint が共有) +
+  `REMINDER_UPCOMING_WINDOW_DAYS` / `REMINDER_BUCKET_LIST_LIMIT` 定数
+- `backend/app/api/tickets.py`: `TicketListResponse.reference_date` 追加 (`_today_jst()` 由来、F-002)
+- `backend/tests/...`: 純粋関数 unit (overdue/due_today/upcoming/window 境界) + `_today_jst` の
+  JST 深夜境界 unit (F-002) + DB-gated 集約 integration (tenant/project 越境 negative + active-scope +
+  archived 除外 + closed/cancelled 除外 + due_date NULL 除外 + bucket 別件数正確性 + bucket 別 capped
+  truncation) + tickets list response の `reference_date` 整合
+- `frontend/lib/api/reminders.ts`: zod schema (bucket 別) + `fetchReminders()` loader
+- `frontend/lib/api/tickets-board.ts`: `TicketBoardResponseSchema` に `reference_date` 追加 (F-002)
+- `frontend/app/(admin)/dashboard/page.tsx`: reminder section (fail-closed ok/error、bucket 別 +
+  truncated 表示)
 - `frontend/components/selectable-ticket-list.tsx`: 期限 3 段階強調 + 純粋関数 `dueDateBucket`
-- `frontend/app/(admin)/tickets/page.tsx`: server 算出 `referenceDate` (Asia/Tokyo) を list に渡す
-- frontend `__tests__`: reminders loader (zod fail-closed) + dueDateBucket 純粋関数 +
-  list 強調 component + dashboard reminder section
+  (backend 由来 `referenceDate` prop)
+- `frontend/app/(admin)/tickets/page.tsx`: 一覧 response の `reference_date` を list に prop で渡す
+- frontend `__tests__`: reminders loader (zod fail-closed、bucket 欠落/型不正) + dueDateBucket 純粋
+  関数 (overdue/soon/future 境界) + list 強調 component + dashboard reminder section (truncated 表示)
 
 ## テスト指針
 
@@ -225,10 +269,30 @@ Response (ReminderSummaryResponse):
 - **due_date NULL 除外**: due_date 未設定 ticket が含まれないこと。
 - **window 境界**: `due_date == today + threshold_days` は含まれ、`today + threshold_days + 1` は
   含まれないこと (上限境界)。overdue は下限なし (古い超過も含まれる)。
-- **件数正確性 + capped**: REMINDER_LIST_LIMIT 超の対象がある fixture で、bucket 別 COUNT が正確
-  (リスト capped と無関係) かつ `reminders` リスト長 == min(対象総数, LIMIT) であること。
-- **順序決定性**: `due_date ASC, slug ASC` で安定し、overdue → due_today → upcoming の緊急度順。
+- **bucket 別件数正確性 + bucket 別 capped (F-001 必須)**: ある 1 bucket (例 overdue) が
+  `REMINDER_BUCKET_LIST_LIMIT` を大きく超える fixture で、(a) 各 bucket の `count` が正確
+  (cap と無関係)、(b) `items` 長 == min(bucket 対象数, LIMIT)、(c) `truncated` が正しい、かつ
+  **overdue の cap 超過が due_today / upcoming の items を枯渇させない** (due_today / upcoming の
+  items が overdue の件数に関わらず満たされる) こと。
+- **bucket 内順序決定性**: overdue / upcoming は `due_date ASC, slug ASC`、due_today は `slug ASC`。
+- **"today" 権威一本化 (F-002 必須)**: `_today_jst()` の JST 深夜境界 unit
+  (`2026-06-02T23:59:59+09:00` → 2026-06-02 / `2026-06-03T00:00:00+09:00` → 2026-06-03 /
+  UTC instant `2026-06-02T15:30:00Z` = JST 翌 00:30 → 2026-06-03 で **JST であり UTC でない**こと)。
+  reminder endpoint の `reference_date` と tickets list endpoint の `reference_date` が
+  **同一 helper 由来**であること (両 response が同じ基準日を返す integration 整合)。
 - **raw secret なし**: response に raw secret が含まれないこと (`assert_no_raw_secret`)。
-- **frontend loader fail-closed**: malformed (field 欠落 / 型不正 / reminders 非配列) で
-  `fetchReminders()` が throw し、dashboard が degraded 表示になること。truncation 表示
-  (件数合計 > リスト長で「他に N 件」) が出ること。
+- **frontend loader fail-closed**: malformed (bucket 欠落 / count 型不正 / items 非配列 /
+  reference_date 欠落) で `fetchReminders()` が throw し、dashboard が degraded 表示になること。
+  bucket 別 truncation 表示 (`truncated` true で「他に N 件」) が出ること。
+  一覧 response の `reference_date` 欠落で `loadTickets` が throw し一覧が degraded に倒れること。
+
+## plan-review 採否記録 (codex-plan-review R1、2026-06-02)
+
+codex-adversarial-review (mode=plan) R1 verdict=needs-attention、2 findings、いずれも **ADOPT**:
+
+| id | severity | 指摘 | 判定 | 反映 |
+|---|---|---|---|---|
+| F-A7-PR-001 | HIGH | 全 bucket 横断の単一 `LIMIT` だと stale overdue が 200 件超で due_today / upcoming の items を完全に枯渇させ、count 非ゼロでも今日/近日のリンクが出ない bucket 単位の silent truncation | ADOPT | response を **bucket 別 (overdue/due_today/upcoming) の count + capped items + truncated** に再設計。各 bucket 独立 cap (`REMINDER_BUCKET_LIST_LIMIT`)。bucket 内 order を ADR 明文化。 |
+| F-A7-PR-002 | MEDIUM | reminder endpoint と一覧 page が **独立時計**で Asia/Tokyo "today" を算出 → JST 深夜境界で同一 ticket の bucket が画面間で矛盾。"today" 権威が 2 箇所に分裂 | ADOPT | "today" 権威を **backend `_today_jst()` に一本化**。tickets list endpoint も `reference_date` を返し、一覧 page はそれを使う (Next.js server / client で独立算出しない)。JST 深夜境界 contract test 追加。 |
+
+reject / defer: なし。R1 全 adopt 反映後、R2 で clean を確認してから proposed → accepted 昇格。
