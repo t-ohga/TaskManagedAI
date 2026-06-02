@@ -282,6 +282,9 @@ class TagRepository:
         if not ids:
             return {}
         await self._tickets._ensure_tenant_context(tenant_id)  # RLS-ready (Codex R1 HIGH)
+        # active ticket のみ embed する (Codex adversarial R8 HIGH、ticket_ids_with_tag と同 class)。
+        # ticket_tags 行は soft-delete を生き残るため、Ticket join + deleted_at IS NULL を repository
+        # 側で enforce し、direct caller が削除済 ticket の tag metadata を取り出せないようにする。
         result = await self.session.execute(
             select(TicketTag.ticket_id, Tag)
             .join(
@@ -290,10 +293,17 @@ class TagRepository:
                 & (Tag.project_id == TicketTag.project_id)
                 & (Tag.id == TicketTag.tag_id),
             )
+            .join(
+                Ticket,
+                (Ticket.tenant_id == TicketTag.tenant_id)
+                & (Ticket.project_id == TicketTag.project_id)
+                & (Ticket.id == TicketTag.ticket_id),
+            )
             .where(
                 TicketTag.tenant_id == tenant_id,
                 TicketTag.project_id == project_id,
                 TicketTag.ticket_id.in_(ids),
+                Ticket.deleted_at.is_(None),
             )
             .order_by(Tag.name)
         )
