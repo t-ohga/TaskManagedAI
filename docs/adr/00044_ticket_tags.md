@@ -142,9 +142,13 @@ project 一致を **service guard + DB 複合 FK の両方**で検証する。
   ticket_tags は project lock 下で内部 cleanup してから tag を hard delete** (FK2 RESTRICT を満たす、R9 deadlock
   解消)。削除は `config_changed` audit (tag_id / name、observability、復旧用ではない)。**FK2 は ON DELETE
   RESTRICT** (R6) なので、service guard を迂回した raw DELETE でも DB が使用中 tag 削除を拒否する (二重防御)。
-- `POST /api/v1/projects/{project_id}/tickets/{ticket_id}/tags` — ticket に tag 付与 (`{tag_id}`)。
-  **active-project guard** + assert_ticket_actionable + tag が同 project かつ active 検証 (FK + service
-  guard) + 重複は idempotent 200。
+- `POST /api/v1/projects/{project_id}/tickets/{ticket_id}/tags` — ticket に tag 付与。body は
+  **既存 tag を `{tag_id}`** で付けるか、**新規 tag を `{name, color}`** で作成して同一 transaction で付ける
+  (tag_id と name/color は排他、schema validator で enforce)。後者は `create_and_attach_tag` が
+  **assert_ticket_actionable を tag 作成より先に実行**し、create→attach を呼び出し側 commit までの単一
+  transaction で行うため、attach 失敗時は tag 作成も rollback される (**create+attach atomic、Codex R5 HIGH:
+  部分成功の孤立 tag / stale session 下の wrong-project tag 作成を構造的に排除**)。**active-project guard** +
+  tag が同 project かつ active 検証 (FK + service guard) + 重複は idempotent 204。
 - `DELETE /api/v1/projects/{project_id}/tickets/{ticket_id}/tags/{tag_id}` — ticket から tag 除去。
   **active-project guard** + assert_ticket_actionable。
 - `GET /api/v1/projects/{project_id}/tickets` / `.../tickets/{id}`: response の `tags: [{id, name, color}]`

@@ -19,7 +19,7 @@ vi.mock("@/lib/api/tags", () => ({
   listTags: (...args: unknown[]) => listTags(...args)
 }));
 
-import { loadProjectTags, loadTickets } from "@/lib/api/tickets-board";
+import { loadProjectTags, loadProjects, loadTickets } from "@/lib/api/tickets-board";
 
 const PID = "00000000-0000-4000-8000-000000000004";
 const TAG_ID = "00000000-0000-4000-8000-00000000a001";
@@ -55,9 +55,10 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
     await expect(loadTickets(PID, TAG_ID)).rejects.toThrow("network failure");
   });
 
-  it("fails soft (empty result) for unfiltered requests so one project outage does not break all view", async () => {
+  it("always rethrows on failure (caller decides fail-soft vs fail-closed), even unfiltered", async () => {
+    // loadTickets 自身は [] に潰さない (Codex R5 HIGH)。fail-soft は all view caller の責務。
     fetchBackendRaw.mockRejectedValue(new BackendApiError(500, "boom"));
-    await expect(loadTickets(PID)).resolves.toEqual({ items: [], total: 0, truncated: false });
+    await expect(loadTickets(PID)).rejects.toBeInstanceOf(BackendApiError);
   });
 
   it("flags truncated=true when total exceeds the returned page (200 items, total 201)", async () => {
@@ -129,5 +130,22 @@ describe("loadProjectTags fail-closed boundary (Codex frontend R4 HIGH)", () => 
   it("returns tag items on success", async () => {
     listTags.mockResolvedValue({ items: [{ id: TAG_ID, name: "bug", color: "red" }] });
     await expect(loadProjectTags(PID, true)).resolves.toHaveLength(1);
+  });
+});
+
+describe("loadProjects fail-closed boundary (Codex frontend R5 HIGH)", () => {
+  it("rethrows when failClosed (specific project / tag filter) so a /me/projects outage cannot render an empty board as complete", async () => {
+    fetchBackendRaw.mockRejectedValue(new BackendApiError(500, "boom"));
+    await expect(loadProjects(true)).rejects.toBeInstanceOf(BackendApiError);
+  });
+
+  it("returns [] when not failClosed (all view aggregation)", async () => {
+    fetchBackendRaw.mockRejectedValue(new BackendApiError(500, "boom"));
+    await expect(loadProjects(false)).resolves.toEqual([]);
+  });
+
+  it("returns projects on success", async () => {
+    fetchBackendRaw.mockResolvedValue({ projects: [{ id: PID, slug: "p", name: "P" }] });
+    await expect(loadProjects(true)).resolves.toHaveLength(1);
   });
 });

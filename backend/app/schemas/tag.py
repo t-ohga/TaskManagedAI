@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from backend.app.db.models.tag import TagColor
 
@@ -40,9 +40,27 @@ class TagUpdate(BaseModel):
 
 
 class TicketTagAttach(BaseModel):
+    """ticket への tag 付与。既存 tag を `tag_id` で付けるか、新規 tag を `name`+`color` で
+    作成して同一 transaction で付ける (ADR-00044、Codex R5 HIGH: create+attach を atomic 化し
+    部分成功の孤立 tag を防ぐ)。tag_id と (name, color) は排他。"""
+
     model_config = ConfigDict(extra="forbid")
 
-    tag_id: UUID
+    tag_id: UUID | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=50)
+    color: TagColor | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_mode(self) -> TicketTagAttach:
+        has_existing = self.tag_id is not None
+        has_new = self.name is not None or self.color is not None
+        if has_existing and has_new:
+            raise ValueError("tag_id と name/color は同時に指定できません。")
+        if not has_existing and not has_new:
+            raise ValueError("tag_id または (name, color) のいずれかを指定してください。")
+        if has_new and (self.name is None or self.color is None):
+            raise ValueError("新規タグには name と color の両方が必要です。")
+        return self
 
 
 __all__ = [

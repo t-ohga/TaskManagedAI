@@ -268,6 +268,32 @@ class TagRepository:
             )
             await self.session.flush()
 
+    async def create_and_attach_tag(
+        self,
+        tenant_id: int,
+        project_id: UUID,
+        ticket_id: UUID,
+        *,
+        name: str,
+        color: str,
+        actor_id: UUID | None = None,
+    ) -> Tag:
+        """新規 tag を作成し同一 transaction で ticket に付与する (Codex adversarial R5 HIGH)。
+
+        ticket actionable を **tag 作成より先に** 検証し (archived → 409 / soft-deleted・不在 → 404)、
+        その後 create → attach を呼ぶ。caller (endpoint) が commit するまで両 statement は未確定なので、
+        attach が失敗すれば tag 作成も rollback される。これにより「create は成功したが attach 失敗で
+        孤立 tag が残る (stale session 下で wrong project に作られる)」部分成功を構造的に排除する。
+        """
+        # ticket が actionable (active project の active ticket) かを先に検証。ここで弾けば tag を
+        # 作らずに済む。create_tag 内の assert_project_exists_active と二重だが FOR UPDATE lock は冪等。
+        await self._tickets.assert_ticket_actionable(tenant_id, project_id, str(ticket_id))
+        tag = await self.create_tag(
+            tenant_id, project_id, name=name, color=color, actor_id=actor_id
+        )
+        await self.attach_tag(tenant_id, project_id, ticket_id, tag.id)
+        return tag
+
     async def detach_tag(
         self,
         tenant_id: int,

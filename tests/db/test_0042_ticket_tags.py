@@ -328,6 +328,49 @@ async def test_tags_for_tickets_excludes_soft_deleted(
 
 
 @pytest.mark.asyncio
+async def test_create_and_attach_is_atomic(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """create_and_attach_tag は ticket actionable を先に検証し、不在 ticket なら tag を作らない
+    (atomic、Codex R5 HIGH: 部分成功の孤立 tag を防ぐ)。"""
+    from uuid import UUID
+
+    from backend.app.repositories.tag import TagRepository
+    from backend.app.repositories.ticket import TicketNotActionableError
+
+    project_id, ticket_id = str(uuid4()), str(uuid4())
+    missing_ticket = str(uuid4())
+    async with session_factory() as session:
+        await _seed_project_ticket_tag(
+            session, project_id=project_id, ticket_id=ticket_id, tag_id=None
+        )
+        repo = TagRepository(session)
+        # 不在 ticket への create+attach → ticket actionable 検証で弾かれ tag は作られない
+        with pytest.raises(TicketNotActionableError):
+            await repo.create_and_attach_tag(
+                1, UUID(project_id), UUID(missing_ticket), name="orphan", color="red"
+            )
+        # 孤立 tag が作られていないこと (atomic)
+        leaked = await session.scalar(
+            text("select count(*) from tags where project_id = :pid and name = 'orphan'"),
+            {"pid": project_id},
+        )
+        assert leaked == 0
+        # 正常系: actionable ticket への create+attach は tag 作成 + 付与の両方を残す
+        tag = await repo.create_and_attach_tag(
+            1, UUID(project_id), UUID(ticket_id), name="bug", color="blue"
+        )
+        await session.flush()
+        attached = await session.scalar(
+            text(
+                "select count(*) from ticket_tags where ticket_id = :tid and tag_id = :tag"
+            ),
+            {"tid": ticket_id, "tag": str(tag.id)},
+        )
+        assert attached == 1
+
+
+@pytest.mark.asyncio
 async def test_detach_rejects_cross_project_tag(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

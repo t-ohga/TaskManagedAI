@@ -1,9 +1,14 @@
 import Link from "next/link";
 import { Suspense } from "react";
 
-import { BackendApiError, fetchBackendRaw } from "@/lib/api/client";
+import { BackendApiError } from "@/lib/api/client";
 import { getCurrentProject } from "@/lib/api/session";
-import { loadProjectTags, loadTickets, type TicketItem } from "@/lib/api/tickets-board";
+import {
+  loadProjectTags,
+  loadProjects,
+  loadTickets,
+  type TicketItem
+} from "@/lib/api/tickets-board";
 import type { TagRead } from "@/lib/domain/tag";
 import { ProjectTab } from "@/components/project-tab";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
@@ -28,23 +33,6 @@ function formatDueDate(value: string | null): string | null {
   if (!match) return value;
   const [, , month, day] = match;
   return `${Number(month)}/${Number(day)}`;
-}
-
-type ProjectItem = {
-  project_id?: string;
-  id?: string;
-  slug: string;
-  name: string;
-};
-
-async function loadProjects(): Promise<ProjectItem[]> {
-  try {
-    const res = await fetchBackendRaw("/api/v1/me/projects");
-    const raw = res as Record<string, unknown>;
-    return ((raw?.projects ?? raw?.items ?? []) as ProjectItem[]);
-  } catch {
-    return [];
-  }
 }
 
 type KanbanGroup = "todo" | "active" | "done";
@@ -178,7 +166,9 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   const tagFilter = params.tag ?? "";
   const currentView = (params.view === "list" ? "list" : "kanban") as "kanban" | "list";
   const sortKey = params.sort ?? "created_desc";
-  const projects = await loadProjects();
+  // 具体 project 選択中 or tag filter 適用中は project metadata を fail-closed で要求する
+  // (取得失敗で「0 件」board を完全な結果として描画しない、Codex R5 HIGH)。横断時は fail-soft。
+  const projects = await loadProjects(selectedProject !== "all" || Boolean(tagFilter));
   // 作成先は server action が session の current_project から resolve する。
   // 表示中 project (URL ?project=) と current_project が一致するときだけ作成 CTA を出す
   // (Codex B2b finding: URL 選択と session current_project の乖離による wrong-project write 防止)。
@@ -209,12 +199,20 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   // tag 絞り込み結果が limit を超えて truncate された場合の通知 (不完全を完全と見せない、R3 HIGH)。
   let tagFilterTruncated: { total: number; shown: number } | null = null;
 
+  // 横断 (all view) で取得に失敗した project 数 (fail-soft、欠落を warning で可視化)。
+  let omittedProjects = 0;
+
   if (selectedProject === "all") {
     for (const p of projects) {
       const pid = String((p as Record<string, unknown>).project_id ?? (p as Record<string, unknown>).id ?? "");
       if (!pid) continue;
-      const board = await loadTickets(pid);
-      allTickets.push(...board.items.map((t) => ({ ...t, projectSlug: p.slug })));
+      try {
+        const board = await loadTickets(pid);
+        allTickets.push(...board.items.map((t) => ({ ...t, projectSlug: p.slug })));
+      } catch {
+        // all view は 1 project の一時障害で全体を落とさず、欠落を warning で可視化 (fail-soft)。
+        omittedProjects += 1;
+      }
     }
   } else {
     const project = projects.find((p) => p.slug === selectedProject);
@@ -229,8 +227,9 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
           }
         } catch (error) {
           if (error instanceof BackendApiError && error.status === 404) {
-            // 無効タグ (cross-project / nonexistent / soft-deleted) のみ絞り込み解除して全件取得
-            // (silent な「該当なし」を避ける)。
+            // 無効タグ (cross-project / nonexistent / soft-deleted) のみ絞り込み解除して全件取得。
+            // fallback の loadTickets も失敗を throw → error boundary に流す (fail-closed、R5 HIGH:
+            // 「filter cleared, all displayed」を 0 件で見せない)。
             tagFilterInvalid = true;
             const board = await loadTickets(pid);
             allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug }));
@@ -241,6 +240,8 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
           }
         }
       } else {
+        // selected-project load は fail-closed (loadTickets が throw → error boundary、R5 HIGH:
+        // 障害を「ticket 0 件の project」と誤表示しない)。
         const board = await loadTickets(pid);
         allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug }));
       }
@@ -349,6 +350,12 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             このタグには {tagFilterTruncated.total} 件のチケットがマッチしますが、最初の
             {tagFilterTruncated.shown} 件のみ表示しています。すべて確認するにはステータスや期間で
             さらに絞り込んでください。
+          </div>
+        ) : null}
+        {omittedProjects > 0 ? (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            {omittedProjects} 件のプロジェクトのチケットを取得できなかったため、一覧から除外しています。
+            時間をおいて再読み込みしてください。
           </div>
         ) : null}
       </Suspense>

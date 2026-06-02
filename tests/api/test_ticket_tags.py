@@ -124,6 +124,28 @@ def test_tag_update_and_attach_schema_forbid_extra() -> None:
         )
 
 
+def test_ticket_tag_attach_tag_id_xor_new_tag() -> None:
+    """attach body は tag_id (既存) XOR name+color (新規 create+attach)。両方/どちらも無し/片方欠落は reject。"""
+    # 既存 tag attach
+    TicketTagAttach.model_validate({"tag_id": "00000000-0000-4000-8000-000000000001"})
+    # 新規 create + attach
+    TicketTagAttach.model_validate({"name": "bug", "color": "red"})
+    # 両方指定 → reject
+    with pytest.raises(ValidationError):
+        TicketTagAttach.model_validate(
+            {"tag_id": "00000000-0000-4000-8000-000000000001", "name": "bug", "color": "red"}
+        )
+    # どちらも無し → reject
+    with pytest.raises(ValidationError):
+        TicketTagAttach.model_validate({})
+    # name のみ (color 欠落) → reject
+    with pytest.raises(ValidationError):
+        TicketTagAttach.model_validate({"name": "bug"})
+    # palette 外 color → reject
+    with pytest.raises(ValidationError):
+        TicketTagAttach.model_validate({"name": "bug", "color": "magenta"})
+
+
 def test_tag_create_schema_rejects_invalid_color() -> None:
     """palette 外 color は schema validation で 422。"""
     with pytest.raises(ValidationError):

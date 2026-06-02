@@ -215,7 +215,25 @@ async def attach_tag(
 ) -> None:
     repo = TagRepository(session)
     try:
-        await repo.attach_tag(tenant_id, project_id, ticket_id, body.tag_id)
+        if body.tag_id is not None:
+            await repo.attach_tag(tenant_id, project_id, ticket_id, body.tag_id)
+        elif body.name is None or body.color is None:
+            # schema validator (TicketTagAttach._exactly_one_mode) が両在を保証するため通常到達しない
+            # defensive narrowing。
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="新規タグには name と color の両方が必要です。",
+            )
+        else:
+            # 新規 tag 作成 + 付与を同一 transaction で実行 (atomic、Codex R5 HIGH)。
+            await repo.create_and_attach_tag(
+                tenant_id,
+                project_id,
+                ticket_id,
+                name=body.name,
+                color=body.color,
+                actor_id=actor_id,
+            )
     except IntegrityError as exc:
         await session.rollback()
         # concurrent attach が同 row を作った場合は idempotent (既に付与済) として 204

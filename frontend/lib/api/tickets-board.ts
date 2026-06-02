@@ -40,6 +40,14 @@ export type TicketBoardResult = {
   truncated: boolean;
 };
 
+/**
+ * 単一 project の ticket を取得する。
+ *
+ * **常に失敗を throw する (Codex R5 HIGH)**。fail-soft / fail-closed の policy は caller intent で
+ * 決める: selected-project load と tag-filtered load (+ invalid-tag fallback) は throw を伝播して
+ * error boundary に流し (fail-closed、不完全を完全と見せない)、all-project aggregation のみ caller が
+ * catch して per-project omission を可視化する (fail-soft)。本 loader 自身は [] に潰さない。
+ */
 export async function loadTickets(
   projectId: string,
   tagId?: string
@@ -47,25 +55,43 @@ export async function loadTickets(
   const params = new URLSearchParams({ limit: String(TICKET_BOARD_PAGE_LIMIT) });
   if (tagId) params.set("tag_id", tagId);
   const path = `/api/v1/projects/${projectId}/tickets?${params.toString()}` as `/${string}`;
+  const res = await fetchBackendRaw(path);
+  const raw = res as Record<string, unknown>;
+  const rawItems = (raw?.items ?? []) as (TicketItem & { tags?: unknown })[];
+  // tags は backend が inject するが Zod で strict validate し、欠落/palette drift は [] に倒す。
+  const items = rawItems.map((t) => {
+    const tagsParsed = z.array(TagReadSchema).safeParse(t.tags ?? []);
+    return { ...t, tags: tagsParsed.success ? tagsParsed.data : [] };
+  });
+  const total = typeof raw?.total === "number" ? raw.total : items.length;
+  return { items, total, truncated: total > items.length };
+}
+
+export type ProjectBoardItem = {
+  project_id?: string;
+  id?: string;
+  slug: string;
+  name: string;
+};
+
+/**
+ * `/me/projects` を取得する。
+ *
+ * **fail-closed 分岐 (Codex R5 HIGH)**: `failClosed=true` (具体 project / tag filter を選択中) のとき
+ * project metadata の取得失敗を [] に潰すと、slug 解決できず ticket fetch も走らないまま「0 件」board を
+ * 完全な結果として描画してしまう。そのため失敗を caller へ伝播し error boundary に流す。横断 (all view)
+ * 時は project 一覧が補助なので fail-soft ([])。
+ */
+export async function loadProjects(failClosed: boolean): Promise<ProjectBoardItem[]> {
   try {
-    const res = await fetchBackendRaw(path);
+    const res = await fetchBackendRaw("/api/v1/me/projects");
     const raw = res as Record<string, unknown>;
-    const rawItems = (raw?.items ?? []) as (TicketItem & { tags?: unknown })[];
-    // tags は backend が inject するが Zod で strict validate し、欠落/palette drift は [] に倒す。
-    const items = rawItems.map((t) => {
-      const tagsParsed = z.array(TagReadSchema).safeParse(t.tags ?? []);
-      return { ...t, tags: tagsParsed.success ? tagsParsed.data : [] };
-    });
-    const total = typeof raw?.total === "number" ? raw.total : items.length;
-    return { items, total, truncated: total > items.length };
+    return (raw?.projects ?? raw?.items ?? []) as ProjectBoardItem[];
   } catch (error) {
-    // tag filter は正確性が重要。失敗 (auth / backend / network) を [] に潰さず caller へ伝播し、
-    // 404 (無効 tag) も caller で絞り込み解除に倒す (silent な「該当なし」を防ぐ、Codex R2 HIGH)。
-    if (tagId) {
+    if (failClosed) {
       throw error;
     }
-    // 通常取得 (tag なし / all view) は fail-soft (1 project の一時障害で全体を落とさない)。
-    return { items: [], total: 0, truncated: false };
+    return [];
   }
 }
 

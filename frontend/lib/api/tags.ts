@@ -95,6 +95,27 @@ export async function attachTag(
   );
 }
 
+/**
+ * 新規 tag を作成して同一 backend transaction で ticket に付与する (ADR-00044、Codex R5 HIGH)。
+ * create + attach を 1 endpoint に集約し、部分成功で孤立 tag が残るのを防ぐ。
+ */
+export async function createAndAttachTag(
+  projectId: string,
+  ticketId: string,
+  body: { name: string; color: TagColor }
+): Promise<void> {
+  assertUuid(projectId, "project id");
+  assertUuid(ticketId, "ticket id");
+  return fetchBackendNoContent(
+    `/api/v1/projects/${projectId}/tickets/${ticketId}/tags` as `/${string}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: body.name, color: body.color })
+    }
+  );
+}
+
 export async function detachTag(
   projectId: string,
   ticketId: string,

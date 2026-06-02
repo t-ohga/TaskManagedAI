@@ -4,7 +4,13 @@ import { revalidatePath } from "next/cache";
 
 import { BackendApiError } from "@/lib/api/client";
 import { getCurrentProjectId } from "@/lib/api/session";
-import { attachTag, createTag, deleteTag, detachTag, renameTag } from "@/lib/api/tags";
+import {
+  attachTag,
+  createAndAttachTag,
+  deleteTag,
+  detachTag,
+  renameTag
+} from "@/lib/api/tags";
 import { TagColorEnum } from "@/lib/domain/tag";
 
 /**
@@ -102,8 +108,9 @@ export async function createTagAndAttachAction(
   }
   try {
     const projectId = await getCurrentProjectId();
-    const tag = await createTag(projectId, { name, color: colorParsed.data });
-    await attachTag(projectId, ticketId, tag.id);
+    // create + attach を単一 backend transaction で実行 (atomic、Codex R5 HIGH)。
+    // attach 失敗時に tag 作成も rollback され、孤立 tag が残らない。
+    await createAndAttachTag(projectId, ticketId, { name, color: colorParsed.data });
     revalidateTicket(ticketId);
     return { kind: "ok" };
   } catch (error) {
