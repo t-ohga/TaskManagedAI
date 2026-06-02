@@ -10,6 +10,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.approval_inbox import (
@@ -39,6 +40,57 @@ router = APIRouter(prefix="/api/v1/projects/{project_id}/tags", tags=["tags"])
 ticket_tags_router = APIRouter(
     prefix="/api/v1/projects/{project_id}/tickets/{ticket_id}/tags", tags=["tags"]
 )
+
+
+_KNOWN_CONSTRAINTS = (
+    "tags_uq_tenant_project_name",
+    "ticket_tags_pkey",
+    "ticket_tags_tag_fkey",
+    "ticket_tags_ticket_fkey",
+    "tags_ck_name_length",
+    "tags_ck_color",
+)
+
+
+def _integrity_constraint(exc: IntegrityError) -> str:
+    """IntegrityError から違反した constraint 名を抽出する (asyncpg の constraint_name 優先)。"""
+    orig = getattr(exc, "orig", None)
+    name = getattr(orig, "constraint_name", None)
+    if name:
+        return str(name)
+    text = str(orig or exc)
+    for cn in _KNOWN_CONSTRAINTS:
+        if cn in text:
+            return cn
+    return ""
+
+
+def _map_integrity_error(exc: IntegrityError, *, op: str) -> HTTPException:
+    """race / raw 経路で DB 制約が発火した場合を documented な 409/422/404 に写像する
+    (Codex code-review R2 HIGH-1。500 への degrade を防ぐ)。"""
+    cn = _integrity_constraint(exc)
+    if cn == "tags_uq_tenant_project_name":
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="a tag with this name already exists in this project.",
+        )
+    if cn == "ticket_tags_tag_fkey":
+        if op == "delete":
+            return HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail={"error": "tag_in_use"}
+            )
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="tag not found for project."
+        )
+    if "_ck_" in cn:
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="tag value violates a database constraint.",
+        )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="tag operation conflicts with the current state.",
+    )
 
 
 def _to_read(tag: Tag) -> TagRead:
@@ -91,6 +143,9 @@ async def create_tag(
         tag = await repo.create_tag(
             tenant_id, project_id, name=body.name, color=body.color, actor_id=actor_id
         )
+    except IntegrityError as exc:
+        await session.rollback()
+        raise _map_integrity_error(exc, op="create") from exc
     except Exception as exc:  # noqa: BLE001 - 既知 domain error を HTTP に写像
         raise _map_tag_error(exc) from exc
     await session.commit()
@@ -112,6 +167,9 @@ async def update_tag(
         tag = await repo.rename_tag(
             tenant_id, project_id, tag_id, name=body.name, color=body.color
         )
+    except IntegrityError as exc:
+        await session.rollback()
+        raise _map_integrity_error(exc, op="rename") from exc
     except Exception as exc:  # noqa: BLE001
         raise _map_tag_error(exc) from exc
     await session.commit()
@@ -130,6 +188,9 @@ async def delete_tag(
     repo = TagRepository(session)
     try:
         await repo.delete_tag(tenant_id, project_id, tag_id, actor_id=actor_id)
+    except IntegrityError as exc:
+        await session.rollback()
+        raise _map_integrity_error(exc, op="delete") from exc
     except Exception as exc:  # noqa: BLE001
         raise _map_tag_error(exc) from exc
     await session.commit()
@@ -148,6 +209,12 @@ async def attach_tag(
     repo = TagRepository(session)
     try:
         await repo.attach_tag(tenant_id, project_id, ticket_id, body.tag_id)
+    except IntegrityError as exc:
+        await session.rollback()
+        # concurrent attach が同 row を作った場合は idempotent (既に付与済) として 204
+        if _integrity_constraint(exc) == "ticket_tags_pkey":
+            return None
+        raise _map_integrity_error(exc, op="attach") from exc
     except Exception as exc:  # noqa: BLE001
         raise _map_tag_error(exc) from exc
     await session.commit()
