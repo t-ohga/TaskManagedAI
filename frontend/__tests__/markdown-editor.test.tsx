@@ -58,6 +58,29 @@ describe("MarkdownEditor", () => {
     expect(ta.value).toBe("1. 最初");
   });
 
+  it("複数行選択の箇条書きは全行の行頭に '- ' を付与する (R1 F-001)", () => {
+    render(<MarkdownEditor ariaLabel="本文" defaultValue={"a\nb\nc"} />);
+    const ta = screen.getByLabelText("本文") as HTMLTextAreaElement;
+    ta.focus();
+    ta.setSelectionRange(0, 3); // "a\nb" を選択
+    fireEvent.click(screen.getByRole("button", { name: "箇条書き" }));
+    // a, b 行に prefix、c 行は選択外なので非付与。
+    expect(ta.value).toBe("- a\n- b\nc");
+  });
+
+  it("複数行選択の見出しは全行に '## ' を付与し preview で各行が見出しになる (R1 F-001)", () => {
+    render(<MarkdownEditor ariaLabel="本文" defaultValue={"A\nB"} />);
+    const ta = screen.getByLabelText("本文") as HTMLTextAreaElement;
+    ta.focus();
+    ta.setSelectionRange(0, 3); // "A\nB" 全体
+    fireEvent.click(screen.getByRole("button", { name: "見出し" }));
+    expect(ta.value).toBe("## A\n## B");
+    // preview で 2 つの見出しが描画される (toolbar の "B" ボタンと区別するため heading role で取得)。
+    fireEvent.click(screen.getByRole("button", { name: "プレビュー" }));
+    expect(screen.getByRole("heading", { name: "A", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "B", level: 2 })).toBeInTheDocument();
+  });
+
   it("プレビュータブで MarkdownRenderer の sanitize 済 HTML を表示する", () => {
     render(<MarkdownEditor ariaLabel="本文" defaultValue={"- **太字** 項目"} />);
     fireEvent.click(screen.getByRole("button", { name: "プレビュー" }));

@@ -50,51 +50,70 @@ function inlineFormat(escaped: string): string {
     );
 }
 
-// G-4: block 単位の変換 (J-4 の regex chain から block-based に再構成)。空行 (\n{2,}) で block を
-// 分割し、各 block を 見出し / 箇条書き / 番号付き / 段落 に分類する。リスト項目内の content も
-// escape 済 + inline 装飾のみで、属性 / URL を生成しない (XSS surface は J-4 と同一)。
+// G-4: line-by-line 変換 (J-4 の regex chain から再構成、adversarial R1: 混在行の list/heading を
+// 標準 Markdown 準拠で正しく抽出する)。各行を 見出し (# / ## / ###) / 箇条書き (- / *) / 番号付き
+// (1.) / 段落 に分類し、連続する list 行を <ul>/<ol> にまとめ、空行で段落/list を区切る。list 項目 /
+// 段落 / 見出しの content は escape 済 + inline 装飾のみで属性 / URL / script を生成しない
+// (XSS surface は J-4 と同一)。
 function markdownToHtml(md: string): string {
   const escaped = escapeHtml(md);
-  const blocks = escaped.split(/\n{2,}/);
-  const htmlBlocks: string[] = [];
+  const lines = escaped.split("\n");
+  const out: string[] = [];
+  let para: string[] = [];
+  let list: { type: "ul" | "ol"; items: string[] } | null = null;
 
-  for (const block of blocks) {
-    const lines = block.split("\n").filter((line) => line.trim() !== "");
-    if (lines.length === 0) continue;
+  const flushPara = (): void => {
+    if (para.length > 0) {
+      out.push(`<p>${inlineFormat(para.join("\n"))}</p>`);
+      para = [];
+    }
+  };
+  const flushList = (): void => {
+    if (list) {
+      out.push(`<${list.type}>${list.items.join("")}</${list.type}>`);
+      list = null;
+    }
+  };
 
-    // 見出し (単一行 block の # / ## / ###)。
-    if (lines.length === 1) {
-      const heading = /^(#{1,3}) (.+)$/.exec(lines[0] ?? "");
-      if (heading) {
-        const level = heading[1]?.length ?? 1;
-        htmlBlocks.push(`<h${level}>${inlineFormat(heading[2] ?? "")}</h${level}>`);
-        continue;
+  for (const line of lines) {
+    if (line.trim() === "") {
+      // 空行は段落 / list の区切り。
+      flushPara();
+      flushList();
+      continue;
+    }
+    const heading = /^(#{1,3}) (.+)$/.exec(line);
+    const ulItem = /^[-*] (.+)$/.exec(line);
+    const olItem = /^\d+\. (.+)$/.exec(line);
+
+    if (heading) {
+      flushPara();
+      flushList();
+      const level = heading[1]?.length ?? 1;
+      out.push(`<h${level}>${inlineFormat(heading[2] ?? "")}</h${level}>`);
+    } else if (ulItem) {
+      flushPara();
+      if (!list || list.type !== "ul") {
+        flushList();
+        list = { type: "ul", items: [] };
       }
+      list.items.push(`<li>${inlineFormat(ulItem[1] ?? "")}</li>`);
+    } else if (olItem) {
+      flushPara();
+      if (!list || list.type !== "ol") {
+        flushList();
+        list = { type: "ol", items: [] };
+      }
+      list.items.push(`<li>${inlineFormat(olItem[1] ?? "")}</li>`);
+    } else {
+      flushList();
+      para.push(line);
     }
-
-    // 箇条書き (全行が `- ` / `* `)。
-    if (lines.every((line) => /^[-*] (.+)$/.test(line))) {
-      const items = lines
-        .map((line) => `<li>${inlineFormat(line.replace(/^[-*] /, ""))}</li>`)
-        .join("");
-      htmlBlocks.push(`<ul>${items}</ul>`);
-      continue;
-    }
-
-    // 番号付き (全行が `1. ` 形式)。
-    if (lines.every((line) => /^\d+\. (.+)$/.test(line))) {
-      const items = lines
-        .map((line) => `<li>${inlineFormat(line.replace(/^\d+\. /, ""))}</li>`)
-        .join("");
-      htmlBlocks.push(`<ol>${items}</ol>`);
-      continue;
-    }
-
-    // 段落 (複数行は \n 結合 = HTML 上は空白)。
-    htmlBlocks.push(`<p>${inlineFormat(lines.join("\n"))}</p>`);
   }
+  flushPara();
+  flushList();
 
-  return sanitizeMarkdownHtml(htmlBlocks.join(""));
+  return sanitizeMarkdownHtml(out.join(""));
 }
 
 export function MarkdownRenderer({ content }: MarkdownRendererProps) {

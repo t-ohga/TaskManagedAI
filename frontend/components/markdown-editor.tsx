@@ -91,9 +91,24 @@ export function MarkdownEditor({
     const ta = textareaRef.current;
     if (!ta) return;
     const start = ta.selectionStart;
-    const lineStart = current.lastIndexOf("\n", start - 1) + 1;
-    const next = current.slice(0, lineStart) + prefix + current.slice(lineStart);
-    pendingSelection.current = [start + prefix.length, start + prefix.length];
+    const end = ta.selectionEnd;
+    // 選択範囲が跨ぐ全行の行頭に prefix を付与する (adversarial R1: 複数行選択で list/heading が
+    // 1 行だけになり renderer 上で no-op 化するのを防ぐ)。
+    const firstLineStart = current.lastIndexOf("\n", start - 1) + 1;
+    // 選択末尾を含む行まで対象にする (selectionEnd が改行直後の場合は前行までに留める)。
+    const selEnd = end > start ? end - 1 : end;
+    const before = current.slice(0, firstLineStart);
+    const region = current.slice(firstLineStart, current.indexOf("\n", selEnd) === -1
+      ? current.length
+      : current.indexOf("\n", selEnd));
+    const after = current.slice(firstLineStart + region.length);
+    const prefixedRegion = region
+      .split("\n")
+      .map((line) => prefix + line)
+      .join("\n");
+    const next = before + prefixedRegion + after;
+    const addedTotal = prefixedRegion.length - region.length;
+    pendingSelection.current = [start + prefix.length, end + addedTotal];
     setCurrent(next);
   }
 

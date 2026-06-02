@@ -50,11 +50,19 @@ describe("markdownToHtml (J-4 DOMPurify sanitize)", () => {
     expect(out).toBe("<p>導入文</p><ul><li>a</li><li>b</li></ul><p>結び</p>");
   });
 
-  it("リスト記号に見える行が混在する block は段落として扱う (誤 li 生成しない)", () => {
-    const out = markdownToHtml("ふつうの文\n- 1 項目だけリスト風");
-    // 全行が list 形式でない block は段落 (li を作らない)。
-    expect(out).not.toMatch(/<li>/);
-    expect(out).toMatch(/<p>/);
+  it("段落の直後に list 行が来たら段落を閉じて list を開始する (標準 Markdown、line-by-line)", () => {
+    const out = markdownToHtml("ふつうの文\n- 項目1\n- 項目2");
+    expect(out).toBe("<p>ふつうの文</p><ul><li>項目1</li><li>項目2</li></ul>");
+  });
+
+  it("複数行の見出しを各行 <hN> に変換する (toolbar 複数行選択対応、R1)", () => {
+    const out = markdownToHtml("## 見出しA\n## 見出しB");
+    expect(out).toBe("<h2>見出しA</h2><h2>見出しB</h2>");
+  });
+
+  it("ul と ol が連続する block を別リストに分ける", () => {
+    const out = markdownToHtml("- a\n1. b");
+    expect(out).toBe("<ul><li>a</li></ul><ol><li>b</li></ol>");
   });
 });
 
