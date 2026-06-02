@@ -58,13 +58,14 @@ export async function loadTickets(
   const res = await fetchBackendRaw(path);
   const raw = res as Record<string, unknown>;
   const rawItems = (raw?.items ?? []) as (TicketItem & { tags?: unknown })[];
-  // tags は backend が inject する。Zod で strict validate し、**malformed (version skew / palette
-  // drift) は [] に潰さず throw する** (Codex R6 HIGH: tag 付き ticket を「タグなし」と silent 誤表示
-  // しない)。caller が intent で fail-closed / omission に倒す。
+  // tags は backend が常に inject する (TicketRead は default_factory=list)。Zod で strict validate し、
+  // **malformed / absent / null は [] に潰さず throw する** (Codex R6/R7 HIGH)。`?? []` を使わず t.tags を
+  // 直接 parse することで、explicit `tags: []` (タグなし、有効) と、version skew / degraded serializer で
+  // tags が欠落/null になった metadata 不在 (tag 付き ticket を「タグなし」と silent 誤表示する) を区別する。
   const items = rawItems.map((t) => {
-    const tagsParsed = z.array(TagReadSchema).safeParse(t.tags ?? []);
+    const tagsParsed = z.array(TagReadSchema).safeParse(t.tags);
     if (!tagsParsed.success) {
-      throw new Error("ticket tag metadata failed schema validation");
+      throw new Error("ticket tag metadata missing or failed schema validation");
     }
     return { ...t, tags: tagsParsed.data };
   });

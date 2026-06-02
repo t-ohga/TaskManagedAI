@@ -38,7 +38,10 @@ function ticketPayload(id: string) {
     due_date: null,
     created_at: null,
     updated_at: null,
-    project_id: "ignored-by-loader"
+    project_id: "ignored-by-loader",
+    // backend TicketRead は常に tags を返す (default_factory=list)。loader が fail-closed なので
+    // fixture も explicit [] を持たせる。tags 欠落ケースは下の omitted test で別途検証する。
+    tags: []
   };
 }
 
@@ -87,6 +90,34 @@ describe("loadTicket (Codex B2b R2/R3/R4/R5 contract)", () => {
     });
 
     await expect(loadTicket(VALID_UUID)).rejects.toThrow();
+  });
+
+  it("tags metadata が欠落 (version skew / degraded) なら throw する (explicit [] と区別、R7 HIGH)", async () => {
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/me/projects") return PROJECTS;
+      if (path === `/api/v1/projects/p-aaa/tickets/${VALID_UUID}`) throw new BackendApiError(404, "nf");
+      if (path === `/api/v1/projects/p-bbb/tickets/${VALID_UUID}`) {
+        // tags field を欠落させた degraded response
+        const payload: Record<string, unknown> = { ...ticketPayload(VALID_UUID) };
+        delete payload.tags;
+        return payload;
+      }
+      throw new BackendApiError(500, "unexpected");
+    });
+
+    await expect(loadTicket(VALID_UUID)).rejects.toThrow();
+  });
+
+  it("explicit tags:[] は有効なタグなし ticket として扱う", async () => {
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/me/projects") return PROJECTS;
+      if (path === `/api/v1/projects/p-aaa/tickets/${VALID_UUID}`) throw new BackendApiError(404, "nf");
+      if (path === `/api/v1/projects/p-bbb/tickets/${VALID_UUID}`) return { ...ticketPayload(VALID_UUID), tags: [] };
+      throw new BackendApiError(500, "unexpected");
+    });
+
+    const result = await loadTicket(VALID_UUID);
+    expect(result?.tags).toEqual([]);
   });
 
   it("有効な tags は detail にそのまま詰める", async () => {

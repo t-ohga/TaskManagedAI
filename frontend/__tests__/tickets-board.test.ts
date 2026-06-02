@@ -115,7 +115,7 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
     await expect(loadTickets(PID)).rejects.toThrow();
   });
 
-  it("accepts an empty tags array as a valid no-tag ticket (not malformed)", async () => {
+  it("accepts an explicit empty tags array as a valid no-tag ticket (not malformed)", async () => {
     fetchBackendRaw.mockResolvedValue({
       items: [
         { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: null, created_at: null, tags: [] }
@@ -124,6 +124,26 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
     });
     const result = await loadTickets(PID);
     expect(result.items[0]?.tags).toEqual([]);
+  });
+
+  it("throws when tags metadata is omitted (version skew / degraded), distinct from explicit [] (R7 HIGH)", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      items: [
+        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: null, created_at: null }
+      ],
+      total: 1
+    });
+    await expect(loadTickets(PID)).rejects.toThrow();
+  });
+
+  it("throws when tags metadata is null (degraded serializer)", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      items: [
+        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: null, created_at: null, tags: null }
+      ],
+      total: 1
+    });
+    await expect(loadTickets(PID)).rejects.toThrow();
   });
 });
 

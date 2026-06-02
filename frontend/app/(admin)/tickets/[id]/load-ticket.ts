@@ -68,14 +68,16 @@ export async function loadTicket(id: string): Promise<TicketDetail | null> {
         );
         const ticket = ticketRes as (TicketDetail & { id?: string }) | null;
         if (ticket && ticket.id?.toLowerCase() === normalizedId) {
-          // tags は backend が inject する。Zod で strict validate し、**malformed (version skew /
-          // palette drift) は [] に潰さず throw** する (Codex R6 HIGH: tag 付き ticket を「タグなし」と
-          // silent 誤表示しない)。throw は probe の rejected として最優先 surface され error boundary へ。
+          // tags は backend が常に inject する。Zod で strict validate し、**malformed / absent / null は
+          // [] に潰さず throw** する (Codex R6/R7 HIGH)。`?? []` を使わず直接 parse し、explicit `tags: []`
+          // (タグなし) と version skew / degraded での metadata 不在を区別する。本ページは attach/detach/
+          // rename/delete の write surface なので、false empty から始めると現在の分類を誤認させる。
+          // throw は probe の rejected として最優先 surface され error boundary へ。
           const tagsParsed = z
             .array(TagReadSchema)
-            .safeParse((ticketRes as Record<string, unknown>)?.tags ?? []);
+            .safeParse((ticketRes as Record<string, unknown>)?.tags);
           if (!tagsParsed.success) {
-            throw new Error("ticket tag metadata failed schema validation");
+            throw new Error("ticket tag metadata missing or failed schema validation");
           }
           return {
             ...ticket,
