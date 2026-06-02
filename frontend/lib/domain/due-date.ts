@@ -73,21 +73,26 @@ export function isReminderActionableStatus(status: string): boolean {
 }
 
 /**
- * ticket の status + 期限から強調用 bucket を返す共有 helper (一覧 / Kanban 共通)。
+ * ticket の project 状態 + status + 期限から強調用 bucket を返す共有 helper (一覧 / Kanban 共通)。
  *
+ * backend reminders query の対象条件 (`projects.status='active'` + actionable status + due_date) と
+ * **同じゲート**を frontend 強調にも適用し、dashboard reminder panel と一覧/Kanban の画面間不整合を防ぐ:
  * - due_date なし / referenceDate・thresholdDays 未取得 (date_context 失敗) -> `null` (neutral)。
- * - **非 actionable status (closed / cancelled)** -> `null` (neutral)。backend reminders と同じ
- *   actionable 集合でゲートし、終了済 ticket を赤/橙の期限強調にしない (R3 F-001)。
+ * - **非 active project (archived)** -> `null` (neutral)。archived は write 凍結で非 actionable
+ *   (R4 F-001: backend reminders が archived を除外するのに一覧/Kanban が urgent 表示する不整合を防ぐ)。
+ * - **非 actionable status (closed / cancelled)** -> `null` (neutral、R3 F-001)。
  * - それ以外は `dueDateBucket` に委譲。
  */
 export function ticketDueBucket(
   dueDate: string | null,
-  status: string,
+  ticketStatus: string,
+  projectActive: boolean,
   referenceDate: string | undefined,
   thresholdDays: number | undefined
 ): DueDateBucket | null {
   if (!dueDate || referenceDate === undefined || thresholdDays === undefined) return null;
-  if (!isReminderActionableStatus(status)) return null;
+  if (!projectActive) return null;
+  if (!isReminderActionableStatus(ticketStatus)) return null;
   return dueDateBucket(dueDate, referenceDate, thresholdDays);
 }
 

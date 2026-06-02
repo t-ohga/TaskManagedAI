@@ -83,20 +83,25 @@ describe("isReminderActionableStatus / ticketDueBucket (R3 F-001 actionable ゲ�
   });
 
   it("closed / cancelled は過去/本日期限でも null (neutral、backend reminders と整合)", () => {
-    expect(ticketDueBucket("2026-05-01", "closed", REF, THRESHOLD)).toBeNull();
-    expect(ticketDueBucket("2026-06-02", "cancelled", REF, THRESHOLD)).toBeNull();
-    expect(ticketDueBucket("2026-05-01", "closed", REF, THRESHOLD)).not.toBe("overdue");
+    expect(ticketDueBucket("2026-05-01", "closed", true, REF, THRESHOLD)).toBeNull();
+    expect(ticketDueBucket("2026-06-02", "cancelled", true, REF, THRESHOLD)).toBeNull();
+    expect(ticketDueBucket("2026-05-01", "closed", true, REF, THRESHOLD)).not.toBe("overdue");
   });
 
-  it("actionable status は通常通り bucket を返す", () => {
-    expect(ticketDueBucket("2026-05-01", "open", REF, THRESHOLD)).toBe("overdue");
-    expect(ticketDueBucket("2026-06-02", "in_progress", REF, THRESHOLD)).toBe("due_today");
-    expect(ticketDueBucket("2026-06-04", "review", REF, THRESHOLD)).toBe("upcoming");
+  it("archived project (projectActive=false) は actionable 超過でも null (R4 F-001)", () => {
+    expect(ticketDueBucket("2026-05-01", "open", false, REF, THRESHOLD)).toBeNull();
+    expect(ticketDueBucket("2026-06-02", "in_progress", false, REF, THRESHOLD)).toBeNull();
+  });
+
+  it("actionable status + active project は通常通り bucket を返す", () => {
+    expect(ticketDueBucket("2026-05-01", "open", true, REF, THRESHOLD)).toBe("overdue");
+    expect(ticketDueBucket("2026-06-02", "in_progress", true, REF, THRESHOLD)).toBe("due_today");
+    expect(ticketDueBucket("2026-06-04", "review", true, REF, THRESHOLD)).toBe("upcoming");
   });
 
   it("due_date なし / 基準日未取得 (date_context 失敗) は null", () => {
-    expect(ticketDueBucket(null, "open", REF, THRESHOLD)).toBeNull();
-    expect(ticketDueBucket("2026-05-01", "open", undefined, THRESHOLD)).toBeNull();
-    expect(ticketDueBucket("2026-05-01", "open", REF, undefined)).toBeNull();
+    expect(ticketDueBucket(null, "open", true, REF, THRESHOLD)).toBeNull();
+    expect(ticketDueBucket("2026-05-01", "open", true, undefined, THRESHOLD)).toBeNull();
+    expect(ticketDueBucket("2026-05-01", "open", true, REF, undefined)).toBeNull();
   });
 });

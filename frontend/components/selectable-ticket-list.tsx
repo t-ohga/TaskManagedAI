@@ -16,6 +16,8 @@ type TicketRow = {
   status: string;
   priority: string | null;
   projectSlug: string;
+  // A-7 (ADR-00045 R4 F-001): 期限強調を active project のみに限定するための project 状態。
+  projectActive: boolean;
   due_date: string | null;
   created_at: string | null;
   tags: TagRead[];
@@ -187,6 +189,7 @@ export function SelectableTicketList({
                       const bucket = ticketDueBucket(
                         ticket.due_date,
                         ticket.status,
+                        ticket.projectActive,
                         referenceDate,
                         thresholdDays
                       );

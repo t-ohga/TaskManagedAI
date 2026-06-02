@@ -86,7 +86,11 @@ const ProjectBoardItemSchema = z
     project_id: z.string().min(1).optional(),
     id: z.string().min(1).optional(),
     slug: z.string().min(1),
-    name: z.string()
+    name: z.string(),
+    // A-7 (ADR-00045 R4 F-001): project の archive 状態。期限強調を active project のみに
+    // ゲートする (backend reminders の projects.status='active' と整合)。optional で受け、
+    // 欠落 / 'active' 以外は非 active 扱い (archived project の urgent 誤強調を防ぐ fail-safe)。
+    status: z.string().optional()
   })
   .refine((p) => Boolean(p.project_id ?? p.id), {
     message: "project row must include project_id or id"

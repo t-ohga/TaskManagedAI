@@ -194,6 +194,23 @@ describe("loadProjects fail-closed boundary (Codex frontend R5 HIGH)", () => {
     await expect(loadProjects(true)).resolves.toHaveLength(1);
   });
 
+  it("captures project status when present (A-7: archived 強調ゲート用)", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      projects: [
+        { id: PID, slug: "active-p", name: "A", status: "active" },
+        { id: PID, slug: "archived-p", name: "B", status: "archived" }
+      ]
+    });
+    const projects = await loadProjects(true);
+    expect(projects.map((p) => p.status)).toEqual(["active", "archived"]);
+  });
+
+  it("status は optional (欠落 row も成功扱い、後方互換)", async () => {
+    fetchBackendRaw.mockResolvedValue({ projects: [{ id: PID, slug: "p", name: "P" }] });
+    const projects = await loadProjects(true);
+    expect(projects[0]?.status).toBeUndefined();
+  });
+
   it("throws when failClosed and a project row is missing slug (degraded response)", async () => {
     // slug 欠落 row を成功扱いすると selectedProject が解決できず空 board を誤表示する (R6 HIGH)
     fetchBackendRaw.mockResolvedValue({ projects: [{ id: PID, name: "P" }] });

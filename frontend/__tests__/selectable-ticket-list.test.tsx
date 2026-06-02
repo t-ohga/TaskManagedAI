@@ -20,6 +20,7 @@ function ticket(id: string, title: string) {
     status: "open",
     priority: null,
     projectSlug: "taskmanagedai",
+    projectActive: true,
     due_date: null,
     created_at: null,
     tags: []
@@ -128,5 +129,19 @@ describe("SelectableTicketList", () => {
     );
     expect(screen.getByText("2026/6/2")).toBeInTheDocument();
     expect(screen.queryByText(/本日/)).not.toBeInTheDocument();
+  });
+
+  it("archived project の actionable 超過期限も neutral (R4 F-001、backend reminders と整合)", () => {
+    render(
+      <SelectableTicketList
+        tickets={[{ ...dueTicket("a", "open", "2026-05-01"), projectActive: false }]}
+        showProjectBadge={false}
+        referenceDate="2026-06-02"
+        thresholdDays={7}
+      />
+    );
+    // open ticket でも archived project なら赤/橙強調しない (dashboard reminder が除外するのと整合)。
+    expect(screen.getByText("2026/5/1")).toBeInTheDocument();
+    expect(screen.queryByText(/超過/)).not.toBeInTheDocument();
   });
 });

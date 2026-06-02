@@ -226,12 +226,17 @@ client では "today" を独立算出しない (JST 深夜 0 時境界で同一 
    list 呼びでも単一基準、"today" 権威を backend に一本化)。date_context の取得失敗 / schema 不正は
    一覧 page で fail-closed (強調なし neutral fallback or degraded notice、不完全な基準日で誤分類
    しない)。一覧 endpoint (`TicketListResponse`) 自体は変更しない。
-   **actionable status ゲート (adversarial R3 F-001)**: 強調は共有 helper `ticketDueBucket(due, status,
-   ref, threshold)` 経由で適用し、**actionable status (open/in_progress/blocked/review) のみ**強調する。
-   `closed` / `cancelled` は backend reminders query と同じく非 actionable として bucket=null (neutral)
-   にし、dashboard reminder panel が除外するのに一覧/Kanban が赤/橙表示する画面間不整合を防ぐ。
-   frontend の actionable 集合 (`REMINDER_ACTIONABLE_STATUSES`) は backend `_REMINDER_ACTIONABLE_STATUSES`
-   と同一に揃える。一覧 (SelectableTicketList) と Kanban (TicketCard) の両 view が同 helper を使う。
+   **backend reminders と同一ゲート (adversarial R3 F-001 / R4 F-001)**: 強調は共有 helper
+   `ticketDueBucket(due, ticketStatus, projectActive, ref, threshold)` 経由で適用し、backend reminders
+   query の対象条件 (`projects.status='active'` + actionable status + due_date) と**同じゲート**を frontend
+   強調にも適用する:
+   - **非 active project (archived)** → bucket=null (neutral)。archived は write 凍結で非 actionable
+     (R4 F-001: backend reminders が archived を除外するのに一覧/Kanban が urgent 表示する不整合を防ぐ)。
+     project 状態は `/me/projects` の `status` を一覧 page が各 ticket row に `projectActive` として渡す
+     (`ProjectBoardItemSchema.status` を optional 追加、欠落 / 'active' 以外は非 active 扱いの fail-safe)。
+   - **非 actionable status (closed/cancelled)** → bucket=null (neutral、R3 F-001)。
+   - frontend の actionable 集合 (`REMINDER_ACTIONABLE_STATUSES`) は backend `_REMINDER_ACTIONABLE_STATUSES`
+     と同一に揃える。一覧 (SelectableTicketList) と Kanban (TicketCard) の両 view が同 helper を使う。
 
 ## 却下案
 
@@ -393,5 +398,13 @@ R2 fix 後の **adversarial-review R3** verdict=needs-attention、1 finding、**
 |---|---|---|---|---|
 | F-A7-CODE-R3-001 | MEDIUM | 一覧/Kanban が `ticket.status` を見ずに全 row へ `dueDateBucket` を適用するため、`closed` / `cancelled` で過去/本日 due_date の ticket も赤/橙 (超過/本日) 強調される。backend reminders query は actionable status (open/in_progress/blocked/review) のみなので、dashboard reminder panel が除外するのに一覧/Kanban が urgent 表示する画面間不整合 | ADOPT | 共有 helper `ticketDueBucket(due, status, ref, threshold)` + `REMINDER_ACTIONABLE_STATUSES` (backend と同一集合) を domain module に追加。非 actionable は bucket=null (neutral)。SelectableTicketList / TicketCard 両 view を helper 経由に。closed/cancelled の overdue/today が赤/橙にならない frontend test 追加。 |
 
-reject / defer: なし。R3 全 adopt 反映後、R4 で clean を確認してから merge。検証: backend ruff/mypy +
-16 pytest、frontend 333 vitest + typecheck + lint 全 green。
+reject / defer: なし。
+
+R3 fix 後の **adversarial-review R4** verdict=needs-attention、1 finding、**ADOPT**:
+
+| id | severity | 指摘 | 判定 | 反映 |
+|---|---|---|---|---|
+| F-A7-CODE-R4-001 | MEDIUM | `ticketDueBucket` が ticket status だけゲートし project status を見ないため、**archived project の actionable ticket** (open/in_progress 等) で過去/本日 due_date が赤/橙強調される。backend reminders は `projects.status='active'` も要求し archived を除外するので、dashboard panel が除外するのに一覧/Kanban が urgent 表示する R3 と同クラスの画面間不整合 | ADOPT | `ticketDueBucket` に `projectActive` 引数を追加し非 active project は null (neutral)。`ProjectBoardItemSchema.status` を optional 追加し一覧 page が各 row に `projectActive` を渡す。archived project の actionable overdue が赤/橙にならない frontend test (unit + 一覧 component) + loadProjects status 捕捉 test を追加。 |
+
+reject / defer: なし。R4 全 adopt 反映後、R5 で clean を確認してから merge。検証: backend ruff/mypy +
+16 pytest、frontend 337 vitest + typecheck + lint 全 green。

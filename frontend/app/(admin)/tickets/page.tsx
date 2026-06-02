@@ -99,20 +99,24 @@ function dueChipPrefix(bucket: DueDateBucket | null): string {
 function TicketCard({
   ticket,
   projectSlug,
+  projectActive,
   referenceDate,
   thresholdDays,
 }: {
   ticket: TicketItem;
   projectSlug?: string | undefined;
+  projectActive: boolean;
   referenceDate?: string | undefined;
   thresholdDays?: number | undefined;
 }) {
   const formattedDue = formatDueDate(ticket.due_date);
-  // status + 期限から強調 bucket を導出。非 actionable (closed/cancelled) / 基準日不明は null
-  // → neutral (backend reminders の actionable 集合と揃え、画面間不整合・誤分類を防ぐ、R3 F-001)。
+  // project active + ticket status + 期限から強調 bucket を導出。archived project / 非 actionable
+  // (closed/cancelled) / 基準日不明は null → neutral (backend reminders と同じゲートで画面間不整合・
+  // 誤分類を防ぐ、R3 F-001 / R4 F-001)。
   const dueBucket = ticketDueBucket(
     ticket.due_date,
     ticket.status,
+    projectActive,
     referenceDate,
     thresholdDays
   );
@@ -240,7 +244,9 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
     }
   }
 
-  let allTickets: (TicketItem & { projectSlug: string })[] = [];
+  // projectActive: 各 ticket の project が active か (R4 F-001: archived project の ticket は
+  // 期限強調しない、backend reminders の projects.status='active' と整合)。
+  let allTickets: (TicketItem & { projectSlug: string; projectActive: boolean })[] = [];
   // tag 絞り込みは specific project でのみ backend query を使う (all view は project 混在で
   // tag scope が曖昧)。指定タグが無効 (404) のときは絞り込みを解除して全件を出し、UI で通知する。
   let tagFilterInvalid = false;
@@ -256,7 +262,10 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
       if (!pid) continue;
       try {
         const board = await loadTickets(pid);
-        allTickets.push(...board.items.map((t) => ({ ...t, projectSlug: p.slug })));
+        const projectActive = p.status === "active";
+        allTickets.push(
+          ...board.items.map((t) => ({ ...t, projectSlug: p.slug, projectActive }))
+        );
       } catch {
         // all view は 1 project の一時障害で全体を落とさず、欠落を warning で可視化 (fail-soft)。
         omittedProjects += 1;
@@ -276,10 +285,11 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
         // project row は解決できたが id/project_id が欠落 (degraded response)。同様に fail-closed。
         notFound();
       }
+      const projectActive = project.status === "active";
       if (tagFilter) {
         try {
           const board = await loadTickets(pid, tagFilter);
-          allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug }));
+          allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug, projectActive }));
           if (board.truncated) {
             tagFilterTruncated = { total: board.total, shown: board.items.length };
           }
@@ -290,7 +300,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             // 「filter cleared, all displayed」を 0 件で見せない)。
             tagFilterInvalid = true;
             const board = await loadTickets(pid);
-            allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug }));
+            allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug, projectActive }));
           } else {
             // auth / backend / network 障害は「該当なし」と誤表示せず error boundary に流す
             // (fail-closed、Codex frontend R2 HIGH)。
@@ -301,7 +311,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
         // selected-project load は fail-closed (loadTickets が throw → error boundary、R5 HIGH:
         // 障害を「ticket 0 件の project」と誤表示しない)。
         const board = await loadTickets(pid);
-        allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug }));
+        allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug, projectActive }));
       }
     }
   }
@@ -449,6 +459,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
                   key={ticket.id}
                   ticket={ticket}
                   projectSlug={showProjectBadge ? ticket.projectSlug : undefined}
+                  projectActive={ticket.projectActive}
                   referenceDate={referenceDate}
                   thresholdDays={thresholdDays}
                 />
@@ -464,6 +475,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             status: t.status,
             priority: t.priority,
             projectSlug: t.projectSlug,
+            projectActive: t.projectActive,
             due_date: t.due_date,
             created_at: t.created_at,
             tags: t.tags,
