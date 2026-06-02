@@ -234,9 +234,14 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   // A-7 (ADR-00045 R2 F-002): 期限強調用の単一 "today" authority を一度だけ取得する (all view の
   // 複数 list 呼びでも全 row に同一基準を適用)。取得失敗 / schema 不正は fail-closed で null に倒し、
   // 基準日不明のまま赤/橙を誤表示せず neutral 表示にする。
-  const dateContext = await fetchDateContext().catch(() => null);
-  const referenceDate = dateContext?.reference_date;
-  const thresholdDays = dateContext?.threshold_days;
+  // R9 F-001: 失敗を silent に neutral 化すると、open/active の超過/本日 ticket の強調が消えても
+  // ユーザーが検知できず dashboard reminder panel と silent に乖離する。ok/error を保持し、失敗時は
+  // degraded warning を可視化する (強調は neutral のまま、degradation を visible にする)。
+  const dateContextResult = await fetchDateContext()
+    .then((ctx) => ({ ok: true as const, ctx }))
+    .catch(() => ({ ok: false as const }));
+  const referenceDate = dateContextResult.ok ? dateContextResult.ctx.reference_date : undefined;
+  const thresholdDays = dateContextResult.ok ? dateContextResult.ctx.threshold_days : undefined;
 
   // ADR-00044 (A-5): tag filter 用に specific project の tags を取得 (all view は project 混在で
   // tag scope が曖昧なため非表示)。tagFilter 適用中は fail-closed (tag metadata が読めない状態で
@@ -437,6 +442,15 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
           <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
             {omittedProjects} 件のプロジェクトのチケットを取得できなかったため、一覧から除外しています。
             時間をおいて再読み込みしてください。
+          </div>
+        ) : null}
+        {/* R9 F-001: date_context (期限の基準日) 取得失敗を可視化する。期限強調 (超過/本日/期限間近) は
+            誤表示を避けるため neutral に倒すが、失敗を silent にせず警告する (dashboard reminder と
+            silent に乖離させない)。期限の日付自体は表示される。 */}
+        {!dateContextResult.ok ? (
+          <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            期限の基準日を取得できなかったため、期限の強調表示 (超過 / 本日 / 期限間近) を一時的に無効にしています。
+            期限の日付は表示されますが、色分けされません。時間をおいて再読み込みしてください。
           </div>
         ) : null}
       </Suspense>

@@ -229,8 +229,10 @@ client では "today" を独立算出しない (JST 深夜 0 時境界で同一 
    `referenceDate` / `thresholdDays` は **`GET /api/v1/me/date_context` の backend 算出値** を一覧
    page が **一度だけ** fetch して `SelectableTicketList` に prop で渡す (R2 F-002: all view の複数
    list 呼びでも単一基準、"today" 権威を backend に一本化)。date_context の取得失敗 / schema 不正は
-   一覧 page で fail-closed (強調なし neutral fallback or degraded notice、不完全な基準日で誤分類
-   しない)。一覧 endpoint (`TicketListResponse`) 自体は変更しない。
+   一覧 page で fail-closed: 強調を neutral に倒す **かつ degraded warning を可視化する** (R9 F-001:
+   silent に neutral 化すると open/active の超過/本日 ticket の強調消失をユーザーが検知できず dashboard
+   reminder panel と silent に乖離するため、`{ok,ctx}/{ok:false}` を保持し失敗時に警告 notice を出す。
+   期限の日付自体は表示され、色分け強調のみ無効化)。一覧 endpoint (`TicketListResponse`) は変更しない。
    **backend reminders と同一ゲート (adversarial R3 F-001 / R4 F-001)**: 強調は共有 helper
    `ticketDueBucket(due, ticketStatus, projectActive, ref, threshold)` 経由で適用し、backend reminders
    query の対象条件 (`projects.status='active'` + actionable status + due_date) と**同じゲート**を frontend
@@ -449,5 +451,13 @@ R7 fix 後の **adversarial-review R8** verdict=needs-attention、1 finding (HIG
 |---|---|---|---|---|
 | F-A7-CODE-R8-001 | HIGH | `reminders_endpoint` は ticket の slug/title/status/priority/due_date を返す ticket read surface だが、既存 ticket read endpoint (`/projects/{id}/tickets` 等) が持つ `maybe_require_cli_capability("task_list")` がない。ticket read 権限を持たない operation token でも tenant-wide に ticket title を列挙でき、capability matrix の read boundary / least-privilege を破る | ADOPT | `reminders_endpoint` に `_cli_capability = Depends(maybe_require_cli_capability("task_list"))` を追加 (ticket list endpoint と同じ read boundary)。route の capability gate wiring を introspect する host test + ticket list との consistency 確認を追加。functional denial は既存 DB-gated capability test 基盤がカバー。`date_context` は ticket data 非返却のため gate なし。 |
 
-reject / defer: なし。R8 全 adopt 反映後、R9 で clean を確認してから merge。検証: backend ruff/mypy +
-20 pytest、frontend 344 vitest + typecheck + lint 全 green。
+reject / defer: なし。
+
+R8 fix 後の **adversarial-review R9** verdict=needs-attention、1 finding、**ADOPT**:
+
+| id | severity | 指摘 | 判定 | 反映 |
+|---|---|---|---|---|
+| F-A7-CODE-R9-001 | MEDIUM | `fetchDateContext()` 失敗を `null` に潰し referenceDate/thresholdDays を undefined で渡すため、`ticketDueBucket` が null bucket を返し open/active の超過/本日 ticket の赤/橙/「超過」「本日」が消えて neutral 化するが、画面に degraded warning がない。date_context だけ壊れると dashboard reminder panel と silent に乖離し、ユーザーが期限強調の失敗を検知できない (fail-closed data completeness / screen consistency 違反) | ADOPT | date_context 結果を `{ok,ctx}/{ok:false}` で保持し、失敗時に一覧/Kanban の近くに degraded warning notice を表示 (強調は neutral のまま、degradation を visible に)。date_context 成功で warning なし + 超過強調 / 失敗で warning + neutral の full-page render regression test を追加。 |
+
+reject / defer: なし。R9 全 adopt 反映後、R10 で clean を確認してから merge。検証: backend ruff/mypy +
+20 pytest、frontend 346 vitest + typecheck + lint 全 green。
