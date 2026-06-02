@@ -18,6 +18,7 @@
 import { z } from "zod";
 
 import { fetchBackendJson } from "@/lib/api/client";
+import { TagReadSchema } from "@/lib/api/tags";
 
 // Codex audit F-006 adopt: backend ticket.py Literal + DB CHECK と integrity 維持
 // backend/app/db/models/ticket.py:20 と完全一致 (Sprint 11 contract test で drift 検証)
@@ -67,7 +68,10 @@ export const TicketListItemSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
   created_at: z.string(),
   updated_at: z.string(),
-  agent_run_count: z.number().int().nonnegative().optional().default(0)
+  agent_run_count: z.number().int().nonnegative().optional().default(0),
+  // ADR-00044 (A-5): backend TicketRead が per-ticket tag を inject する (tags_for_tickets 由来)。
+  // 旧経路 / 他 response で欠落しても落ちないよう default [] (present なら strict validate)。
+  tags: z.array(TagReadSchema).default([])
 });
 
 export type TicketListItem = z.infer<typeof TicketListItemSchema>;

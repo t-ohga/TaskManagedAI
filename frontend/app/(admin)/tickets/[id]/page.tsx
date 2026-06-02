@@ -9,8 +9,11 @@ import { PrintButton } from "@/components/print-button";
 import { EditTicketForm } from "./_components/edit-ticket-form";
 import { TicketDeleteButton } from "@/components/ticket-delete-button";
 import { TrackRecentTicket } from "@/components/recent-tickets";
+import { TagChip } from "@/components/tag-chip";
+import { TicketTagManager } from "@/components/ticket-tag-manager";
 import { getCurrentProject } from "@/lib/api/session";
 import { getTicketActivity, type TicketActivityEntry } from "@/lib/api/tickets";
+import { listTags, type TagRead } from "@/lib/api/tags";
 
 import { addTicketCommentAction } from "../actions";
 import { loadTicket } from "./load-ticket";
@@ -112,6 +115,17 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   // 編集 UI を出さず閲覧のみにする (Codex B2b R7 finding、create gating と同じ方針)。
   const currentProject = await getCurrentProject().catch(() => null);
   const isWritable = currentProject !== null && ticket.project_id === currentProject.project_id;
+
+  // ADR-00044 (A-5): project の全タグ (tag 管理 / 付与候補)。取得失敗は付与中タグ表示に degrade
+  // (補助情報なので fail-soft、ticket.tags は by-id load 済で常に表示できる)。
+  let allTags: TagRead[] = [];
+  if (isWritable) {
+    try {
+      allTags = (await listTags(ticket.project_id)).items;
+    } catch {
+      allTags = [];
+    }
+  }
 
   // ADR-00041 N-2: comment + status 変更 + created を backend 集約 endpoint から取得。
   // 取得失敗 (backend 障害 / 一時的 5xx) はページ全体を落とさず、作成/更新の合成 entry に
@@ -218,6 +232,42 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           </div>
         </article>
       </div>
+
+      {/* ADR-00044 (A-5): ラベル。付与中タグは閲覧/印刷可、操作 (manager) は no-print + isWritable のみ */}
+      <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">
+        <h2 className="text-lg font-semibold">ラベル</h2>
+        {isWritable ? (
+          <>
+            {/* 操作 UI は画面のみ。印刷では下の print-only サマリで付与中タグを出す */}
+            <div className="no-print mt-4">
+              <TicketTagManager
+                ticketId={ticket.id}
+                currentTags={ticket.tags}
+                allTags={allTags}
+              />
+            </div>
+            <div className="print-only mt-4 flex flex-wrap gap-2">
+              {ticket.tags.length === 0 ? (
+                <p className="text-sm text-muted-foreground">タグはありません</p>
+              ) : (
+                ticket.tags.map((tag) => (
+                  <TagChip key={tag.id} name={tag.name} color={tag.color} />
+                ))
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {ticket.tags.length === 0 ? (
+              <p className="text-sm text-muted-foreground">タグはありません</p>
+            ) : (
+              ticket.tags.map((tag) => (
+                <TagChip key={tag.id} name={tag.name} color={tag.color} />
+              ))
+            )}
+          </div>
+        )}
+      </article>
       {!isWritable ? (
         <div className="no-print rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
           このチケットは現在の作業プロジェクト外のため、ここでは閲覧のみ可能です。

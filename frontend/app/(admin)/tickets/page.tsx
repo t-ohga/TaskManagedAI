@@ -1,11 +1,15 @@
 import Link from "next/link";
 import { Suspense } from "react";
+import { z } from "zod";
 
 import { fetchBackendRaw } from "@/lib/api/client";
 import { getCurrentProject } from "@/lib/api/session";
+import { listTags, TagReadSchema, type TagRead } from "@/lib/api/tags";
 import { ProjectTab } from "@/components/project-tab";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { TicketCreateDialog } from "@/components/ticket-create-dialog";
+import { TagChip } from "@/components/tag-chip";
+import { TagFilter } from "@/components/tag-filter";
 import { SearchBar } from "@/components/search-bar";
 import { StatusFilter } from "@/components/status-filter";
 import { PriorityFilter } from "@/components/priority-filter";
@@ -24,6 +28,8 @@ type TicketItem = {
   description: string | null;
   due_date: string | null;
   created_at: string | null;
+  // ADR-00044 (A-5): backend list が per-ticket tag を inject する (active scope)。
+  tags: TagRead[];
 };
 
 // due_date は SQL date (YYYY-MM-DD) のプレーンな暦日。timezone を持たないため
@@ -57,7 +63,12 @@ async function loadTickets(projectId: string): Promise<TicketItem[]> {
   try {
     const res = await fetchBackendRaw(`/api/v1/projects/${projectId}/tickets?limit=200` as `/${string}`);
     const raw = res as Record<string, unknown>;
-    return ((raw?.items ?? []) as TicketItem[]);
+    const items = (raw?.items ?? []) as (TicketItem & { tags?: unknown })[];
+    // tags は backend が inject するが Zod で strict validate し、欠落/palette drift は [] に倒す。
+    return items.map((t) => {
+      const tagsParsed = z.array(TagReadSchema).safeParse(t.tags ?? []);
+      return { ...t, tags: tagsParsed.success ? tagsParsed.data : [] };
+    });
   } catch {
     return [];
   }
@@ -117,6 +128,14 @@ function TicketCard({ ticket, projectSlug }: { ticket: TicketItem; projectSlug?:
           {ticket.description}
         </p> : null}
 
+      {ticket.tags.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {ticket.tags.map((tag) => (
+            <TagChip key={tag.id} name={tag.name} color={tag.color} />
+          ))}
+        </div>
+      ) : null}
+
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <TicketStatusIndicator status={ticket.status} />
         {priorityBadge(ticket.priority)}
@@ -173,7 +192,7 @@ function KanbanColumnEnhanced({
 }
 
 type Props = {
-  searchParams: Promise<{ project?: string; q?: string; status?: string; priority?: string; range?: string; view?: string; sort?: string }>;
+  searchParams: Promise<{ project?: string; q?: string; status?: string; priority?: string; range?: string; view?: string; sort?: string; tag?: string }>;
 };
 
 export default async function TicketsKanbanPage({ searchParams }: Props) {
@@ -183,6 +202,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   const statusFilter = params.status ?? "";
   const priorityFilter = params.priority ?? "";
   const rangeFilter = params.range ?? "";
+  const tagFilter = params.tag ?? "";
   const currentView = (params.view === "list" ? "list" : "kanban") as "kanban" | "list";
   const sortKey = params.sort ?? "created_desc";
   const projects = await loadProjects();
@@ -190,6 +210,27 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   // 表示中 project (URL ?project=) と current_project が一致するときだけ作成 CTA を出す
   // (Codex B2b finding: URL 選択と session current_project の乖離による wrong-project write 防止)。
   const currentProject = await getCurrentProject().catch(() => null);
+
+  // ADR-00044 (A-5): tag filter 用に specific project の tags を取得 (all view は project 混在で
+  // tag scope が曖昧なため非表示)。取得失敗は filter 非表示に degrade (fail-soft)。
+  let projectTags: TagRead[] = [];
+  if (selectedProject !== "all") {
+    const selProject = projects.find((p) => p.slug === selectedProject);
+    if (selProject) {
+      const pid = String(
+        (selProject as Record<string, unknown>).project_id ??
+          (selProject as Record<string, unknown>).id ??
+          ""
+      );
+      if (pid) {
+        try {
+          projectTags = (await listTags(pid)).items;
+        } catch {
+          projectTags = [];
+        }
+      }
+    }
+  }
 
   let allTickets: (TicketItem & { projectSlug: string })[] = [];
 
@@ -221,6 +262,9 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   }
   if (priorityFilter) {
     filteredTickets = filteredTickets.filter((t) => t.priority === priorityFilter);
+  }
+  if (tagFilter) {
+    filteredTickets = filteredTickets.filter((t) => t.tags.some((tag) => tag.id === tagFilter));
   }
   if (rangeFilter) {
     const now = new Date();
@@ -299,6 +343,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
           <SortControl />
           <ViewToggle currentView={currentView} />
         </div>
+        {projectTags.length > 0 ? <TagFilter tags={projectTags} /> : null}
       </Suspense>
 
       {selectedProject === "all" ? (
@@ -347,6 +392,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             projectSlug: t.projectSlug,
             due_date: t.due_date,
             created_at: t.created_at,
+            tags: t.tags,
           }))}
           showProjectBadge={showProjectBadge}
         />

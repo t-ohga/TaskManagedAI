@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { BackendApiError, fetchBackendRaw } from "@/lib/api/client";
+import { TagReadSchema, type TagRead } from "@/lib/api/tags";
 
 // ticket_id の検証は TicketReadSchema.id (z.string().uuid()) と同一契約に揃える。
 // 狭い v1-5 限定 validator だと UUIDv7 等の backend-valid な id を frontend が false
@@ -20,6 +21,8 @@ export type TicketDetail = {
   project_id: string;
   // 看板への戻り導線で使う project slug (tickets 一覧の ?project= は slug を期待する)。
   project_slug: string;
+  // ADR-00044 (A-5): backend が GET by-id で inject する per-ticket tag (active scope)。
+  tags: TagRead[];
 };
 
 /**
@@ -65,7 +68,17 @@ export async function loadTicket(id: string): Promise<TicketDetail | null> {
         );
         const ticket = ticketRes as (TicketDetail & { id?: string }) | null;
         if (ticket && ticket.id?.toLowerCase() === normalizedId) {
-          return { ...ticket, project_id: pid, project_slug: slug };
+          // tags は backend が inject するが生 assertion せず Zod で strict validate し、
+          // 欠落/不正は [] に倒す (untrusted 表示防止、palette drift は型で検出)。
+          const tagsParsed = z
+            .array(TagReadSchema)
+            .safeParse((ticketRes as Record<string, unknown>)?.tags ?? []);
+          return {
+            ...ticket,
+            project_id: pid,
+            project_slug: slug,
+            tags: tagsParsed.success ? tagsParsed.data : []
+          };
         }
         return null;
       } catch (error) {

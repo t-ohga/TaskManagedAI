@@ -34,7 +34,8 @@ const ticketFixture: TicketRead = {
   metadata: { rls_ready: true },
   created_at: "2026-05-22T20:00:00+00:00",
   updated_at: "2026-05-22T21:00:00+00:00",
-  agent_run_count: 0
+  agent_run_count: 0,
+  tags: []
 };
 
 describe("ticket form i18n", () => {

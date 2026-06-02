@@ -6,6 +6,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { BulkStatusChanger } from "@/components/bulk-status-changer";
+import { TagChip } from "@/components/tag-chip";
+import type { TagRead } from "@/lib/api/tags";
 
 type TicketRow = {
   id: string;
@@ -15,6 +17,7 @@ type TicketRow = {
   projectSlug: string;
   due_date: string | null;
   created_at: string | null;
+  tags: TagRead[];
 };
 
 type SelectableTicketListProps = {
@@ -129,6 +132,13 @@ export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTi
                     <Link href={`/tickets/${ticket.id}` as Route} className="font-medium text-accent hover:underline">
                       {ticket.title}
                     </Link>
+                    {ticket.tags.length > 0 ? (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {ticket.tags.map((tag) => (
+                          <TagChip key={tag.id} name={tag.name} color={tag.color} />
+                        ))}
+                      </div>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3"><TicketStatusIndicator status={ticket.status} /></td>
                   <td className="px-4 py-3">
