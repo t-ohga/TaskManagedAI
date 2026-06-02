@@ -428,5 +428,13 @@ R5 fix 後の **adversarial-review R6** verdict=needs-attention、1 finding (HIG
 |---|---|---|---|---|
 | F-A7-CODE-R6-001 | HIGH | R5 で `status` を required enum にした結果、`loadProjects(false)` (all view) は配列全体を一括 safeParse するため、`/me/projects` の 1 行だけ status 欠落/不正でも全体 reject → `[]` で valid な他 project の tickets まで silent に消える (silent neutral を silent empty board に置換)。`omittedProjects` も増えず可視化されない | ADOPT | `loadProjectsAllView` を新設し all view を **row-level safeParse** に。valid row を保持、malformed row だけ omission して件数を返し tickets page の warning に合算 (1 行 drift で全 project を消さない)。failClosed (具体 project/tag) は `loadProjects(true)` で従来通り 1 行でも throw。partial malformed all-view の regression test (valid 2 + malformed 1 → valid 2 + omission 1) 追加。 |
 
-reject / defer: なし。R6 全 adopt 反映後、R7 で clean を確認してから merge。検証: backend ruff/mypy +
-16 pytest、frontend 342 vitest + typecheck + lint 全 green。
+reject / defer: なし。
+
+R6 fix 後の **adversarial-review R7** verdict=needs-attention、1 finding、**ADOPT**:
+
+| id | severity | 指摘 | 判定 | 反映 |
+|---|---|---|---|---|
+| F-A7-CODE-R7-001 | MEDIUM | `TicketItemSchema.due_date` が `z.string().nullable()` (任意文字列) のため、timestamp / junk suffix / 非実在日 (2026-02-31) が `loadTickets` を通る。`ticketDueBucket` は strict YMD で null (neutral) を返すが `formatDueDate` が raw を echo し、一覧/Kanban が bogus deadline を neutral 表示する。dashboard/date_context が strict なのに一覧は serializer drift を fail-closed しない画面間不整合 | ADOPT | `TicketItemSchema.due_date` を `z.string().refine(isValidYmd).nullable()` に (reminders/date_context と同じ strict YMD)。malformed は loadTickets で fail-closed (A-5 strict tags と同方針)。`formatDueDate` 2 箇所も raw echo を廃し非実在日 / 不正は null (defense-in-depth)。malformed due_date reject + valid 通過の regression 追加。 |
+
+reject / defer: なし。R7 全 adopt 反映後、R8 で clean を確認してから merge。検証: backend ruff/mypy +
+16 pytest、frontend 344 vitest + typecheck + lint 全 green。

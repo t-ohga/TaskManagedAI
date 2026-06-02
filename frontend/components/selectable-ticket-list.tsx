@@ -8,7 +8,7 @@ import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { BulkStatusChanger } from "@/components/bulk-status-changer";
 import { TagChip } from "@/components/tag-chip";
 import type { TagRead } from "@/lib/domain/tag";
-import { ticketDueBucket, type DueDateBucket } from "@/lib/domain/due-date";
+import { isValidYmd, ticketDueBucket, type DueDateBucket } from "@/lib/domain/due-date";
 
 type TicketRow = {
   id: string;
@@ -34,11 +34,11 @@ type SelectableTicketListProps = {
 
 // due_date は SQL date (YYYY-MM-DD) のプレーンな暦日。timezone を持たないため
 // new Date(...) を介さず文字列から直接整形し、JST 変換による日付ずれを防ぐ。
+// 非実在日 / 不正形式は raw を echo せず null (R7 F-001: schema が strict だが defense-in-depth、
+// bogus deadline を表示しない)。
 function formatDueDate(value: string | null): string | null {
-  if (!value) return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  if (!match) return value;
-  const [, year, month, day] = match;
+  if (!value || !isValidYmd(value)) return null;
+  const [year, month, day] = value.split("-");
   return `${year}/${Number(month)}/${Number(day)}`;
 }
 

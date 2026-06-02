@@ -3,6 +3,7 @@ import { z } from "zod";
 import { fetchBackendRaw } from "@/lib/api/client";
 import { listTags } from "@/lib/api/tags";
 import { TagReadSchema, type TagRead } from "@/lib/domain/tag";
+import { isValidYmd } from "@/lib/domain/due-date";
 
 /**
  * ticket 看板 / 一覧用の ticket 取得 (server-only)。
@@ -24,7 +25,11 @@ const TicketItemSchema = z.object({
   status: z.string(),
   priority: z.string().nullable(),
   description: z.string().nullable(),
-  due_date: z.string().nullable(),
+  // A-7 (ADR-00045 R7 F-001): due_date は backend の `date` 型 (厳密に YYYY-MM-DD) または null。
+  // reminders / date_context と同じ strict YMD validator で検証し、timestamp / junk suffix /
+  // 非実在日 (2026-02-31) を fail-closed で reject する (一覧/Kanban が serializer drift した
+  // due_date を bogus deadline として neutral 表示するのを防ぐ、画面間の strict-YMD 整合)。
+  due_date: z.string().refine(isValidYmd).nullable(),
   created_at: z.string().nullable(),
   tags: z.array(TagReadSchema)
 });

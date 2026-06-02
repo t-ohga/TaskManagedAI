@@ -14,7 +14,7 @@ import {
   type TicketItem
 } from "@/lib/api/tickets-board";
 import type { TagRead } from "@/lib/domain/tag";
-import { ticketDueBucket, type DueDateBucket } from "@/lib/domain/due-date";
+import { isValidYmd, ticketDueBucket, type DueDateBucket } from "@/lib/domain/due-date";
 import { ProjectTab } from "@/components/project-tab";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { TicketCreateDialog } from "@/components/ticket-create-dialog";
@@ -32,11 +32,10 @@ export const dynamic = "force-dynamic";
 
 // due_date は SQL date (YYYY-MM-DD) のプレーンな暦日。timezone を持たないため
 // new Date(...) を介さず文字列から直接整形し、JST 変換による日付ずれを防ぐ。
+// 非実在日 / 不正形式は raw を echo せず null (R7 F-001: schema strict + defense-in-depth)。
 function formatDueDate(value: string | null): string | null {
-  if (!value) return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  if (!match) return value;
-  const [, , month, day] = match;
+  if (!value || !isValidYmd(value)) return null;
+  const [, month, day] = value.split("-");
   return `${Number(month)}/${Number(day)}`;
 }
 

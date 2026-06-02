@@ -131,6 +131,32 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
     expect(result.items[0]?.tags).toEqual([]);
   });
 
+  it("accepts a valid YMD due_date and null due_date (A-7 R7)", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      items: [
+        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: "2026-06-30", created_at: null, tags: [] },
+        { id: "t2", title: "y", status: "open", priority: null, description: null, due_date: null, created_at: null, tags: [] }
+      ],
+      total: 2
+    });
+    const result = await loadTickets(PID);
+    expect(result.items.map((t) => t.due_date)).toEqual(["2026-06-30", null]);
+  });
+
+  it("throws on malformed due_date (timestamp / junk / 非実在日) instead of rendering bogus deadline (R7 F-001)", async () => {
+    // due_date は date 型 (厳密 YYYY-MM-DD)。serializer drift した値を「neutral な期限」として
+    // 表示しないため fail-closed で throw する (dashboard/date_context と同じ strict YMD)。
+    for (const bad of ["2026-06-30T00:00:00Z", "2026-06-30junk", "2026-02-31", "2026-6-3"]) {
+      fetchBackendRaw.mockResolvedValueOnce({
+        items: [
+          { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: bad, created_at: null, tags: [] }
+        ],
+        total: 1
+      });
+      await expect(loadTickets(PID)).rejects.toThrow();
+    }
+  });
+
   it("throws when tags metadata is omitted (version skew / degraded), distinct from explicit [] (R7 HIGH)", async () => {
     fetchBackendRaw.mockResolvedValue({
       items: [
