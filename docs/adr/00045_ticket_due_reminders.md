@@ -247,6 +247,9 @@ client では "today" を独立算出しない (JST 深夜 0 時境界で同一 
      **all view は `loadProjectsAllView` で row-level omission** (R6 F-001: 配列一括 safeParse だと 1 行の
      status drift が全 project を消し silent empty board になるため、各 row を個別 safeParse して valid を
      保持、malformed row だけ omission して件数を warning 化、valid project の tickets を消さない)。
+     **whole-list failure (R10 F-001)**: envelope 不正 / fetch 失敗 (auth 失効 / backend 障害 / schema
+     drift) で project 一覧そのものが読めない場合は `degraded: true` を返し、page が「取得失敗」warning を
+     必ず表示する (project/ticket 0 件の genuine empty と区別、silent empty board を避ける)。
    - **非 actionable status (closed/cancelled)** → bucket=null (neutral、R3 F-001)。
    - frontend の actionable 集合 (`REMINDER_ACTIONABLE_STATUSES`) は backend `_REMINDER_ACTIONABLE_STATUSES`
      と同一に揃える。一覧 (SelectableTicketList) と Kanban (TicketCard) の両 view が同 helper を使う。
@@ -459,5 +462,13 @@ R8 fix 後の **adversarial-review R9** verdict=needs-attention、1 finding、**
 |---|---|---|---|---|
 | F-A7-CODE-R9-001 | MEDIUM | `fetchDateContext()` 失敗を `null` に潰し referenceDate/thresholdDays を undefined で渡すため、`ticketDueBucket` が null bucket を返し open/active の超過/本日 ticket の赤/橙/「超過」「本日」が消えて neutral 化するが、画面に degraded warning がない。date_context だけ壊れると dashboard reminder panel と silent に乖離し、ユーザーが期限強調の失敗を検知できない (fail-closed data completeness / screen consistency 違反) | ADOPT | date_context 結果を `{ok,ctx}/{ok:false}` で保持し、失敗時に一覧/Kanban の近くに degraded warning notice を表示 (強調は neutral のまま、degradation を visible に)。date_context 成功で warning なし + 超過強調 / 失敗で warning + neutral の full-page render regression test を追加。 |
 
-reject / defer: なし。R9 全 adopt 反映後、R10 で clean を確認してから merge。検証: backend ruff/mypy +
-20 pytest、frontend 346 vitest + typecheck + lint 全 green。
+reject / defer: なし。
+
+R9 fix 後の **adversarial-review R10** verdict=needs-attention、1 finding (HIGH)、**ADOPT**:
+
+| id | severity | 指摘 | 判定 | 反映 |
+|---|---|---|---|---|
+| F-A7-CODE-R10-001 | HIGH | `loadProjectsAllView` が envelope 不正 / fetch 失敗でも `{items:[], omittedProjects:0}` を返し、page は `omittedProjects>0` でしか warning を出さないため、401/500/schema drift で project 一覧そのものが読めない whole-list failure が「横断表示に project/ticket なし」の空状態と区別できず silent empty board になる | ADOPT | `loadProjectsAllView` の戻り値に `degraded: boolean` を追加 (envelope/fetch failure=true、genuine empty=false)。page は `degraded` 時に「取得失敗」warning を必ず表示し空状態と区別。loadProjectsAllView の degraded test (envelope/fetch=true / empty=false) + page の whole-list failure warning render test を追加。 |
+
+reject / defer: なし。R10 全 adopt 反映後、R11 で clean を確認してから merge。検証: backend ruff/mypy +
+20 pytest、frontend 349 vitest + typecheck + lint 全 green。

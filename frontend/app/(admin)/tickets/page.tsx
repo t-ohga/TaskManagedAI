@@ -220,12 +220,15 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   const isProjectFailClosed = selectedProject !== "all" || Boolean(tagFilter);
   let projects: ProjectBoardItem[];
   let malformedProjects = 0;
+  // R10 F-001: all view の whole-list failure (project 一覧そのものが読めない) を空状態と区別する。
+  let projectListDegraded = false;
   if (isProjectFailClosed) {
     projects = await loadProjects(true);
   } else {
     const allViewProjects = await loadProjectsAllView();
     projects = allViewProjects.items;
     malformedProjects = allViewProjects.omittedProjects;
+    projectListDegraded = allViewProjects.degraded;
   }
   // 作成先は server action が session の current_project から resolve する。
   // 表示中 project (URL ?project=) と current_project が一致するときだけ作成 CTA を出す
@@ -436,6 +439,15 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             このタグには {tagFilterTruncated.total} 件のチケットがマッチしますが、最初の
             {tagFilterTruncated.shown} 件のみ表示しています。すべて確認するにはステータスや期間で
             さらに絞り込んでください。
+          </div>
+        ) : null}
+        {/* R10 F-001: 横断表示で project 一覧そのものが読めなかった (auth 失効 / backend 障害 /
+            schema drift) を「project/ticket が無い空状態」と区別して可視化する (silent empty board
+            を避ける)。 */}
+        {projectListDegraded ? (
+          <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            プロジェクト一覧を取得できなかったため、横断表示のチケットを表示できません
+            (チケットが 0 件なのではなく取得失敗です)。時間をおいて再読み込みしてください。
           </div>
         ) : null}
         {omittedProjects > 0 ? (

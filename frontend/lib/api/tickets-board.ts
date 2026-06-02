@@ -153,19 +153,26 @@ export async function loadProjects(failClosed: boolean): Promise<ProjectBoardIte
  * page が warning で可視化できるようにする (1 行の drift で全 project を消さない)。
  *
  * 具体 project / tag filter (failClosed=true) は `loadProjects(true)` を使い、1 行でも schema failure
- * なら throw する (不完全を完全と見せない)。envelope 不正 / fetch 失敗は all view では空 + omission 0
- * (既存 fail-soft と一致、1 project 障害で全体を落とさない)。
+ * なら throw する (不完全を完全と見せない)。
+ *
+ * **whole-list failure の可視化 (Codex adversarial R10 HIGH)**: envelope 不正 (非配列) / fetch 失敗
+ * (401/500/schema drift) で project 一覧そのものが読めない場合は `degraded: true` を返す。これを
+ * `{ items: [], omittedProjects: 0 }` の「空」と区別し、tickets page が warning を必ず出せるようにする
+ * (whole-list failure を「横断表示に project/ticket なし」の空状態と silent に取り違えない)。
+ * 正常で project 0 件の場合は `degraded: false` + 空 (genuine empty)。
  */
 export async function loadProjectsAllView(): Promise<{
   items: ProjectBoardItem[];
   omittedProjects: number;
+  degraded: boolean;
 }> {
   try {
     const res = await fetchBackendRaw("/api/v1/me/projects");
     const raw = res as Record<string, unknown>;
     const rawList = raw?.projects ?? raw?.items;
     if (!Array.isArray(rawList)) {
-      return { items: [], omittedProjects: 0 };
+      // envelope 不正 = project 一覧そのものが読めない (whole-list failure、空ではない)。
+      return { items: [], omittedProjects: 0, degraded: true };
     }
     const items: ProjectBoardItem[] = [];
     let omittedProjects = 0;
@@ -177,9 +184,10 @@ export async function loadProjectsAllView(): Promise<{
         omittedProjects += 1;
       }
     }
-    return { items, omittedProjects };
+    return { items, omittedProjects, degraded: false };
   } catch {
-    return { items: [], omittedProjects: 0 };
+    // fetch 失敗 (auth 失効 / backend down) = whole-list failure。空状態と区別する。
+    return { items: [], omittedProjects: 0, degraded: true };
   }
 }
 

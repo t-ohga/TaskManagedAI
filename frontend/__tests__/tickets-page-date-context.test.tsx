@@ -78,7 +78,11 @@ beforeEach(() => {
   apiMocks.fetchDateContext.mockReset();
 
   apiMocks.getCurrentProject.mockResolvedValue({ ...PROJECT, tenant_id: 1, workspace_id: "w" });
-  apiMocks.loadProjectsAllView.mockResolvedValue({ items: [PROJECT], omittedProjects: 0 });
+  apiMocks.loadProjectsAllView.mockResolvedValue({
+    items: [PROJECT],
+    omittedProjects: 0,
+    degraded: false
+  });
   apiMocks.loadProjects.mockResolvedValue([PROJECT]);
   apiMocks.loadProjectTags.mockResolvedValue([]);
   apiMocks.loadTickets.mockResolvedValue({
@@ -110,5 +114,36 @@ describe("TicketsKanbanPage date_context degraded warning (R9 F-001)", () => {
     // (warning 文言にも「超過」は含まれるため、chip の "超過 5/1" 表記で判定する。)
     expect(screen.queryByText(/超過 5\/1/)).not.toBeInTheDocument();
     expect(screen.getByText(/期限 5\/1/)).toBeInTheDocument();
+  });
+});
+
+describe("TicketsKanbanPage all-view project list degraded warning (R10 F-001)", () => {
+  it("project 一覧 whole-list failure (degraded) は空状態と区別して warning を出す", async () => {
+    apiMocks.fetchDateContext.mockResolvedValue({ reference_date: "2026-06-02", threshold_days: 7 });
+    // /me/projects そのものが読めない (auth 失効 / backend 障害)。
+    apiMocks.loadProjectsAllView.mockResolvedValue({
+      items: [],
+      omittedProjects: 0,
+      degraded: true
+    });
+    render(await renderPage());
+
+    expect(
+      screen.getByText(/プロジェクト一覧を取得できなかったため/)
+    ).toBeInTheDocument();
+  });
+
+  it("正常で project 0 件 (genuine empty) は degraded warning を出さない", async () => {
+    apiMocks.fetchDateContext.mockResolvedValue({ reference_date: "2026-06-02", threshold_days: 7 });
+    apiMocks.loadProjectsAllView.mockResolvedValue({
+      items: [],
+      omittedProjects: 0,
+      degraded: false
+    });
+    render(await renderPage());
+
+    expect(
+      screen.queryByText(/プロジェクト一覧を取得できなかったため/)
+    ).not.toBeInTheDocument();
   });
 });

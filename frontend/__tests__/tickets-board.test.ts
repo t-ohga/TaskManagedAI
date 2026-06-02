@@ -286,9 +286,10 @@ describe("loadProjectsAllView row-level omission (Codex adversarial R6 HIGH)", (
         { id: PID, slug: "gamma", name: "C", status: "archived" }
       ]
     });
-    const { items, omittedProjects } = await loadProjectsAllView();
+    const { items, omittedProjects, degraded } = await loadProjectsAllView();
     expect(items.map((p) => p.slug)).toEqual(["alpha", "gamma"]);
     expect(omittedProjects).toBe(1);
+    expect(degraded).toBe(false);
   });
 
   it("不正な status enum の row も omission (valid は保持)", async () => {
@@ -303,19 +304,38 @@ describe("loadProjectsAllView row-level omission (Codex adversarial R6 HIGH)", (
     expect(omittedProjects).toBe(1);
   });
 
-  it("全 valid なら omission 0", async () => {
+  it("全 valid なら omission 0 + degraded false", async () => {
     fetchBackendRaw.mockResolvedValue({
       projects: [{ id: PID, slug: "alpha", name: "A", status: "active" }]
     });
-    const { items, omittedProjects } = await loadProjectsAllView();
+    const { items, omittedProjects, degraded } = await loadProjectsAllView();
     expect(items).toHaveLength(1);
     expect(omittedProjects).toBe(0);
+    expect(degraded).toBe(false);
   });
 
-  it("envelope 不正 / fetch 失敗は空 + omission 0 (all view fail-soft、既存挙動と一致)", async () => {
+  it("正常で project 0 件は degraded false (genuine empty、R10)", async () => {
+    fetchBackendRaw.mockResolvedValue({ projects: [] });
+    await expect(loadProjectsAllView()).resolves.toEqual({
+      items: [],
+      omittedProjects: 0,
+      degraded: false
+    });
+  });
+
+  it("envelope 不正 / fetch 失敗は degraded true (whole-list failure、空状態と区別、R10 F-001)", async () => {
+    // project 一覧そのものが読めない (auth 失効 / backend 障害 / schema drift) を空と取り違えない。
     fetchBackendRaw.mockResolvedValueOnce({});
-    await expect(loadProjectsAllView()).resolves.toEqual({ items: [], omittedProjects: 0 });
+    await expect(loadProjectsAllView()).resolves.toEqual({
+      items: [],
+      omittedProjects: 0,
+      degraded: true
+    });
     fetchBackendRaw.mockRejectedValueOnce(new BackendApiError(500, "boom"));
-    await expect(loadProjectsAllView()).resolves.toEqual({ items: [], omittedProjects: 0 });
+    await expect(loadProjectsAllView()).resolves.toEqual({
+      items: [],
+      omittedProjects: 0,
+      degraded: true
+    });
   });
 });
