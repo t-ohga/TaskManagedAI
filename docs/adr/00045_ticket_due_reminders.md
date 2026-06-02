@@ -235,8 +235,11 @@ client では "today" を独立算出しない (JST 深夜 0 時境界で同一 
      project 状態は `/me/projects` の `status` を一覧 page が各 ticket row に `projectActive` として渡す。
      `ProjectBoardItemSchema.status` は **required + enum (`active`/`archived`、backend ProjectStatus と
      同一)** とし、`status` 欠落 / 不正値は schema failure に倒す (R5 F-001: unknown を archived と誤マップ
-     して active project の reminder 強調を silent に消さない。failClosed (具体 project) では throw →
-     degraded/error、fail-soft (all view) では omission として扱い、silent neutral にしない)。
+     して active project の reminder 強調を silent に消さない)。**failClosed (具体 project / tag filter)
+     は `loadProjects(true)` で 1 行でも schema failure なら throw** (不完全を完全と見せない)。
+     **all view は `loadProjectsAllView` で row-level omission** (R6 F-001: 配列一括 safeParse だと 1 行の
+     status drift が全 project を消し silent empty board になるため、各 row を個別 safeParse して valid を
+     保持、malformed row だけ omission して件数を warning 化、valid project の tickets を消さない)。
    - **非 actionable status (closed/cancelled)** → bucket=null (neutral、R3 F-001)。
    - frontend の actionable 集合 (`REMINDER_ACTIONABLE_STATUSES`) は backend `_REMINDER_ACTIONABLE_STATUSES`
      と同一に揃える。一覧 (SelectableTicketList) と Kanban (TicketCard) の両 view が同 helper を使う。
@@ -417,5 +420,13 @@ R4 fix 後の **adversarial-review R5** verdict=needs-attention、1 finding、**
 |---|---|---|---|---|
 | F-A7-CODE-R5-001 | MEDIUM | R4 で `ProjectBoardItemSchema.status` を optional にし `p.status === "active"` で `projectActive` を導出したため、`/me/projects` が version-skew で `status` を omit すると active project が非 active 扱いになり全 due ticket が silent に neutral 化。dashboard reminder は依然 count するので逆方向の silent 不整合。unknown ≠ archived で fail-closed data 完全性に反する | ADOPT | `status` を **required + enum (`active`/`archived`)** に厳格化。欠落 / 不正は schema failure → failClosed (具体 project) で throw → degraded/error、fail-soft (all view) で omission。silent neutral にしない。load-ticket / tickets-board の test fixture に status を追加 (実 backend は常に返す)、欠落 / 不正 enum reject の regression を追加。 |
 
-reject / defer: なし。R5 全 adopt 反映後、R6 で clean を確認してから merge。検証: backend ruff/mypy +
-16 pytest、frontend 338 vitest + typecheck + lint 全 green。
+reject / defer: なし。
+
+R5 fix 後の **adversarial-review R6** verdict=needs-attention、1 finding (HIGH)、**ADOPT**:
+
+| id | severity | 指摘 | 判定 | 反映 |
+|---|---|---|---|---|
+| F-A7-CODE-R6-001 | HIGH | R5 で `status` を required enum にした結果、`loadProjects(false)` (all view) は配列全体を一括 safeParse するため、`/me/projects` の 1 行だけ status 欠落/不正でも全体 reject → `[]` で valid な他 project の tickets まで silent に消える (silent neutral を silent empty board に置換)。`omittedProjects` も増えず可視化されない | ADOPT | `loadProjectsAllView` を新設し all view を **row-level safeParse** に。valid row を保持、malformed row だけ omission して件数を返し tickets page の warning に合算 (1 行 drift で全 project を消さない)。failClosed (具体 project/tag) は `loadProjects(true)` で従来通り 1 行でも throw。partial malformed all-view の regression test (valid 2 + malformed 1 → valid 2 + omission 1) 追加。 |
+
+reject / defer: なし。R6 全 adopt 反映後、R7 で clean を確認してから merge。検証: backend ruff/mypy +
+16 pytest、frontend 342 vitest + typecheck + lint 全 green。

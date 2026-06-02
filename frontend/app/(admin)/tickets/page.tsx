@@ -8,7 +8,9 @@ import { fetchDateContext } from "@/lib/api/reminders";
 import {
   loadProjectTags,
   loadProjects,
+  loadProjectsAllView,
   loadTickets,
+  type ProjectBoardItem,
   type TicketItem
 } from "@/lib/api/tickets-board";
 import type { TagRead } from "@/lib/domain/tag";
@@ -213,8 +215,19 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   const currentView = (params.view === "list" ? "list" : "kanban") as "kanban" | "list";
   const sortKey = params.sort ?? "created_desc";
   // 具体 project 選択中 or tag filter 適用中は project metadata を fail-closed で要求する
-  // (取得失敗で「0 件」board を完全な結果として描画しない、Codex R5 HIGH)。横断時は fail-soft。
-  const projects = await loadProjects(selectedProject !== "all" || Boolean(tagFilter));
+  // (取得失敗で「0 件」board を完全な結果として描画しない、Codex R5 HIGH)。
+  // 横断 (all view) は fail-soft だが **row-level omission** で取得する (Codex R6 HIGH: 1 行の
+  // malformed project が全 project を消すのを防ぎ、valid project を保持して omission を warning 化)。
+  const isProjectFailClosed = selectedProject !== "all" || Boolean(tagFilter);
+  let projects: ProjectBoardItem[];
+  let malformedProjects = 0;
+  if (isProjectFailClosed) {
+    projects = await loadProjects(true);
+  } else {
+    const allViewProjects = await loadProjectsAllView();
+    projects = allViewProjects.items;
+    malformedProjects = allViewProjects.omittedProjects;
+  }
   // 作成先は server action が session の current_project から resolve する。
   // 表示中 project (URL ?project=) と current_project が一致するときだけ作成 CTA を出す
   // (Codex B2b finding: URL 選択と session current_project の乖離による wrong-project write 防止)。
@@ -253,8 +266,9 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   // tag 絞り込み結果が limit を超えて truncate された場合の通知 (不完全を完全と見せない、R3 HIGH)。
   let tagFilterTruncated: { total: number; shown: number } | null = null;
 
-  // 横断 (all view) で取得に失敗した project 数 (fail-soft、欠落を warning で可視化)。
-  let omittedProjects = 0;
+  // 横断 (all view) で除外した project 数 (fail-soft、欠落を warning で可視化)。malformed な project
+  // metadata (R6 row-level omission) + ticket fetch 失敗の両方を含める。
+  let omittedProjects = malformedProjects;
 
   if (selectedProject === "all") {
     for (const p of projects) {

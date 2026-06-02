@@ -19,7 +19,12 @@ vi.mock("@/lib/api/tags", () => ({
   listTags: (...args: unknown[]) => listTags(...args)
 }));
 
-import { loadProjectTags, loadProjects, loadTickets } from "@/lib/api/tickets-board";
+import {
+  loadProjectTags,
+  loadProjects,
+  loadProjectsAllView,
+  loadTickets
+} from "@/lib/api/tickets-board";
 
 const PID = "00000000-0000-4000-8000-000000000004";
 const TAG_ID = "00000000-0000-4000-8000-00000000a001";
@@ -243,5 +248,48 @@ describe("loadProjects fail-closed boundary (Codex frontend R5 HIGH)", () => {
   it("accepts an explicit empty projects array", async () => {
     fetchBackendRaw.mockResolvedValue({ projects: [] });
     await expect(loadProjects(true)).resolves.toEqual([]);
+  });
+});
+
+describe("loadProjectsAllView row-level omission (Codex adversarial R6 HIGH)", () => {
+  it("valid 2 件 + status 欠落 1 件で valid 2 件を保持し omission 1 を返す (全 project を消さない)", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      projects: [
+        { id: PID, slug: "alpha", name: "A", status: "active" },
+        { id: PID, slug: "beta", name: "B" }, // status 欠落 (malformed)
+        { id: PID, slug: "gamma", name: "C", status: "archived" }
+      ]
+    });
+    const { items, omittedProjects } = await loadProjectsAllView();
+    expect(items.map((p) => p.slug)).toEqual(["alpha", "gamma"]);
+    expect(omittedProjects).toBe(1);
+  });
+
+  it("不正な status enum の row も omission (valid は保持)", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      projects: [
+        { id: PID, slug: "alpha", name: "A", status: "active" },
+        { id: PID, slug: "bad", name: "B", status: "weird" }
+      ]
+    });
+    const { items, omittedProjects } = await loadProjectsAllView();
+    expect(items.map((p) => p.slug)).toEqual(["alpha"]);
+    expect(omittedProjects).toBe(1);
+  });
+
+  it("全 valid なら omission 0", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      projects: [{ id: PID, slug: "alpha", name: "A", status: "active" }]
+    });
+    const { items, omittedProjects } = await loadProjectsAllView();
+    expect(items).toHaveLength(1);
+    expect(omittedProjects).toBe(0);
+  });
+
+  it("envelope 不正 / fetch 失敗は空 + omission 0 (all view fail-soft、既存挙動と一致)", async () => {
+    fetchBackendRaw.mockResolvedValueOnce({});
+    await expect(loadProjectsAllView()).resolves.toEqual({ items: [], omittedProjects: 0 });
+    fetchBackendRaw.mockRejectedValueOnce(new BackendApiError(500, "boom"));
+    await expect(loadProjectsAllView()).resolves.toEqual({ items: [], omittedProjects: 0 });
   });
 });

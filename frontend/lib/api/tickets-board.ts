@@ -139,6 +139,46 @@ export async function loadProjects(failClosed: boolean): Promise<ProjectBoardIte
 }
 
 /**
+ * all view (横断表示) 用の project 取得。**row-level fail-soft (Codex adversarial R6 HIGH)**。
+ *
+ * `loadProjects(false)` は配列全体を一括 safeParse するため、R5 で `status` が required enum になった
+ * 結果、1 行でも status 欠落 / 不正値があると全体 reject → 空配列になり、valid な他 project の tickets
+ * まで silent に消える (silent neutral を silent empty board に置換)。all view では **各 row を個別に
+ * safeParse** し、valid row を保持して malformed row だけ omission する。omission 件数を返し、tickets
+ * page が warning で可視化できるようにする (1 行の drift で全 project を消さない)。
+ *
+ * 具体 project / tag filter (failClosed=true) は `loadProjects(true)` を使い、1 行でも schema failure
+ * なら throw する (不完全を完全と見せない)。envelope 不正 / fetch 失敗は all view では空 + omission 0
+ * (既存 fail-soft と一致、1 project 障害で全体を落とさない)。
+ */
+export async function loadProjectsAllView(): Promise<{
+  items: ProjectBoardItem[];
+  omittedProjects: number;
+}> {
+  try {
+    const res = await fetchBackendRaw("/api/v1/me/projects");
+    const raw = res as Record<string, unknown>;
+    const rawList = raw?.projects ?? raw?.items;
+    if (!Array.isArray(rawList)) {
+      return { items: [], omittedProjects: 0 };
+    }
+    const items: ProjectBoardItem[] = [];
+    let omittedProjects = 0;
+    for (const row of rawList) {
+      const parsed = ProjectBoardItemSchema.safeParse(row);
+      if (parsed.success) {
+        items.push(parsed.data);
+      } else {
+        omittedProjects += 1;
+      }
+    }
+    return { items, omittedProjects };
+  } catch {
+    return { items: [], omittedProjects: 0 };
+  }
+}
+
+/**
  * project の tag 一覧 (TagFilter / 付与候補 用)。
  *
  * **fail-closed 分岐 (Codex frontend R4 HIGH)**: `failClosed=true` (tag filter 適用中) のとき
