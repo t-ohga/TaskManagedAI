@@ -304,8 +304,17 @@ class TagRepository:
     async def ticket_ids_with_tag(
         self, tenant_id: int, project_id: UUID, tag_id: UUID
     ) -> list[UUID]:
-        """tag filter 用: 指定 tag を持つ ticket_id を返す (同 project scope)。"""
-        await self._tickets._ensure_tenant_context(tenant_id)  # RLS-ready (Codex R1 HIGH)
+        """tag filter 用: 指定 tag を持つ ticket_id を返す (同 project scope)。
+
+        repository boundary で fail-closed (Codex adversarial R6 HIGH): cross-project /
+        nonexistent tag_id は空 list でなく ``TagNotFoundError`` を raise する。本 method は
+        ADR-00044 が REST endpoint / MCP / script の共有 filter primitive として扱う境界であり、
+        ここで弾かないと direct repository caller が path/target mismatch を「該当 0 件」と
+        取り違える (R4 class の bug)。endpoint は TagNotFoundError → 404 の thin mapper に徹する。
+        """
+        tag = await self.get_tag(tenant_id, project_id, tag_id)  # 兼 _ensure_tenant_context
+        if tag is None:
+            raise TagNotFoundError(tag_id=tag_id)
         result = await self.session.execute(
             select(TicketTag.ticket_id).where(
                 TicketTag.tenant_id == tenant_id,

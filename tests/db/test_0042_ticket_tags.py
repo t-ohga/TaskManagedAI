@@ -227,6 +227,29 @@ async def test_get_tag_rejects_cross_project_tag(
 
 
 @pytest.mark.asyncio
+async def test_ticket_ids_with_tag_rejects_cross_project(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """filter primitive も repository boundary で fail-closed (R6 HIGH)。
+
+    ``ticket_ids_with_tag`` を project A scope で project B の tag に対して呼ぶと、
+    空 list でなく ``TagNotFoundError`` を raise する (direct repository caller が
+    cross-project tag を「該当 0 件」と取り違えない)。
+    """
+    from uuid import UUID
+
+    from backend.app.repositories.tag import TagNotFoundError, TagRepository
+
+    project_a, project_b, tag_b = str(uuid4()), str(uuid4()), str(uuid4())
+    async with session_factory() as session:
+        await _seed_project_ticket_tag(session, project_id=project_a, ticket_id=None, tag_id=None)
+        await _seed_project_ticket_tag(session, project_id=project_b, ticket_id=None, tag_id=tag_b)
+        repo = TagRepository(session)
+        with pytest.raises(TagNotFoundError):
+            await repo.ticket_ids_with_tag(1, UUID(project_a), UUID(tag_b))
+
+
+@pytest.mark.asyncio
 async def test_detach_rejects_cross_project_tag(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
