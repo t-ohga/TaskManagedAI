@@ -20,7 +20,7 @@ invariant:
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -45,7 +45,12 @@ from backend.app.repositories.ticket import (
     TicketRepository,
 )
 from backend.app.schemas.tag import TagRead
-from backend.app.schemas.ticket import TicketPriority, TicketRead, TicketStatus
+from backend.app.schemas.ticket import (
+    StrictDueDate,
+    TicketPriority,
+    TicketRead,
+    TicketStatus,
+)
 from backend.app.services.notifications.ticket_comment import (
     TICKET_COMMENT_MESSAGE_MAX_LENGTH,
     create_ticket_comment_event,
@@ -182,7 +187,8 @@ class TicketCreateRequest(BaseModel):
     description: str | None = None
     status: TicketStatus = "open"
     priority: TicketPriority | None = None
-    due_date: date | None = None
+    # ADR-00045 R13: 厳密な暦日 (YYYY-MM-DD) または null のみ。datetime / epoch / 非実在日を reject。
+    due_date: StrictDueDate = None
     assignee_actor_id: UUID | None = None
 
 
@@ -198,7 +204,8 @@ class TicketUpdateRequest(BaseModel):
     description: str | None = None
     status: TicketStatus | None = None
     priority: TicketPriority | None = None
-    due_date: date | None = None
+    # ADR-00045 R13: 厳密な暦日 (YYYY-MM-DD) または null のみ。datetime / epoch / 非実在日を reject。
+    due_date: StrictDueDate = None
     assignee_actor_id: UUID | None = None
 
 

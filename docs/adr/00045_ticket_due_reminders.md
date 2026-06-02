@@ -61,6 +61,15 @@ notification_events への materialization は **行わない** (純粋派生、
   `maybe_require_cli_capability("task_list")` を必須にする。ticket read 権限を持たない operation token
   に tenant-wide な ticket title 列挙を deny する (least-privilege、capability matrix read boundary)。
   `date_context` は ticket data を返さない (today + 定数のみ) ため gate なし。
+- **backend strict YMD write boundary (adversarial R13 F-001)**: ticket の **write boundary**
+  (`TicketCreateRequest` / `TicketUpdateRequest` REST + 内部 `TicketCreate` / `TicketUpdate`) の
+  `due_date` を `StrictDueDate` (= `Annotated[date | None, BeforeValidator(coerce_strict_due_date)]`)
+  にする。Pydantic v2 の `date` lax coercion が datetime 文字列 (`2026-06-01T00:00:00Z`) / epoch
+  (`1772323200`) を silent に date 化するのを塞ぎ、null または full-match `YYYY-MM-DD` のみ受理、
+  datetime/epoch/非実在日 (2026-02-31)/junk suffix/非ゼロパディングを 422 で reject する。**server-owned
+  boundary が strict-YMD の authoritative 強制点**であり、frontend strict は defense-in-depth。
+  `task_create`/`task_write` capability を持つ API/CLI/MCP/内部 promotion caller が frontend を bypass
+  しても timestamp/epoch を期限日として silent 永続化できない (data integrity 不変条件)。
 - **active-scope 必須 (ADR-00037 / ADR-00039 と整合)**: 既存 default read path と同一の active-scope
   predicate を適用する。reminder が一覧から隠れた削除済みデータを surface してはならない。
   - `Ticket.deleted_at IS NULL` (soft-deleted を除外)。
@@ -486,5 +495,13 @@ R11 fix 後の **adversarial-review R12** verdict=needs-attention、1 finding (H
 |---|---|---|---|---|
 | F-A7-CODE-R12-001 | HIGH | R11 で `TicketReadSchema.due_date` を strict 化したが、実際の detail loader `loadTicket` (`[id]/load-ticket.ts`) は by-id response を `TicketDetail` に cast 直返しし tags のみ検証するため、strict schema を呼ばない。backend serializer drift で `due_date: "2026-06-30T00:00:00Z"` / `2026-02-31` が detail/edit まで到達し、formatter が「未設定」に隠蔽、edit form が raw 値を date input に渡して保存で deadline を silent clear/改変しうる (strict-YMD all-surface invariant が loader で破れる) | ADOPT | `loadTicket` に **targeted strict YMD validation** を追加 (due_date は null または実在 YYYY-MM-DD のみ許可、timestamp/junk/非実在日/欠落は fail-closed throw)。full `TicketReadSchema` parse は loader の path-pid 設計 (response project_id 無視) + tags-only 検証戦略と非整合のため targeted check で invariant を enforce。malformed due_date reject + valid 通過の loadTicket regression を追加。 |
 
-reject / defer: なし。R12 全 adopt 反映後、R13 で clean を確認してから merge。検証: backend ruff/mypy +
-20 pytest、frontend 352 vitest + typecheck + lint 全 green。
+reject / defer: なし。
+
+R12 fix 後の **adversarial-review R13** verdict=needs-attention、1 finding (HIGH)、**ADOPT**:
+
+| id | severity | 指摘 | 判定 | 反映 |
+|---|---|---|---|---|
+| F-A7-CODE-R13-001 | HIGH | A-7 が frontend/detail loader に strict YMD を適用したが、実 backend write boundary (`TicketCreateRequest`/`TicketUpdateRequest`) は `date \| None` のまま。Pydantic v2 lax coercion で datetime 文字列 / epoch を date に silent coerce するため、`task_create`/`task_write` capability を持つ API/CLI caller が frontend strict validator を通らず timestamp/epoch を期限日として永続化できる data integrity gap (server-owned boundary と frontend invariant の trust boundary ずれ) | ADOPT | `StrictDueDate` (`BeforeValidator(coerce_strict_due_date)`) を `schemas/ticket.py` に定義し、REST request (`TicketCreateRequest`/`TicketUpdateRequest`) + 内部 write schema (`TicketCreate`/`TicketUpdate`) 全 write boundary に適用。null または full-match `YYYY-MM-DD` のみ受理、datetime/epoch/非実在日/junk を 422 reject。pure validator + 全 write schema の reject/accept contract test を追加 (server-owned boundary を authoritative 強制点に)。 |
+
+reject / defer: なし。R13 全 adopt 反映後、R14 で clean を確認してから merge。検証: backend ruff/mypy +
+backend 61 strict due_date pytest + 143 ticket regression、frontend 352 vitest + typecheck + lint 全 green。
