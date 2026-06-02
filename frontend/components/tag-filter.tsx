@@ -7,8 +7,9 @@ import type { TagRead } from "@/lib/domain/tag";
 
 /**
  * ADR-00044 (A-5): ticket 一覧の tag 絞り込み。選択した tag を `?tag=<tag_id>` に反映し、
- * page 側で client-side に絞り込む (一覧は全件取得 + JS filter の既存方式に合わせる)。
- * 選択中タグの再クリックで解除。tag が 0 件なら何も描画しない。
+ * page 側が backend の `?tag_id=` query で絞り込む (client-side filter は limit=200 を超えた tag 付き
+ * ticket を silent に隠すため不採用、Codex frontend R1 HIGH)。選択中タグの再クリックで解除。
+ * tag が 0 件なら何も描画しない。
  */
 export function TagFilter({ tags }: { tags: TagRead[] }) {
   const router = useRouter();
