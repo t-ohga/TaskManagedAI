@@ -423,6 +423,10 @@ async def date_context_endpoint(
 
 @router.get("/reminders", response_model=ReminderSummaryResponse)
 async def reminders_endpoint(
+    # ticket の slug/title/status/priority/due_date を返す ticket read surface のため、ticket list
+    # endpoint と同じ `task_list` capability gate を通す (adversarial R8 F-001: operation token が
+    # ticket read 権限を持たない場合に tenant-wide な ticket title 列挙を許さない、least-privilege)。
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_list")),  # noqa: B008
     actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
     tenant_id: int = Depends(get_tenant_id),  # noqa: B008
     session: AsyncSession = Depends(get_db_session),  # noqa: B008

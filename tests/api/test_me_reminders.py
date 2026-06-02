@@ -69,6 +69,47 @@ def test_reminders_routes_are_registered() -> None:
     assert "/api/v1/me/date_context" in paths
 
 
+def _route_capability_actions(app: object, path: str) -> list[str]:
+    """route の dependency に wired された `maybe_require_cli_capability(<action>)` の action を抽出する。
+
+    `maybe_require_cli_capability` は `required_action` を closure free var に捕捉した `dependency`
+    closure を返す。FastAPI route の `dependant.dependencies` を走査し、closure free var から
+    `required_action` を取り出す (operation token capability gate の wiring を no-DB で検証)。
+    """
+    actions: list[str] = []
+    for route in app.routes:  # type: ignore[attr-defined]
+        if getattr(route, "path", None) != path:
+            continue
+        dependant = getattr(route, "dependant", None)
+        if dependant is None:
+            continue
+        for dep in dependant.dependencies:
+            fn = dep.call
+            closure = getattr(fn, "__closure__", None)
+            if not closure:
+                continue
+            freevars = fn.__code__.co_freevars
+            for name, cell in zip(freevars, closure, strict=False):
+                if name == "required_action":
+                    actions.append(cell.cell_contents)
+    return actions
+
+
+def test_reminders_endpoint_requires_task_list_capability() -> None:
+    # ticket read surface (slug/title/status/priority/due_date) のため、ticket list endpoint と同じ
+    # `task_list` capability gate を必須にする (adversarial R8 F-001: ticket read 権限のない operation
+    # token に tenant-wide な ticket title 列挙を許さない)。functional な denial は DB-gated capability
+    # test 基盤 (tests/security/test_api_capability_token_scope_mismatch.py 等) がカバーする。
+    app = create_app(_settings())
+    reminder_actions = _route_capability_actions(app, "/api/v1/me/reminders")
+    assert "task_list" in reminder_actions
+    # ticket list endpoint と同じ read boundary であることを確認 (consistency)。
+    ticket_list_actions = _route_capability_actions(
+        app, "/api/v1/projects/{project_id}/tickets"
+    )
+    assert "task_list" in ticket_list_actions
+
+
 def test_reminder_response_schemas_have_no_secret_fields() -> None:
     item_fields = set(me_api.ReminderItem.model_fields.keys())
     assert item_fields == {

@@ -56,6 +56,11 @@ notification_events への materialization は **行わない** (純粋派生、
 - **read-only / 純粋派生**。mutation なし。副作用なし。migration なし。同一入力に対し冪等。
 - tenant / project 境界を強制 (`tenant_id` を session から resolve、caller-supplied 禁止)。
   single-tenant membership のため tenant 境界が project 境界を兼ねる (`ticket_summary` と同方針)。
+- **capability gate (adversarial R8 F-001)**: `reminders` は ticket の slug/title/status/priority/
+  due_date を返す ticket read surface のため、ticket list endpoint と同じ
+  `maybe_require_cli_capability("task_list")` を必須にする。ticket read 権限を持たない operation token
+  に tenant-wide な ticket title 列挙を deny する (least-privilege、capability matrix read boundary)。
+  `date_context` は ticket data を返さない (today + 定数のみ) ため gate なし。
 - **active-scope 必須 (ADR-00037 / ADR-00039 と整合)**: 既存 default read path と同一の active-scope
   predicate を適用する。reminder が一覧から隠れた削除済みデータを surface してはならない。
   - `Ticket.deleted_at IS NULL` (soft-deleted を除外)。
@@ -436,5 +441,13 @@ R6 fix 後の **adversarial-review R7** verdict=needs-attention、1 finding、**
 |---|---|---|---|---|
 | F-A7-CODE-R7-001 | MEDIUM | `TicketItemSchema.due_date` が `z.string().nullable()` (任意文字列) のため、timestamp / junk suffix / 非実在日 (2026-02-31) が `loadTickets` を通る。`ticketDueBucket` は strict YMD で null (neutral) を返すが `formatDueDate` が raw を echo し、一覧/Kanban が bogus deadline を neutral 表示する。dashboard/date_context が strict なのに一覧は serializer drift を fail-closed しない画面間不整合 | ADOPT | `TicketItemSchema.due_date` を `z.string().refine(isValidYmd).nullable()` に (reminders/date_context と同じ strict YMD)。malformed は loadTickets で fail-closed (A-5 strict tags と同方針)。`formatDueDate` 2 箇所も raw echo を廃し非実在日 / 不正は null (defense-in-depth)。malformed due_date reject + valid 通過の regression 追加。 |
 
-reject / defer: なし。R7 全 adopt 反映後、R8 で clean を確認してから merge。検証: backend ruff/mypy +
-16 pytest、frontend 344 vitest + typecheck + lint 全 green。
+reject / defer: なし。
+
+R7 fix 後の **adversarial-review R8** verdict=needs-attention、1 finding (HIGH)、**ADOPT**:
+
+| id | severity | 指摘 | 判定 | 反映 |
+|---|---|---|---|---|
+| F-A7-CODE-R8-001 | HIGH | `reminders_endpoint` は ticket の slug/title/status/priority/due_date を返す ticket read surface だが、既存 ticket read endpoint (`/projects/{id}/tickets` 等) が持つ `maybe_require_cli_capability("task_list")` がない。ticket read 権限を持たない operation token でも tenant-wide に ticket title を列挙でき、capability matrix の read boundary / least-privilege を破る | ADOPT | `reminders_endpoint` に `_cli_capability = Depends(maybe_require_cli_capability("task_list"))` を追加 (ticket list endpoint と同じ read boundary)。route の capability gate wiring を introspect する host test + ticket list との consistency 確認を追加。functional denial は既存 DB-gated capability test 基盤がカバー。`date_context` は ticket data 非返却のため gate なし。 |
+
+reject / defer: なし。R8 全 adopt 反映後、R9 で clean を確認してから merge。検証: backend ruff/mypy +
+20 pytest、frontend 344 vitest + typecheck + lint 全 green。
