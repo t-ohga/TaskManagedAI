@@ -210,13 +210,15 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   // tag 絞り込みは specific project でのみ backend query を使う (all view は project 混在で
   // tag scope が曖昧)。指定タグが無効 (404) のときは絞り込みを解除して全件を出し、UI で通知する。
   let tagFilterInvalid = false;
+  // tag 絞り込み結果が limit を超えて truncate された場合の通知 (不完全を完全と見せない、R3 HIGH)。
+  let tagFilterTruncated: { total: number; shown: number } | null = null;
 
   if (selectedProject === "all") {
     for (const p of projects) {
       const pid = String((p as Record<string, unknown>).project_id ?? (p as Record<string, unknown>).id ?? "");
       if (!pid) continue;
-      const tickets = await loadTickets(pid);
-      allTickets.push(...tickets.map((t) => ({ ...t, projectSlug: p.slug })));
+      const board = await loadTickets(pid);
+      allTickets.push(...board.items.map((t) => ({ ...t, projectSlug: p.slug })));
     }
   } else {
     const project = projects.find((p) => p.slug === selectedProject);
@@ -224,15 +226,18 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
       const pid = String((project as Record<string, unknown>).project_id ?? (project as Record<string, unknown>).id ?? "");
       if (tagFilter) {
         try {
-          const tickets = await loadTickets(pid, tagFilter);
-          allTickets = tickets.map((t) => ({ ...t, projectSlug: project.slug }));
+          const board = await loadTickets(pid, tagFilter);
+          allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug }));
+          if (board.truncated) {
+            tagFilterTruncated = { total: board.total, shown: board.items.length };
+          }
         } catch (error) {
           if (error instanceof BackendApiError && error.status === 404) {
             // 無効タグ (cross-project / nonexistent / soft-deleted) のみ絞り込み解除して全件取得
             // (silent な「該当なし」を避ける)。
             tagFilterInvalid = true;
-            const tickets = await loadTickets(pid);
-            allTickets = tickets.map((t) => ({ ...t, projectSlug: project.slug }));
+            const board = await loadTickets(pid);
+            allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug }));
           } else {
             // auth / backend / network 障害は「該当なし」と誤表示せず error boundary に流す
             // (fail-closed、Codex frontend R2 HIGH)。
@@ -240,8 +245,8 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
           }
         }
       } else {
-        const tickets = await loadTickets(pid);
-        allTickets = tickets.map((t) => ({ ...t, projectSlug: project.slug }));
+        const board = await loadTickets(pid);
+        allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug }));
       }
     }
   }
@@ -341,6 +346,13 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
         {tagFilterInvalid ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
             選択したタグが見つからないため、絞り込みを解除して全件を表示しています。
+          </div>
+        ) : null}
+        {tagFilterTruncated ? (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            このタグには {tagFilterTruncated.total} 件のチケットがマッチしますが、最初の
+            {tagFilterTruncated.shown} 件のみ表示しています。すべて確認するにはステータスや期間で
+            さらに絞り込んでください。
           </div>
         ) : null}
       </Suspense>

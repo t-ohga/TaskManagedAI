@@ -48,9 +48,39 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
     await expect(loadTickets(PID, TAG_ID)).rejects.toThrow("network failure");
   });
 
-  it("fails soft (returns []) for unfiltered requests so one project outage does not break all view", async () => {
+  it("fails soft (empty result) for unfiltered requests so one project outage does not break all view", async () => {
     fetchBackendRaw.mockRejectedValue(new BackendApiError(500, "boom"));
-    await expect(loadTickets(PID)).resolves.toEqual([]);
+    await expect(loadTickets(PID)).resolves.toEqual({ items: [], total: 0, truncated: false });
+  });
+
+  it("flags truncated=true when total exceeds the returned page (200 items, total 201)", async () => {
+    const items = Array.from({ length: 200 }, (_v, i) => ({
+      id: `t${i}`,
+      title: "x",
+      status: "open",
+      priority: null,
+      description: null,
+      due_date: null,
+      created_at: null,
+      tags: []
+    }));
+    fetchBackendRaw.mockResolvedValue({ items, total: 201 });
+    const result = await loadTickets(PID, TAG_ID);
+    // 不完全 (201 件中 200 件) を完全な結果として見せないため truncated を立てる (Codex R3 HIGH)
+    expect(result.total).toBe(201);
+    expect(result.items).toHaveLength(200);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("reports truncated=false when the full filtered set fits in one page", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      items: [
+        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: null, created_at: null, tags: [] }
+      ],
+      total: 1
+    });
+    const result = await loadTickets(PID, TAG_ID);
+    expect(result.truncated).toBe(false);
   });
 
   it("validates per-ticket tags and drops palette-drifted entries", async () => {
@@ -69,10 +99,11 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
             { id: "00000000-0000-4000-8000-00000000b002", name: "bad", color: "magenta" }
           ]
         }
-      ]
+      ],
+      total: 1
     });
     const result = await loadTickets(PID);
     // palette 外 color (magenta) を含む配列は strict validate 失敗 → [] に倒す
-    expect(result[0]?.tags).toEqual([]);
+    expect(result.items[0]?.tags).toEqual([]);
   });
 });

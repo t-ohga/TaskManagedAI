@@ -26,19 +26,37 @@ export type TicketItem = {
   tags: TagRead[];
 };
 
-export async function loadTickets(projectId: string, tagId?: string): Promise<TicketItem[]> {
-  const params = new URLSearchParams({ limit: "200" });
+export const TICKET_BOARD_PAGE_LIMIT = 200;
+
+/**
+ * loadTickets の結果。`total` は backend が `tag_id` 適用後に返す **絞り込み後の全件数**。
+ * `total > items.length` なら limit で truncate されており、結果は部分的。caller はこの flag で
+ * 「該当なし」と「一部のみ表示」を区別し、不完全データを完全な結果として見せない (Codex R3 HIGH)。
+ */
+export type TicketBoardResult = {
+  items: TicketItem[];
+  total: number;
+  truncated: boolean;
+};
+
+export async function loadTickets(
+  projectId: string,
+  tagId?: string
+): Promise<TicketBoardResult> {
+  const params = new URLSearchParams({ limit: String(TICKET_BOARD_PAGE_LIMIT) });
   if (tagId) params.set("tag_id", tagId);
   const path = `/api/v1/projects/${projectId}/tickets?${params.toString()}` as `/${string}`;
   try {
     const res = await fetchBackendRaw(path);
     const raw = res as Record<string, unknown>;
-    const items = (raw?.items ?? []) as (TicketItem & { tags?: unknown })[];
+    const rawItems = (raw?.items ?? []) as (TicketItem & { tags?: unknown })[];
     // tags は backend が inject するが Zod で strict validate し、欠落/palette drift は [] に倒す。
-    return items.map((t) => {
+    const items = rawItems.map((t) => {
       const tagsParsed = z.array(TagReadSchema).safeParse(t.tags ?? []);
       return { ...t, tags: tagsParsed.success ? tagsParsed.data : [] };
     });
+    const total = typeof raw?.total === "number" ? raw.total : items.length;
+    return { items, total, truncated: total > items.length };
   } catch (error) {
     // tag filter は正確性が重要。失敗 (auth / backend / network) を [] に潰さず caller へ伝播し、
     // 404 (無効 tag) も caller で絞り込み解除に倒す (silent な「該当なし」を防ぐ、Codex R2 HIGH)。
@@ -46,6 +64,6 @@ export async function loadTickets(projectId: string, tagId?: string): Promise<Ti
       throw error;
     }
     // 通常取得 (tag なし / all view) は fail-soft (1 project の一時障害で全体を落とさない)。
-    return [];
+    return { items: [], total: 0, truncated: false };
   }
 }
