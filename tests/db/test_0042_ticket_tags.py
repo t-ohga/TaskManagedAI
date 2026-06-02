@@ -328,6 +328,54 @@ async def test_tags_for_tickets_excludes_soft_deleted(
 
 
 @pytest.mark.asyncio
+async def test_ticket_read_with_tags_helper_injects_after_update(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """PATCH/POST 用の共通 helper ``_ticket_read_with_tags`` が更新後 ticket にも tag を注入する
+    (Codex R9 HIGH: 更新応答が tag 付き ticket を「タグなし」と誤認させない)。
+
+    tag を attach した ticket を title 更新した後、helper が返す TicketRead.tags に tag が残る。
+    """
+    from uuid import UUID
+
+    from backend.app.api.tickets import _ticket_read_with_tags
+    from backend.app.repositories.tag import TagRepository
+    from backend.app.repositories.ticket import TicketRepository
+
+    project_id, ticket_id, tag_id = str(uuid4()), str(uuid4()), str(uuid4())
+    async with session_factory() as session:
+        await _seed_project_ticket_tag(
+            session, project_id=project_id, ticket_id=ticket_id, tag_id=tag_id
+        )
+        await session.execute(
+            text(
+                "insert into ticket_tags (tenant_id, project_id, ticket_id, tag_id) "
+                "values (1, :pid, :tid, :tag)"
+            ),
+            {"pid": project_id, "tid": ticket_id, "tag": tag_id},
+        )
+        await session.flush()
+        # title を更新 (PATCH 相当)
+        await session.execute(
+            text("update tickets set title = 'updated' where id = :id"),
+            {"id": ticket_id},
+        )
+        await session.flush()
+        ticket = await TicketRepository(session).get_in_project(
+            tenant_id=1, project_id=UUID(project_id), ticket_id=UUID(ticket_id)
+        )
+        assert ticket is not None
+        read = await _ticket_read_with_tags(session, 1, UUID(project_id), ticket)
+        # 更新後でも tag が応答に残る
+        assert {str(t.id) for t in read.tags} == {tag_id}
+        # 参考: 注入しない素の TicketRead は tags=[] (helper が必要な理由)
+        bare = await TagRepository(session).tags_for_tickets(
+            1, UUID(project_id), [UUID(ticket_id)]
+        )
+        assert UUID(ticket_id) in bare
+
+
+@pytest.mark.asyncio
 async def test_create_and_attach_is_atomic(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

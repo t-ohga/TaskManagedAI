@@ -35,6 +35,7 @@ from backend.app.api.approval_inbox import (
 )
 from backend.app.api.dependencies.api_capability_token import maybe_require_cli_capability
 from backend.app.db.models.audit_event import AuditEvent
+from backend.app.db.models.ticket import Ticket
 from backend.app.repositories.audit_event import AuditEventRepository
 from backend.app.repositories.notification_event import NotificationEventRepository
 from backend.app.repositories.tag import TagNotFoundError, TagRepository
@@ -79,6 +80,26 @@ class TicketListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+async def _ticket_read_with_tags(
+    session: AsyncSession,
+    tenant_id: int,
+    project_id: UUID,
+    ticket: Ticket,
+) -> TicketRead:
+    """ADR-00044 (A-5): 単一 ticket の TicketRead に active-scope な per-ticket tag を注入する。
+
+    ``TicketRead.tags`` は ORM relationship ではなく default ``[]`` のため、TicketRead を返す全 endpoint
+    (detail / create / update) はこの helper を経由して tag を注入する。経由しないと PATCH/POST 応答が
+    tag 付き ticket を「タグなし」と誤認させ、不完全を完全と見せる (Codex R9 HIGH)。
+    """
+    read = TicketRead.model_validate(ticket)
+    tags_by_ticket = await TagRepository(session).tags_for_tickets(
+        tenant_id, project_id, [ticket.id]
+    )
+    read.tags = [TagRead.model_validate(t) for t in tags_by_ticket.get(ticket.id, [])]
+    return read
 
 
 @router.get("", response_model=TicketListResponse)
@@ -142,12 +163,7 @@ async def get_ticket_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="ticket not found",
         )
-    read = TicketRead.model_validate(ticket)
-    tags_by_ticket = await TagRepository(session).tags_for_tickets(
-        tenant_id, project_id, [ticket.id]
-    )
-    read.tags = [TagRead.model_validate(t) for t in tags_by_ticket.get(ticket.id, [])]
-    return read
+    return await _ticket_read_with_tags(session, tenant_id, project_id, ticket)
 
 
 _SLUG_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
@@ -244,7 +260,9 @@ async def create_ticket_endpoint(
     # 必要。flush のみだと request close で rollback され、201 返しても persist しない。
     await session.commit()
 
-    return TicketRead.model_validate(ticket)
+    # 新規 ticket は tag 未付与だが、共通 helper 経由で TicketRead.tags を埋める
+    # (ADR-00044、全 TicketRead 応答で tag 注入を統一、Codex R9 HIGH)。
+    return await _ticket_read_with_tags(session, tenant_id, project_id, ticket)
 
 
 @router.patch("/{ticket_id}", response_model=TicketRead)
@@ -338,7 +356,9 @@ async def update_ticket_endpoint(
     # rollback されるため明示 commit。
     await session.commit()
 
-    return TicketRead.model_validate(ticket)
+    # tag 付き ticket を更新したとき、応答が「タグなし」と誤認させないため共通 helper で
+    # active-scope な tag を注入する (ADR-00044、Codex R9 HIGH: 不完全を完全と見せない)。
+    return await _ticket_read_with_tags(session, tenant_id, project_id, ticket)
 
 
 # ---------------------------------------------------------------------------
