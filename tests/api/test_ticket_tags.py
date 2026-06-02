@@ -17,8 +17,10 @@ from typing import get_args
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import CheckConstraint, UniqueConstraint
 
 from backend.app.api.router import api_router
+from backend.app.db.models.base import Base
 from backend.app.db.models.tag import TAG_COLORS, TagColor
 from backend.app.domain.tag import _TAG_NAME_SECRET_PATTERNS, assert_tag_name_safe
 from backend.app.schemas.tag import TagCreate, TagRead, TagUpdate, TicketTagAttach
@@ -154,3 +156,38 @@ def test_tag_color_palette_5plus_source_integrity() -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert set(module.TAG_COLORS) == expected
+
+
+# ── DDL metadata introspection (Codex code-review R1 HIGH-2): migration 0042 が要求する
+#    境界 invariant を ORM metadata から固定する (DB 不要)。
+def test_ticket_tags_fk_metadata_enforces_boundary() -> None:
+    """ticket_tags の FK2 (tag) は RESTRICT、FK1 (ticket) は CASCADE、両 FK が
+    (tenant_id, project_id) を共有して同一 project を構造的に強制する。"""
+    table = Base.metadata.tables["ticket_tags"]
+    fks = {fk.name: fk for fk in table.foreign_key_constraints}
+    assert fks["ticket_tags_tag_fkey"].ondelete == "RESTRICT"  # 使用中 tag 削除を DB で拒否
+    assert fks["ticket_tags_ticket_fkey"].ondelete == "CASCADE"
+    tag_cols = set(fks["ticket_tags_tag_fkey"].column_keys)
+    ticket_cols = set(fks["ticket_tags_ticket_fkey"].column_keys)
+    assert {"tenant_id", "project_id"} <= tag_cols
+    assert {"tenant_id", "project_id"} <= ticket_cols
+
+
+def test_tags_table_constraints_metadata() -> None:
+    """tags は project 内 name unique + FK target unique + name 長 / color palette CHECK +
+    RLS-ready metadata 列を持つ。"""
+    table = Base.metadata.tables["tags"]
+    uniques = {c.name for c in table.constraints if isinstance(c, UniqueConstraint)}
+    assert {"tags_uq_tenant_project_name", "tags_uq_tenant_project_id"} <= uniques
+    checks = {c.name for c in table.constraints if isinstance(c, CheckConstraint)}
+    assert {"tags_ck_name_length", "tags_ck_color"} <= checks
+    project_fk = next(
+        fk for fk in table.foreign_key_constraints if fk.name == "tags_project_fkey"
+    )
+    assert {"tenant_id", "project_id"} <= set(project_fk.column_keys)
+    assert "metadata" in table.columns  # RLS-ready metadata
+
+
+def test_ticket_tags_join_table_has_no_metadata_column() -> None:
+    """join table は entity ではないため metadata 列を持たない (RLS は親で enforce、R3 免除)。"""
+    assert "metadata" not in Base.metadata.tables["ticket_tags"].columns

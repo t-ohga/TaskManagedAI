@@ -63,6 +63,8 @@ class TagRepository:
         self._audit = AuditEventRepository(session)
 
     async def list_tags(self, tenant_id: int, project_id: UUID) -> list[Tag]:
+        # read path も RLS-ready な tenant context を設定する (app-role / RLS policy 整合、Codex R1 HIGH)
+        await self._tickets._ensure_tenant_context(tenant_id)
         result = await self.session.execute(
             select(Tag)
             .where(Tag.tenant_id == tenant_id, Tag.project_id == project_id)
@@ -71,6 +73,7 @@ class TagRepository:
         return list(result.scalars().all())
 
     async def get_tag(self, tenant_id: int, project_id: UUID, tag_id: UUID) -> Tag | None:
+        await self._tickets._ensure_tenant_context(tenant_id)
         return cast(
             "Tag | None",
             await self.session.scalar(
@@ -270,6 +273,7 @@ class TagRepository:
         ids = list(ticket_ids)
         if not ids:
             return {}
+        await self._tickets._ensure_tenant_context(tenant_id)  # RLS-ready (Codex R1 HIGH)
         result = await self.session.execute(
             select(TicketTag.ticket_id, Tag)
             .join(
@@ -294,6 +298,7 @@ class TagRepository:
         self, tenant_id: int, project_id: UUID, tag_id: UUID
     ) -> list[UUID]:
         """tag filter 用: 指定 tag を持つ ticket_id を返す (同 project scope)。"""
+        await self._tickets._ensure_tenant_context(tenant_id)  # RLS-ready (Codex R1 HIGH)
         result = await self.session.execute(
             select(TicketTag.ticket_id).where(
                 TicketTag.tenant_id == tenant_id,
