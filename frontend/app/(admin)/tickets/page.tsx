@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
 import { BackendApiError } from "@/lib/api/client";
@@ -216,8 +217,18 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
     }
   } else {
     const project = projects.find((p) => p.slug === selectedProject);
-    if (project) {
+    if (!project) {
+      // selectedProject の slug が /me/projects に解決できない (stale URL / 権限欠落 / degraded
+      // response で slug 欠落)。空 board を「0 件」と誤表示せず fail-closed で notFound に倒す
+      // (Codex R6 HIGH)。
+      notFound();
+    }
+    {
       const pid = String((project as Record<string, unknown>).project_id ?? (project as Record<string, unknown>).id ?? "");
+      if (!pid) {
+        // project row は解決できたが id/project_id が欠落 (degraded response)。同様に fail-closed。
+        notFound();
+      }
       if (tagFilter) {
         try {
           const board = await loadTickets(pid, tagFilter);

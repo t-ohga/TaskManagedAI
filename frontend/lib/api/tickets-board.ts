@@ -58,35 +58,56 @@ export async function loadTickets(
   const res = await fetchBackendRaw(path);
   const raw = res as Record<string, unknown>;
   const rawItems = (raw?.items ?? []) as (TicketItem & { tags?: unknown })[];
-  // tags は backend が inject するが Zod で strict validate し、欠落/palette drift は [] に倒す。
+  // tags は backend が inject する。Zod で strict validate し、**malformed (version skew / palette
+  // drift) は [] に潰さず throw する** (Codex R6 HIGH: tag 付き ticket を「タグなし」と silent 誤表示
+  // しない)。caller が intent で fail-closed / omission に倒す。
   const items = rawItems.map((t) => {
     const tagsParsed = z.array(TagReadSchema).safeParse(t.tags ?? []);
-    return { ...t, tags: tagsParsed.success ? tagsParsed.data : [] };
+    if (!tagsParsed.success) {
+      throw new Error("ticket tag metadata failed schema validation");
+    }
+    return { ...t, tags: tagsParsed.data };
   });
   const total = typeof raw?.total === "number" ? raw.total : items.length;
   return { items, total, truncated: total > items.length };
 }
 
-export type ProjectBoardItem = {
-  project_id?: string;
-  id?: string;
-  slug: string;
-  name: string;
-};
+// project row は slug + (project_id | id) が必須。degraded response で欠落した row を成功扱いしない
+// (Codex R6 HIGH: slug 欠落で selectedProject が解決できず空 board を誤表示する経路を塞ぐ)。
+const ProjectBoardItemSchema = z
+  .object({
+    project_id: z.string().min(1).optional(),
+    id: z.string().min(1).optional(),
+    slug: z.string().min(1),
+    name: z.string()
+  })
+  .refine((p) => Boolean(p.project_id ?? p.id), {
+    message: "project row must include project_id or id"
+  });
+
+export type ProjectBoardItem = z.infer<typeof ProjectBoardItemSchema>;
 
 /**
  * `/me/projects` を取得する。
  *
- * **fail-closed 分岐 (Codex R5 HIGH)**: `failClosed=true` (具体 project / tag filter を選択中) のとき
- * project metadata の取得失敗を [] に潰すと、slug 解決できず ticket fetch も走らないまま「0 件」board を
- * 完全な結果として描画してしまう。そのため失敗を caller へ伝播し error boundary に流す。横断 (all view)
- * 時は project 一覧が補助なので fail-soft ([])。
+ * **fail-closed 分岐 (Codex R5/R6 HIGH)**: `failClosed=true` (具体 project / tag filter を選択中) のとき
+ * (a) request の失敗、(b) project row shape (slug + project_id/id) の schema 不正、のどちらも [] に潰すと
+ * slug 解決できず ticket fetch も走らないまま「0 件」board を完全な結果として描画してしまう。そのため
+ * 両方を caller へ伝播し error boundary に流す。横断 (all view) 時は project 一覧が補助なので fail-soft ([])。
  */
 export async function loadProjects(failClosed: boolean): Promise<ProjectBoardItem[]> {
   try {
     const res = await fetchBackendRaw("/api/v1/me/projects");
     const raw = res as Record<string, unknown>;
-    return (raw?.projects ?? raw?.items ?? []) as ProjectBoardItem[];
+    const rawList = (raw?.projects ?? raw?.items ?? []) as unknown[];
+    const parsed = z.array(ProjectBoardItemSchema).safeParse(rawList);
+    if (!parsed.success) {
+      if (failClosed) {
+        throw new Error("project list failed schema validation");
+      }
+      return [];
+    }
+    return parsed.data;
   } catch (error) {
     if (failClosed) {
       throw error;

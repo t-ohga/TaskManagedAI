@@ -91,7 +91,7 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
     expect(result.truncated).toBe(false);
   });
 
-  it("validates per-ticket tags and drops palette-drifted entries", async () => {
+  it("throws on malformed tag metadata instead of silently dropping it (R6 HIGH)", async () => {
     fetchBackendRaw.mockResolvedValue({
       items: [
         {
@@ -110,8 +110,19 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
       ],
       total: 1
     });
+    // palette 外 color (magenta) は version skew / drift。[] に潰すと tag 付き ticket を「タグなし」と
+    // silent 誤表示するため fail-closed で throw する (不完全を完全と見せない)。
+    await expect(loadTickets(PID)).rejects.toThrow();
+  });
+
+  it("accepts an empty tags array as a valid no-tag ticket (not malformed)", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      items: [
+        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: null, created_at: null, tags: [] }
+      ],
+      total: 1
+    });
     const result = await loadTickets(PID);
-    // palette 外 color (magenta) を含む配列は strict validate 失敗 → [] に倒す
     expect(result.items[0]?.tags).toEqual([]);
   });
 });
@@ -147,5 +158,21 @@ describe("loadProjects fail-closed boundary (Codex frontend R5 HIGH)", () => {
   it("returns projects on success", async () => {
     fetchBackendRaw.mockResolvedValue({ projects: [{ id: PID, slug: "p", name: "P" }] });
     await expect(loadProjects(true)).resolves.toHaveLength(1);
+  });
+
+  it("throws when failClosed and a project row is missing slug (degraded response)", async () => {
+    // slug 欠落 row を成功扱いすると selectedProject が解決できず空 board を誤表示する (R6 HIGH)
+    fetchBackendRaw.mockResolvedValue({ projects: [{ id: PID, name: "P" }] });
+    await expect(loadProjects(true)).rejects.toThrow();
+  });
+
+  it("throws when failClosed and a project row has neither project_id nor id", async () => {
+    fetchBackendRaw.mockResolvedValue({ projects: [{ slug: "p", name: "P" }] });
+    await expect(loadProjects(true)).rejects.toThrow();
+  });
+
+  it("returns [] for malformed project rows when not failClosed (all view)", async () => {
+    fetchBackendRaw.mockResolvedValue({ projects: [{ name: "P" }] });
+    await expect(loadProjects(false)).resolves.toEqual([]);
   });
 });

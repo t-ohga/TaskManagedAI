@@ -72,6 +72,41 @@ describe("loadTicket (Codex B2b R2/R3/R4/R5 contract)", () => {
     await expect(loadTicket(VALID_UUID)).resolves.toBeNull();
   });
 
+  it("malformed tag metadata は [] に潰さず throw する (fail-closed、Codex R6 HIGH)", async () => {
+    // tag 付き ticket を「タグなし」と silent 誤表示しないため、palette 外 color を throw に倒す。
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/me/projects") return PROJECTS;
+      if (path === `/api/v1/projects/p-aaa/tickets/${VALID_UUID}`) throw new BackendApiError(404, "nf");
+      if (path === `/api/v1/projects/p-bbb/tickets/${VALID_UUID}`) {
+        return {
+          ...ticketPayload(VALID_UUID),
+          tags: [{ id: "00000000-0000-4000-8000-00000000a001", name: "x", color: "magenta" }]
+        };
+      }
+      throw new BackendApiError(500, "unexpected");
+    });
+
+    await expect(loadTicket(VALID_UUID)).rejects.toThrow();
+  });
+
+  it("有効な tags は detail にそのまま詰める", async () => {
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/me/projects") return PROJECTS;
+      if (path === `/api/v1/projects/p-aaa/tickets/${VALID_UUID}`) throw new BackendApiError(404, "nf");
+      if (path === `/api/v1/projects/p-bbb/tickets/${VALID_UUID}`) {
+        return {
+          ...ticketPayload(VALID_UUID),
+          tags: [{ id: "00000000-0000-4000-8000-00000000a001", name: "bug", color: "red" }]
+        };
+      }
+      throw new BackendApiError(500, "unexpected");
+    });
+
+    const result = await loadTicket(VALID_UUID);
+    expect(result?.tags).toHaveLength(1);
+    expect(result?.tags[0]?.name).toBe("bug");
+  });
+
   it("非 404 失敗は found より優先して rethrow する (fail-closed、R4)", async () => {
     // 所有 project (beta) で found だが、別 project (alpha) が 403 → found を隠さず throw。
     mockFetch.mockImplementation(async (path: string) => {
