@@ -1,8 +1,9 @@
 ---
 id: "ADR-00045"
 title: "期限リマインダー集約エンドポイント (read-only、on-read、A-7)"
-status: "proposed"
+status: "accepted"
 date: "2026-06-02"
+accepted_at: "2026-06-02"
 deciders: ["t-ohga"]
 adr_gate_criteria: [3]
 related_adr:
