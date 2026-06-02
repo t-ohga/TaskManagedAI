@@ -18,7 +18,7 @@
 import { z } from "zod";
 
 import { fetchBackendJson } from "@/lib/api/client";
-import { TagReadSchema } from "@/lib/api/tags";
+import { TagReadSchema } from "@/lib/domain/tag";
 
 // Codex audit F-006 adopt: backend ticket.py Literal + DB CHECK と integrity 維持
 // backend/app/db/models/ticket.py:20 と完全一致 (Sprint 11 contract test で drift 検証)

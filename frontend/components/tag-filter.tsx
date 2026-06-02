@@ -3,7 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { TagChip } from "@/components/tag-chip";
-import type { TagRead } from "@/lib/api/tags";
+import type { TagRead } from "@/lib/domain/tag";
 
 /**
  * ADR-00044 (A-5): ticket 一覧の tag 絞り込み。選択した tag を `?tag=<tag_id>` に反映し、

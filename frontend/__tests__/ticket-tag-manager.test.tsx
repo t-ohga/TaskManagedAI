@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TicketTagManager } from "@/components/ticket-tag-manager";
-import type { TagRead } from "@/lib/api/tags";
+import type { TagRead } from "@/lib/domain/tag";
 
 // Server Action と router を mock し、各操作が正しい action / FormData を呼ぶことを検証する。
 const refresh = vi.fn();

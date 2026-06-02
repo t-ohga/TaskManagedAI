@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { BackendApiError, fetchBackendRaw } from "@/lib/api/client";
-import { TagReadSchema, type TagRead } from "@/lib/api/tags";
+import { TagReadSchema, type TagRead } from "@/lib/domain/tag";
 
 // ticket_id の検証は TicketReadSchema.id (z.string().uuid()) と同一契約に揃える。
 // 狭い v1-5 限定 validator だと UUIDv7 等の backend-valid な id を frontend が false

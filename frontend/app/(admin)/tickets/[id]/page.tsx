@@ -13,7 +13,8 @@ import { TagChip } from "@/components/tag-chip";
 import { TicketTagManager } from "@/components/ticket-tag-manager";
 import { getCurrentProject } from "@/lib/api/session";
 import { getTicketActivity, type TicketActivityEntry } from "@/lib/api/tickets";
-import { listTags, type TagRead } from "@/lib/api/tags";
+import { listTags } from "@/lib/api/tags";
+import type { TagRead } from "@/lib/domain/tag";
 
 import { addTicketCommentAction } from "../actions";
 import { loadTicket } from "./load-ticket";

@@ -1,4 +1,4 @@
-import type { TagColor } from "@/lib/api/tags";
+import type { TagColor } from "@/lib/domain/tag";
 
 /**
  * ADR-00044 (A-5): tag を色付き chip で表示する pure presentation component。

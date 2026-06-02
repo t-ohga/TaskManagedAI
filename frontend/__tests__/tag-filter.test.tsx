@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TagFilter } from "@/components/tag-filter";
-import type { TagRead } from "@/lib/api/tags";
+import type { TagRead } from "@/lib/domain/tag";
 
 const push = vi.fn();
 let searchString = "";

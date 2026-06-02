@@ -4,14 +4,8 @@ import { revalidatePath } from "next/cache";
 
 import { BackendApiError } from "@/lib/api/client";
 import { getCurrentProjectId } from "@/lib/api/session";
-import {
-  attachTag,
-  createTag,
-  deleteTag,
-  detachTag,
-  renameTag,
-  TagColorEnum
-} from "@/lib/api/tags";
+import { attachTag, createTag, deleteTag, detachTag, renameTag } from "@/lib/api/tags";
+import { TagColorEnum } from "@/lib/domain/tag";
 
 /**
  * ADR-00044 (A-5): ticket への tag 付与/除去 + project tag の作成/編集/削除 Server Action。

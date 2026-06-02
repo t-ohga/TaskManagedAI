@@ -1,50 +1,22 @@
 /**
- * ADR-00044 (A-5): ticket タグ/ラベルの API client (Zod schema + fetch helper)。
+ * ADR-00044 (A-5): ticket タグ/ラベルの **server-only** fetch helper (cookies 依存)。
  *
- * backend は全 endpoint project-scoped (`/api/v1/projects/{project_id}/...`)。
- * server-owned-boundary §1: tenant_id / project_id は Server Component / Server Action で
- * session から resolve し caller-supplied 経路を持たない。response は Zod で strict validate。
+ * Client Component からは import しない (next/headers が client graph に混入するため、
+ * Codex frontend R1 HIGH)。palette / schema / 型は `@/lib/domain/tag` (client-safe) を使う。
+ * 本 module は Server Component / Server Action からのみ呼ぶ。
  *
- * - color palette は backend `TAG_COLORS` (migration DB CHECK / ORM / Pydantic) と 5+ source 整合。
- *   drift した場合 Zod parse が落ちるため UI 側で不正 color を握りつぶさない。
- * - cross-project / nonexistent tag_id を指す read/mutate は backend が 404 (BackendApiError) を返す
- *   (path/target mismatch を fail-closed)。呼び出し側は status で分岐する。
+ * - 全 endpoint project-scoped。tenant_id / project_id は server 側で resolve (caller-supplied なし)。
+ * - cross-project / nonexistent / soft-deleted target は backend が 404 (BackendApiError) を返す。
  */
 
-import { z } from "zod";
-
 import { fetchBackendJson, fetchBackendNoContent } from "@/lib/api/client";
-
-// backend/app/db/models/tag.py TAG_COLORS と完全一致 (順序込み、test_ticket_tags.py で drift 検証)。
-export const TagColorEnum = z.enum([
-  "slate",
-  "red",
-  "orange",
-  "amber",
-  "green",
-  "teal",
-  "blue",
-  "purple",
-  "pink"
-]);
-
-export type TagColor = z.infer<typeof TagColorEnum>;
-
-export const TAG_COLORS: readonly TagColor[] = TagColorEnum.options;
-
-export const TagReadSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string(),
-  color: TagColorEnum
-});
-
-export type TagRead = z.infer<typeof TagReadSchema>;
-
-export const TagListResponseSchema = z.object({
-  items: z.array(TagReadSchema)
-});
-
-export type TagListResponse = z.infer<typeof TagListResponseSchema>;
+import {
+  TagListResponseSchema,
+  TagReadSchema,
+  type TagColor,
+  type TagListResponse,
+  type TagRead
+} from "@/lib/domain/tag";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

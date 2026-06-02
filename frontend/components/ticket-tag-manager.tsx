@@ -12,7 +12,7 @@ import {
   type TagActionState
 } from "@/app/(admin)/tickets/[id]/tag-actions";
 import { TagChip } from "@/components/tag-chip";
-import { TAG_COLORS, type TagColor, type TagRead } from "@/lib/api/tags";
+import { TAG_COLORS, type TagColor, type TagRead } from "@/lib/domain/tag";
 
 /**
  * ADR-00044 (A-5): ticket 詳細でのタグ操作 UI。

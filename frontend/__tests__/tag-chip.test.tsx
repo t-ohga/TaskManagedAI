@@ -2,7 +2,7 @@ import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { TagChip } from "@/components/tag-chip";
-import { TAG_COLORS } from "@/lib/api/tags";
+import { TAG_COLORS } from "@/lib/domain/tag";
 
 describe("TagChip", () => {
   it("renders the tag name", () => {

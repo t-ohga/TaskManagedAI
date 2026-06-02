@@ -2,9 +2,10 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { z } from "zod";
 
-import { fetchBackendRaw } from "@/lib/api/client";
+import { BackendApiError, fetchBackendRaw } from "@/lib/api/client";
 import { getCurrentProject } from "@/lib/api/session";
-import { listTags, TagReadSchema, type TagRead } from "@/lib/api/tags";
+import { listTags } from "@/lib/api/tags";
+import { TagReadSchema, type TagRead } from "@/lib/domain/tag";
 import { ProjectTab } from "@/components/project-tab";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { TicketCreateDialog } from "@/components/ticket-create-dialog";
@@ -59,9 +60,15 @@ async function loadProjects(): Promise<ProjectItem[]> {
   }
 }
 
-async function loadTickets(projectId: string): Promise<TicketItem[]> {
+async function loadTickets(projectId: string, tagId?: string): Promise<TicketItem[]> {
+  const params = new URLSearchParams({ limit: "200" });
+  // tag 絞り込みは backend の tag_id query を使う (client-side filter だと limit=200 を超えた
+  // tag 付き ticket を silent に隠すため、Codex frontend R1 HIGH)。tag_id は backend で
+  // active scope + project 所属を fail-closed 検証する。
+  if (tagId) params.set("tag_id", tagId);
+  const path = `/api/v1/projects/${projectId}/tickets?${params.toString()}` as `/${string}`;
   try {
-    const res = await fetchBackendRaw(`/api/v1/projects/${projectId}/tickets?limit=200` as `/${string}`);
+    const res = await fetchBackendRaw(path);
     const raw = res as Record<string, unknown>;
     const items = (raw?.items ?? []) as (TicketItem & { tags?: unknown })[];
     // tags は backend が inject するが Zod で strict validate し、欠落/palette drift は [] に倒す。
@@ -69,7 +76,12 @@ async function loadTickets(projectId: string): Promise<TicketItem[]> {
       const tagsParsed = z.array(TagReadSchema).safeParse(t.tags ?? []);
       return { ...t, tags: tagsParsed.success ? tagsParsed.data : [] };
     });
-  } catch {
+  } catch (error) {
+    // tag_id 指定の 404 (cross-project / nonexistent / soft-deleted tag = backend fail-closed) は
+    // 呼び出し側へ伝播させ、「該当なし」と取り違えず filter 解除 + 通知に倒す。
+    if (tagId && error instanceof BackendApiError && error.status === 404) {
+      throw error;
+    }
     return [];
   }
 }
@@ -233,6 +245,9 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   }
 
   let allTickets: (TicketItem & { projectSlug: string })[] = [];
+  // tag 絞り込みは specific project でのみ backend query を使う (all view は project 混在で
+  // tag scope が曖昧)。指定タグが無効 (404) のときは絞り込みを解除して全件を出し、UI で通知する。
+  let tagFilterInvalid = false;
 
   if (selectedProject === "all") {
     for (const p of projects) {
@@ -245,8 +260,24 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
     const project = projects.find((p) => p.slug === selectedProject);
     if (project) {
       const pid = String((project as Record<string, unknown>).project_id ?? (project as Record<string, unknown>).id ?? "");
-      const tickets = await loadTickets(pid);
-      allTickets = tickets.map((t) => ({ ...t, projectSlug: project.slug }));
+      if (tagFilter) {
+        try {
+          const tickets = await loadTickets(pid, tagFilter);
+          allTickets = tickets.map((t) => ({ ...t, projectSlug: project.slug }));
+        } catch (error) {
+          if (error instanceof BackendApiError && error.status === 404) {
+            // 無効タグ: 絞り込み解除して全件取得 (silent な「該当なし」を避ける)
+            tagFilterInvalid = true;
+            const tickets = await loadTickets(pid);
+            allTickets = tickets.map((t) => ({ ...t, projectSlug: project.slug }));
+          } else {
+            allTickets = [];
+          }
+        }
+      } else {
+        const tickets = await loadTickets(pid);
+        allTickets = tickets.map((t) => ({ ...t, projectSlug: project.slug }));
+      }
     }
   }
 
@@ -263,9 +294,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   if (priorityFilter) {
     filteredTickets = filteredTickets.filter((t) => t.priority === priorityFilter);
   }
-  if (tagFilter) {
-    filteredTickets = filteredTickets.filter((t) => t.tags.some((tag) => tag.id === tagFilter));
-  }
+  // tag 絞り込みは loadTickets の backend tag_id query で適用済 (client-side filter は不要)。
   if (rangeFilter) {
     const now = new Date();
     const cutoff = new Date();
@@ -344,6 +373,11 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
           <ViewToggle currentView={currentView} />
         </div>
         {projectTags.length > 0 ? <TagFilter tags={projectTags} /> : null}
+        {tagFilterInvalid ? (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            選択したタグが見つからないため、絞り込みを解除して全件を表示しています。
+          </div>
+        ) : null}
       </Suspense>
 
       {selectedProject === "all" ? (
