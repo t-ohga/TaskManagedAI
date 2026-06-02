@@ -4,6 +4,7 @@ import { Suspense } from "react";
 
 import { BackendApiError } from "@/lib/api/client";
 import { getCurrentProject } from "@/lib/api/session";
+import { fetchDateContext } from "@/lib/api/reminders";
 import {
   loadProjectTags,
   loadProjects,
@@ -11,6 +12,7 @@ import {
   type TicketItem
 } from "@/lib/api/tickets-board";
 import type { TagRead } from "@/lib/domain/tag";
+import { dueDateBucket, type DueDateBucket } from "@/lib/domain/due-date";
 import { ProjectTab } from "@/components/project-tab";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { TicketCreateDialog } from "@/components/ticket-create-dialog";
@@ -74,7 +76,43 @@ function priorityBadge(priority: string | null | undefined) {
   );
 }
 
-function TicketCard({ ticket, projectSlug }: { ticket: TicketItem; projectSlug?: string | undefined }) {
+// A-7 (ADR-00045): 期限 chip の色 (overdue=赤 / due_today・upcoming=橙 / future・基準日なし=neutral)。
+function dueChipClass(bucket: DueDateBucket | null): string {
+  switch (bucket) {
+    case "overdue":
+      return "bg-red-50 font-medium text-red-700";
+    case "due_today":
+    case "upcoming":
+      return "bg-amber-50 font-medium text-amber-700";
+    default:
+      return "bg-slate-50 text-muted-foreground";
+  }
+}
+
+// 色だけに依存しない (a11y): overdue / due_today は接頭ラベルでも区別する。
+function dueChipPrefix(bucket: DueDateBucket | null): string {
+  if (bucket === "overdue") return "超過";
+  if (bucket === "due_today") return "本日";
+  return "期限";
+}
+
+function TicketCard({
+  ticket,
+  projectSlug,
+  referenceDate,
+  thresholdDays,
+}: {
+  ticket: TicketItem;
+  projectSlug?: string | undefined;
+  referenceDate?: string | undefined;
+  thresholdDays?: number | undefined;
+}) {
+  const formattedDue = formatDueDate(ticket.due_date);
+  // referenceDate (date_context 由来) が無いときは bucket=null → neutral (基準日不明で誤分類しない)。
+  const dueBucket =
+    ticket.due_date && referenceDate !== undefined && thresholdDays !== undefined
+      ? dueDateBucket(ticket.due_date, referenceDate, thresholdDays)
+      : null;
   return (
     <Link
       href={`/tickets/${ticket.id}` as never}
@@ -104,9 +142,9 @@ function TicketCard({ ticket, projectSlug }: { ticket: TicketItem; projectSlug?:
         {projectSlug ? <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-muted-foreground">
             {projectSlug}
           </span> : null}
-        {formatDueDate(ticket.due_date) ? (
-          <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
-            期限 {formatDueDate(ticket.due_date)}
+        {formattedDue ? (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] ${dueChipClass(dueBucket)}`}>
+            {dueChipPrefix(dueBucket)} {formattedDue}
           </span>
         ) : null}
         <span className="ml-auto text-[10px] text-muted-foreground">
@@ -174,6 +212,12 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   // 表示中 project (URL ?project=) と current_project が一致するときだけ作成 CTA を出す
   // (Codex B2b finding: URL 選択と session current_project の乖離による wrong-project write 防止)。
   const currentProject = await getCurrentProject().catch(() => null);
+  // A-7 (ADR-00045 R2 F-002): 期限強調用の単一 "today" authority を一度だけ取得する (all view の
+  // 複数 list 呼びでも全 row に同一基準を適用)。取得失敗 / schema 不正は fail-closed で null に倒し、
+  // 基準日不明のまま赤/橙を誤表示せず neutral 表示にする。
+  const dateContext = await fetchDateContext().catch(() => null);
+  const referenceDate = dateContext?.reference_date;
+  const thresholdDays = dateContext?.threshold_days;
 
   // ADR-00044 (A-5): tag filter 用に specific project の tags を取得 (all view は project 混在で
   // tag scope が曖昧なため非表示)。tagFilter 適用中は fail-closed (tag metadata が読めない状態で
@@ -402,6 +446,8 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
                   key={ticket.id}
                   ticket={ticket}
                   projectSlug={showProjectBadge ? ticket.projectSlug : undefined}
+                  referenceDate={referenceDate}
+                  thresholdDays={thresholdDays}
                 />
               ))}
             </KanbanColumnEnhanced>
@@ -420,6 +466,8 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             tags: t.tags,
           }))}
           showProjectBadge={showProjectBadge}
+          referenceDate={referenceDate}
+          thresholdDays={thresholdDays}
         />
       )}
     </section>

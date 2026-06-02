@@ -8,6 +8,7 @@ import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { BulkStatusChanger } from "@/components/bulk-status-changer";
 import { TagChip } from "@/components/tag-chip";
 import type { TagRead } from "@/lib/domain/tag";
+import { dueDateBucket, type DueDateBucket } from "@/lib/domain/due-date";
 
 type TicketRow = {
   id: string;
@@ -23,6 +24,10 @@ type TicketRow = {
 type SelectableTicketListProps = {
   tickets: TicketRow[];
   showProjectBadge: boolean;
+  // A-7 (ADR-00045): backend authority な基準日 + reminder window (date_context 由来)。
+  // 取得失敗時は undefined → 期限強調なし (neutral) に倒す (fail-closed、誤分類しない)。
+  referenceDate?: string | undefined;
+  thresholdDays?: number | undefined;
 };
 
 // due_date は SQL date (YYYY-MM-DD) のプレーンな暦日。timezone を持たないため
@@ -35,6 +40,26 @@ function formatDueDate(value: string | null): string | null {
   return `${year}/${Number(month)}/${Number(day)}`;
 }
 
+// A-7: 期限 chip の色 (overdue=赤 / due_today・upcoming=橙 / future・基準日なし=neutral)。
+function dueChipClass(bucket: DueDateBucket | null): string {
+  switch (bucket) {
+    case "overdue":
+      return "bg-red-50 font-medium text-red-700";
+    case "due_today":
+    case "upcoming":
+      return "bg-amber-50 font-medium text-amber-700";
+    default:
+      return "bg-slate-50 text-muted-foreground";
+  }
+}
+
+// 色だけに依存しない (a11y): overdue / due_today は接頭ラベルでも区別する。
+function dueChipLabel(bucket: DueDateBucket | null, formatted: string): string {
+  if (bucket === "overdue") return `超過 ${formatted}`;
+  if (bucket === "due_today") return `本日 ${formatted}`;
+  return formatted;
+}
+
 const PRIORITY_LABELS: Record<string, { label: string; color: string }> = {
   critical: { label: "最優先", color: "bg-red-100 text-red-700" },
   high: { label: "高", color: "bg-orange-100 text-orange-700" },
@@ -42,7 +67,12 @@ const PRIORITY_LABELS: Record<string, { label: string; color: string }> = {
   low: { label: "低", color: "bg-blue-100 text-blue-700" },
 };
 
-export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTicketListProps) {
+export function SelectableTicketList({
+  tickets,
+  showProjectBadge,
+  referenceDate,
+  thresholdDays,
+}: SelectableTicketListProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // 横断表示 (project=all) では updateTicketAction が単一プロジェクトしか
@@ -146,13 +176,23 @@ export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTi
                   </td>
                   {showProjectBadge ? <td className="px-4 py-3 text-xs text-muted-foreground">{ticket.projectSlug}</td> : null}
                   <td className="px-4 py-3 text-xs">
-                    {formatDueDate(ticket.due_date) ? (
-                      <span className="rounded bg-amber-50 px-1.5 py-0.5 font-medium text-amber-700">
-                        {formatDueDate(ticket.due_date)}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
+                    {(() => {
+                      const formatted = formatDueDate(ticket.due_date);
+                      if (!formatted || !ticket.due_date) {
+                        return <span className="text-muted-foreground">—</span>;
+                      }
+                      // referenceDate (date_context 由来) が無いときは bucket=null → neutral 表示
+                      // (基準日不明で誤分類しない、R2 F-002 fail-closed)。
+                      const bucket =
+                        referenceDate !== undefined && thresholdDays !== undefined
+                          ? dueDateBucket(ticket.due_date, referenceDate, thresholdDays)
+                          : null;
+                      return (
+                        <span className={`rounded px-1.5 py-0.5 ${dueChipClass(bucket)}`}>
+                          {dueChipLabel(bucket, formatted)}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
                     {ticket.created_at ? new Date(ticket.created_at).toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo" }) : ""}
