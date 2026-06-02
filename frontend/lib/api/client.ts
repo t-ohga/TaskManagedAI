@@ -86,3 +86,31 @@ export async function fetchBackendRaw(
 
   return response.json();
 }
+
+/**
+ * 204 No Content を返す mutation (ADR-00044 A-5 tag delete/attach/detach 等) 用 helper。
+ * body を読まないため response.json() の "Unexpected end of JSON input" を避ける。
+ * 非 2xx は BackendApiError に写像し、呼び出し側が status (404/409 等) を分岐できるようにする。
+ */
+export async function fetchBackendNoContent(
+  path: `/${string}`,
+  init: RequestInit = {}
+): Promise<void> {
+  const headers = new Headers(init.headers);
+  const cookieStore = await cookies();
+  const sessionCookie = cookieStore.get(DEV_SESSION_COOKIE_NAME);
+
+  if (sessionCookie) {
+    headers.set("cookie", `${DEV_SESSION_COOKIE_NAME}=${sessionCookie.value}`);
+  }
+
+  const response = await fetch(buildBackendUrl(path), {
+    ...init,
+    headers,
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    throw new BackendApiError(response.status, `Backend request failed with ${response.status}.`);
+  }
+}

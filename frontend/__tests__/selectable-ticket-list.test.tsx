@@ -21,7 +21,8 @@ function ticket(id: string, title: string) {
     priority: null,
     projectSlug: "taskmanagedai",
     due_date: null,
-    created_at: null
+    created_at: null,
+    tags: []
   };
 }
 

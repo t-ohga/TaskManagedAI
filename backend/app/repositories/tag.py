@@ -1,0 +1,404 @@
+from __future__ import annotations
+
+from collections.abc import Iterable, Sequence
+from typing import cast
+from uuid import UUID, uuid4
+
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.db.models.tag import TAG_COLORS, Tag, TicketTag
+from backend.app.db.models.ticket import Ticket
+from backend.app.domain.tag import assert_tag_name_safe
+from backend.app.repositories.audit_event import AuditEventRepository
+from backend.app.repositories.ticket import TicketRepository
+
+
+class TagNotFoundError(Exception):
+    """ADR-00044: 指定 project に存在しない tag (→ 404)。"""
+
+    def __init__(self, *, tag_id: UUID) -> None:
+        super().__init__(f"tag {tag_id} not found for project.")
+        self.tag_id = tag_id
+
+
+class TagNameConflictError(Exception):
+    """ADR-00044: 同 project に同名の tag が既に存在する (→ 409)。"""
+
+    def __init__(self, *, name: str) -> None:
+        super().__init__(f"a tag named {name!r} already exists in this project.")
+        self.name = name
+
+
+class TagColorInvalidError(Exception):
+    """ADR-00044: palette 外の color (→ 422)。Pydantic と二重防御 (direct repository call 用)。"""
+
+    def __init__(self, *, color: str) -> None:
+        super().__init__(f"color {color!r} is not an allowed tag color.")
+        self.color = color
+
+
+class TagInUseError(Exception):
+    """ADR-00044 R4: 使用中 (ticket_tags 有) tag の削除は不可 (→ 409)。FK2 RESTRICT と二重防御。"""
+
+    def __init__(self, *, tag_id: UUID, attached_count: int) -> None:
+        super().__init__(
+            f"tag {tag_id} is attached to {attached_count} ticket(s); detach before deleting."
+        )
+        self.tag_id = tag_id
+        self.attached_count = attached_count
+
+
+class TagRepository:
+    """ADR-00044 A-5: project-scoped tag CRUD + ticket への attach/detach。
+
+    全 mutation は ``TicketRepository`` の active-project guard (FOR UPDATE lock で archive toggle と
+    直列化) / ``assert_ticket_actionable`` を経由する。secret scan は ``assert_tag_name_safe`` (domain) に
+    集約し、REST / MCP / seed のどの経路から create/rename を呼んでも raw secret tag name を弾く。
+    ``BaseRepository`` の generic delete/update primitive は本 repository では公開しない (guard 迂回防止)。
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self._tickets = TicketRepository(session)
+        self._audit = AuditEventRepository(session)
+
+    async def list_tags(self, tenant_id: int, project_id: UUID) -> list[Tag]:
+        # read path も RLS-ready な tenant context を設定する (app-role / RLS policy 整合、Codex R1 HIGH)
+        await self._tickets._ensure_tenant_context(tenant_id)
+        result = await self.session.execute(
+            select(Tag)
+            .where(Tag.tenant_id == tenant_id, Tag.project_id == project_id)
+            .order_by(Tag.name)
+        )
+        return list(result.scalars().all())
+
+    async def get_tag(self, tenant_id: int, project_id: UUID, tag_id: UUID) -> Tag | None:
+        await self._tickets._ensure_tenant_context(tenant_id)
+        return cast(
+            "Tag | None",
+            await self.session.scalar(
+                select(Tag).where(
+                    Tag.tenant_id == tenant_id,
+                    Tag.project_id == project_id,
+                    Tag.id == tag_id,
+                )
+            ),
+        )
+
+    async def create_tag(
+        self,
+        tenant_id: int,
+        project_id: UUID,
+        *,
+        name: str,
+        color: str,
+        actor_id: UUID | None = None,
+    ) -> Tag:
+        # 存在 + active project を FOR UPDATE で要求 (archived → ProjectArchivedError=409)
+        await self._tickets.assert_project_exists_active(tenant_id, project_id)
+        normalized = name.strip()
+        assert_tag_name_safe(normalized)  # raw secret / canary → ValueError=422
+        if color not in TAG_COLORS:
+            raise TagColorInvalidError(color=color)
+        existing = await self.session.scalar(
+            select(Tag.id).where(
+                Tag.tenant_id == tenant_id,
+                Tag.project_id == project_id,
+                Tag.name == normalized,
+            )
+        )
+        if existing is not None:
+            raise TagNameConflictError(name=normalized)
+        tag = Tag(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            project_id=project_id,
+            name=normalized,
+            color=color,
+        )
+        self.session.add(tag)
+        await self.session.flush()
+        if actor_id is not None:
+            await self._audit.append(
+                tenant_id=tenant_id,
+                event_type="config_changed",
+                payload={
+                    "change": "tag_created",
+                    "project_id": str(project_id),
+                    "tag_id": str(tag.id),
+                    "name": normalized,
+                    "color": color,
+                },
+                actor_id=actor_id,
+            )
+        return tag
+
+    async def rename_tag(
+        self,
+        tenant_id: int,
+        project_id: UUID,
+        tag_id: UUID,
+        *,
+        name: str | None = None,
+        color: str | None = None,
+    ) -> Tag:
+        await self._tickets.assert_project_active(tenant_id, project_id)
+        tag = await self.get_tag(tenant_id, project_id, tag_id)
+        if tag is None:
+            raise TagNotFoundError(tag_id=tag_id)
+        if name is not None:
+            normalized = name.strip()
+            assert_tag_name_safe(normalized)
+            if normalized != tag.name:
+                conflict = await self.session.scalar(
+                    select(Tag.id).where(
+                        Tag.tenant_id == tenant_id,
+                        Tag.project_id == project_id,
+                        Tag.name == normalized,
+                    )
+                )
+                if conflict is not None:
+                    raise TagNameConflictError(name=normalized)
+                tag.name = normalized
+        if color is not None:
+            if color not in TAG_COLORS:
+                raise TagColorInvalidError(color=color)
+            tag.color = color
+        await self.session.flush()
+        return tag
+
+    async def delete_tag(
+        self,
+        tenant_id: int,
+        project_id: UUID,
+        tag_id: UUID,
+        *,
+        actor_id: UUID | None = None,
+    ) -> None:
+        await self._tickets.assert_project_active(tenant_id, project_id)
+        tag = await self.get_tag(tenant_id, project_id, tag_id)
+        if tag is None:
+            raise TagNotFoundError(tag_id=tag_id)
+        # 使用中ガードは active ticket への付与のみで数える (Codex adversarial R9 HIGH、read primitive と
+        # 同じ active scope)。deleted ticket への付与を in-use に含めると (a) attached_count が hidden
+        # deleted ticket の付与数を漏らし、(b) 全付与が deleted 側だけに残った tag が永久に削除不能になる
+        # (detach は active ticket のみ対象)。active 件数のみを 409 に露出する。
+        active_attached = (
+            await self.session.scalar(
+                select(func.count())
+                .select_from(TicketTag)
+                .join(
+                    Ticket,
+                    (Ticket.tenant_id == TicketTag.tenant_id)
+                    & (Ticket.project_id == TicketTag.project_id)
+                    & (Ticket.id == TicketTag.ticket_id),
+                )
+                .where(
+                    TicketTag.tenant_id == tenant_id,
+                    TicketTag.project_id == project_id,
+                    TicketTag.tag_id == tag_id,
+                    Ticket.deleted_at.is_(None),
+                )
+            )
+            or 0
+        )
+        if active_attached > 0:
+            raise TagInUseError(tag_id=tag_id, attached_count=int(active_attached))
+        tag_name = tag.name
+        # active 0 件。deleted ticket 側に残存する付与を project lock (assert_project_active の FOR UPDATE)
+        # 下で先に cleanup し、FK2 RESTRICT を満たしてから tag を hard delete する (R9 deadlock 解消)。
+        # tag は project label として ticket と独立管理し、削除後の deleted ticket restore で復活しない
+        # (ADR-00044 delete model lifecycle)。
+        await self.session.execute(
+            delete(TicketTag).where(
+                TicketTag.tenant_id == tenant_id,
+                TicketTag.project_id == project_id,
+                TicketTag.tag_id == tag_id,
+            )
+        )
+        await self.session.execute(
+            delete(Tag).where(
+                Tag.tenant_id == tenant_id,
+                Tag.project_id == project_id,
+                Tag.id == tag_id,
+            )
+        )
+        # observability audit (復旧用 snapshot ではない、ADR-00044)
+        await self._audit.append(
+            tenant_id=tenant_id,
+            event_type="config_changed",
+            payload={
+                "change": "tag_deleted",
+                "project_id": str(project_id),
+                "tag_id": str(tag_id),
+                "name": tag_name,
+            },
+            actor_id=actor_id,
+        )
+
+    async def attach_tag(
+        self,
+        tenant_id: int,
+        project_id: UUID,
+        ticket_id: UUID,
+        tag_id: UUID,
+    ) -> None:
+        # archived project → 409 / soft-deleted・不在 ticket → 404
+        await self._tickets.assert_ticket_actionable(tenant_id, project_id, str(ticket_id))
+        tag = await self.get_tag(tenant_id, project_id, tag_id)
+        if tag is None:
+            raise TagNotFoundError(tag_id=tag_id)
+        existing = await self.session.scalar(
+            select(TicketTag.tag_id).where(
+                TicketTag.tenant_id == tenant_id,
+                TicketTag.project_id == project_id,
+                TicketTag.ticket_id == ticket_id,
+                TicketTag.tag_id == tag_id,
+            )
+        )
+        if existing is None:  # idempotent
+            self.session.add(
+                TicketTag(
+                    tenant_id=tenant_id,
+                    project_id=project_id,
+                    ticket_id=ticket_id,
+                    tag_id=tag_id,
+                )
+            )
+            await self.session.flush()
+
+    async def create_and_attach_tag(
+        self,
+        tenant_id: int,
+        project_id: UUID,
+        ticket_id: UUID,
+        *,
+        name: str,
+        color: str,
+        actor_id: UUID | None = None,
+    ) -> Tag:
+        """新規 tag を作成し同一 transaction で ticket に付与する (Codex adversarial R5 HIGH)。
+
+        ticket actionable を **tag 作成より先に** 検証し (archived → 409 / soft-deleted・不在 → 404)、
+        その後 create → attach を呼ぶ。caller (endpoint) が commit するまで両 statement は未確定なので、
+        attach が失敗すれば tag 作成も rollback される。これにより「create は成功したが attach 失敗で
+        孤立 tag が残る (stale session 下で wrong project に作られる)」部分成功を構造的に排除する。
+        """
+        # ticket が actionable (active project の active ticket) かを先に検証。ここで弾けば tag を
+        # 作らずに済む。create_tag 内の assert_project_exists_active と二重だが FOR UPDATE lock は冪等。
+        await self._tickets.assert_ticket_actionable(tenant_id, project_id, str(ticket_id))
+        tag = await self.create_tag(
+            tenant_id, project_id, name=name, color=color, actor_id=actor_id
+        )
+        await self.attach_tag(tenant_id, project_id, ticket_id, tag.id)
+        return tag
+
+    async def detach_tag(
+        self,
+        tenant_id: int,
+        project_id: UUID,
+        ticket_id: UUID,
+        tag_id: UUID,
+    ) -> None:
+        await self._tickets.assert_ticket_actionable(tenant_id, project_id, str(ticket_id))
+        # attach と対称に tag の project 所属を検証する (Codex adversarial R5 HIGH)。
+        # cross-project / nonexistent tag_id は path/target mismatch として 404 に fail-close し、
+        # 0 rows delete を「成功」と取り違えて stale/越境 caller state を隠さない。
+        # valid tag の未付与 detach は get_tag が通り 0 rows delete で idempotent 204 を維持する。
+        tag = await self.get_tag(tenant_id, project_id, tag_id)
+        if tag is None:
+            raise TagNotFoundError(tag_id=tag_id)
+        await self.session.execute(
+            delete(TicketTag).where(
+                TicketTag.tenant_id == tenant_id,
+                TicketTag.project_id == project_id,
+                TicketTag.ticket_id == ticket_id,
+                TicketTag.tag_id == tag_id,
+            )
+        )
+
+    async def tags_for_tickets(
+        self,
+        tenant_id: int,
+        project_id: UUID,
+        ticket_ids: Sequence[UUID] | Iterable[UUID],
+    ) -> dict[UUID, list[Tag]]:
+        """per-ticket の tag を **単一 join query** で bulk 取得 (N+1 回避、ADR-00044)。"""
+        ids = list(ticket_ids)
+        if not ids:
+            return {}
+        await self._tickets._ensure_tenant_context(tenant_id)  # RLS-ready (Codex R1 HIGH)
+        # active ticket のみ embed する (Codex adversarial R8 HIGH、ticket_ids_with_tag と同 class)。
+        # ticket_tags 行は soft-delete を生き残るため、Ticket join + deleted_at IS NULL を repository
+        # 側で enforce し、direct caller が削除済 ticket の tag metadata を取り出せないようにする。
+        result = await self.session.execute(
+            select(TicketTag.ticket_id, Tag)
+            .join(
+                Tag,
+                (Tag.tenant_id == TicketTag.tenant_id)
+                & (Tag.project_id == TicketTag.project_id)
+                & (Tag.id == TicketTag.tag_id),
+            )
+            .join(
+                Ticket,
+                (Ticket.tenant_id == TicketTag.tenant_id)
+                & (Ticket.project_id == TicketTag.project_id)
+                & (Ticket.id == TicketTag.ticket_id),
+            )
+            .where(
+                TicketTag.tenant_id == tenant_id,
+                TicketTag.project_id == project_id,
+                TicketTag.ticket_id.in_(ids),
+                Ticket.deleted_at.is_(None),
+            )
+            .order_by(Tag.name)
+        )
+        out: dict[UUID, list[Tag]] = {}
+        for ticket_id, tag in result.all():
+            out.setdefault(ticket_id, []).append(tag)
+        return out
+
+    async def ticket_ids_with_tag(
+        self, tenant_id: int, project_id: UUID, tag_id: UUID
+    ) -> list[UUID]:
+        """tag filter 用: 指定 tag を持つ ticket_id を返す (同 project scope)。
+
+        repository boundary で fail-closed (Codex adversarial R6 HIGH): cross-project /
+        nonexistent tag_id は空 list でなく ``TagNotFoundError`` を raise する。本 method は
+        ADR-00044 が REST endpoint / MCP / script の共有 filter primitive として扱う境界であり、
+        ここで弾かないと direct repository caller が path/target mismatch を「該当 0 件」と
+        取り違える (R4 class の bug)。endpoint は TagNotFoundError → 404 の thin mapper に徹する。
+        """
+        tag = await self.get_tag(tenant_id, project_id, tag_id)  # 兼 _ensure_tenant_context
+        if tag is None:
+            raise TagNotFoundError(tag_id=tag_id)
+        # active ticket のみ返す (Codex adversarial R7 HIGH)。ticket soft-delete は
+        # tickets.deleted_at で表現され ticket_tags 行は残るため、raw join では deleted ticket の
+        # id が漏れる。filter primitive は共有境界なので deleted_at IS NULL を repository 側で enforce し、
+        # direct caller (MCP / script) が削除済 ticket を tag 経由で後続 flow に戻せないようにする。
+        result = await self.session.execute(
+            select(TicketTag.ticket_id)
+            .join(
+                Ticket,
+                (Ticket.tenant_id == TicketTag.tenant_id)
+                & (Ticket.project_id == TicketTag.project_id)
+                & (Ticket.id == TicketTag.ticket_id),
+            )
+            .where(
+                TicketTag.tenant_id == tenant_id,
+                TicketTag.project_id == project_id,
+                TicketTag.tag_id == tag_id,
+                Ticket.deleted_at.is_(None),
+            )
+        )
+        return list(result.scalars().all())
+
+
+__all__ = [
+    "TagRepository",
+    "TagNotFoundError",
+    "TagNameConflictError",
+    "TagColorInvalidError",
+    "TagInUseError",
+]

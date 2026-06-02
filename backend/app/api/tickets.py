@@ -35,13 +35,16 @@ from backend.app.api.approval_inbox import (
 )
 from backend.app.api.dependencies.api_capability_token import maybe_require_cli_capability
 from backend.app.db.models.audit_event import AuditEvent
+from backend.app.db.models.ticket import Ticket
 from backend.app.repositories.audit_event import AuditEventRepository
 from backend.app.repositories.notification_event import NotificationEventRepository
+from backend.app.repositories.tag import TagNotFoundError, TagRepository
 from backend.app.repositories.ticket import (
     ProjectArchivedError,
     TicketNotActionableError,
     TicketRepository,
 )
+from backend.app.schemas.tag import TagRead
 from backend.app.schemas.ticket import TicketPriority, TicketRead, TicketStatus
 from backend.app.services.notifications.ticket_comment import (
     TICKET_COMMENT_MESSAGE_MAX_LENGTH,
@@ -79,27 +82,64 @@ class TicketListResponse(BaseModel):
     offset: int
 
 
+async def _ticket_read_with_tags(
+    session: AsyncSession,
+    tenant_id: int,
+    project_id: UUID,
+    ticket: Ticket,
+) -> TicketRead:
+    """ADR-00044 (A-5): 単一 ticket の TicketRead に active-scope な per-ticket tag を注入する。
+
+    ``TicketRead.tags`` は ORM relationship ではなく default ``[]`` のため、TicketRead を返す全 endpoint
+    (detail / create / update) はこの helper を経由して tag を注入する。経由しないと PATCH/POST 応答が
+    tag 付き ticket を「タグなし」と誤認させ、不完全を完全と見せる (Codex R9 HIGH)。
+    """
+    read = TicketRead.model_validate(ticket)
+    tags_by_ticket = await TagRepository(session).tags_for_tickets(
+        tenant_id, project_id, [ticket.id]
+    )
+    read.tags = [TagRead.model_validate(t) for t in tags_by_ticket.get(ticket.id, [])]
+    return read
+
+
 @router.get("", response_model=TicketListResponse)
 async def list_tickets_endpoint(
     project_id: UUID,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    tag_id: UUID | None = Query(default=None),  # ADR-00044 (A-5): tag による絞り込み
     _cli_capability: object = Depends(maybe_require_cli_capability("task_list")),  # noqa: B008
     actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008  # FastAPI Depends pattern
     tenant_id: int = Depends(get_tenant_id),  # noqa: B008
     session: AsyncSession = Depends(get_db_session),  # noqa: B008
 ) -> TicketListResponse:
-    """List tickets in project (paginated)."""
+    """List tickets in project (paginated)。任意で tag_id による絞り込み + per-ticket tag を埋め込む。"""
     repo = TicketRepository(session)
+    tag_repo = TagRepository(session)
     tickets = await repo.list_in_project(tenant_id=tenant_id, project_id=project_id)
+    if tag_id is not None:
+        # fail-closed 検証は repository primitive (ticket_ids_with_tag) に集約済 (Codex R6 HIGH)。
+        # endpoint は TagNotFoundError → 404 に写像する thin mapper に徹し、cross-project /
+        # nonexistent tag を「有効だが ticket 0 件」と取り違えて全件を silent に隠さない。
+        try:
+            allowed = set(await tag_repo.ticket_ids_with_tag(tenant_id, project_id, tag_id))
+        except TagNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="tag not found for project",
+            ) from exc
+        tickets = [t for t in tickets if t.id in allowed]
     total = len(tickets)
     paginated = tickets[offset : offset + limit]
-    return TicketListResponse(
-        items=[TicketRead.model_validate(ticket) for ticket in paginated],
-        total=total,
-        limit=limit,
-        offset=offset,
+    tags_by_ticket = await tag_repo.tags_for_tickets(
+        tenant_id, project_id, [t.id for t in paginated]
     )
+    items: list[TicketRead] = []
+    for ticket in paginated:
+        read = TicketRead.model_validate(ticket)
+        read.tags = [TagRead.model_validate(t) for t in tags_by_ticket.get(ticket.id, [])]
+        items.append(read)
+    return TicketListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/{ticket_id}", response_model=TicketRead)
@@ -123,7 +163,7 @@ async def get_ticket_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="ticket not found",
         )
-    return TicketRead.model_validate(ticket)
+    return await _ticket_read_with_tags(session, tenant_id, project_id, ticket)
 
 
 _SLUG_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
@@ -215,12 +255,15 @@ async def create_ticket_endpoint(
         },
     )
     session.add(audit_event)
+    # tag 注入 (追加 SELECT) を commit **前** に実行する。commit 後だと read 失敗時に mutation だけ
+    # durable になり「書けたのに 500」+ POST retry の slug conflict が起きる (Codex R10 HIGH)。
+    # 新規 ticket は tag 未付与なので tags=[] だが、全 TicketRead 応答で helper を統一する (ADR-00044)。
+    response = await _ticket_read_with_tags(session, tenant_id, project_id, ticket)
     # Codex PR #119 R1 F-PR119-001 (P1) fix: `get_session` は auto-commit なし、
     # 既存 endpoint pattern (agent_runs/approval_inbox/claims 等) は明示 commit が
     # 必要。flush のみだと request close で rollback され、201 返しても persist しない。
     await session.commit()
-
-    return TicketRead.model_validate(ticket)
+    return response
 
 
 @router.patch("/{ticket_id}", response_model=TicketRead)
@@ -309,12 +352,15 @@ async def update_ticket_endpoint(
         },
     )
     session.add(audit_event)
+    # tag 注入 (追加 SELECT) を commit **前** に実行する。commit 後だと read 失敗時に field 変更/audit
+    # だけ durable になり、UI に「更新失敗」と誤認させ retry で audit 重複する (Codex R10 HIGH)。
+    # tag 付き ticket の更新応答が「タグなし」と誤認されないよう active-scope tag を注入 (R9 HIGH)。
+    response = await _ticket_read_with_tags(session, tenant_id, project_id, ticket)
     # Codex PR #119 R1 F-PR119-002 (P1) fix: PATCH success path で commit 必須。
     # 既存 endpoint pattern (claims/evidence_items 等) と同じく flush のみでは
     # rollback されるため明示 commit。
     await session.commit()
-
-    return TicketRead.model_validate(ticket)
+    return response
 
 
 # ---------------------------------------------------------------------------

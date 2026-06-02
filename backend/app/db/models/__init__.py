@@ -31,6 +31,7 @@ from backend.app.db.models.secret_capability_token import (
     SecretCapabilityTokenStatus,
 )
 from backend.app.db.models.secret_ref import SecretRef, SecretRefScope, SecretRefStatus
+from backend.app.db.models.tag import TAG_COLORS, Tag, TagColor, TicketTag
 from backend.app.db.models.tenant import Tenant
 from backend.app.db.models.ticket import Ticket, TicketPriority, TicketStatus
 from backend.app.db.models.ticket_relation import TicketRelation, TicketRelationType
@@ -69,11 +70,15 @@ __all__ = [
     "SecretRef",
     "SecretRefScope",
     "SecretRefStatus",
+    "TAG_COLORS",
+    "Tag",
+    "TagColor",
     "Tenant",
     "Ticket",
     "TicketPriority",
     "TicketRelation",
     "TicketRelationType",
     "TicketStatus",
+    "TicketTag",
     "Workspace",
 ]

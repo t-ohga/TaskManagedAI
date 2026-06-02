@@ -17,6 +17,7 @@ from backend.app.api import (
     onboarding,
     p0_acceptance_report,
     research_tasks,
+    tags,
     tickets,
 )
 
@@ -32,6 +33,8 @@ api_router.include_router(evidence_items.router)
 api_router.include_router(kpi_rollup.router)
 api_router.include_router(p0_acceptance_report.router)
 api_router.include_router(tickets.router)
+api_router.include_router(tags.router)
+api_router.include_router(tags.ticket_tags_router)
 api_router.include_router(memory.router)
 api_router.include_router(me.router)
 api_router.include_router(onboarding.router)

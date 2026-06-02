@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import { BackendApiError, fetchBackendRaw } from "@/lib/api/client";
+import { loadProjects } from "@/lib/api/tickets-board";
+import { TagReadSchema, type TagRead } from "@/lib/domain/tag";
 
 // ticket_id の検証は TicketReadSchema.id (z.string().uuid()) と同一契約に揃える。
 // 狭い v1-5 限定 validator だと UUIDv7 等の backend-valid な id を frontend が false
@@ -20,6 +22,8 @@ export type TicketDetail = {
   project_id: string;
   // 看板への戻り導線で使う project slug (tickets 一覧の ?project= は slug を期待する)。
   project_slug: string;
+  // ADR-00044 (A-5): backend が GET by-id で inject する per-ticket tag (active scope)。
+  tags: TagRead[];
 };
 
 /**
@@ -48,16 +52,15 @@ export async function loadTicket(id: string): Promise<TicketDetail | null> {
   // 照合とも lowercase に正規化して大小不一致による false notFound を防ぐ (R6 finding)。
   const normalizedId = id.toLowerCase();
 
-  const projectsRes = await fetchBackendRaw("/api/v1/me/projects");
-  const projects = ((projectsRes as Record<string, unknown>)?.projects ?? []) as Record<
-    string,
-    string
-  >[];
+  // project list を envelope + row shape まで fail-closed validate する (Codex R8 HIGH)。
+  // degraded /me/projects (projects 欠落/null、id 欠落 row、slug 欠落) を空 probe set に潰して
+  // 実 ticket を false 404 / broken back-link にしない。loadProjects(true) が schema 不正/障害を throw する。
+  const projects = await loadProjects(true);
 
   const settled = await Promise.allSettled(
     projects.map(async (p): Promise<TicketDetail | null> => {
       const pid = String(p.project_id ?? p.id ?? "");
-      const slug = String(p.slug ?? "");
+      const slug = p.slug;
       if (!pid) return null;
       try {
         const ticketRes = await fetchBackendRaw(
@@ -65,7 +68,23 @@ export async function loadTicket(id: string): Promise<TicketDetail | null> {
         );
         const ticket = ticketRes as (TicketDetail & { id?: string }) | null;
         if (ticket && ticket.id?.toLowerCase() === normalizedId) {
-          return { ...ticket, project_id: pid, project_slug: slug };
+          // tags は backend が常に inject する。Zod で strict validate し、**malformed / absent / null は
+          // [] に潰さず throw** する (Codex R6/R7 HIGH)。`?? []` を使わず直接 parse し、explicit `tags: []`
+          // (タグなし) と version skew / degraded での metadata 不在を区別する。本ページは attach/detach/
+          // rename/delete の write surface なので、false empty から始めると現在の分類を誤認させる。
+          // throw は probe の rejected として最優先 surface され error boundary へ。
+          const tagsParsed = z
+            .array(TagReadSchema)
+            .safeParse((ticketRes as Record<string, unknown>)?.tags);
+          if (!tagsParsed.success) {
+            throw new Error("ticket tag metadata missing or failed schema validation");
+          }
+          return {
+            ...ticket,
+            project_id: pid,
+            project_slug: slug,
+            tags: tagsParsed.data
+          };
         }
         return null;
       } catch (error) {
