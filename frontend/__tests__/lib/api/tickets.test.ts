@@ -89,6 +89,33 @@ describe("tickets schemas (SP-012-9 BL-UIW-003)", () => {
     expect(parsed.due_date).toBe("2026-06-30");
   });
 
+  it("TicketReadSchema rejects malformed due_date (timestamp / junk / 非実在日) (A-7 R11 F-001)", () => {
+    // due_date は date 型 (厳密 YYYY-MM-DD)。serializer drift した値を detail/edit が slice して表示・
+    // 誤書き戻ししないため fail-closed で reject (reminders/board と同じ strict-YMD all-surface 整合)。
+    const base = {
+      id: "00000000-0000-4000-8000-000000000006",
+      tenant_id: 1,
+      project_id: DEFAULT_PROJECT_ID,
+      repository_id: null,
+      slug: "welcome",
+      title: "Welcome",
+      description: null,
+      status: "open",
+      priority: null,
+      assignee_actor_id: null,
+      created_by_actor_id: "00000000-0000-4000-8000-000000000001",
+      metadata: { rls_ready: true },
+      created_at: "2026-05-22T00:00:00+00:00",
+      updated_at: "2026-05-22T00:00:00+00:00",
+    };
+    for (const bad of ["2026-06-30T00:00:00Z", "2026-06-30junk", "2026-02-31", "2026-6-3"]) {
+      expect(() => TicketReadSchema.parse({ ...base, due_date: bad })).toThrow();
+    }
+    // 正常な YMD と null は通過する。
+    expect(TicketReadSchema.parse({ ...base, due_date: "2026-06-30" }).due_date).toBe("2026-06-30");
+    expect(TicketReadSchema.parse({ ...base, due_date: null }).due_date).toBeNull();
+  });
+
   it("TicketReadSchema rejects unknown status enum", () => {
     const invalid = {
       id: "00000000-0000-4000-8000-000000000006",

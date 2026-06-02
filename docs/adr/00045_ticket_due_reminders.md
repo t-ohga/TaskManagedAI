@@ -470,5 +470,13 @@ R9 fix 後の **adversarial-review R10** verdict=needs-attention、1 finding (HI
 |---|---|---|---|---|
 | F-A7-CODE-R10-001 | HIGH | `loadProjectsAllView` が envelope 不正 / fetch 失敗でも `{items:[], omittedProjects:0}` を返し、page は `omittedProjects>0` でしか warning を出さないため、401/500/schema drift で project 一覧そのものが読めない whole-list failure が「横断表示に project/ticket なし」の空状態と区別できず silent empty board になる | ADOPT | `loadProjectsAllView` の戻り値に `degraded: boolean` を追加 (envelope/fetch failure=true、genuine empty=false)。page は `degraded` 時に「取得失敗」warning を必ず表示し空状態と区別。loadProjectsAllView の degraded test (envelope/fetch=true / empty=false) + page の whole-list failure warning render test を追加。 |
 
-reject / defer: なし。R10 全 adopt 反映後、R11 で clean を確認してから merge。検証: backend ruff/mypy +
-20 pytest、frontend 349 vitest + typecheck + lint 全 green。
+reject / defer: なし。
+
+R10 fix 後の **adversarial-review R11** verdict=needs-attention、1 finding (HIGH)、**ADOPT**:
+
+| id | severity | 指摘 | 判定 | 反映 |
+|---|---|---|---|---|
+| F-A7-CODE-R11-001 | HIGH | A-7 が reminders/date_context/board に strict YMD を適用した一方、ticket detail/edit が使う共有 `TicketReadSchema.due_date` (lib/api/tickets.ts) が `z.string()` のまま。detail formatter が prefix-match、edit form が `due_date.slice(0,10)` を date input default に使い、update action が任意 string を backend に送るため、timestamp/junk/非実在日の serializer drift で board は fail-closed だが detail/edit は malformed を表示・truncate し、保存で sliced date を authoritative に書き戻して deadline を silent 改変しうる (strict-YMD all-surface invariant 違反) | ADOPT | 共有 `TicketListItemSchema.due_date` (= TicketReadSchema/TicketDetailSchema 基底) を `z.string().refine(isValidYmd).nullable()` に。detail formatter を harden (raw echo 廃止)、edit form の `slice(0,10)` を validated 値直接使用に、update action の `TicketUpdateFormSchema.due_date` を strict YMD に。TicketReadSchema malformed reject regression を追加。 |
+
+reject / defer: なし。R11 全 adopt 反映後、R12 で clean を確認してから merge。検証: backend ruff/mypy +
+20 pytest、frontend 350 vitest + typecheck + lint 全 green。

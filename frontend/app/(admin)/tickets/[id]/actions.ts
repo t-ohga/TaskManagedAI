@@ -6,6 +6,7 @@ import { z } from "zod";
 import { fetchBackendJson } from "@/lib/api/client";
 import { getCurrentProjectId } from "@/lib/api/session";
 import { TicketReadSchema } from "@/lib/api/tickets";
+import { isValidYmd } from "@/lib/domain/due-date";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -24,7 +25,10 @@ const TicketUpdateFormSchema = z.object({
     .enum(["open", "in_progress", "blocked", "review", "closed", "cancelled"])
     .optional(),
   priority: z.enum(["low", "medium", "high", "critical"]).nullable().optional(),
-  due_date: z.string().nullable().optional()
+  // A-7 (ADR-00045 R11 F-001): due_date は <input type="date"> 由来の YYYY-MM-DD または "" (=null clear)。
+  // strict YMD validator で検証し、timestamp / junk / 非実在日を reject (malformed を backend へ
+  // 書き戻して deadline を silent 改変しない、strict-YMD all-surface 整合)。null=clear / undefined=変更なし。
+  due_date: z.string().refine(isValidYmd).nullable().optional()
 });
 
 export type UpdateTicketState =

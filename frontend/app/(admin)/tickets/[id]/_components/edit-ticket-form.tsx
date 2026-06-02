@@ -64,7 +64,10 @@ export function EditTicketForm({ ticket }: EditTicketFormProps) {
           <input
             type="date"
             name="due_date"
-            defaultValue={ticket.due_date ? ticket.due_date.slice(0, 10) : ""}
+            // A-7 (ADR-00045 R11 F-001): ticket.due_date は TicketReadSchema で strict YMD 検証済
+            // (YYYY-MM-DD or null)。slice(0,10) の truncation fallback は不要 (malformed は loadTicket
+            // で既に fail-closed)。validated 値をそのまま date input の default に使う。
+            defaultValue={ticket.due_date ?? ""}
             className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           />
         </label>
