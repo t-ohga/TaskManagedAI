@@ -1,9 +1,9 @@
 ---
 id: "ADR-00044"
 title: "Ticket タグ/ラベルシステム (A-5)"
-status: "proposed"
+status: "accepted"
 date: "2026-06-02"
-accepted_at: null
+accepted_at: "2026-06-02"
 deciders: ["t-ohga"]
 adr_gate_criteria: [2, 3, 4, 8]
 related_adr:
