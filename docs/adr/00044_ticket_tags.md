@@ -150,6 +150,19 @@ bridge / seed / 管理 script が repository を直接呼んでも raw secret ta
 **repository / service direct-call の negative test** + **scanner drift guard test** (eval
 `_RAW_SECRET_VALUE_PATTERNS` と同期) を追加 (comment 設計と同方針)。
 
+### capability / auth 境界 (Codex plan-review R8 HIGH、ADR Gate#4)
+
+各 endpoint は FastAPI signature で capability / action を **明示的に pin** する (既存 ticket / comment
+mutation と同方針):
+
+- **read** (`GET tags` / ticket tags embed / tag filter): `get_current_actor_id` + `get_tenant_id`
+  (+ 既存 ticket read と同じ `task_list` / `task_show` 相当)。
+- **mutation** (`POST tags` create / `PATCH` rename / `DELETE` / ticket tags `POST` attach / `DELETE` detach):
+  `maybe_require_cli_capability("task_write")` + `get_current_actor_id` + `get_tenant_id` を必須にする。
+  read-only な `task_list` / `task_show` token では mutation が **403**。
+
+これにより CLI / MCP 経路の権限境界回帰 (read-only token で taxonomy を無許可変更) を実装・test 両面で防ぐ。
+
 ### frontend
 
 - `lib/api/tags.ts`: list/create/delete tag + attach/detach (zod schema)。
@@ -200,7 +213,8 @@ bridge / seed / 管理 script が repository を直接呼んでも raw secret ta
 - `backend/app/api/tags.py` (新規) or `tickets.py` 拡張: project-scoped endpoint (HIGH-1) + PATCH rename
   (R3 HIGH)。palette 検証 + active-project guard (HIGH-2) + assert_ticket_actionable。**request body は
   `tag_id` / `name` / `color` のみ許可し `project_id` / `tenant_id` を extra field reject** (R2 MEDIUM)。
-  secret scan は repository 境界に委譲 (HIGH-3)。
+  secret scan は repository 境界に委譲 (HIGH-3)。**mutation は `maybe_require_cli_capability("task_write")` +
+  `get_current_actor_id` + `get_tenant_id` を signature に pin、read は `task_list` / `task_show` 相当 (R8)**。
 - `backend/app/api/tickets.py`: TicketRead に `tags` 埋め込み + list の `tag_id` filter (同 project)。
 - `tests/api/test_ticket_tags.py` (新規): route 登録 + schema no-secret + SQL introspection
   (tenant/project scope + tag filter predicate) + cross-project 付与 negative + palette 検証 +
@@ -235,4 +249,7 @@ bridge / seed / 管理 script が repository を直接呼んでも raw secret ta
 - **boundary (R2 MEDIUM)**: request body に `project_id` / `tenant_id` → extra field 422。path の
   `project_id` と対象 ticket / tag の project mismatch → 404 (別 project の ticket/tag を path project
   経由で操作不可)。
+- **capability / auth (R8)**: read-only (`task_show` / `task_list`) capability token で create / rename /
+  delete / attach / detach → **403**。mutation は `task_write` capability + actor/tenant 必須を確認
+  (CLI / MCP 経路の無許可 taxonomy 変更回帰を防ぐ)。
 - **per-ticket bulk**: ticket 一覧の tags は単一 join query (N+1 無し) を SQL introspection で確認。
