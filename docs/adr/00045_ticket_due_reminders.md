@@ -153,10 +153,15 @@ ReminderBucket:
     同一 signature (`due_date, referenceDate, thresholdDays`) + 同一 4 値 (`overdue` / `due_today` /
     `upcoming` / `null`) を返し、backend と drift しない。
 - **件数は bucket ごとに SQL COUNT で正確** (条件別 COUNT、list cap に依存しない)。
-- **items は bucket ごとに独立して cap** (`REMINDER_BUCKET_LIST_LIMIT`)。bucket 内 order:
-  - `overdue`: `due_date ASC, slug ASC` (最古 = 最も超過 = 最も放置 を先頭。最長 overdue を優先表示)。
-  - `due_today`: `slug ASC` (単一 due_date のため slug 決定順)。
-  - `upcoming`: `due_date ASC, slug ASC` (期限が近い順)。
+- **items は bucket ごとに独立して cap** (`REMINDER_BUCKET_LIST_LIMIT`)。bucket 内 order は
+  **`due_date, slug, project_id, id`** で固定 (緊急度順 + 一意 tie-breaker):
+  - `overdue`: `due_date ASC` (最古 = 最も超過 = 最も放置 を先頭。最長 overdue を優先表示)。
+  - `due_today`: 単一 due_date のため tie-breaker が実順序を決める。
+  - `upcoming`: `due_date ASC` (期限が近い順)。
+  - **一意 tie-breaker `project_id, id` 必須** (adversarial R1 F-002): slug は `(tenant, project)`
+    一意のため、tenant 横断 reminder では別 project の同 slug + 同 due_date が tie になり、cap 超過
+    bucket で表示行と「他に N 件」が request ごとに揺れる。`due_date, slug, project_id, id` まで含め
+    決定的にする。
   - 各 bucket の意図した緊急度順を上記で固定 (plan-review R1 F-001: 並び順を ADR で明文化)。
 - **全 bucket 横断の単一 LIMIT は採らない** (overdue が due_today / upcoming の表示枠を枯渇させる
   silent truncation を防ぐ、F-001 ADOPT)。各 bucket の `truncated` で欠落を明示。
@@ -195,7 +200,10 @@ client では "today" を独立算出しない (JST 深夜 0 時境界で同一 
 1. **reminder loader** (`frontend/lib/api/reminders.ts`): zod-backed `fetchReminders()` が
    `fetchBackendJson("/api/v1/me/reminders", ReminderSummarySchema)` を呼ぶ。response 全 field を
    Zod で必須検証 (data 完全性: 不完全を完全と見せない)。malformed / auth 失効 / schema drift は
-   throw し、呼出側が degraded (ok/error) に倒す。
+   throw し、呼出側が degraded (ok/error) に倒す。**`reference_date` / item `due_date` は実在する
+   暦日 (`isValidYmd`: full-match regex + UTC round-trip) のみ許容**し、`2026-13-40` / `2026-02-31`
+   等の非実在日を取得失敗に倒す (adversarial R1 F-001: 壊れた基準日で赤/橙を誤表示しない)。
+   `threshold_days` は非負・妥当上限内に制限する。
 
 2. **dashboard reminder section** (`dashboard/page.tsx`): `fetchReminders()` を `ticket_summary` と
    同じ ok/error fail-closed pattern で呼ぶ。取得失敗は「—」/「取得できませんでした」表示にし、
@@ -207,7 +215,9 @@ client では "today" を独立算出しない (JST 深夜 0 時境界で同一 
    `referenceDate` + `thresholdDays` で 3 段階に強調する。bucket 判定は純粋関数
    `dueDateBucket(due_date, referenceDate, thresholdDays) -> "overdue"|"due_today"|"upcoming"|null`
    (backend `compute_reminder_bucket` と同一 signature / 同一 4 値、`new Date(due_date)` を介さず
-   `YYYY-MM-DD` 文字列比較で TZ ずれを排除、ADR-00034 と整合)。一覧の色 mapping:
+   `YYYY-MM-DD` 文字列比較で TZ ずれを排除、ADR-00034 と整合)。**入力が実在しない暦日 / 不正形式 /
+   不正 threshold の場合は `null` (強調なし) に倒す** (adversarial R1 F-001: `isValidYmd` で full-match +
+   UTC round-trip 検証、非実在日の JS Date 正規化による誤分類を防ぐ)。一覧の色 mapping:
    - `overdue` → 赤 (danger)
    - `due_today` / `upcoming` → 橙 (attention、期限近接)
    - `null` (window 外の未来) → neutral (既存の控えめ表示)
@@ -350,3 +360,16 @@ R2 fix 後の R3 verdict=needs-attention、1 finding、**ADOPT** (stale text の
 | F-A7-PR-R3-001 | MEDIUM | テスト指針 / risk 節に R2 で削除したはずの「一覧 response の reference_date 欠落で loadTickets が throw」「tickets list endpoint が同一 helper」表現が残存。実装者が従うと TicketListResponse に reference_date を戻し R2 F-002 を破壊する契約矛盾 | ADOPT | 該当 stale text を date_context 契約に統一: テスト指針を「date_context の reference_date/threshold_days 欠落で fetchDateContext が throw、一覧 page は neutral/degraded に倒す。TicketListResponse/loadTickets は reference_date を要求しない」に修正。risk 節の「tickets list endpoint が同一 helper」→「date_context endpoint が同一 helper」。R1 採否表に R2 supersede 注記を追加。 |
 
 reject / defer: なし。R3 全 adopt 反映後、R4 で clean を確認してから proposed → accepted 昇格。
+
+### adversarial-review (mode=code、実装、2026-06-02)
+
+実装 (commit b78c615) に対する codex-adversarial-review R1 verdict=needs-attention、2 findings、
+いずれも **ADOPT** (実装時の fail-closed / 決定性の欠陥):
+
+| id | severity | 指摘 | 判定 | 反映 |
+|---|---|---|---|---|
+| F-A7-CODE-R1-001 | MEDIUM | `dueDateBucket` / zod が `YYYY-MM-DD` の prefix しか見ず、非実在日 (`2026-13-40` / `2026-02-31`) を通す。`addDaysYmd` の JS Date 正規化で別日に化け、壊れた基準日でも null に倒れず赤/橙を誤表示する | ADOPT | `isValidYmd` (full-match regex + UTC round-trip) を新設し dueDateBucket / `DateContextSchema.reference_date` / `ReminderItem.due_date` / `ReminderSummary.reference_date` に適用。`threshold_days` を `min(0).max(366)` に。非実在日 / 不正 threshold は null / parse 失敗 → neutral/degraded。 |
+| F-A7-CODE-R1-002 | MEDIUM | bucket list の `ORDER BY due_date, slug` だけでは、slug が `(tenant, project)` 一意のため tenant 横断 reminder で別 project の同 slug + 同 due_date が tie になり、cap 超過 bucket で表示/「他に N 件」が request ごとに揺れる | ADOPT | `ORDER BY due_date, slug, project_id, id` の一意 tie-breaker を追加し cap 境界を決定的に。SQL introspection test + ADR order spec も更新。 |
+
+reject / defer: なし。R1 全 adopt 反映後、R2 で clean を確認してから merge。検証: backend ruff/mypy +
+16 pytest、frontend 324 vitest + typecheck + lint 全 green。

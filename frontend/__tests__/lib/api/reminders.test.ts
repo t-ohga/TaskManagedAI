@@ -67,6 +67,25 @@ describe("ReminderSummarySchema (fail-closed)", () => {
     const ok = { ...validSummary, overdue: validBucket(1, [itemNullPriority]) };
     expect(ReminderSummarySchema.safeParse(ok).success).toBe(true);
   });
+
+  it("非実在の reference_date / item due_date は reject (R1 F-001、誤分類を取得失敗に倒す)", () => {
+    expect(
+      ReminderSummarySchema.safeParse({ ...validSummary, reference_date: "2026-13-40" }).success
+    ).toBe(false);
+    const badItem = { ...validItem(), due_date: "2026-02-31" };
+    expect(
+      ReminderSummarySchema.safeParse({ ...validSummary, overdue: validBucket(1, [badItem]) }).success
+    ).toBe(false);
+  });
+
+  it("threshold_days が負 / 上限超は reject", () => {
+    expect(ReminderSummarySchema.safeParse({ ...validSummary, threshold_days: -1 }).success).toBe(
+      false
+    );
+    expect(ReminderSummarySchema.safeParse({ ...validSummary, threshold_days: 9999 }).success).toBe(
+      false
+    );
+  });
 });
 
 describe("DateContextSchema (fail-closed)", () => {
@@ -83,6 +102,12 @@ describe("DateContextSchema (fail-closed)", () => {
   it("threshold_days 型不正は reject", () => {
     expect(
       DateContextSchema.safeParse({ reference_date: "2026-06-02", threshold_days: "7" }).success
+    ).toBe(false);
+  });
+
+  it("非実在の reference_date は reject (基準日 authority 破損を取得失敗に倒す、R1 F-001)", () => {
+    expect(
+      DateContextSchema.safeParse({ reference_date: "2026-02-31", threshold_days: 7 }).success
     ).toBe(false);
   });
 });

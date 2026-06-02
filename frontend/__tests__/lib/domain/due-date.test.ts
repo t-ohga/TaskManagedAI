@@ -51,4 +51,18 @@ describe("dueDateBucket (ADR-00045 期限 bucket)", () => {
     expect(dueDateBucket("2026-06-03", "garbage", THRESHOLD)).toBeNull();
     expect(dueDateBucket("", REF, THRESHOLD)).toBeNull();
   });
+
+  it("非実在の暦日は null (R1 F-001: JS Date 正規化で別日に化けて誤分類しない)", () => {
+    // prefix だけ正しい非実在日 (13 月 / 2 月 31 日) を弾く。
+    expect(dueDateBucket("2026-13-40", REF, THRESHOLD)).toBeNull();
+    expect(dueDateBucket("2026-02-31", REF, THRESHOLD)).toBeNull();
+    // 壊れた reference_date でも誤分類せず null。
+    expect(dueDateBucket("2026-06-03", "2026-00-10", THRESHOLD)).toBeNull();
+    expect(dueDateBucket("2026-06-03", "2026-02-30", THRESHOLD)).toBeNull();
+  });
+
+  it("不正な threshold (負 / 非整数) は null", () => {
+    expect(dueDateBucket("2026-06-03", REF, -1)).toBeNull();
+    expect(dueDateBucket("2026-06-03", REF, 1.5)).toBeNull();
+  });
 });

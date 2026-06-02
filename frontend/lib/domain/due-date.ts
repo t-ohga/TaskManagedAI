@@ -10,10 +10,23 @@
 
 export type DueDateBucket = "overdue" | "due_today" | "upcoming";
 
-const _YMD = /^\d{4}-\d{2}-\d{2}/;
+const _YMD_FULL = /^\d{4}-\d{2}-\d{2}$/;
 
-function isYmd(value: string): boolean {
-  return _YMD.test(value);
+/**
+ * 先頭 10 文字が **実在する暦日** (`YYYY-MM-DD`) か検証する (adversarial R1 F-001)。
+ *
+ * regex の full-match に加え、UTC で round-trip して年月日が一致するか確認する。これにより
+ * `2026-13-40` / `2026-02-31` のような prefix だけ正しい非実在日を弾く (JS Date の正規化で別日へ
+ * 化けて誤分類するのを防ぐ)。時刻付き文字列 (`2026-06-01T00:00:00Z`) は date 部のみ検証する。
+ */
+export function isValidYmd(value: string): boolean {
+  const s = value.slice(0, 10);
+  if (!_YMD_FULL.test(s)) return false;
+  const y = Number(s.slice(0, 4));
+  const m = Number(s.slice(5, 7));
+  const d = Number(s.slice(8, 10));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
 }
 
 // `YYYY-MM-DD` に days を加算して `YYYY-MM-DD` を返す純粋関数。UTC で parse / format するため
@@ -46,7 +59,9 @@ export function dueDateBucket(
   referenceDate: string,
   thresholdDays: number
 ): DueDateBucket | null {
-  if (!isYmd(dueDate) || !isYmd(referenceDate)) return null;
+  // 非実在日 / 形式不正 / 不正な閾値は誤分類せず null (強調なし、fail-safe、R1 F-001)。
+  if (!isValidYmd(dueDate) || !isValidYmd(referenceDate)) return null;
+  if (!Number.isInteger(thresholdDays) || thresholdDays < 0) return null;
   const due = dueDate.slice(0, 10);
   const ref = referenceDate.slice(0, 10);
   if (due < ref) return "overdue";

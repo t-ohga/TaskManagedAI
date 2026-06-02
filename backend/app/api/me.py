@@ -485,7 +485,16 @@ async def reminders_endpoint(
                     select(Ticket)
                     .join(Project, join_on)
                     .where(*base_conditions, bucket_filter)
-                    .order_by(Ticket.due_date, Ticket.slug)
+                    # 一意な tie-breaker (project_id, id) で cap 境界を決定的にする (adversarial R1
+                    # F-002)。slug は (tenant, project) 一意のため、tenant 横断 reminder では別 project
+                    # の同 slug + 同 due_date が tie になり、50 件超 bucket で表示/「他に N 件」が
+                    # request ごとに揺れる。複合一意 (tenant, project, id) まで含め安定順序にする。
+                    .order_by(
+                        Ticket.due_date,
+                        Ticket.slug,
+                        Ticket.project_id,
+                        Ticket.id,
+                    )
                     .limit(REMINDER_BUCKET_LIST_LIMIT)
                 )
             )

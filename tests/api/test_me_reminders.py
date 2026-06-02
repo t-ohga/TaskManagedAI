@@ -154,3 +154,10 @@ def test_reminders_query_applies_all_boundaries_and_per_bucket_cap() -> None:
     assert all("count(*)" in sql for sql in count_sql)
     assert all("LIMIT 50" in sql for sql in list_sql)
     assert sum("LIMIT 50" in sql for sql in all_sql) == 3
+
+    # list は一意 tie-breaker (project_id, id) まで含む決定的順序 (adversarial R1 F-002: cap 境界の
+    # 揺れ防止)。slug だけだと別 project の同 slug+同 due_date が非決定で 50 件超 bucket が揺れる。
+    for sql in list_sql:
+        assert (
+            "ORDER BY tickets.due_date, tickets.slug, tickets.project_id, tickets.id" in sql
+        )
