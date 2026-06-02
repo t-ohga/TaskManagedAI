@@ -27,7 +27,11 @@ from backend.app.repositories.tag import (
     TagNotFoundError,
     TagRepository,
 )
-from backend.app.repositories.ticket import ProjectArchivedError, TicketNotActionableError
+from backend.app.repositories.ticket import (
+    ProjectArchivedError,
+    ProjectNotFoundError,
+    TicketNotActionableError,
+)
 from backend.app.schemas.tag import (
     TagCreate,
     TagListResponse,
@@ -100,6 +104,9 @@ def _to_read(tag: Tag) -> TagRead:
 def _map_tag_error(exc: Exception) -> HTTPException:
     if isinstance(exc, ProjectArchivedError):
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    if isinstance(exc, ProjectNotFoundError):
+        # 存在しない path project_id → 404 (既存 import/bulk-delete の契約と整合、Codex R3 HIGH)
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     if isinstance(exc, TicketNotActionableError):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     if isinstance(exc, TagNotFoundError):

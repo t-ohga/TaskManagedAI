@@ -191,3 +191,25 @@ def test_tags_table_constraints_metadata() -> None:
 def test_ticket_tags_join_table_has_no_metadata_column() -> None:
     """join table は entity ではないため metadata 列を持たない (RLS は親で enforce、R3 免除)。"""
     assert "metadata" not in Base.metadata.tables["ticket_tags"].columns
+
+
+def test_map_tag_error_maps_project_not_found_to_404() -> None:
+    """存在しない path project_id への tag 作成は 500 でなく 404 (Codex code-review R3 HIGH)。"""
+    import uuid
+
+    from backend.app.api.tags import _map_tag_error
+    from backend.app.repositories.ticket import ProjectNotFoundError
+
+    http_exc = _map_tag_error(ProjectNotFoundError(project_id=uuid.uuid4()))
+    assert http_exc.status_code == 404
+
+
+def test_map_tag_error_maps_archived_project_to_409() -> None:
+    """archived project への mutation は 409。"""
+    import uuid
+
+    from backend.app.api.tags import _map_tag_error
+    from backend.app.repositories.ticket import ProjectArchivedError
+
+    http_exc = _map_tag_error(ProjectArchivedError(project_id=uuid.uuid4()))
+    assert http_exc.status_code == 409
