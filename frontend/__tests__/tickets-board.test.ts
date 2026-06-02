@@ -19,7 +19,12 @@ vi.mock("@/lib/api/tags", () => ({
   listTags: (...args: unknown[]) => listTags(...args)
 }));
 
-import { loadProjectTags, loadProjects, loadTickets } from "@/lib/api/tickets-board";
+import {
+  loadProjectTags,
+  loadProjects,
+  loadProjectsAllView,
+  loadTickets
+} from "@/lib/api/tickets-board";
 
 const PID = "00000000-0000-4000-8000-000000000004";
 const TAG_ID = "00000000-0000-4000-8000-00000000a001";
@@ -126,6 +131,32 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
     expect(result.items[0]?.tags).toEqual([]);
   });
 
+  it("accepts a valid YMD due_date and null due_date (A-7 R7)", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      items: [
+        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: "2026-06-30", created_at: null, tags: [] },
+        { id: "t2", title: "y", status: "open", priority: null, description: null, due_date: null, created_at: null, tags: [] }
+      ],
+      total: 2
+    });
+    const result = await loadTickets(PID);
+    expect(result.items.map((t) => t.due_date)).toEqual(["2026-06-30", null]);
+  });
+
+  it("throws on malformed due_date (timestamp / junk / 非実在日) instead of rendering bogus deadline (R7 F-001)", async () => {
+    // due_date は date 型 (厳密 YYYY-MM-DD)。serializer drift した値を「neutral な期限」として
+    // 表示しないため fail-closed で throw する (dashboard/date_context と同じ strict YMD)。
+    for (const bad of ["2026-06-30T00:00:00Z", "2026-06-30junk", "2026-02-31", "2026-6-3"]) {
+      fetchBackendRaw.mockResolvedValueOnce({
+        items: [
+          { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: bad, created_at: null, tags: [] }
+        ],
+        total: 1
+      });
+      await expect(loadTickets(PID)).rejects.toThrow();
+    }
+  });
+
   it("throws when tags metadata is omitted (version skew / degraded), distinct from explicit [] (R7 HIGH)", async () => {
     fetchBackendRaw.mockResolvedValue({
       items: [
@@ -190,8 +221,31 @@ describe("loadProjects fail-closed boundary (Codex frontend R5 HIGH)", () => {
   });
 
   it("returns projects on success", async () => {
-    fetchBackendRaw.mockResolvedValue({ projects: [{ id: PID, slug: "p", name: "P" }] });
+    fetchBackendRaw.mockResolvedValue({ projects: [{ id: PID, slug: "p", name: "P", status: "active" }] });
     await expect(loadProjects(true)).resolves.toHaveLength(1);
+  });
+
+  it("captures project status (A-7: archived 強調ゲート用、active/archived enum)", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      projects: [
+        { id: PID, slug: "active-p", name: "A", status: "active" },
+        { id: PID, slug: "archived-p", name: "B", status: "archived" }
+      ]
+    });
+    const projects = await loadProjects(true);
+    expect(projects.map((p) => p.status)).toEqual(["active", "archived"]);
+  });
+
+  it("status 欠落は failClosed で reject (R5 F-001: unknown を archived と誤マップせず degraded に倒す)", async () => {
+    // status 欠落を非 active に潰すと active project の reminder 強調が silent に消える。
+    // schema failure として throw し、degraded/error に倒す (fail-closed)。
+    fetchBackendRaw.mockResolvedValue({ projects: [{ id: PID, slug: "p", name: "P" }] });
+    await expect(loadProjects(true)).rejects.toThrow();
+  });
+
+  it("不正な status enum は failClosed で reject", async () => {
+    fetchBackendRaw.mockResolvedValue({ projects: [{ id: PID, slug: "p", name: "P", status: "weird" }] });
+    await expect(loadProjects(true)).rejects.toThrow();
   });
 
   it("throws when failClosed and a project row is missing slug (degraded response)", async () => {
@@ -220,5 +274,68 @@ describe("loadProjects fail-closed boundary (Codex frontend R5 HIGH)", () => {
   it("accepts an explicit empty projects array", async () => {
     fetchBackendRaw.mockResolvedValue({ projects: [] });
     await expect(loadProjects(true)).resolves.toEqual([]);
+  });
+});
+
+describe("loadProjectsAllView row-level omission (Codex adversarial R6 HIGH)", () => {
+  it("valid 2 件 + status 欠落 1 件で valid 2 件を保持し omission 1 を返す (全 project を消さない)", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      projects: [
+        { id: PID, slug: "alpha", name: "A", status: "active" },
+        { id: PID, slug: "beta", name: "B" }, // status 欠落 (malformed)
+        { id: PID, slug: "gamma", name: "C", status: "archived" }
+      ]
+    });
+    const { items, omittedProjects, degraded } = await loadProjectsAllView();
+    expect(items.map((p) => p.slug)).toEqual(["alpha", "gamma"]);
+    expect(omittedProjects).toBe(1);
+    expect(degraded).toBe(false);
+  });
+
+  it("不正な status enum の row も omission (valid は保持)", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      projects: [
+        { id: PID, slug: "alpha", name: "A", status: "active" },
+        { id: PID, slug: "bad", name: "B", status: "weird" }
+      ]
+    });
+    const { items, omittedProjects } = await loadProjectsAllView();
+    expect(items.map((p) => p.slug)).toEqual(["alpha"]);
+    expect(omittedProjects).toBe(1);
+  });
+
+  it("全 valid なら omission 0 + degraded false", async () => {
+    fetchBackendRaw.mockResolvedValue({
+      projects: [{ id: PID, slug: "alpha", name: "A", status: "active" }]
+    });
+    const { items, omittedProjects, degraded } = await loadProjectsAllView();
+    expect(items).toHaveLength(1);
+    expect(omittedProjects).toBe(0);
+    expect(degraded).toBe(false);
+  });
+
+  it("正常で project 0 件は degraded false (genuine empty、R10)", async () => {
+    fetchBackendRaw.mockResolvedValue({ projects: [] });
+    await expect(loadProjectsAllView()).resolves.toEqual({
+      items: [],
+      omittedProjects: 0,
+      degraded: false
+    });
+  });
+
+  it("envelope 不正 / fetch 失敗は degraded true (whole-list failure、空状態と区別、R10 F-001)", async () => {
+    // project 一覧そのものが読めない (auth 失効 / backend 障害 / schema drift) を空と取り違えない。
+    fetchBackendRaw.mockResolvedValueOnce({});
+    await expect(loadProjectsAllView()).resolves.toEqual({
+      items: [],
+      omittedProjects: 0,
+      degraded: true
+    });
+    fetchBackendRaw.mockRejectedValueOnce(new BackendApiError(500, "boom"));
+    await expect(loadProjectsAllView()).resolves.toEqual({
+      items: [],
+      omittedProjects: 0,
+      degraded: true
+    });
   });
 });

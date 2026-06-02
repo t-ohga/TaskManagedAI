@@ -20,6 +20,7 @@ function ticket(id: string, title: string) {
     status: "open",
     priority: null,
     projectSlug: "taskmanagedai",
+    projectActive: true,
     due_date: null,
     created_at: null,
     tags: []
@@ -84,5 +85,63 @@ describe("SelectableTicketList", () => {
     // showProjectBadge=true (project=all) では一括操作 UI を出さない。
     expect(screen.queryByLabelText("すべて選択")).not.toBeInTheDocument();
     expect(screen.queryByTestId("bulk-boundary")).not.toBeInTheDocument();
+  });
+
+  // A-7 (ADR-00045 R3 F-001): 期限強調は actionable status のみ。closed/cancelled は neutral。
+  function dueTicket(id: string, status: string, due_date: string) {
+    return { ...ticket(id, id), status, due_date };
+  }
+
+  it("actionable (open) の超過期限は『超過』強調を出す", () => {
+    render(
+      <SelectableTicketList
+        tickets={[dueTicket("a", "open", "2026-05-01")]}
+        showProjectBadge={false}
+        referenceDate="2026-06-02"
+        thresholdDays={7}
+      />
+    );
+    expect(screen.getByText("超過 2026/5/1")).toBeInTheDocument();
+  });
+
+  it("closed の超過期限は neutral (『超過』を出さない、backend reminders と整合)", () => {
+    render(
+      <SelectableTicketList
+        tickets={[dueTicket("a", "closed", "2026-05-01")]}
+        showProjectBadge={false}
+        referenceDate="2026-06-02"
+        thresholdDays={7}
+      />
+    );
+    // 日付は表示するが「超過」prefix / 赤強調は付かない (neutral)。
+    expect(screen.getByText("2026/5/1")).toBeInTheDocument();
+    expect(screen.queryByText(/超過/)).not.toBeInTheDocument();
+  });
+
+  it("cancelled の本日期限も neutral (『本日』を出さない)", () => {
+    render(
+      <SelectableTicketList
+        tickets={[dueTicket("a", "cancelled", "2026-06-02")]}
+        showProjectBadge={false}
+        referenceDate="2026-06-02"
+        thresholdDays={7}
+      />
+    );
+    expect(screen.getByText("2026/6/2")).toBeInTheDocument();
+    expect(screen.queryByText(/本日/)).not.toBeInTheDocument();
+  });
+
+  it("archived project の actionable 超過期限も neutral (R4 F-001、backend reminders と整合)", () => {
+    render(
+      <SelectableTicketList
+        tickets={[{ ...dueTicket("a", "open", "2026-05-01"), projectActive: false }]}
+        showProjectBadge={false}
+        referenceDate="2026-06-02"
+        thresholdDays={7}
+      />
+    );
+    // open ticket でも archived project なら赤/橙強調しない (dashboard reminder が除外するのと整合)。
+    expect(screen.getByText("2026/5/1")).toBeInTheDocument();
+    expect(screen.queryByText(/超過/)).not.toBeInTheDocument();
   });
 });

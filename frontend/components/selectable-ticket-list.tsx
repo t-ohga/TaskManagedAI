@@ -8,6 +8,7 @@ import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { BulkStatusChanger } from "@/components/bulk-status-changer";
 import { TagChip } from "@/components/tag-chip";
 import type { TagRead } from "@/lib/domain/tag";
+import { isValidYmd, ticketDueBucket, type DueDateBucket } from "@/lib/domain/due-date";
 
 type TicketRow = {
   id: string;
@@ -15,6 +16,8 @@ type TicketRow = {
   status: string;
   priority: string | null;
   projectSlug: string;
+  // A-7 (ADR-00045 R4 F-001): 期限強調を active project のみに限定するための project 状態。
+  projectActive: boolean;
   due_date: string | null;
   created_at: string | null;
   tags: TagRead[];
@@ -23,16 +26,40 @@ type TicketRow = {
 type SelectableTicketListProps = {
   tickets: TicketRow[];
   showProjectBadge: boolean;
+  // A-7 (ADR-00045): backend authority な基準日 + reminder window (date_context 由来)。
+  // 取得失敗時は undefined → 期限強調なし (neutral) に倒す (fail-closed、誤分類しない)。
+  referenceDate?: string | undefined;
+  thresholdDays?: number | undefined;
 };
 
 // due_date は SQL date (YYYY-MM-DD) のプレーンな暦日。timezone を持たないため
 // new Date(...) を介さず文字列から直接整形し、JST 変換による日付ずれを防ぐ。
+// 非実在日 / 不正形式は raw を echo せず null (R7 F-001: schema が strict だが defense-in-depth、
+// bogus deadline を表示しない)。
 function formatDueDate(value: string | null): string | null {
-  if (!value) return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  if (!match) return value;
-  const [, year, month, day] = match;
+  if (!value || !isValidYmd(value)) return null;
+  const [year, month, day] = value.split("-");
   return `${year}/${Number(month)}/${Number(day)}`;
+}
+
+// A-7: 期限 chip の色 (overdue=赤 / due_today・upcoming=橙 / future・基準日なし=neutral)。
+function dueChipClass(bucket: DueDateBucket | null): string {
+  switch (bucket) {
+    case "overdue":
+      return "bg-red-50 font-medium text-red-700";
+    case "due_today":
+    case "upcoming":
+      return "bg-amber-50 font-medium text-amber-700";
+    default:
+      return "bg-slate-50 text-muted-foreground";
+  }
+}
+
+// 色だけに依存しない (a11y): overdue / due_today は接頭ラベルでも区別する。
+function dueChipLabel(bucket: DueDateBucket | null, formatted: string): string {
+  if (bucket === "overdue") return `超過 ${formatted}`;
+  if (bucket === "due_today") return `本日 ${formatted}`;
+  return formatted;
 }
 
 const PRIORITY_LABELS: Record<string, { label: string; color: string }> = {
@@ -42,7 +69,12 @@ const PRIORITY_LABELS: Record<string, { label: string; color: string }> = {
   low: { label: "低", color: "bg-blue-100 text-blue-700" },
 };
 
-export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTicketListProps) {
+export function SelectableTicketList({
+  tickets,
+  showProjectBadge,
+  referenceDate,
+  thresholdDays,
+}: SelectableTicketListProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // 横断表示 (project=all) では updateTicketAction が単一プロジェクトしか
@@ -146,13 +178,27 @@ export function SelectableTicketList({ tickets, showProjectBadge }: SelectableTi
                   </td>
                   {showProjectBadge ? <td className="px-4 py-3 text-xs text-muted-foreground">{ticket.projectSlug}</td> : null}
                   <td className="px-4 py-3 text-xs">
-                    {formatDueDate(ticket.due_date) ? (
-                      <span className="rounded bg-amber-50 px-1.5 py-0.5 font-medium text-amber-700">
-                        {formatDueDate(ticket.due_date)}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
+                    {(() => {
+                      const formatted = formatDueDate(ticket.due_date);
+                      if (!formatted || !ticket.due_date) {
+                        return <span className="text-muted-foreground">—</span>;
+                      }
+                      // status + 期限から強調 bucket を導出。非 actionable (closed/cancelled) /
+                      // 基準日不明 (date_context 失敗) は bucket=null → neutral (R2 F-002 / R3 F-001、
+                      // backend reminders の actionable 集合と揃え画面間不整合・誤分類を防ぐ)。
+                      const bucket = ticketDueBucket(
+                        ticket.due_date,
+                        ticket.status,
+                        ticket.projectActive,
+                        referenceDate,
+                        thresholdDays
+                      );
+                      return (
+                        <span className={`rounded px-1.5 py-0.5 ${dueChipClass(bucket)}`}>
+                          {dueChipLabel(bucket, formatted)}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
                     {ticket.created_at ? new Date(ticket.created_at).toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo" }) : ""}

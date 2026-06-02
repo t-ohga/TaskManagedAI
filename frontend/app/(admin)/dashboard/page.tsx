@@ -2,6 +2,7 @@ import { getBackendHealth } from "@/lib/api/client";
 import { listCurrentProjects } from "@/lib/api/session";
 import { listTickets } from "@/lib/api/tickets";
 import { fetchTicketSummary, foldTicketDisplayCounts, fetchActivityTimeseries, buildActivityTrendSeries } from "@/lib/api/dashboard";
+import { fetchReminders } from "@/lib/api/reminders";
 import type { HealthResponse } from "@/lib/api/types";
 import { getFrontendHealth } from "@/lib/health";
 import { StatusDonutChart } from "@/components/status-donut-chart";
@@ -10,6 +11,7 @@ import { DateRangeFilter } from "@/components/date-range-filter";
 import { BarChart } from "@/components/bar-chart";
 import { WelcomeBanner } from "@/components/welcome-banner";
 import { RecentTicketsList } from "@/components/recent-tickets";
+import { RemindersPanel } from "@/components/reminders-panel";
 // ExportButton は Tier 4 (設計承認後) に有効化
 
 export const dynamic = "force-dynamic";
@@ -94,7 +96,7 @@ type DashboardProps = {
 export default async function DashboardPage({ searchParams }: DashboardProps) {
   const params = await searchParams;
   const rangeFilter = params.range ?? "";
-  const [backendHealth, projectData, ticketSummaryResult, activityResult] = await Promise.all([
+  const [backendHealth, projectData, ticketSummaryResult, activityResult, remindersResult] = await Promise.all([
     readBackendHealth(),
     readProjectSummaries(),
     // D-5 (ADR-00039): status 別母数は backend SQL 集計 (limit 非依存)。
@@ -106,6 +108,11 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
     // D-3/D-4 (ADR-00040): AI 実行アクティビティ + コスト時系列。失敗は degraded 表示。
     fetchActivityTimeseries("day", "month")
       .then((timeseries) => ({ ok: true as const, timeseries }))
+      .catch(() => ({ ok: false as const })),
+    // A-7 (ADR-00045): 期限リマインダー (read-only、on-read 派生)。取得失敗 / schema 不正は
+    // ok/error を区別し degraded 表示にする (取得失敗を「リマインダーなし」と誤認させない)。
+    fetchReminders()
+      .then((reminders) => ({ ok: true as const, reminders }))
       .catch(() => ({ ok: false as const })),
   ]);
   // 取得失敗時は null にして count cards を「—」表示にする (失敗を真の 0 件と誤認させない)。
@@ -250,6 +257,21 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
           </p>
         </article>
       </section>
+
+      {/* A-7 (ADR-00045): 期限リマインダー。取得失敗は「リマインダーなし」と誤認させず degraded 表示。
+          degraded 通知は dashboard の他の集計失敗 (ticket summary / projects) と同じく plain text で
+          表す (role="status" は backend health 専用、二重 status landmark を作らない)。 */}
+      {remindersResult.ok ? (
+        <RemindersPanel reminders={remindersResult.reminders} />
+      ) : (
+        <section
+          aria-label="期限リマインダー"
+          className="rounded-lg border border-line bg-panel p-5 shadow-sm"
+        >
+          <h2 className="text-base font-semibold">期限リマインダー</h2>
+          <p className="mt-2 text-sm text-danger">リマインダーを取得できませんでした。</p>
+        </section>
+      )}
 
       {totalTickets > 0 ? <section aria-label="チケット分析" className="grid gap-4 md:grid-cols-2">
           <article className="rounded-lg border border-line bg-panel p-5 shadow-sm">

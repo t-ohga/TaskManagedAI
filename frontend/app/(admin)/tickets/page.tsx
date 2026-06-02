@@ -4,13 +4,17 @@ import { Suspense } from "react";
 
 import { BackendApiError } from "@/lib/api/client";
 import { getCurrentProject } from "@/lib/api/session";
+import { fetchDateContext } from "@/lib/api/reminders";
 import {
   loadProjectTags,
   loadProjects,
+  loadProjectsAllView,
   loadTickets,
+  type ProjectBoardItem,
   type TicketItem
 } from "@/lib/api/tickets-board";
 import type { TagRead } from "@/lib/domain/tag";
+import { isValidYmd, ticketDueBucket, type DueDateBucket } from "@/lib/domain/due-date";
 import { ProjectTab } from "@/components/project-tab";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { TicketCreateDialog } from "@/components/ticket-create-dialog";
@@ -28,11 +32,10 @@ export const dynamic = "force-dynamic";
 
 // due_date は SQL date (YYYY-MM-DD) のプレーンな暦日。timezone を持たないため
 // new Date(...) を介さず文字列から直接整形し、JST 変換による日付ずれを防ぐ。
+// 非実在日 / 不正形式は raw を echo せず null (R7 F-001: schema strict + defense-in-depth)。
 function formatDueDate(value: string | null): string | null {
-  if (!value) return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  if (!match) return value;
-  const [, , month, day] = match;
+  if (!value || !isValidYmd(value)) return null;
+  const [, month, day] = value.split("-");
   return `${Number(month)}/${Number(day)}`;
 }
 
@@ -74,7 +77,50 @@ function priorityBadge(priority: string | null | undefined) {
   );
 }
 
-function TicketCard({ ticket, projectSlug }: { ticket: TicketItem; projectSlug?: string | undefined }) {
+// A-7 (ADR-00045): 期限 chip の色 (overdue=赤 / due_today・upcoming=橙 / future・基準日なし=neutral)。
+function dueChipClass(bucket: DueDateBucket | null): string {
+  switch (bucket) {
+    case "overdue":
+      return "bg-red-50 font-medium text-red-700";
+    case "due_today":
+    case "upcoming":
+      return "bg-amber-50 font-medium text-amber-700";
+    default:
+      return "bg-slate-50 text-muted-foreground";
+  }
+}
+
+// 色だけに依存しない (a11y): overdue / due_today は接頭ラベルでも区別する。
+function dueChipPrefix(bucket: DueDateBucket | null): string {
+  if (bucket === "overdue") return "超過";
+  if (bucket === "due_today") return "本日";
+  return "期限";
+}
+
+function TicketCard({
+  ticket,
+  projectSlug,
+  projectActive,
+  referenceDate,
+  thresholdDays,
+}: {
+  ticket: TicketItem;
+  projectSlug?: string | undefined;
+  projectActive: boolean;
+  referenceDate?: string | undefined;
+  thresholdDays?: number | undefined;
+}) {
+  const formattedDue = formatDueDate(ticket.due_date);
+  // project active + ticket status + 期限から強調 bucket を導出。archived project / 非 actionable
+  // (closed/cancelled) / 基準日不明は null → neutral (backend reminders と同じゲートで画面間不整合・
+  // 誤分類を防ぐ、R3 F-001 / R4 F-001)。
+  const dueBucket = ticketDueBucket(
+    ticket.due_date,
+    ticket.status,
+    projectActive,
+    referenceDate,
+    thresholdDays
+  );
   return (
     <Link
       href={`/tickets/${ticket.id}` as never}
@@ -104,9 +150,9 @@ function TicketCard({ ticket, projectSlug }: { ticket: TicketItem; projectSlug?:
         {projectSlug ? <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-muted-foreground">
             {projectSlug}
           </span> : null}
-        {formatDueDate(ticket.due_date) ? (
-          <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
-            期限 {formatDueDate(ticket.due_date)}
+        {formattedDue ? (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] ${dueChipClass(dueBucket)}`}>
+            {dueChipPrefix(dueBucket)} {formattedDue}
           </span>
         ) : null}
         <span className="ml-auto text-[10px] text-muted-foreground">
@@ -168,12 +214,37 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   const currentView = (params.view === "list" ? "list" : "kanban") as "kanban" | "list";
   const sortKey = params.sort ?? "created_desc";
   // 具体 project 選択中 or tag filter 適用中は project metadata を fail-closed で要求する
-  // (取得失敗で「0 件」board を完全な結果として描画しない、Codex R5 HIGH)。横断時は fail-soft。
-  const projects = await loadProjects(selectedProject !== "all" || Boolean(tagFilter));
+  // (取得失敗で「0 件」board を完全な結果として描画しない、Codex R5 HIGH)。
+  // 横断 (all view) は fail-soft だが **row-level omission** で取得する (Codex R6 HIGH: 1 行の
+  // malformed project が全 project を消すのを防ぎ、valid project を保持して omission を warning 化)。
+  const isProjectFailClosed = selectedProject !== "all" || Boolean(tagFilter);
+  let projects: ProjectBoardItem[];
+  let malformedProjects = 0;
+  // R10 F-001: all view の whole-list failure (project 一覧そのものが読めない) を空状態と区別する。
+  let projectListDegraded = false;
+  if (isProjectFailClosed) {
+    projects = await loadProjects(true);
+  } else {
+    const allViewProjects = await loadProjectsAllView();
+    projects = allViewProjects.items;
+    malformedProjects = allViewProjects.omittedProjects;
+    projectListDegraded = allViewProjects.degraded;
+  }
   // 作成先は server action が session の current_project から resolve する。
   // 表示中 project (URL ?project=) と current_project が一致するときだけ作成 CTA を出す
   // (Codex B2b finding: URL 選択と session current_project の乖離による wrong-project write 防止)。
   const currentProject = await getCurrentProject().catch(() => null);
+  // A-7 (ADR-00045 R2 F-002): 期限強調用の単一 "today" authority を一度だけ取得する (all view の
+  // 複数 list 呼びでも全 row に同一基準を適用)。取得失敗 / schema 不正は fail-closed で null に倒し、
+  // 基準日不明のまま赤/橙を誤表示せず neutral 表示にする。
+  // R9 F-001: 失敗を silent に neutral 化すると、open/active の超過/本日 ticket の強調が消えても
+  // ユーザーが検知できず dashboard reminder panel と silent に乖離する。ok/error を保持し、失敗時は
+  // degraded warning を可視化する (強調は neutral のまま、degradation を visible にする)。
+  const dateContextResult = await fetchDateContext()
+    .then((ctx) => ({ ok: true as const, ctx }))
+    .catch(() => ({ ok: false as const }));
+  const referenceDate = dateContextResult.ok ? dateContextResult.ctx.reference_date : undefined;
+  const thresholdDays = dateContextResult.ok ? dateContextResult.ctx.threshold_days : undefined;
 
   // ADR-00044 (A-5): tag filter 用に specific project の tags を取得 (all view は project 混在で
   // tag scope が曖昧なため非表示)。tagFilter 適用中は fail-closed (tag metadata が読めない状態で
@@ -193,15 +264,18 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
     }
   }
 
-  let allTickets: (TicketItem & { projectSlug: string })[] = [];
+  // projectActive: 各 ticket の project が active か (R4 F-001: archived project の ticket は
+  // 期限強調しない、backend reminders の projects.status='active' と整合)。
+  let allTickets: (TicketItem & { projectSlug: string; projectActive: boolean })[] = [];
   // tag 絞り込みは specific project でのみ backend query を使う (all view は project 混在で
   // tag scope が曖昧)。指定タグが無効 (404) のときは絞り込みを解除して全件を出し、UI で通知する。
   let tagFilterInvalid = false;
   // tag 絞り込み結果が limit を超えて truncate された場合の通知 (不完全を完全と見せない、R3 HIGH)。
   let tagFilterTruncated: { total: number; shown: number } | null = null;
 
-  // 横断 (all view) で取得に失敗した project 数 (fail-soft、欠落を warning で可視化)。
-  let omittedProjects = 0;
+  // 横断 (all view) で除外した project 数 (fail-soft、欠落を warning で可視化)。malformed な project
+  // metadata (R6 row-level omission) + ticket fetch 失敗の両方を含める。
+  let omittedProjects = malformedProjects;
 
   if (selectedProject === "all") {
     for (const p of projects) {
@@ -209,7 +283,10 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
       if (!pid) continue;
       try {
         const board = await loadTickets(pid);
-        allTickets.push(...board.items.map((t) => ({ ...t, projectSlug: p.slug })));
+        const projectActive = p.status === "active";
+        allTickets.push(
+          ...board.items.map((t) => ({ ...t, projectSlug: p.slug, projectActive }))
+        );
       } catch {
         // all view は 1 project の一時障害で全体を落とさず、欠落を warning で可視化 (fail-soft)。
         omittedProjects += 1;
@@ -229,10 +306,11 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
         // project row は解決できたが id/project_id が欠落 (degraded response)。同様に fail-closed。
         notFound();
       }
+      const projectActive = project.status === "active";
       if (tagFilter) {
         try {
           const board = await loadTickets(pid, tagFilter);
-          allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug }));
+          allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug, projectActive }));
           if (board.truncated) {
             tagFilterTruncated = { total: board.total, shown: board.items.length };
           }
@@ -243,7 +321,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             // 「filter cleared, all displayed」を 0 件で見せない)。
             tagFilterInvalid = true;
             const board = await loadTickets(pid);
-            allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug }));
+            allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug, projectActive }));
           } else {
             // auth / backend / network 障害は「該当なし」と誤表示せず error boundary に流す
             // (fail-closed、Codex frontend R2 HIGH)。
@@ -254,7 +332,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
         // selected-project load は fail-closed (loadTickets が throw → error boundary、R5 HIGH:
         // 障害を「ticket 0 件の project」と誤表示しない)。
         const board = await loadTickets(pid);
-        allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug }));
+        allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug, projectActive }));
       }
     }
   }
@@ -363,10 +441,28 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             さらに絞り込んでください。
           </div>
         ) : null}
+        {/* R10 F-001: 横断表示で project 一覧そのものが読めなかった (auth 失効 / backend 障害 /
+            schema drift) を「project/ticket が無い空状態」と区別して可視化する (silent empty board
+            を避ける)。 */}
+        {projectListDegraded ? (
+          <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            プロジェクト一覧を取得できなかったため、横断表示のチケットを表示できません
+            (チケットが 0 件なのではなく取得失敗です)。時間をおいて再読み込みしてください。
+          </div>
+        ) : null}
         {omittedProjects > 0 ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
             {omittedProjects} 件のプロジェクトのチケットを取得できなかったため、一覧から除外しています。
             時間をおいて再読み込みしてください。
+          </div>
+        ) : null}
+        {/* R9 F-001: date_context (期限の基準日) 取得失敗を可視化する。期限強調 (超過/本日/期限間近) は
+            誤表示を避けるため neutral に倒すが、失敗を silent にせず警告する (dashboard reminder と
+            silent に乖離させない)。期限の日付自体は表示される。 */}
+        {!dateContextResult.ok ? (
+          <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            期限の基準日を取得できなかったため、期限の強調表示 (超過 / 本日 / 期限間近) を一時的に無効にしています。
+            期限の日付は表示されますが、色分けされません。時間をおいて再読み込みしてください。
           </div>
         ) : null}
       </Suspense>
@@ -402,6 +498,9 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
                   key={ticket.id}
                   ticket={ticket}
                   projectSlug={showProjectBadge ? ticket.projectSlug : undefined}
+                  projectActive={ticket.projectActive}
+                  referenceDate={referenceDate}
+                  thresholdDays={thresholdDays}
                 />
               ))}
             </KanbanColumnEnhanced>
@@ -415,11 +514,14 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             status: t.status,
             priority: t.priority,
             projectSlug: t.projectSlug,
+            projectActive: t.projectActive,
             due_date: t.due_date,
             created_at: t.created_at,
             tags: t.tags,
           }))}
           showProjectBadge={showProjectBadge}
+          referenceDate={referenceDate}
+          thresholdDays={thresholdDays}
         />
       )}
     </section>

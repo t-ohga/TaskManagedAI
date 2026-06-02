@@ -15,6 +15,7 @@ import { getCurrentProject } from "@/lib/api/session";
 import { getTicketActivity, type TicketActivityEntry } from "@/lib/api/tickets";
 import { listTags } from "@/lib/api/tags";
 import type { TagRead } from "@/lib/domain/tag";
+import { isValidYmd } from "@/lib/domain/due-date";
 
 import { addTicketCommentAction } from "../actions";
 import { loadTicket } from "./load-ticket";
@@ -72,11 +73,11 @@ function toTimelineEntry(entry: TicketActivityEntry): TimelineEntryView {
 // due_date は SQL date (YYYY-MM-DD) のプレーンな日付。timezone を持たないため、
 // new Date(...) / toLocaleDateString による変換は使わず文字列を直接整形する
 // (UTC parse → JST 変換で日付が 1 日ずれる事故を防ぐ)。
+// 非実在日 / 不正形式は raw を echo せず「未設定」扱い (A-7 R11 F-001: schema が strict だが
+// defense-in-depth、malformed を bogus deadline として表示しない)。
 function formatDueDate(value: string | null): string {
-  if (!value) return "未設定";
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  if (!match) return value;
-  const [, year, month, day] = match;
+  if (!value || !isValidYmd(value)) return "未設定";
+  const [year, month, day] = value.split("-");
   return `${year}/${month}/${day}`;
 }
 

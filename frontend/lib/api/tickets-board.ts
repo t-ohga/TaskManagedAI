@@ -3,6 +3,7 @@ import { z } from "zod";
 import { fetchBackendRaw } from "@/lib/api/client";
 import { listTags } from "@/lib/api/tags";
 import { TagReadSchema, type TagRead } from "@/lib/domain/tag";
+import { isValidYmd } from "@/lib/domain/due-date";
 
 /**
  * ticket 看板 / 一覧用の ticket 取得 (server-only)。
@@ -24,7 +25,11 @@ const TicketItemSchema = z.object({
   status: z.string(),
   priority: z.string().nullable(),
   description: z.string().nullable(),
-  due_date: z.string().nullable(),
+  // A-7 (ADR-00045 R7 F-001): due_date は backend の `date` 型 (厳密に YYYY-MM-DD) または null。
+  // reminders / date_context と同じ strict YMD validator で検証し、timestamp / junk suffix /
+  // 非実在日 (2026-02-31) を fail-closed で reject する (一覧/Kanban が serializer drift した
+  // due_date を bogus deadline として neutral 表示するのを防ぐ、画面間の strict-YMD 整合)。
+  due_date: z.string().refine(isValidYmd).nullable(),
   created_at: z.string().nullable(),
   tags: z.array(TagReadSchema)
 });
@@ -86,7 +91,13 @@ const ProjectBoardItemSchema = z
     project_id: z.string().min(1).optional(),
     id: z.string().min(1).optional(),
     slug: z.string().min(1),
-    name: z.string()
+    name: z.string(),
+    // A-7 (ADR-00045 R4/R5 F-001): project の archive 状態。期限強調を active project のみに
+    // ゲートする (backend reminders の projects.status='active' と整合)。**required + enum**
+    // (backend ProjectStatus = active/archived と同一)。`status` 欠落 / 不正値は schema failure に倒し、
+    // unknown を archived (非 active) と誤マップして active project の reminder を silent に消さない
+    // (R5 F-001: unknown ≠ archived、欠落は failClosed で degraded/error、fail-soft view では omission)。
+    status: z.enum(["active", "archived"])
   })
   .refine((p) => Boolean(p.project_id ?? p.id), {
     message: "project row must include project_id or id"
@@ -129,6 +140,54 @@ export async function loadProjects(failClosed: boolean): Promise<ProjectBoardIte
       throw error;
     }
     return [];
+  }
+}
+
+/**
+ * all view (横断表示) 用の project 取得。**row-level fail-soft (Codex adversarial R6 HIGH)**。
+ *
+ * `loadProjects(false)` は配列全体を一括 safeParse するため、R5 で `status` が required enum になった
+ * 結果、1 行でも status 欠落 / 不正値があると全体 reject → 空配列になり、valid な他 project の tickets
+ * まで silent に消える (silent neutral を silent empty board に置換)。all view では **各 row を個別に
+ * safeParse** し、valid row を保持して malformed row だけ omission する。omission 件数を返し、tickets
+ * page が warning で可視化できるようにする (1 行の drift で全 project を消さない)。
+ *
+ * 具体 project / tag filter (failClosed=true) は `loadProjects(true)` を使い、1 行でも schema failure
+ * なら throw する (不完全を完全と見せない)。
+ *
+ * **whole-list failure の可視化 (Codex adversarial R10 HIGH)**: envelope 不正 (非配列) / fetch 失敗
+ * (401/500/schema drift) で project 一覧そのものが読めない場合は `degraded: true` を返す。これを
+ * `{ items: [], omittedProjects: 0 }` の「空」と区別し、tickets page が warning を必ず出せるようにする
+ * (whole-list failure を「横断表示に project/ticket なし」の空状態と silent に取り違えない)。
+ * 正常で project 0 件の場合は `degraded: false` + 空 (genuine empty)。
+ */
+export async function loadProjectsAllView(): Promise<{
+  items: ProjectBoardItem[];
+  omittedProjects: number;
+  degraded: boolean;
+}> {
+  try {
+    const res = await fetchBackendRaw("/api/v1/me/projects");
+    const raw = res as Record<string, unknown>;
+    const rawList = raw?.projects ?? raw?.items;
+    if (!Array.isArray(rawList)) {
+      // envelope 不正 = project 一覧そのものが読めない (whole-list failure、空ではない)。
+      return { items: [], omittedProjects: 0, degraded: true };
+    }
+    const items: ProjectBoardItem[] = [];
+    let omittedProjects = 0;
+    for (const row of rawList) {
+      const parsed = ProjectBoardItemSchema.safeParse(row);
+      if (parsed.success) {
+        items.push(parsed.data);
+      } else {
+        omittedProjects += 1;
+      }
+    }
+    return { items, omittedProjects, degraded: false };
+  } catch {
+    // fetch 失敗 (auth 失効 / backend down) = whole-list failure。空状態と区別する。
+    return { items: [], omittedProjects: 0, degraded: true };
   }
 }
 

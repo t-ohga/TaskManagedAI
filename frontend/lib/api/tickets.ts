@@ -19,6 +19,7 @@ import { z } from "zod";
 
 import { fetchBackendJson } from "@/lib/api/client";
 import { TagReadSchema } from "@/lib/domain/tag";
+import { isValidYmd } from "@/lib/domain/due-date";
 
 // Codex audit F-006 adopt: backend ticket.py Literal + DB CHECK と integrity 維持
 // backend/app/db/models/ticket.py:20 と完全一致 (Sprint 11 contract test で drift 検証)
@@ -62,7 +63,10 @@ export const TicketListItemSchema = z.object({
   // optional にすると response から欠落しても検証が通り、編集フォームが空で開いて
   // 次回保存で誤って null PATCH する drift 経路を生むため、必須 nullable で締める
   // (Codex adversarial R2 F-MEDIUM)。
-  due_date: z.string().nullable(),
+  // A-7 (ADR-00045 R11 F-001): reminders / board と同じ strict YMD validator で検証する。
+  // timestamp / junk suffix / 非実在日 (2026-02-31) を fail-closed で reject し、detail/edit が
+  // malformed due_date を slice して表示・誤書き戻しするのを防ぐ (strict-YMD all-surface 整合)。
+  due_date: z.string().refine(isValidYmd).nullable(),
   assignee_actor_id: z.string().uuid().nullable(),
   created_by_actor_id: z.string().uuid().nullable().optional(),
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),

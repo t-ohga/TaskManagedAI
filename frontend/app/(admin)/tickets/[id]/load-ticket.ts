@@ -3,6 +3,7 @@ import { z } from "zod";
 import { BackendApiError, fetchBackendRaw } from "@/lib/api/client";
 import { loadProjects } from "@/lib/api/tickets-board";
 import { TagReadSchema, type TagRead } from "@/lib/domain/tag";
+import { isValidYmd } from "@/lib/domain/due-date";
 
 // ticket_id の検証は TicketReadSchema.id (z.string().uuid()) と同一契約に揃える。
 // 狭い v1-5 限定 validator だと UUIDv7 等の backend-valid な id を frontend が false
@@ -68,6 +69,18 @@ export async function loadTicket(id: string): Promise<TicketDetail | null> {
         );
         const ticket = ticketRes as (TicketDetail & { id?: string }) | null;
         if (ticket && ticket.id?.toLowerCase() === normalizedId) {
+          // A-7 (ADR-00045 R11/R12 F-001): detail loader は cast 直返しで strict schema を bypass
+          // していたため、due_date を **strict YMD validate** する (reminders/board/TicketReadSchema と
+          // 同じ strict-YMD all-surface 不変条件を detail/edit 経路でも enforce)。due_date は backend の
+          // date 型 (required nullable)。null または実在する YYYY-MM-DD のみ許可し、timestamp / junk /
+          // 非実在日 (2026-02-31) / 欠落は fail-closed で throw する (detail formatter が malformed を
+          // 表示・隠蔽したり、edit form が malformed を date input に渡して保存で deadline を silent 改変
+          // するのを防ぐ)。throw は probe の rejected として最優先 surface され error boundary へ。
+          const rawDue = (ticketRes as Record<string, unknown>)?.due_date;
+          const dueOk = rawDue === null || (typeof rawDue === "string" && isValidYmd(rawDue));
+          if (!dueOk) {
+            throw new Error("ticket due_date is missing or not a valid YYYY-MM-DD calendar date");
+          }
           // tags は backend が常に inject する。Zod で strict validate し、**malformed / absent / null は
           // [] に潰さず throw** する (Codex R6/R7 HIGH)。`?? []` を使わず直接 parse し、explicit `tags: []`
           // (タグなし) と version skew / degraded での metadata 不在を区別する。本ページは attach/detach/

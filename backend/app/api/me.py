@@ -16,12 +16,12 @@ invariant:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +38,11 @@ from backend.app.db.models.project import Project, ProjectStatus
 from backend.app.db.models.secret_ref import SecretRef, SecretRefScope, SecretRefStatus
 from backend.app.db.models.ticket import Ticket
 from backend.app.domain.policy.autonomy_level import AutonomyLevel
+from backend.app.domain.reminders import (
+    REMINDER_BUCKET_LIST_LIMIT,
+    REMINDER_UPCOMING_WINDOW_DAYS,
+    today_jst,
+)
 from backend.app.repositories.project import ProjectRepository
 from backend.app.repositories.secret_ref import SecretRefRepository
 from backend.app.repositories.ticket import (
@@ -329,6 +334,208 @@ async def ticket_summary_endpoint(
     ]
     ticket_total = sum(count.count for count in status_counts)
     return TicketSummaryResponse(ticket_total=ticket_total, status_counts=status_counts)
+
+
+# ---------------------------------------------------------------------------
+# A-7 (ADR-00045): 期限リマインダー (read-only、on-read 純粋派生)
+# ---------------------------------------------------------------------------
+
+# reminder の actionable ticket status (closed / cancelled は終了済で期限が actionable でない)。
+_REMINDER_ACTIONABLE_STATUSES = ("open", "in_progress", "blocked", "review")
+
+
+class DateContextResponse(BaseModel):
+    """ADR-00045 (R2 F-002): 一覧画面用の単一 "today" authority。
+
+    backend `today_jst()` 由来の `reference_date` (Asia/Tokyo 暦日) + reminder window
+    (`threshold_days`)。一覧 page はこれを一度だけ fetch し全 row の期限強調に使う
+    (all view の複数 list 呼びでも単一基準を保証し、Next.js server / client で "today" を独立
+    算出しない)。reminder endpoint の `reference_date` / `threshold_days` と同一 helper / 定数由来。
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    reference_date: date
+    threshold_days: int
+
+
+class ReminderItem(BaseModel):
+    """ADR-00045: reminder 対象の active ticket 1 件 (既存 ticket 一覧が露出済の field のみ)。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    ticket_id: UUID
+    project_id: UUID
+    slug: str
+    title: str
+    status: str
+    priority: str | None
+    due_date: date
+    # signed: <0 超過 / 0 当日 / >0 近接 (= (due_date - reference_date).days)。
+    days_until: int
+
+
+class ReminderBucket(BaseModel):
+    """ADR-00045 (R1 F-001): bucket ごとの正確な count + 独立 cap された items + truncated。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    # SQL COUNT (正確、items の cap と無関係)。
+    count: int
+    # count > len(items) のとき True (bucket 単位の silent truncation を明示)。
+    truncated: bool
+    # bucket ごとに独立して REMINDER_BUCKET_LIST_LIMIT で cap (overdue が due_today / upcoming の
+    # 表示枠を枯渇させない)。
+    items: list[ReminderItem]
+
+
+class ReminderSummaryResponse(BaseModel):
+    """ADR-00045: 期限リマインダー集約 (bucket 別)。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    # server (FastAPI) 算出の "today" (Asia/Tokyo 暦日)。bucket / count / list の API 契約の基準。
+    reference_date: date
+    threshold_days: int
+    overdue: ReminderBucket
+    due_today: ReminderBucket
+    upcoming: ReminderBucket
+
+
+@router.get("/date_context", response_model=DateContextResponse)
+async def date_context_endpoint(
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> DateContextResponse:
+    """A-7 (ADR-00045 R2 F-002): 一覧画面用の単一 "today" authority。
+
+    backend `today_jst()` (Asia/Tokyo 暦日) + reminder window を返す。一覧 page はこれを一度だけ
+    取得し、`reference_date` / `threshold_days` を全 ticket row の期限強調 (overdue/due_soon/future)
+    に適用する。reminder endpoint と同一 helper / 定数由来のため、画面間で基準日が drift しない。
+    `actor_id` は authenticated session 強制のため Depends で resolve (no-secret response)。
+    """
+    return DateContextResponse(
+        reference_date=today_jst(),
+        threshold_days=REMINDER_UPCOMING_WINDOW_DAYS,
+    )
+
+
+@router.get("/reminders", response_model=ReminderSummaryResponse)
+async def reminders_endpoint(
+    # ticket の slug/title/status/priority/due_date を返す ticket read surface のため、ticket list
+    # endpoint と同じ `task_list` capability gate を通す (adversarial R8 F-001: operation token が
+    # ticket read 権限を持たない場合に tenant-wide な ticket title 列挙を許さない、least-privilege)。
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_list")),  # noqa: B008
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> ReminderSummaryResponse:
+    """A-7 (ADR-00045): tenant 内 active ticket の期限リマインダーを bucket 別集約 (read-only).
+
+    純粋派生 (notification_events への materialization なし、副作用なし、冪等)。対象は active-scope
+    (`deleted_at IS NULL`) + active-project (`projects.status='active'`、archived は write 凍結で
+    actionable でないため除外) + actionable status + `due_date IS NOT NULL` + 期限が超過または
+    `today + threshold` 以内のもの。bucket (overdue / due_today / upcoming) ごとに正確な count +
+    独立 cap された items + truncated を返す (R1 F-001: overdue が今日/近日の表示枠を枯渇させない)。
+    "today" は backend `today_jst()` (Asia/Tokyo 暦日) 1 箇所が権威 (R2 F-002)。
+    single-tenant membership のため tenant 境界が project 境界を兼ねる (`ticket_summary` と同方針)。
+    raw secret なし (既存 ticket 一覧が露出済の metadata のみ)。
+    """
+    reference_date = today_jst()
+    threshold_days = REMINDER_UPCOMING_WINDOW_DAYS
+    window_end = reference_date + timedelta(days=threshold_days)
+
+    # tenant 境界 + active-scope (deleted_at IS NULL) + active-project (projects.status='active'、
+    # archived 除外) + actionable status + due_date NOT NULL + window 上限 (overdue または upcoming)。
+    base_conditions = (
+        Ticket.tenant_id == tenant_id,
+        Ticket.deleted_at.is_(None),
+        Project.status == "active",
+        Ticket.status.in_(_REMINDER_ACTIONABLE_STATUSES),
+        Ticket.due_date.is_not(None),
+        Ticket.due_date <= window_end,
+    )
+    join_on = and_(
+        Ticket.tenant_id == Project.tenant_id,
+        Ticket.project_id == Project.id,
+    )
+    # bucket 別の追加条件 (compute_reminder_bucket と同一 semantics)。
+    bucket_filters = {
+        "overdue": Ticket.due_date < reference_date,
+        "due_today": Ticket.due_date == reference_date,
+        "upcoming": and_(
+            Ticket.due_date > reference_date,
+            Ticket.due_date <= window_end,
+        ),
+    }
+
+    buckets: dict[str, ReminderBucket] = {}
+    for name, bucket_filter in bucket_filters.items():
+        # 正確な count (cap と無関係、bucket 単位)。
+        count = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(Ticket)
+                .join(Project, join_on)
+                .where(*base_conditions, bucket_filter)
+            )
+            or 0
+        )
+        # bucket ごとに独立 cap した items (overdue が due_today / upcoming を枯渇させない)。
+        tickets = (
+            (
+                await session.execute(
+                    select(Ticket)
+                    .join(Project, join_on)
+                    .where(*base_conditions, bucket_filter)
+                    # 一意な tie-breaker (project_id, id) で cap 境界を決定的にする (adversarial R1
+                    # F-002)。slug は (tenant, project) 一意のため、tenant 横断 reminder では別 project
+                    # の同 slug + 同 due_date が tie になり、50 件超 bucket で表示/「他に N 件」が
+                    # request ごとに揺れる。複合一意 (tenant, project, id) まで含め安定順序にする。
+                    .order_by(
+                        Ticket.due_date,
+                        Ticket.slug,
+                        Ticket.project_id,
+                        Ticket.id,
+                    )
+                    .limit(REMINDER_BUCKET_LIST_LIMIT)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        items: list[ReminderItem] = []
+        for ticket in tickets:
+            due = ticket.due_date
+            if due is None:
+                # query で due_date IS NOT NULL を強制済 (defensive: NULL row は skip)。
+                continue
+            items.append(
+                ReminderItem(
+                    ticket_id=ticket.id,
+                    project_id=ticket.project_id,
+                    slug=ticket.slug,
+                    title=ticket.title,
+                    status=ticket.status,
+                    priority=ticket.priority,
+                    due_date=due,
+                    days_until=(due - reference_date).days,
+                )
+            )
+        buckets[name] = ReminderBucket(
+            count=count,
+            truncated=count > len(items),
+            items=items,
+        )
+
+    return ReminderSummaryResponse(
+        reference_date=reference_date,
+        threshold_days=threshold_days,
+        overdue=buckets["overdue"],
+        due_today=buckets["due_today"],
+        upcoming=buckets["upcoming"],
+    )
 
 
 @router.patch("/projects/{project_id}/autonomy", response_model=ProjectListItem)
