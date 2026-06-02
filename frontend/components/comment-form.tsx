@@ -2,6 +2,8 @@
 
 import { useActionState, useState } from "react";
 
+import { MarkdownEditor } from "@/components/markdown-editor";
+
 type CommentResult = { kind: "ok" } | { kind: "error"; message: string };
 type CommentState = CommentResult | { kind: "idle" };
 
@@ -24,15 +26,13 @@ export function CommentForm({ ticketId, onSubmit }: CommentFormProps) {
   return (
     <form action={formAction} className="grid gap-3">
       <input type="hidden" name="ticket_id" value={ticketId} />
-      <textarea
+      <MarkdownEditor
         name="body"
         value={body}
-        onChange={(e) => setBody(e.target.value)}
+        onValueChange={setBody}
         rows={3}
-        required
         placeholder="コメントを入力 (Markdown 対応)"
-        className="w-full rounded-md border border-line bg-transparent px-3 py-2 text-sm outline-none focus:border-accent"
-        aria-label="コメント本文"
+        ariaLabel="コメント本文"
       />
       {state.kind === "error" ? <p className="text-xs text-danger">{state.message}</p> : null}
       <div className="flex justify-end">

@@ -5,6 +5,7 @@ import { useActionState, useEffect } from "react";
 
 import { formatTicketPriority, formatTicketStatus } from "@/lib/i18n/ticket-labels";
 import type { TicketRead } from "@/lib/api/tickets";
+import { MarkdownEditor } from "@/components/markdown-editor";
 
 import { updateTicketAction, type UpdateTicketState } from "../actions";
 
@@ -49,15 +50,16 @@ export function EditTicketForm({ ticket }: EditTicketFormProps) {
           />
         </label>
 
-        <label className="grid gap-2 text-sm">
+        <div className="grid gap-2 text-sm">
           <span className="font-medium">説明</span>
-          <textarea
+          <MarkdownEditor
             name="description"
             rows={5}
             defaultValue={ticket.description ?? ""}
-            className="min-h-32 resize-y rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            ariaLabel="説明"
+            textareaClassName="min-h-32 w-full resize-y rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           />
-        </label>
+        </div>
 
         <label className="grid gap-2 text-sm">
           <span className="font-medium">期限</span>
