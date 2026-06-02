@@ -18,6 +18,58 @@ describe("markdownToHtml (J-4 DOMPurify sanitize)", () => {
     // 実行可能な属性を持つ実タグが生成されないこと。
     expect(img).not.toMatch(/<\w+[^>]*\son\w+=/i);
   });
+
+  // G-4: 箇条書き / 番号付きリスト対応。
+  it("箇条書き (- / *) を <ul><li> に変換する", () => {
+    const ul = markdownToHtml("- りんご\n- ばなな");
+    expect(ul).toBe("<ul><li>りんご</li><li>ばなな</li></ul>");
+    const ulStar = markdownToHtml("* a\n* b");
+    expect(ulStar).toBe("<ul><li>a</li><li>b</li></ul>");
+  });
+
+  it("番号付きリスト (1. 2.) を <ol><li> に変換する", () => {
+    const ol = markdownToHtml("1. first\n2. second\n3. third");
+    expect(ol).toBe("<ol><li>first</li><li>second</li><li>third</li></ol>");
+  });
+
+  it("リスト項目内の inline 装飾は適用するが生 HTML は escape する", () => {
+    const out = markdownToHtml("- **太字** と `code`");
+    expect(out).toContain("<li><strong>太字</strong> と <code");
+    const xss = markdownToHtml("- <img src=x onerror=alert(1)>");
+    // li は生成されるが、項目内の生 HTML は entity-escape され実タグ化されない (escape + sanitize)。
+    // "onerror" は無害な literal text として残るが、実行可能な属性を持つ実タグは生成されない。
+    expect(xss).toMatch(/<li>/);
+    expect(xss).not.toMatch(/<img/i);
+    expect(xss).toContain("&lt;img");
+    // 実タグに on* 属性が付かないこと (escape 済テキストの "onerror=" は実タグ外)。
+    expect(xss).not.toMatch(/<\w+[^>]*\son\w+=/i);
+  });
+
+  it("リストと段落が混在する block を分離する", () => {
+    const out = markdownToHtml("導入文\n\n- a\n- b\n\n結び");
+    expect(out).toBe("<p>導入文</p><ul><li>a</li><li>b</li></ul><p>結び</p>");
+  });
+
+  it("段落の直後に list 行が来たら段落を閉じて list を開始する (標準 Markdown、line-by-line)", () => {
+    const out = markdownToHtml("ふつうの文\n- 項目1\n- 項目2");
+    expect(out).toBe("<p>ふつうの文</p><ul><li>項目1</li><li>項目2</li></ul>");
+  });
+
+  it("複数行の見出しを各行 <hN> に変換する (toolbar 複数行選択対応、R1)", () => {
+    const out = markdownToHtml("## 見出しA\n## 見出しB");
+    expect(out).toBe("<h2>見出しA</h2><h2>見出しB</h2>");
+  });
+
+  it("ul と ol が連続する block を別リストに分ける", () => {
+    const out = markdownToHtml("- a\n1. b");
+    expect(out).toBe("<ul><li>a</li></ul><ol><li>b</li></ol>");
+  });
+
+  it("CRLF / CR の改行でも list / heading を正しく検出する (code-reviewer LOW)", () => {
+    expect(markdownToHtml("- a\r\n- b")).toBe("<ul><li>a</li><li>b</li></ul>");
+    expect(markdownToHtml("## 見出し\r\n本文")).toBe("<h2>見出し</h2><p>本文</p>");
+    expect(markdownToHtml("- a\r- b")).toBe("<ul><li>a</li><li>b</li></ul>");
+  });
 });
 
 describe("sanitizeMarkdownHtml (DOMPurify allowlist の defense-in-depth)", () => {

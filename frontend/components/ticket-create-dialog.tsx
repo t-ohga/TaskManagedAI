@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { Route } from "next";
 
 import { createTicketAction, type CreateTicketState } from "@/app/(admin)/tickets/actions";
+import { MarkdownEditor } from "@/components/markdown-editor";
 
 const initialState: CreateTicketState = { kind: "idle" };
 
@@ -86,16 +87,16 @@ export function TicketCreateDialog() {
           {titleError ? <p id="title-error" className="mt-1 text-xs text-danger" role="alert">{titleError}</p> : null}
         </div>
         <div>
-          <label htmlFor="description" className="text-xs font-medium text-muted-foreground">
-            説明 (任意)
-          </label>
-          <textarea
-            id="description"
-            name="description"
-            rows={2}
-            placeholder="詳細な説明"
-            className="mt-1 w-full rounded-md border border-line px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-          />
+          <span className="text-xs font-medium text-muted-foreground">説明 (任意)</span>
+          <div className="mt-1">
+            <MarkdownEditor
+              name="description"
+              rows={2}
+              placeholder="詳細な説明"
+              ariaLabel="説明"
+              textareaClassName="w-full resize-y rounded-md border border-line px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <select
