@@ -478,5 +478,13 @@ R10 fix 後の **adversarial-review R11** verdict=needs-attention、1 finding (H
 |---|---|---|---|---|
 | F-A7-CODE-R11-001 | HIGH | A-7 が reminders/date_context/board に strict YMD を適用した一方、ticket detail/edit が使う共有 `TicketReadSchema.due_date` (lib/api/tickets.ts) が `z.string()` のまま。detail formatter が prefix-match、edit form が `due_date.slice(0,10)` を date input default に使い、update action が任意 string を backend に送るため、timestamp/junk/非実在日の serializer drift で board は fail-closed だが detail/edit は malformed を表示・truncate し、保存で sliced date を authoritative に書き戻して deadline を silent 改変しうる (strict-YMD all-surface invariant 違反) | ADOPT | 共有 `TicketListItemSchema.due_date` (= TicketReadSchema/TicketDetailSchema 基底) を `z.string().refine(isValidYmd).nullable()` に。detail formatter を harden (raw echo 廃止)、edit form の `slice(0,10)` を validated 値直接使用に、update action の `TicketUpdateFormSchema.due_date` を strict YMD に。TicketReadSchema malformed reject regression を追加。 |
 
-reject / defer: なし。R11 全 adopt 反映後、R12 で clean を確認してから merge。検証: backend ruff/mypy +
-20 pytest、frontend 350 vitest + typecheck + lint 全 green。
+reject / defer: なし。
+
+R11 fix 後の **adversarial-review R12** verdict=needs-attention、1 finding (HIGH)、**ADOPT**:
+
+| id | severity | 指摘 | 判定 | 反映 |
+|---|---|---|---|---|
+| F-A7-CODE-R12-001 | HIGH | R11 で `TicketReadSchema.due_date` を strict 化したが、実際の detail loader `loadTicket` (`[id]/load-ticket.ts`) は by-id response を `TicketDetail` に cast 直返しし tags のみ検証するため、strict schema を呼ばない。backend serializer drift で `due_date: "2026-06-30T00:00:00Z"` / `2026-02-31` が detail/edit まで到達し、formatter が「未設定」に隠蔽、edit form が raw 値を date input に渡して保存で deadline を silent clear/改変しうる (strict-YMD all-surface invariant が loader で破れる) | ADOPT | `loadTicket` に **targeted strict YMD validation** を追加 (due_date は null または実在 YYYY-MM-DD のみ許可、timestamp/junk/非実在日/欠落は fail-closed throw)。full `TicketReadSchema` parse は loader の path-pid 設計 (response project_id 無視) + tags-only 検証戦略と非整合のため targeted check で invariant を enforce。malformed due_date reject + valid 通過の loadTicket regression を追加。 |
+
+reject / defer: なし。R12 全 adopt 反映後、R13 で clean を確認してから merge。検証: backend ruff/mypy +
+20 pytest、frontend 352 vitest + typecheck + lint 全 green。

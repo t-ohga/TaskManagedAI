@@ -66,6 +66,46 @@ describe("loadTicket (Codex B2b R2/R3/R4/R5 contract)", () => {
     expect(result?.project_slug).toBe("beta");
   });
 
+  it("valid YMD due_date を解決する (A-7 R12)", async () => {
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/me/projects") return PROJECTS;
+      if (path === `/api/v1/projects/p-aaa/tickets/${VALID_UUID}`) throw new BackendApiError(404, "nf");
+      if (path === `/api/v1/projects/p-bbb/tickets/${VALID_UUID}`) {
+        return { ...ticketPayload(VALID_UUID), due_date: "2026-06-30" };
+      }
+      throw new BackendApiError(500, "unexpected");
+    });
+    const result = await loadTicket(VALID_UUID);
+    expect(result?.due_date).toBe("2026-06-30");
+  });
+
+  it("malformed due_date (timestamp / junk / 非実在日 / 欠落) は throw する (A-7 R12 F-001、strict-YMD all-surface)", async () => {
+    // detail loader が strict schema を bypass して malformed due_date を表示・誤書き戻しするのを防ぐ。
+    for (const bad of [
+      "2026-06-30T00:00:00Z",
+      "2026-06-30junk",
+      "2026-02-31",
+      "2026-6-3",
+      undefined // due_date 欠落 (required nullable 契約違反)
+    ]) {
+      mockFetch.mockImplementation(async (path: string) => {
+        if (path === "/api/v1/me/projects") return PROJECTS;
+        if (path === `/api/v1/projects/p-aaa/tickets/${VALID_UUID}`) throw new BackendApiError(404, "nf");
+        if (path === `/api/v1/projects/p-bbb/tickets/${VALID_UUID}`) {
+          const payload = ticketPayload(VALID_UUID) as Record<string, unknown>;
+          if (bad === undefined) {
+            delete payload.due_date;
+          } else {
+            payload.due_date = bad;
+          }
+          return payload;
+        }
+        throw new BackendApiError(500, "unexpected");
+      });
+      await expect(loadTicket(VALID_UUID)).rejects.toThrow();
+    }
+  });
+
   it("全 project が 404 のときだけ null を返す (notFound 経路)", async () => {
     mockFetch.mockImplementation(async (path: string) => {
       if (path === "/api/v1/me/projects") return PROJECTS;
