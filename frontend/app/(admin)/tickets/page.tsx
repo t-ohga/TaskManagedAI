@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { z } from "zod";
 
 import { BackendApiError, fetchBackendRaw } from "@/lib/api/client";
 import { getCurrentProject } from "@/lib/api/session";
 import { listTags } from "@/lib/api/tags";
-import { TagReadSchema, type TagRead } from "@/lib/domain/tag";
+import { loadTickets, type TicketItem } from "@/lib/api/tickets-board";
+import type { TagRead } from "@/lib/domain/tag";
 import { ProjectTab } from "@/components/project-tab";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { TicketCreateDialog } from "@/components/ticket-create-dialog";
@@ -20,18 +20,6 @@ import { ViewToggle } from "@/components/view-toggle";
 import { SelectableTicketList } from "@/components/selectable-ticket-list";
 
 export const dynamic = "force-dynamic";
-
-type TicketItem = {
-  id: string;
-  title: string;
-  status: string;
-  priority: string | null;
-  description: string | null;
-  due_date: string | null;
-  created_at: string | null;
-  // ADR-00044 (A-5): backend list が per-ticket tag を inject する (active scope)。
-  tags: TagRead[];
-};
 
 // due_date は SQL date (YYYY-MM-DD) のプレーンな暦日。timezone を持たないため
 // new Date(...) を介さず文字列から直接整形し、JST 変換による日付ずれを防ぐ。
@@ -56,32 +44,6 @@ async function loadProjects(): Promise<ProjectItem[]> {
     const raw = res as Record<string, unknown>;
     return ((raw?.projects ?? raw?.items ?? []) as ProjectItem[]);
   } catch {
-    return [];
-  }
-}
-
-async function loadTickets(projectId: string, tagId?: string): Promise<TicketItem[]> {
-  const params = new URLSearchParams({ limit: "200" });
-  // tag 絞り込みは backend の tag_id query を使う (client-side filter だと limit=200 を超えた
-  // tag 付き ticket を silent に隠すため、Codex frontend R1 HIGH)。tag_id は backend で
-  // active scope + project 所属を fail-closed 検証する。
-  if (tagId) params.set("tag_id", tagId);
-  const path = `/api/v1/projects/${projectId}/tickets?${params.toString()}` as `/${string}`;
-  try {
-    const res = await fetchBackendRaw(path);
-    const raw = res as Record<string, unknown>;
-    const items = (raw?.items ?? []) as (TicketItem & { tags?: unknown })[];
-    // tags は backend が inject するが Zod で strict validate し、欠落/palette drift は [] に倒す。
-    return items.map((t) => {
-      const tagsParsed = z.array(TagReadSchema).safeParse(t.tags ?? []);
-      return { ...t, tags: tagsParsed.success ? tagsParsed.data : [] };
-    });
-  } catch (error) {
-    // tag_id 指定の 404 (cross-project / nonexistent / soft-deleted tag = backend fail-closed) は
-    // 呼び出し側へ伝播させ、「該当なし」と取り違えず filter 解除 + 通知に倒す。
-    if (tagId && error instanceof BackendApiError && error.status === 404) {
-      throw error;
-    }
     return [];
   }
 }
@@ -266,12 +228,15 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
           allTickets = tickets.map((t) => ({ ...t, projectSlug: project.slug }));
         } catch (error) {
           if (error instanceof BackendApiError && error.status === 404) {
-            // 無効タグ: 絞り込み解除して全件取得 (silent な「該当なし」を避ける)
+            // 無効タグ (cross-project / nonexistent / soft-deleted) のみ絞り込み解除して全件取得
+            // (silent な「該当なし」を避ける)。
             tagFilterInvalid = true;
             const tickets = await loadTickets(pid);
             allTickets = tickets.map((t) => ({ ...t, projectSlug: project.slug }));
           } else {
-            allTickets = [];
+            // auth / backend / network 障害は「該当なし」と誤表示せず error boundary に流す
+            // (fail-closed、Codex frontend R2 HIGH)。
+            throw error;
           }
         }
       } else {
