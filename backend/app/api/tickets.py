@@ -255,14 +255,15 @@ async def create_ticket_endpoint(
         },
     )
     session.add(audit_event)
+    # tag 注入 (追加 SELECT) を commit **前** に実行する。commit 後だと read 失敗時に mutation だけ
+    # durable になり「書けたのに 500」+ POST retry の slug conflict が起きる (Codex R10 HIGH)。
+    # 新規 ticket は tag 未付与なので tags=[] だが、全 TicketRead 応答で helper を統一する (ADR-00044)。
+    response = await _ticket_read_with_tags(session, tenant_id, project_id, ticket)
     # Codex PR #119 R1 F-PR119-001 (P1) fix: `get_session` は auto-commit なし、
     # 既存 endpoint pattern (agent_runs/approval_inbox/claims 等) は明示 commit が
     # 必要。flush のみだと request close で rollback され、201 返しても persist しない。
     await session.commit()
-
-    # 新規 ticket は tag 未付与だが、共通 helper 経由で TicketRead.tags を埋める
-    # (ADR-00044、全 TicketRead 応答で tag 注入を統一、Codex R9 HIGH)。
-    return await _ticket_read_with_tags(session, tenant_id, project_id, ticket)
+    return response
 
 
 @router.patch("/{ticket_id}", response_model=TicketRead)
@@ -351,14 +352,15 @@ async def update_ticket_endpoint(
         },
     )
     session.add(audit_event)
+    # tag 注入 (追加 SELECT) を commit **前** に実行する。commit 後だと read 失敗時に field 変更/audit
+    # だけ durable になり、UI に「更新失敗」と誤認させ retry で audit 重複する (Codex R10 HIGH)。
+    # tag 付き ticket の更新応答が「タグなし」と誤認されないよう active-scope tag を注入 (R9 HIGH)。
+    response = await _ticket_read_with_tags(session, tenant_id, project_id, ticket)
     # Codex PR #119 R1 F-PR119-002 (P1) fix: PATCH success path で commit 必須。
     # 既存 endpoint pattern (claims/evidence_items 等) と同じく flush のみでは
     # rollback されるため明示 commit。
     await session.commit()
-
-    # tag 付き ticket を更新したとき、応答が「タグなし」と誤認させないため共通 helper で
-    # active-scope な tag を注入する (ADR-00044、Codex R9 HIGH: 不完全を完全と見せない)。
-    return await _ticket_read_with_tags(session, tenant_id, project_id, ticket)
+    return response
 
 
 # ---------------------------------------------------------------------------
