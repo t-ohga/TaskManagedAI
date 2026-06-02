@@ -180,22 +180,43 @@ class TagRepository:
         tag = await self.get_tag(tenant_id, project_id, tag_id)
         if tag is None:
             raise TagNotFoundError(tag_id=tag_id)
-        # 使用中ガード (FK2 RESTRICT と二重防御): 1 件でも付与があれば 409
-        attached = (
+        # 使用中ガードは active ticket への付与のみで数える (Codex adversarial R9 HIGH、read primitive と
+        # 同じ active scope)。deleted ticket への付与を in-use に含めると (a) attached_count が hidden
+        # deleted ticket の付与数を漏らし、(b) 全付与が deleted 側だけに残った tag が永久に削除不能になる
+        # (detach は active ticket のみ対象)。active 件数のみを 409 に露出する。
+        active_attached = (
             await self.session.scalar(
                 select(func.count())
                 .select_from(TicketTag)
+                .join(
+                    Ticket,
+                    (Ticket.tenant_id == TicketTag.tenant_id)
+                    & (Ticket.project_id == TicketTag.project_id)
+                    & (Ticket.id == TicketTag.ticket_id),
+                )
                 .where(
                     TicketTag.tenant_id == tenant_id,
                     TicketTag.project_id == project_id,
                     TicketTag.tag_id == tag_id,
+                    Ticket.deleted_at.is_(None),
                 )
             )
             or 0
         )
-        if attached > 0:
-            raise TagInUseError(tag_id=tag_id, attached_count=int(attached))
+        if active_attached > 0:
+            raise TagInUseError(tag_id=tag_id, attached_count=int(active_attached))
         tag_name = tag.name
+        # active 0 件。deleted ticket 側に残存する付与を project lock (assert_project_active の FOR UPDATE)
+        # 下で先に cleanup し、FK2 RESTRICT を満たしてから tag を hard delete する (R9 deadlock 解消)。
+        # tag は project label として ticket と独立管理し、削除後の deleted ticket restore で復活しない
+        # (ADR-00044 delete model lifecycle)。
+        await self.session.execute(
+            delete(TicketTag).where(
+                TicketTag.tenant_id == tenant_id,
+                TicketTag.project_id == project_id,
+                TicketTag.tag_id == tag_id,
+            )
+        )
         await self.session.execute(
             delete(Tag).where(
                 Tag.tenant_id == tenant_id,

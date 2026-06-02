@@ -353,6 +353,54 @@ async def test_detach_rejects_cross_project_tag(
 
 
 @pytest.mark.asyncio
+async def test_delete_tag_in_use_is_active_scope(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """delete_tag の使用中判定は active ticket のみで数える (R9 HIGH)。
+
+    - active ticket への付与がある → TagInUseError (409、attached_count は active 件数)
+    - その ticket を soft-delete し active 0 件 → tag は削除可能 (deleted 付与は内部 cleanup)
+    - 削除後 tag は存在せず、deleted ticket の ticket_tags も cleanup 済 (restore で tag 復活しない)
+    """
+    from uuid import UUID
+
+    from backend.app.repositories.tag import TagInUseError, TagRepository
+
+    project_id, ticket_id, tag_id = str(uuid4()), str(uuid4()), str(uuid4())
+    async with session_factory() as session:
+        await _seed_project_ticket_tag(
+            session, project_id=project_id, ticket_id=ticket_id, tag_id=tag_id
+        )
+        await session.execute(
+            text(
+                "insert into ticket_tags (tenant_id, project_id, ticket_id, tag_id) "
+                "values (1, :pid, :tid, :tag)"
+            ),
+            {"pid": project_id, "tid": ticket_id, "tag": tag_id},
+        )
+        await session.flush()
+        repo = TagRepository(session)
+        # active ticket に付与中 → 削除不可 (使用中ガードは select のみで raise、session は dirty でない)
+        with pytest.raises(TagInUseError) as excinfo:
+            await repo.delete_tag(1, UUID(project_id), UUID(tag_id), actor_id=None)
+        assert excinfo.value.attached_count == 1
+        # soft-delete ticket → active 0 件 → 削除可能 (deleted 付与は内部 cleanup)
+        await session.execute(
+            text("update tickets set deleted_at = now() where id = :id"),
+            {"id": ticket_id},
+        )
+        await session.flush()
+        await repo.delete_tag(1, UUID(project_id), UUID(tag_id), actor_id=None)
+        await session.flush()
+        # tag は hard-delete 済 + deleted ticket の ticket_tags も cleanup 済
+        assert await repo.get_tag(1, UUID(project_id), UUID(tag_id)) is None
+        remaining = await session.scalar(
+            text("select count(*) from ticket_tags where tag_id = :tag"), {"tag": tag_id}
+        )
+        assert remaining == 0
+
+
+@pytest.mark.asyncio
 async def test_raw_delete_of_attached_tag_rejected(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
