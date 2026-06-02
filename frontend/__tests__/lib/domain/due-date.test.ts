@@ -42,14 +42,19 @@ describe("dueDateBucket (ADR-00045 期限 bucket)", () => {
     expect(dueDateBucket("2027-01-02", "2026-12-28", THRESHOLD)).toBe("upcoming");
   });
 
-  it("時刻付き文字列でも先頭 YYYY-MM-DD で判定する", () => {
-    expect(dueDateBucket("2026-06-01T00:00:00Z", REF, THRESHOLD)).toBe("overdue");
+  it("timestamp / 余分な suffix は null (R2 F-001: due_date は date 型、schema drift を fail-closed)", () => {
+    // backend の due_date は厳密に YYYY-MM-DD。timestamp / junk suffix は drift として拒否し、
+    // JST 深夜境界で別暦日に誤分類しない。
+    expect(dueDateBucket("2026-06-01T00:00:00Z", REF, THRESHOLD)).toBeNull();
+    expect(dueDateBucket("2026-06-01junk", REF, THRESHOLD)).toBeNull();
+    expect(dueDateBucket("2026-06-03", "2026-06-02T23:30:00Z", THRESHOLD)).toBeNull();
   });
 
   it("不正な日付形式は null (誤分類せず強調なしに倒す)", () => {
     expect(dueDateBucket("not-a-date", REF, THRESHOLD)).toBeNull();
     expect(dueDateBucket("2026-06-03", "garbage", THRESHOLD)).toBeNull();
     expect(dueDateBucket("", REF, THRESHOLD)).toBeNull();
+    expect(dueDateBucket("2026-6-3", REF, THRESHOLD)).toBeNull(); // 非ゼロパディング
   });
 
   it("非実在の暦日は null (R1 F-001: JS Date 正規化で別日に化けて誤分類しない)", () => {

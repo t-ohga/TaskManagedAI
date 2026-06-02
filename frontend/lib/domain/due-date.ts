@@ -13,26 +13,28 @@ export type DueDateBucket = "overdue" | "due_today" | "upcoming";
 const _YMD_FULL = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * 先頭 10 文字が **実在する暦日** (`YYYY-MM-DD`) か検証する (adversarial R1 F-001)。
+ * 文字列全体が **実在する暦日** (`YYYY-MM-DD`) か厳密に検証する (adversarial R1 F-001 / R2 F-001)。
  *
- * regex の full-match に加え、UTC で round-trip して年月日が一致するか確認する。これにより
- * `2026-13-40` / `2026-02-31` のような prefix だけ正しい非実在日を弾く (JS Date の正規化で別日へ
- * 化けて誤分類するのを防ぐ)。時刻付き文字列 (`2026-06-01T00:00:00Z`) は date 部のみ検証する。
+ * regex の **全文字列 full-match** に加え、UTC で round-trip して年月日が一致するか確認する。
+ * - `2026-13-40` / `2026-02-31` のような prefix だけ正しい非実在日を弾く (JS Date 正規化での誤分類防止)。
+ * - `2026-06-01T23:30:00Z` / `2026-06-01junk` のような **timestamp / 余分な suffix も弾く**。
+ *   reminder / date_context / ticket の `due_date` は backend の `date` 型 (厳密に `YYYY-MM-DD`、
+ *   時刻なし) のため、timestamp は schema drift であり fail-closed で拒否する (R2: slice 検証は
+ *   suffix を見逃し、JST 深夜境界で別暦日に誤分類しうる)。
  */
 export function isValidYmd(value: string): boolean {
-  const s = value.slice(0, 10);
-  if (!_YMD_FULL.test(s)) return false;
-  const y = Number(s.slice(0, 4));
-  const m = Number(s.slice(5, 7));
-  const d = Number(s.slice(8, 10));
+  if (!_YMD_FULL.test(value)) return false;
+  const y = Number(value.slice(0, 4));
+  const m = Number(value.slice(5, 7));
+  const d = Number(value.slice(8, 10));
   const dt = new Date(Date.UTC(y, m - 1, d));
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
 }
 
-// `YYYY-MM-DD` に days を加算して `YYYY-MM-DD` を返す純粋関数。UTC で parse / format するため
-// local timezone に依存しない (暦日の加算のみ)。
+// `YYYY-MM-DD` (isValidYmd 済) に days を加算して `YYYY-MM-DD` を返す純粋関数。UTC で parse /
+// format するため local timezone に依存しない (暦日の加算のみ)。
 function addDaysYmd(ymd: string, days: number): string {
-  const parts = ymd.slice(0, 10).split("-");
+  const parts = ymd.split("-");
   const y = Number(parts[0]);
   const m = Number(parts[1]);
   const d = Number(parts[2]);
@@ -59,14 +61,13 @@ export function dueDateBucket(
   referenceDate: string,
   thresholdDays: number
 ): DueDateBucket | null {
-  // 非実在日 / 形式不正 / 不正な閾値は誤分類せず null (強調なし、fail-safe、R1 F-001)。
+  // 非実在日 / 形式不正 (timestamp / junk suffix 含む) / 不正な閾値は誤分類せず null
+  // (強調なし、fail-safe、R1/R2 F-001)。
   if (!isValidYmd(dueDate) || !isValidYmd(referenceDate)) return null;
   if (!Number.isInteger(thresholdDays) || thresholdDays < 0) return null;
-  const due = dueDate.slice(0, 10);
-  const ref = referenceDate.slice(0, 10);
-  if (due < ref) return "overdue";
-  if (due === ref) return "due_today";
-  const windowEnd = addDaysYmd(ref, thresholdDays);
-  if (due <= windowEnd) return "upcoming";
+  if (dueDate < referenceDate) return "overdue";
+  if (dueDate === referenceDate) return "due_today";
+  const windowEnd = addDaysYmd(referenceDate, thresholdDays);
+  if (dueDate <= windowEnd) return "upcoming";
   return null;
 }

@@ -78,6 +78,17 @@ describe("ReminderSummarySchema (fail-closed)", () => {
     ).toBe(false);
   });
 
+  it("timestamp / junk suffix の reference_date / due_date は reject (R2 F-001、date 型 drift)", () => {
+    expect(
+      ReminderSummarySchema.safeParse({ ...validSummary, reference_date: "2026-06-02T00:00:00Z" })
+        .success
+    ).toBe(false);
+    const tsItem = { ...validItem(), due_date: "2026-06-01T12:00:00Z" };
+    expect(
+      ReminderSummarySchema.safeParse({ ...validSummary, overdue: validBucket(1, [tsItem]) }).success
+    ).toBe(false);
+  });
+
   it("threshold_days が負 / 上限超は reject", () => {
     expect(ReminderSummarySchema.safeParse({ ...validSummary, threshold_days: -1 }).success).toBe(
       false
@@ -108,6 +119,16 @@ describe("DateContextSchema (fail-closed)", () => {
   it("非実在の reference_date は reject (基準日 authority 破損を取得失敗に倒す、R1 F-001)", () => {
     expect(
       DateContextSchema.safeParse({ reference_date: "2026-02-31", threshold_days: 7 }).success
+    ).toBe(false);
+  });
+
+  it("timestamp / junk suffix の reference_date は reject (R2 F-001、date 型 drift)", () => {
+    expect(
+      DateContextSchema.safeParse({ reference_date: "2026-06-02T00:00:00Z", threshold_days: 7 })
+        .success
+    ).toBe(false);
+    expect(
+      DateContextSchema.safeParse({ reference_date: "2026-06-02junk", threshold_days: 7 }).success
     ).toBe(false);
   });
 });
