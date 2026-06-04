@@ -1,15 +1,18 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AppearanceSettings } from "@/app/(admin)/settings/_components/appearance-settings";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
+import { __resetSessionThemeForTest } from "@/lib/use-theme";
 
 // M-2 (ADR-00047): nav toggle と設定 selector が useTheme で state 共有する (R1 F-002)。
 
 beforeEach(() => {
   localStorage.clear();
   document.documentElement.classList.remove("dark");
+  // module-level の in-session 選択 (F-G4) を test 間でリークさせない。
+  __resetSessionThemeForTest();
 });
 
 afterEach(() => {
@@ -108,6 +111,97 @@ describe("nav toggle ↔ 設定 selector 同期 (useTheme)", () => {
     // controls (state) と DOM の .dark class の両方が dark に追従する (state だけでなく配色も)。
     expect(screen.getByRole("radio", { name: /ダーク/ })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("button").getAttribute("aria-label")).toContain("現在: ダーク");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+});
+
+// Codex App F-G4: localStorage が throw する環境 (private mode 等) でも、in-session の明示選択が
+// 「後から mount する別 consumer」「OS preference 変更」で system に巻き戻らないこと。
+describe("storage 無効環境での in-session テーマ保持 (Codex F-G4)", () => {
+  // jsdom default の matchMedia 不在を test 内で制御するための最小 mock。
+  // useTheme は addEventListener/removeEventListener のみ使うため legacy addListener/removeListener は省く。
+  let mediaListeners: (() => void)[] = [];
+
+  function installMatchMedia(matches: boolean): void {
+    mediaListeners = [];
+    window.matchMedia = ((query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addEventListener: (_type: string, cb: () => void) => {
+        mediaListeners.push(cb);
+      },
+      removeEventListener: (_type: string, cb: () => void) => {
+        mediaListeners = mediaListeners.filter((l) => l !== cb);
+      },
+      dispatchEvent: () => false
+    })) as unknown as typeof window.matchMedia;
+  }
+
+  function fireMediaChange(): void {
+    for (const cb of mediaListeners) cb();
+  }
+
+  function disableStorage(): void {
+    const throwing = (): never => {
+      throw new Error("storage disabled");
+    };
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(throwing);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(throwing);
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    // jsdom default (matchMedia 未定義) に戻す。
+    // @ts-expect-error cleanup: matchMedia を未定義へ戻す
+    delete window.matchMedia;
+    mediaListeners = [];
+    document.documentElement.classList.remove("dark");
+  });
+
+  it("設定で選んだ dark が、後から mount する nav toggle でも維持される (system に巻き戻らない)", () => {
+    disableStorage();
+    const { unmount } = render(<AppearanceSettings />);
+    // storage 書込は失敗するが in-session 選択 dark は保持される。
+    fireEvent.click(screen.getByRole("radio", { name: /ダーク/ }));
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+
+    // 設定画面を離れ、後で nav toggle が mount する状況を再現。
+    unmount();
+    render(<ThemeToggle />);
+
+    // storage は読めず system に倒れるが、in-session の dark 選択が引き継がれる。
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(screen.getByRole("button").getAttribute("aria-label")).toContain("現在: ダーク");
+  });
+
+  it("dark 選択中は OS preference 変更 (matchMedia change) で system に戻らない", () => {
+    disableStorage();
+    installMatchMedia(false); // OS は light
+    render(
+      <>
+        <ThemeToggle />
+        <AppearanceSettings />
+      </>
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /ダーク/ }));
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+
+    // OS preference の change が来ても、明示選択 dark は維持される。
+    fireMediaChange();
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+
+  it("system のときは OS preference 変更が反映される (storage 不可でも追従)", () => {
+    disableStorage();
+    installMatchMedia(true); // OS は dark
+    render(<ThemeToggle />);
+    // 初期は明示選択なし → system。OS dark なので .dark。
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+
+    // OS change を発火しても system のままなので OS dark に追従する。
+    document.documentElement.classList.remove("dark");
+    fireMediaChange();
     expect(document.documentElement.classList.contains("dark")).toBe(true);
   });
 });
