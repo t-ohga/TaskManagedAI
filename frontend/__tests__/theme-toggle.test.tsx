@@ -261,4 +261,23 @@ describe("storage 無効環境での in-session テーマ保持 (Codex F-G4)", (
     expect(screen.getByRole("radio", { name: /システム/ })).toHaveAttribute("aria-checked", "true");
     expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
+
+  it("localStorage アクセサが throw する環境でも ThemeToggle が例外なく mount する (F-G7)", () => {
+    // storage access がポリシー拒否され、localStorage プロパティ取得自体が throw するケース。
+    // ThemeToggle は admin Navigation に常時 mount されるため、例外が漏れると管理画面全体が壊れる。
+    const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      get() {
+        throw new Error("SecurityError: storage access denied");
+      }
+    });
+    try {
+      expect(() => render(<ThemeToggle />)).not.toThrow();
+      // system fallback で継続し、toggle は描画される。
+      expect(screen.getByRole("button")).toBeInTheDocument();
+    } finally {
+      if (original) Object.defineProperty(globalThis, "localStorage", original);
+    }
+  });
 });

@@ -57,6 +57,23 @@ describe("readStoredTheme", () => {
     localStorage.setItem(THEME_STORAGE_KEY, "neon");
     expect(readStoredTheme()).toBe("system");
   });
+
+  it("localStorage アクセサ自体が throw (SecurityError) しても system に倒す (Codex F-G7)", () => {
+    // Cookie/storage がポリシーで拒否される設定では `getItem` 以前に localStorage プロパティ取得が
+    // throw し得る。try 外で評価すると mount 時に例外が漏れる。
+    const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      get() {
+        throw new Error("SecurityError: storage access denied");
+      }
+    });
+    try {
+      expect(readStoredTheme()).toBe("system");
+    } finally {
+      if (original) Object.defineProperty(globalThis, "localStorage", original);
+    }
+  });
 });
 
 describe("applyTheme", () => {

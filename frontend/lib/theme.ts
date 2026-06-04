@@ -15,9 +15,13 @@ export function isTheme(value: unknown): value is Theme {
 
 /** localStorage から保存テーマを読む (無効/不在は "system")。client でのみ意味を持つ。 */
 export function readStoredTheme(): Theme {
-  if (typeof localStorage === "undefined") return "system";
   try {
-    const value = localStorage.getItem(THEME_STORAGE_KEY);
+    // localStorage **プロパティの取得自体** が SecurityError を投げ得る (Cookie/storage がポリシーで
+    // 拒否される設定。typeof チェックを try 外に置くと mount 時に例外が漏れて admin UI を壊す、
+    // Codex F-G7)。SSR (Node) では globalThis.localStorage が undefined になり throw しない。
+    const storage = globalThis.localStorage;
+    if (!storage) return "system";
+    const value = storage.getItem(THEME_STORAGE_KEY);
     return isTheme(value) ? value : "system";
   } catch {
     return "system";
