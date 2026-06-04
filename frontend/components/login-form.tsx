@@ -26,7 +26,7 @@ export function LoginForm({ action, error, nextPath }: LoginFormProps) {
   return (
     <form action={action} className="grid gap-4">
       {error ? (
-        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-danger" role="alert">
+        <p className="rounded-md border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-sm text-danger" role="alert">
           {error}
         </p>
       ) : null}
@@ -39,7 +39,7 @@ export function LoginForm({ action, error, nextPath }: LoginFormProps) {
         </label>
         <input
           autoComplete="current-password"
-          className="h-11 rounded-md border border-line bg-white px-3 text-base text-ink outline-offset-2 placeholder:text-slate-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          className="h-11 rounded-md border border-line bg-panel px-3 text-base text-ink outline-offset-2 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           id="dev-login-token"
           maxLength={4096}
           name="token"

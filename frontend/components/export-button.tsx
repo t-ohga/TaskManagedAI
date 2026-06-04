@@ -42,7 +42,7 @@ export function ExportButton({ data, filename, format = "csv" }: ExportButtonPro
       type="button"
       onClick={handleExport}
       disabled={data.length === 0}
-      className="rounded-md border border-line px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-slate-50 disabled:opacity-50"
+      className="rounded-md border border-line px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
     >
       {format === "json" ? "JSON" : "CSV"} エクスポート
     </button>

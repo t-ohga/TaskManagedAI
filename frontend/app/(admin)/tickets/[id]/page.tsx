@@ -89,10 +89,10 @@ function formatDueDate(value: string | null): string {
 
 function statusBadge(status: string) {
   const colors: Record<string, string> = {
-    open: "bg-blue-50 text-blue-700",
-    in_progress: "bg-amber-50 text-amber-700",
-    closed: "bg-gray-100 text-gray-500",
-    cancelled: "bg-red-50 text-red-600",
+    open: "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300",
+    in_progress: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300",
+    closed: "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400",
+    cancelled: "bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400",
   };
   const labels: Record<string, string> = {
     open: "未着手",
@@ -102,7 +102,7 @@ function statusBadge(status: string) {
   };
   return (
     <span
-      className={`rounded-full px-3 py-1 text-sm font-medium ${colors[status] ?? "bg-gray-100 text-gray-600"}`}
+      className={`rounded-full px-3 py-1 text-sm font-medium ${colors[status] ?? "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"}`}
     >
       {labels[status] ?? status}
     </span>
@@ -298,7 +298,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
         )}
       </article>
       {!isWritable ? (
-        <div className="no-print rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+        <div className="no-print rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
           このチケットは現在の作業プロジェクト外のため、ここでは閲覧のみ可能です。
           ステータス変更・編集・中止は、そのチケットが属するプロジェクトを現在の
           プロジェクトにしているときだけ行えます。
@@ -324,7 +324,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           <div className="mt-4 grid gap-2">
             <a
               href={`/tickets?project=${encodeURIComponent(ticket.project_slug)}`}
-              className="rounded-md border border-line px-4 py-2 text-center text-sm font-medium text-muted-foreground transition-colors hover:bg-slate-50"
+              className="rounded-md border border-line px-4 py-2 text-center text-sm font-medium text-muted-foreground transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
             >
               プロジェクトの看板に戻る
             </a>
@@ -357,7 +357,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           </div>
         ) : null}
         {activityEntries === null ? (
-          <p className="mt-4 text-sm text-amber-700">
+          <p className="mt-4 text-sm text-amber-700 dark:text-amber-300">
             アクティビティを読み込めませんでした。基本的な履歴のみ表示しています。
           </p>
         ) : null}

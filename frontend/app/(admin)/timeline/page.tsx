@@ -186,7 +186,7 @@ export default async function TimelinePage() {
         <section
           aria-label="Timeline data source status"
           role="status"
-          className="rounded-md border border-attention bg-amber-50 p-4"
+          className="rounded-md border border-attention bg-amber-50 dark:bg-amber-950/40 p-4"
         >
           <h2 className="text-base font-semibold text-attention">
             一部データを表示できません
@@ -200,7 +200,7 @@ export default async function TimelinePage() {
       ) : null}
 
       {state.agents.kind === "ok" && state.agents.data.detailFailures > 0 ? (
-        <section role="status" className="rounded-md border border-attention bg-amber-50 p-4">
+        <section role="status" className="rounded-md border border-attention bg-amber-50 dark:bg-amber-950/40 p-4">
           <h2 className="text-base font-semibold text-attention">
             一部 AgentRun detail を取得できません
           </h2>
@@ -420,12 +420,12 @@ function toneForEvent(eventType: string): TimelineRow["tone"] {
 function toneClass(tone: TimelineRow["tone"]): string {
   switch (tone) {
     case "danger":
-      return "bg-rose-100 text-rose-800";
+      return "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300";
     case "attention":
-      return "bg-amber-100 text-attention";
+      return "bg-amber-100 dark:bg-amber-900/40 text-attention";
     case "success":
-      return "bg-emerald-100 text-emerald-800";
+      return "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300";
     default:
-      return "bg-slate-100 text-slate-800";
+      return "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200";
   }
 }

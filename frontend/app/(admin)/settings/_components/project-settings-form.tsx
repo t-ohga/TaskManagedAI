@@ -31,14 +31,14 @@ const AUTONOMY_DESCRIPTIONS: Record<string, string> = {
 function StatusMessage({ state }: { state: SettingsActionState }) {
   if (state.kind === "error") {
     return (
-      <p role="status" className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">
+      <p role="status" className="rounded-md bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
         {state.message}
       </p>
     );
   }
   if (state.kind === "ok") {
     return (
-      <p role="status" className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+      <p role="status" className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
         {state.message}
       </p>
     );
@@ -159,7 +159,7 @@ export function ProjectSettingsForm({
               name="name"
               defaultValue={name}
               onChange={() => setNameDirty(true)}
-              className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              className="rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             />
           </label>
 
@@ -170,7 +170,7 @@ export function ProjectSettingsForm({
               rows={3}
               defaultValue={description ?? ""}
               onChange={() => setDescriptionDirty(true)}
-              className="min-h-20 resize-y rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              className="min-h-20 resize-y rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             />
           </label>
 
@@ -206,7 +206,7 @@ export function ProjectSettingsForm({
               name="autonomy_level"
               value={autonomyValue}
               onChange={(event) => setAutonomyValue(event.target.value as AutonomyLevel)}
-              className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              className="rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
               <option value="L0">L0 — 完全手動</option>
               <option value="L1">L1 — 低リスク自動化</option>

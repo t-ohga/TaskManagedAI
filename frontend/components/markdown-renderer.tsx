@@ -46,7 +46,7 @@ function inlineFormat(escaped: string): string {
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
     .replace(
       /`(.+?)`/g,
-      '<code class="rounded bg-gray-100 px-1 py-0.5 text-xs font-mono">$1</code>'
+      '<code class="rounded bg-gray-100 dark:bg-gray-800 px-1 py-0.5 text-xs font-mono">$1</code>'
     );
 }
 

@@ -101,17 +101,17 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
 function eventTypeBadge(eventType: string) {
   const label = EVENT_TYPE_LABELS[eventType] ?? eventType;
   const colors: Record<string, string> = {
-    policy_decision_created: "bg-blue-50 text-blue-700",
-    secret_canary_detected: "bg-red-50 text-red-700",
-    runner_blocked: "bg-orange-50 text-orange-700",
-    repo_pr_opened: "bg-emerald-50 text-emerald-700",
-    approval_requested: "bg-purple-50 text-purple-700",
-    approval_decided: "bg-purple-50 text-purple-700",
-    run_completed: "bg-emerald-50 text-emerald-700",
-    run_failed: "bg-red-50 text-red-700",
+    policy_decision_created: "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300",
+    secret_canary_detected: "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300",
+    runner_blocked: "bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300",
+    repo_pr_opened: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300",
+    approval_requested: "bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300",
+    approval_decided: "bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300",
+    run_completed: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300",
+    run_failed: "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300",
   };
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${colors[eventType] ?? "bg-gray-100 text-gray-600"}`}>
+    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${colors[eventType] ?? "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"}`}>
       {label}
     </span>
   );
@@ -135,10 +135,10 @@ function redactionStatusBadge(status: string | null) {
   // 畳み、未知 raw 値を DOM に出さない。
   const label = status == null ? "未検証" : isKnown ? status : "不明";
   const tone = isRoutineSafe
-    ? "bg-emerald-50 text-emerald-700"
+    ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
     : status === "blocked_by_secret_scan"
-      ? "bg-red-50 text-red-700"
-      : "bg-amber-50 text-amber-700";
+      ? "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300"
+      : "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300";
   return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}>{label}</span>;
 }
 
@@ -192,7 +192,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
         >
           <a
             href="/audit"
-            className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium transition-colors ${!typeFilter ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+            className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium transition-colors ${!typeFilter ? "bg-accent text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"}`}
           >
             すべて
           </a>
@@ -200,7 +200,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
             <a
               key={t}
               href={`/audit?type=${t}`}
-              className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium transition-colors ${typeFilter === t ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+              className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium transition-colors ${typeFilter === t ? "bg-accent text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"}`}
             >
               {EVENT_TYPE_LABELS[t] ?? t}
             </a>
@@ -208,9 +208,9 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
         </div>
       </div>
 
-      <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
-        <p className="text-sm font-medium text-red-700">AC-HARD-02 監査マスク</p>
-        <p className="mt-1 text-xs text-red-600">
+      <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/40 px-4 py-3">
+        <p className="text-sm font-medium text-red-700 dark:text-red-300">AC-HARD-02 監査マスク</p>
+        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
           生のシークレット、トークン、プロバイダーキーは表示されません。reason_code、パターン検出、ハッシュ参照のみ。
         </p>
       </div>
@@ -218,7 +218,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
       {events.length > 0 ? (
         <div className="overflow-x-auto rounded-lg border border-line">
           <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-line bg-slate-50">
+            <thead className="border-b border-line bg-slate-50 dark:bg-slate-800">
               <tr>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">イベント種別</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground">アクター</th>
@@ -230,7 +230,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
             </thead>
             <tbody className="divide-y divide-line">
               {events.map((e) => (
-                <tr key={e.id} className="hover:bg-slate-50">
+                <tr key={e.id} className="hover:bg-slate-50 dark:hover:bg-slate-800">
                   <td className="px-4 py-3">{eventTypeBadge(e.event_type)}</td>
                   <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                     {e.actor_id ? e.actor_id.slice(0, 8) + "..." : "—"}
@@ -256,11 +256,11 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
       )}
 
       {totalPages > 1 ? <nav aria-label="ページネーション" className="no-print flex items-center justify-center gap-2">
-          {pageNum > 1 ? <a href={`/audit?${typeFilter ? `type=${typeFilter}&` : ""}page=${pageNum - 1}`} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+          {pageNum > 1 ? <a href={`/audit?${typeFilter ? `type=${typeFilter}&` : ""}page=${pageNum - 1}`} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
               前へ
             </a> : null}
           <span className="text-sm text-muted-foreground">{pageNum} / {totalPages}</span>
-          {pageNum < totalPages ? <a href={`/audit?${typeFilter ? `type=${typeFilter}&` : ""}page=${pageNum + 1}`} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+          {pageNum < totalPages ? <a href={`/audit?${typeFilter ? `type=${typeFilter}&` : ""}page=${pageNum + 1}`} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
               次へ
             </a> : null}
         </nav> : null}

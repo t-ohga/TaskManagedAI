@@ -53,7 +53,7 @@ export function Navigation({ actorLabel }: NavigationProps) {
             ))}
             <li>
               <Link
-                className="block rounded-md px-3 py-2 text-sm font-medium text-muted-foreground outline-offset-2 hover:bg-slate-50 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="block rounded-md px-3 py-2 text-sm font-medium text-muted-foreground outline-offset-2 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 href="/login"
               >
                 ログアウト

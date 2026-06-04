@@ -78,7 +78,7 @@ export function EditTicketForm({
           <input
             name="title"
             defaultValue={ticket.title}
-            className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            className="rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           />
         </label>
 
@@ -89,7 +89,7 @@ export function EditTicketForm({
             rows={5}
             defaultValue={ticket.description ?? ""}
             ariaLabel="説明"
-            textareaClassName="min-h-32 w-full resize-y rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            textareaClassName="min-h-32 w-full resize-y rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           />
         </div>
 
@@ -102,7 +102,7 @@ export function EditTicketForm({
             // (YYYY-MM-DD or null)。slice(0,10) の truncation fallback は不要 (malformed は loadTicket
             // で既に fail-closed)。validated 値をそのまま date input の default に使う。
             defaultValue={ticket.due_date ?? ""}
-            className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            className="rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           />
         </label>
 
@@ -112,7 +112,7 @@ export function EditTicketForm({
             <select
               name="status"
               defaultValue={ticket.status}
-              className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              className="rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
               <option value="open">{formatTicketStatus("open")}</option>
               <option value="in_progress">{formatTicketStatus("in_progress")}</option>
@@ -128,7 +128,7 @@ export function EditTicketForm({
             <select
               name="priority"
               defaultValue={ticket.priority ?? ""}
-              className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              className="rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
               <option value="">(未指定)</option>
               <option value="low">{formatTicketPriority("low")}</option>
@@ -147,7 +147,7 @@ export function EditTicketForm({
             // degraded 警告は aria-describedby で関連付ける (label 内に置くと select の
             // accessible name を汚染するため、name は「担当者」のまま description で補足する)。
             aria-describedby={assignableActorsDegraded ? "assignee-degraded" : undefined}
-            className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            className="rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           >
             <option value="">未割当</option>
             {assigneeOptions.map((option) => (
@@ -160,13 +160,13 @@ export function EditTicketForm({
         {assignableActorsDegraded ? (
           // R1 F-009: 候補取得失敗を degraded で可視化 (silent に未割当へ倒さない)。現 assignee は
           // option に保持済のため保存しても現在値を失わない。label 外に出して select の name を汚さない。
-          <p id="assignee-degraded" className="text-xs text-amber-700">
+          <p id="assignee-degraded" className="text-xs text-amber-700 dark:text-amber-300">
             担当者候補を取得できませんでした。現在の担当者の保持・解除のみ可能です。
           </p>
         ) : assignableActorsTruncated ? (
           // Codex App F-C3: 候補が cap 超過で切り詰められた場合、一覧に無い human を割り当てられない旨を
           // 警告 (tickets 一覧 page と同じ扱い、silent な部分候補にしない)。
-          <p id="assignee-degraded" className="text-xs text-amber-700">
+          <p id="assignee-degraded" className="text-xs text-amber-700 dark:text-amber-300">
             担当者が多いため候補の一部のみ表示しています。一覧に無い担当者は割り当てできません。
           </p>
         ) : null}
@@ -183,7 +183,7 @@ export function EditTicketForm({
         {state.kind === "error" ? (
           <p
             role="status"
-            className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700"
+            className="rounded-md bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-sm text-rose-700 dark:text-rose-300"
           >
             {state.message}
           </p>
@@ -191,7 +191,7 @@ export function EditTicketForm({
         {state.kind === "ok" ? (
           <p
             role="status"
-            className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
+            className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300"
           >
             チケットを更新しました (id: {state.ticket_id})
           </p>

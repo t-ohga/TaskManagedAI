@@ -57,18 +57,18 @@ const STATUS_TO_KANBAN: Record<string, KanbanGroup> = {
 };
 
 const KANBAN_COLUMNS: { key: KanbanGroup; title: string; color: string; hint: string }[] = [
-  { key: "todo", title: "未着手", color: "bg-blue-50", hint: "新しいチケットがここに入ります" },
-  { key: "active", title: "進行中", color: "bg-amber-50", hint: "作業中・レビュー中・ブロック中のチケット" },
-  { key: "done", title: "完了", color: "bg-emerald-50", hint: "完了・中止されたチケット" },
+  { key: "todo", title: "未着手", color: "bg-blue-50 dark:bg-blue-950/40", hint: "新しいチケットがここに入ります" },
+  { key: "active", title: "進行中", color: "bg-amber-50 dark:bg-amber-950/40", hint: "作業中・レビュー中・ブロック中のチケット" },
+  { key: "done", title: "完了", color: "bg-emerald-50 dark:bg-emerald-950/40", hint: "完了・中止されたチケット" },
 ];
 
 function priorityBadge(priority: string | null | undefined) {
   if (!priority) return null;
   const colors: Record<string, string> = {
-    critical: "bg-red-100 text-red-700",
-    high: "bg-orange-100 text-orange-700",
-    medium: "bg-yellow-100 text-yellow-700",
-    low: "bg-blue-100 text-blue-700",
+    critical: "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300",
+    high: "bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300",
+    medium: "bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300",
+    low: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300",
   };
   const labels: Record<string, string> = {
     critical: "最優先",
@@ -77,7 +77,7 @@ function priorityBadge(priority: string | null | undefined) {
     low: "低",
   };
   return (
-    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${colors[priority] ?? "bg-gray-100 text-gray-600"}`}>
+    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${colors[priority] ?? "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"}`}>
       {labels[priority] ?? priority}
     </span>
   );
@@ -87,12 +87,12 @@ function priorityBadge(priority: string | null | undefined) {
 function dueChipClass(bucket: DueDateBucket | null): string {
   switch (bucket) {
     case "overdue":
-      return "bg-red-50 font-medium text-red-700";
+      return "bg-red-50 dark:bg-red-950/40 font-medium text-red-700 dark:text-red-300";
     case "due_today":
     case "upcoming":
-      return "bg-amber-50 font-medium text-amber-700";
+      return "bg-amber-50 dark:bg-amber-950/40 font-medium text-amber-700 dark:text-amber-300";
     default:
-      return "bg-slate-50 text-muted-foreground";
+      return "bg-slate-50 dark:bg-slate-800 text-muted-foreground";
   }
 }
 
@@ -156,7 +156,7 @@ function TicketCard({
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <TicketStatusIndicator status={ticket.status} />
         {priorityBadge(ticket.priority)}
-        {projectSlug ? <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+        {projectSlug ? <span className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[10px] text-muted-foreground">
             {projectSlug}
           </span> : null}
         {formattedDue ? (
@@ -166,7 +166,7 @@ function TicketCard({
         ) : null}
         {/* A-6: 担当者が居るときのみ display_name chip (UUID 生表示はしない)。 */}
         {ticket.assignee_actor_id ? (
-          <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
+          <span className="rounded bg-indigo-50 dark:bg-indigo-950/40 px-1.5 py-0.5 text-[10px] text-indigo-700 dark:text-indigo-300">
             担当: {assigneeLabel(assigneeNameById ?? new Map(), ticket.assignee_actor_id)}
           </span>
         ) : null}
@@ -196,7 +196,7 @@ function KanbanColumnEnhanced({
       <div className={`flex items-center justify-between rounded-t-lg border-b border-line px-4 py-3 ${color}`}>
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold">{title}</h3>
-          <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold tabular-nums">
+          <span className="rounded-full bg-panel/80 px-2 py-0.5 text-xs font-semibold tabular-nums">
             {count}
           </span>
         </div>
@@ -460,12 +460,12 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
         </div>
         {projectTags.length > 0 ? <TagFilter tags={projectTags} /> : null}
         {tagFilterInvalid ? (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+          <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
             選択したタグが見つからないため、絞り込みを解除して全件を表示しています。
           </div>
         ) : null}
         {tagFilterTruncated ? (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+          <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
             このタグには {tagFilterTruncated.total} 件のチケットがマッチしますが、最初の
             {tagFilterTruncated.shown} 件のみ表示しています。すべて確認するにはステータスや期間で
             さらに絞り込んでください。
@@ -475,13 +475,13 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             schema drift) を「project/ticket が無い空状態」と区別して可視化する (silent empty board
             を避ける)。 */}
         {projectListDegraded ? (
-          <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+          <div role="status" className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
             プロジェクト一覧を取得できなかったため、横断表示のチケットを表示できません
             (チケットが 0 件なのではなく取得失敗です)。時間をおいて再読み込みしてください。
           </div>
         ) : null}
         {omittedProjects > 0 ? (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+          <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
             {omittedProjects} 件のプロジェクトのチケットを取得できなかったため、一覧から除外しています。
             時間をおいて再読み込みしてください。
           </div>
@@ -490,7 +490,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             誤表示を避けるため neutral に倒すが、失敗を silent にせず警告する (dashboard reminder と
             silent に乖離させない)。期限の日付自体は表示される。 */}
         {!dateContextResult.ok ? (
-          <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+          <div role="status" className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
             期限の基準日を取得できなかったため、期限の強調表示 (超過 / 本日 / 期限間近) を一時的に無効にしています。
             期限の日付は表示されますが、色分けされません。時間をおいて再読み込みしてください。
           </div>
@@ -498,12 +498,12 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
         {/* A-6 (Codex adversarial F-A3): 担当者候補の取得失敗 / cap 超過を可視化する。silent に空候補や
             部分候補を見せず、作成フォームの担当者選択が不完全であることを明示する。 */}
         {assignableActorsDegraded ? (
-          <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+          <div role="status" className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
             担当者候補を取得できませんでした。新規チケットは未割当で作成され、既存の担当者は名前ではなく
             「担当者 (不明)」と表示される場合があります。時間をおいて再読み込みしてください。
           </div>
         ) : assignableActorsTruncated ? (
-          <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+          <div role="status" className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
             担当者が多いため候補の一部のみ表示しています。候補一覧に無い担当者は新規割り当てできず、
             該当する既存の担当者は「担当者 (不明)」と表示される場合があります。
           </div>
@@ -511,13 +511,13 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
       </Suspense>
 
       {selectedProject === "all" ? (
-        <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
+        <div className="rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 px-4 py-2 text-xs text-blue-700 dark:text-blue-300">
           全プロジェクト横断表示中。チケットの作成・更新するにはプロジェクトを選択してください。
         </div>
       ) : currentProject && selectedProject === currentProject.slug ? (
         <TicketCreateDialog assignableActors={assignableActors} />
       ) : (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+        <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
           チケットは現在のプロジェクト
           {currentProject ? `「${currentProject.name}」` : ""}に作成されます。
           {currentProject

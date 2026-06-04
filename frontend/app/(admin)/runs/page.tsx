@@ -147,11 +147,11 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
       {/* S-1: フィルタ操作子は印刷物に出さない (.no-print)。チップは画面では 44px tap target (I-3)。 */}
       <div className="no-print flex flex-wrap items-center gap-3">
         <div className="flex flex-wrap gap-1">
-          <Link href="/runs" className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${!statusFilter ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+          <Link href="/runs" className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${!statusFilter ? "bg-accent text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"}`}>
             すべて
           </Link>
           {statuses.map((s) => (
-            <a key={s} href={`/runs?status=${s}${roleFilter ? `&role=${roleFilter}` : ""}`} className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${statusFilter === s ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+            <a key={s} href={`/runs?status=${s}${roleFilter ? `&role=${roleFilter}` : ""}`} className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${statusFilter === s ? "bg-accent text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"}`}>
               {STATUS_LABELS[s] ?? s}
             </a>
           ))}
@@ -159,7 +159,7 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
         {roles.length > 0 ? <div className="flex flex-wrap gap-1">
             <span className="text-xs text-muted-foreground">ロール:</span>
             {roles.map((r) => (
-              <a key={r} href={`/runs?${statusFilter ? `status=${statusFilter}&` : ""}role=${r}`} className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${roleFilter === r ? "bg-accent text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+              <a key={r} href={`/runs?${statusFilter ? `status=${statusFilter}&` : ""}role=${r}`} className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium ${roleFilter === r ? "bg-accent text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"}`}>
                 {r}
               </a>
             ))}
@@ -262,20 +262,20 @@ export default async function RunsPage({ searchParams }: RunsPageProps) {
           <p className="mt-2 text-xs text-muted-foreground">
             フィルターを変更するか、すべて表示に切り替えてください。
           </p>
-          <Link href="/runs" className="mt-3 inline-block rounded-md border border-line px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-slate-50">
+          <Link href="/runs" className="mt-3 inline-block rounded-md border border-line px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-slate-50 dark:hover:bg-slate-800">
             フィルターをリセット
           </Link>
         </div> : null}
 
       {totalRuns > RUNS_PER_PAGE ? <nav aria-label="ページネーション" className="no-print flex items-center justify-center gap-2">
           {page > 1 ? (
-            <a href={runsPageHref(page - 1)} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+            <a href={runsPageHref(page - 1)} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
               前へ
             </a>
           ) : null}
           <span className="text-sm text-muted-foreground">{page} / {totalPages}</span>
           {page < totalPages ? (
-            <a href={runsPageHref(page + 1)} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50">
+            <a href={runsPageHref(page + 1)} className="inline-flex items-center justify-center rounded border border-line px-3 py-1 text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
               次へ
             </a>
           ) : null}

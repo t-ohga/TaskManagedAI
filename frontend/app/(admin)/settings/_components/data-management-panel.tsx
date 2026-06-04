@@ -24,14 +24,14 @@ const INITIAL_IMPORT_STATE: ImportActionState = { kind: "idle" };
 function StatusMessage({ state }: { state: SettingsActionState }) {
   if (state.kind === "error") {
     return (
-      <p role="status" className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">
+      <p role="status" className="rounded-md bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
         {state.message}
       </p>
     );
   }
   if (state.kind === "ok") {
     return (
-      <p role="status" className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+      <p role="status" className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
         {state.message}
       </p>
     );
@@ -45,8 +45,8 @@ function StatusBadge({ status }: { status: string }) {
     <span
       className={
         archived
-          ? "inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800"
-          : "inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800"
+          ? "inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-900/40 px-2.5 py-0.5 text-xs font-semibold text-amber-800 dark:text-amber-300"
+          : "inline-flex items-center rounded-full bg-emerald-100 dark:bg-emerald-900/40 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300"
       }
     >
       {archived ? "アーカイブ済み" : "アクティブ"}
@@ -137,15 +137,15 @@ export function DataManagementPanel({
               <button
                 type="button"
                 onClick={() => setArchiveConfirming(true)}
-                className="rounded-md border border-line bg-white px-4 py-2 text-sm font-medium text-ink shadow-sm hover:bg-canvas disabled:opacity-60"
+                className="rounded-md border border-line bg-panel px-4 py-2 text-sm font-medium text-ink shadow-sm hover:bg-canvas disabled:opacity-60"
                 disabled={archivePending}
               >
                 {archived ? "アーカイブを解除する" : "プロジェクトをアーカイブする"}
               </button>
             </div>
           ) : (
-            <div className="grid gap-3 rounded-md border border-amber-300 bg-amber-50 p-3">
-              <p className="text-sm text-amber-900">
+            <div className="grid gap-3 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3">
+              <p className="text-sm text-amber-900 dark:text-amber-200">
                 {archived
                   ? "アーカイブを解除して ticket 操作を再開しますか？"
                   : "プロジェクトをアーカイブしますか？子要素 (ticket) の変更が凍結されます。"}
@@ -165,7 +165,7 @@ export function DataManagementPanel({
                 <button
                   type="button"
                   onClick={() => setArchiveConfirming(false)}
-                  className="rounded-md border border-line bg-white px-4 py-2 text-sm font-medium text-ink hover:bg-canvas"
+                  className="rounded-md border border-line bg-panel px-4 py-2 text-sm font-medium text-ink hover:bg-canvas"
                   disabled={archivePending}
                 >
                   キャンセル
@@ -192,7 +192,7 @@ export function DataManagementPanel({
         </p>
 
         {archived ? (
-          <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <p className="rounded-md bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
             プロジェクトがアーカイブされているため一括削除は無効です。アーカイブを解除してください。
           </p>
         ) : (
@@ -209,7 +209,7 @@ export function DataManagementPanel({
                 <button
                   type="button"
                   onClick={() => setDeleteConfirming(true)}
-                  className="rounded-md border border-rose-300 bg-white px-4 py-2 text-sm font-medium text-rose-700 shadow-sm hover:bg-rose-50 disabled:opacity-60"
+                  className="rounded-md border border-rose-300 dark:border-rose-700 bg-panel px-4 py-2 text-sm font-medium text-rose-700 dark:text-rose-300 shadow-sm hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-60"
                   disabled={deletePending || activeTicketCount === 0}
                 >
                   アクティブ ticket を全件削除する
@@ -221,8 +221,8 @@ export function DataManagementPanel({
                 ) : null}
               </div>
             ) : (
-              <div className="grid gap-3 rounded-md border border-rose-300 bg-rose-50 p-3">
-                <p className="text-sm text-rose-900">
+              <div className="grid gap-3 rounded-md border border-rose-300 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/40 p-3">
+                <p className="text-sm text-rose-900 dark:text-rose-200">
                   本当に <span className="font-semibold">{activeTicketCount} 件</span>{" "}
                   すべての ticket を削除しますか？この操作は監査に記録され、復元バッチ ID が発行されます。
                 </p>
@@ -237,7 +237,7 @@ export function DataManagementPanel({
                   <button
                     type="button"
                     onClick={() => setDeleteConfirming(false)}
-                    className="rounded-md border border-line bg-white px-4 py-2 text-sm font-medium text-ink hover:bg-canvas"
+                    className="rounded-md border border-line bg-panel px-4 py-2 text-sm font-medium text-ink hover:bg-canvas"
                     disabled={deletePending}
                   >
                     キャンセル
@@ -262,7 +262,7 @@ export function DataManagementPanel({
           一括削除時に発行された復元バッチ ID を指定して、そのバッチの ticket を復元します。
         </p>
         {archived ? (
-          <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <p className="rounded-md bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
             プロジェクトがアーカイブされているため復元は無効です。アーカイブを解除してください。
           </p>
         ) : (
@@ -273,13 +273,13 @@ export function DataManagementPanel({
               <input
                 name="deleted_batch_id"
                 placeholder="00000000-0000-0000-0000-000000000000"
-                className="rounded-md border border-line bg-white px-3 py-2 font-mono text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="rounded-md border border-line bg-panel px-3 py-2 font-mono text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               />
             </label>
             <div>
               <button
                 type="submit"
-                className="rounded-md border border-line bg-white px-4 py-2 text-sm font-medium text-ink shadow-sm hover:bg-canvas disabled:opacity-60"
+                className="rounded-md border border-line bg-panel px-4 py-2 text-sm font-medium text-ink shadow-sm hover:bg-canvas disabled:opacity-60"
                 disabled={restorePending}
               >
                 {restorePending ? "復元中..." : "バッチを復元"}
@@ -305,7 +305,7 @@ export function DataManagementPanel({
         </p>
 
         {archived ? (
-          <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <p className="rounded-md bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
             プロジェクトがアーカイブされているためインポートは無効です。アーカイブを解除してください。
           </p>
         ) : (
@@ -320,7 +320,7 @@ export function DataManagementPanel({
                 value={importJson}
                 onChange={(event) => setImportJson(event.target.value)}
                 placeholder='[{ "slug": "example-1", "title": "Example" }]'
-                className="min-h-40 resize-y rounded-md border border-line bg-white px-3 py-2 font-mono text-xs outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="min-h-40 resize-y rounded-md border border-line bg-panel px-3 py-2 font-mono text-xs outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               />
             </label>
 
@@ -329,7 +329,7 @@ export function DataManagementPanel({
                 type="submit"
                 name="dry_run"
                 value="true"
-                className="rounded-md border border-line bg-white px-4 py-2 text-sm font-medium text-ink shadow-sm hover:bg-canvas disabled:opacity-60"
+                className="rounded-md border border-line bg-panel px-4 py-2 text-sm font-medium text-ink shadow-sm hover:bg-canvas disabled:opacity-60"
                 disabled={importPending || importJson.trim().length === 0}
               >
                 {importPending ? "検証中..." : "プレビュー (検証のみ)"}
@@ -350,8 +350,8 @@ export function DataManagementPanel({
                 role="status"
                 className={
                   importState.valid
-                    ? "grid gap-1 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
-                    : "grid gap-1 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700"
+                    ? "grid gap-1 rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300"
+                    : "grid gap-1 rounded-md bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-sm text-rose-700 dark:text-rose-300"
                 }
               >
                 {importState.json !== importJson ? (

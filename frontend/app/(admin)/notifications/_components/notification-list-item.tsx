@@ -15,7 +15,7 @@ export function NotificationListItem({ notification }: { notification: Notificat
       data-testid={`notification-${notification.id}`}
       data-read={isRead ? "true" : "false"}
       className={`rounded-lg border p-4 ${
-        isRead ? "border-line bg-panel" : "border-accent bg-emerald-50"
+        isRead ? "border-line bg-panel" : "border-accent bg-emerald-50 dark:bg-emerald-950/40"
       }`}
     >
       <div className="flex items-start justify-between gap-4">

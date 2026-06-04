@@ -29,7 +29,7 @@ export function ThemeToggle() {
       // a11y (R1 F-010): accessible name に現在テーマを含め、emoji は装飾として aria-hidden。
       aria-label={`テーマを切り替える（現在: ${THEME_LABEL[theme]}、次: ${THEME_LABEL[next]}）`}
       title={`テーマ: ${THEME_LABEL[theme]}`}
-      className="rounded-md border border-line px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-slate-50 hover:text-ink dark:hover:bg-slate-800 dark:hover:text-ink"
+      className="rounded-md border border-line px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-ink dark:hover:bg-slate-800 dark:hover:text-ink"
     >
       <span aria-hidden="true">{THEME_ICON[theme]}</span>
     </button>

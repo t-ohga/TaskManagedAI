@@ -51,12 +51,12 @@ function formatDueDate(value: string | null): string | null {
 function dueChipClass(bucket: DueDateBucket | null): string {
   switch (bucket) {
     case "overdue":
-      return "bg-red-50 font-medium text-red-700";
+      return "bg-red-50 dark:bg-red-950/40 font-medium text-red-700 dark:text-red-300";
     case "due_today":
     case "upcoming":
-      return "bg-amber-50 font-medium text-amber-700";
+      return "bg-amber-50 dark:bg-amber-950/40 font-medium text-amber-700 dark:text-amber-300";
     default:
-      return "bg-slate-50 text-muted-foreground";
+      return "bg-slate-50 dark:bg-slate-800 text-muted-foreground";
   }
 }
 
@@ -68,10 +68,10 @@ function dueChipLabel(bucket: DueDateBucket | null, formatted: string): string {
 }
 
 const PRIORITY_LABELS: Record<string, { label: string; color: string }> = {
-  critical: { label: "最優先", color: "bg-red-100 text-red-700" },
-  high: { label: "高", color: "bg-orange-100 text-orange-700" },
-  medium: { label: "中", color: "bg-yellow-100 text-yellow-700" },
-  low: { label: "低", color: "bg-blue-100 text-blue-700" },
+  critical: { label: "最優先", color: "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300" },
+  high: { label: "高", color: "bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300" },
+  medium: { label: "中", color: "bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300" },
+  low: { label: "低", color: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300" },
 };
 
 export function SelectableTicketList({
@@ -159,7 +159,7 @@ export function SelectableTicketList({
             {tickets.map((ticket) => {
               const pri = ticket.priority ? PRIORITY_LABELS[ticket.priority] : null;
               return (
-                <tr key={ticket.id} className={selectedIds.includes(ticket.id) ? "bg-accent/5" : "hover:bg-slate-50"}>
+                <tr key={ticket.id} className={selectedIds.includes(ticket.id) ? "bg-accent/5" : "hover:bg-slate-50 dark:hover:bg-slate-800"}>
                   {bulkEnabled ? <td className="px-4 py-3">
                       <input
                         type="checkbox"

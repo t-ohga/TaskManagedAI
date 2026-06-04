@@ -114,7 +114,7 @@ export default async function AiSocietyBoardPage() {
       </header>
 
       {state.kind === "error" ? (
-        <article role="status" className="rounded-md border border-attention bg-amber-50 p-4">
+        <article role="status" className="rounded-md border border-attention bg-amber-50 dark:bg-amber-950/40 p-4">
           <h2 className="text-base font-semibold text-attention">AI 組織ボードを表示できません</h2>
           <p className="mt-1 text-sm text-muted-foreground">{state.message}</p>
         </article>
@@ -142,7 +142,7 @@ function BoardContents({ state }: { state: Extract<BoardState, { kind: "ok" }> }
       </dl>
 
       {state.detailFailures > 0 ? (
-        <article role="status" className="rounded-md border border-attention bg-amber-50 p-4">
+        <article role="status" className="rounded-md border border-attention bg-amber-50 dark:bg-amber-950/40 p-4">
           <h2 className="text-base font-semibold text-attention">一部 timeline を取得できません</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             最新 {DETAIL_FETCH_LIMIT} 件の detail fetch のうち {state.detailFailures} 件が失敗しました。
@@ -179,7 +179,7 @@ function BoardContents({ state }: { state: Extract<BoardState, { kind: "ok" }> }
           </div>
           <div className="overflow-x-auto rounded-lg border border-line bg-panel shadow-sm">
             <table className="min-w-full divide-y divide-line text-sm">
-              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-muted-foreground">
+              <thead className="bg-slate-50 dark:bg-slate-800 text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th scope="col" className="px-4 py-3 text-left font-medium">Run ID</th>
                   <th scope="col" className="px-4 py-3 text-left font-medium">role_id</th>
@@ -189,7 +189,7 @@ function BoardContents({ state }: { state: Extract<BoardState, { kind: "ok" }> }
               </thead>
               <tbody className="divide-y divide-line">
                 {unknownRoleRuns.map((run) => (
-                  <tr key={run.id} className="align-top hover:bg-slate-50">
+                  <tr key={run.id} className="align-top hover:bg-slate-50 dark:hover:bg-slate-800">
                     <td className="px-4 py-3">
                       <RunLink runId={run.id} />
                     </td>
@@ -232,7 +232,7 @@ function RoleCard({ summary }: { summary: RoleSummary }) {
       <div className="flex items-start gap-3">
         <span
           aria-hidden="true"
-          className="grid size-10 shrink-0 place-items-center rounded-md border border-line bg-slate-50 text-xl"
+          className="grid size-10 shrink-0 place-items-center rounded-md border border-line bg-slate-50 dark:bg-slate-800 text-xl"
         >
           {visual.icon}
         </span>
@@ -302,7 +302,7 @@ function InterAgentTimeline({ events }: { events: InterAgentTimelineEvent[] }) {
             aria-label="inter-agent event_type、payload_keys、run_id"
             className="min-w-full divide-y divide-line text-sm"
           >
-            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-muted-foreground">
+            <thead className="bg-slate-50 dark:bg-slate-800 text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th scope="col" className="px-4 py-3 text-left font-medium">seq_no</th>
                 <th scope="col" className="px-4 py-3 text-left font-medium">event_type</th>
@@ -314,7 +314,7 @@ function InterAgentTimeline({ events }: { events: InterAgentTimelineEvent[] }) {
             </thead>
             <tbody className="divide-y divide-line">
               {events.map((event) => (
-                <tr key={event.id} className="align-top hover:bg-slate-50">
+                <tr key={event.id} className="align-top hover:bg-slate-50 dark:hover:bg-slate-800">
                   <td className="px-4 py-3 font-mono text-xs">{event.seqNo}</td>
                   <td className="px-4 py-3 font-mono text-xs">{event.eventType}</td>
                   <td className="px-4 py-3">

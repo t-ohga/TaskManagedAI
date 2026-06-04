@@ -95,9 +95,15 @@ describe("THEME_INIT_SCRIPT (inline no-FOUC、固定文字列)", () => {
     expect(THEME_INIT_SCRIPT).toContain("catch");
   });
 
+  it("印刷は常に light: beforeprint で .dark を外し afterprint で戻す (D-4)", () => {
+    expect(THEME_INIT_SCRIPT).toContain('addEventListener("beforeprint"');
+    expect(THEME_INIT_SCRIPT).toContain('addEventListener("afterprint"');
+    expect(THEME_INIT_SCRIPT).toContain('classList');
+  });
+
   it("ユーザ入力を埋め込まない (CSP hash 可能、固定)。実行しても例外を投げない", () => {
     // 固定文字列であること (テンプレートに動的値が混ざっていない) を簡易確認。
-    expect(THEME_INIT_SCRIPT.startsWith("(function(){try{")).toBe(true);
+    expect(THEME_INIT_SCRIPT.startsWith("(function(){var k=")).toBe(true);
     // jsdom で評価しても throw しない (document.documentElement に作用、副作用は許容)。
     expect(() => {
       new Function(THEME_INIT_SCRIPT)();

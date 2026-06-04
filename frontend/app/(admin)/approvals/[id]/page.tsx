@@ -36,7 +36,7 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
           ]}
         />
         <h1 className="text-2xl font-semibold">承認詳細</h1>
-        <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">
+        <p className="rounded-md bg-rose-50 dark:bg-rose-950/40 p-3 text-sm text-rose-700 dark:text-rose-300">
           承認詳細の取得に失敗しました: {error instanceof Error ? error.message : "不明なエラー"}
         </p>
       </section>
@@ -172,7 +172,7 @@ function formatSha256Value(value: string | null, emptyValue = "(未提供)"): st
 function StatusNotice({ approval }: { approval: ApprovalDetail }) {
   if (approval.status === "invalidated") {
     return (
-      <p className="rounded-md bg-amber-50 p-3 text-sm text-attention">
+      <p className="rounded-md bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-attention">
         この承認は古い artifact、diff、policy、または provider fingerprint により無効化されています。
       </p>
     );
@@ -180,7 +180,7 @@ function StatusNotice({ approval }: { approval: ApprovalDetail }) {
 
   if (approval.status === "expired") {
     return (
-      <p className="rounded-md bg-slate-100 p-3 text-sm text-muted-foreground">
+      <p className="rounded-md bg-slate-100 dark:bg-slate-800 p-3 text-sm text-muted-foreground">
         この承認は期限切れです。再開前に再申請が必要です。
       </p>
     );
@@ -188,7 +188,7 @@ function StatusNotice({ approval }: { approval: ApprovalDetail }) {
 
   if (approval.status === "rejected") {
     return (
-      <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">
+      <p className="rounded-md bg-rose-50 dark:bg-rose-950/40 p-3 text-sm text-rose-700 dark:text-rose-300">
         この承認は却下されました。再開はブロックされています。
       </p>
     );
@@ -196,14 +196,14 @@ function StatusNotice({ approval }: { approval: ApprovalDetail }) {
 
   if (approval.status === "approved") {
     return (
-      <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
+      <p className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 p-3 text-sm text-emerald-700 dark:text-emerald-300">
         この承認は承認済みです。後続実行は引き続き policy を通過する必要があります。
       </p>
     );
   }
 
   return (
-    <p className="rounded-md bg-teal-50 p-3 text-sm text-accent">
+    <p className="rounded-md bg-teal-50 dark:bg-teal-950/40 p-3 text-sm text-accent">
       この項目は独立レビュアーの判定待ちです。
     </p>
   );
@@ -219,31 +219,31 @@ function formatDateTime(value: string): string {
 function riskClass(risk: string): string {
   switch (risk) {
     case "critical":
-      return "bg-rose-100 text-rose-800";
+      return "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300";
     case "high":
-      return "bg-orange-100 text-orange-800";
+      return "bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-300";
     case "medium":
-      return "bg-yellow-100 text-yellow-800";
+      return "bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300";
     case "low":
-      return "bg-emerald-100 text-emerald-800";
+      return "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300";
     default:
-      return "bg-slate-100 text-slate-800";
+      return "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200";
   }
 }
 
 function statusClass(status: string): string {
   switch (status) {
     case "pending":
-      return "bg-teal-50 text-accent";
+      return "bg-teal-50 dark:bg-teal-950/40 text-accent";
     case "approved":
-      return "bg-emerald-100 text-emerald-800";
+      return "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300";
     case "rejected":
-      return "bg-rose-100 text-rose-800";
+      return "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300";
     case "invalidated":
-      return "bg-amber-100 text-attention";
+      return "bg-amber-100 dark:bg-amber-900/40 text-attention";
     case "expired":
-      return "bg-slate-200 text-slate-700";
+      return "bg-slate-200 text-slate-700 dark:text-slate-300";
     default:
-      return "bg-slate-100 text-slate-800";
+      return "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200";
   }
 }

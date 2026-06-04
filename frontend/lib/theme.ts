@@ -48,15 +48,21 @@ export function applyTheme(theme: Theme): void {
 }
 
 // FOUC 解消用の inline blocking script。root layout の <head> で first paint 前に同期実行され、
-// localStorage + matchMedia を読んで `.dark` を適用する。**固定文字列 (ユーザ入力の埋め込みなし)** の
-// ため、将来 CSP を導入する場合は hash-based CSP で許可できる (plan-review R1 F-009)。
-// storage key は JSON.stringify で安全に literal 化する。
+// localStorage + matchMedia を読んで `.dark` を適用する。さらに **印刷は常に light** にするため
+// beforeprint で `.dark` を一時的に外し afterprint で戻す (ADR-00047 D-4 / R2 F-002: print の
+// token reset だけでは `dark:bg-amber-950/40` 等の utility variant が `.dark` 残存で dark 印刷される。
+// class を外せば token surface も utility variant も両方 light 印刷になる)。
+// **固定文字列 (ユーザ入力の埋め込みなし)** のため、将来 CSP は hash-based で許可できる (R1 F-009)。
 export const THEME_INIT_SCRIPT =
-  "(function(){try{" +
-  "var k=" +
+  "(function(){var k=" +
   JSON.stringify(THEME_STORAGE_KEY) +
-  ";var t=localStorage.getItem(k);" +
+  ";try{" +
+  "var t=localStorage.getItem(k);" +
   'if(t!=="light"&&t!=="dark"&&t!=="system"){t="system";}' +
   'var d=t==="dark"||(t==="system"&&window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches);' +
   'document.documentElement.classList.toggle("dark",d);' +
+  "}catch(e){}" +
+  "try{var wasDark=false;" +
+  'window.addEventListener("beforeprint",function(){var c=document.documentElement.classList;wasDark=c.contains("dark");c.remove("dark");});' +
+  'window.addEventListener("afterprint",function(){if(wasDark)document.documentElement.classList.add("dark");});' +
   "}catch(e){}})();";

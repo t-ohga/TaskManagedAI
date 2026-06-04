@@ -592,11 +592,11 @@ export default async function EvalDashboardPage() {
                   </td>
                   <td className="border-b border-line px-3 py-2">
                     {gate.threshold_met ? (
-                      <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                      <span className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-2 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                         PASS
                       </span>
                     ) : (
-                      <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                      <span className="rounded-md bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-xs font-semibold text-attention">
                         FAIL
                       </span>
                     )}
@@ -675,11 +675,11 @@ export default async function EvalDashboardPage() {
                   </td>
                   <td className="border-b border-line px-3 py-2">
                     {kpi.threshold_met ? (
-                      <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                      <span className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-2 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                         PASS
                       </span>
                     ) : (
-                      <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                      <span className="rounded-md bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-xs font-semibold text-attention">
                         FAIL
                       </span>
                     )}
@@ -704,11 +704,11 @@ export default async function EvalDashboardPage() {
             <dt className="text-muted-foreground">overall_success</dt>
             <dd>
               {SMOKE_RESULT.overall_success ? (
-                <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                <span className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-2 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                   PASS
                 </span>
               ) : (
-                <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                <span className="rounded-md bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-xs font-semibold text-attention">
                   FAIL
                 </span>
               )}
@@ -739,11 +739,11 @@ export default async function EvalDashboardPage() {
             <dt className="text-muted-foreground">status</dt>
             <dd>
               {PRIVATE_STAGING.status === "passed" ? (
-                <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                <span className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-2 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                   PASSED
                 </span>
               ) : (
-                <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                <span className="rounded-md bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-xs font-semibold text-attention">
                   {PRIVATE_STAGING.status.toUpperCase()}
                 </span>
               )}
@@ -789,15 +789,15 @@ export default async function EvalDashboardPage() {
                   <td className="border-b border-line px-3 py-2 font-mono">{row.row_id}</td>
                   <td className="border-b border-line px-3 py-2">
                     {row.status === "pass" ? (
-                      <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                      <span className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-2 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                         pass
                       </span>
                     ) : row.status === "structured_defer" ? (
-                      <span className="rounded-md bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-700">
+                      <span className="rounded-md bg-sky-50 dark:bg-sky-950/40 px-2 py-1 text-xs font-semibold text-sky-700 dark:text-sky-300">
                         structured_defer
                       </span>
                     ) : (
-                      <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                      <span className="rounded-md bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-xs font-semibold text-attention">
                         {row.status}
                       </span>
                     )}
@@ -870,11 +870,11 @@ export default async function EvalDashboardPage() {
               </dt>
               <dd>
                 {drill.drill_status === "passed" ? (
-                  <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                  <span className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-2 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                     PASSED
                   </span>
                 ) : (
-                  <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+                  <span className="rounded-md bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-xs font-semibold text-attention">
                     {drill.drill_status.toUpperCase()}
                   </span>
                 )}
