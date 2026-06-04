@@ -316,6 +316,13 @@ async def ticket_create(
             # 真の新規作成時のみ通知する: ticket_id があり、error でなく、idempotent_replay でない。
             # 同一 idempotency_key の retry/replay や error dict 返却では通知を発火させない
             # (downstream automation が「新規 ticket」と誤認する重複を防ぐ)。
+            #
+            # Codex F-O2 への判定 (reject outbox / 事実 document): Discord 通知は **best-effort**
+            # (下の try/except が失敗を silent に log、元から配信保証なし)。commit 後に通知が失敗し、
+            # その後 replay されると本 gate で通知が抑止され通知は届かない。これは idempotency が
+            # 保証する対象 (= DB resource の重複防止、F-L4 integrity) の外側であり、convenience な
+            # Discord ping のために outbox + worker を導入するのは過剰と判断し reject。通知が将来
+            # critical な automation trigger になる場合は ticket 作成 transaction 内 outbox 化を要検討。
             if (
                 result.get("ticket_id")
                 and not result.get("error")
