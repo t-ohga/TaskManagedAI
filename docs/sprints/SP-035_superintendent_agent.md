@@ -190,3 +190,7 @@ uv run mypy backend/app/services/superintendent/
 - multi-Superintendent 環境での競合 (P2)
 - agent spawn の resource limit (docker container 数上限)
 - Superintendent session の TTL 管理 (長命だが無期限ではない)
+
+## Review
+
+(2026-06-04 台帳監査) **実装確認、completed 維持**。Superintendent Agent (`backend/app/services/superintendent/` lifecycle 等) + 6 MCP tools + 28 tests (#271)、MCP dispatch / 21 tools full DB wiring (#279) 実装済 (ADR-00027 accepted)。地上真実 (2026-06-04): backend pytest 4404 pass / 0 fail。heavy + ADR + 実コード + test が揃い completed は正確。Review 欄欠落のみ本監査で追記。

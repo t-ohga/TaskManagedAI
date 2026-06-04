@@ -35,3 +35,7 @@ uv run pytest -q
 ## 残リスク
 
 - ADR Gate 該当の場合は heavy Pack 化 + ADR 起票が必要
+
+## Review
+
+(2026-06-04 台帳監査) **実装確認、completed 維持**。`backend/app/observability/` (otel.py / prometheus.py / logging.py / config.py) で OpenTelemetry trace + Prometheus metrics + structured logging を実装、`backend/app/main.py` に配線済。地上真実 (2026-06-04): backend pytest 4404 pass / 0 fail。受け入れ条件チェックボックスは未更新だったが実コード + test は green。Review 欄欠落のみ追記 (Grafana/Loki dashboard 自体は外部 infra 設定で本 Pack scope 外)。

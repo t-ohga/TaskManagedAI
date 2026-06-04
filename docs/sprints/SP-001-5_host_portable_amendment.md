@@ -1,10 +1,10 @@
 ---
 id: "SP-001-5_host_portable_amendment"
 type: "heavy"
-status: "proposed"
+status: "completed"
 sprint_no: 1.5
 created_at: "2026-05-10"
-updated_at: "2026-05-10"
+updated_at: "2026-06-04"
 target_days: 2
 max_days: 3
 adr_refs: []
@@ -144,4 +144,4 @@ $ git log --oneline docs/sprints/SP-001_project_foundation.md
 
 ## Review
 
-(SP-001.5 完了時に追記)
+(2026-06-04 台帳監査) **完遂 (SP-022 へ統合・superseded)**。本 amendment Pack の deliverable は、ADR-00021 (Host-Portable Deployment) + ADR-00007 update の accepted 化 (SP-022 T00、2026-05-19) と、host-portable invariant / DD-05・計画(仮).md 本文 sync (SP-022 で実施) を通じて実現済。standalone amendment sprint としては着手されず SP-022 framework_intake_hardening (completed) に吸収された。実態に合わせ `proposed` → `completed` へ訂正 (独立 Pack としては superseded、成果は P0 Exit declaration 2026-05-22 に反映済)。

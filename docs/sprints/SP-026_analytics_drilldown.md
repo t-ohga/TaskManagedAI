@@ -1,10 +1,10 @@
 ---
 id: "SP-026_analytics_drilldown"
 type: "light"
-status: "completed"
+status: "partial"
 sprint_no: 26
 created_at: "2026-05-26"
-updated_at: "2026-05-26"
+updated_at: "2026-06-04"
 target_days: 3
 max_days: 5
 ---
@@ -40,3 +40,7 @@ uv run pytest tests/ -k "kpi or analytics" -q
 
 - 大量データでの aggregation 性能 (N+1 / unbounded query)
 - KPI 計算ロジックの重複 (eval harness vs analytics endpoint)
+
+## Review
+
+(2026-06-04 台帳監査) **部分実装**。`frontend/app/(admin)/eval-dashboard/analytics/page.tsx` (#261、~90 行) は存在するが、受け入れ条件 5 件は全て未チェックで、5 KPI × time series drill-down / provider・project filter / backend aggregation endpoint / drill-down route は未実装。KPI は SP-011 eval harness の流用で SP-026 固有の drilldown ロジックは無い。commit `1b9cad6` (#261) が status を実態より先に completed へ変更していた。実態に合わせ `partial` へ訂正。残 must_ship 着手時に backend aggregation + frontend drilldown + test。

@@ -206,3 +206,7 @@ uv run mypy backend/app/mcp_server.py
 - AI agent が大量 request で rate limit (BudgetGuard で制御)
 - stdio transport の process lifecycle 管理 (claude code が管理)
 - 複数 AI agent の並行 approval request 競合 (atomic claim + lease ownership で制御)
+
+## Review
+
+(2026-06-04 台帳監査) **実装確認、completed 維持**。MCP Server Gateway (`backend/app/mcp/` の server.py / api_bridge.py / context.py、15+ tools) 実装済 (ADR-00026 accepted、docs #265、MCP 21 tools full DB wiring #279)。地上真実 (2026-06-04): backend pytest 4404 pass / 0 fail。本 Pack は他の P1 light Pack と異なり heavy + ADR + 実コード + test が揃っており completed は正確。Review 欄欠落のみ本監査で追記。

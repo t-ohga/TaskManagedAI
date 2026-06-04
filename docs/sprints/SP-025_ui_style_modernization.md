@@ -47,3 +47,7 @@ cd frontend && pnpm test:e2e
 - component library 選定が ADR Gate に該当する可能性 (外部依存追加)
 - Dark mode で secret canary 表示が見づらくならないこと
 - 既存 E2E test の aria-label が変更で壊れる可能性
+
+## Review
+
+(2026-06-04 台帳監査) **実装確認、completed 維持**。shadcn/ui component (`frontend/components/ui/` の badge/button/card/table/tabs 等) + 統一 page-state (`frontend/components/page-states.tsx`) + status badge (AgentRun 16 状態 / Approval 状態) 実装済。Dark mode toggle は M-2 (PR #320、ADR-00047) で完成。地上真実 (2026-06-04): frontend vitest 423 pass + next build / tsc / eslint clean。受け入れ条件チェックボックスは未更新だったが実コード + test は green。Review 欄欠落のみ本監査で追記。

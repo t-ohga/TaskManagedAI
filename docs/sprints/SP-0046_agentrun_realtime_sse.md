@@ -1,10 +1,10 @@
 ---
 id: "SP-0046_agentrun_realtime_sse"
 type: "heavy"
-status: "in_progress"
+status: "completed"
 sprint_no: 46
 created_at: "2026-06-01"
-updated_at: "2026-06-01"
+updated_at: "2026-06-04"
 target_days: 3
 max_days: 5
 adr_refs:
@@ -168,3 +168,4 @@ ADR-00038 採用案に準拠。堅牢化 10 要件 (NOTIFY trigger / catch-up-on
   - R2: HIGH terminal close 境界 event-loss race (両 terminal 経路で stream_end 前 final drain)。
 - **検証**: ruff + mypy clean / 16 backend fast test (redaction allowlist + framing + endpoint contract + sessionless auth + dep-graph) / 5 frontend vitest (204 停止 / event parse / status / resume URL / flapping bounded) / migration upgrade→downgrade lossless (throwaway postgres)。
 - **残リスク / follow-up**: DB-backed 統合 test (catch-up race / scope_revoked / capacity 503 / pool starvation / trigger NOTIFY 発火) は `TASKMANAGEDAI_RUN_DB_TESTS` gate 下で未実装 (fast test + code-review で代替)。runs 一覧 realtime / 接続 metrics は対象外 (次スプリント候補)。proxy buffering はブラウザ検証必須 (ADR-00038 §ブラウザ側検証必須項目)。
+- **(2026-06-04 台帳監査) status drift 訂正**: 機能は L-3 SSE として PR #301 (ADR-00038) で main merge 済だが frontmatter が `in_progress` のままだった。実態 (上記 Review = 実装完了 + R3 approve) に合わせ `completed` へ訂正。
