@@ -1,17 +1,23 @@
 ---
 id: "ADR-00007"
 title: "外部公開設定: Tailscale Serve + Funnel 不使用 + tag:taskhub-ci grants 最小化"
-status: "proposed"
+status: "accepted"
 date: "2026-05-07"
+accepted_at: "2026-05-19"
 authors:
   - "t-ohga"
 related_sprints:
   - "SP-000_bootstrap"
+  - "SP-022_framework_intake_hardening"
 supersedes: null
 superseded_by: null
+# (2026-06-05 reconcile) SP-022 T00 (2026-05-19) で ADR-00021 と simultaneous accepted 済
+# (host-portable invariant 同期、master plan line 107)。canonical file の status が proposed のまま
+# 追従漏れだったのを reconcile。本 ADR は **Funnel 不使用 + Tailscale 閉域 = 外部公開を開かない
+# restriction policy** であり、accepted 化は閉域制約の formalize (外部公開を開く変更ではない)。
 ---
 
-最終更新: 2026-05-07
+最終更新: 2026-06-05 (SP-022 T00 acceptance に canonical status を reconcile、本文方針は不変)
 
 ## 背景
 
