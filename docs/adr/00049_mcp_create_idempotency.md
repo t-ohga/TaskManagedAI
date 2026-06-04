@@ -80,12 +80,18 @@ idempotency_key の再送が新規作成ではなく既存 resource を返すよ
 | `tool_name` | text NOT NULL (`ticket_create` / `run_create`、tool scope) |
 | `idempotency_key` | text NOT NULL (client 指定) |
 | `request_fingerprint` | text NOT NULL (正規化 request payload の SHA-256。同一 key + 異 payload を検出) |
-| `created_resource_kind` | text NOT NULL (`ticket` / `agent_run`) |
-| `created_resource_id` | UUID NOT NULL |
-| `created_at` | timestamptz NOT NULL |
+| `created_resource_kind` | text **NULLABLE** (`ticket` / `agent_run`。reservation 中は NULL、completed で set) |
+| `created_resource_id` | UUID **NULLABLE** (同上) |
+| `created_at` | timestamptz NOT NULL (reservation 時刻) |
+| `completed_at` | timestamptz **NULLABLE** (resource 作成完了時刻) |
 
 - **unique constraint**: `(tenant_id, actor_id, tool_name, idempotency_key)`。これが cross-actor replay
   deny の核 (別 actor が同 key を使っても別 row、互いに干渉しない)。
+- **CHECK constraint** (R2 F-N3 fix): `(created_resource_kind IS NULL AND created_resource_id IS NULL
+  AND completed_at IS NULL) OR (created_resource_kind IS NOT NULL AND created_resource_id IS NOT NULL
+  AND completed_at IS NOT NULL)` — reservation 中 (全 NULL) か completed (全 NOT NULL) のいずれかのみ。
+  これにより reservation-first の初回 INSERT (NULL) が NOT NULL violation にならず、かつ「半端な
+  resource を loser が返す」ことも防ぐ (resource_id が set される時は必ず completed)。
 - request_fingerprint: NFC UTF-8 + JCS canonical JSON + SHA-256 で request の本質部分 (project_id /
   title / description 等、actor 申告でない server-resolved 値) から計算。raw secret は含めない。
 
@@ -111,9 +117,14 @@ idempotency_key の再送が新規作成ではなく既存 resource を返すよ
       WHERE (tenant_id, actor_id, tool_name, idempotency_key) FOR UPDATE` で **winner の commit を待つ**
       (row lock が winner transaction commit まで block)。lock 取得後:
       - `request_fingerprint` 不一致 → `IdempotencyKeyConflictError` (同一 key 異 payload、HTTP 409)。
-      - 一致 → `created_resource_id` の既存 resource を返す (新規作成しない)。
-   - これにより **「2 request → 1 resource」invariant** が race でも成立 (loser は resource を作らない)。
-3. winner の resource 作成と idempotency row 完了は**同一 transaction** (どちらか失敗で両方 rollback、
+      - 一致 + `completed_at` 設定済 → `created_resource_id` の既存 resource を返す (新規作成しない)。
+   - **winner rollback 時の loser 昇格 (R2 F-N3)**: `INSERT ... ON CONFLICT DO NOTHING` は競合相手の
+     transaction commit/rollback まで **block** する。winner が rollback すれば conflict が消え loser の
+     INSERT が成功 → loser が winner に昇格し resource を作成する (孤立 reservation も resource も残らない)。
+     よって loser の FOR UPDATE 経路は winner が **commit 済 (= completed、CHECK で resource_id 必ず set)**
+     の時のみ到達する。万一 `completed_at IS NULL` を観測したら recoverable error として扱い 500 を返さない。
+   - これにより **「2 request → 1 resource」invariant** が race / winner rollback でも成立。
+3. winner の reservation insert + resource 作成 + row 完了は**同一 transaction** (どれか失敗で全 rollback、
    孤立 reservation row も残らない)。
 
 ### MCP / 他経路の配線 + actor 解決 (R1 F-N2)
@@ -171,6 +182,10 @@ idempotency_key の再送が新規作成ではなく既存 resource を返すよ
 - **cross-actor**: 別 actor が同 key → 別 resource (干渉しない、replay deny の意味は「別 actor の key で
   既存を奪えない」)。
 - **race (atomic)**: 並行同一 key 2 request → 1 resource のみ作成、両 request が同一 resource_id を返す。
+- **winner rollback 昇格 (R2 F-N3)**: winner の resource 作成が失敗し rollback → 後続の同一 key request が
+  winner に昇格し resource を作成する (孤立 reservation row が残らない、重複もしない)。
+- **reservation 整合 (R2 F-N3)**: reservation row は (全 NULL) か (resource_id + completed_at 全 set) の
+  いずれかのみ (CHECK constraint)。loser が半端な resource を返さない。
 - **null key**: idempotency_key=None → 従来通り毎回新規作成 (後方互換)。
 - **tenant 境界**: 別 tenant の同 key は別 row。
 - **audit / secret**: request_fingerprint / idempotency_key に raw secret を含めない (`assert_no_raw_secret`)。
