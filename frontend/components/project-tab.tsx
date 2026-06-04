@@ -32,7 +32,7 @@ export function ProjectTab({ projects }: ProjectTabProps) {
         className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
           current === "all"
             ? "bg-accent text-white"
-            : "text-muted-foreground hover:bg-slate-100"
+            : "text-muted-foreground hover:bg-slate-100 dark:hover:bg-slate-800"
         }`}
         type="button"
       >
@@ -47,7 +47,7 @@ export function ProjectTab({ projects }: ProjectTabProps) {
           className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
             current === p.slug
               ? "bg-accent text-white"
-              : "text-muted-foreground hover:bg-slate-100"
+              : "text-muted-foreground hover:bg-slate-100 dark:hover:bg-slate-800"
           }`}
           type="button"
         >

@@ -61,10 +61,10 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
   return (
     <div className="rounded-lg border border-line bg-panel p-4 shadow-md">
       <h3 className="mb-3 text-sm font-semibold">新規チケット作成</h3>
-      {state.kind === "ok" ? <div className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+      {state.kind === "ok" ? <div className="mb-3 rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
           チケットを作成しました
         </div> : null}
-      {state.kind === "error" ? <div className="mb-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+      {state.kind === "error" ? <div className="mb-3 rounded-md bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-700 dark:text-red-300">
           {state.message}
         </div> : null}
       <form action={formAction} className="grid gap-3">
@@ -142,7 +142,7 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
           <button
             type="button"
             onClick={() => setOpen(false)}
-            className="rounded-md border border-line px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-slate-50"
+            className="rounded-md border border-line px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
           >
             キャンセル
           </button>

@@ -44,7 +44,7 @@ export default async function ApprovalInboxPage({
     return (
       <section aria-label="承認一覧" className="grid gap-4">
         <h1 className="text-2xl font-semibold">承認一覧</h1>
-        <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">
+        <p className="rounded-md bg-rose-50 dark:bg-rose-950/40 p-3 text-sm text-rose-700 dark:text-rose-300">
           承認一覧の取得に失敗しました: {error instanceof Error ? error.message : "不明なエラー"}
         </p>
       </section>
@@ -71,7 +71,7 @@ export default async function ApprovalInboxPage({
               aria-current={isActive ? "page" : undefined}
               className={
                 isActive
-                  ? "rounded-md bg-teal-50 px-3 py-2 text-sm font-semibold text-accent"
+                  ? "rounded-md bg-teal-50 dark:bg-teal-950/40 px-3 py-2 text-sm font-semibold text-accent"
                   : "rounded-md border border-line px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-panel-muted"
               }
               href={`/approvals?status=${statusValue}`}
@@ -83,7 +83,7 @@ export default async function ApprovalInboxPage({
       </nav>
 
       {approvals.length === 0 ? (
-        <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
+        <p className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 p-3 text-sm text-emerald-700 dark:text-emerald-300">
           {formatApprovalStatus(selectedStatus)} の承認 request はありません。
         </p>
       ) : (
@@ -136,14 +136,14 @@ export default async function ApprovalInboxPage({
 function riskBadgeClass(risk: string): string {
   switch (risk) {
     case "critical":
-      return "bg-rose-100 text-rose-800";
+      return "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300";
     case "high":
-      return "bg-orange-100 text-orange-800";
+      return "bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-300";
     case "medium":
-      return "bg-yellow-100 text-yellow-800";
+      return "bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300";
     case "low":
-      return "bg-emerald-100 text-emerald-800";
+      return "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300";
     default:
-      return "bg-slate-100 text-slate-800";
+      return "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200";
   }
 }

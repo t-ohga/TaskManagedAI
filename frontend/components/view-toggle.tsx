@@ -25,7 +25,7 @@ export function ViewToggle({ currentView }: ViewToggleProps) {
         className={`rounded-l-md px-3 py-1.5 text-xs font-medium transition-colors ${
           currentView === "kanban"
             ? "bg-accent text-white"
-            : "text-muted-foreground hover:bg-slate-50"
+            : "text-muted-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
         }`}
         aria-pressed={currentView === "kanban"}
       >
@@ -37,7 +37,7 @@ export function ViewToggle({ currentView }: ViewToggleProps) {
         className={`rounded-r-md px-3 py-1.5 text-xs font-medium transition-colors ${
           currentView === "list"
             ? "bg-accent text-white"
-            : "text-muted-foreground hover:bg-slate-50"
+            : "text-muted-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
         }`}
         aria-pressed={currentView === "list"}
       >

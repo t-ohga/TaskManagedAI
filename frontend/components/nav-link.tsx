@@ -18,8 +18,8 @@ export function NavLink({ href, label }: NavLinkProps) {
       aria-current={isActive ? "page" : undefined}
       className={
         isActive
-          ? "block rounded-md bg-teal-50 px-3 py-2 text-sm font-semibold text-accent outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-          : "block rounded-md px-3 py-2 text-sm font-medium text-muted-foreground outline-offset-2 hover:bg-slate-50 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          ? "block rounded-md bg-teal-50 dark:bg-teal-950/40 px-3 py-2 text-sm font-semibold text-accent outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          : "block rounded-md px-3 py-2 text-sm font-medium text-muted-foreground outline-offset-2 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
       }
       href={href as Route}
     >

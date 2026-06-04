@@ -12,7 +12,7 @@ export function KanbanColumn({ title, count, color, children }: KanbanColumnProp
     <div className="flex min-h-[300px] flex-col rounded-lg border border-line bg-canvas">
       <div className={`flex items-center justify-between rounded-t-lg border-b border-line px-4 py-3 ${color}`}>
         <h3 className="text-sm font-semibold">{title}</h3>
-        <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-medium">
+        <span className="rounded-full bg-panel/80 px-2 py-0.5 text-xs font-medium">
           {count}
         </span>
       </div>

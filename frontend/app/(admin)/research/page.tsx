@@ -28,10 +28,10 @@ function formatDate(value: string): string {
 function StatusBadge({ status }: { readonly status: ResearchTask["status"] }) {
   const tone =
     status === "completed"
-      ? "border-teal-200 bg-teal-50 text-accent"
+      ? "border-teal-200 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/40 text-accent"
       : status === "failed"
-        ? "border-rose-200 bg-rose-50 text-danger"
-        : "border-line bg-slate-50 text-ink";
+        ? "border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-danger"
+        : "border-line bg-slate-50 dark:bg-slate-800 text-ink";
 
   return (
     <span className={`rounded-md border px-2 py-1 font-mono text-xs font-semibold ${tone}`}>
@@ -59,7 +59,7 @@ function ResearchTaskTable({ tasks }: { readonly tasks: readonly ResearchTask[] 
         <caption className="sr-only">
           状態、タイトル、作成日時、project_id を含むリサーチ task 一覧。
         </caption>
-        <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted-foreground">
+        <thead className="bg-slate-50 dark:bg-slate-800 text-xs uppercase tracking-normal text-muted-foreground">
           <tr>
             <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
               状態 (status)
@@ -111,7 +111,7 @@ function ErrorPanel({ error }: { readonly error: unknown }) {
       title="リサーチ読込エラー"
       titleId="research-load-error"
     >
-      <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-danger">
+      <p role="alert" className="rounded-md border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 p-3 text-sm text-danger">
         リサーチ task の読込に失敗しました: {error instanceof Error ? error.message : "不明なエラー"}
       </p>
     </Panel>
@@ -149,7 +149,7 @@ export default async function ResearchListPage() {
 
       <Panel
         aside={
-          <span className="rounded-md border border-line bg-white px-3 py-2 font-mono text-xs text-muted-foreground">
+          <span className="rounded-md border border-line bg-panel px-3 py-2 font-mono text-xs text-muted-foreground">
             合計 {result.total}
           </span>
         }

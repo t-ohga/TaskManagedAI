@@ -42,7 +42,7 @@ export function TicketDeleteButton({ ticketId }: TicketDeleteButtonProps) {
         <button
           type="button"
           onClick={open}
-          className="rounded-md border border-danger/30 px-4 py-2 text-center text-sm font-medium text-danger transition-colors hover:bg-red-50"
+          className="rounded-md border border-danger/30 px-4 py-2 text-center text-sm font-medium text-danger transition-colors hover:bg-red-50 dark:hover:bg-red-950/40"
         >
           チケットを中止
         </button>

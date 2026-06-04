@@ -23,16 +23,16 @@ const TRUST_LABELS: Record<string, string> = {
 };
 
 const TRUST_COLORS: Record<string, string> = {
-  untrusted_content: "bg-gray-100 text-gray-600",
-  validated_artifact: "bg-blue-50 text-blue-700",
-  trusted_instruction: "bg-teal-50 text-accent",
+  untrusted_content: "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300",
+  validated_artifact: "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300",
+  trusted_instruction: "bg-teal-50 dark:bg-teal-950/40 text-accent",
 };
 
 const DATA_CLASS_COLORS: Record<string, string> = {
-  public: "bg-gray-100 text-gray-600",
-  internal: "bg-amber-50 text-amber-700",
-  confidential: "bg-orange-50 text-orange-700",
-  pii: "bg-red-50 text-red-600",
+  public: "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300",
+  internal: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300",
+  confidential: "bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300",
+  pii: "bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400",
 };
 
 function kindLabel(kind: string): string {
@@ -53,7 +53,7 @@ export function RunArtifactsSection({
         この実行が生成した artifact の一覧 (種別・信頼度・分類のみ。本文は表示しません)。
       </p>
       {degraded ? (
-        <p className="mt-4 text-sm text-amber-700">
+        <p className="mt-4 text-sm text-amber-700 dark:text-amber-300">
           生成物を読み込めませんでした。
         </p>
       ) : artifacts && artifacts.length > 0 ? (
@@ -61,16 +61,16 @@ export function RunArtifactsSection({
           {artifacts.map((artifact) => (
             <li
               key={artifact.id}
-              className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm"
+              className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-panel px-3 py-2 text-sm"
             >
               <span className="font-medium text-ink">{kindLabel(artifact.kind)}</span>
               <span
-                className={`rounded-full px-2 py-0.5 text-xs font-medium ${TRUST_COLORS[artifact.trust_level] ?? "bg-gray-100 text-gray-600"}`}
+                className={`rounded-full px-2 py-0.5 text-xs font-medium ${TRUST_COLORS[artifact.trust_level] ?? "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"}`}
               >
                 {TRUST_LABELS[artifact.trust_level] ?? artifact.trust_level}
               </span>
               <span
-                className={`rounded-full px-2 py-0.5 text-xs font-medium ${DATA_CLASS_COLORS[artifact.payload_data_class] ?? "bg-gray-100 text-gray-600"}`}
+                className={`rounded-full px-2 py-0.5 text-xs font-medium ${DATA_CLASS_COLORS[artifact.payload_data_class] ?? "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"}`}
               >
                 {artifact.payload_data_class}
               </span>

@@ -61,7 +61,7 @@ export function ApprovalRevisionRequestForm({
         <label className="grid gap-2 text-sm">
           <span className="font-medium">修正理由</span>
           <textarea
-            className="min-h-32 resize-y rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            className="min-h-32 resize-y rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             maxLength={2000}
             name="rationale"
             placeholder="再提出前に直すべき内容"
@@ -70,7 +70,7 @@ export function ApprovalRevisionRequestForm({
         </label>
 
         <button
-          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-attention outline-offset-2 hover:bg-amber-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:border-line disabled:bg-slate-100 disabled:text-slate-400"
+          className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm font-semibold text-attention outline-offset-2 hover:bg-amber-100 dark:hover:bg-amber-900/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:border-line disabled:bg-slate-100 dark:disabled:bg-slate-800 disabled:text-slate-400 dark:disabled:text-slate-500"
           type="submit"
         >
           修正依頼
@@ -80,7 +80,7 @@ export function ApprovalRevisionRequestForm({
       {result ? (
         <p
           className={`mt-4 rounded-md p-3 text-sm ${
-            result.ok ? "bg-amber-50 text-attention" : "bg-rose-50 text-rose-700"
+            result.ok ? "bg-amber-50 dark:bg-amber-950/40 text-attention" : "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300"
           }`}
           role="status"
         >

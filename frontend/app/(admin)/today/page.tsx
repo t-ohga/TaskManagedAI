@@ -226,7 +226,7 @@ export default async function TodayPage() {
         <section
           aria-label="Today data source status"
           role="status"
-          className="rounded-md border border-attention bg-amber-50 p-4"
+          className="rounded-md border border-attention bg-amber-50 dark:bg-amber-950/40 p-4"
         >
           <h2 className="text-base font-semibold text-attention">
             一部データを表示できません
@@ -521,30 +521,30 @@ function formatDate(iso: string): string {
 function priorityClass(priority: TicketRead["priority"]): string {
   switch (priority) {
     case "critical":
-      return "bg-rose-100 text-rose-800";
+      return "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300";
     case "high":
-      return "bg-orange-100 text-orange-800";
+      return "bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-300";
     case "medium":
-      return "bg-yellow-100 text-yellow-800";
+      return "bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300";
     case "low":
-      return "bg-emerald-100 text-emerald-800";
+      return "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300";
     default:
-      return "bg-slate-100 text-slate-800";
+      return "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200";
   }
 }
 
 function riskClass(risk: ApprovalListItem["risk_level"]): string {
   switch (risk) {
     case "critical":
-      return "bg-rose-100 text-rose-800";
+      return "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300";
     case "high":
-      return "bg-orange-100 text-orange-800";
+      return "bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-300";
     case "medium":
-      return "bg-yellow-100 text-yellow-800";
+      return "bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300";
     case "low":
-      return "bg-emerald-100 text-emerald-800";
+      return "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300";
     default:
-      return "bg-slate-100 text-slate-800";
+      return "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200";
   }
 }
 
@@ -554,16 +554,16 @@ function runStatusClass(status: AgentRunListItem["status"]): string {
     case "failed":
     case "provider_refused":
     case "repair_exhausted":
-      return "bg-rose-100 text-rose-800";
+      return "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300";
     case "waiting_approval":
     case "provider_incomplete":
-      return "bg-amber-100 text-attention";
+      return "bg-amber-100 dark:bg-amber-900/40 text-attention";
     case "completed":
-      return "bg-emerald-100 text-emerald-800";
+      return "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300";
     case "running":
     case "gathering_context":
-      return "bg-teal-50 text-accent";
+      return "bg-teal-50 dark:bg-teal-950/40 text-accent";
     default:
-      return "bg-slate-100 text-slate-800";
+      return "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200";
   }
 }

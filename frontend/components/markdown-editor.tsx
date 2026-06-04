@@ -133,7 +133,7 @@ export function MarkdownEditor({
               // 編集タブのときのみ操作可能 (プレビュー中は書式挿入不可)。
               disabled={tab !== "edit"}
               onClick={() => onToolbarClick(action)}
-              className="rounded border border-line px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-slate-50 disabled:opacity-40"
+              className="rounded border border-line px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40"
             >
               {action.label}
             </button>
@@ -145,7 +145,7 @@ export function MarkdownEditor({
             aria-pressed={tab === "edit"}
             onClick={() => setTab("edit")}
             className={`rounded px-2 py-1 font-medium transition-colors ${
-              tab === "edit" ? "bg-accent/10 text-accent" : "text-muted-foreground hover:bg-slate-50"
+              tab === "edit" ? "bg-accent/10 text-accent" : "text-muted-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
             }`}
           >
             編集
@@ -155,7 +155,7 @@ export function MarkdownEditor({
             aria-pressed={tab === "preview"}
             onClick={() => setTab("preview")}
             className={`rounded px-2 py-1 font-medium transition-colors ${
-              tab === "preview" ? "bg-accent/10 text-accent" : "text-muted-foreground hover:bg-slate-50"
+              tab === "preview" ? "bg-accent/10 text-accent" : "text-muted-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
             }`}
           >
             プレビュー
@@ -175,12 +175,12 @@ export function MarkdownEditor({
         aria-label={ariaLabel}
         className={`${tab === "edit" ? "" : "hidden"} ${
           textareaClassName ??
-          "min-h-28 w-full resize-y rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          "min-h-28 w-full resize-y rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         }`}
       />
 
       {tab === "preview" ? (
-        <div className="min-h-28 rounded-md border border-line bg-white px-3 py-2">
+        <div className="min-h-28 rounded-md border border-line bg-panel px-3 py-2">
           {current.trim() ? (
             <MarkdownRenderer content={current} />
           ) : (

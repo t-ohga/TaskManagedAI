@@ -41,7 +41,7 @@ export default async function NotificationsPage({
     return (
       <section aria-label="通知" className="grid gap-4">
         <h1 className="text-2xl font-semibold">通知</h1>
-        <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">
+        <p className="rounded-md bg-rose-50 dark:bg-rose-950/40 p-3 text-sm text-rose-700 dark:text-rose-300">
           通知の取得に失敗しました: {error instanceof Error ? error.message : "不明なエラー"}
         </p>
       </section>
@@ -67,7 +67,7 @@ export default async function NotificationsPage({
               aria-current={isActive ? "page" : undefined}
               className={
                 isActive
-                  ? "rounded-md bg-teal-50 px-3 py-2 text-sm font-semibold text-accent"
+                  ? "rounded-md bg-teal-50 dark:bg-teal-950/40 px-3 py-2 text-sm font-semibold text-accent"
                   : "rounded-md border border-line px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-panel-muted"
               }
               href={`/notifications?state=${stateValue}`}
@@ -79,7 +79,7 @@ export default async function NotificationsPage({
       </nav>
 
       {notifications.length === 0 ? (
-        <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
+        <p className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 p-3 text-sm text-emerald-700 dark:text-emerald-300">
           通知はありません。
         </p>
       ) : (

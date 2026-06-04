@@ -117,7 +117,7 @@ function ErrorPanel({ error }: { readonly error: unknown }) {
       title="リサーチ詳細読込エラー"
       titleId="research-detail-load-error"
     >
-      <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-danger">
+      <p role="alert" className="rounded-md border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 p-3 text-sm text-danger">
         リサーチ詳細の読込に失敗しました: {error instanceof Error ? error.message : "不明なエラー"}
       </p>
     </Panel>

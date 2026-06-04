@@ -30,6 +30,7 @@ import {
   ProviderComplianceMatrixTable,
   SecretBoundaryNotice
 } from "../_components/sprint9-admin-ui";
+import { AppearanceSettings } from "./_components/appearance-settings";
 import { DataManagementPanel } from "./_components/data-management-panel";
 import { ProjectSettingsForm } from "./_components/project-settings-form";
 import { SecretRefsInventory } from "./_components/secret-refs-inventory";
@@ -129,6 +130,16 @@ export default async function ProjectSettingsPage() {
     >
       <KeyboardReadinessStrip current="プロジェクト設定" />
 
+      {/* M-2 (ADR-00047): 外観 (テーマ) = この端末の表示設定。project 設定とは別の device-local
+          preference であることを description で明示する (R1 F-008)。 */}
+      <Panel
+        description="この端末の表示テーマ（ライト / ダーク / システム）を選びます。ブラウザごとの表示設定で、プロジェクトの設定ではありません。"
+        title="外観（この端末の表示設定）"
+        titleId="settings-appearance"
+      >
+        <AppearanceSettings />
+      </Panel>
+
       <Panel
         description="プロジェクト名・説明・AI 自律レベルを編集できます。policy_profile は autonomy_level から自動導出され UI から直接変更できません。"
         title="プロジェクト基本情報"
@@ -193,19 +204,19 @@ export default async function ProjectSettingsPage() {
         titleId="settings-repo-binding"
       >
         <dl className="grid gap-2 md:grid-cols-3">
-          <div className="rounded-md border border-line bg-white p-3">
+          <div className="rounded-md border border-line bg-panel p-3">
             <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
               write path
             </dt>
             <dd className="mt-2 text-sm text-ink">RepoProxy のみ</dd>
           </div>
-          <div className="rounded-md border border-line bg-white p-3">
+          <div className="rounded-md border border-line bg-panel p-3">
             <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
               branch policy
             </dt>
             <dd className="mt-2 text-sm text-ink">Draft PR のみ（main 直接 push 不可）</dd>
           </div>
-          <div className="rounded-md border border-line bg-white p-3">
+          <div className="rounded-md border border-line bg-panel p-3">
             <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
               merge guard
             </dt>

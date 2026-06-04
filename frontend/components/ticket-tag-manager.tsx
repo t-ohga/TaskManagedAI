@@ -185,7 +185,7 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
                   disabled={isPending}
                   onClick={() => handleDetach(tag.id)}
                   aria-label={`タグ「${tag.name}」をこのチケットから外す`}
-                  className="rounded-full px-1 text-xs text-muted-foreground hover:text-red-600 disabled:opacity-40"
+                  className="rounded-full px-1 text-xs text-muted-foreground hover:text-red-600 dark:hover:text-red-400 disabled:opacity-40"
                 >
                   ×
                 </button>
@@ -263,7 +263,7 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
             type="button"
             disabled={isPending}
             onClick={() => setCreating(true)}
-            className="rounded-md border border-dashed border-line px-3 py-1 text-xs text-muted-foreground hover:bg-slate-50 disabled:opacity-40"
+            className="rounded-md border border-dashed border-line px-3 py-1 text-xs text-muted-foreground hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40"
           >
             + 新しいタグを作成
           </button>
@@ -311,7 +311,7 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
                       type="button"
                       disabled={isPending}
                       onClick={() => handleDelete(tag.id)}
-                      className="ml-auto rounded-md border border-red-200 px-3 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40"
+                      className="ml-auto rounded-md border border-red-200 dark:border-red-800 px-3 py-1 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-40"
                     >
                       削除
                     </button>
@@ -324,7 +324,7 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
                     type="button"
                     disabled={isPending}
                     onClick={() => startEdit(tag)}
-                    className="ml-auto rounded border border-line px-2 py-0.5 text-xs text-muted-foreground hover:bg-slate-50 disabled:opacity-40"
+                    className="ml-auto rounded border border-line px-2 py-0.5 text-xs text-muted-foreground hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40"
                   >
                     編集
                   </button>
@@ -339,7 +339,7 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
       ) : null}
 
       <div aria-live="polite">
-        {error ? <p className="text-xs text-red-600">{error}</p> : null}
+        {error ? <p className="text-xs text-red-600 dark:text-red-400">{error}</p> : null}
         {isPending ? <p className="text-xs text-muted-foreground">更新中...</p> : null}
       </div>
     </div>

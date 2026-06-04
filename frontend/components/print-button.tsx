@@ -7,7 +7,7 @@ export function PrintButton({ label = "印刷" }: { label?: string }) {
     <button
       type="button"
       onClick={() => window.print()}
-      className="no-print rounded-md border border-line px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-slate-50"
+      className="no-print rounded-md border border-line px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
     >
       {label}
     </button>

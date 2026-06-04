@@ -9,10 +9,10 @@ import type { SecretRefListItem, SecretRefStatus } from "@/lib/api/session";
  */
 
 const STATUS_STYLE: Record<SecretRefStatus, { label: string; className: string }> = {
-  active: { label: "active", className: "bg-emerald-50 text-emerald-700 ring-emerald-600/20" },
-  deprecated: { label: "deprecated", className: "bg-slate-100 text-slate-600 ring-slate-500/20" },
-  revoked: { label: "revoked", className: "bg-rose-50 text-rose-700 ring-rose-600/20" },
-  pending: { label: "pending", className: "bg-amber-50 text-amber-700 ring-amber-600/20" }
+  active: { label: "active", className: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 ring-emerald-600/20" },
+  deprecated: { label: "deprecated", className: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 ring-slate-500/20" },
+  revoked: { label: "revoked", className: "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 ring-rose-600/20" },
+  pending: { label: "pending", className: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 ring-amber-600/20" }
 };
 
 function StatusBadge({ status }: { status: SecretRefStatus }) {

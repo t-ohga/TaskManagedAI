@@ -168,7 +168,7 @@ function ReadinessUnavailable({ message }: { message: string }) {
   return (
     <section
       aria-label="初回チェック"
-      className="rounded-md border border-attention bg-amber-50 p-4"
+      className="rounded-md border border-attention bg-amber-50 dark:bg-amber-950/40 p-4"
       role="status"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -205,7 +205,7 @@ function StarterChoices() {
               <span className="rounded-md bg-panel-muted px-2 py-1 font-mono text-[11px] text-muted-foreground">
                 {choice.mode}
               </span>
-              <span className="rounded-md bg-teal-50 px-2 py-1 font-mono text-[11px] text-accent">
+              <span className="rounded-md bg-teal-50 dark:bg-teal-950/40 px-2 py-1 font-mono text-[11px] text-accent">
                 {choice.actionClass}
               </span>
             </div>

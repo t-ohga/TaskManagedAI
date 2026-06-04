@@ -40,7 +40,7 @@ export function DryRunPlanForm() {
             <label className="grid gap-2 text-sm">
               <span className="font-medium">目的</span>
               <textarea
-                className="min-h-28 resize-y rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="min-h-28 resize-y rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 maxLength={4000}
                 name="purpose"
                 placeholder="調査、計画、または Draft PR 候補の目的"
@@ -51,7 +51,7 @@ export function DryRunPlanForm() {
             <label className="grid gap-2 text-sm">
               <span className="font-medium">想定成果物</span>
               <input
-                className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 maxLength={1000}
                 name="expected_artifact"
                 placeholder="実装計画、調査メモ、Draft PR plan"
@@ -63,7 +63,7 @@ export function DryRunPlanForm() {
               <label className="grid gap-2 text-sm">
                 <span className="font-medium">starter mode</span>
                 <select
-                  className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  className="rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                   defaultValue="plan_only"
                   name="starter_mode"
                 >
@@ -78,7 +78,7 @@ export function DryRunPlanForm() {
               <label className="grid gap-2 text-sm">
                 <span className="font-medium">upper action class</span>
                 <select
-                  className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  className="rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                   defaultValue="read_only"
                   name="allowed_action_class"
                 >
@@ -94,7 +94,7 @@ export function DryRunPlanForm() {
               <label className="grid gap-2 text-sm">
                 <span className="font-medium">repo ref</span>
                 <input
-                  className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  className="rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                   maxLength={500}
                   name="target_repo_ref"
                   placeholder="owner/repo or local workspace"
@@ -104,7 +104,7 @@ export function DryRunPlanForm() {
               <label className="grid gap-2 text-sm">
                 <span className="font-medium">budget cap</span>
                 <input
-                  className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  className="rounded-md border border-line bg-panel px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                   maxLength={100}
                   name="budget_cap"
                   placeholder="0 USD committed"
@@ -121,7 +121,7 @@ export function DryRunPlanForm() {
           </fieldset>
 
           {state.kind === "error" ? (
-            <p className="mt-4 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700" role="status">
+            <p className="mt-4 rounded-md bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-sm text-rose-700 dark:text-rose-300" role="status">
               {state.message}
             </p>
           ) : null}

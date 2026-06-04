@@ -16,18 +16,18 @@ type BucketStyle = {
 const BUCKET_STYLES: Record<"overdue" | "due_today" | "upcoming", BucketStyle> = {
   overdue: {
     title: "期限超過",
-    badge: "bg-red-100 text-red-700",
-    border: "border-red-200",
+    badge: "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300",
+    border: "border-red-200 dark:border-red-800",
   },
   due_today: {
     title: "本日期限",
-    badge: "bg-amber-100 text-amber-700",
-    border: "border-amber-200",
+    badge: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300",
+    border: "border-amber-200 dark:border-amber-800",
   },
   upcoming: {
     title: "まもなく期限",
-    badge: "bg-blue-100 text-blue-700",
-    border: "border-blue-200",
+    badge: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300",
+    border: "border-blue-200 dark:border-blue-800",
   },
 };
 

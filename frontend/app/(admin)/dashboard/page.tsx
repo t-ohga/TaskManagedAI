@@ -166,7 +166,7 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
               <h2 className="text-base font-semibold">フロントエンド</h2>
               <p className="mt-1 text-sm text-muted-foreground">フロントエンドの状態確認</p>
             </div>
-            <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+            <span className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-2 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
               {frontendHealth.status}
             </span>
           </div>
@@ -197,11 +197,11 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
               <p className="mt-1 text-sm text-muted-foreground">バックエンドの状態確認</p>
             </div>
             {backendHealth.kind === "ok" ? (
-              <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+              <span className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-2 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                 {backendHealth.health.status}
               </span>
             ) : (
-              <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-attention">
+              <span className="rounded-md bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-xs font-semibold text-attention">
                 利用不可
               </span>
             )}
@@ -246,13 +246,13 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
         {/* D-5 (UI 監査 fix): 旧「表示中チケット」は「総チケット数」と同一式の重複だった。完了チケット
             (statusCounts) は 200 件 client 集計で総数と不整合のため、全 project list の status から正確に
             出せる active/archived に分ける (Codex review R1#2/R2: project-count は ticket fetch 不要)。 */}
-        <article className="rounded-lg border border-blue-200 bg-blue-50 p-4 shadow-sm">
-          <p className="text-xs text-blue-600">稼働中プロジェクト</p>
-          <p className="mt-1 text-2xl font-bold text-blue-700">{activeProjectTotal ?? "—"}</p>
+        <article className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 p-4 shadow-sm">
+          <p className="text-xs text-blue-600 dark:text-blue-400">稼働中プロジェクト</p>
+          <p className="mt-1 text-2xl font-bold text-blue-700 dark:text-blue-300">{activeProjectTotal ?? "—"}</p>
         </article>
-        <article className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
-          <p className="text-xs text-amber-600">アーカイブ済プロジェクト</p>
-          <p className="mt-1 text-2xl font-bold text-amber-700">
+        <article className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-4 shadow-sm">
+          <p className="text-xs text-amber-600 dark:text-amber-400">アーカイブ済プロジェクト</p>
+          <p className="mt-1 text-2xl font-bold text-amber-700 dark:text-amber-300">
             {projectTotal != null && activeProjectTotal != null ? projectTotal - activeProjectTotal : "—"}
           </p>
         </article>
@@ -284,11 +284,11 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
             <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <div>
                 <p className="text-muted-foreground">完了</p>
-                <p className="text-lg font-bold text-emerald-600">{closedTickets}</p>
+                <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{closedTickets}</p>
               </div>
               <div>
                 <p className="text-muted-foreground">残り</p>
-                <p className="text-lg font-bold text-amber-600">{totalTickets - closedTickets}</p>
+                <p className="text-lg font-bold text-amber-600 dark:text-amber-400">{totalTickets - closedTickets}</p>
               </div>
             </div>
           </article>
@@ -356,8 +356,8 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
                   <span
                     className={`rounded px-2 py-0.5 text-xs font-medium ${
                       p.status === "active"
-                        ? "bg-emerald-50 text-emerald-700"
-                        : "bg-amber-50 text-amber-700"
+                        ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
+                        : "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300"
                     }`}
                   >
                     {/* K-3 (UI 監査 fix): archived 等の英語 fallback を日本語化 */}

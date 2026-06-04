@@ -78,19 +78,19 @@ function ProvenanceSummary({ claim }: { readonly claim: Claim }) {
 
   return (
     <dl className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-4">
-      <div className="rounded-md border border-line bg-slate-50 p-2">
+      <div className="rounded-md border border-line bg-slate-50 dark:bg-slate-800 p-2">
         <dt className="font-semibold text-ink">activities</dt>
         <dd>{prov.activities.length}</dd>
       </div>
-      <div className="rounded-md border border-line bg-slate-50 p-2">
+      <div className="rounded-md border border-line bg-slate-50 dark:bg-slate-800 p-2">
         <dt className="font-semibold text-ink">entities</dt>
         <dd>{prov.entities.length}</dd>
       </div>
-      <div className="rounded-md border border-line bg-slate-50 p-2">
+      <div className="rounded-md border border-line bg-slate-50 dark:bg-slate-800 p-2">
         <dt className="font-semibold text-ink">agents</dt>
         <dd>{prov.agents.length}</dd>
       </div>
-      <div className="rounded-md border border-line bg-slate-50 p-2">
+      <div className="rounded-md border border-line bg-slate-50 dark:bg-slate-800 p-2">
         <dt className="font-semibold text-ink">relations</dt>
         <dd>{provenanceRelationCount(claim)}</dd>
       </div>
@@ -101,23 +101,23 @@ function ProvenanceSummary({ claim }: { readonly claim: Claim }) {
 export function ResearchTaskCard({ task }: { readonly task: ResearchTaskDetail }) {
   return (
     <dl className="grid gap-3 md:grid-cols-2">
-      <div className="rounded-md border border-line bg-white p-3">
+      <div className="rounded-md border border-line bg-panel p-3">
         <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">タイトル</dt>
         <dd className="mt-2 text-sm font-medium text-ink">{task.title}</dd>
       </div>
-      <div className="rounded-md border border-line bg-white p-3">
+      <div className="rounded-md border border-line bg-panel p-3">
         <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">状態 (status)</dt>
         <dd className="mt-2">
-          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-ink">
+          <code className="rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 font-mono text-xs text-ink">
             {formatResearchStatus(task.status)}
           </code>
         </dd>
       </div>
-      <div className="rounded-md border border-line bg-white p-3">
+      <div className="rounded-md border border-line bg-panel p-3">
         <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">project_id</dt>
         <dd className="mt-2 break-all font-mono text-xs text-ink">{task.project_id}</dd>
       </div>
-      <div className="rounded-md border border-line bg-white p-3">
+      <div className="rounded-md border border-line bg-panel p-3">
         <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
           作成日時 (created_at)
         </dt>
@@ -134,7 +134,7 @@ export function ResearchMetricSummary({ task }: { readonly task: ResearchTaskDet
 
   return (
     <dl className="grid gap-3 md:grid-cols-4">
-      <div className="rounded-md border border-line bg-white p-3 md:col-span-2">
+      <div className="rounded-md border border-line bg-panel p-3 md:col-span-2">
         <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
           evidence_set_hash
         </dt>
@@ -142,7 +142,7 @@ export function ResearchMetricSummary({ task }: { readonly task: ResearchTaskDet
           {task.evidence_set_hash}
         </dd>
       </div>
-      <div className="rounded-md border border-line bg-white p-3">
+      <div className="rounded-md border border-line bg-panel p-3">
         <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
           attachment_rate
         </dt>
@@ -150,7 +150,7 @@ export function ResearchMetricSummary({ task }: { readonly task: ResearchTaskDet
           {formatRate(metric.attachment_rate)}
         </dd>
       </div>
-      <div className="rounded-md border border-line bg-white p-3">
+      <div className="rounded-md border border-line bg-panel p-3">
         <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
           numerator / denominator
         </dt>
@@ -171,7 +171,7 @@ export function ClaimList({
 }) {
   if (claims.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-line bg-white p-4 text-sm text-muted-foreground">
+      <div className="rounded-md border border-dashed border-line bg-panel p-4 text-sm text-muted-foreground">
         このリサーチ task に紐づく claim はありません。
       </div>
     );
@@ -183,7 +183,7 @@ export function ClaimList({
         const evidenceItems = evidenceItemsByClaimId.get(claim.id) ?? [];
 
         return (
-          <li key={claim.id} className="rounded-md border border-line bg-white p-3">
+          <li key={claim.id} className="rounded-md border border-line bg-panel p-3">
             <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
               <div>
                 <p className="text-sm font-medium text-ink">{claim.claim_text}</p>
@@ -238,7 +238,7 @@ export function EvidenceItemList({
 }) {
   if (items.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-line bg-white p-4 text-sm text-muted-foreground">
+      <div className="rounded-md border border-dashed border-line bg-panel p-4 text-sm text-muted-foreground">
         このリサーチ task に紐づく evidence item はありません。
       </div>
     );
@@ -250,7 +250,7 @@ export function EvidenceItemList({
         <caption className="sr-only">
           locator、relation、relevance score、source link を含む evidence item 一覧。
         </caption>
-        <thead className="bg-slate-50 text-xs uppercase tracking-normal text-muted-foreground">
+        <thead className="bg-slate-50 dark:bg-slate-800 text-xs uppercase tracking-normal text-muted-foreground">
           <tr>
             <th scope="col" className="border-b border-line px-3 py-2 font-semibold">
               locator
@@ -273,7 +273,7 @@ export function EvidenceItemList({
                 <code className="break-all font-mono text-xs text-ink">{item.locator}</code>
               </th>
               <td className="border-b border-line px-3 py-2">
-                <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-ink">
+                <code className="rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 font-mono text-xs text-ink">
                   {formatEvidenceRelation(item.relation)}
                 </code>
               </td>
