@@ -195,12 +195,13 @@ export default async function TodayPage() {
   const pendingApprovals = state.approvals.kind === "ok" ? state.approvals.data : [];
   const errors = collectErrors(state);
 
-  // A-6 (ADR-00046): 担当者 UUID -> display_name 解決 map。取得失敗は空 map (中立 fallback)。
+  // A-6 (ADR-00046 / Codex adversarial F-A3): 担当者 UUID -> display_name 解決 map。取得失敗は空 map
+  // (中立 fallback) + errors に可視化し、detail/一覧 と degradation の扱いを揃える (silent にしない)。
   let assigneeNameById = new Map<string, string | null>();
   try {
     assigneeNameById = buildAssigneeNameMap((await fetchAssignableActors()).actors);
   } catch {
-    assigneeNameById = new Map();
+    errors.push("担当者名を取得できませんでした（担当者は「担当者 (不明)」と表示されます）。");
   }
 
   return (

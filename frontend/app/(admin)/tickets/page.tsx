@@ -262,13 +262,17 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   const thresholdDays = dateContextResult.ok ? dateContextResult.ctx.threshold_days : undefined;
 
   // A-6 (ADR-00046): 担当者候補 (tenant 内 human)。作成 dialog の選択肢 + 一覧 (Kanban/list) の
-  // assignee display (UUID -> display_name) に使う。取得失敗は degraded (空 list) に倒す
-  // (assignee 表示は中立 fallback、作成は未割当のまま可能)。
+  // assignee display (UUID -> display_name) に使う。Codex adversarial F-A3: truncated (cap 超過) と
+  // degraded (取得失敗) を別々に保持して可視化する (silent cap / silent failure を A-6 要件どおり表示)。
   let assignableActors: AssignableActor[] = [];
+  let assignableActorsTruncated = false;
+  let assignableActorsDegraded = false;
   try {
-    assignableActors = (await fetchAssignableActors()).actors;
+    const assignableResp = await fetchAssignableActors();
+    assignableActors = assignableResp.actors;
+    assignableActorsTruncated = assignableResp.truncated;
   } catch {
-    assignableActors = [];
+    assignableActorsDegraded = true;
   }
   const assigneeNameById = buildAssigneeNameMap(assignableActors);
 
@@ -489,6 +493,19 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
           <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
             期限の基準日を取得できなかったため、期限の強調表示 (超過 / 本日 / 期限間近) を一時的に無効にしています。
             期限の日付は表示されますが、色分けされません。時間をおいて再読み込みしてください。
+          </div>
+        ) : null}
+        {/* A-6 (Codex adversarial F-A3): 担当者候補の取得失敗 / cap 超過を可視化する。silent に空候補や
+            部分候補を見せず、作成フォームの担当者選択が不完全であることを明示する。 */}
+        {assignableActorsDegraded ? (
+          <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            担当者候補を取得できませんでした。新規チケットは未割当で作成され、既存の担当者は名前ではなく
+            「担当者 (不明)」と表示される場合があります。時間をおいて再読み込みしてください。
+          </div>
+        ) : assignableActorsTruncated ? (
+          <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            担当者が多いため候補の一部のみ表示しています。候補一覧に無い担当者は新規割り当てできず、
+            該当する既存の担当者は「担当者 (不明)」と表示される場合があります。
           </div>
         ) : null}
       </Suspense>

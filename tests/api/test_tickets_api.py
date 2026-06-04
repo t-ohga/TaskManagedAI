@@ -739,3 +739,52 @@ async def test_update_assign_human_then_clear_succeeds(
         await session.commit()
         assert cleared is not None
         assert cleared.assignee_actor_id is None
+
+
+@pytest.mark.asyncio
+async def test_update_endpoint_records_assignee_change_in_audit(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """ADR-00046 (Codex adversarial F-A1 HIGH): assignee 変更が audit に previous/new で記録される。
+
+    回帰防止: `existing.assignee_actor_id` を update 後に読むと identity map refresh で new vs new に
+    なり audit に載らない。update 前 snapshot を使う実装を E2E で検証する (endpoint 直接呼び出し)。
+    """
+    from sqlalchemy import select as _select
+
+    from backend.app.api.tickets import TicketUpdateRequest, update_ticket_endpoint
+    from backend.app.db.models.audit_event import AuditEvent
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    # 初期 assignee=None → endpoint で ACTOR_ID (human) に変更。
+    async with session_factory() as session:
+        await update_ticket_endpoint(
+            project_id=PROJECT_A_ID,
+            ticket_id=TICKET_A1_ID,
+            payload=TicketUpdateRequest(assignee_actor_id=ACTOR_ID),
+            _cli_capability=None,
+            actor_id=ACTOR_ID,
+            tenant_id=1,
+            session=session,
+        )
+
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                _select(AuditEvent).where(
+                    AuditEvent.tenant_id == 1,
+                    AuditEvent.event_type.in_(
+                        ["ticket_updated", "ticket_status_changed"]
+                    ),
+                )
+            )
+        ).scalars().all()
+        # previous=None / new=ACTOR_ID が記録された audit が存在する。
+        assert any(
+            row.event_payload.get("new_assignee_actor_id") == str(ACTOR_ID)
+            and row.event_payload.get("previous_assignee_actor_id") is None
+            for row in rows
+        ), "assignee 変更が audit に previous/new で記録されていない (F-A1 regression)"

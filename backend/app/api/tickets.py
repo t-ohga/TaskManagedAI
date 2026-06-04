@@ -218,9 +218,17 @@ def _is_assignee_fk_violation(exc: IntegrityError) -> bool:
     通常は到達不能だが、pre-check SELECT と insert flush の間で actor が削除される TOCTOU 等の防御として
     残す。slug unique (`tickets_uq_tenant_project_slug`) 等の他制約違反は誤写像せず re-raise させるため、
     constraint 名で assignee FK のみに限定する。
+
+    Codex adversarial F-A2: asyncpg/SQLAlchemy では constraint_name が `exc.orig` ではなく
+    `exc.orig.__cause__` 側に入る形がある (evidence_items.py の `_constraint_name` と同じく両方を見ないと
+    TOCTOU FK 違反を 500 に取り違える)。orig と orig.__cause__ の両方を確認する。
     """
-    constraint = getattr(getattr(exc, "orig", None), "constraint_name", None)
-    return constraint == "tickets_assignee_actor_fkey"
+    orig = getattr(exc, "orig", None)
+    candidates = [orig, getattr(orig, "__cause__", None)]
+    for candidate in candidates:
+        if getattr(candidate, "constraint_name", None) == "tickets_assignee_actor_fkey":
+            return True
+    return False
 
 
 @router.post("", response_model=TicketRead, status_code=status.HTTP_201_CREATED)
@@ -347,6 +355,11 @@ async def update_ticket_endpoint(
     # status 変更検出 (audit event 詳細用)
     previous_status = existing.status
     new_status = update_data.get("status", previous_status)
+    # ADR-00046 (Codex adversarial F-A1 HIGH fix): assignee の previous は **update 前に snapshot** する。
+    # update_in_project の `update(...).returning(Ticket)` は identity map 上の `existing` インスタンスを
+    # 更新後値に refresh し得るため、audit ブロックで `existing.assignee_actor_id` を読むと new vs new に
+    # なり変更が記録されない。ここで old 値を local に退避して比較に使う (previous_status と同方針)。
+    previous_assignee_actor_id = existing.assignee_actor_id
 
     try:
         ticket = await repo.update_in_project(
@@ -399,11 +412,12 @@ async def update_ticket_endpoint(
         "new_status": new_status,
         "updated_fields": sorted(payload.model_dump(exclude_unset=True).keys()),
     }
-    # ADR-00046 (D-4 / R1 F-008): assignee が変わった場合のみ previous/new を記録 (UUID のみ、
-    # 誰から誰へ変わったかを追跡可能にする。display_name / secret / PII は入れない)。
-    if existing.assignee_actor_id != ticket.assignee_actor_id:
+    # ADR-00046 (D-4 / R1 F-008 + Codex adversarial F-A1): assignee が変わった場合のみ previous/new を
+    # 記録 (UUID のみ、誰から誰へ変わったかを追跡可能にする。display_name / secret / PII は入れない)。
+    # previous は update 前 snapshot を使う (identity map refresh で new vs new にならないため)。
+    if previous_assignee_actor_id != ticket.assignee_actor_id:
         event_payload["previous_assignee_actor_id"] = (
-            str(existing.assignee_actor_id) if existing.assignee_actor_id else None
+            str(previous_assignee_actor_id) if previous_assignee_actor_id else None
         )
         event_payload["new_assignee_actor_id"] = (
             str(ticket.assignee_actor_id) if ticket.assignee_actor_id else None

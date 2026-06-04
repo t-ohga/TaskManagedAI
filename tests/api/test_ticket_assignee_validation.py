@@ -70,18 +70,33 @@ def test_assert_assignee_human_rejects_missing_actor() -> None:
 
 
 class _Orig:
-    def __init__(self, constraint_name: str | None) -> None:
+    def __init__(self, constraint_name: str | None, cause: object = None) -> None:
         self.constraint_name = constraint_name
+        # asyncpg/SQLAlchemy では constraint_name が orig.__cause__ 側に入る形がある (F-A2)。
+        self.__cause__ = cause
 
 
 class _FakeIntegrityError:
-    def __init__(self, constraint_name: str | None) -> None:
-        self.orig = _Orig(constraint_name)
+    def __init__(self, constraint_name: str | None, cause: object = None) -> None:
+        self.orig = _Orig(constraint_name, cause)
 
 
 def test_is_assignee_fk_violation_true_for_assignee_constraint() -> None:
     exc = cast(IntegrityError, _FakeIntegrityError("tickets_assignee_actor_fkey"))
     assert _is_assignee_fk_violation(exc) is True
+
+
+def test_is_assignee_fk_violation_true_when_constraint_on_orig_cause() -> None:
+    # Codex adversarial F-A2: constraint_name が orig.__cause__ 側だけにある asyncpg 形でも検出する。
+    cause = _Orig("tickets_assignee_actor_fkey")
+    exc = cast(IntegrityError, _FakeIntegrityError(None, cause=cause))
+    assert _is_assignee_fk_violation(exc) is True
+
+
+def test_is_assignee_fk_violation_false_when_other_constraint_on_cause() -> None:
+    cause = _Orig("tickets_uq_tenant_project_slug")
+    exc = cast(IntegrityError, _FakeIntegrityError(None, cause=cause))
+    assert _is_assignee_fk_violation(exc) is False
 
 
 @pytest.mark.parametrize(
