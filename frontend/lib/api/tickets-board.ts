@@ -31,6 +31,9 @@ const TicketItemSchema = z.object({
   // due_date を bogus deadline として neutral 表示するのを防ぐ、画面間の strict-YMD 整合)。
   due_date: z.string().refine(isValidYmd).nullable(),
   created_at: z.string().nullable(),
+  // A-6 (ADR-00046): 担当者 actor id (UUID or null)。display_name は一覧側が assignable-actors map で
+  // 解決する (TicketRead 契約不変)。null は未割当。
+  assignee_actor_id: z.string().uuid().nullable(),
   tags: z.array(TagReadSchema)
 });
 

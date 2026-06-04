@@ -40,7 +40,22 @@ const ticketFixture: TicketRead = {
 
 describe("ticket form i18n", () => {
   it("renders the edit ticket form with Japanese labels and raw enum values preserved", () => {
-    render(<EditTicketForm ticket={ticketFixture} />);
+    render(
+      <EditTicketForm
+        // A-6 (ADR-00046): EditTicketForm は EditableTicket (description: string | null) を受け取る。
+        ticket={{
+          id: ticketFixture.id,
+          title: ticketFixture.title,
+          description: ticketFixture.description ?? null,
+          due_date: ticketFixture.due_date,
+          status: ticketFixture.status,
+          priority: ticketFixture.priority,
+          assignee_actor_id: ticketFixture.assignee_actor_id
+        }}
+        assignableActors={[]}
+        assignableActorsDegraded={false}
+      />
+    );
 
     expect(screen.getByText("チケット編集")).toBeVisible();
     expect(screen.getByLabelText("タイトル")).toHaveValue("Sample ticket");
@@ -52,6 +67,67 @@ describe("ticket form i18n", () => {
     expect(screen.getByRole("option", { name: "完了 (closed)" })).toHaveValue("closed");
     expect(screen.getByRole("combobox", { name: "優先度" })).toHaveValue("high");
     expect(screen.getByRole("option", { name: "高 (high)" })).toHaveValue("high");
+    // A-6: 担当者セレクタ (候補なし時は「未割当」のみ)。
+    expect(screen.getByRole("combobox", { name: "担当者" })).toHaveValue("");
     expect(screen.getByRole("button", { name: "保存" })).toBeVisible();
+  });
+});
+
+// A-6 (ADR-00046): 担当者セレクタの挙動 (候補表示 / R1 F-009 現在値保持 / degraded 警告)。
+describe("ticket assignee selector", () => {
+  const ASSIGNEE_A = "00000000-0000-4000-8000-0000000000a1";
+  const ASSIGNEE_OUT = "00000000-0000-4000-8000-0000000000ff";
+
+  function editableTicket(assigneeActorId: string | null) {
+    return {
+      id: ticketFixture.id,
+      title: ticketFixture.title,
+      description: ticketFixture.description ?? null,
+      due_date: ticketFixture.due_date,
+      status: ticketFixture.status,
+      priority: ticketFixture.priority,
+      assignee_actor_id: assigneeActorId
+    };
+  }
+
+  it("候補 actor を option に表示し、現 assignee を選択値にする", () => {
+    render(
+      <EditTicketForm
+        ticket={editableTicket(ASSIGNEE_A)}
+        assignableActors={[{ id: ASSIGNEE_A, display_name: "Owner" }]}
+        assignableActorsDegraded={false}
+      />
+    );
+    const select = screen.getByRole("combobox", { name: "担当者" });
+    expect(select).toHaveValue(ASSIGNEE_A);
+    expect(screen.getByRole("option", { name: "Owner" })).toHaveValue(ASSIGNEE_A);
+    expect(screen.getByRole("option", { name: "未割当" })).toHaveValue("");
+  });
+
+  it("現 assignee が候補一覧に無くても option に保持し選択値を失わない (R1 F-009)", () => {
+    render(
+      <EditTicketForm
+        ticket={editableTicket(ASSIGNEE_OUT)}
+        assignableActors={[{ id: ASSIGNEE_A, display_name: "Owner" }]}
+        assignableActorsDegraded={false}
+      />
+    );
+    const select = screen.getByRole("combobox", { name: "担当者" });
+    // 現在値 (一覧外) が option として存在し、selected を維持する。
+    expect(select).toHaveValue(ASSIGNEE_OUT);
+    expect(screen.getByRole("option", { name: "担当者 (一覧外)" })).toHaveValue(ASSIGNEE_OUT);
+  });
+
+  it("候補取得失敗 (degraded) は警告を表示し、現 assignee を保持する (R1 F-009)", () => {
+    render(
+      <EditTicketForm
+        ticket={editableTicket(ASSIGNEE_OUT)}
+        assignableActors={[]}
+        assignableActorsDegraded={true}
+      />
+    );
+    expect(screen.getByText(/担当者候補を取得できませんでした/)).toBeVisible();
+    // degraded でも現在値は option に保持される (silent に未割当へ倒さない)。
+    expect(screen.getByRole("combobox", { name: "担当者" })).toHaveValue(ASSIGNEE_OUT);
   });
 });

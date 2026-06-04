@@ -39,6 +39,9 @@ function ticketPayload(id: string) {
     created_at: null,
     updated_at: null,
     project_id: "ignored-by-loader",
+    // A-6 (ADR-00046): backend TicketRead は assignee_actor_id を常に返す (nullable)。loader が
+    // strict validate するため fixture も explicit null を持たせる。欠落ケースは別 test で検証する。
+    assignee_actor_id: null,
     // backend TicketRead は常に tags を返す (default_factory=list)。loader が fail-closed なので
     // fixture も explicit [] を持たせる。tags 欠落ケースは下の omitted test で別途検証する。
     tags: []
@@ -104,6 +107,41 @@ describe("loadTicket (Codex B2b R2/R3/R4/R5 contract)", () => {
       });
       await expect(loadTicket(VALID_UUID)).rejects.toThrow();
     }
+  });
+
+  it("malformed assignee_actor_id (非 UUID / 欠落) は throw する (A-6 ADR-00046、strict all-surface)", async () => {
+    // detail loader が壊れた assignee を edit form の select に渡さないよう fail-closed (due_date と同方針)。
+    for (const bad of ["not-a-uuid", "123", undefined]) {
+      mockFetch.mockImplementation(async (path: string) => {
+        if (path === "/api/v1/me/projects") return PROJECTS;
+        if (path === `/api/v1/projects/p-aaa/tickets/${VALID_UUID}`) throw new BackendApiError(404, "nf");
+        if (path === `/api/v1/projects/p-bbb/tickets/${VALID_UUID}`) {
+          const payload = ticketPayload(VALID_UUID) as Record<string, unknown>;
+          if (bad === undefined) {
+            delete payload.assignee_actor_id;
+          } else {
+            payload.assignee_actor_id = bad;
+          }
+          return payload;
+        }
+        throw new BackendApiError(500, "unexpected");
+      });
+      await expect(loadTicket(VALID_UUID)).rejects.toThrow();
+    }
+  });
+
+  it("valid assignee_actor_id (UUID) と null を解決する (A-6)", async () => {
+    const ASSIGNEE = "00000000-0000-4000-8000-0000000000a1";
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/me/projects") return PROJECTS;
+      if (path === `/api/v1/projects/p-aaa/tickets/${VALID_UUID}`) throw new BackendApiError(404, "nf");
+      if (path === `/api/v1/projects/p-bbb/tickets/${VALID_UUID}`) {
+        return { ...ticketPayload(VALID_UUID), assignee_actor_id: ASSIGNEE };
+      }
+      throw new BackendApiError(500, "unexpected");
+    });
+    const result = await loadTicket(VALID_UUID);
+    expect(result?.assignee_actor_id).toBe(ASSIGNEE);
   });
 
   it("全 project が 404 のときだけ null を返す (notFound 経路)", async () => {

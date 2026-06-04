@@ -75,6 +75,7 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
       description: null,
       due_date: null,
       created_at: null,
+      assignee_actor_id: null,
       tags: []
     }));
     fetchBackendRaw.mockResolvedValue({ items, total: 201 });
@@ -88,7 +89,7 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
   it("reports truncated=false when the full filtered set fits in one page", async () => {
     fetchBackendRaw.mockResolvedValue({
       items: [
-        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: null, created_at: null, tags: [] }
+        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: null, created_at: null, assignee_actor_id: null, tags: [] }
       ],
       total: 1
     });
@@ -107,6 +108,7 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
           description: null,
           due_date: null,
           created_at: null,
+          assignee_actor_id: null,
           tags: [
             { id: TAG_ID, name: "bug", color: "red" },
             { id: "00000000-0000-4000-8000-00000000b002", name: "bad", color: "magenta" }
@@ -123,7 +125,7 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
   it("accepts an explicit empty tags array as a valid no-tag ticket (not malformed)", async () => {
     fetchBackendRaw.mockResolvedValue({
       items: [
-        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: null, created_at: null, tags: [] }
+        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: null, created_at: null, assignee_actor_id: null, tags: [] }
       ],
       total: 1
     });
@@ -134,8 +136,8 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
   it("accepts a valid YMD due_date and null due_date (A-7 R7)", async () => {
     fetchBackendRaw.mockResolvedValue({
       items: [
-        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: "2026-06-30", created_at: null, tags: [] },
-        { id: "t2", title: "y", status: "open", priority: null, description: null, due_date: null, created_at: null, tags: [] }
+        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: "2026-06-30", created_at: null, assignee_actor_id: null, tags: [] },
+        { id: "t2", title: "y", status: "open", priority: null, description: null, due_date: null, created_at: null, assignee_actor_id: null, tags: [] }
       ],
       total: 2
     });
@@ -149,7 +151,7 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
     for (const bad of ["2026-06-30T00:00:00Z", "2026-06-30junk", "2026-02-31", "2026-6-3"]) {
       fetchBackendRaw.mockResolvedValueOnce({
         items: [
-          { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: bad, created_at: null, tags: [] }
+          { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: bad, created_at: null, assignee_actor_id: null, tags: [] }
         ],
         total: 1
       });
@@ -160,7 +162,7 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
   it("throws when tags metadata is omitted (version skew / degraded), distinct from explicit [] (R7 HIGH)", async () => {
     fetchBackendRaw.mockResolvedValue({
       items: [
-        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: null, created_at: null }
+        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: null, created_at: null, assignee_actor_id: null }
       ],
       total: 1
     });
@@ -170,7 +172,7 @@ describe("loadTickets fail-closed boundary (Codex frontend R2 HIGH)", () => {
   it("throws when tags metadata is null (degraded serializer)", async () => {
     fetchBackendRaw.mockResolvedValue({
       items: [
-        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: null, created_at: null, tags: null }
+        { id: "t1", title: "x", status: "open", priority: null, description: null, due_date: null, created_at: null, assignee_actor_id: null, tags: null }
       ],
       total: 1
     });

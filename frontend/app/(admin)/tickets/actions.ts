@@ -8,6 +8,7 @@ import { getCurrentProjectId } from "@/lib/api/session";
 import { createTicketComment, TicketReadSchema } from "@/lib/api/tickets";
 
 const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const TicketCreateFormSchema = z.object({
   slug: z.string().trim().min(1).regex(SLUG_PATTERN, "slug は kebab-case (a-z0-9 + hyphen)"),
@@ -16,7 +17,10 @@ const TicketCreateFormSchema = z.object({
   status: z
     .enum(["open", "in_progress", "blocked", "review", "closed", "cancelled"])
     .default("open"),
-  priority: z.enum(["low", "medium", "high", "critical"]).optional()
+  priority: z.enum(["low", "medium", "high", "critical"]).optional(),
+  // A-6 (ADR-00046): 担当者 (任意)。uuid -> set / 未指定 ("未割当") -> 送らない。
+  // backend repository choke point が human-only + tenant を最終 enforce する。
+  assignee_actor_id: z.string().regex(UUID_PATTERN, "担当者の形式が不正です").optional()
 });
 
 export type CreateTicketState =
@@ -31,6 +35,7 @@ export async function createTicketAction(
   const rawDescription = formData.get("description");
   const rawPriority = formData.get("priority");
   const rawStatus = formData.get("status");
+  const rawAssignee = formData.get("assignee_actor_id");
   const parsed = TicketCreateFormSchema.safeParse({
     slug: typeof formData.get("slug") === "string" ? formData.get("slug") : "",
     title: typeof formData.get("title") === "string" ? formData.get("title") : "",
@@ -43,6 +48,10 @@ export async function createTicketAction(
     priority:
       typeof rawPriority === "string" && rawPriority.length > 0
         ? rawPriority
+        : undefined,
+    assignee_actor_id:
+      typeof rawAssignee === "string" && rawAssignee.length > 0
+        ? rawAssignee
         : undefined
   });
 
@@ -66,6 +75,8 @@ export async function createTicketAction(
       }
     );
     revalidatePath("/tickets");
+    // A-6 (R1 F-010): 新規 ticket (担当者付き含む) は Today / Inbox 分類に影響するため /today も再検証。
+    revalidatePath("/today");
     return { kind: "ok", ticket_id: created.id };
   } catch (error: unknown) {
     const message =

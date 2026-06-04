@@ -5,14 +5,20 @@ import { useRouter } from "next/navigation";
 import type { Route } from "next";
 
 import { createTicketAction, type CreateTicketState } from "@/app/(admin)/tickets/actions";
+import { assigneeSelectOptions, type AssignableActor } from "@/lib/api/actors";
 import { MarkdownEditor } from "@/components/markdown-editor";
 
 const initialState: CreateTicketState = { kind: "idle" };
 
+type TicketCreateDialogProps = {
+  // A-6 (ADR-00046): 担当者候補 (tenant 内 human)。取得失敗時は [] (作成は未割当のまま可能)。
+  assignableActors?: AssignableActor[];
+};
+
 // 作成先 project は server action が session の current_project から resolve する
 // (server-owned-boundary §1: project_id は caller-supplied 禁止)。本 dialog は
 // 呼び出し側で「現在の project を表示中のときだけ」mount される (tickets/page.tsx)。
-export function TicketCreateDialog() {
+export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialogProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [titleError, setTitleError] = useState<string | null>(null);
@@ -98,9 +104,10 @@ export function TicketCreateDialog() {
             />
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <select
             name="priority"
+            aria-label="優先度"
             className="rounded-md border border-line px-2 py-1.5 text-xs focus:border-accent focus:outline-none"
           >
             <option value="">優先度なし</option>
@@ -108,6 +115,20 @@ export function TicketCreateDialog() {
             <option value="medium">中</option>
             <option value="high">高</option>
             <option value="critical">最優先</option>
+          </select>
+          {/* A-6: 担当者 (任意)。候補なし (取得失敗 / human 0) でも「未割当」で作成可能。 */}
+          <select
+            name="assignee_actor_id"
+            aria-label="担当者"
+            defaultValue=""
+            className="rounded-md border border-line px-2 py-1.5 text-xs focus:border-accent focus:outline-none"
+          >
+            <option value="">担当者なし</option>
+            {assigneeSelectOptions(assignableActors, null).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </div>
         <div className="flex gap-2">

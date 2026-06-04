@@ -421,6 +421,75 @@ async def date_context_endpoint(
     )
 
 
+# ADR-00046 (A-6): 担当者割当の母集合 cap。P0 は human 1 名だが将来の sane 上限。
+# 超過時は truncated=true で可視化し、pagination 化の trigger とする (R1 F-009)。
+ASSIGNABLE_ACTOR_LIST_LIMIT = 200
+
+
+class AssignableActor(BaseModel):
+    """ADR-00046 (A-6): 担当者に割当可能な actor 1 件 (tenant 内 human のみ)。
+
+    露出最小化 (R1 F-002): id (UUID = ticket.assignee_actor_id の値 / select の value) と
+    display_name (label) のみ。stable identity の actor_id / auth_context_hash / metadata /
+    impersonated_by 等の内部属性 / secret は返さない。
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID
+    display_name: str | None
+
+
+class AssignableActorsResponse(BaseModel):
+    """ADR-00046 (A-6): tenant 内の割当可能 (human) actor 一覧。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    actors: list[AssignableActor]
+    # ASSIGNABLE_ACTOR_LIST_LIMIT 到達で一覧が切り詰められたか (R1 F-009、silent cap の可視化)。
+    truncated: bool
+
+
+@router.get("/assignable-actors", response_model=AssignableActorsResponse)
+async def assignable_actors_endpoint(
+    # tenant 内 human actor の display directory を返す read surface のため、ticket 管理 read と同じ
+    # `task_list` capability gate を通す (least-privilege、actor_id 等の内部属性は露出しない)。
+    _cli_capability: object = Depends(maybe_require_cli_capability("task_list")),  # noqa: B008
+    actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008
+    tenant_id: int = Depends(get_tenant_id),  # noqa: B008
+    session: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> AssignableActorsResponse:
+    """A-6 (ADR-00046): tenant 内の担当者に割当可能な actor (human のみ) 一覧 (read-only).
+
+    ticket の assignee セレクタの母集合 + assignee UUID -> display_name 解決に使う。`actor_type='human'`
+    のみ (agent / provider / service / github_app は担当者にしない、D-2 の write 検証と対の read)。露出
+    最小化のため id + display_name のみ返す (R1 F-002、actor_id / secret は返さない)。
+    `ASSIGNABLE_ACTOR_LIST_LIMIT` で cap し、超過時は `truncated=true` で可視化 (R1 F-009)。
+    single-tenant membership のため tenant 境界が owner 境界を兼ねる (P0)。raw secret なし。
+    """
+    rows = (
+        await session.execute(
+            select(Actor.id, Actor.display_name)
+            .where(
+                Actor.tenant_id == tenant_id,
+                Actor.actor_type == "human",
+            )
+            # display_name null/重複は id で安定 tie-break (一覧順の決定性)。
+            .order_by(Actor.display_name.nulls_last(), Actor.id)
+            # limit+1 取得で cap 超過を検出 (truncated 可視化)。
+            .limit(ASSIGNABLE_ACTOR_LIST_LIMIT + 1)
+        )
+    ).all()
+    truncated = len(rows) > ASSIGNABLE_ACTOR_LIST_LIMIT
+    capped = rows[:ASSIGNABLE_ACTOR_LIST_LIMIT]
+    return AssignableActorsResponse(
+        actors=[
+            AssignableActor(id=row.id, display_name=row.display_name) for row in capped
+        ],
+        truncated=truncated,
+    )
+
+
 @router.get("/reminders", response_model=ReminderSummaryResponse)
 async def reminders_endpoint(
     # ticket の slug/title/status/priority/due_date を返す ticket read surface のため、ticket list

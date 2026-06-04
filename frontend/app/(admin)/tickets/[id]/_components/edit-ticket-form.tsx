@@ -4,19 +4,40 @@ import { useRouter } from "next/navigation";
 import { useActionState, useEffect } from "react";
 
 import { formatTicketPriority, formatTicketStatus } from "@/lib/i18n/ticket-labels";
-import type { TicketRead } from "@/lib/api/tickets";
+import { assigneeSelectOptions, type AssignableActor } from "@/lib/api/actors";
 import { MarkdownEditor } from "@/components/markdown-editor";
 
 import { updateTicketAction, type UpdateTicketState } from "../actions";
 
+// A-6 (ADR-00046 R1 F-006): TicketRead への as-unknown cast を解消し、編集フォームが使う field のみを
+// 明示的に受け取る。TicketDetail (load-ticket) が構造的に満たす。
+type EditableTicket = {
+  id: string;
+  title: string;
+  description: string | null;
+  due_date: string | null;
+  status: string;
+  priority: string | null;
+  assignee_actor_id: string | null;
+};
+
 type EditTicketFormProps = {
-  ticket: TicketRead;
+  ticket: EditableTicket;
+  // A-6: 担当者候補 (tenant 内 human)。取得失敗時は [] + degraded=true (現 assignee のみ option 保持)。
+  assignableActors: AssignableActor[];
+  assignableActorsDegraded: boolean;
 };
 
 const INITIAL_STATE: UpdateTicketState = { kind: "idle" };
 
-export function EditTicketForm({ ticket }: EditTicketFormProps) {
+export function EditTicketForm({
+  ticket,
+  assignableActors,
+  assignableActorsDegraded
+}: EditTicketFormProps) {
   const router = useRouter();
+  // R1 F-009: 現 assignee が候補一覧に無くても option に保持 (select が現在値を失わない)。
+  const assigneeOptions = assigneeSelectOptions(assignableActors, ticket.assignee_actor_id);
 
   // SP-012-11.1 BL-TCU-016: React 19 useActionState (Codex PR #120 P2 完全 migration)
   const [state, formAction, isPending] = useActionState(
@@ -106,6 +127,32 @@ export function EditTicketForm({ ticket }: EditTicketFormProps) {
             </select>
           </label>
         </div>
+
+        <label className="grid gap-2 text-sm">
+          <span className="font-medium">担当者</span>
+          <select
+            name="assignee_actor_id"
+            defaultValue={ticket.assignee_actor_id ?? ""}
+            // degraded 警告は aria-describedby で関連付ける (label 内に置くと select の
+            // accessible name を汚染するため、name は「担当者」のまま description で補足する)。
+            aria-describedby={assignableActorsDegraded ? "assignee-degraded" : undefined}
+            className="rounded-md border border-line bg-white px-3 py-2 text-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <option value="">未割当</option>
+            {assigneeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {assignableActorsDegraded ? (
+          // R1 F-009: 候補取得失敗を degraded で可視化 (silent に未割当へ倒さない)。現 assignee は
+          // option に保持済のため保存しても現在値を失わない。label 外に出して select の name を汚さない。
+          <p id="assignee-degraded" className="text-xs text-amber-700">
+            担当者候補を取得できませんでした。現在の担当者の保持・解除のみ可能です。
+          </p>
+        ) : null}
 
         <div className="flex flex-wrap gap-2">
           <button
