@@ -1,10 +1,10 @@
 ---
 id: "SP-027_source_trust_registry"
 type: "light"
-status: "completed"
+status: "draft"
 sprint_no: 27
 created_at: "2026-05-26"
-updated_at: "2026-05-26"
+updated_at: "2026-06-04"
 target_days: 3
 max_days: 5
 ---
@@ -35,3 +35,7 @@ uv run pytest -q
 ## 残リスク
 
 - ADR Gate 該当の場合は heavy Pack 化 + ADR 起票が必要
+
+## Review
+
+(2026-06-04 台帳監査) **未実装**。本 Pack は `status: "completed"` だったが、source trust registry に対応する実装は `backend/app` / `frontend` に存在しない (grep `source_trust` / `trust_registry` = 0 件)。受け入れ条件チェックボックスも全て未チェックのまま。commit `1b9cad6` (#261、2026-05-26) が 9 つの P1 Pack を実装を伴わず `status: draft → completed` へ一括変更した over-claim。実態に合わせ `draft` へ訂正。P1 (P0.1 より先の将来スコープ) であり、着手時に ADR-first + 実装 + test が必要。

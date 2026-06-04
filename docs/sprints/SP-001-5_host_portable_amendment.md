@@ -4,7 +4,7 @@ type: "heavy"
 status: "proposed"
 sprint_no: 1.5
 created_at: "2026-05-10"
-updated_at: "2026-05-10"
+updated_at: "2026-06-04"
 target_days: 2
 max_days: 3
 adr_refs: []
@@ -144,4 +144,4 @@ $ git log --oneline docs/sprints/SP-001_project_foundation.md
 
 ## Review
 
-(SP-001.5 完了時に追記)
+(2026-06-04 台帳監査) **`proposed` 維持 (ADR gate 未達)**。本 amendment は ADR-00021 (Host-Portable Deployment) + ADR-00007 update の **accepted 化を着手 gate** とするが、canonical ADR (`docs/adr/00021_host_portable_deployment.md` / `docs/adr/00007_external_exposure.md`) は **現在も `status: "proposed"`** で、本 Pack frontmatter も `adr_refs: []` / ADR は `planned_adr_refs` 止まり。よって completed にはできず `proposed` を維持する (Codex App F-L2)。**別 drift 注意**: P0 Exit declaration (`docs/release/p0_exit_2026_05_22.md`) は SP-022 T00 で ADR-00021/00007 を accepted 化したと記載するが、canonical ADR 側が proposed のまま追従しておらず矛盾。ADR 正本の status 整合は別途要確認 (本 doc PR scope 外、報告に記録)。

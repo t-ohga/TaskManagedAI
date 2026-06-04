@@ -1,10 +1,10 @@
 ---
 id: "SP-029_shadow_mode"
 type: "light"
-status: "completed"
+status: "draft"
 sprint_no: 29
 created_at: "2026-05-26"
-updated_at: "2026-05-26"
+updated_at: "2026-06-04"
 target_days: 4
 max_days: 6
 ---
@@ -35,3 +35,7 @@ uv run pytest -q
 ## 残リスク
 
 - ADR Gate 該当の場合は heavy Pack 化 + ADR 起票が必要
+
+## Review
+
+(2026-06-04 台帳監査) **未実装**。本 Pack は `status: "completed"` だったが、shadow mode / shadow run に対応する実装は `backend/app` / `frontend` に存在しない (grep `shadow_mode` / `shadow_run` / `ShadowMode` = 0 件)。受け入れ条件も全て未チェック。commit `1b9cad6` (#261) の実装を伴わない一括 status flip の対象。実態に合わせ `draft` へ訂正。P1 将来スコープで、着手時に ADR-first + 実装 + test が必要。
