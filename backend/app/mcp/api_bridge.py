@@ -113,6 +113,10 @@ async def bridge_ticket_create(
     # default superintendent (per-actor MCP 認証は SP-016 別 scope)。idempotency の actor 次元はこの
     # resolved actor で bind する (F-N2)。created_by_actor_id も同 actor に揃える。
     resolved_actor_id = actor_id if actor_id is not None else DEFAULT_SUPERINTENDENT_ACTOR_ID
+    # ADR-00049 R3 F-O3: 空文字 / 空白のみの idempotency_key は「未指定」とみなし None 正規化する
+    # (client が optional を "" 直列化しても共有 bucket poisoning にならない、毎回新規作成)。
+    if idempotency_key is not None and not idempotency_key.strip():
+        idempotency_key = None
 
     repo = TicketRepository(session)
 
@@ -394,9 +398,12 @@ async def bridge_run_create(
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
 
     resolved_actor_id = actor_id if actor_id is not None else DEFAULT_SUPERINTENDENT_ACTOR_ID
+    # ADR-00049 R3 F-O3: 空文字 / 空白のみの idempotency_key は「未指定」とみなし None 正規化する。
+    if idempotency_key is not None and not idempotency_key.strip():
+        idempotency_key = None
 
     # ADR-00049: idempotency reserve (idempotency_key 指定時のみ)。winner は通常経路で create し、
-    # commit 直前に complete する。loser (既存予約) は assert_ticket_actionable を通さず既存 run を返す。
+    # commit 直前に complete する。loser (既存予約) は既存 run を返すが、active-scope 再検証は行う。
     reservation_winner_id: UUID | None = None
     if idempotency_key is not None:
         if not commit:
@@ -427,9 +434,17 @@ async def bridge_run_create(
                     AgentRun.id == outcome.resource_id,
                 )
             )
-            await session.commit()  # loser の FOR UPDATE lock を解放する
             if existing_run is None:
+                await session.commit()  # loser の FOR UPDATE lock を解放する
                 return {"error": "not_found", "run_id": str(outcome.resource_id)}
+            # ADR-00049 R3 F-O4: replay も active-scope を再検証する。新規 run_create は後続で
+            # assert_ticket_actionable を通すが replay branch はその前に return するため、ここで
+            # 明示的に再検証しないと soft-deleted ticket / archived project の work を idempotency
+            # replay 経由で再露出してしまう (run_show / run_list の active-scope と不整合)。
+            # actionable でなければ TicketNotActionableError / ProjectArchivedError を raise し、
+            # transaction rollback で FOR UPDATE lock を解放、MCP wrapper が error dict 化する。
+            await _assert_run_ticket_actionable(session, tenant_id=tenant_id, run=existing_run)
+            await session.commit()  # loser の FOR UPDATE lock を解放する
             return {
                 "run_id": str(existing_run.id),
                 "status": existing_run.status,

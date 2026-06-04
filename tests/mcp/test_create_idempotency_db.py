@@ -26,6 +26,7 @@ from backend.app.config import Settings, get_settings
 from backend.app.db.models.mcp_idempotency_key import McpIdempotencyKey
 from backend.app.db.session import create_engine
 from backend.app.mcp.api_bridge import bridge_run_create, bridge_ticket_create
+from backend.app.repositories.ticket import TicketNotActionableError
 from backend.app.seeds.initial import (
     DEFAULT_ACTOR_ID,
     DEFAULT_PROJECT_ID,
@@ -287,6 +288,67 @@ async def test_run_create_replay_returns_same_run(
         )
     assert first["run_id"] == second["run_id"]
     assert second.get("idempotent_replay") is True
+
+
+@pytest.mark.asyncio
+async def test_blank_idempotency_key_creates_each_time(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    # ADR-00049 R3 F-O3: 空文字 / 空白のみ key は未指定とみなし毎回新規作成 (共有 bucket poisoning 防止)。
+    for blank in ("", "   "):
+        async with session_factory() as session:
+            a = await bridge_ticket_create(
+                session,
+                tenant_id=DEFAULT_TENANT_ID,
+                project_id=DEFAULT_PROJECT_ID,
+                title="blank",
+                idempotency_key=blank,
+            )
+        async with session_factory() as session:
+            b = await bridge_ticket_create(
+                session,
+                tenant_id=DEFAULT_TENANT_ID,
+                project_id=DEFAULT_PROJECT_ID,
+                title="blank",
+                idempotency_key=blank,
+            )
+        assert a["ticket_id"] != b["ticket_id"]
+        assert a.get("idempotent_replay") is None
+
+
+@pytest.mark.asyncio
+async def test_run_create_replay_rejected_after_ticket_soft_delete(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    # ADR-00049 R3 F-O4: soft-deleted ticket の run を idempotency replay で再露出しない。
+    ticket_id = await _create_ticket_for_run(session_factory)
+    key = f"run-sd-{uuid4()}"
+    async with session_factory() as session:
+        await bridge_run_create(
+            session,
+            tenant_id=DEFAULT_TENANT_ID,
+            project_id=DEFAULT_PROJECT_ID,
+            ticket_id=ticket_id,
+            purpose="p",
+            idempotency_key=key,
+        )
+    async with session_factory() as session:
+        await session.execute(
+            text("update tickets set deleted_at = now() where id = :id"),
+            {"id": UUID(ticket_id)},
+        )
+        await session.commit()
+    # ticket soft-delete 後の replay は active-scope 再検証で reject される (bridge 直呼びは raise)。
+    async with session_factory() as session:
+        with pytest.raises(TicketNotActionableError):
+            await bridge_run_create(
+                session,
+                tenant_id=DEFAULT_TENANT_ID,
+                project_id=DEFAULT_PROJECT_ID,
+                ticket_id=ticket_id,
+                purpose="p",
+                idempotency_key=key,
+            )
 
 
 @pytest.mark.asyncio

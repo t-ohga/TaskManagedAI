@@ -65,6 +65,12 @@ def upgrade() -> None:
             "tool_name IN ('ticket_create', 'run_create')",
             name="mcp_idempotency_keys_tool_name_check",
         ),
+        # ADR-00049 R3 F-O3: 空文字 / 空白のみの idempotency_key を予約させない (共有 bucket poisoning
+        # 防止)。bridge は blank を None に正規化するが、DB CHECK で defense-in-depth する。
+        sa.CheckConstraint(
+            "length(btrim(idempotency_key)) > 0",
+            name="mcp_idempotency_keys_key_non_blank_check",
+        ),
         sa.CheckConstraint(
             "created_resource_kind IS NULL "
             "OR created_resource_kind IN ('ticket', 'agent_run')",

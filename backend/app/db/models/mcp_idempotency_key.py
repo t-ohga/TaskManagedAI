@@ -48,6 +48,12 @@ class McpIdempotencyKey(TenantIdMixin, CreatedAtMixin, Base):
             "tool_name IN ('ticket_create', 'run_create')",
             name="mcp_idempotency_keys_tool_name_check",
         ),
+        # ADR-00049 R3 F-O3: 空文字 / 空白のみ key の共有 bucket poisoning を DB で防ぐ
+        # (bridge も blank を None 正規化する、defense-in-depth)。
+        sa.CheckConstraint(
+            "length(btrim(idempotency_key)) > 0",
+            name="mcp_idempotency_keys_key_non_blank_check",
+        ),
         sa.CheckConstraint(
             "created_resource_kind IS NULL "
             "OR created_resource_kind IN ('ticket', 'agent_run')",
