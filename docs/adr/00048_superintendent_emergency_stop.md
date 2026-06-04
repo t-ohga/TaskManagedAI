@@ -86,15 +86,53 @@ enforce + audit 付きで FastAPI endpoint として配線する。
 ### (B) 永続 emergency-stop latch (CRITICAL-2 fix、rules instincts §14 「global kill switch は新規を止める」準拠)
 
 - **tenant-scoped emergency-stop state** を DB に持つ (`superintendent_emergency_stops` table:
-  `tenant_id` PK, `engaged_at`, `engaged_by_actor_id`, `cleared_at`, `cleared_by_actor_id`、active は最大 1)。
+  `tenant_id`, `generation` (CAS 用 bigint), `engaged_at`, `engaged_by_actor_id`, `cleared_at`,
+  `cleared_by_actor_id`、`(tenant_id) WHERE cleared_at IS NULL` partial unique で active ≤ 1)。
 - engage 後、以下の **enforcement point で latch を fail-closed check** し新規活動を deny:
   1. AgentRun 作成 (`run_create` / `bridge_run_create` / orchestrator dispatch)
   2. `superintendent_agent_start` / `superintendent_agent_register` / `superintendent_dispatch`
   3. autonomy policy allow (auto-approve 経路)
   4. `provider_request_preflight` (provider call 直前)
 - deny 時 reason_code `emergency_stop_engaged` を audit。
-- **clear/resume は human-only + audit + conservative-by-default** (engage と同じ operator gate、
-  別 human が勝手に clear できない、self-clear も明示記録)。
+
+### (B-1) 並行 race の直列化 (R2 CRITICAL fix、TOCTOU 防止)
+
+latch check と side effect (spawn / run_create / provider call) を **同一 tenant-scoped critical section**
+で直列化しないと、「start が latch check 通過 → engage が kill 対象列挙 → その後 spawn 完了で process 残存」
+の race が起きる。対策:
+
+- **PostgreSQL tenant-scoped advisory lock** (`pg_advisory_xact_lock(hashtext('superintendent_emergency_stop'), tenant_id)`)
+  を engage / clear / 全 side-effecting enforcement point の critical section 入口で取得。
+- **engage**: advisory lock 取得 → latch row 有効化 (generation++) → scoped kill + block を **同一 lock 下**
+  で実行 (latch を先に立ててから kill/block するので、以後の spawn は必ず engaged latch を見る)。
+- **spawn (`agent_start`)**: advisory lock 下で latch check → process 起動 → `_active_agents` 登録までを
+  同一 critical section に収める (latch check 通過後に engage が割り込めない)。
+- race test (concurrent engage vs start) を must-ship に含める。
+
+### (B-2) 全 MCP mutating tool の latch gate (R2 HIGH fix、work-advance bypass 防止)
+
+`agent_start/register/dispatch` だけでなく、既存 run を**進行・完了・承認 event 追加**する MCP mutating
+tool も latch 対象にしないと、kill し損ねた agent / stale client / 再接続 client が engaged 中に作業を
+進められる。対策: **MCP mutating bridge 全体を centralize し latch gate を通す**。
+
+- deny (fail-closed, `emergency_stop_engaged`): `run_update` / `run_create` / `delegation_accept` /
+  `delegation_submit` / `delegation_review` / `approval_request_create` / `ticket_comment` /
+  work-result 系 / `superintendent_*` (start/register/dispatch) 等の mutating tool。
+- allow (明示 allowlist): read-only / status / `run_cancel` / `superintendent_agent_stop` / list 系。
+- MCP mutating tool の網羅 negative test (engaged 中 deny / cleared 後 allow) を must-ship に含める。
+
+### (B-3) clear / resume の state 復元 (R2 HIGH fix、gate skip 防止)
+
+clear で一律 `blocked -> running` に戻すと、元が `waiting_approval` / `diff_ready` / `policy_linted` の
+run が承認 / diff / policy gate を**飛ばして実行再開**してしまう。対策:
+
+- emergency-stop で block する際、**`pre_stop_status` を AgentRunEvent payload (または専用列) に保存**。
+- clear / resume は **human-only operator (engage と同 gate) + latch generation CAS** (stale clear 防止)。
+- 復元表 (一律 running にしない):
+  - `running` 由来 → `running` へ resume 可
+  - `waiting_approval` 由来 → `waiting_approval` へ戻す (approval 待ち継続)
+  - `diff_ready` / `policy_linted` 由来 → 元 gate へ戻す or 再評価必須
+- resume 操作を latch generation CAS 付きで test (古い generation の clear は reject)。
 
 ### (C) endpoint + operator gate (HIGH-4 fix)
 
