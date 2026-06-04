@@ -54,6 +54,7 @@ describe("ticket form i18n", () => {
         }}
         assignableActors={[]}
         assignableActorsDegraded={false}
+        assignableActorsTruncated={false}
       />
     );
 
@@ -96,6 +97,7 @@ describe("ticket assignee selector", () => {
         ticket={editableTicket(ASSIGNEE_A)}
         assignableActors={[{ id: ASSIGNEE_A, display_name: "Owner" }]}
         assignableActorsDegraded={false}
+        assignableActorsTruncated={false}
       />
     );
     const select = screen.getByRole("combobox", { name: "担当者" });
@@ -110,6 +112,7 @@ describe("ticket assignee selector", () => {
         ticket={editableTicket(ASSIGNEE_OUT)}
         assignableActors={[{ id: ASSIGNEE_A, display_name: "Owner" }]}
         assignableActorsDegraded={false}
+        assignableActorsTruncated={false}
       />
     );
     const select = screen.getByRole("combobox", { name: "担当者" });
@@ -124,10 +127,38 @@ describe("ticket assignee selector", () => {
         ticket={editableTicket(ASSIGNEE_OUT)}
         assignableActors={[]}
         assignableActorsDegraded={true}
+        assignableActorsTruncated={false}
       />
     );
     expect(screen.getByText(/担当者候補を取得できませんでした/)).toBeVisible();
     // degraded でも現在値は option に保持される (silent に未割当へ倒さない)。
     expect(screen.getByRole("combobox", { name: "担当者" })).toHaveValue(ASSIGNEE_OUT);
+  });
+
+  it("候補 cap 超過 (truncated) は警告を表示する (Codex App F-C3)", () => {
+    render(
+      <EditTicketForm
+        ticket={editableTicket(ASSIGNEE_A)}
+        assignableActors={[{ id: ASSIGNEE_A, display_name: "Owner" }]}
+        assignableActorsDegraded={false}
+        assignableActorsTruncated={true}
+      />
+    );
+    expect(screen.getByText(/候補の一部のみ表示/)).toBeVisible();
+  });
+
+  it("更新前 assignee を hidden field で送る (Codex App F-C2、変更検出用)", () => {
+    render(
+      <EditTicketForm
+        ticket={editableTicket(ASSIGNEE_A)}
+        assignableActors={[{ id: ASSIGNEE_A, display_name: "Owner" }]}
+        assignableActorsDegraded={false}
+        assignableActorsTruncated={false}
+      />
+    );
+    // hidden input name=original_assignee_actor_id に現 assignee が入る (action が変更時のみ送信判定に使う)。
+    const form = screen.getByTestId("edit-ticket-form");
+    const hidden = form.querySelector('input[name="original_assignee_actor_id"]');
+    expect(hidden).toHaveValue(ASSIGNEE_A);
   });
 });

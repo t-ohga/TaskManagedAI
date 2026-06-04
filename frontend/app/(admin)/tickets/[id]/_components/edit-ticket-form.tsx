@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useActionState, useEffect } from "react";
 
 import { formatTicketPriority, formatTicketStatus } from "@/lib/i18n/ticket-labels";
-import { assigneeSelectOptions, type AssignableActor } from "@/lib/api/actors";
+import { assigneeSelectOptions, type AssignableActor } from "@/lib/domain/assignee";
 import { MarkdownEditor } from "@/components/markdown-editor";
 
 import { updateTicketAction, type UpdateTicketState } from "../actions";
@@ -26,6 +26,8 @@ type EditTicketFormProps = {
   // A-6: 担当者候補 (tenant 内 human)。取得失敗時は [] + degraded=true (現 assignee のみ option 保持)。
   assignableActors: AssignableActor[];
   assignableActorsDegraded: boolean;
+  // Codex App F-C3: 候補が cap 超過で切り詰められたか (一覧に無い human を割り当てられない旨を警告)。
+  assignableActorsTruncated: boolean;
 };
 
 const INITIAL_STATE: UpdateTicketState = { kind: "idle" };
@@ -33,7 +35,8 @@ const INITIAL_STATE: UpdateTicketState = { kind: "idle" };
 export function EditTicketForm({
   ticket,
   assignableActors,
-  assignableActorsDegraded
+  assignableActorsDegraded,
+  assignableActorsTruncated
 }: EditTicketFormProps) {
   const router = useRouter();
   // R1 F-009: 現 assignee が候補一覧に無くても option に保持 (select が現在値を失わない)。
@@ -59,6 +62,14 @@ export function EditTicketForm({
       data-testid="edit-ticket-form"
     >
       <input type="hidden" name="ticket_id" value={ticket.id} />
+      {/* Codex App F-C2: 更新前の assignee。Server Action が「変更時のみ assignee を送信」判定に使う
+          (legacy 非 human assignee 付き ticket でも他 field だけ編集でき、unchanged な不正値を再送して
+          422 で全編集不能にしない)。 */}
+      <input
+        type="hidden"
+        name="original_assignee_actor_id"
+        value={ticket.assignee_actor_id ?? ""}
+      />
       <fieldset className="grid gap-4" disabled={isPending}>
         <legend className="text-base font-semibold">チケット編集</legend>
 
@@ -151,6 +162,12 @@ export function EditTicketForm({
           // option に保持済のため保存しても現在値を失わない。label 外に出して select の name を汚さない。
           <p id="assignee-degraded" className="text-xs text-amber-700">
             担当者候補を取得できませんでした。現在の担当者の保持・解除のみ可能です。
+          </p>
+        ) : assignableActorsTruncated ? (
+          // Codex App F-C3: 候補が cap 超過で切り詰められた場合、一覧に無い human を割り当てられない旨を
+          // 警告 (tickets 一覧 page と同じ扱い、silent な部分候補にしない)。
+          <p id="assignee-degraded" className="text-xs text-amber-700">
+            担当者が多いため候補の一部のみ表示しています。一覧に無い担当者は割り当てできません。
           </p>
         ) : null}
 

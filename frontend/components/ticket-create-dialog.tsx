@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import type { Route } from "next";
 
 import { createTicketAction, type CreateTicketState } from "@/app/(admin)/tickets/actions";
-import { assigneeSelectOptions, type AssignableActor } from "@/lib/api/actors";
+import { assigneeSelectOptions, type AssignableActor } from "@/lib/domain/assignee";
 import { MarkdownEditor } from "@/components/markdown-editor";
 
 const initialState: CreateTicketState = { kind: "idle" };

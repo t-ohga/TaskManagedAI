@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { BulkStatusChanger } from "@/components/bulk-status-changer";
 import { TagChip } from "@/components/tag-chip";
-import { assigneeLabel } from "@/lib/api/actors";
+import { assigneeLabel } from "@/lib/domain/assignee";
 import type { TagRead } from "@/lib/domain/tag";
 import { isValidYmd, ticketDueBucket, type DueDateBucket } from "@/lib/domain/due-date";
 

@@ -365,4 +365,18 @@ R1 の 3 findings は解消確認。新規 2 HIGH (concurrency/TOCTOU):
 
 **Readiness Gate (R2 後)**: CRITICAL=0 / HIGH=0 (F-B1 + F-B2 とも adopt)。clean。
 
-(PR Codex App auto-review の round はここに追記する)
+### Codex App auto-review (PR #319、2026-06-04)
+
+3 inline findings、**全 3 adopt**:
+- **F-C1 (P1、build 破壊)**: `lib/api/actors.ts` が `fetchBackendJson` (→ `next/headers` server-only) を
+  import しつつ Client Component (edit-form / create-dialog / selectable-list) から pure helper を import
+  され、client bundle に server-only が混入し **`next build` 失敗**。→ pure helper (schema / map / label /
+  options) を client-safe な `lib/domain/assignee.ts` に分離、fetch のみ `lib/api/actors.ts` に残す
+  (A-7 の due-date / reminders と同じ domain / api 分割規約)。`next build` 成功で検証。
+  **教訓**: vitest / tsc / eslint は RSC server/client bundle 境界を検査せず、`next build` のみが catch する。
+- **F-C2 (P2)**: legacy 非 human assignee 付き ticket で title だけ編集しても select が現 UUID を再送し
+  repository validation で 422 (全編集不能) → 編集 form に hidden `original_assignee_actor_id` を追加し、
+  Server Action が **assignee 変更時のみ送信** (unchanged は payload から除外)。null=clear / 別 human への
+  変更時のみ検証経路に乗せる。
+- **F-C3 (P2)**: 詳細/編集 page が `truncated` を捨てていた → page で capture し編集 form へ伝播、cap 超過
+  警告を表示 (一覧 page と同扱い)。

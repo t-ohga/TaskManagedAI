@@ -6,7 +6,7 @@ import {
   assigneeLabel,
   assigneeSelectOptions,
   type AssignableActor
-} from "@/lib/api/actors";
+} from "@/lib/domain/assignee";
 
 // A-6 (ADR-00046): 担当者割当の zod 契約 + 表示/選択 helper の pure logic。
 

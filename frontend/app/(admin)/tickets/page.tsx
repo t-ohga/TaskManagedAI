@@ -5,12 +5,12 @@ import { Suspense } from "react";
 import { BackendApiError } from "@/lib/api/client";
 import { getCurrentProject } from "@/lib/api/session";
 import { fetchDateContext } from "@/lib/api/reminders";
+import { fetchAssignableActors } from "@/lib/api/actors";
 import {
-  fetchAssignableActors,
   buildAssigneeNameMap,
   assigneeLabel,
   type AssignableActor
-} from "@/lib/api/actors";
+} from "@/lib/domain/assignee";
 import {
   loadProjectTags,
   loadProjects,

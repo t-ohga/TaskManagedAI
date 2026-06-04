@@ -14,12 +14,12 @@ import { TicketTagManager } from "@/components/ticket-tag-manager";
 import { getCurrentProject } from "@/lib/api/session";
 import { getTicketActivity, type TicketActivityEntry } from "@/lib/api/tickets";
 import { listTags } from "@/lib/api/tags";
+import { fetchAssignableActors } from "@/lib/api/actors";
 import {
-  fetchAssignableActors,
   buildAssigneeNameMap,
   assigneeLabel,
   type AssignableActor
-} from "@/lib/api/actors";
+} from "@/lib/domain/assignee";
 import type { TagRead } from "@/lib/domain/tag";
 import { isValidYmd } from "@/lib/domain/due-date";
 
@@ -140,8 +140,12 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   // 現 assignee のみ option 保持 + 警告 (silent に未割当へ変えない、R1 F-009)。
   let assignableActors: AssignableActor[] = [];
   let assignableActorsDegraded = false;
+  let assignableActorsTruncated = false;
   try {
-    assignableActors = (await fetchAssignableActors()).actors;
+    const assignableResp = await fetchAssignableActors();
+    assignableActors = assignableResp.actors;
+    // Codex App F-C3: truncated を編集フォームへ伝えて cap 切り詰めを可視化する (一覧 page と同扱い)。
+    assignableActorsTruncated = assignableResp.truncated;
   } catch {
     assignableActorsDegraded = true;
   }
@@ -339,6 +343,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
             ticket={ticket}
             assignableActors={assignableActors}
             assignableActorsDegraded={assignableActorsDegraded}
+            assignableActorsTruncated={assignableActorsTruncated}
           />
         </div>
       ) : null}

@@ -85,6 +85,13 @@ export async function updateTicketAction(
   }
 
   const { ticket_id, ...rest } = parsed.data;
+  // Codex App F-C2: assignee が変更されていなければ payload から外す。legacy 非 human assignee を持つ
+  // ticket でも他 field だけ編集できるようにし、unchanged な不正値を再送して repository の human-only
+  // 検証で 422 (全編集不能) にしない。null=clear / 別 human への変更時のみ送信する (= 変更時のみ検証)。
+  const originalAssignee = clearableField(formData.get("original_assignee_actor_id"));
+  if (rest.assignee_actor_id === originalAssignee) {
+    rest.assignee_actor_id = undefined;
+  }
   // Zod optional fields は undefined を残すので、undefined 排除。
   // `null` (explicit clear) は payload に残す = backend に null として送り clear。
   const updatePayload: Record<string, string | null> = {};

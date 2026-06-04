@@ -18,7 +18,8 @@ import {
 } from "@/lib/api/eval-dashboard";
 import { getCurrentProject, type CurrentProject } from "@/lib/api/session";
 import { listTickets, type TicketRead } from "@/lib/api/tickets";
-import { fetchAssignableActors, buildAssigneeNameMap, assigneeLabel } from "@/lib/api/actors";
+import { fetchAssignableActors } from "@/lib/api/actors";
+import { buildAssigneeNameMap, assigneeLabel } from "@/lib/domain/assignee";
 import {
   formatApprovalActionClass,
   formatRiskLevel,
