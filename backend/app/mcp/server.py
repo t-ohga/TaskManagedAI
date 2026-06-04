@@ -312,11 +312,20 @@ async def ticket_create(
                 description=description,
                 idempotency_key=idempotency_key,
             )
-            try:
-                from backend.app.mcp.discord_notify import notify_ticket_created
-                await notify_ticket_created(title, project_id[:8])
-            except Exception:  # noqa: S110
-                logging.getLogger(__name__).debug("Discord notification skipped")
+            # ADR-00049 (Codex F-O1): 外部 side-effect (Discord 通知) も idempotent にする。
+            # 真の新規作成時のみ通知する: ticket_id があり、error でなく、idempotent_replay でない。
+            # 同一 idempotency_key の retry/replay や error dict 返却では通知を発火させない
+            # (downstream automation が「新規 ticket」と誤認する重複を防ぐ)。
+            if (
+                result.get("ticket_id")
+                and not result.get("error")
+                and not result.get("idempotent_replay")
+            ):
+                try:
+                    from backend.app.mcp.discord_notify import notify_ticket_created
+                    await notify_ticket_created(title, project_id[:8])
+                except Exception:  # noqa: S110
+                    logging.getLogger(__name__).debug("Discord notification skipped")
             return result
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
