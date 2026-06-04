@@ -38,7 +38,18 @@
   --tm-panel: #192734;
   --tm-accent: #2dd4bf;
   --tm-attention: #f59e0b;
-  --tm-danger: #ef4444;
+  /* M-2 (Codex adversarial F-E2): danger token はボタン (`bg-danger text-white`) と文字 (`text-danger`)
+     の両用。dark では bg-danger 上の白文字が AA (4.5:1) を満たす red-600 (#dc2626、白文字 ≈4.86:1) を
+     使い、文字色は下の `html.dark .text-danger` override で panel 上 AA を満たす明るい red にする
+     (旧 #ef4444 は bg-danger 白文字も text-danger も AA 未達だった)。 */
+  --tm-danger: #dc2626;
+}
+
+/* M-2 (F-E2): dark の text-danger は dark panel/canvas 上で AA を満たす明るい red (red-400 #f87171、
+   panel 上 ≈5.5:1)。token (--tm-danger) を bg ボタン用に保ちつつ、文字色だけ明るくする (specificity
+   html.dark .text-danger > Tailwind .text-danger)。print では .dark が外れる (beforeprint) ため非適用。 */
+.dark .text-danger {
+  color: #f87171;
 }
 
 html {

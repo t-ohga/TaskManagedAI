@@ -6,6 +6,7 @@ import {
   type Theme,
   THEME_STORAGE_KEY,
   applyTheme,
+  isTheme,
   readStoredTheme
 } from "@/lib/theme";
 
@@ -36,7 +37,16 @@ export function useTheme(): { theme: Theme; setTheme: (next: Theme) => void } {
       // この key の変更、または別 tab の localStorage.clear() (key === null) → system へ再同期。
       if (event.key === THEME_STORAGE_KEY || event.key === null) syncFromStorage();
     };
-    const onCustom = (): void => syncFromStorage();
+    // Codex adversarial F-E1: 同一 tab 通知は **dispatch された値 (event.detail) を使い、storage を再読込
+    // しない**。storage 無効 (private mode) で setItem が失敗していると、再読込は古い値/system に倒れて
+    // 選択を即上書きしてしまうため (in-session 選択は CustomEvent の detail で伝える)。detail が不正な
+    // ときのみ storage を読む。
+    const onCustom = (event: Event): void => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      const next = isTheme(detail) ? detail : readStoredTheme();
+      applyTheme(next);
+      setThemeState(next);
+    };
     window.addEventListener("storage", onStorage);
     window.addEventListener(THEME_CHANGE_EVENT, onCustom);
 
@@ -67,8 +77,9 @@ export function useTheme(): { theme: Theme; setTheme: (next: Theme) => void } {
     applyTheme(next);
     setThemeState(next);
     // 同一 tab の他の useTheme インスタンス (nav toggle ↔ 設定 selector) に通知する
-    // (storage event は別 tab のみ発火するため)。再 dispatch しないので無限ループしない。
-    window.dispatchEvent(new Event(THEME_CHANGE_EVENT));
+    // (storage event は別 tab のみ発火するため)。**選択値を detail に載せ** storage 再読込に依存させない
+    // (F-E1: storage 無効でも in-session の選択が保持される)。再 dispatch しないので無限ループしない。
+    window.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT, { detail: next }));
   }, []);
 
   return { theme, setTheme };
