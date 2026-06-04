@@ -236,4 +236,29 @@ describe("storage 無効環境での in-session テーマ保持 (Codex F-G4)", (
     fireMediaChange();
     expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
+
+  it("dirty 中の cross-tab StorageEvent は stale な getItem ではなく event.newValue を採用する (F-G6)", () => {
+    // getItem は旧値 dark を返し続ける read 障害 (setItem も失敗)。OS は light。
+    readOnlyStorageWith("dark");
+    installMatchMedia(false);
+    render(<AppearanceSettings />);
+    // 初期は旧値 dark。
+    expect(screen.getByRole("radio", { name: /ダーク/ })).toHaveAttribute("aria-checked", "true");
+
+    // light を選択 (未永続 dirty)。
+    fireEvent.click(screen.getByRole("radio", { name: /ライト/ }));
+    expect(screen.getByRole("radio", { name: /ライト/ })).toHaveAttribute("aria-checked", "true");
+
+    // 別 tab が system へ正常書込 → StorageEvent(newValue: "system")。
+    // stale getItem は dark を返すが、newValue=system を authoritative に採用すべき
+    // (stale dark でも in-session light でもなく system になる)。
+    fireEvent(
+      window,
+      new StorageEvent("storage", { key: THEME_STORAGE_KEY, newValue: "system" })
+    );
+
+    // newValue system を採用 → system radio + OS light なので .dark なし。dirty も解除される。
+    expect(screen.getByRole("radio", { name: /システム/ })).toHaveAttribute("aria-checked", "true");
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+  });
 });
