@@ -50,4 +50,6 @@ cd frontend && pnpm test:e2e
 
 ## Review
 
-(2026-06-04 台帳監査) **実装確認、completed 維持**。shadcn/ui component (`frontend/components/ui/` の badge/button/card/table/tabs 等) + 統一 page-state (`frontend/components/page-states.tsx`) + status badge (AgentRun 16 状態 / Approval 状態) 実装済。Dark mode toggle は M-2 (PR #320、ADR-00047) で完成。地上真実 (2026-06-04): frontend vitest 423 pass + next build / tsc / eslint clean。受け入れ条件チェックボックスは未更新だったが実コード + test は green。Review 欄欠落のみ本監査で追記。
+(2026-06-04 台帳監査) **実装確認、completed 維持**。shadcn/ui component (`frontend/components/ui/` の badge/button/card/table/tabs 等) + status badge (AgentRun 16 状態 / Approval 状態) 実装済。Dark mode toggle は M-2 (PR #320、ADR-00047) で完成。**loading/error/empty の「全 page 統一」は App Router route-level convention で達成**: `app/loading.tsx` / `app/error.tsx` + `app/(admin)/loading.tsx` / `app/(admin)/error.tsx` (+ tickets/runs の loading.tsx) が admin 全 route の loading/error UI を統一 (route group の Suspense / error boundary)、empty は `EmptyState` (page-states.tsx) を使用。地上真実 (2026-06-04): frontend vitest 423 pass + next build / tsc / eslint clean。
+
+**Codex CLI F-L6 への採否判定 (adopt 事実 / reject downgrade)**: page-states.tsx の `LoadingState` / `ErrorState` export が app 未使用 (dead export) という事実は確認・**adopt** (当初 Review が page-states を loading/error の evidence として citation したのは不正確、上記に訂正)。ただし「loading/error の統一 acceptance が未達」という downgrade 推奨は **reject**: 統一は route-level `loading.tsx`/`error.tsx` (Next.js App Router の idiomatic 手段) で実際に満たされており、未使用なのは shared component の重複 export のみ。よって status は completed 維持。dead export 整理は別 scope の minor cleanup。
