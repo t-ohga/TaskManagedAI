@@ -6,11 +6,11 @@ import { useEffect, useState, useTransition } from "react";
 import { updateTicketAction, type UpdateTicketState } from "@/app/(admin)/tickets/[id]/actions";
 
 const STATUSES = [
-  { value: "open", label: "未着手", color: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 hover:bg-blue-200" },
-  { value: "in_progress", label: "進行中", color: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 hover:bg-amber-200" },
-  { value: "review", label: "レビュー", color: "bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 hover:bg-purple-200" },
-  { value: "blocked", label: "ブロック", color: "bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 hover:bg-orange-200" },
-  { value: "closed", label: "完了", color: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200" },
+  { value: "open", label: "未着手", color: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-800" },
+  { value: "in_progress", label: "進行中", color: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-800" },
+  { value: "review", label: "レビュー", color: "bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-800" },
+  { value: "blocked", label: "ブロック", color: "bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 hover:bg-orange-200 dark:hover:bg-orange-800" },
+  { value: "closed", label: "完了", color: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-800" },
   { value: "cancelled", label: "中止", color: "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700" },
 ] as const;
 

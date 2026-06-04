@@ -242,7 +242,7 @@ function statusClass(status: string): string {
     case "invalidated":
       return "bg-amber-100 dark:bg-amber-900/40 text-attention";
     case "expired":
-      return "bg-slate-200 text-slate-700 dark:text-slate-300";
+      return "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300";
     default:
       return "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200";
   }

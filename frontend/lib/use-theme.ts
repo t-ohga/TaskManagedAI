@@ -21,8 +21,13 @@ export function useTheme(): { theme: Theme; setTheme: (next: Theme) => void } {
 
   useEffect(() => {
     // localStorage は SSR で読めないため hydration 後に反映する (initializer で読むと mismatch)。
+    // state だけでなく DOM の `.dark` も applyTheme で揃える: inline script (first paint) が storage の
+    // 一時失敗 / 後からの値変更 / script 未注入 (embed/test) で React state と乖離した `.dark` を残して
+    // いても、controls と配色を一致させる (Codex App F-G1)。applyTheme は idempotent。
+    const initial = readStoredTheme();
+    applyTheme(initial);
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setThemeState(readStoredTheme());
+    setThemeState(initial);
 
     // Codex adversarial F-D1: 別 tab で theme が変わったら React state だけでなく **DOM の `.dark` class
     // にも applyTheme を再適用** する。`.dark` はグローバル副作用で React 描画属性ではないため、state

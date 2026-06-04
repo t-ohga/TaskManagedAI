@@ -56,9 +56,13 @@ export function applyTheme(theme: Theme): void {
 export const THEME_INIT_SCRIPT =
   "(function(){var k=" +
   JSON.stringify(THEME_STORAGE_KEY) +
-  ";try{" +
-  "var t=localStorage.getItem(k);" +
-  'if(t!=="light"&&t!=="dark"&&t!=="system"){t="system";}' +
+  ';var t="system";' +
+  // storage 読込のみを try で囲む。失敗 (private mode 等) しても t="system" のまま下の matchMedia 評価へ
+  // 進み、OS ダーク preference を適用する (Codex App F-G1: storage 失敗で全 try を抜けると OS ダークでも
+  // light のままだった)。
+  "try{var s=localStorage.getItem(k);" +
+  'if(s==="light"||s==="dark"||s==="system"){t=s;}}catch(e){}' +
+  "try{" +
   'var d=t==="dark"||(t==="system"&&window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches);' +
   'document.documentElement.classList.toggle("dark",d);' +
   "}catch(e){}" +
