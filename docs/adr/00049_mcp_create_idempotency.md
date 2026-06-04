@@ -89,24 +89,47 @@ idempotency_key の再送が新規作成ではなく既存 resource を返すよ
 - request_fingerprint: NFC UTF-8 + JCS canonical JSON + SHA-256 で request の本質部分 (project_id /
   title / description 等、actor 申告でない server-resolved 値) から計算。raw secret は含めない。
 
-### bridge での enforce (atomic、race-safe)
+### bridge での enforce (reservation-first、race-safe、R1 F-N1 fix)
+
+> **R1 F-N1 fix**: 初版は「resource 作成 → idempotency row insert」順だったが、race の敗者が
+> ON CONFLICT 経路で duplicate resource を commit する / IntegrityError で abort transaction のまま
+> 再 SELECT できない欠陥があった。**reservation-first** に変更: idempotency row を**先に**予約し、
+> winner だけが resource を作成する。
 
 `bridge_ticket_create` / `bridge_run_create` に `idempotency_key: str | None = None` +
-`actor_id` (既に解決済の caller actor) を渡し、**同一 transaction 内で**:
+`actor_id` (解決済 caller actor) を渡し、**同一 transaction 内で**:
 
 1. `idempotency_key is None` → 従来通り作成 (idempotency なし)。
-2. key あり → `mcp_idempotency_keys` を `(tenant_id, actor_id, tool_name, key)` で lookup:
-   - **hit + fingerprint 一致** → 既存 `created_resource_id` の resource を返す (idempotent replay、新規作成しない)。
-   - **hit + fingerprint 不一致** → `IdempotencyKeyConflictError` (同一 key で異なる payload = client error、HTTP 409)。
-   - **miss** → resource 作成 + idempotency row insert を**同一 transaction**で。
-3. **並行 race**: 2 つの同一 key request が同時に miss → 両方 insert 試行 → unique constraint で 1 つだけ
-   成功、敗者は `IntegrityError` を catch して **勝者の row を再 lookup し既存 resource を返す**
-   (`INSERT ... ON CONFLICT DO NOTHING` + 再 SELECT、または catch + re-select)。最終的に 1 resource。
+2. key あり、**reservation-first**:
+   1. `INSERT INTO mcp_idempotency_keys (tenant_id, actor_id, tool_name, idempotency_key,
+      request_fingerprint, created_resource_kind=NULL, created_resource_id=NULL)
+      ON CONFLICT (tenant_id, actor_id, tool_name, idempotency_key) DO NOTHING RETURNING id`。
+   2. **RETURNING に row (= winner)** → resource 作成 → 同一 transaction で
+      `UPDATE mcp_idempotency_keys SET created_resource_kind=..., created_resource_id=... WHERE id=:id`
+      → commit。作成した resource を返す。
+   3. **RETURNING 空 (= loser、既に予約済)** → `SELECT ... FROM mcp_idempotency_keys
+      WHERE (tenant_id, actor_id, tool_name, idempotency_key) FOR UPDATE` で **winner の commit を待つ**
+      (row lock が winner transaction commit まで block)。lock 取得後:
+      - `request_fingerprint` 不一致 → `IdempotencyKeyConflictError` (同一 key 異 payload、HTTP 409)。
+      - 一致 → `created_resource_id` の既存 resource を返す (新規作成しない)。
+   - これにより **「2 request → 1 resource」invariant** が race でも成立 (loser は resource を作らない)。
+3. winner の resource 作成と idempotency row 完了は**同一 transaction** (どちらか失敗で両方 rollback、
+   孤立 reservation row も残らない)。
 
-### MCP / 他経路の配線
+### MCP / 他経路の配線 + actor 解決 (R1 F-N2)
 
 - `server.py` の `ticket_create` / `run_create` が `idempotency_key` を bridge に渡す (dead param 解消)。
-- actor_id は MCP context の解決済 actor (caller 申告でなく server-owned)。
+- **actor_id の解決 (R1 F-N2)**: idempotency の `(tenant, actor, tool, key)` bind は actor が正しく
+  解決される前提。**現行 MCP context は固定 `DEFAULT_SUPERINTENDENT_ACTOR_ID` で per-client actor を
+  解決しない** (SP-016 api_capability_tokens による per-actor MCP 認証は別 scope)。本 ADR の P0.1 実装:
+  - bridge は `actor_id` を **caller 申告でなく MCP context 解決値** (現状は default superintendent) で受ける。
+  - その結果、P0.1 では actor 次元が実質単一 → idempotency は **「同一 (default) actor の同 key 再送で
+    重複作成しない」**という core 目的 (F-L4 = duplicate 作成防止) を満たす。
+  - **per-actor cross-actor replay deny は、SP-016 per-actor MCP 認証が wired された時点で自動的に
+    有効化**される設計 (unique constraint に actor_id を含むため、actor が分かれれば bucket が分かれる)。
+  - 本 ADR は actor 次元を **forward-compatible に schema へ含める**が、per-actor 認証自体は本 scope 外
+    (固定 default actor で ship してよいが、その制約を本 ADR + SP-034 Review に明記)。must-ship test は
+    bridge 直呼びで distinct actor_id を渡し、actor 分離が schema/算法レベルで成立することを固定する。
 - REST / research adapter 経路は idempotency_key を持たない呼出が大半 → `None` で従来通り (後方互換)。
 
 ## 却下案
