@@ -335,9 +335,24 @@ async def update_ticket_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="empty update payload",
         )
+    # ADR-00046 (Codex adversarial F-B2): existing 読込の **前に** project row を FOR UPDATE で lock し、
+    # existing 読込〜update_in_project を同一 project lock 下で直列化する。これにより
+    # previous_status / previous_assignee の snapshot が同一 ticket への並行更新に対して正確になる
+    # (project lock は同一 project の全 ticket write = update_in_project / bulk を直列化するため、
+    # lock 保持中は別 tx が assignee を書き換えられない)。lock 順は project → actor (F-B1) → ticket-update
+    # で update_in_project / bulk (project → ticket) と一貫し deadlock しない。archived は 409、存在しない
+    # project は no-op (lock 取得せず、下の get_in_project None → 404)。
+    try:
+        await repo.assert_project_active(tenant_id, project_id)
+    except ProjectArchivedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="project is archived; unarchive it before updating tickets",
+        ) from exc
     # user 編集 marker (seed re-apply 衝突回避、SP-012-11 BL-TCU-009)
     # metadata は repository が既存 metadata と merge せず、明示的に新規 dict なので、
     # 既存 dogfooding_source は preservation が必要 → get_in_project で取得して merge
+    # (上の project lock 下で読むため、previous snapshot が並行更新に対し正確、F-B2)。
     existing = await repo.get_in_project(
         tenant_id=tenant_id,
         project_id=project_id,

@@ -98,12 +98,20 @@ class TicketRepository(BaseRepository[Ticket]):
         ``create_in_project`` / ``update_in_project`` を通るため、ここを choke point として
         human-only + tenant を enforce する (R1 F-001、N-1/N-2 ADR-00041 と同型の迂回封鎖)。
         non-null の assignee 指定時のみ呼ぶ (null = 担当解除 / 未指定は検証 skip)。
+
+        Codex adversarial F-B1: actor row を ``FOR UPDATE`` で lock し、判定〜ticket write commit の間に
+        同じ actor の actor_type が human 以外へ変わって非 human assignee が永続化される競合を塞ぐ
+        (FK は tenant_id/id の存在しか守らない)。呼出順は ``_assert_project_active`` (project lock) の
+        後なので lock 順は project -> actor で一貫し、bulk 操作 (project -> ticket) と deadlock しない。
+        P0 では actor_type の mutation 経路は無いが、core invariant (human-only) の defense-in-depth。
         """
         actor_type = await self.session.scalar(
-            select(Actor.actor_type).where(
+            select(Actor.actor_type)
+            .where(
                 Actor.tenant_id == tenant_id,
                 Actor.id == assignee_actor_id,
             )
+            .with_for_update()
         )
         if actor_type != "human":
             # actor 不在 / 別 tenant (None) も非 human も同じく reject (fail-closed)。

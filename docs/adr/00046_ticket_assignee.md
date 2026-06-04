@@ -336,4 +336,33 @@ D-1 / D-2 / D-3 / D-4 を採用する。
 
 **Readiness Gate: READY**(R1+R2 で CRITICAL=0 / HIGH=0、R2 clean)。proposed → **accepted** (2026-06-04)。
 
-(実装後の adversarial-review / PR Codex auto-review の round はここに追記する)
+### codex-adversarial-review R1 (実装後、2026-06-04、branch diff vs origin/main)
+
+3 findings、**全 3 adopt**:
+- **F-A1 (HIGH)**: assignee audit diff が SQLAlchemy identity map refresh で `existing.assignee_actor_id`
+  が new 値に同期され new vs new 比較になり記録漏れ → `previous_assignee_actor_id` を update 前に snapshot
+  (`previous_status` と同方針)。DB-gated E2E audit 回帰 test 追加。
+- **F-A2 (MEDIUM)**: `_is_assignee_fk_violation` が `exc.orig.constraint_name` のみで asyncpg の
+  `orig.__cause__.constraint_name` 形を見逃し TOCTOU で 500 化 → `evidence_items._constraint_name` と同型に
+  両方確認。`__cause__` ケースの unit test 追加。
+- **F-A3 (MEDIUM)**: tickets 一覧 page が assignable-actors の `truncated`/degraded を捨てていた →
+  `{actors, truncated, degraded}` を保持し別々に警告表示。today も assignee 取得失敗を errors に可視化。
+
+### codex-adversarial-review R2 (2026-06-04)
+
+R1 の 3 findings は解消確認。新規 2 HIGH (concurrency/TOCTOU):
+- **F-B1 (HIGH) adopt**: `_assert_assignee_human` が unlocked SELECT で、判定〜commit 間の actor_type 変更
+  競合で非 human assignee が永続化されうる → actor row を `SELECT ... FOR UPDATE` で lock。lock 順は
+  `_assert_project_active` (project lock) の後で project→actor に一貫し bulk 操作 (project→ticket) と
+  deadlock しない。P0 では actor_type の mutation 経路が無いため非露出だが core invariant の defense-in-depth。
+- **F-B2 (HIGH) adopt**: audit の previous snapshot が mutation lock 前で、同一 ticket 並行更新時に虚偽遷移
+  (actorA→actorB を None→actorB) を記録しうる → **update_ticket_endpoint で `existing` 読込の前に
+  `assert_project_active` で project row を FOR UPDATE lock**。project lock は同一 project の全 ticket write
+  (update_in_project / bulk) を直列化するため、lock 保持中は別 tx が assignee/status を書き換えられず、
+  previous snapshot (status / assignee 両方) が並行更新に対し正確になる。lock 順は project → actor (F-B1)
+  → ticket-update で bulk (project → ticket) と一貫し deadlock しない (endpoint 側で ticket row を先 lock
+  する naive 案は project↔ticket 逆順で deadlock するため不採用、project-first lock で回避)。
+
+**Readiness Gate (R2 後)**: CRITICAL=0 / HIGH=0 (F-B1 + F-B2 とも adopt)。clean。
+
+(PR Codex App auto-review の round はここに追記する)
