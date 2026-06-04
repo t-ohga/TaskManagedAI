@@ -1,7 +1,7 @@
 ---
 id: "SP-034_mcp_server_gateway"
 type: "heavy"
-status: "completed"
+status: "partial_skeleton"
 sprint_no: 34
 created_at: "2026-05-26"
 updated_at: "2026-05-26"
@@ -209,4 +209,4 @@ uv run mypy backend/app/mcp_server.py
 
 ## Review
 
-(2026-06-04 台帳監査) **実装確認、completed 維持**。MCP Server Gateway (`backend/app/mcp/` の server.py / api_bridge.py / context.py、15+ tools) 実装済 (ADR-00026 accepted、docs #265、MCP 21 tools full DB wiring #279)。地上真実 (2026-06-04): backend pytest 4404 pass / 0 fail。本 Pack は他の P1 light Pack と異なり heavy + ADR + 実コード + test が揃っており completed は正確。Review 欄欠落のみ本監査で追記。
+(2026-06-04 台帳監査) **partial_skeleton (core 実装済だが idempotency acceptance 未達)**。MCP Server Gateway core (`backend/app/mcp/server.py` / api_bridge.py / context.py、15+ tools) は実装済 (ADR-00026 accepted、docs #265、MCP 21 tools full DB wiring #279) で backend pytest 4404 pass。**ただし受け入れ条件の idempotency (`ticket_create` / `run_create` の `idempotency_key` 再送重複防止、行 113/114/175/183) が未達**: `server.py:307` の `ticket_create` (および `run_create`) は `idempotency_key` 引数を受けるが docstring「idempotency_key で重複防止」に反し `bridge_ticket_create` / `bridge_run_create` へ渡しておらず (dead param)、bridge 側にも idempotency 引数が無いため MCP client retry で duplicate ticket / run が作れる (Codex CLI F-L4、実コード確認済)。よって当初の completed 維持判断を撤回し `partial_skeleton` へ訂正。idempotency 配線 (`(tenant_id, actor_id, tool_name, key)` bind) + retry duplicate 防止 test は別 scope で要実装。

@@ -193,4 +193,4 @@ uv run mypy backend/app/services/superintendent/
 
 ## Review
 
-(2026-06-04 台帳監査) **実装確認、completed 維持**。Superintendent Agent (`backend/app/services/superintendent/` lifecycle 等) + 6 MCP tools + 28 tests (#271)、MCP dispatch / 21 tools full DB wiring (#279) 実装済 (ADR-00027 accepted)。地上真実 (2026-06-04): backend pytest 4404 pass / 0 fail。heavy + ADR + 実コード + test が揃い completed は正確。Review 欄欠落のみ本監査で追記。
+(2026-06-04 台帳監査) **実装確認、completed 維持**。Superintendent Agent (`backend/app/services/superintendent/` lifecycle 等) + 6 MCP tools + 28 tests (#271)、MCP dispatch / 21 tools full DB wiring (#279) 実装済 (ADR-00027 accepted)。地上真実 (2026-06-04): backend pytest 4404 pass / 0 fail。proper PR (#271/#279) 経由実装 + test green を根拠に completed 維持 (個別 acceptance criterion の網羅監査は本台帳監査の scope 外。SP-034 と異なり本監査では未達 criterion を検出していないが、idempotency 等 MCP create 経路の retry safety は SP-034 の gap と連動するため、別 scope の実装時に再点検)。Review 欄欠落のみ本監査で追記。
