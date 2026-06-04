@@ -68,78 +68,132 @@ enforce + audit 付きで FastAPI endpoint として配線する。
 3. **CLI 専用 (API なし)** — ❌ 却下。CLI も結局 backend を叩く必要があり、緊急停止は UI からも
    叩けるべき。API endpoint を core にし CLI/UI は client にするのが正しい層分け。
 
-## 採用案 (詳細)
+## 採用案 (詳細、plan-review R1 の CRITICAL 2 + HIGH 3 を反映した改訂版)
 
-### endpoint
+> **重要**: 初版は「process-global kill 即時実行のみ」で設計したが、codex-plan-review R1 が
+> (1) tenant 越境 kill (2) latch 不在で再 spawn 可能 (3) state machine 逸脱 (4) 弱い human gate
+> (5) MCP bypass の 5 欠陥を指摘。kill switch を**正しく**作ると tenant-scoped kill + 永続
+> emergency-stop latch + operator gate + MCP hardening を伴う安全サブシステムになる。以下は改訂後。
 
-`POST /api/v1/superintendent/emergency-stop`
+### (A) tenant-scoped agent registry + scoped kill (CRITICAL-1 fix)
 
-- 認証: `actor_id = Depends(get_current_actor_id)` (authenticated session 必須)。
-- **human-only enforce**: service layer で DB から `Actor.actor_type` を resolve し `human` 以外は
-  `EmergencyStopForbiddenError` → HTTP 403 + `reason_code=non_human_actor`。`cli_artifact/decision.py`
-  の human-only 強制と同 pattern (caller 申告ではなく DB resolve)。
-- response model: `{ stopped_agent_count, blocked_run_count, stopped_at }` (raw secret / pid / token 非含)。
+- `agent_spawner` の `_active_agents: dict[UUID, SpawnedAgent]` は process-global で tenant/project を
+  持たないため、`kill_all_agents()` は**全 tenant を巻き込む**。
+- `SpawnedAgent` に `tenant_id` (+ `project_id`) を持たせ、`kill_agents_for_tenant(tenant_id)` を新設。
+  pre-kill で tenant 一致を確認し、**同一 operation 内で同 scope の run のみ** block する。
+- `kill_all_agents()` (process-global) は emergency-stop からは**呼ばない**。
 
-### service (`backend/app/services/superintendent/emergency_stop.py`)
+### (B) 永続 emergency-stop latch (CRITICAL-2 fix、rules instincts §14 「global kill switch は新規を止める」準拠)
 
-1. `actor_type == "human"` を DB resolve + 検証 (fail → forbidden)。
-2. `kill_all_agents()` を呼び spawned process を SIGKILL、停止した agent_id リスト取得。
-3. 当該 tenant の active (非 terminal) AgentRun を `blocked` + `blocked_reason='runtime_blocked'`
-   へ遷移 (既存 state machine 経由、`error_code='superintendent_emergency_stop'`)。AgentRunEvent
-   `runtime_blocked` + audit_events を append-only で記録。
-4. audit event payload: `actor_id` (human), `stopped_agent_count`, `blocked_run_count`,
-   `reason='superintendent_emergency_stop'`, `trace_id`, `correlation_id`, `timestamp`。raw 値なし。
+- **tenant-scoped emergency-stop state** を DB に持つ (`superintendent_emergency_stops` table:
+  `tenant_id` PK, `engaged_at`, `engaged_by_actor_id`, `cleared_at`, `cleared_by_actor_id`、active は最大 1)。
+- engage 後、以下の **enforcement point で latch を fail-closed check** し新規活動を deny:
+  1. AgentRun 作成 (`run_create` / `bridge_run_create` / orchestrator dispatch)
+  2. `superintendent_agent_start` / `superintendent_agent_register` / `superintendent_dispatch`
+  3. autonomy policy allow (auto-approve 経路)
+  4. `provider_request_preflight` (provider call 直前)
+- deny 時 reason_code `emergency_stop_engaged` を audit。
+- **clear/resume は human-only + audit + conservative-by-default** (engage と同じ operator gate、
+  別 human が勝手に clear できない、self-clear も明示記録)。
 
-### auto-approve policy resolution は本 ADR scope 外 (意図的 defer)
+### (C) endpoint + operator gate (HIGH-4 fix)
 
-SP-035 F-L5 のもう一方 (`superintendent_dispatch` が `POLICY_TEMPLATES["conservative"]` を hardcode し
-project autonomy_level を解決しない) は、**conservative = 常に human approval = P0.1 の安全側 default**
-であり、project-configured auto-approve を有効化するのは AI 権限拡大 (ADR Gate #4) でむしろ慎重に
-すべき。本 ADR では **conservative-by-default を P0.1 の意図的な安全 default として確定** し、
-project autonomy_level 解決は別 ADR / 別 scope に defer する (SP-035 Review に記録)。
+`POST /api/v1/superintendent/emergency-stop` (engage) + `POST .../emergency-stop/clear` (clear)
+
+- 専用 dependency `require_emergency_stop_operator` を新設 (`get_current_actor_id` のみでは不十分):
+  1. authenticated session 必須 (`request.state.authenticated` 検証、me.py `_require_authenticated_owner` 準拠)
+  2. DB resolve した `actor_type == "human"`
+  3. configured owner / 明示 emergency-stop role (同 tenant の別 human が勝手に発動できない)
+  4. tenant context を明示
+  5. unauthenticated / other-human / non-human は fail-closed (403)
+- response: `{ engaged, stopped_agent_count, blocked_run_count, engaged_at }` (raw secret/pid/token 非含)。
+
+### (D) state machine 整合 (HIGH-3 fix)
+
+- emergency-stop の run block は **`-> blocked` の正当 source state のみ** に限定:
+  `running` / `policy_linted` / `diff_ready` / `waiting_approval` (AgentRun state machine table 準拠)。
+- それ以外の非 terminal state (`queued` / `gathering_context` / `generated_artifact` / `schema_validated`
+  / `validation_failed` / `provider_incomplete`) は **latch (B) で新規活動を止める**ことでカバーし、
+  既存 row の status は直接遷移させない (不正 transition history を作らない)。
+- status update と AgentRunEvent `runtime_blocked` append は同一 transaction。terminal は不変。
+
+### (E) MCP agent-facing stop の hardening (HIGH-5 fix)
+
+- 現状 MCP `superintendent_agent_stop` / `_start` / `_register` は human check 無しで、AI agent が
+  1 体ずつ stop して human-only kill boundary を迂回できる。
+- emergency-stop latch (B) を `superintendent_agent_start` / `_register` / `_dispatch` の前段で check し、
+  latch engaged 中は MCP 経路の spawn/dispatch を deny。
+- `superintendent_agent_stop` (個別停止) は latch とは独立だが、emergency-stop 設計と整合するよう
+  MCP tool-list / direct-call negative test で「latch engaged 中の start/register/dispatch deny」を固定。
+
+### auto-approve policy resolution は本 ADR scope 外 (意図的 defer、F-L5 のもう一方)
+
+`superintendent_dispatch` の `POLICY_TEMPLATES["conservative"]` hardcode は **conservative = 常に human
+approval = P0.1 の安全側 default**。project-configured auto-approve を有効化するのは AI 権限拡大
+(ADR Gate #4) でむしろ慎重にすべき。本 ADR は conservative-by-default を P0.1 の意図的な安全 default
+として確定し、project autonomy_level 解決は別 ADR に defer する (SP-035 Review に記録)。
 
 ## 却下案
 
-- MCP tool での kill (選択肢 1): human-only 不整合。
-- approval 経路経由の kill: 緊急停止が approval 待ちになるのは本末転倒。kill は approval を通さない。
-- agent 個別 stop の連打: race / 取りこぼし。全停止は atomic な一括経路にする。
+- **process-global `kill_all_agents()` を emergency-stop から直接呼ぶ** (初版設計): CRITICAL-1 (tenant 越境)。
+- **latch 無しの「現プロセス kill のみ」** (初版設計): CRITICAL-2 (再 spawn で無力化)。
+- **「全 active run → blocked」** (初版設計): HIGH-3 (state machine 逸脱)。
+- **`get_current_actor_id` + actor_type のみ gate** (初版設計): HIGH-4 (authenticated / owner 未検証)。
+- MCP tool での kill: human-only 不整合 (選択肢 1)。
+- approval 経路経由の kill: 緊急停止が approval 待ちになるのは本末転倒。
 
 ## リスク
 
-- **誤操作リスク**: human が誤って全 agent を停止 → 進行中作業が `runtime_blocked` で停止。緩和:
-  endpoint は明示的な POST + (将来 UI では) 確認 dialog。停止は `blocked` (terminal でない) なので
-  原因解消後 resume 可能 (AgentRun state machine の `blocked → running`)。
-- **DoS リスク**: 連打で繰り返し kill。緩和: kill は冪等 (既に停止済は no-op)、human-only で外部到達不可
-  (Tailscale 閉域 + authenticated session)。
-- **audit 改ざん**: なし (append-only audit、raw 値なし)。
+- **誤操作リスク**: human が誤って emergency-stop → 進行中作業が停止 + 新規 deny。緩和: 明示 POST +
+  (将来 UI) 確認 dialog、clear で復帰可能 (`blocked → running` resume)。
+- **latch clear 忘れ**: engage 後 clear し忘れると新規活動が永続 deny。緩和: latch 状態を UI/CLI/API で
+  可視化、`tm superintendent status` で engaged 表示。
+- **cross-tenant 巻き込み**: (A) の scoped kill + pre-kill tenant 一致 check + negative test で防止。
+- **DoS / 改ざん**: kill は冪等、human-only operator + Tailscale 閉域で外部到達不可、append-only audit。
 
 ## rollback 手順
 
-1. 本変更は additive (新 endpoint + 新 service + audit event 種別)。DB schema 変更なし。
-2. rollback は endpoint 登録を router から外す + service を削除する revert PR (`git revert <merge SHA>`)。
-3. 既存 `kill_all_agents` / `OrchestratorKillSwitch` は元から未配線だったため、revert で従来状態に戻る
-   (機能の喪失なし、安全性の追加が無効化されるだけ)。
+1. 本変更は **migration を伴う** (`superintendent_emergency_stops` table) + 新 endpoint + service +
+   enforcement point の latch check。
+2. rollback: revert PR (`git revert <merge SHA>`) + migration downgrade (table drop、lossless)。
+3. 既存 `kill_all_agents` / `OrchestratorKillSwitch` は元から未配線のため、revert で従来状態 (安全性の
+   追加が無効化されるだけ、機能喪失なし)。
+4. enforcement point の latch check は **fail-closed だが latch row が無ければ常に allow** なので、
+   revert 後も既存挙動に影響しない設計にする。
 
 ## 実装対象ファイル
 
-- `backend/app/services/superintendent/emergency_stop.py` (新規 service、human-only + kill + blocked 遷移 + audit)
-- `backend/app/api/superintendent.py` (新規 router、`POST /emergency-stop`)
+- `migrations/versions/00NN_sp035_emergency_stop.py` (新規 `superintendent_emergency_stops` table、tenant scoped active ≤ 1 partial unique index)
+- `backend/app/db/models/superintendent_emergency_stop.py` (ORM)
+- `backend/app/services/superintendent/emergency_stop.py` (engage / clear / is_engaged、human-only、scoped kill、blocked 遷移、audit)
+- `backend/app/services/superintendent/agent_spawner.py` (SpawnedAgent に tenant_id 追加 + `kill_agents_for_tenant`)
+- `backend/app/api/superintendent.py` (新規 router、engage / clear endpoint)
+- `backend/app/api/dependencies/emergency_stop_operator.py` (`require_emergency_stop_operator`)
+- enforcement point: AgentRun 作成 / `superintendent_dispatch` / `agent_start` / `agent_register` /
+  autonomy allow / `provider_request_preflight` に latch check 追加
 - `backend/app/api/router.py` (router 登録)
-- `cli/tm/commands/superintendent.py` (新規 CLI、`tm superintendent emergency-stop`、任意・後続可)
-- `backend/tests/superintendent/test_emergency_stop.py` (新規 test)
+- `cli/tm/commands/superintendent.py` (engage / clear / status、後続可)
+- test 群 (下記)
 
-## テスト指針
+## テスト指針 (must-ship、plan-review R1 next steps 準拠)
 
-- **positive**: human actor で emergency-stop → spawned agent が kill され、active run が
-  `blocked`+`runtime_blocked` に遷移、audit event が raw 値なしで記録される。
-- **negative (human-only)**: `agent` / `service` / `provider` / `github_app` actor_type で 403 +
-  `reason_code=non_human_actor`、kill が**実行されない** (agent 残存)。
-- **冪等性**: agent 不在で emergency-stop → `stopped_agent_count=0`、エラーにならない。
-- **state machine**: 停止対象は非 terminal run のみ (completed/failed/cancelled は遷移しない)。
-- **audit**: `assert_no_raw_secret` で raw secret / token / pid が audit payload に出ないことを確認。
-- **tenant 境界**: 別 tenant の run を停止しない。
+- **cross-tenant 非干渉 (CRITICAL-1)**: tenant 1 の emergency-stop で tenant 2 の agent process / run が
+  **一切影響を受けない**。
+- **post-stop 新規 deny (CRITICAL-2)**: latch engaged 後、AgentRun 作成 / dispatch / agent_start /
+  provider preflight が `emergency_stop_engaged` で全 deny。clear 後は再び allow。
+- **state machine (HIGH-3)**: block は `running`/`policy_linted`/`diff_ready`/`waiting_approval` のみ
+  遷移。`queued`/`gathering_context`/`generated_artifact`/`schema_validated`/`validation_failed`/
+  `provider_incomplete` の row は直接遷移しない (latch で新規活動を止める)。terminal は不変。
+- **operator gate (HIGH-4)**: unauthenticated / 同 tenant 別 human / non-human (agent/service/provider/
+  github_app) は全 fail-closed (403)、kill / latch engage が**実行されない**。
+- **MCP bypass (HIGH-5)**: latch engaged 中の MCP `superintendent_agent_start`/`_register`/`_dispatch`
+  が deny されることを tool-list / direct-call negative test で固定。
+- **冪等性**: 二重 engage は no-op + 同一 latch、agent 不在 engage は `stopped_agent_count=0`。
+- **audit**: `assert_no_raw_secret` で raw secret / token / pid が audit payload に出ない。
 
 ## Hard Gates / KPI への trace
 
-- AC-HARD 直接の新規 fixture は不要 (本変更は安全性の**追加**であり既存 gate を緩めない)。
-- DD-04 の human-only decision boundary + append-only audit invariant に整合。
+- AC-HARD 既存 gate を緩めない (本変更は安全性の追加 + 新規活動 deny)。
+- DD-04 human-only decision boundary + append-only audit + instincts §14 「global kill switch は新規
+  AgentRun / provider call を止める」invariant に整合。
+- cross-source-enum-integrity: reason_code `emergency_stop_engaged` を 5+ source で整合させる。
