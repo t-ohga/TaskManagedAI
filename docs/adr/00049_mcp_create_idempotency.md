@@ -111,8 +111,10 @@ idempotency_key の再送が新規作成ではなく既存 resource を返すよ
       request_fingerprint, created_resource_kind=NULL, created_resource_id=NULL)
       ON CONFLICT (tenant_id, actor_id, tool_name, idempotency_key) DO NOTHING RETURNING id`。
    2. **RETURNING に row (= winner)** → resource 作成 → 同一 transaction で
-      `UPDATE mcp_idempotency_keys SET created_resource_kind=..., created_resource_id=... WHERE id=:id`
-      → commit。作成した resource を返す。
+      `UPDATE mcp_idempotency_keys SET created_resource_kind=..., created_resource_id=...,
+      completed_at=now() WHERE id=:id` (**3 列を同時に set**、CHECK constraint「completed = 全 NOT NULL」
+      を満たす。R3 F-N4: completed_at を含めないと CHECK violation で全 create が失敗する) → commit。
+      作成した resource を返す。
    3. **RETURNING 空 (= loser、既に予約済)** → `SELECT ... FROM mcp_idempotency_keys
       WHERE (tenant_id, actor_id, tool_name, idempotency_key) FOR UPDATE` で **winner の commit を待つ**
       (row lock が winner transaction commit まで block)。lock 取得後:
