@@ -1,8 +1,9 @@
 ---
 id: "ADR-00021"
 title: "Host-Portable Deployment + Data Migration: Mac / Linux / VPS どれでも 1 箇所選択 + taskhub admin CLI (init/backup/restore/migrate) + age key 手動運搬 + Tailscale 閉域維持 + RTO ≤ 4h host migration drill"
-status: "proposed"
+status: "accepted"
 date: "2026-05-10"
+accepted_at: "2026-05-19"
 authors:
   - "t-ohga"
 related_sprints:
@@ -14,12 +15,10 @@ related_research:
   - "ADR-00007 (External exposure、Tailscale-only invariant 不変前提)"
 supersedes: null
 superseded_by: null
-acceptance_blocked_by:
-  - "Phase G Codex plan-review + adversarial-review clean"
-  - "Phase H Codex second-opinion で 94 finding closure verify"
-  - "ADR-00007 update accepted (host-portable 明示化、Phase H で同期確認)"
-  - "SP-001.5 (host-portable amendment) が proposed で起票済"
-acceptance_target_sprint: "SP-001 着手直前 (Phase F-0 完了 + SP-001.5 着手と同時に proposed → accepted)"
+# (2026-06-05 reconcile) acceptance_blocked_by / acceptance_target_sprint は SP-022 T00 (2026-05-19)
+# で全条件 satisfied + accepted 化済のため削除 (F-R2-002 convention)。canonical file の status が
+# proposed のまま追従漏れだったのを SP-022 (completed) + P0 Exit declaration の記録に reconcile。
+# Phase 7b T09 (Mac→VPS 実機 migration drill RTO≤4h) は post-acceptance verification (P0 Exit gate 外、任意 timing)。
 ---
 
 最終更新: 2026-05-10 (proposed 起票 + Phase G plan/adversarial + Phase H second-opinion 反映、§11/§12/§14 が **正本**、§2/§3/§5/§7 は早期 sample で **§11/§12/§14 が後勝ち**)
