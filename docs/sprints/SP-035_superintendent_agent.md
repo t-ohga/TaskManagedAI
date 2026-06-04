@@ -1,7 +1,7 @@
 ---
 id: "SP-035_superintendent_agent"
 type: "heavy"
-status: "completed"
+status: "partial_skeleton"
 sprint_no: 35
 created_at: "2026-05-26"
 updated_at: "2026-05-26"
@@ -193,4 +193,4 @@ uv run mypy backend/app/services/superintendent/
 
 ## Review
 
-(2026-06-04 台帳監査) **実装確認、completed 維持**。Superintendent Agent (`backend/app/services/superintendent/` lifecycle 等) + 6 MCP tools + 28 tests (#271)、MCP dispatch / 21 tools full DB wiring (#279) 実装済 (ADR-00027 accepted)。地上真実 (2026-06-04): backend pytest 4404 pass / 0 fail。proper PR (#271/#279) 経由実装 + test green を根拠に completed 維持 (個別 acceptance criterion の網羅監査は本台帳監査の scope 外。SP-034 と異なり本監査では未達 criterion を検出していないが、idempotency 等 MCP create 経路の retry safety は SP-034 の gap と連動するため、別 scope の実装時に再点検)。Review 欄欠落のみ本監査で追記。
+(2026-06-04 台帳監査) **partial_skeleton (core 実装済だが auto-approve / kill switch acceptance 未達)**。Superintendent Agent core (`backend/app/services/superintendent/` lifecycle / delegation_policy 等) + 6 MCP tools + 28 tests (#271)、MCP dispatch (#279)、ADR-00027 accepted、backend pytest 4404 pass。**ただし 2 つの受け入れ条件が未配線 (Codex CLI F-L5、実コード確認済)**: (1) 低リスク自動承認 (行 109) — `server.py:886` の `superintendent_dispatch` が project autonomy_level (SP-024 L0-L3) を解決せず `POLICY_TEMPLATES["conservative"]` を hardcode するため、`delegation_policy.can_auto_approve` が常に human approval path に落ち、`task_write`/`read_only` でも auto-approve されない。(2) human kill switch (行 120) — `agent_spawner.py:111` の `kill_all_agents` は caller が無く (grep 0)、MCP/API の human kill-all 経路に未配線。よって当初の completed 維持判断を撤回し `partial_skeleton` へ訂正。policy persistence 解決 + kill-all 配線 + 統合 test は別 scope で要実装。
