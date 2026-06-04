@@ -18,10 +18,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.audit_event import AuditEvent
+from backend.app.db.models.ticket import Ticket
 from backend.app.repositories.ticket import (
     ProjectArchivedError,
     TicketNotActionableError,
     TicketRepository,
+)
+from backend.app.services.mcp_idempotency import (
+    ReservationExisting,
+    complete_reservation,
+    compute_request_fingerprint,
+    reserve_or_lookup,
 )
 
 MAX_LIMIT = 200
@@ -97,23 +104,76 @@ async def bridge_ticket_create(
     project_id: UUID,
     title: str,
     description: str = "",
+    idempotency_key: str | None = None,
+    actor_id: UUID | None = None,
 ) -> dict[str, Any]:
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
 
+    # ADR-00049 (SP-034): actor_id は MCP context 解決値 (caller 申告でない)。現行 MCP context は固定
+    # default superintendent (per-actor MCP 認証は SP-016 別 scope)。idempotency の actor 次元はこの
+    # resolved actor で bind する (F-N2)。created_by_actor_id も同 actor に揃える。
+    resolved_actor_id = actor_id if actor_id is not None else DEFAULT_SUPERINTENDENT_ACTOR_ID
+
     repo = TicketRepository(session)
-    # Q-4 (ADR-00037 R5 #2): create_in_project は _assert_project_active を通るため、archived project
-    # への MCP 経由 ticket create は ProjectArchivedError -> 409 で fail-closed になる (base create は
-    # guard を通らないので使わない、全 mutation 境界で archive freeze を enforce)。
-    ticket = await repo.create_in_project(
-        tenant_id,
-        project_id,
-        {
-            "title": title,
-            "slug": _title_to_slug(title),
-            "description": description,
-            "status": "open",
-            "created_by_actor_id": DEFAULT_SUPERINTENDENT_ACTOR_ID,
-        },
+
+    async def _create_ticket() -> Ticket:
+        # Q-4 (ADR-00037 R5 #2): create_in_project は _assert_project_active を通るため、archived
+        # project への MCP 経由 ticket create は ProjectArchivedError -> 409 で fail-closed になる
+        # (base create は guard を通らないので使わない、全 mutation 境界で archive freeze を enforce)。
+        return await repo.create_in_project(
+            tenant_id,
+            project_id,
+            {
+                "title": title,
+                "slug": _title_to_slug(title),
+                "description": description,
+                "status": "open",
+                "created_by_actor_id": resolved_actor_id,
+            },
+        )
+
+    if idempotency_key is None:
+        ticket = await _create_ticket()
+        await session.commit()
+        return {
+            "ticket_id": str(ticket.id),
+            "title": ticket.title,
+            "status": ticket.status,
+        }
+
+    # ADR-00049: idempotency。reserve → winner は create + complete、loser は既存 ticket を返す。
+    # reservation insert + ticket 作成 + reservation 完了は同一 transaction (どれか失敗で全 rollback)。
+    fingerprint = compute_request_fingerprint(
+        {"project_id": str(project_id), "title": title, "description": description}
+    )
+    outcome = await reserve_or_lookup(
+        session,
+        tenant_id=tenant_id,
+        actor_id=resolved_actor_id,
+        tool_name="ticket_create",
+        idempotency_key=idempotency_key,
+        request_fingerprint=fingerprint,
+    )
+    if isinstance(outcome, ReservationExisting):
+        existing = await repo.get_in_project(
+            tenant_id=tenant_id, project_id=project_id, ticket_id=outcome.resource_id
+        )
+        await session.commit()  # loser の FOR UPDATE lock を解放する
+        if existing is None:
+            return {"error": "not_found", "ticket_id": str(outcome.resource_id)}
+        return {
+            "ticket_id": str(existing.id),
+            "title": existing.title,
+            "status": existing.status,
+            "idempotent_replay": True,
+        }
+
+    ticket = await _create_ticket()
+    await complete_reservation(
+        session,
+        reservation_id=outcome.reservation_id,
+        resource_kind="ticket",
+        resource_id=ticket.id,
     )
     await session.commit()
     return {
@@ -314,6 +374,8 @@ async def bridge_run_create(
     role_id: str | None = None,
     parent_run_id: UUID | None = None,
     commit: bool = True,
+    idempotency_key: str | None = None,
+    actor_id: UUID | None = None,
 ) -> dict[str, Any]:
     """AgentRun を作成する run/delegation/dispatch の chokepoint。
 
@@ -322,9 +384,63 @@ async def bridge_run_create(
     保持**する。`bridge_delegation_create` は child run 作成と inter_agent_messages INSERT を同一 lock 下の
     1 transaction で行い、child 作成後・message INSERT 前に concurrent な bulk_soft_delete / archive が割り込む
     TOCTOU を排除するために本 flag を使う。
+
+    ADR-00049 (SP-034): ``idempotency_key`` 指定時は作成-level idempotency を適用する。これは MCP
+    ``run_create`` (commit=True) からのみ使われ、``commit=False`` (delegation chain) では非対応
+    (delegation は idempotency_key を渡さない)。delegation/dispatch の commit=False 経路は本変更で一切
+    変わらない。
     """
     from backend.app.db.models.agent_run_event import AgentRunEvent
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
+
+    resolved_actor_id = actor_id if actor_id is not None else DEFAULT_SUPERINTENDENT_ACTOR_ID
+
+    # ADR-00049: idempotency reserve (idempotency_key 指定時のみ)。winner は通常経路で create し、
+    # commit 直前に complete する。loser (既存予約) は assert_ticket_actionable を通さず既存 run を返す。
+    reservation_winner_id: UUID | None = None
+    if idempotency_key is not None:
+        if not commit:
+            # delegation chain (commit=False) は idempotency_key を渡さない契約。誤用は fail-closed。
+            raise ValueError("idempotency_key is not supported with commit=False")
+        fingerprint = compute_request_fingerprint(
+            {
+                "project_id": str(project_id),
+                "ticket_id": ticket_id,
+                "purpose": purpose,
+                "role_id": role_id,
+                "parent_run_id": str(parent_run_id) if parent_run_id else None,
+            }
+        )
+        outcome = await reserve_or_lookup(
+            session,
+            tenant_id=tenant_id,
+            actor_id=resolved_actor_id,
+            tool_name="run_create",
+            idempotency_key=idempotency_key,
+            request_fingerprint=fingerprint,
+        )
+        if isinstance(outcome, ReservationExisting):
+            existing_run = await session.scalar(
+                select(AgentRun).where(
+                    AgentRun.tenant_id == tenant_id,
+                    AgentRun.project_id == project_id,
+                    AgentRun.id == outcome.resource_id,
+                )
+            )
+            await session.commit()  # loser の FOR UPDATE lock を解放する
+            if existing_run is None:
+                return {"error": "not_found", "run_id": str(outcome.resource_id)}
+            return {
+                "run_id": str(existing_run.id),
+                "status": existing_run.status,
+                "project_id": str(project_id),
+                "ticket_id": ticket_id,
+                "purpose": purpose,
+                "role_id": role_id,
+                "parent_run_id": str(parent_run_id) if parent_run_id else None,
+                "idempotent_replay": True,
+            }
+        reservation_winner_id = outcome.reservation_id
 
     # Q-3/Q-4 (ADR-00037 / Codex adversarial R3): soft-deleted ticket / archived project への
     # 作業開始を拒否する。run_create は run/delegation/dispatch の chokepoint (bridge_delegation_create
@@ -380,6 +496,15 @@ async def bridge_run_create(
         actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
     )
     session.add(event)
+    # ADR-00049: winner は run 作成後・commit 前に reservation を completed 化する (同一 transaction、
+    # 3 列同時 set)。idempotency_key 未指定時は reservation_winner_id is None で no-op。
+    if reservation_winner_id is not None:
+        await complete_reservation(
+            session,
+            reservation_id=reservation_winner_id,
+            resource_kind="agent_run",
+            resource_id=run.id,
+        )
     if commit:
         await session.commit()
     else:

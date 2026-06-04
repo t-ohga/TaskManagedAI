@@ -1,9 +1,9 @@
 ---
 id: "ADR-00049"
 title: "MCP create idempotency (ticket_create / run_create の retry 重複防止、SP-034 gap)"
-status: "proposed"
+status: "accepted"
 date: "2026-06-05"
-accepted_at: null
+accepted_at: "2026-06-05"
 deciders: ["t-ohga"]
 adr_gate_criteria: [2, 3]
 related_adr:

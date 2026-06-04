@@ -310,6 +310,7 @@ async def ticket_create(
                 project_id=UUID(project_id),
                 title=title,
                 description=description,
+                idempotency_key=idempotency_key,
             )
             try:
                 from backend.app.mcp.discord_notify import notify_ticket_created
@@ -402,6 +403,7 @@ async def run_create(
                 purpose=purpose,
                 role_id=role_id,
                 parent_run_id=parsed_parent,
+                idempotency_key=idempotency_key,
             )
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
