@@ -1,7 +1,7 @@
 ---
 id: "SP-032_research_advanced"
 type: "light"
-status: "partial"
+status: "partial_skeleton"
 sprint_no: 32
 created_at: "2026-05-26"
 updated_at: "2026-06-04"
@@ -38,4 +38,4 @@ uv run pytest -q
 
 ## Review
 
-(2026-06-04 台帳監査) **部分実装**。claim model / schema に `conflict_group_id` / `freshness_score` フィールドは存在 (SP-010 由来の reserved column) するが、SP-032 の目的である矛盾検出ロジック / freshness 計算 / domain trust registry 連携は未実装。受け入れ条件も全て未チェック。SP-027 (source trust registry) とも依存。commit `1b9cad6` (#261) の一括 status flip 対象。実態に合わせ `partial` へ訂正。
+(2026-06-04 台帳監査) **部分実装**。claim model / schema に `conflict_group_id` / `freshness_score` フィールドは存在 (SP-010 由来の reserved column) するが、SP-032 の目的である矛盾検出ロジック / freshness 計算 / domain trust registry 連携は未実装。受け入れ条件も全て未チェック。SP-027 (source trust registry) とも依存。commit `1b9cad6` (#261) の一括 status flip 対象。実態に合わせ `partial_skeleton` へ訂正 (seed→in_progress、bare `partial` は未対応のため、Codex App F-L1)。

@@ -1,7 +1,7 @@
 ---
 id: "SP-028_webhook_ux"
 type: "light"
-status: "partial"
+status: "partial_skeleton"
 sprint_no: 28
 created_at: "2026-05-26"
 updated_at: "2026-06-04"
@@ -38,4 +38,4 @@ uv run pytest -q
 
 ## Review
 
-(2026-06-04 台帳監査) **部分実装**。`backend/app/api/github_webhooks.py` で GitHub webhook **受信** は実装済だが、SP-028 の目的である UX 層 (webhook event の toast 通知 / CI status live update / PR timeline 統合) は未実装。受け入れ条件も全て未チェック。commit `1b9cad6` (#261) の一括 status flip 対象。実態に合わせ `partial` へ訂正。残 UX 着手時に frontend 配線 + test。
+(2026-06-04 台帳監査) **部分実装**。`backend/app/api/github_webhooks.py` で GitHub webhook **受信** は実装済だが、SP-028 の目的である UX 層 (webhook event の toast 通知 / CI status live update / PR timeline 統合) は未実装。受け入れ条件も全て未チェック。commit `1b9cad6` (#261) の一括 status flip 対象。実態に合わせ `partial_skeleton` へ訂正 (seed→in_progress、bare `partial` は未対応のため、Codex App F-L1)。残 UX 着手時に frontend 配線 + test。

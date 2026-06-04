@@ -1,7 +1,7 @@
 ---
 id: "SP-001-5_host_portable_amendment"
 type: "heavy"
-status: "completed"
+status: "proposed"
 sprint_no: 1.5
 created_at: "2026-05-10"
 updated_at: "2026-06-04"
@@ -144,4 +144,4 @@ $ git log --oneline docs/sprints/SP-001_project_foundation.md
 
 ## Review
 
-(2026-06-04 台帳監査) **完遂 (SP-022 へ統合・superseded)**。本 amendment Pack の deliverable は、ADR-00021 (Host-Portable Deployment) + ADR-00007 update の accepted 化 (SP-022 T00、2026-05-19) と、host-portable invariant / DD-05・計画(仮).md 本文 sync (SP-022 で実施) を通じて実現済。standalone amendment sprint としては着手されず SP-022 framework_intake_hardening (completed) に吸収された。実態に合わせ `proposed` → `completed` へ訂正 (独立 Pack としては superseded、成果は P0 Exit declaration 2026-05-22 に反映済)。
+(2026-06-04 台帳監査) **`proposed` 維持 (ADR gate 未達)**。本 amendment は ADR-00021 (Host-Portable Deployment) + ADR-00007 update の **accepted 化を着手 gate** とするが、canonical ADR (`docs/adr/00021_host_portable_deployment.md` / `docs/adr/00007_external_exposure.md`) は **現在も `status: "proposed"`** で、本 Pack frontmatter も `adr_refs: []` / ADR は `planned_adr_refs` 止まり。よって completed にはできず `proposed` を維持する (Codex App F-L2)。**別 drift 注意**: P0 Exit declaration (`docs/release/p0_exit_2026_05_22.md`) は SP-022 T00 で ADR-00021/00007 を accepted 化したと記載するが、canonical ADR 側が proposed のまま追従しておらず矛盾。ADR 正本の status 整合は別途要確認 (本 doc PR scope 外、報告に記録)。

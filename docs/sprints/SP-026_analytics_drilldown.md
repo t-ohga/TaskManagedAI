@@ -1,7 +1,7 @@
 ---
 id: "SP-026_analytics_drilldown"
 type: "light"
-status: "partial"
+status: "partial_skeleton"
 sprint_no: 26
 created_at: "2026-05-26"
 updated_at: "2026-06-04"
@@ -43,4 +43,4 @@ uv run pytest tests/ -k "kpi or analytics" -q
 
 ## Review
 
-(2026-06-04 台帳監査) **部分実装**。`frontend/app/(admin)/eval-dashboard/analytics/page.tsx` (#261、~90 行) は存在するが、受け入れ条件 5 件は全て未チェックで、5 KPI × time series drill-down / provider・project filter / backend aggregation endpoint / drill-down route は未実装。KPI は SP-011 eval harness の流用で SP-026 固有の drilldown ロジックは無い。commit `1b9cad6` (#261) が status を実態より先に completed へ変更していた。実態に合わせ `partial` へ訂正。残 must_ship 着手時に backend aggregation + frontend drilldown + test。
+(2026-06-04 台帳監査) **部分実装**。`frontend/app/(admin)/eval-dashboard/analytics/page.tsx` (#261、~90 行) は存在するが、受け入れ条件 5 件は全て未チェックで、5 KPI × time series drill-down / provider・project filter / backend aggregation endpoint / drill-down route は未実装。KPI は SP-011 eval harness の流用で SP-026 固有の drilldown ロジックは無い。commit `1b9cad6` (#261) が status を実態より先に completed へ変更していた。実態に合わせ `partial_skeleton` へ訂正 (dogfooding seed は `partial_skeleton`→in_progress ticket に projection。bare `partial` は seed mapping 未対応で fallback=open になるため不可、Codex App F-L1)。残 must_ship 着手時に backend aggregation + frontend drilldown + test。

@@ -1,7 +1,7 @@
 ---
 id: "SP-033_remote_agent_adapter"
 type: "light"
-status: "partial"
+status: "partial_skeleton"
 sprint_no: 33
 created_at: "2026-05-26"
 updated_at: "2026-06-04"
@@ -38,4 +38,4 @@ uv run pytest -q
 
 ## Review
 
-(2026-06-04 台帳監査) **部分実装 (P0.1 deny-only stub のみ)**。`backend/app/services/remote_agent_gateway/deny_only.py` の deny-only gateway stub は実装済 (ADR-00013 Remote Agent Extension Point boundary 準拠の P0.1 deny-only 方針)。ただし Pack 目的の full adapter (Codex App Server / Claude Agent SDK / Remote Control adapter / MCP gateway 拡張) は未実装・将来スコープ。受け入れ条件も全て未チェック。commit `1b9cad6` (#261) の一括 status flip 対象。実態に合わせ `partial` へ訂正。
+(2026-06-04 台帳監査) **部分実装 (P0.1 deny-only stub のみ)**。`backend/app/services/remote_agent_gateway/deny_only.py` の deny-only gateway stub は実装済 (ADR-00013 Remote Agent Extension Point boundary 準拠の P0.1 deny-only 方針)。ただし Pack 目的の full adapter (Codex App Server / Claude Agent SDK / Remote Control adapter / MCP gateway 拡張) は未実装・将来スコープ。受け入れ条件も全て未チェック。commit `1b9cad6` (#261) の一括 status flip 対象。実態に合わせ `partial_skeleton` へ訂正 (seed→in_progress、bare `partial` は未対応のため、Codex App F-L1)。
