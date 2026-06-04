@@ -63,16 +63,14 @@ export function useTheme(): { theme: Theme; setTheme: (next: Theme) => void } {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setThemeState(initial);
 
-    // Codex adversarial F-D1: 別 tab で theme が変わったら React state だけでなく **DOM の `.dark` class
-    // にも applyTheme を再適用** する。`.dark` はグローバル副作用で React 描画属性ではないため、state
-    // 更新だけだと「controls は新値表示・配色は旧のまま」と乖離する。applyTheme は idempotent なので
-    // 同 tab custom event 経路 (setTheme で適用済) で再呼びしても害はない。
-    // 別 tab の theme 変更 (StorageEvent) を反映する。StorageEvent.newValue は **書込側 tab が持つ
-    // 実際の新値** なので、getItem 再読込 (read 障害で stale な可能性、F-G5) に頼らず newValue を
-    // authoritative に採用する (Codex F-G6: stale な getItem で cross-tab の新値を取りこぼし、未永続の
-    // in-session 選択を古い値で消してしまうのを防ぐ)。key === null は localStorage.clear()、
-    // newValue === null は当該 key の removeItem で、いずれも system 扱い。cross-tab で storage が
-    // 更新された証左なので dirty を解除する。
+    // 別 tab の theme 変更 (StorageEvent) を反映する。
+    // - F-D1: React state だけでなく **DOM の `.dark` class にも applyTheme を再適用** する。`.dark` は
+    //   グローバル副作用で React 描画属性ではないため、state 更新だけだと controls は新値・配色は旧の
+    //   ままと乖離する (applyTheme は idempotent)。
+    // - F-G6: 反映値は **StorageEvent.newValue (書込側 tab が持つ実際の新値)** を採用し、getItem 再読込
+    //   (read 障害で stale な可能性、F-G5) に頼らない。key === null は localStorage.clear()、
+    //   newValue === null は当該 key の removeItem で、いずれも system 扱い。cross-tab で storage が
+    //   更新された証左なので dirty を解除する。
     const onStorage = (event: StorageEvent): void => {
       if (event.key !== THEME_STORAGE_KEY && event.key !== null) return;
       const raw = event.key === null ? null : event.newValue;
