@@ -14,6 +14,12 @@ import { TicketTagManager } from "@/components/ticket-tag-manager";
 import { getCurrentProject } from "@/lib/api/session";
 import { getTicketActivity, type TicketActivityEntry } from "@/lib/api/tickets";
 import { listTags } from "@/lib/api/tags";
+import { fetchAssignableActors } from "@/lib/api/actors";
+import {
+  buildAssigneeNameMap,
+  assigneeLabel,
+  type AssignableActor
+} from "@/lib/domain/assignee";
 import type { TagRead } from "@/lib/domain/tag";
 import { isValidYmd } from "@/lib/domain/due-date";
 
@@ -129,6 +135,22 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
     }
   }
 
+  // A-6 (ADR-00046): 担当者候補 (tenant 内 human)。表示 (UUID -> display_name) + 編集 select に使う。
+  // 取得失敗は degraded (空 list + flag) に倒す。表示は assigneeLabel の中立 fallback、編集 select は
+  // 現 assignee のみ option 保持 + 警告 (silent に未割当へ変えない、R1 F-009)。
+  let assignableActors: AssignableActor[] = [];
+  let assignableActorsDegraded = false;
+  let assignableActorsTruncated = false;
+  try {
+    const assignableResp = await fetchAssignableActors();
+    assignableActors = assignableResp.actors;
+    // Codex App F-C3: truncated を編集フォームへ伝えて cap 切り詰めを可視化する (一覧 page と同扱い)。
+    assignableActorsTruncated = assignableResp.truncated;
+  } catch {
+    assignableActorsDegraded = true;
+  }
+  const assigneeNameById = buildAssigneeNameMap(assignableActors);
+
   // ADR-00041 N-2: comment + status 変更 + created を backend 集約 endpoint から取得。
   // 取得失敗 (backend 障害 / 一時的 5xx) はページ全体を落とさず、作成/更新の合成 entry に
   // degrade する (timeline は補助情報、章単位で fail-soft)。
@@ -203,6 +225,11 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
             <div className="flex justify-between border-t border-line pt-3">
               <dt className="text-muted-foreground">期限</dt>
               <dd>{formatDueDate(ticket.due_date)}</dd>
+            </div>
+            <div className="flex justify-between border-t border-line pt-3">
+              {/* A-6: assignee は display_name で表示 (UUID 生表示はしない、map-miss は中立 fallback)。 */}
+              <dt className="text-muted-foreground">担当者</dt>
+              <dd>{assigneeLabel(assigneeNameById, ticket.assignee_actor_id)}</dd>
             </div>
             <div className="flex justify-between border-t border-line pt-3">
               <dt className="text-muted-foreground">作成日</dt>
@@ -311,13 +338,13 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
       {/* S-1: 編集フォームは印刷物には出さない (.no-print) */}
       {isWritable ? (
         <div className="no-print">
-          <EditTicketForm ticket={{
-            ...ticket,
-            assignee_actor_id: null,
-            acceptance_criteria: null,
-            evidence_ids: [],
-            agent_run_ids: [],
-          } as unknown as Parameters<typeof EditTicketForm>[0]["ticket"]} />
+          {/* A-6 (R1 F-006): as-unknown cast を解消。TicketDetail (assignee_actor_id 含む) を直接渡す。 */}
+          <EditTicketForm
+            ticket={ticket}
+            assignableActors={assignableActors}
+            assignableActorsDegraded={assignableActorsDegraded}
+            assignableActorsTruncated={assignableActorsTruncated}
+          />
         </div>
       ) : null}
 

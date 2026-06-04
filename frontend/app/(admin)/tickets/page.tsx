@@ -5,6 +5,12 @@ import { Suspense } from "react";
 import { BackendApiError } from "@/lib/api/client";
 import { getCurrentProject } from "@/lib/api/session";
 import { fetchDateContext } from "@/lib/api/reminders";
+import { fetchAssignableActors } from "@/lib/api/actors";
+import {
+  buildAssigneeNameMap,
+  assigneeLabel,
+  type AssignableActor
+} from "@/lib/domain/assignee";
 import {
   loadProjectTags,
   loadProjects,
@@ -103,12 +109,15 @@ function TicketCard({
   projectActive,
   referenceDate,
   thresholdDays,
+  assigneeNameById,
 }: {
   ticket: TicketItem;
   projectSlug?: string | undefined;
   projectActive: boolean;
   referenceDate?: string | undefined;
   thresholdDays?: number | undefined;
+  // A-6: assignee UUID -> display_name 解決 map (取得失敗時は空 map → 中立 fallback)。
+  assigneeNameById?: Map<string, string | null> | undefined;
 }) {
   const formattedDue = formatDueDate(ticket.due_date);
   // project active + ticket status + 期限から強調 bucket を導出。archived project / 非 actionable
@@ -153,6 +162,12 @@ function TicketCard({
         {formattedDue ? (
           <span className={`rounded px-1.5 py-0.5 text-[10px] ${dueChipClass(dueBucket)}`}>
             {dueChipPrefix(dueBucket)} {formattedDue}
+          </span>
+        ) : null}
+        {/* A-6: 担当者が居るときのみ display_name chip (UUID 生表示はしない)。 */}
+        {ticket.assignee_actor_id ? (
+          <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
+            担当: {assigneeLabel(assigneeNameById ?? new Map(), ticket.assignee_actor_id)}
           </span>
         ) : null}
         <span className="ml-auto text-[10px] text-muted-foreground">
@@ -245,6 +260,21 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
     .catch(() => ({ ok: false as const }));
   const referenceDate = dateContextResult.ok ? dateContextResult.ctx.reference_date : undefined;
   const thresholdDays = dateContextResult.ok ? dateContextResult.ctx.threshold_days : undefined;
+
+  // A-6 (ADR-00046): 担当者候補 (tenant 内 human)。作成 dialog の選択肢 + 一覧 (Kanban/list) の
+  // assignee display (UUID -> display_name) に使う。Codex adversarial F-A3: truncated (cap 超過) と
+  // degraded (取得失敗) を別々に保持して可視化する (silent cap / silent failure を A-6 要件どおり表示)。
+  let assignableActors: AssignableActor[] = [];
+  let assignableActorsTruncated = false;
+  let assignableActorsDegraded = false;
+  try {
+    const assignableResp = await fetchAssignableActors();
+    assignableActors = assignableResp.actors;
+    assignableActorsTruncated = assignableResp.truncated;
+  } catch {
+    assignableActorsDegraded = true;
+  }
+  const assigneeNameById = buildAssigneeNameMap(assignableActors);
 
   // ADR-00044 (A-5): tag filter 用に specific project の tags を取得 (all view は project 混在で
   // tag scope が曖昧なため非表示)。tagFilter 適用中は fail-closed (tag metadata が読めない状態で
@@ -465,6 +495,19 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             期限の日付は表示されますが、色分けされません。時間をおいて再読み込みしてください。
           </div>
         ) : null}
+        {/* A-6 (Codex adversarial F-A3): 担当者候補の取得失敗 / cap 超過を可視化する。silent に空候補や
+            部分候補を見せず、作成フォームの担当者選択が不完全であることを明示する。 */}
+        {assignableActorsDegraded ? (
+          <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            担当者候補を取得できませんでした。新規チケットは未割当で作成され、既存の担当者は名前ではなく
+            「担当者 (不明)」と表示される場合があります。時間をおいて再読み込みしてください。
+          </div>
+        ) : assignableActorsTruncated ? (
+          <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            担当者が多いため候補の一部のみ表示しています。候補一覧に無い担当者は新規割り当てできず、
+            該当する既存の担当者は「担当者 (不明)」と表示される場合があります。
+          </div>
+        ) : null}
       </Suspense>
 
       {selectedProject === "all" ? (
@@ -472,7 +515,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
           全プロジェクト横断表示中。チケットの作成・更新するにはプロジェクトを選択してください。
         </div>
       ) : currentProject && selectedProject === currentProject.slug ? (
-        <TicketCreateDialog />
+        <TicketCreateDialog assignableActors={assignableActors} />
       ) : (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
           チケットは現在のプロジェクト
@@ -501,6 +544,7 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
                   projectActive={ticket.projectActive}
                   referenceDate={referenceDate}
                   thresholdDays={thresholdDays}
+                  assigneeNameById={assigneeNameById}
                 />
               ))}
             </KanbanColumnEnhanced>
@@ -517,11 +561,13 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             projectActive: t.projectActive,
             due_date: t.due_date,
             created_at: t.created_at,
+            assignee_actor_id: t.assignee_actor_id,
             tags: t.tags,
           }))}
           showProjectBadge={showProjectBadge}
           referenceDate={referenceDate}
           thresholdDays={thresholdDays}
+          assigneeNameById={assigneeNameById}
         />
       )}
     </section>

@@ -23,6 +23,8 @@ function ticket(id: string, title: string) {
     projectActive: true,
     due_date: null,
     created_at: null,
+    // A-6 (ADR-00046): SelectableTicketList の TicketRow に assignee_actor_id が必須。
+    assignee_actor_id: null,
     tags: []
   };
 }

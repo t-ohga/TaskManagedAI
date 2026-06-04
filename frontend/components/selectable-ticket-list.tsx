@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { TicketStatusIndicator } from "@/components/ticket-status-indicator";
 import { BulkStatusChanger } from "@/components/bulk-status-changer";
 import { TagChip } from "@/components/tag-chip";
+import { assigneeLabel } from "@/lib/domain/assignee";
 import type { TagRead } from "@/lib/domain/tag";
 import { isValidYmd, ticketDueBucket, type DueDateBucket } from "@/lib/domain/due-date";
 
@@ -20,6 +21,8 @@ type TicketRow = {
   projectActive: boolean;
   due_date: string | null;
   created_at: string | null;
+  // A-6 (ADR-00046): 担当者 actor id (UUID or null)。display_name は assigneeNameById で解決。
+  assignee_actor_id: string | null;
   tags: TagRead[];
 };
 
@@ -30,6 +33,8 @@ type SelectableTicketListProps = {
   // 取得失敗時は undefined → 期限強調なし (neutral) に倒す (fail-closed、誤分類しない)。
   referenceDate?: string | undefined;
   thresholdDays?: number | undefined;
+  // A-6 (ADR-00046): assignee UUID -> display_name 解決 map (取得失敗時は空 map → 中立 fallback)。
+  assigneeNameById?: Map<string, string | null> | undefined;
 };
 
 // due_date は SQL date (YYYY-MM-DD) のプレーンな暦日。timezone を持たないため
@@ -74,6 +79,7 @@ export function SelectableTicketList({
   showProjectBadge,
   referenceDate,
   thresholdDays,
+  assigneeNameById,
 }: SelectableTicketListProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
@@ -108,7 +114,8 @@ export function SelectableTicketList({
     });
   }, [tickets]);
 
-  const colSpan = (showProjectBadge ? 6 : 5) + (bulkEnabled ? 1 : 0);
+  // 列: title / status / priority / [project] / 期限 / 担当者 / 作成日 (+ checkbox)。
+  const colSpan = (showProjectBadge ? 7 : 6) + (bulkEnabled ? 1 : 0);
 
   // フィルタ / プロジェクト切替で tickets が変わったとき、隠れたチケット ID が mutation 境界
   // (BulkStatusChanger → updateTicketAction) へ渡らないよう、表示中チケットに含まれる選択 ID
@@ -144,6 +151,7 @@ export function SelectableTicketList({
               <th className="px-4 py-3">優先度</th>
               {showProjectBadge ? <th className="px-4 py-3">プロジェクト</th> : null}
               <th className="px-4 py-3">期限</th>
+              <th className="px-4 py-3">担当者</th>
               <th className="px-4 py-3">作成日</th>
             </tr>
           </thead>
@@ -199,6 +207,16 @@ export function SelectableTicketList({
                         </span>
                       );
                     })()}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {/* A-6: assignee は display_name で表示 (UUID 生表示はしない)。未割当は淡色。 */}
+                    {ticket.assignee_actor_id ? (
+                      <span className="text-foreground">
+                        {assigneeLabel(assigneeNameById ?? new Map(), ticket.assignee_actor_id)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">未割当</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
                     {ticket.created_at ? new Date(ticket.created_at).toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo" }) : ""}

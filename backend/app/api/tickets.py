@@ -26,6 +26,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.approval_inbox import (
@@ -40,6 +41,7 @@ from backend.app.repositories.audit_event import AuditEventRepository
 from backend.app.repositories.notification_event import NotificationEventRepository
 from backend.app.repositories.tag import TagNotFoundError, TagRepository
 from backend.app.repositories.ticket import (
+    AssigneeNotAssignableError,
     ProjectArchivedError,
     TicketNotActionableError,
     TicketRepository,
@@ -209,6 +211,26 @@ class TicketUpdateRequest(BaseModel):
     assignee_actor_id: UUID | None = None
 
 
+def _is_assignee_fk_violation(exc: IntegrityError) -> bool:
+    """IntegrityError が assignee FK (tickets_assignee_actor_fkey) 違反か (ADR-00046 R1 F-004 backstop)。
+
+    `_assert_assignee_human` の pre-check が non-human / cross-tenant / nonexistent を先に弾くため
+    通常は到達不能だが、pre-check SELECT と insert flush の間で actor が削除される TOCTOU 等の防御として
+    残す。slug unique (`tickets_uq_tenant_project_slug`) 等の他制約違反は誤写像せず re-raise させるため、
+    constraint 名で assignee FK のみに限定する。
+
+    Codex adversarial F-A2: asyncpg/SQLAlchemy では constraint_name が `exc.orig` ではなく
+    `exc.orig.__cause__` 側に入る形がある (evidence_items.py の `_constraint_name` と同じく両方を見ないと
+    TOCTOU FK 違反を 500 に取り違える)。orig と orig.__cause__ の両方を確認する。
+    """
+    orig = getattr(exc, "orig", None)
+    candidates = [orig, getattr(orig, "__cause__", None)]
+    for candidate in candidates:
+        if getattr(candidate, "constraint_name", None) == "tickets_assignee_actor_fkey":
+            return True
+    return False
+
+
 @router.post("", response_model=TicketRead, status_code=status.HTTP_201_CREATED)
 async def create_ticket_endpoint(
     project_id: UUID,
@@ -240,6 +262,21 @@ async def create_ticket_endpoint(
             status_code=status.HTTP_409_CONFLICT,
             detail="project is archived; unarchive it before creating tickets",
         ) from exc
+    except AssigneeNotAssignableError as exc:
+        # ADR-00046 (A-6): assignee が同一 tenant の human actor でない -> 422 (repository choke point)。
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="assignee must be a human actor in this tenant",
+        ) from exc
+    except IntegrityError as exc:
+        # ADR-00046 (R1 F-004) backstop: assignee FK 違反 (pre-check と flush 間の actor 削除 TOCTOU 等)
+        # のみ 422 に写像。slug unique 等の他制約は誤写像せず re-raise (既存挙動維持)。
+        if _is_assignee_fk_violation(exc):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="assignee actor not found in this tenant",
+            ) from exc
+        raise
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -247,7 +284,7 @@ async def create_ticket_endpoint(
         ) from exc
 
     # SP-012-11 BL-TCU-008: ticket_created audit event 記録
-    # raw secret なし、ticket id / slug / status / actor のみ
+    # raw secret なし、ticket id / slug / status / actor / 初期 assignee (UUID のみ、ADR-00046 D-4)
     audit_event = AuditEvent(
         tenant_id=tenant_id,
         event_type="ticket_created",
@@ -259,6 +296,9 @@ async def create_ticket_endpoint(
             "slug": ticket.slug,
             "status": ticket.status,
             "priority": ticket.priority,
+            "assignee_actor_id": (
+                str(ticket.assignee_actor_id) if ticket.assignee_actor_id else None
+            ),
         },
     )
     session.add(audit_event)
@@ -295,9 +335,24 @@ async def update_ticket_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="empty update payload",
         )
+    # ADR-00046 (Codex adversarial F-B2): existing 読込の **前に** project row を FOR UPDATE で lock し、
+    # existing 読込〜update_in_project を同一 project lock 下で直列化する。これにより
+    # previous_status / previous_assignee の snapshot が同一 ticket への並行更新に対して正確になる
+    # (project lock は同一 project の全 ticket write = update_in_project / bulk を直列化するため、
+    # lock 保持中は別 tx が assignee を書き換えられない)。lock 順は project → actor (F-B1) → ticket-update
+    # で update_in_project / bulk (project → ticket) と一貫し deadlock しない。archived は 409、存在しない
+    # project は no-op (lock 取得せず、下の get_in_project None → 404)。
+    try:
+        await repo.assert_project_active(tenant_id, project_id)
+    except ProjectArchivedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="project is archived; unarchive it before updating tickets",
+        ) from exc
     # user 編集 marker (seed re-apply 衝突回避、SP-012-11 BL-TCU-009)
     # metadata は repository が既存 metadata と merge せず、明示的に新規 dict なので、
     # 既存 dogfooding_source は preservation が必要 → get_in_project で取得して merge
+    # (上の project lock 下で読むため、previous snapshot が並行更新に対し正確、F-B2)。
     existing = await repo.get_in_project(
         tenant_id=tenant_id,
         project_id=project_id,
@@ -315,6 +370,11 @@ async def update_ticket_endpoint(
     # status 変更検出 (audit event 詳細用)
     previous_status = existing.status
     new_status = update_data.get("status", previous_status)
+    # ADR-00046 (Codex adversarial F-A1 HIGH fix): assignee の previous は **update 前に snapshot** する。
+    # update_in_project の `update(...).returning(Ticket)` は identity map 上の `existing` インスタンスを
+    # 更新後値に refresh し得るため、audit ブロックで `existing.assignee_actor_id` を読むと new vs new に
+    # なり変更が記録されない。ここで old 値を local に退避して比較に使う (previous_status と同方針)。
+    previous_assignee_actor_id = existing.assignee_actor_id
 
     try:
         ticket = await repo.update_in_project(
@@ -329,6 +389,20 @@ async def update_ticket_endpoint(
             status_code=status.HTTP_409_CONFLICT,
             detail="project is archived; unarchive it before updating tickets",
         ) from exc
+    except AssigneeNotAssignableError as exc:
+        # ADR-00046 (A-6): assignee が同一 tenant の human actor でない -> 422 (repository choke point)。
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="assignee must be a human actor in this tenant",
+        ) from exc
+    except IntegrityError as exc:
+        # ADR-00046 (R1 F-004) backstop: assignee FK 違反のみ 422、他制約は re-raise (既存挙動維持)。
+        if _is_assignee_fk_violation(exc):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="assignee actor not found in this tenant",
+            ) from exc
+        raise
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -344,19 +418,30 @@ async def update_ticket_endpoint(
     event_type = (
         "ticket_status_changed" if previous_status != new_status else "ticket_updated"
     )
+    event_payload: dict[str, Any] = {
+        "rls_ready": True,
+        "ticket_id": str(ticket.id),
+        "project_id": str(project_id),
+        "slug": ticket.slug,
+        "previous_status": previous_status,
+        "new_status": new_status,
+        "updated_fields": sorted(payload.model_dump(exclude_unset=True).keys()),
+    }
+    # ADR-00046 (D-4 / R1 F-008 + Codex adversarial F-A1): assignee が変わった場合のみ previous/new を
+    # 記録 (UUID のみ、誰から誰へ変わったかを追跡可能にする。display_name / secret / PII は入れない)。
+    # previous は update 前 snapshot を使う (identity map refresh で new vs new にならないため)。
+    if previous_assignee_actor_id != ticket.assignee_actor_id:
+        event_payload["previous_assignee_actor_id"] = (
+            str(previous_assignee_actor_id) if previous_assignee_actor_id else None
+        )
+        event_payload["new_assignee_actor_id"] = (
+            str(ticket.assignee_actor_id) if ticket.assignee_actor_id else None
+        )
     audit_event = AuditEvent(
         tenant_id=tenant_id,
         event_type=event_type,
         actor_id=actor_id,
-        event_payload={
-            "rls_ready": True,
-            "ticket_id": str(ticket.id),
-            "project_id": str(project_id),
-            "slug": ticket.slug,
-            "previous_status": previous_status,
-            "new_status": new_status,
-            "updated_fields": sorted(payload.model_dump(exclude_unset=True).keys()),
-        },
+        event_payload=event_payload,
     )
     session.add(audit_event)
     # tag 注入 (追加 SELECT) を commit **前** に実行する。commit 後だと read 失敗時に field 変更/audit

@@ -28,7 +28,10 @@ const TicketUpdateFormSchema = z.object({
   // A-7 (ADR-00045 R11 F-001): due_date は <input type="date"> 由来の YYYY-MM-DD または "" (=null clear)。
   // strict YMD validator で検証し、timestamp / junk / 非実在日を reject (malformed を backend へ
   // 書き戻して deadline を silent 改変しない、strict-YMD all-surface 整合)。null=clear / undefined=変更なし。
-  due_date: z.string().refine(isValidYmd).nullable().optional()
+  due_date: z.string().refine(isValidYmd).nullable().optional(),
+  // A-6 (ADR-00046): 担当者。"" -> null (担当解除) / uuid -> set / 未指定 -> 変更なし。
+  // backend repository choke point が human-only + tenant を最終 enforce する (UI は補助)。
+  assignee_actor_id: z.string().regex(UUID_PATTERN, "担当者の形式が不正です").nullable().optional()
 });
 
 export type UpdateTicketState =
@@ -69,7 +72,9 @@ export async function updateTicketAction(
     description: clearableField(formData.get("description")),
     status: nonEmpty(formData.get("status")),
     priority: clearableField(formData.get("priority")),
-    due_date: clearableField(formData.get("due_date"))
+    due_date: clearableField(formData.get("due_date")),
+    // A-6: "" -> null (担当解除) / uuid -> set / 未指定 -> undefined (変更なし)。
+    assignee_actor_id: clearableField(formData.get("assignee_actor_id"))
   });
 
   if (!parsed.success) {
@@ -80,6 +85,13 @@ export async function updateTicketAction(
   }
 
   const { ticket_id, ...rest } = parsed.data;
+  // Codex App F-C2: assignee が変更されていなければ payload から外す。legacy 非 human assignee を持つ
+  // ticket でも他 field だけ編集できるようにし、unchanged な不正値を再送して repository の human-only
+  // 検証で 422 (全編集不能) にしない。null=clear / 別 human への変更時のみ送信する (= 変更時のみ検証)。
+  const originalAssignee = clearableField(formData.get("original_assignee_actor_id"));
+  if (rest.assignee_actor_id === originalAssignee) {
+    rest.assignee_actor_id = undefined;
+  }
   // Zod optional fields は undefined を残すので、undefined 排除。
   // `null` (explicit clear) は payload に残す = backend に null として送り clear。
   const updatePayload: Record<string, string | null> = {};
@@ -108,6 +120,8 @@ export async function updateTicketAction(
     );
     revalidatePath(`/tickets/${ticket_id}`);
     revalidatePath("/tickets");
+    // A-6 (R1 F-010): 担当者変更は Today / Inbox 分類に影響するため /today も再検証。
+    revalidatePath("/today");
     return { kind: "ok", ticket_id: updated.id };
   } catch (error: unknown) {
     const message =

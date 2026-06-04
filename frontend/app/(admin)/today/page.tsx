@@ -18,6 +18,8 @@ import {
 } from "@/lib/api/eval-dashboard";
 import { getCurrentProject, type CurrentProject } from "@/lib/api/session";
 import { listTickets, type TicketRead } from "@/lib/api/tickets";
+import { fetchAssignableActors } from "@/lib/api/actors";
+import { buildAssigneeNameMap, assigneeLabel } from "@/lib/domain/assignee";
 import {
   formatApprovalActionClass,
   formatRiskLevel,
@@ -194,6 +196,15 @@ export default async function TodayPage() {
   const pendingApprovals = state.approvals.kind === "ok" ? state.approvals.data : [];
   const errors = collectErrors(state);
 
+  // A-6 (ADR-00046 / Codex adversarial F-A3): 担当者 UUID -> display_name 解決 map。取得失敗は空 map
+  // (中立 fallback) + errors に可視化し、detail/一覧 と degradation の扱いを揃える (silent にしない)。
+  let assigneeNameById = new Map<string, string | null>();
+  try {
+    assigneeNameById = buildAssigneeNameMap((await fetchAssignableActors()).actors);
+  } catch {
+    errors.push("担当者名を取得できませんでした（担当者は「担当者 (不明)」と表示されます）。");
+  }
+
   return (
     <section aria-label="Today control plane" className="grid gap-5">
       <header className="grid gap-2">
@@ -236,7 +247,7 @@ export default async function TodayPage() {
         >
           <LaneGroup title="未完了チケット" emptyLabel="進行中のチケットはありません。">
             {workTickets.slice(0, 8).map((ticket) => (
-              <TicketRow key={ticket.id} ticket={ticket} />
+              <TicketRow key={ticket.id} ticket={ticket} assigneeNameById={assigneeNameById} />
             ))}
           </LaneGroup>
           <LaneGroup title="実行中 AI" emptyLabel="進行中の AI 実行はありません。">
@@ -258,7 +269,7 @@ export default async function TodayPage() {
         >
           <LaneGroup title="未割当チケット" emptyLabel="未割当チケットはありません。">
             {inboxTickets.slice(0, 10).map((ticket) => (
-              <TicketRow key={ticket.id} ticket={ticket} />
+              <TicketRow key={ticket.id} ticket={ticket} assigneeNameById={assigneeNameById} />
             ))}
           </LaneGroup>
           <LaneGroup title="待機中 AI 実行" emptyLabel="queued の AI 実行はありません。">
@@ -369,7 +380,13 @@ function LaneGroup({
   );
 }
 
-function TicketRow({ ticket }: { ticket: TicketRead }) {
+function TicketRow({
+  ticket,
+  assigneeNameById,
+}: {
+  ticket: TicketRead;
+  assigneeNameById: Map<string, string | null>;
+}) {
   return (
     <li className="grid gap-2 px-3 py-3 hover:bg-panel-muted">
       <div className="flex items-start justify-between gap-3">
@@ -386,7 +403,8 @@ function TicketRow({ ticket }: { ticket: TicketRead }) {
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span className="font-mono">{ticket.slug}</span>
         <span>{formatTicketStatus(ticket.status)}</span>
-        <span>担当:{ticket.assignee_actor_id ?? "未割当"}</span>
+        {/* A-6: assignee は display_name で表示 (UUID 生表示はしない、map-miss は中立 fallback)。 */}
+        <span>担当: {assigneeLabel(assigneeNameById, ticket.assignee_actor_id)}</span>
         <span>更新:{formatDate(ticket.updated_at)}</span>
       </div>
     </li>

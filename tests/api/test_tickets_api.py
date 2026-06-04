@@ -563,3 +563,228 @@ async def test_update_in_project_sets_then_clears_due_date(
         )
         assert ticket is not None
         assert ticket.due_date is None
+
+
+# ---------------------------------------------------------------------------
+# A-6 (ADR-00046): assignee 検証を repository choke point で enforce (REST + MCP + research の全 write
+# 経路が create_in_project / update_in_project を通る、R1 F-001)。human-only + tenant の E2E negative。
+# ---------------------------------------------------------------------------
+
+AGENT_ACTOR_ID = UUID("00000000-0000-4000-8000-0000000550a1")
+
+
+async def _insert_agent_actor(session: AsyncSession) -> None:
+    """同一 tenant の非 human (agent) actor を 1 件 seed (担当者に割り当て不可であるべき対象)."""
+    await session.execute(
+        text(
+            """
+            insert into actors (id, tenant_id, actor_type, actor_id, display_name, metadata)
+            values (:actor_id, 1, 'agent', 'agent:worker', 'Worker Agent',
+                    '{"rls_ready": true}'::jsonb)
+            """
+        ),
+        {"actor_id": AGENT_ACTOR_ID},
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_with_human_assignee_succeeds(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """create_in_project: human actor への assign は成功 (ADR-00046 D-2)."""
+    from backend.app.repositories.ticket import TicketRepository
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        created = await repo.create_in_project(
+            tenant_id=1,
+            project_id=PROJECT_A_ID,
+            payload={
+                "slug": "ticket-assign-human",
+                "title": "Assigned to human",
+                "status": "open",
+                "created_by_actor_id": ACTOR_ID,
+                "assignee_actor_id": ACTOR_ID,
+            },
+        )
+        await session.commit()
+        assert created.assignee_actor_id == ACTOR_ID
+
+
+@pytest.mark.asyncio
+async def test_create_with_non_human_assignee_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """create_in_project: agent / 非 human への assign は AssigneeNotAssignableError (R1 F-001)."""
+    from backend.app.repositories.ticket import (
+        AssigneeNotAssignableError,
+        TicketRepository,
+    )
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+        await _insert_agent_actor(session)
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        with pytest.raises(AssigneeNotAssignableError):
+            await repo.create_in_project(
+                tenant_id=1,
+                project_id=PROJECT_A_ID,
+                payload={
+                    "slug": "ticket-assign-agent",
+                    "title": "Assigned to agent",
+                    "status": "open",
+                    "created_by_actor_id": ACTOR_ID,
+                    "assignee_actor_id": AGENT_ACTOR_ID,
+                },
+            )
+
+
+@pytest.mark.asyncio
+async def test_create_with_nonexistent_assignee_rejected_not_fk_500(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """create_in_project: 不在 / cross-tenant assignee は pre-check で AssigneeNotAssignableError
+    (FK IntegrityError 500 に至らず、R1 F-004 の前段)."""
+    from backend.app.repositories.ticket import (
+        AssigneeNotAssignableError,
+        TicketRepository,
+    )
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        with pytest.raises(AssigneeNotAssignableError):
+            await repo.create_in_project(
+                tenant_id=1,
+                project_id=PROJECT_A_ID,
+                payload={
+                    "slug": "ticket-assign-ghost",
+                    "title": "Assigned to ghost",
+                    "status": "open",
+                    "created_by_actor_id": ACTOR_ID,
+                    "assignee_actor_id": uuid4(),
+                },
+            )
+
+
+@pytest.mark.asyncio
+async def test_update_with_non_human_assignee_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """update_in_project: 既存 ticket を agent に re-assign しようとすると reject (全経路 choke point)."""
+    from backend.app.repositories.ticket import (
+        AssigneeNotAssignableError,
+        TicketRepository,
+    )
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+        await _insert_agent_actor(session)
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        with pytest.raises(AssigneeNotAssignableError):
+            await repo.update_in_project(
+                tenant_id=1,
+                project_id=PROJECT_A_ID,
+                ticket_id=TICKET_A1_ID,
+                payload={"assignee_actor_id": AGENT_ACTOR_ID},
+            )
+
+
+@pytest.mark.asyncio
+async def test_update_assign_human_then_clear_succeeds(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """update_in_project: human への assign 成功 → None で担当解除も成功 (null は検証 skip)."""
+    from backend.app.repositories.ticket import TicketRepository
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        assigned = await repo.update_in_project(
+            tenant_id=1,
+            project_id=PROJECT_A_ID,
+            ticket_id=TICKET_A1_ID,
+            payload={"assignee_actor_id": ACTOR_ID},
+        )
+        await session.commit()
+        assert assigned is not None
+        assert assigned.assignee_actor_id == ACTOR_ID
+
+    async with session_factory() as session:
+        repo = TicketRepository(session)
+        cleared = await repo.update_in_project(
+            tenant_id=1,
+            project_id=PROJECT_A_ID,
+            ticket_id=TICKET_A1_ID,
+            payload={"assignee_actor_id": None},
+        )
+        await session.commit()
+        assert cleared is not None
+        assert cleared.assignee_actor_id is None
+
+
+@pytest.mark.asyncio
+async def test_update_endpoint_records_assignee_change_in_audit(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """ADR-00046 (Codex adversarial F-A1 HIGH): assignee 変更が audit に previous/new で記録される。
+
+    回帰防止: `existing.assignee_actor_id` を update 後に読むと identity map refresh で new vs new に
+    なり audit に載らない。update 前 snapshot を使う実装を E2E で検証する (endpoint 直接呼び出し)。
+    """
+    from sqlalchemy import select as _select
+
+    from backend.app.api.tickets import TicketUpdateRequest, update_ticket_endpoint
+    from backend.app.db.models.audit_event import AuditEvent
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    # 初期 assignee=None → endpoint で ACTOR_ID (human) に変更。
+    async with session_factory() as session:
+        await update_ticket_endpoint(
+            project_id=PROJECT_A_ID,
+            ticket_id=TICKET_A1_ID,
+            payload=TicketUpdateRequest(assignee_actor_id=ACTOR_ID),
+            _cli_capability=None,
+            actor_id=ACTOR_ID,
+            tenant_id=1,
+            session=session,
+        )
+
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                _select(AuditEvent).where(
+                    AuditEvent.tenant_id == 1,
+                    AuditEvent.event_type.in_(
+                        ["ticket_updated", "ticket_status_changed"]
+                    ),
+                )
+            )
+        ).scalars().all()
+        # previous=None / new=ACTOR_ID が記録された audit が存在する。
+        assert any(
+            row.event_payload.get("new_assignee_actor_id") == str(ACTOR_ID)
+            and row.event_payload.get("previous_assignee_actor_id") is None
+            for row in rows
+        ), "assignee 変更が audit に previous/new で記録されていない (F-A1 regression)"

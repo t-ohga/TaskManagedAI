@@ -18,6 +18,9 @@ export type TicketDetail = {
   description: string | null;
   priority: string | null;
   due_date: string | null;
+  // A-6 (ADR-00046): 担当者 actor id (UUID or null)。display_name は frontend が
+  // assignable-actors map で解決する (TicketRead 契約不変)。
+  assignee_actor_id: string | null;
   created_at: string | null;
   updated_at: string | null;
   project_id: string;
@@ -92,10 +95,22 @@ export async function loadTicket(id: string): Promise<TicketDetail | null> {
           if (!tagsParsed.success) {
             throw new Error("ticket tag metadata missing or failed schema validation");
           }
+          // A-6 (ADR-00046): assignee_actor_id を strict validate (null または canonical UUID のみ)。
+          // 欠落 (version skew) / 非 UUID は fail-closed で throw し、detail 表示や edit form の select に
+          // 壊れた値を渡さない (due_date と同じ strict-all-surface 方針)。
+          const rawAssignee = (ticketRes as Record<string, unknown>)?.assignee_actor_id;
+          const assigneeOk =
+            rawAssignee === null ||
+            (typeof rawAssignee === "string" &&
+              TICKET_ID_SCHEMA.safeParse(rawAssignee).success);
+          if (!assigneeOk) {
+            throw new Error("ticket assignee_actor_id is missing or not a valid UUID");
+          }
           return {
             ...ticket,
             project_id: pid,
             project_slug: slug,
+            assignee_actor_id: rawAssignee as string | null,
             tags: tagsParsed.data
           };
         }

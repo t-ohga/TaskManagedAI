@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.db.models.actor import Actor
 from backend.app.db.models.project import Project
 from backend.app.db.models.ticket import Ticket
 from backend.app.repositories.base import BaseRepository
@@ -66,9 +67,55 @@ class TicketNotActionableError(Exception):
         self.ticket_id = ticket_id
 
 
+class AssigneeNotAssignableError(Exception):
+    """ADR-00046 (A-6): assignee_actor_id が同一 tenant の human actor を指さない。
+
+    REST endpoint / MCP bridge / research adapter の全 ticket write 経路が通る repository
+    choke point (create_in_project / update_in_project) で raise し、
+    agent / provider / service / github_app への誤 assign と、cross-tenant / nonexistent
+    actor (FK tickets_assignee_actor_fkey の IntegrityError 500) を事前に 422 化する。
+    actor_type は caller 申告でなく DB から resolve する (server-owned-boundary)。
+    """
+
+    def __init__(self, *, assignee_actor_id: UUID) -> None:
+        super().__init__(
+            f"assignee {assignee_actor_id} must be a human actor in the same tenant."
+        )
+        self.assignee_actor_id = assignee_actor_id
+
+
 class TicketRepository(BaseRepository[Ticket]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, Ticket)
+
+    async def _assert_assignee_human(
+        self, tenant_id: int, assignee_actor_id: UUID
+    ) -> None:
+        """assignee は同一 tenant の ``actor_type='human'`` のみ許可する (ADR-00046 D-2)。
+
+        FK (tickets_assignee_actor_fkey) は ``(tenant_id, assignee_actor_id)`` の存在のみを
+        担保し ``actor_type`` を制約しない。REST / MCP bridge / research adapter のどの caller も
+        ``create_in_project`` / ``update_in_project`` を通るため、ここを choke point として
+        human-only + tenant を enforce する (R1 F-001、N-1/N-2 ADR-00041 と同型の迂回封鎖)。
+        non-null の assignee 指定時のみ呼ぶ (null = 担当解除 / 未指定は検証 skip)。
+
+        Codex adversarial F-B1: actor row を ``FOR UPDATE`` で lock し、判定〜ticket write commit の間に
+        同じ actor の actor_type が human 以外へ変わって非 human assignee が永続化される競合を塞ぐ
+        (FK は tenant_id/id の存在しか守らない)。呼出順は ``_assert_project_active`` (project lock) の
+        後なので lock 順は project -> actor で一貫し、bulk 操作 (project -> ticket) と deadlock しない。
+        P0 では actor_type の mutation 経路は無いが、core invariant (human-only) の defense-in-depth。
+        """
+        actor_type = await self.session.scalar(
+            select(Actor.actor_type)
+            .where(
+                Actor.tenant_id == tenant_id,
+                Actor.id == assignee_actor_id,
+            )
+            .with_for_update()
+        )
+        if actor_type != "human":
+            # actor 不在 / 別 tenant (None) も非 human も同じく reject (fail-closed)。
+            raise AssigneeNotAssignableError(assignee_actor_id=assignee_actor_id)
 
     async def get(self, tenant_id: int, id: UUID) -> Ticket | None:
         raise NotImplementedError("Use get_in_project(...)")
@@ -269,6 +316,12 @@ class TicketRepository(BaseRepository[Ticket]):
             raise ValueError("payload project_id must match repository project_id.")
 
         data["project_id"] = project_id
+        # ADR-00046 (A-6): assignee は human-only + tenant を choke point で enforce (R1 F-001)。
+        # non-null 指定時のみ検証 (未指定 / null=未割当 は skip)。insert 前なので FK IntegrityError
+        # に至る前に 422 化される (R1 F-004)。
+        create_assignee = data.get("assignee_actor_id")
+        if create_assignee is not None:
+            await self._assert_assignee_human(tenant_id, create_assignee)
         ticket = Ticket(**data)
         self.session.add(ticket)
         await self.session.flush()
@@ -296,6 +349,11 @@ class TicketRepository(BaseRepository[Ticket]):
             if data["project_id"] != project_id:
                 raise ValueError("payload project_id must match repository project_id.")
             data.pop("project_id")
+
+        # ADR-00046 (A-6): assignee 変更時のみ human-only + tenant を choke point で enforce。
+        # payload に assignee_actor_id が無い (未変更) / null (担当解除) は skip (R1 F-001/F-004)。
+        if "assignee_actor_id" in data and data["assignee_actor_id"] is not None:
+            await self._assert_assignee_human(tenant_id, data["assignee_actor_id"])
 
         # active scope: soft-deleted ticket は update 対象にしない。
         result = await self.session.execute(
