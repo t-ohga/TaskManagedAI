@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from backend.app.services.mcp_idempotency.service import (
+    MAX_IDEMPOTENCY_KEY_LENGTH,
     IdempotencyConflictError,
     IdempotencyReservationPendingError,
     ReservationExisting,
@@ -14,6 +15,7 @@ from backend.app.services.mcp_idempotency.service import (
 )
 
 __all__ = [
+    "MAX_IDEMPOTENCY_KEY_LENGTH",
     "IdempotencyConflictError",
     "IdempotencyReservationPendingError",
     "ReservationExisting",

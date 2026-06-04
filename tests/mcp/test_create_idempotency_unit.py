@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
+from uuid import UUID
 
 import pytest
 
@@ -115,3 +116,19 @@ async def test_ticket_create_notifies_only_on_new_creation(
     res_err = await server.ticket_create(project_id=project_id, title="t")
     assert "error" in res_err
     assert notify_calls == []  # error dict → 通知しない
+
+
+@pytest.mark.asyncio
+async def test_oversized_idempotency_key_rejected() -> None:
+    """ADR-00049 App F-P3: 上限超の idempotency_key は bridge で reject (DB 到達前、session 不使用)。"""
+    from backend.app.mcp.api_bridge import bridge_ticket_create
+    from backend.app.services.mcp_idempotency import MAX_IDEMPOTENCY_KEY_LENGTH
+
+    with pytest.raises(ValueError, match="maximum length"):
+        await bridge_ticket_create(
+            object(),  # length check が session 使用前に raise するため dummy で良い
+            tenant_id=1,
+            project_id=UUID("00000000-0000-4000-8000-000000000004"),
+            title="t",
+            idempotency_key="x" * (MAX_IDEMPOTENCY_KEY_LENGTH + 1),
+        )

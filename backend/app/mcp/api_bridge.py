@@ -25,6 +25,7 @@ from backend.app.repositories.ticket import (
     TicketRepository,
 )
 from backend.app.services.mcp_idempotency import (
+    MAX_IDEMPOTENCY_KEY_LENGTH,
     ReservationExisting,
     complete_reservation,
     compute_request_fingerprint,
@@ -117,6 +118,11 @@ async def bridge_ticket_create(
     # (client が optional を "" 直列化しても共有 bucket poisoning にならない、毎回新規作成)。
     if idempotency_key is not None and not idempotency_key.strip():
         idempotency_key = None
+    # ADR-00049 App F-P3: 巨大 key は unique index の row-size error を誘発するため上限を bridge で拒否。
+    if idempotency_key is not None and len(idempotency_key) > MAX_IDEMPOTENCY_KEY_LENGTH:
+        raise ValueError(
+            f"idempotency_key exceeds maximum length ({MAX_IDEMPOTENCY_KEY_LENGTH})."
+        )
 
     repo = TicketRepository(session)
 
@@ -401,6 +407,11 @@ async def bridge_run_create(
     # ADR-00049 R3 F-O3: 空文字 / 空白のみの idempotency_key は「未指定」とみなし None 正規化する。
     if idempotency_key is not None and not idempotency_key.strip():
         idempotency_key = None
+    # ADR-00049 App F-P3: 巨大 key の unique index row-size error を bridge で拒否。
+    if idempotency_key is not None and len(idempotency_key) > MAX_IDEMPOTENCY_KEY_LENGTH:
+        raise ValueError(
+            f"idempotency_key exceeds maximum length ({MAX_IDEMPOTENCY_KEY_LENGTH})."
+        )
 
     # ADR-00049: idempotency reserve (idempotency_key 指定時のみ)。winner は通常経路で create し、
     # commit 直前に complete する。loser (既存予約) は既存 run を返すが、active-scope 再検証は行う。
@@ -508,7 +519,10 @@ async def bridge_run_create(
             "role_id": role_id,
             "parent_run_id": str(parent_run_id) if parent_run_id else None,
         },
-        actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+        # ADR-00049 App F-P1: reservation と同じ resolved_actor_id で event attribution する
+        # (非 default actor の per-actor MCP create で audit/event が actor 不一致にならない)。
+        # actor_id 未指定時は resolved_actor_id == DEFAULT_SUPERINTENDENT_ACTOR_ID で従来と同じ。
+        actor_id=resolved_actor_id,
     )
     session.add(event)
     # ADR-00049: winner は run 作成後・commit 前に reservation を completed 化する (同一 transaction、

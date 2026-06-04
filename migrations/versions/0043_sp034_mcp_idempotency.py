@@ -71,6 +71,20 @@ def upgrade() -> None:
             "length(btrim(idempotency_key)) > 0",
             name="mcp_idempotency_keys_key_non_blank_check",
         ),
+        # ADR-00049 App F-P3: raw idempotency_key を unique index するため、巨大 key は index-row-size
+        # error を誘発する。長さ上限を DB で bound する (bridge も検証、defense-in-depth)。
+        sa.CheckConstraint(
+            "length(idempotency_key) <= 255",
+            name="mcp_idempotency_keys_key_max_length_check",
+        ),
+        # ADR-00049 App F-P2: actor_id を tenant-scoped FK で actors に束縛する (未知 actor の
+        # reservation 予約 / replay を DB で拒否、actor 境界を強化)。
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "actor_id"],
+            ["actors.tenant_id", "actors.id"],
+            name="mcp_idempotency_keys_actor_fkey",
+            ondelete="RESTRICT",
+        ),
         sa.CheckConstraint(
             "created_resource_kind IS NULL "
             "OR created_resource_kind IN ('ticket', 'agent_run')",

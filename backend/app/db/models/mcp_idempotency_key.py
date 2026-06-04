@@ -54,6 +54,18 @@ class McpIdempotencyKey(TenantIdMixin, CreatedAtMixin, Base):
             "length(btrim(idempotency_key)) > 0",
             name="mcp_idempotency_keys_key_non_blank_check",
         ),
+        # ADR-00049 App F-P3: 巨大 key の index-row-size error を防ぐ長さ上限 (bridge も検証)。
+        sa.CheckConstraint(
+            "length(idempotency_key) <= 255",
+            name="mcp_idempotency_keys_key_max_length_check",
+        ),
+        # ADR-00049 App F-P2: actor 境界を FK で強化 (未知 actor の予約 / replay を DB で拒否)。
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "actor_id"],
+            ["actors.tenant_id", "actors.id"],
+            name="mcp_idempotency_keys_actor_fkey",
+            ondelete="RESTRICT",
+        ),
         sa.CheckConstraint(
             "created_resource_kind IS NULL "
             "OR created_resource_kind IN ('ticket', 'agent_run')",

@@ -35,6 +35,10 @@ from backend.app.db.models.mcp_idempotency_key import (
     McpIdempotencyToolName,
 )
 
+# ADR-00049 App F-P3: idempotency_key の最大長 (DB unique index の row-size error を防ぐ)。
+# DB CHECK (mcp_idempotency_keys_key_max_length_check) と一致させる。
+MAX_IDEMPOTENCY_KEY_LENGTH = 255
+
 
 class IdempotencyConflictError(Exception):
     """同一 (tenant, actor, tool, key) で **異なる payload** が再送された (client error、HTTP 409 相当)。"""
