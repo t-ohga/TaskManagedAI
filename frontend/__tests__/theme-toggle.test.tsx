@@ -87,4 +87,27 @@ describe("nav toggle ↔ 設定 selector 同期 (useTheme)", () => {
     fireEvent.click(screen.getByRole("button")); // light -> dark
     expect(screen.getByRole("radio", { name: /ダーク/ })).toHaveAttribute("aria-checked", "true");
   });
+
+  it("別 tab の theme 変更 (StorageEvent) で controls と .dark class の両方が追従する (Codex F-D1)", () => {
+    localStorage.setItem(THEME_STORAGE_KEY, "light");
+    render(
+      <>
+        <ThemeToggle />
+        <AppearanceSettings />
+      </>
+    );
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+
+    // 別 tab が localStorage を dark に変更 → StorageEvent を発火 (jsdom は別 tab 変更を自動発火しない)。
+    localStorage.setItem(THEME_STORAGE_KEY, "dark");
+    fireEvent(
+      window,
+      new StorageEvent("storage", { key: THEME_STORAGE_KEY, newValue: "dark" })
+    );
+
+    // controls (state) と DOM の .dark class の両方が dark に追従する (state だけでなく配色も)。
+    expect(screen.getByRole("radio", { name: /ダーク/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("button").getAttribute("aria-label")).toContain("現在: ダーク");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
 });
