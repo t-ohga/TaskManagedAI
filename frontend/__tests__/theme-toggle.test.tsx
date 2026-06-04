@@ -150,6 +150,14 @@ describe("storage 無効環境での in-session テーマ保持 (Codex F-G4)", (
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(throwing);
   }
 
+  // read-only / quota 部分障害: getItem は旧値を返すが setItem は throw する (F-G5)。
+  function readOnlyStorageWith(value: string): void {
+    vi.spyOn(Storage.prototype, "getItem").mockReturnValue(value);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation((): never => {
+      throw new Error("read-only storage");
+    });
+  }
+
   afterEach(() => {
     vi.restoreAllMocks();
     // jsdom default (matchMedia 未定義) に戻す。
@@ -203,5 +211,29 @@ describe("storage 無効環境での in-session テーマ保持 (Codex F-G4)", (
     document.documentElement.classList.remove("dark");
     fireMediaChange();
     expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+
+  it("read-only storage (getItem は旧値 dark / setItem 失敗) で選択 light が stale dark に再上書きされない (F-G5)", () => {
+    // storage には dark が残っているが setItem は失敗する (quota / read-only)。
+    readOnlyStorageWith("dark");
+    installMatchMedia(false); // OS は light
+    const { unmount } = render(<AppearanceSettings />);
+    // 初期は保存値 dark。
+    expect(screen.getByRole("radio", { name: /ダーク/ })).toHaveAttribute("aria-checked", "true");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+
+    // light を明示選択 (setItem 失敗 → dirty な in-session light)。
+    fireEvent.click(screen.getByRole("radio", { name: /ライト/ }));
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+
+    // 別 consumer が後から mount しても、stale な保存値 dark ではなく in-session light が優先される。
+    unmount();
+    render(<ThemeToggle />);
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(screen.getByRole("button").getAttribute("aria-label")).toContain("現在: ライト");
+
+    // dirty 中は OS preference 変更でも light を維持する (system に戻らない)。
+    fireMediaChange();
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
 });

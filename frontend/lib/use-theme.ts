@@ -24,20 +24,29 @@ const THEME_CHANGE_EVENT = "tm:themechange";
 // storage が機能していれば storage 値が authoritative なので、storage sync 時に in-memory を揃える。
 let sessionTheme: Theme | null = null;
 
+// Codex CLI adversarial F-G5: in-session 選択が storage に **永続化できていない** (setItem が throw、
+// または readback 不一致 = quota/read-only storage) 場合 true。getItem は成功して **古い保存値** を
+// 返し続ける部分障害では、stale な storage 値が in-session 選択を再上書きしてしまうため、dirty な間は
+// storage 値より sessionTheme を優先する。storage event (= storage write 成功の証左) で解除する。
+let sessionThemeDirty = false;
+
 /**
- * 実効テーマ。storage 値を優先しつつ、storage 不可時は in-session の明示選択を source of truth にする。
- * - readStoredTheme() が明示値 ("light"/"dark") を返す → storage 由来 (cross-tab 変更含む) を優先。
- * - "system" を返す (storage が "system" を保持 / storage 不可で fallback) → in-session 選択があれば優先。
+ * 実効テーマ。
+ * - in-session 選択が未永続 (dirty) なら、stale な storage 値より in-session を優先する (F-G5)。
+ * - それ以外は storage 値を優先 ("light"/"dark" は cross-tab 変更含め authoritative)。
+ * - storage が "system" (system 保持 / storage 不可で fallback) のときは in-session 選択があれば使う (F-G4)。
  */
 function effectiveTheme(): Theme {
+  if (sessionThemeDirty && sessionTheme !== null) return sessionTheme;
   const stored = readStoredTheme();
   if (stored !== "system") return stored;
   return sessionTheme ?? "system";
 }
 
-/** test 専用: module-level の in-session 選択を初期化する (test 間の状態リークを防ぐ)。 */
+/** test 専用: module-level の in-session 状態を初期化する (test 間の状態リークを防ぐ)。 */
 export function __resetSessionThemeForTest(): void {
   sessionTheme = null;
+  sessionThemeDirty = false;
 }
 
 export function useTheme(): { theme: Theme; setTheme: (next: Theme) => void } {
@@ -58,10 +67,12 @@ export function useTheme(): { theme: Theme; setTheme: (next: Theme) => void } {
     // にも applyTheme を再適用** する。`.dark` はグローバル副作用で React 描画属性ではないため、state
     // 更新だけだと「controls は新値表示・配色は旧のまま」と乖離する。applyTheme は idempotent なので
     // 同 tab custom event 経路 (setTheme で適用済) で再呼びしても害はない。
-    // storage event は storage が機能している証左なので、in-memory (sessionTheme) を storage 値へ揃える。
+    // storage event は storage が機能している証左なので、in-memory (sessionTheme) を storage 値へ揃え、
+    // dirty を解除する (F-G5: storage が再び書ける/別 tab で書けたので storage が authoritative に戻る)。
     const syncFromStorage = (): void => {
       const next = readStoredTheme();
       sessionTheme = next;
+      sessionThemeDirty = false;
       applyTheme(next);
       setThemeState(next);
     };
@@ -103,13 +114,20 @@ export function useTheme(): { theme: Theme; setTheme: (next: Theme) => void } {
   }, []);
 
   const setTheme = useCallback((next: Theme) => {
+    // 永続化の成否を追跡する。setItem が throw する (private mode) ケースに加え、throw せず silently
+    // 反映されない / quota で getItem が旧値を返す read-only ケースも readback で検出する (F-G5)。
+    let persisted = false;
     try {
       localStorage.setItem(THEME_STORAGE_KEY, next);
+      persisted = readStoredTheme() === next;
     } catch {
-      // localStorage 不可 (private mode 等) でも適用は続ける。
+      // localStorage 不可 (private mode / read-only / quota) でも適用は続ける。
+      persisted = false;
     }
     // in-session source of truth を更新 (storage 不可でも current session の選択を維持、F-G4)。
+    // 永続化できなければ dirty=true: stale な storage 値より in-session 選択を優先させる (F-G5)。
     sessionTheme = next;
+    sessionThemeDirty = !persisted;
     applyTheme(next);
     setThemeState(next);
     // 同一 tab の他の useTheme インスタンス (nav toggle ↔ 設定 selector) に通知する
