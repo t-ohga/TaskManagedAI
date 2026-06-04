@@ -30,6 +30,7 @@ import {
   ProviderComplianceMatrixTable,
   SecretBoundaryNotice
 } from "../_components/sprint9-admin-ui";
+import { AppearanceSettings } from "./_components/appearance-settings";
 import { DataManagementPanel } from "./_components/data-management-panel";
 import { ProjectSettingsForm } from "./_components/project-settings-form";
 import { SecretRefsInventory } from "./_components/secret-refs-inventory";
@@ -128,6 +129,16 @@ export default async function ProjectSettingsPage() {
       title="プロジェクト設定"
     >
       <KeyboardReadinessStrip current="プロジェクト設定" />
+
+      {/* M-2 (ADR-00047): 外観 (テーマ) = この端末の表示設定。project 設定とは別の device-local
+          preference であることを description で明示する (R1 F-008)。 */}
+      <Panel
+        description="この端末の表示テーマ（ライト / ダーク / システム）を選びます。ブラウザごとの表示設定で、プロジェクトの設定ではありません。"
+        title="外観（この端末の表示設定）"
+        titleId="settings-appearance"
+      >
+        <AppearanceSettings />
+      </Panel>
 
       <Panel
         description="プロジェクト名・説明・AI 自律レベルを編集できます。policy_profile は autonomy_level から自動導出され UI から直接変更できません。"

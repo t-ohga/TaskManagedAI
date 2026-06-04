@@ -145,6 +145,46 @@ input {
     background: white !important;
     color: black !important;
   }
+  /* M-2 (ADR-00047 D-4 / plan-review R2 F-002): ダークモードでも印刷は常に light。body の白背景だけでは
+     token surface (bg-panel / bg-card 等、CSS 変数ベース) が dark のまま残り、下の print-color-adjust:exact
+     で暗色印刷される。`.dark` の **両 token family (--tm-* と shadcn)** を :root (light) 値へ再宣言する。 */
+  html.dark {
+    color-scheme: light;
+    --tm-canvas: #f7f8fa;
+    --tm-ink: #17202a;
+    --tm-muted: #657083;
+    --tm-line: #d8dee8;
+    --tm-panel: #ffffff;
+    --tm-accent: #0f766e;
+    --tm-attention: #b45309;
+    --tm-danger: #b42318;
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.145 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.145 0 0);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.145 0 0);
+    --primary: oklch(0.205 0 0);
+    --primary-foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.205 0 0);
+    --muted: oklch(0.95 0.01 250);
+    --muted-foreground: oklch(0.35 0.03 250);
+    --accent: oklch(0.45 0.12 175);
+    --accent-foreground: oklch(0.98 0 0);
+    --destructive: oklch(0.577 0.245 27.325);
+    --border: oklch(0.922 0 0);
+    --input: oklch(0.922 0 0);
+    --ring: oklch(0.708 0 0);
+    --sidebar: oklch(0.985 0 0);
+    --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.205 0 0);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.97 0 0);
+    --sidebar-accent-foreground: oklch(0.205 0 0);
+    --sidebar-border: oklch(0.922 0 0);
+    --sidebar-ring: oklch(0.708 0 0);
+  }
   /* ステータスバッジ等の背景色を印刷でも保持する */
   * {
     -webkit-print-color-adjust: exact !important;
