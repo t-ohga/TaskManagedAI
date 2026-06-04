@@ -19,6 +19,13 @@ from backend.app.db.models.eval_run import EvalRun
 from backend.app.db.models.eval_score import EvalScore
 from backend.app.db.models.evidence_item import EvidenceItem
 from backend.app.db.models.evidence_source import EvidenceSource
+from backend.app.db.models.mcp_idempotency_key import (
+    MCP_IDEMPOTENCY_RESOURCE_KINDS,
+    MCP_IDEMPOTENCY_TOOL_NAMES,
+    McpIdempotencyKey,
+    McpIdempotencyResourceKind,
+    McpIdempotencyToolName,
+)
 from backend.app.db.models.notification_event import NotificationEvent
 from backend.app.db.models.policy_decision import PolicyDecision
 from backend.app.db.models.policy_rule import PolicyRule
@@ -54,6 +61,11 @@ __all__ = [
     "EvidenceItem",
     "EvidenceSource",
     "FixtureKind",
+    "MCP_IDEMPOTENCY_RESOURCE_KINDS",
+    "MCP_IDEMPOTENCY_TOOL_NAMES",
+    "McpIdempotencyKey",
+    "McpIdempotencyResourceKind",
+    "McpIdempotencyToolName",
     "NotificationEvent",
     "PolicyDecision",
     "PolicyRule",
