@@ -20,7 +20,7 @@ superseded_by: null
 
 # ADR-00050: GitHub webhook event processing + UX (SP-028)
 
-最終更新: 2026-06-05 (Codex plan-review R1: 15 findings 全 adopt、CRITICAL=0)
+最終更新: 2026-06-05 (Codex plan-review R1 15 + R2 5 findings 全 adopt、CRITICAL=0、best-effort enrichment に reframe)
 
 ## 背景
 
@@ -43,12 +43,22 @@ PR/CI イベントを surface する。real-time push (SSE) / toast は本 ADR s
 
 ## 前提 / 制約
 
-- **DB migration を伴う (ADR Gate #2)**: 新 `github_webhook_events` table。additive、downgrade lossless。
+- **DB migration を伴う (ADR Gate #2)**: 新 `github_webhook_events` table。既存 schema/data に additive
+  (既存 table 不変)。downgrade は新 table drop = 蓄積 event row は失われる (要 export、F-011、rollback §参照)。
 - **read-only API (ADR Gate #3)**: webhook event 一覧 endpoint。mutation は無し (受信は既存 ingress)。
 - tenant / project 境界を維持 (複合 FK)。repository は `(tenant_id, id)` で紐付け。
 - **raw secret / token を保存・表示しない**: payload から **allowlist した非機密 field のみ**抽出
   (action / number / state / sha / title / sender.login)。raw payload は保存しない (redaction)。
-- 既存 ingress security (HMAC verify / replay) を変えない。**verification accepted のときのみ** parse + persist。
+- **既存 ingress security contract を一切変更しない (R2 F-001/F-002/F-005、最重要)**: `GitHubWebhookVerifier` /
+  `WebhookSecretResolver` / `WebhookReplayStore` の protocol・replay key・TTL・tenant 解決 (`_tenant_id`) は
+  **本 ADR で変更しない**。webhook parse + persist は **verification accepted 後の独立した best-effort
+  read-only enrichment** であり、security-critical な replay store の改修 (release 追加等) は本 ADR scope 外
+  (それ自体が別 ADR Gate 案件)。読み取り専用の表示機能のために ingress 安全境界を不安定化させない。
+- **P0 single-tenant scope (R2 F-001)**: P0 は単一 tenant。tenant は既存 `_tenant_id(request)` (request.state /
+  default_tenant_id) を踏襲 = P0 では webhook secret が属する単一 tenant と一致する。installation_id は
+  **HMAC 検証成功後**に trusted となった signed body field として使う。**multi-tenant の verifier-derived
+  tenant (複数 installation が別 tenant に跨る場合) は forward requirement** として記録し、P0 では実装しない。
+- **verification accepted のときのみ** parse + persist。
 - live update (real-time) は SSE 結合せず frontend polling refresh (L-3 SSE は AgentRun 専用、別 concern)。
 
 ## 選択肢
@@ -73,7 +83,7 @@ PR/CI イベントを surface する。real-time push (SSE) / toast は本 ADR s
 | `payload_hash` | text NOT NULL (signed body の SHA-256 hex、dedup conflict 時の同一性検証 + replay 検知、F-005) |
 | `event_kind` | text NOT NULL、**DB CHECK enum** (`pull_request` / `check_run` / `check_suite` / `status` / `push`、F-010) |
 | `status` | text NOT NULL、**DB CHECK enum** (`accepted` / `quarantined`、F-004)。`accepted` のみ通常 feed |
-| `quarantine_reason` | text NULLABLE、**DB CHECK enum** (`unregistered_repo` / `cross_tenant_mismatch` / `repo_lookup_ambiguous`、status='quarantined' 時のみ NOT NULL、F-004/F-015) |
+| `quarantine_reason` | text NULLABLE、**DB CHECK enum** (`unregistered_repo` / `repo_lookup_ambiguous` / `payload_shape_mismatch` / `header_event_mismatch` / `parse_validation_failed`、status='quarantined' 時のみ NOT NULL、F-004/F-015/R2-F-004)。全 quarantine 経路を網羅 (repo lookup + parser/header validation)。hash mismatch は audit-only で row 非作成 (R2 F-003) |
 | `action` | text NULLABLE、**DB CHECK length ≤ 64** (opened / closed / completed / synchronize 等) |
 | `external_ref` | text NULLABLE、**DB CHECK length ≤ 255** (PR number / check id / commit sha) |
 | `state` | text NULLABLE、**DB CHECK length ≤ 32** (open / closed / merged / success / failure / pending / neutral 等) |
@@ -83,7 +93,8 @@ PR/CI イベントを surface する。real-time push (SSE) / toast は本 ADR s
 | `created_at` | timestamptz NOT NULL |
 
 - **unique** `(tenant_id, delivery_id)` で **再配信 dedup** (GitHub は webhook を redeliver する)。conflict 時は
-  `payload_hash` 比較: 一致 → idempotent accepted、不一致 → security signal (audit alert + quarantine、F-005)。
+  `payload_hash` 比較: 一致 → idempotent accepted、不一致 → 既存 row 保持 + audit anomaly のみ (quarantine row
+  非作成、unique 衝突回避、F-005 + R2-F-003)。
 - **複合 FK** `(tenant_id, repository_id) → (repositories.tenant_id, repositories.id)` を **`ON DELETE SET NULL
   (repository_id)`** (PostgreSQL 16 の column-list SET NULL、tenant_id は NULL 化しない、F-003)。repo 削除で
   event は残すが紐付け解除、repository_id NULL 許容。**repository は `(tenant_id, provider='github', external_id)`
@@ -95,39 +106,45 @@ PR/CI イベントを surface する。real-time push (SSE) / toast は本 ADR s
 
 ### payload 処理 (verification accepted のときのみ、R1 findings 反映)
 
-#### (a) tenant は verified installation から fail-closed 導出 (R1 F-Q1 + Codex F-001/F-009)
+#### (a) tenant は accepted verification 後に確定、repo は fail-closed 解決 (R1 F-Q1 + Codex F-001/F-009 + R2 F-001)
 
-- webhook は unauthenticated。tenant を request.state / default / payload 申告値に依存させない。
-- **verifier contract (F-001、ADR 明文化)**: HMAC は **署名前 body と候補 webhook secret 群で検証**し、
-  **検証成功した `secret_ref` が属する tenant のみ**を `tenant_id` の source of truth にする。payload 内の
-  `installation_id` は **HMAC 検証成功後の signed body field としてのみ** mapping に使う (検証前の未信頼値を
-  tenant lookup の前提にしない)。`installation_id` 欠落 / 複数 tenant secret match / mapping 不存在は
-  **fail-closed reject (event を保存しない)**。
+- **P0 の tenant 解決 (R2 F-001、既存 contract 踏襲)**: parse は **HMAC verification accepted 後**に走る。
+  この時点で `installation_id` は signed body field として trusted。P0 single-tenant では `tenant_id` は既存
+  `_tenant_id(request)` (request.state / default_tenant_id) を使う = webhook secret が属する単一 tenant と一致。
+  **既存 verifier / resolver の contract は変更しない** (前提/制約 参照)。
+- **forward requirement (multi-tenant)**: 複数 installation が別 tenant に跨る将来は、verifier が検証成功した
+  `secret_ref` の tenant を返す contract へ拡張し、未検証 installation_id を tenant lookup に使わない設計へ
+  移行する。P0 では single-tenant のため不要、本 ADR では forward note のみ。
 - **repository lookup contract (F-009、concrete)**: payload の `repository.id` (= external_id) を
   **`(tenant_id, provider='github', external_id)` の既存 unique で解決** (`repositories_uq_tenant_provider_external`、
   0 or 1 row)。解決 row の `installation_ref` が **verified installation と一致**することを要求する。
   - 一致 → `status='accepted'`、`repository_id` set。
   - 0 件 (未登録 repo) → `status='quarantined'`, `quarantine_reason='unregistered_repo'`, `repository_id=NULL`
     (verified tenant 下に記録、通常 feed 非表示)。
-  - 複数件 / installation 不一致 → `status='quarantined'`, `quarantine_reason='repo_lookup_ambiguous'`。
-  - payload repo が **別 tenant** を指す解決になった場合 → verified installation tenant に
-    `status='quarantined'`, `quarantine_reason='cross_tenant_mismatch'`, `repository_id=NULL` で記録
-    (cross-tenant/project leak 防止、verified tenant 外には一切書かない)。
+  - 複数件 / installation_ref 不一致 → `status='quarantined'`, `quarantine_reason='repo_lookup_ambiguous'`。
+  - **lookup は常に `tenant_id` scope** (P0 single-tenant では別 tenant 解決は構造上発生しない)。`tenant_id` 外の
+    repository に書き込む経路は持たない (cross-tenant/project leak 防止)。
 - quarantine の実体は §(e) 参照。`status='quarantined'` event は通常 read feed に出さない。
 
-#### (b) header validation + dedup payload_hash 比較 + replay guard (R1 F-Q2 + Codex F-005)
+#### (b) header validation + dedup + hash-mismatch anomaly (R1 F-Q2 + Codex F-005 + R2 F-002/F-003)
 
 - `X-GitHub-Delivery` (delivery_id) は **length/形式 validation**、`X-GitHub-Event` (event_kind) は **enum validation**。
 - **payload shape validation**: header の event_kind と payload body の実体 (PR なら pull_request key 存在等)
-  が一致しない場合は **保存拒否 / quarantine** (header poisoning 防止)。
-- **dedup conflict 時の hash 比較 (F-005)**: `(tenant_id, delivery_id)` unique conflict 時、保存済 row の
-  `payload_hash` と新 signed body の hash を比較する:
-  - **一致** → 真の GitHub redelivery、idempotent accepted (新規 row 作らない)。
-  - **不一致** → 同一 delivery_id で別 body = security signal。**audit alert + quarantine** に倒す
-    (`ON CONFLICT DO NOTHING` で握り潰さず、conflict を hash 比較経路に通す)。
-- **security replay guard**: delivery_id を差し替えて同一 signed body を再注入する経路は、既存
-  `WebhookReplayStore` (Redis、HMAC verify 層) の replay claim が **signed body 単位**で塞ぐ。本 event
-  table 側の `payload_hash` は dedup 同一性検証 + 異常検知 (audit) 用途で重複保持する。
+  が一致しない場合は **新 delivery_id の quarantine row として記録** (header poisoning 防止、unique conflict なし)。
+- **dedup (R2 F-002 修正、誤った replay claim を撤回)**: 既存 ingress の replay guard は **delivery_id nonce 単位**
+  (`github-webhook:{tenant}:{installation}:sha256(delivery_id)`、TTL 3600s) であり、**signed body 単位ではない**。
+  本 ADR は **既存 replay store を変更しない** (前提/制約)。event table 側の dedup は `(tenant_id, delivery_id)`
+  unique で GitHub の正常 redelivery を冪等化する。
+- **dedup conflict 時の hash mismatch (R2 F-003、unique 制約と両立)**: `(tenant_id, delivery_id)` conflict 時は
+  既存 row の `payload_hash` と比較する。
+  - **一致** → 正常 redelivery、idempotent (新規 row 作らない、202)。
+  - **不一致** (同一 delivery_id で別 body、通常は発生しない異常) → **既存 accepted row は保持したまま
+    `audit_events` に anomaly record (reason_code のみ、raw payload なし) を残す**。**quarantine row は作らない**
+    (unique 制約と衝突するため、anomaly は audit-only forensic trail で表現)。新 body は drop。
+- **residual risk (R2 F-002)**: delivery_id を差し替えた同一 signed body の再注入は、既存 delivery_id-nonce
+  replay guard を通過し event table に別 row として受理され得る。影響は **read-only 表示の activity-log 行が
+  重複する程度** (mutation / secret なし、低影響)。本 ADR scope では replay store を改修せず **residual risk
+  として記録** (将来 payload_hash claim 追加で hardening 可能、別 ADR)。
 
 #### (c) allowlist field を抽出 (event_kind 別) + 値レベル redaction (R1 F-Q3)
 
@@ -148,34 +165,40 @@ PR/CI イベントを surface する。real-time push (SSE) / toast は本 ADR s
 - **frontend は text-only rendering** (`dangerouslySetInnerHTML` / Markdown rendering 禁止、title 等を
   そのまま text node で表示)。
 
-#### (d) 失敗時シーケンスを単一 path に固定し event loss を防ぐ (R1 F-Q4 + Codex F-006)
+#### (d) 失敗時シーケンス (R1 F-Q4 + Codex F-006 + R2 F-005、best-effort enrichment に固定)
 
-実装者が選択に迷わないよう、**失敗時の順序と補償を 1 本の path に固定** (F-006、選択式を排除):
+R2 F-005 で判明: 既存 `WebhookReplayStore` は `claim_once()` のみ (release なし)、TTL 3600s 固定。よって
+「replay claim を戻して 5xx redelivery」は **既存 ingress contract を変えないと実装不能**。read-only 表示機能の
+ために security-critical な replay store を改修しない方針 (前提/制約) に従い、**parse + persist を verification
+後の best-effort enrichment に固定**する:
 
 ```
-1. HMAC verify + replay claim (既存 ingress、変更なし)
-2. verification audit を commit (この時点で security ingress は成功確定)
-3. parse + persist を 1 transaction で実行:
+1. HMAC verify + replay claim (既存 ingress、本 ADR では一切変更しない)
+2. verification audit を commit (security ingress 成功確定、本 ADR の責務外で既存どおり)
+3. parse + persist (verification accepted の後段、独立 transaction):
    - parse validation failure (shape 不正 / header mismatch / lookup ambiguous):
-       status='quarantined' で row を insert + audit → commit → 202 accepted
-       (event は失わず quarantine、verification は維持)
-   - persist transient failure (DB timeout / session failure / IntegrityError 以外の一時障害):
-       transaction rollback + replay claim を再試行可能状態に戻す + **5xx を返す**
-       (GitHub の自動 redelivery を誘発、silent event loss を防ぐ。202 は返さない)
-   - dedup conflict ((tenant_id, delivery_id) 既存): §(b) の payload_hash 比較経路 → 202 accepted
-   - success: status='accepted' で commit → 202 accepted
+       新 delivery_id の status='quarantined' row を insert + audit → 202 (event は失わず quarantine)
+   - dedup conflict ((tenant_id, delivery_id) 既存): §(b) hash 比較 → 一致は idempotent 202 /
+       不一致は audit anomaly + drop (row 追加なし)
+   - success: status='accepted' で commit → 202
+   - persist transient failure (DB timeout 等): parse/persist 内で **bounded retry**。それでも失敗時は
+       error を log (raw payload なし) し 202 を返す。**event は best-effort なので欠落し得る**
+       (replay store を戻せないため redelivery で復旧できない、§residual risk)。
 ```
 
-- **202 accepted は dedup / validation quarantine / 正常 persist のみ**。transient persist failure に 202 を
-  返さない (これが silent loss の原因)。
-- replay claim を戻せない実装制約がある場合は、replay TTL を短く保ち **manual redelivery 手順** を運用に残す。
-- **transaction 境界明示**: step 2 の verification audit は step 3 と別 transaction。step 3 の rollback でも
-  verification audit は残り、再処理 (redelivery) 可能。
+- **既存 ingress 応答 contract を変えない**: verification 自体の成否は既存どおり。parse/persist は後段の
+  best-effort であり、その失敗で ingress (verification) を巻き戻さない。
+- **residual risk (R2 F-005、honest scoping)**: transient persist failure が bounded retry でも回復しない稀な
+  ケースで、当該 webhook の **activity-log 行が欠落**し得る。GitHub の自動 redelivery は同一 delivery_id が
+  replay guard (TTL 3600s) で弾かれるため自動復旧しない。**影響は read-only 表示 1 行の欠落** (mutation /
+  secret / 整合性影響なし)。復旧は replay window 経過後の **manual redelivery** で可能。replay store に
+  release/compare-delete を足して厳密な no-loss にするのは **別 ADR (ingress security boundary 変更)**。
 
 #### (e) quarantine の実体 (Codex F-004 + F-015)
 
 - quarantine は **別 table ではなく同 `github_webhook_events` table の `status='quarantined'` row** で表現
-  (verified tenant 下に記録、§(a) の 3 reason)。`quarantine_reason` enum で原因を保持。
+  (verified tenant 下に記録、新 delivery_id なので unique 衝突なし)。`quarantine_reason` enum (5 種、repo lookup +
+  parser/header validation) で原因を保持。**hash mismatch は audit-only** で quarantine row を作らない (R2 F-003)。
 - **owner の定義 (F-015)**: 「owner-only」は GitHub repository owner login ではなく、**TaskManagedAI の
   tenant 内 admin capability を持つ actor** を指す。P0 は単一 user (= tenant admin) なので owner = その user。
   quarantine view は通常 read capability と分離し、admin capability を要求する。
@@ -223,23 +246,24 @@ PR/CI イベントを surface する。real-time push (SSE) / toast は本 ADR s
   加え、**抽出 DTO の全 string field に raw-secret/canary scanner を必須適用**し hit 時は当該 field を redact。
   field 名 allowlist だけでは値に混入した token を防げないため、**値レベル redaction を保存前に必ず通す**
   (GitHub payload は外部由来 untrusted、保存 field の allowlist 固定 + 値 scan の二段が核)。
-- **cross-tenant / cross-project leak** (F-Q1): tenant は **verified installation の secret_ref が属する
-  tenant から fail-closed 導出**。repository binding は `(tenant_id, provider='github', external_id)` +
-  installation 一致を要求し、不一致は通常保存せず quarantine + audit のみ。repository_id NULL event も
-  owner-only quarantine に分離し read feed に出さない。
-- **header poisoning / replay** (F-Q2): `X-GitHub-Delivery` (UUID) + `X-GitHub-Event` (enum) header validation +
-  payload shape との一致確認で header 偽装を弾く。`(tenant_id, delivery_id)` unique は **redelivery dedup**、
-  別途 `payload_hash + installation_id + tenant_id` の **security replay guard** で delivery_id 差し替えによる
-  同一 signed body の再注入を塞ぐ。
-- **persist 失敗による silent event loss** (F-Q4 + F-006): §(d) の **単一 failure path に固定**。parse
-  validation failure → quarantine + 202 (verification 維持)、**persist transient failure → replay claim 戻し +
-  5xx** (GitHub redelivery 誘発、202 は返さない)。dedup / validation quarantine のみ 202。transaction 境界を
-  明示し step 3 rollback でも verification audit が残り再処理可能。
-- **同一 delivery_id の body すり替え** (F-005): `(tenant_id, delivery_id)` unique conflict 時に `payload_hash`
-  比較。一致 → idempotent accepted、不一致 → audit alert + quarantine (`ON CONFLICT DO NOTHING` で握り潰さない)。
+- **cross-tenant / cross-project leak** (F-Q1 + R2-F-001): P0 single-tenant では tenant は既存
+  `_tenant_id(request)` 踏襲 (= webhook secret が属する単一 tenant)。repository lookup は常に
+  `(tenant_id, 'github', external_id)` tenant-scope + installation_ref 一致。tenant 外 repository への書込経路を
+  持たない。read endpoint は project/capability で更に絞る (F-002、ADR-00041)。multi-tenant verifier-derived
+  tenant は forward requirement。
+- **header poisoning** (F-Q2): `X-GitHub-Delivery` + `X-GitHub-Event` header validation + payload shape 一致確認で
+  header 偽装を弾き、新 delivery_id の quarantine row として記録 (raw payload なし)。
+- **dedup と body すり替え** (F-005 + R2-F-002/F-003): event table dedup は `(tenant_id, delivery_id)` unique
+  (GitHub 正常 redelivery 冪等化)。conflict 時 `payload_hash` 比較で一致=idempotent、不一致=audit anomaly のみ
+  (quarantine row は unique 衝突を避け非作成)。delivery_id 差し替えの同一 body 再注入は既存 delivery_id-nonce
+  replay guard を通過し得る → **residual risk** (read-only 表示行の重複、低影響、別 ADR で payload_hash claim hardening)。
+- **persist 失敗による event 欠落** (F-Q4 + F-006 + R2-F-005): parse/persist は **verification 後の best-effort
+  enrichment**。validation failure → quarantine row + 202、transient failure → bounded retry 後も失敗なら log + 202。
+  既存 security-critical replay store (release なし、TTL 3600s) を本 ADR で変更しないため、**transient 失敗時に
+  activity-log 行が欠落し得る** (read-only 表示 1 行、mutation/secret 影響なし、manual redelivery で復旧)。
+  厳密 no-loss は replay store 改修 = 別 ADR (ingress security boundary)。
 - **read endpoint の cross-project leak** (F-002): tenant scope だけでなく **actor の閲覧可能 project /
-  repository capability で絞る** (ADR-00041 先例)。
-- **repo 未解決 / ambiguous**: `status='quarantined'` + reason で記録 (event は失わない)、通常 feed 非表示。
+  repository capability で絞る** (ADR-00041 先例)。通常 feed は `status='accepted' AND repository_id IS NOT NULL`。
 - **複合 FK SET NULL の tenant_id 巻き込み** (F-003): `ON DELETE SET NULL (repository_id)` (PG16 column-list)
   で repository_id のみ NULL 化、`tenant_id NOT NULL` を保つ。
 
@@ -259,10 +283,13 @@ PR/CI イベントを surface する。real-time push (SSE) / toast は本 ADR s
   SET NULL + read index)
 - `backend/app/db/models/github_webhook_event.py` (ORM + CheckConstraint、5+ source 整合)
 - `backend/app/domain/...` event_kind / status / quarantine_reason の Python Literal + Pydantic (enum 整合)
-- `backend/app/services/repoproxy/webhook_event_parser.py` (verifier-derived tenant + allowlist 抽出 +
-  値レベル redaction + repo lookup + dedup hash 比較 + 単一 failure path persist)
-- `backend/app/api/github_webhooks.py` (verification accepted 後に parse hook、§(d) failure path)
+- `backend/app/services/repoproxy/webhook_event_parser.py` (新規: P0 tenant 踏襲 + allowlist 抽出 +
+  値レベル redaction + tenant-scope repo lookup + dedup hash 比較 + best-effort persist)
+- `backend/app/api/github_webhooks.py` (verification accepted 後に parse hook を呼ぶ最小追加、§(d) best-effort path)
 - 新 `backend/app/api/webhook_events.py` (read endpoint: project/capability scope + cursor + quarantine view)
+- **変更しないファイル (R2-F-001/F-002/F-005、ingress security boundary)**: `webhook_service.py` /
+  `webhook_adapters.py` の `GitHubWebhookVerifier` / `WebhookSecretResolver` / `WebhookReplayStore` protocol /
+  replay key / TTL は **本 ADR で触らない** (別 ADR 案件)。
 - `frontend/lib/domain/webhook-event.ts` (client-safe pure) + `frontend/lib/api/webhook-events.ts`
   (server fetch、`cache: 'no-store'` + session-bound)
 - `frontend/app/(admin)/...` webhook activity view + nav
@@ -275,23 +302,23 @@ PR/CI イベントを surface する。real-time push (SSE) / toast は本 ADR s
 - **値レベル redaction (F-Q3)**: title / sender_login 等の allowlist field に **secret-shaped 値 (GitHub
   token / age key / canary) を注入 → 保存値が redact される** (field 名 allowlist を通過した値も scan される
   ことを確認、`assert_no_raw_secret` 相当 + 全 string field の max length / NFC / control-char 除去)。
-- **tenant 導出 fail-closed (F-Q1)**: verified installation → tenant_id 導出、installation と payload の
-  repository.owner が **別 tenant を指す場合は通常保存せず quarantine + audit**。repository_id NULL event は
-  read feed に出ない (owner-only quarantine 分離)。
-- **verifier contract / tenant 導出 (F-001)**: tenant は verified secret_ref の tenant のみから導出。
-  installation_id 欠落 / 複数 tenant secret match / mapping 不存在 → **fail-closed reject (row 作らない)**。
-  検証前 payload の installation_id を tenant lookup に使わない。
-- **repo lookup contract (F-009)**: `(tenant_id, 'github', external_id)` unique 解決 + installation_ref 一致 →
-  accepted。0 件 → `unregistered_repo` quarantine、複数/不一致 → `repo_lookup_ambiguous`、別 tenant 解決 →
-  `cross_tenant_mismatch`。いずれも verified tenant 下にのみ記録。
+- **tenant 解決 (F-Q1 + R2-F-001、P0)**: parse は verification accepted 後に走り、`tenant_id` は既存
+  `_tenant_id(request)` 踏襲、`installation_id` は verified signed body field。tenant-scope を超えた書込が
+  発生しないことを確認。既存 verifier/resolver contract を変更しない (回帰なし)。
+- **repo lookup contract (F-009 + R2-F-001)**: `(tenant_id, 'github', external_id)` unique 解決 + installation_ref
+  一致 → accepted。0 件 → `unregistered_repo` quarantine、複数/不一致 → `repo_lookup_ambiguous`。lookup は
+  常に tenant-scope (別 tenant 解決は構造上不可)。
 - **audit/log redaction (F-007)**: parse failure / quarantine / exception path で **raw payload / 抽出前値が
   audit・log・exception message に出ない** (allowlist: delivery_id / event_kind / tenant_id / installation_id /
   payload_hash prefix / reason_code のみ)。secret-shaped 値注入で確認。
-- **header poisoning (F-Q2)**: header event_kind と payload 実体の mismatch → 保存拒否 / quarantine。
-- **dedup hash 比較 (F-005)**: 同一 `(tenant_id, delivery_id)` で **同一 body → 1 row idempotent accepted**、
-  **異なる body → audit alert + quarantine** (silent accept しない)。
-- **persist 失敗の単一 path (F-Q4 + F-006)**: parse validation failure → quarantine row + 202 (verification 維持) /
-  **persist transient failure → replay claim 戻し + 5xx (202 を返さない)** / dedup conflict → 202。silent loss なし。
+- **header poisoning (F-Q2 + R2-F-004)**: header event_kind と payload 実体の mismatch → 新 delivery_id の
+  `header_event_mismatch` / `payload_shape_mismatch` quarantine row。
+- **dedup + hash anomaly (F-005 + R2-F-002/F-003)**: 同一 `(tenant_id, delivery_id)` で **同一 body → idempotent
+  202 (1 row)**、**異なる body → 既存 row 保持 + audit anomaly record (quarantine row 非作成、unique 衝突なし)**。
+  既存 replay store contract を変更しないこと (回帰なし)。
+- **persist best-effort (F-Q4 + F-006 + R2-F-005)**: parse validation failure → quarantine row + 202、success →
+  accepted + 202、transient persist failure → bounded retry 後 log (raw payload なし) + 202。**verification
+  応答を巻き戻さない**。replay store を変更しないことを確認。
 - **複合 FK SET NULL (F-003)**: repository 削除で event row の **repository_id のみ NULL 化、tenant_id は保持**
   (DB-gated、PG16 column-list SET NULL)。
 - **DB-level 防御 (F-010)**: event_kind / status / quarantine_reason の enum CHECK、各 string field の length
