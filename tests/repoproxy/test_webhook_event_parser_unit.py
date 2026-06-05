@@ -91,6 +91,20 @@ def test_clean_drops_age_key() -> None:
     assert _clean("AGE-SECRET-KEY-1" + "A" * 55, TITLE_MAX_LENGTH) is None
 
 
+def test_clean_drops_zero_width_split_secret() -> None:
+    """Codex adversarial F-2: zero-width / format 文字 (Cf) で分断した secret token も drop する。"""
+    for invisible in ("​", "‌", "‍", "﻿", "⁠"):
+        token = "ghp_" + invisible + "A" * 36
+        assert _clean(token, TITLE_MAX_LENGTH) is None, f"not dropped for U+{ord(invisible):04X}"
+    # 末尾 / 複数箇所に混入しても drop。
+    assert _clean("gh" + "​" + "p_" + "B" * 36, TITLE_MAX_LENGTH) is None
+
+
+def test_clean_strips_invisible_but_keeps_visible() -> None:
+    # 不可視文字を含む通常文字列は不可視のみ除去して残す (情報を失わない)。
+    assert _clean("Fix​ bug", TITLE_MAX_LENGTH) == "Fix bug"
+
+
 def test_clean_strips_control_chars_and_normalizes() -> None:
     assert _clean("  hel\x00lo\tworld\n  ", TITLE_MAX_LENGTH) == "helloworld"
 

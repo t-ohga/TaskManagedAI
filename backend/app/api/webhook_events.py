@@ -15,10 +15,10 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.approval_inbox import (
-    get_current_actor_id,
     get_db_session,
     get_tenant_id,
 )
+from backend.app.api.me import require_project_owner
 from backend.app.db.models.github_webhook_event import (
     GitHubWebhookEvent,
     WebhookEventKind,
@@ -74,14 +74,19 @@ async def list_webhook_events_endpoint(
     project_id: UUID,
     repository_id: UUID | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=WEBHOOK_EVENT_FEED_MAX_LIMIT),
-    _actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008  # authenticated session 必須
+    # Codex adversarial F-1: project join だけでは「actor がこの project を読んでよいか」を保証しない。
+    # P0 owner gate (R-3 secret-refs read と同じ owner-only read 先例) で fail-closed に enforce する
+    # (service / agent / provider / github_app / 別 human / 未認証は 401/403)。multi-project membership は
+    # forward の actor_membership table 追加後に per-project gate へ拡張 (me.py の single-project note と整合)。
+    _owner_actor_id: UUID = Depends(require_project_owner),  # noqa: B008
     tenant_id: int = Depends(get_tenant_id),  # noqa: B008
     session: AsyncSession = Depends(get_db_session),  # noqa: B008
 ) -> WebhookEventListResponse:
     """project 配下の accepted webhook event (PR / CI) を received_at 降順で返す。
 
-    tenant + project boundary は repository join で enforce、quarantine (repository_id NULL) は除外。
-    任意 ``repository_id`` filter は当該 project 内に属する repository に限定 (cross-project leak 防止)。
+    owner gate (require_project_owner) で P0 owner のみに限定し、tenant + project boundary は repository
+    join で enforce、quarantine (repository_id NULL) は除外。任意 ``repository_id`` filter は当該 project
+    内に属する repository に限定 (cross-project / cross-actor leak 防止)。
     """
 
     events = await GitHubWebhookEventRepository(session).list_accepted_for_project(

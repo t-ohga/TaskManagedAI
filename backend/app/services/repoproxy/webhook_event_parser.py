@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -51,9 +50,19 @@ logger = logging.getLogger(__name__)
 WEBHOOK_DELIVERY_HASH_MISMATCH_AUDIT_EVENT_TYPE = "github_webhook_delivery_hash_mismatch"
 
 _EVENT_KINDS: frozenset[str] = frozenset(WEBHOOK_EVENT_KINDS)
-# 制御文字 (改行・タブ含む) を除去し bidi / injection を防ぐ。表示は単一行 text node 前提。
-_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f‎‏‪-‮⁦-⁩]")
 _MAX_PERSIST_ATTEMPTS = 2
+
+
+def _strip_invisible(value: str) -> str:
+    """全 Unicode control (Cc) + format (Cf) 文字を除去する。
+
+    Codex adversarial F-2: zero-width 文字 (U+200B/U+200C/U+200D/U+FEFF 等、category Cf) で secret
+    token を分断すると、contiguous な ``_RAW_SECRET_PATTERNS`` を回避して redaction を擦り抜ける。
+    Cc (C0/C1 control) + Cf (format / bidi / zero-width) を一括除去してから scan することで、不可視
+    文字による token 分断 bypass を塞ぐ (bidi / 制御文字 injection 防止も兼ねる)。
+    """
+
+    return "".join(ch for ch in value if unicodedata.category(ch) not in ("Cc", "Cf"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,8 +275,9 @@ def _clean(value: str | None, max_length: int) -> str | None:
 
     if value is None:
         return None
-    normalized = unicodedata.normalize("NFC", value)
-    normalized = _CONTROL_CHAR_RE.sub("", normalized).strip()
+    # NFC 正規化 → 不可視文字 (Cc/Cf、zero-width 含む) を除去してから secret scan する。
+    # 除去を scan の前に行うことで zero-width 分断 bypass を塞ぐ (Codex adversarial F-2)。
+    normalized = _strip_invisible(unicodedata.normalize("NFC", value)).strip()
     if not normalized:
         return None
     for _kind, regex in _RAW_SECRET_PATTERNS:

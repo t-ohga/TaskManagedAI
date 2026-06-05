@@ -161,8 +161,10 @@ PR/CI イベントを surface する。real-time push (SSE) / toast は本 ADR s
   - `push`: ref→external_ref, after→sha, repository.id, sender.login
 - **field 名 allowlist だけでは不十分**。抽出 DTO の **全 string field に既存 raw-secret/canary scanner
   相当を必須適用** (secret-shaped token / GitHub token / age key 等 hit 時は **当該 field を redact**)。
-- **全 string field に max length bound + UTF-8 NFC normalize + control-character 除去** (bidi / 制御文字
-  injection 防止)。bound 値は DB CHECK length と同一定数。
+- **全 string field に max length bound + UTF-8 NFC normalize + 不可視文字除去**。除去対象は **Unicode
+  category Cc (制御) + Cf (format / bidi / zero-width)** を **secret scan の前**に一括除去する (Codex
+  adversarial F-2: U+200B/U+200C/U+200D/U+FEFF 等で token を分断すると contiguous な scanner を擦り抜けるため、
+  分断 bypass を塞ぐ)。bound 値は DB CHECK length と同一定数。
 - **error/audit/log path の redaction invariant (F-007)**: parse failure / quarantine reason / audit detail /
   exception log は **raw payload や抽出前の raw field value を含めない**。audit / log に出してよいのは
   `delivery_id`、`event_kind`、`tenant_id`、`installation_id`、`payload_hash` prefix、`reason_code` のみ
@@ -214,10 +216,12 @@ R2 F-005 で判明: 既存 `WebhookReplayStore` は `claim_once()` のみ (relea
 
 `GET /api/v1/projects/{project_id}/webhook_events?repository_id=<uuid>&limit=<n>`
 
-- **project-scoped path (F-002、既存 `/api/v1/projects/{project_id}/...` 規約)**: 既存 tickets / agent_runs と
-  同じ project-scoped path + `require_active_project` dependency で **project 境界を構造的に enforce** する
-  (`/me/` 横断 endpoint より既存 pattern と整合し、同一 tenant 内 cross-project leak を path で防ぐ)。
-  `get_current_actor_id` / `get_tenant_id` で authenticated session を必須化。
+- **project-scoped path + owner gate (F-002 + Codex adversarial F-1)**: 既存 tickets / agent_runs と同じ
+  project-scoped path に加え、**`require_project_owner` owner gate** で P0 owner のみに限定する
+  (R-3 secret-refs read と同じ owner-only read 先例)。project join だけでは「actor がこの project を
+  読んでよいか」を保証しないため、owner gate で fail-closed (service / agent / provider / github_app /
+  別 human / 未認証は 401/403)。multi-project membership は forward の `actor_membership` table 追加後に
+  per-project gate へ拡張 (me.py の single-project simplification と整合)。`get_tenant_id` で tenant scope。
 - **通常 feed フィルタ**: `github_webhook_events e JOIN repositories r ON (e.tenant_id=r.tenant_id AND
   e.repository_id=r.id) WHERE e.tenant_id=:tid AND r.project_id=:pid AND e.status='accepted'`。
   `status='quarantined'` (repository_id NULL) event は join で自然に除外され通常 feed に出ない。
@@ -306,9 +310,10 @@ R2 F-005 で判明: 既存 `WebhookReplayStore` は `claim_once()` のみ (relea
 ## テスト指針 (must-ship)
 
 - **parse allowlist**: 各 event_kind で allowlist field のみ抽出、raw payload が保存 field に出ない。
-- **値レベル redaction (F-Q3)**: title / sender_login 等の allowlist field に **secret-shaped 値 (GitHub
-  token / age key / canary) を注入 → 保存値が redact される** (field 名 allowlist を通過した値も scan される
-  ことを確認、`assert_no_raw_secret` 相当 + 全 string field の max length / NFC / control-char 除去)。
+- **値レベル redaction (F-Q3 + Codex F-2)**: title / sender_login 等の allowlist field に **secret-shaped 値
+  (GitHub token / age key / canary) を注入 → 保存値が drop される**。**zero-width / format 文字 (U+200B/
+  U+200C/U+200D/U+FEFF) で分断した token も drop される** (Cc/Cf 除去を scan 前に行う)。`assert_no_raw_secret`
+  相当 + 全 string field の max length / NFC / 不可視文字除去。
 - **tenant 解決 (F-Q1 + R2-F-001、P0)**: parse は verification accepted 後に走り、`tenant_id` は既存
   `_tenant_id(request)` 踏襲、`installation_id` は verified signed body field。tenant-scope を超えた書込が
   発生しないことを確認。既存 verifier/resolver contract を変更しない (回帰なし)。
@@ -332,9 +337,9 @@ R2 F-005 で判明: 既存 `WebhookReplayStore` は `claim_once()` のみ (relea
   CHECK が parser bypass insert を reject (5+ source 整合)。
 - **received_at server clock (F-013)**: payload/header の timestamp を保存しない。received_at は server 採番
   (外部入力で ordering 操作できない)。
-- **read endpoint scope (F-002)**: authenticated 必須、**actor の閲覧可能 project/repository に限定**
-  (同一 tenant 内 cross-project の event を返さない)、limit clamp、cursor ordering 安定、非機密 field のみ、
-  通常 feed は `status='accepted' AND repository_id IS NOT NULL`、quarantine は admin capability のみ。
+- **read endpoint scope (F-002 + Codex F-1)**: **owner gate (`require_project_owner`) 経由を wiring guard で
+  固定** (gate を外す regression を検出)、非 owner (service/agent/未認証) は 401/403、tenant + project join scope、
+  非機密 field のみ、通常 feed は `status='accepted' AND repository_id IS NOT NULL` (quarantine 除外)。
 - **frontend cache (F-008)**: tenant-scoped server fetch が `cache: 'no-store'` / session-bound で
   static cache に乗らない (別ユーザー leak なし)。
 - **frontend 表示**: state badge / PR / push、text-only rendering (dangerouslySetInnerHTML なし)、
