@@ -15,6 +15,7 @@ const navItems = [
   { href: "/approvals", label: "承認待ち" },
   { href: "/runs", label: "AI 実行" },
   { href: "/orchestrator/board", label: "AI 組織" },
+  { href: "/webhook-events", label: "Webhook" },
   { href: "/audit", label: "監査ログ" },
   { href: "/settings", label: "設定" },
 ] as const;

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from ipaddress import ip_address, ip_network
@@ -21,6 +23,7 @@ from backend.app.services.repoproxy.webhook_adapters import (
     RedisWebhookReplayStore,
     SecretMaterialResolver,
 )
+from backend.app.services.repoproxy.webhook_event_parser import record_webhook_event
 from backend.app.services.repoproxy.webhook_service import (
     GITHUB_WEBHOOK_REPLAY_WINDOW_SECONDS,
     GitHubWebhookReasonCode,
@@ -30,10 +33,13 @@ from backend.app.services.repoproxy.webhook_service import (
     WebhookReplayStore,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/webhooks", tags=["github_webhooks"])
 
 _GITHUB_SIGNATURE_HEADER = "X-Hub-Signature-256"
 _GITHUB_DELIVERY_HEADER = "X-GitHub-Delivery"
+_GITHUB_EVENT_HEADER = "X-GitHub-Event"
 _ALLOWED_INGRESS_NETWORKS = (
     ip_network("127.0.0.0/8"),
     ip_network("::1/128"),
@@ -90,16 +96,30 @@ async def receive_github_webhook(
     _require_internal_ingress(request)
     runtime = _runtime_from_app_state(request) or _build_webhook_runtime(request, session)
     payload = await request.body()
+    tenant_id = _tenant_id(request)
+    installation_id = _extract_installation_id(payload)
+    delivery_id = request.headers.get(_GITHUB_DELIVERY_HEADER)
     result = await runtime.verifier.verify(
         GitHubWebhookRequest(
-            tenant_id=_tenant_id(request),
-            installation_id=_extract_installation_id(payload),
-            delivery_id=request.headers.get(_GITHUB_DELIVERY_HEADER),
+            tenant_id=tenant_id,
+            installation_id=installation_id,
+            delivery_id=delivery_id,
             payload=payload,
             signature_header=request.headers.get(_GITHUB_SIGNATURE_HEADER),
         )
     )
     await runtime.commit()
+    # ADR-00050 SP-028: verification accepted の **後段** に best-effort で event を記録する。
+    # 既存 ingress security contract は変更せず、失敗しても verification 応答を巻き戻さない (R2 F-005)。
+    if result.accepted and delivery_id and installation_id >= 1:
+        await _record_webhook_event_best_effort(
+            session,
+            tenant_id=tenant_id,
+            installation_id=installation_id,
+            delivery_id=delivery_id,
+            event_kind_header=request.headers.get(_GITHUB_EVENT_HEADER),
+            payload=payload,
+        )
     response = GitHubWebhookIngressResponse(
         accepted=result.accepted,
         reason_code=result.reason_code,
@@ -110,6 +130,37 @@ async def receive_github_webhook(
         content=response.model_dump(mode="json"),
         headers={"cache-control": "no-store"},
     )
+
+
+async def _record_webhook_event_best_effort(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    installation_id: int,
+    delivery_id: str,
+    event_kind_header: str | None,
+    payload: bytes,
+) -> None:
+    """webhook event を記録する best-effort hook。parser は自前で失敗を握るが、想定外例外でも
+     ingress を壊さないよう二重に握る (raw payload は log しない)。"""
+
+    try:
+        await record_webhook_event(
+            session,
+            tenant_id=tenant_id,
+            installation_id=installation_id,
+            delivery_id=delivery_id,
+            event_kind_header=event_kind_header,
+            payload=payload,
+            payload_hash=hashlib.sha256(payload).hexdigest(),
+        )
+    except Exception:  # noqa: BLE001 - best-effort enrichment must never break ingress
+        logger.warning(
+            "github webhook event enrichment failed (ingress unaffected): "
+            "tenant_id=%s event_kind_present=%s",
+            tenant_id,
+            bool(event_kind_header),
+        )
 
 
 def _runtime_from_app_state(request: Request) -> GitHubWebhookRuntime | None:
