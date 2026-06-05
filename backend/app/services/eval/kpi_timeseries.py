@@ -176,7 +176,13 @@ def _bucketed_approval_sql() -> sa.TextClause:
 
 
 def _unattributed_approval_sql() -> sa.TextClause:
-    """project filter 指定時、run 未紐付 (run_id null / stale) で集計から落ちた approval 数 (F-003 開示)。"""
+    """run 未紐付 (run_id null) / stale (run 不存在) で **どの project にも attribute 不能**な approval 数。
+
+    adversarial F-2 fix: 旧版は `ar.project_id is distinct from :project_id` で **別 project の正当な
+    approval まで unattributed に数えていた** (project B の approval が project A view で「run 未紐付」と
+    誤表示)。本来 unattributed = run_id null か join 不成立 (stale run_id) のみ。別 project の approval は
+    その project に正しく attribute 済なので unattributed ではない。
+    """
     statuses = ", ".join(f"'{s}'" for s in APPROVAL_DECIDED_STATUSES)
     return sa.text(
         f"""
@@ -189,7 +195,7 @@ def _unattributed_approval_sql() -> sa.TextClause:
            and arq.decided_at is not null
            and arq.decided_at >= arq.requested_at
            and arq.requested_at >= :cutoff
-           and ar.project_id is distinct from cast(:project_id as uuid)
+           and (arq.run_id is null or ar.id is null)
         """
     )
 
@@ -209,6 +215,18 @@ def _bucketed_citation_sql() -> sa.TextClause:
                and aa.adoption_state = 'final'
                and aa.finalized_at >= :cutoff
                and (:project_id is null or aa.project_id = cast(:project_id as uuid))
+               -- adversarial F-1 fix: artifact の run が soft-deleted ticket に紐づく場合は除外
+               -- (cost / time_to_merge / acceptance と同じ soft_deleted_ticket_run_exclusion 整合)。
+               and not exists (
+                   select 1 from agent_runs ar
+                   join tickets t
+                     on t.tenant_id = ar.tenant_id and t.project_id = ar.project_id
+                    and t.id = ar.ticket_id
+                  where ar.tenant_id = aa.tenant_id
+                    and ar.project_id = aa.project_id
+                    and ar.id = aa.run_id
+                    and t.deleted_at is not null
+               )
         ),
         claim_rows as (
             select fa.artifact_id, fa.finalized_at, claim.value as claim_json

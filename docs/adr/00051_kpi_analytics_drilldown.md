@@ -104,10 +104,18 @@ trend を可視化する。
 - **KPI definition authority = backend** (F-009): unit / threshold / direction / measurement_kind は backend が
   返し、frontend は表示のみ (threshold 定数を frontend で再定義しない)。
 - `project_id` 任意 filter: acceptance/citation/cost は project_id 列で限定。approval は `run_id → agent_runs.project_id`
-  join (run_id nullable・FK TODO) のため、project 指定時は **`unattributed_approval_count` を別途返す** (run 未紐付
-  approval を静かに落とさない、F-003)。未指定は tenant 全体。
-- **active-scope**: cost (agent_runs) / time_to_merge proxy は `soft_deleted_ticket_run_exclusion()`、acceptance/
-  citation は project active + soft-delete 除外。tenant boundary 必須。
+  join (run_id nullable・FK TODO) のため、project 指定時は **`unattributed_approval_count` を別途返す**。
+  **adversarial F-2 fix**: unattributed は **run_id null / stale (join 不成立) のみ**カウント (別 project の
+  正当な approval を「未紐付」と誤計上しない)。未指定は tenant 全体。
+- **active-scope (adversarial F-1 + 既存 precedent 整合)**: cost / time_to_merge / acceptance / **citation** は
+  全て `soft_deleted_ticket_run_exclusion()` 相当 (soft-deleted ticket に紐づく run/artifact を除外)。citation は
+  当初実装で欠落していたため fix 済。tenant boundary 必須。
+  - **archived project は除外しない (project-active 部分は reject)**: 既存の canonical active-scope helper
+    `soft_deleted_ticket_run_exclusion()` は全 default read path (cost_summary / activity_timeseries / KPI rollup)
+    で **soft-deleted ticket のみ除外し archived project は含める** (archived = read-only-visible、ADR-00037)。
+    KPI の cost は cost_summary と同一 agent_runs data を使うため、KPI だけ project-archive 除外すると
+    cost_summary と数値が不整合になる。よって既存 precedent に合わせ archived は historical operational data
+    として含める (consistency 優先、rejected.md に記録)。
 - raw 値を返し frontend が threshold 比較表示 (direction も backend が返す)。
 
 ### (B) eval provider breakdown endpoint

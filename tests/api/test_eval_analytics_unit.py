@@ -93,11 +93,25 @@ def test_all_bucketed_sql_use_utc_date_trunc_and_group_by() -> None:
 
 
 def test_run_based_sql_enforce_soft_delete_active_scope() -> None:
-    # cost / time_to_merge / acceptance は soft-deleted ticket を除外する (NOT EXISTS deleted_at)。
-    for fn in (_bucketed_cost_sql, _bucketed_time_to_merge_sql, _bucketed_acceptance_sql):
+    # cost / time_to_merge / acceptance / citation は soft-deleted ticket を除外する (adversarial F-1)。
+    for fn in (
+        _bucketed_cost_sql,
+        _bucketed_time_to_merge_sql,
+        _bucketed_acceptance_sql,
+        _bucketed_citation_sql,
+    ):
         sql = _sql(fn()).lower()
         assert "not exists" in sql, fn.__name__
         assert "deleted_at is not null" in sql, fn.__name__
+
+
+def test_unattributed_approval_only_counts_null_or_stale_run() -> None:
+    # adversarial F-2: 別 project の approval を unattributed に数えない。run_id null / join 不成立のみ。
+    from backend.app.services.eval.kpi_timeseries import _unattributed_approval_sql
+
+    sql = _sql(_unattributed_approval_sql()).lower()
+    assert "arq.run_id is null or ar.id is null" in sql
+    assert "project_id is distinct" not in sql  # 旧 over-count predicate を残さない
 
 
 def test_approval_sql_supports_project_filter_join() -> None:
