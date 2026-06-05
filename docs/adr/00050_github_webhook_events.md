@@ -1,9 +1,9 @@
 ---
 id: "ADR-00050"
 title: "GitHub webhook event processing + UX (SP-028: payload parse + persist + read API + activity view)"
-status: "proposed"
+status: "accepted"
 date: "2026-06-05"
-accepted_at: null
+accepted_at: "2026-06-05"
 deciders: ["t-ohga"]
 adr_gate_criteria: [2, 3]
 related_adr:

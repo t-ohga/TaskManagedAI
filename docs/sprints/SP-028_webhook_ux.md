@@ -1,22 +1,29 @@
 ---
 id: "SP-028_webhook_ux"
 type: "light"
-status: "partial_skeleton"
+status: "in_progress"
 sprint_no: 28
 created_at: "2026-05-26"
-updated_at: "2026-06-04"
+updated_at: "2026-06-05"
 target_days: 3
 max_days: 5
+adr_refs:
+  - "[ADR-00050](../adr/00050_github_webhook_events.md)"
 ---
 
 ## 目的
 
-- GitHub webhook event の toast 通知 + CI status live update + PR timeline 統合
+- GitHub webhook event (PR / CI) の **parse + persist + read API + activity view** (ADR-00050)
+- (当初目的の toast / CI live update / PR timeline 統合のうち) 本 Sprint scope = **read-only activity view +
+  polling refresh**。real-time SSE / toast / 最新 status projection は follow-up (ADR-00050 §却下案 / frontend §)
 
 ## 対象外
 
 - P0 invariant の変更 (16 status / 3 blocked_reason / 10 ContextSnapshot columns は不変)
 - 破壊的 migration (additive のみ)
+- **既存 webhook ingress security contract の変更** (verifier / secret resolver / replay store は不変、
+  ADR-00050 §前提・R2-F-001/F-002/F-005)。webhook parse/persist は verification 後の **best-effort enrichment**
+- real-time push (SSE) / toast / 最新 CI status projection (follow-up ADR)
 
 ## 受け入れ条件
 
