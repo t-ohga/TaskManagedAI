@@ -19,6 +19,7 @@ from backend.app.api import (
     research_tasks,
     tags,
     tickets,
+    webhook_events,
 )
 
 api_router = APIRouter()
@@ -33,6 +34,7 @@ api_router.include_router(evidence_items.router)
 api_router.include_router(kpi_rollup.router)
 api_router.include_router(p0_acceptance_report.router)
 api_router.include_router(tickets.router)
+api_router.include_router(webhook_events.router)
 api_router.include_router(tags.router)
 api_router.include_router(tags.ticket_tags_router)
 api_router.include_router(memory.router)

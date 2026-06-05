@@ -115,13 +115,19 @@ PR/CI イベントを surface する。real-time push (SSE) / toast は本 ADR s
 - **forward requirement (multi-tenant)**: 複数 installation が別 tenant に跨る将来は、verifier が検証成功した
   `secret_ref` の tenant を返す contract へ拡張し、未検証 installation_id を tenant lookup に使わない設計へ
   移行する。P0 では single-tenant のため不要、本 ADR では forward note のみ。
-- **repository lookup contract (F-009、concrete)**: payload の `repository.id` (= external_id) を
-  **`(tenant_id, provider='github', external_id)` の既存 unique で解決** (`repositories_uq_tenant_provider_external`、
-  0 or 1 row)。解決 row の `installation_ref` が **verified installation と一致**することを要求する。
-  - 一致 → `status='accepted'`、`repository_id` set。
+- **repository lookup contract (F-009、実コード突合で修正)**: payload の `repository.id` (int) を
+  `str()` 化し `external_id` として **`(tenant_id, provider='github', external_id)` の既存 unique で解決**
+  (`repositories_uq_tenant_provider_external`、0 or 1 row)。
+  - **installation_ref 一致は要求しない (実コード修正)**: 本 codebase の webhook secret は **tenant 単位の
+    共有 `p0` scope secret (`github_webhook_hmac`)** であり installation 単位ではない (`DbWebhookSecretResolver`)。
+    `repositories.installation_ref` は nullable な SecretRef 風 metadata で installation_id ではない。よって
+    installation_ref と installation_id の照合は成立しない。**security は「HMAC 検証済の共有 secret + tenant-scope
+    external_id 解決」で担保**する (verified payload の repository.id を tenant 内で解決するのみ)。
+  - 1 件 → `status='accepted'`、`repository_id` set。
   - 0 件 (未登録 repo) → `status='quarantined'`, `quarantine_reason='unregistered_repo'`, `repository_id=NULL`
     (verified tenant 下に記録、通常 feed 非表示)。
-  - 複数件 / installation_ref 不一致 → `status='quarantined'`, `quarantine_reason='repo_lookup_ambiguous'`。
+  - 2 件以上 (unique 制約上は発生しないが defensive) → `status='quarantined'`,
+    `quarantine_reason='repo_lookup_ambiguous'`。
   - **lookup は常に `tenant_id` scope** (P0 single-tenant では別 tenant 解決は構造上発生しない)。`tenant_id` 外の
     repository に書き込む経路は持たない (cross-tenant/project leak 防止)。
 - quarantine の実体は §(e) 参照。`status='quarantined'` event は通常 read feed に出さない。
@@ -206,17 +212,18 @@ R2 F-005 で判明: 既存 `WebhookReplayStore` は `claim_once()` のみ (relea
 
 ### read endpoint
 
-`GET /api/v1/me/webhook_events?repository_id=<uuid>&cursor=<opaque>&limit=<n>`
+`GET /api/v1/projects/{project_id}/webhook_events?repository_id=<uuid>&limit=<n>`
 
-- `actor_id = Depends(get_current_actor_id)` (authenticated session)。
-- **scope 条件 (F-002、ADR-00041 capability gate 先例)**: tenant scope に加え **actor が閲覧可能な
-  project / repository に限定**する。`repository_id` 指定時は `(tenant_id, repository_id)` 解決後に
-  **project membership / read capability を検証** (未所属 repo の event を返さない)。未指定時も actor が
-  アクセスできる project 配下の repository event のみに絞る (同一 tenant 内 cross-project leak 防止)。
-- **通常 feed フィルタ**: `status='accepted' AND repository_id IS NOT NULL`。`status='quarantined'` event は
-  通常 feed に出さず、admin 専用 quarantine view (別 capability) でのみ非機密 summary を返す (§(e))。
-- **ordering + pagination (F-012)**: `ORDER BY received_at DESC, id DESC` + opaque cursor pagination
-  (received_at 同値の順序安定化)。`limit` clamp (≤ 100)。read index は table §参照。
+- **project-scoped path (F-002、既存 `/api/v1/projects/{project_id}/...` 規約)**: 既存 tickets / agent_runs と
+  同じ project-scoped path + `require_active_project` dependency で **project 境界を構造的に enforce** する
+  (`/me/` 横断 endpoint より既存 pattern と整合し、同一 tenant 内 cross-project leak を path で防ぐ)。
+  `get_current_actor_id` / `get_tenant_id` で authenticated session を必須化。
+- **通常 feed フィルタ**: `github_webhook_events e JOIN repositories r ON (e.tenant_id=r.tenant_id AND
+  e.repository_id=r.id) WHERE e.tenant_id=:tid AND r.project_id=:pid AND e.status='accepted'`。
+  `status='quarantined'` (repository_id NULL) event は join で自然に除外され通常 feed に出ない。
+  任意 `repository_id` filter は当該 project 内に属する repo に限定。
+- **ordering (F-012)**: `ORDER BY e.received_at DESC, e.id DESC` (received_at 同値の順序安定化)。`limit`
+  clamp (≤ 100)。read index は table §参照。quarantine view (admin 専用、非機密 summary) は follow-up。
 - response: 非機密 field のみ (event_kind / action / external_ref / state / title / sender_login /
   received_at / repository_id)。raw secret なし。
 
@@ -305,9 +312,9 @@ R2 F-005 で判明: 既存 `WebhookReplayStore` は `claim_once()` のみ (relea
 - **tenant 解決 (F-Q1 + R2-F-001、P0)**: parse は verification accepted 後に走り、`tenant_id` は既存
   `_tenant_id(request)` 踏襲、`installation_id` は verified signed body field。tenant-scope を超えた書込が
   発生しないことを確認。既存 verifier/resolver contract を変更しない (回帰なし)。
-- **repo lookup contract (F-009 + R2-F-001)**: `(tenant_id, 'github', external_id)` unique 解決 + installation_ref
-  一致 → accepted。0 件 → `unregistered_repo` quarantine、複数/不一致 → `repo_lookup_ambiguous`。lookup は
-  常に tenant-scope (別 tenant 解決は構造上不可)。
+- **repo lookup contract (F-009 + R2-F-001、実コード修正)**: `(tenant_id, 'github', str(repository.id))` unique
+  解決 → 1 件 accepted / 0 件 `unregistered_repo` quarantine。installation_ref 一致は要求しない (共有 p0
+  webhook secret、installation_ref は installation_id ではない)。lookup は常に tenant-scope。
 - **audit/log redaction (F-007)**: parse failure / quarantine / exception path で **raw payload / 抽出前値が
   audit・log・exception message に出ない** (allowlist: delivery_id / event_kind / tenant_id / installation_id /
   payload_hash prefix / reason_code のみ)。secret-shaped 値注入で確認。

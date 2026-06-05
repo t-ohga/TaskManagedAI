@@ -19,6 +19,15 @@ from backend.app.db.models.eval_run import EvalRun
 from backend.app.db.models.eval_score import EvalScore
 from backend.app.db.models.evidence_item import EvidenceItem
 from backend.app.db.models.evidence_source import EvidenceSource
+from backend.app.db.models.github_webhook_event import (
+    WEBHOOK_EVENT_KINDS,
+    WEBHOOK_EVENT_STATUSES,
+    WEBHOOK_QUARANTINE_REASONS,
+    GitHubWebhookEvent,
+    WebhookEventKind,
+    WebhookEventStatus,
+    WebhookQuarantineReason,
+)
 from backend.app.db.models.mcp_idempotency_key import (
     MCP_IDEMPOTENCY_RESOURCE_KINDS,
     MCP_IDEMPOTENCY_TOOL_NAMES,
@@ -61,6 +70,7 @@ __all__ = [
     "EvidenceItem",
     "EvidenceSource",
     "FixtureKind",
+    "GitHubWebhookEvent",
     "MCP_IDEMPOTENCY_RESOURCE_KINDS",
     "MCP_IDEMPOTENCY_TOOL_NAMES",
     "McpIdempotencyKey",
@@ -92,5 +102,11 @@ __all__ = [
     "TicketRelationType",
     "TicketStatus",
     "TicketTag",
+    "WEBHOOK_EVENT_KINDS",
+    "WEBHOOK_EVENT_STATUSES",
+    "WEBHOOK_QUARANTINE_REASONS",
+    "WebhookEventKind",
+    "WebhookEventStatus",
+    "WebhookQuarantineReason",
     "Workspace",
 ]
