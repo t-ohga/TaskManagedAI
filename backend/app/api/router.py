@@ -7,6 +7,7 @@ from backend.app.api import (
     auth,
     auth_cli,
     claims,
+    eval_analytics,
     evidence_items,
     evidence_sources,
     github_webhooks,
@@ -32,6 +33,7 @@ api_router.include_router(evidence_sources.router)
 api_router.include_router(claims.router)
 api_router.include_router(evidence_items.router)
 api_router.include_router(kpi_rollup.router)
+api_router.include_router(eval_analytics.router)
 api_router.include_router(p0_acceptance_report.router)
 api_router.include_router(tickets.router)
 api_router.include_router(webhook_events.router)
