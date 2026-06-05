@@ -1,9 +1,9 @@
 ---
 id: "ADR-00051"
 title: "KPI Analytics Drilldown (SP-026: 運用実績 time series + eval provider breakdown, read-only)"
-status: "proposed"
+status: "accepted"
 date: "2026-06-05"
-accepted_at: null
+accepted_at: "2026-06-05"
 deciders: ["t-ohga"]
 adr_gate_criteria: [3]
 related_adr:
@@ -20,7 +20,7 @@ superseded_by: null
 
 # ADR-00051: KPI Analytics Drilldown (SP-026)
 
-最終更新: 2026-06-05 (plan-review R1: 9 findings 全 adopt、既存 metric service 再利用へ是正)
+最終更新: 2026-06-05 (plan-review R1 9 + R2 0 = 収束、accepted)
 
 ## 背景
 

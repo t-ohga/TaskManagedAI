@@ -1,12 +1,14 @@
 ---
 id: "SP-026_analytics_drilldown"
 type: "light"
-status: "partial_skeleton"
+status: "in_progress"
 sprint_no: 26
 created_at: "2026-05-26"
-updated_at: "2026-06-04"
+updated_at: "2026-06-05"
 target_days: 3
 max_days: 5
+adr_refs:
+  - "[ADR-00051](../adr/00051_kpi_analytics_drilldown.md)"
 ---
 
 ## 目的
