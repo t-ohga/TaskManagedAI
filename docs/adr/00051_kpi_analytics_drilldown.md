@@ -20,7 +20,7 @@ superseded_by: null
 
 # ADR-00051: KPI Analytics Drilldown (SP-026)
 
-最終更新: 2026-06-05
+最終更新: 2026-06-05 (plan-review R1: 9 findings 全 adopt、既存 metric service 再利用へ是正)
 
 ## 背景
 
@@ -29,21 +29,29 @@ breakdown の drill-down」へ拡張する。現状 `frontend/app/(admin)/eval-d
 **skeleton (~90 行、`--` placeholder + static BarChart)** で、backend aggregation endpoint も drill-down も
 未実装。
 
-### 実コード突合で判明した P0 データ現実 (設計に直結)
+### 実コード突合 + plan-review R1 (9 findings) で判明した P0 データ現実 (設計に直結)
 
-1. **5 KPI の source-of-truth は fixture corpus** (`eval/quality/<kpi_id>/`、`compute_kpi_rollup()` pure
-   function、`GET /api/v1/eval/kpi-rollup`)。これは **P0 Exit 判定用の point-in-time 測定**であり time series
-   ではない。fixture KPI は P0 Exit の正本なので**改変しない**。
-2. **operational live data の有無 (DB)**:
-   - acceptance_pass_rate ← `acceptance_criteria.status` (satisfied/rejected)、created_at、project_id ✅
-   - approval_wait_ms ← `approval_requests` (requested_at→decided_at)、index 有 ✅
-   - citation_coverage ← `claims` + `evidence_items` (claim_id FK)、project_id、created_at ✅
-   - cost_per_completed_task ← `agent_runs` (cost_usd, status=completed, created_at, project_id) ✅
-   - **time_to_merge ← merge は P0 deny (`rules/core.md`、merge=P0 deny)。real merge / merge timestamp が
-     存在しない → P0 では live data ゼロ** (fixture KPI のみが測定)。
-3. **provider dimension**: `agent_runs` に **provider column は無い** (run→single-provider 帰属は意味的にも
-   不正確)。provider は **`eval_runs.provider`** (provider bake-off、eval harness) に存在。eval_runs は
-   project_id を持たず tenant-scoped。
+1. **5 KPI の P0-Exit source-of-truth は fixture corpus** (`eval/quality/<kpi_id>/`、`compute_kpi_rollup()`、
+   `GET /api/v1/eval/kpi-rollup`) = **point-in-time 測定**。fixture KPI は P0 Exit 正本なので**改変しない**。
+2. **operational live metric は既存 service に canonical 実装が存在** (`backend/app/services/metrics/`)。
+   SP-026 は **これらを再利用** し、time-series bucketing を被せる (公式を複製しない、Pack 残リスク回避):
+   - `OrchestratorKpiRollupService` (SP-014): `completed_run_count` / `cost_per_completed_task_usd`
+     (= provider_total_cost / **全 completed run 数** が分母) / `time_to_merge_proxy_median_ms` /
+     `approval_wait_median_ms` を**まとめて**算出。
+   - `ApprovalWaitMsMetricService` (AC-KPI-03): `status in ('approved','rejected')` AND `decided_at NOT NULL`
+     AND `decided_at >= requested_at` の `percentile_cont(0.5)` median_ms。
+   - `AdoptedArtifactCitationCoverageService` (SP-020): citation_coverage は **final-adopted artifact**
+     (`adoption_state='final'`, `finalized_at`) を分母にする (**raw claims ではない**)。
+   - `AgentRunKpiService` (AC-KPI-02): `time_to_merge_proxy` = `repo_pr_opened_to_agent_run_completed`。
+     **real merge は P0 deny だが proxy が存在する** (= 「空」ではなく proxy。UI で proxy と明示)。
+3. **acceptance_pass_rate の operational source**: 専用 metric service は無い。operational では
+   `acceptance_criteria.status` (`satisfied` / `rejected`) の比率を用いる (fixture KPI と公式 semantics 同一、
+   data は live)。**operational acceptance であることを明示**。
+4. **range vocabulary**: 既存は `CostSummaryRange = today|week|month|quarter|all` (`quarter`=90日)。SP-026 は
+   `week(7d)|month(30d)|quarter(90d)` を採用 (`year` は誤り、F-006)。
+5. **provider dimension**: `agent_runs` に provider column 無し (run→single-provider 帰属は不正確)。provider は
+   **`eval_runs.provider`** (bake-off) のみ。eval_runs は project_id 非保持で **tenant-scoped**。provider
+   breakdown は tenant-wide であることを response/UI に明示 (F-005)。
 
 ## 決定対象
 
@@ -74,56 +82,85 @@ trend を可視化する。
 
 ### (A) operational KPI time series endpoint
 
-`GET /api/v1/eval/kpi_timeseries?bucket=day|week&range=week|month|year&project_id=<uuid>`
+`GET /api/v1/eval/kpi_timeseries?bucket=day|week&range=week|month|quarter&project_id=<uuid>`
 
 - `actor_id = Depends(get_current_actor_id)` + `tenant_id = Depends(get_tenant_id)` (authenticated)。
-- **5 KPI それぞれ live aggregation** (UTC date_trunc bucket、tenant + active-scope + range cutoff、sparse):
+- **既存 metric service の公式を再利用**し、`date_trunc(bucket, <time_col>, 'UTC')` で GROUP BY bucket を被せる。
+  公式 (status set / denominator / source / time source) は既存 service と**共有定数/共有 SQL fragment**で
+  揃え、drift guard test で固定する (F-009)。各 KPI の per-bucket 集計と time source:
 
-| KPI | source | per-bucket 集計 (公式 semantics は fixture KPI と同一) | P0 |
-|---|---|---|---|
-| acceptance_pass_rate | acceptance_criteria | `count(status='satisfied') / nullif(count(status in ('satisfied','rejected')),0)` (created_at bucket) | ✅ |
-| approval_wait_ms | approval_requests | `percentile_cont(0.5)` of `extract(epoch from decided_at-requested_at)*1000` (decided only、requested_at bucket) | ✅ |
-| citation_coverage | claims⟕evidence_items | `count(claims with ≥1 evidence) / nullif(count(claims),0)` (claims.created_at bucket) | ✅ |
-| cost_per_completed_task | agent_runs | `sum(cost_usd) filter(status='completed') / nullif(count filter(status='completed' and cost_usd not null),0)` | ✅ |
-| time_to_merge | (merge event) | **P0 は merge deny → 常に空 bucket** (honest empty、fixture KPI が P0 Exit 用に測定) | ⚠️ empty |
+| KPI | 既存 service / source | per-bucket 公式 | time source | P0 状態 |
+|---|---|---|---|---|
+| acceptance_pass_rate | acceptance_criteria (operational) | `count(status='satisfied') / nullif(count(status in ('satisfied','rejected')),0)` | created_at | measured |
+| approval_wait_ms | `ApprovalWaitMsMetricService` | `percentile_cont(0.5)` of wait_ms、`status in ('approved','rejected')` AND `decided_at NOT NULL` AND `decided_at>=requested_at` | requested_at | measured |
+| citation_coverage | `AdoptedArtifactCitationCoverageService` | **final-adopted artifact** (`adoption_state='final'`) 基準の coverage | finalized_at | measured |
+| cost_per_completed_task | `OrchestratorKpiRollupService` | `sum(provider cost) / nullif(completed_run_count,0)` (分母=**全 completed run**)。`measured/unmeasured_completed_run_count` も返す (F-002) | completed_at | measured / partial_unmeasured |
+| time_to_merge | `AgentRunKpiService` proxy | `time_to_merge_proxy` (`repo_pr_opened_to_agent_run_completed`) の median。**proxy であることを明示** (F-004) | completed_at | proxy |
 
-- response `KpiTimeseriesResponse`: `{ bucket, range, series: [{ kpi_id, unit, threshold, buckets: [{bucket_start, value|null, sample_count}] }] }`。各 KPI は sparse (data 有 bucket のみ)、`value=null` は「測定不能/データ無し」(0 と区別)。
-- `project_id` 任意 filter: 指定時は当該 project に限定 (acceptance/citation/cost は project_id 列、approval は run_id→agent_runs.project_id join)。未指定は actor の tenant 全体。
-- **active-scope**: cost (agent_runs) は `soft_deleted_ticket_run_exclusion()`、acceptance/citation は project active + soft-delete 除外。
-- 各 KPI の **value は閾値方向を含めず raw 値**を返し、frontend が threshold と比較表示。
+- **response `KpiTimeseriesResponse`**: `{ bucket, range, series: [{ kpi_id, unit, threshold, direction, measurement_kind: 'measured'|'proxy', buckets: [{bucket_start, value|null, state, numerator_count?, denominator_count?, measured_count?, unmeasured_count?}] }] }`。
+- **bucket `state` enum (F-008)**: `measured` (値有) / `no_denominator` (分母 0、value=null) / `partial_unmeasured`
+  (cost で unmeasured_completed>0) / `proxy` (time_to_merge)。sparse (data 無 bucket は出さない) と
+  `no_denominator` (bucket は有るが分母 0) を区別。`value=null` の理由を state で表現。
+- **KPI definition authority = backend** (F-009): unit / threshold / direction / measurement_kind は backend が
+  返し、frontend は表示のみ (threshold 定数を frontend で再定義しない)。
+- `project_id` 任意 filter: acceptance/citation/cost は project_id 列で限定。approval は `run_id → agent_runs.project_id`
+  join (run_id nullable・FK TODO) のため、project 指定時は **`unattributed_approval_count` を別途返す** (run 未紐付
+  approval を静かに落とさない、F-003)。未指定は tenant 全体。
+- **active-scope**: cost (agent_runs) / time_to_merge proxy は `soft_deleted_ticket_run_exclusion()`、acceptance/
+  citation は project active + soft-delete 除外。tenant boundary 必須。
+- raw 値を返し frontend が threshold 比較表示 (direction も backend が返す)。
 
 ### (B) eval provider breakdown endpoint
 
-`GET /api/v1/eval/provider_breakdown?range=week|month|year`
+`GET /api/v1/eval/provider_breakdown?range=week|month|quarter`
 
-- `eval_runs.provider` × `eval_scores` を join し、**provider 別**に `{ provider, model, run_count, metric_key 別 pass_rate / median score }` を集計 (tenant-scoped、started_at range cutoff)。
-- provider bake-off (どの provider が eval で良い結果か) を可視化。eval_runs は project_id 非保持 → tenant 全体。
+- `eval_runs.provider` × `eval_scores` を join し、**provider 別**に `{ provider, model, run_count, metric_key 別
+  pass_rate / median score }` を集計 (tenant-scoped、started_at range cutoff)。
+- provider bake-off (どの provider が eval で良い結果か) を可視化。
+- **scope 明示 (F-005)**: eval_runs は project_id 非保持 → response に `scope: 'tenant'` +
+  `project_filter_applied: false` を含め、UI で「tenant-wide eval bake-off」と表示 (project filter が効いている
+  ように誤読させない)。
 - secret なし、集計のみ。
 
 ### frontend (analytics page 本実装)
 
 - `lib/api/eval-analytics.ts` (server fetch、`fetchBackendJson` = cache:no-store + session-bound、fail-closed loader `{ok}`)。
-- `lib/domain/kpi-analytics.ts` (client-safe pure: zod schema + KPI 定義 + value 整形 + threshold 判定 tone)。
-- analytics page: ① range tab (7d=week / 30d=month / 90d=year) ② project filter (現 project / 全体) ③ 5 KPI
-  operational time series chart (既存 BarChart 流用、time_to_merge は「P0 では merge 無効のためデータ無し」明示)
-  ④ provider breakdown table (eval bake-off)。**fixture P0-Exit KPI とは別 section + ラベル明示**で混同防止。
-- 取得失敗 (fail-closed) は skeleton/「取得失敗」、空は「データ無し」、0 と null を区別表示。
+- `lib/domain/kpi-analytics.ts` (client-safe pure: zod schema + value 整形 + state 別表示。**KPI 定義 (unit/
+  threshold/direction) は backend response から受ける**、frontend で再定義しない、F-009)。
+- analytics page: ① range tab (**7d=week / 30d=month / 90d=quarter**、F-006) ② project filter (現 project / 全体、
+  operational series のみに効く) ③ 5 KPI operational time series chart (既存 BarChart 流用、time_to_merge は
+  **「proxy (PR open→completed)」と明示**、cost は partial_unmeasured 注記) ④ provider breakdown table
+  (**tenant-wide bake-off と明示**、project filter 非適用)。**fixture P0-Exit KPI とは別 section + ラベル明示**で混同防止。
+- **state 別表示 (F-008)**: `measured` (値) / `no_denominator` (「対象データ無し」) / `partial_unmeasured`
+  (「一部未計測」) / `proxy` (「代理指標」) / sparse 欠落 (bucket 非表示) / 取得失敗 (「取得失敗」) を**全て別文言**で
+  区別。0 と null を混同しない。
 
 ## 却下案
 - fixture KPI の time series 化 (選択肢 1)。
 - agent_runs provider column 追加 (選択肢 2)。
-- real-time streaming (Pack 対象外、polling で十分)。
-- 外部 BI 連携 (Pack 対象外)。
+- **operational KPI 公式の独自再実装** — ❌ 却下 (Pack 残リスク「KPI 計算ロジック重複」)。既存 metric service
+  (`OrchestratorKpiRollupService` / `ApprovalWaitMsMetricService` / `AdoptedArtifactCitationCoverageService` /
+  `AgentRunKpiService`) の公式を共有定数/fragment で再利用する。
+- time_to_merge を「P0 空」とする (当初案) — ❌ 却下。既存 `time_to_merge_proxy` を proxy として採用 (F-004)。
+- real-time streaming / 外部 BI 連携 (Pack 対象外)。
 
 ## リスク
 
-- **aggregation 性能 (N+1 / unbounded)**: range cutoff (week/month/year) + UTC bucket GROUP BY + 既存 index
-  (approval_requests_idx_requested_at 等) で bound。citation の claims⟕evidence は claim 単位 GROUP BY +
-  `exists(evidence)` で N+1 回避。median は `percentile_cont` 単一 query。
-- **KPI 公式の drift**: operational 集計は fixture KPI と **同一公式 semantics** を使うが別 data。公式定数
-  (threshold) を単一 source (frontend KPI_DEFINITIONS / backend) で揃え、drift guard test で固定。
-- **fixture KPI との混同**: UI ラベルで「P0 Exit 判定 (fixture)」/「運用実績 (live)」を明確分離。
-- **time_to_merge の空表示を「壊れ」と誤認**: 「P0 は merge 無効」注記で honest に表示 (機能削減ではない)。
+- **aggregation 性能 (N+1 / unbounded)**: range cutoff + UTC bucket GROUP BY で bound。median は `percentile_cont`
+  単一 query、citation は final-adoption + evidence の集合演算で N+1 回避。**ただし index 現状は source ごとに
+  異なる (F-007)**: `approval_requests_idx_requested_at` は有るが、`acceptance_criteria` / `claims` /
+  `evidence_items` の `(tenant_id, project_id, created_at)` range index、`eval_runs(tenant_id, started_at)` は
+  未整備。**P0 dogfooding 規模では migration なしで許容、データ増加時は follow-up index migration**と明記
+  (本 ADR の性能 claim を「現規模で許容」に弱める)。DB-gated で row-count bound smoke を入れる。
+- **KPI 公式の drift (F-009)**: operational 集計は既存 metric service と **同一公式 (status set / denominator /
+  source / time source)** を共有定数/fragment で揃え、no-DB introspection で `status in (...)` / denominator /
+  `date_trunc(...,'UTC')` / active-scope 極性まで assert + 既存 service の定数との drift guard test で固定。
+  threshold/unit/direction は backend authority。
+- **fixture KPI との混同**: UI で「P0 Exit 判定 (fixture)」/「運用実績 (live)」を別 section + ラベル分離。
+- **citation 分母の取り違え (F-001)**: final-adopted artifact を分母にする (raw claims 不可)。draft/non-adopted が
+  分母に入らない DB-gated negative test を must-ship。
+- **approval の project 取りこぼし (F-003)**: run 未紐付 approval を `unattributed_approval_count` で開示。
+- **provider breakdown の scope 誤読 (F-005)**: tenant-wide を response/UI に明示。
 
 ## rollback 手順
 
@@ -132,26 +169,39 @@ trend を可視化する。
 
 ## 実装対象ファイル
 
-- `backend/app/services/eval/kpi_timeseries.py` (live aggregation SQL builder + 集計ロジック)
-- `backend/app/api/eval_analytics.py` (kpi_timeseries + provider_breakdown endpoint) + router 登録
-- `frontend/lib/domain/kpi-analytics.ts` (pure) + `frontend/lib/api/eval-analytics.ts` (server fetch)
+- `backend/app/services/eval/kpi_timeseries.py` (bucketed aggregation。既存 metric service の公式 fragment/
+  定数を import/共有して time-series 化、独自再実装しない)
+- `backend/app/api/eval_analytics.py` (kpi_timeseries + provider_breakdown endpoint、KPI definition authority) + router 登録
+- `frontend/lib/domain/kpi-analytics.ts` (pure、backend 定義を受ける) + `frontend/lib/api/eval-analytics.ts` (server fetch)
 - `frontend/app/(admin)/eval-dashboard/analytics/page.tsx` (skeleton → 本実装)
-- tests: no-DB (SQL introspection: tenant/active-scope/date_trunc/group by 検証 + zod) + DB-gated
-  (集計値正しさ/sparse/null-0 区別/project filter/provider breakdown) + frontend vitest (domain + page)
+- tests: no-DB (SQL introspection + 公式 drift guard + zod) + DB-gated (集計値/state/filter/breakdown) + frontend vitest
 
 ## テスト指針 (must-ship)
 
 - **SQL introspection (no-DB)**: 各 KPI query が `tenant_id =` + active-scope (`NOT (EXISTS`) + `date_trunc(...,'UTC')`
-  + `GROUP BY` + range cutoff を含む (capturing session で compiled SQL assert、ADR-00039 先例)。
-- **集計正しさ (DB-gated)**: acceptance ratio / approval median / citation coverage / cost-per-completed が
-  既知 fixture data で期待値、sparse (data 無 bucket は出ない)、value=null と 0 を区別。
-- **project filter (DB-gated)**: project_id 指定で当該 project のみ、別 project の data を混ぜない。
-- **active-scope (DB-gated)**: soft-deleted ticket の run を cost 集計から除外。
-- **time_to_merge empty (DB-gated/no-DB)**: P0 では空 series + 「merge 無効」flag。
-- **provider breakdown (DB-gated)**: eval_runs.provider 別 pass_rate / score、tenant-scoped。
-- **公式 drift guard (no-DB)**: KPI threshold 定数が backend/frontend で一致。
-- **frontend**: range tab 切替、project filter、null/0/取得失敗の 3 state 区別、text-only、RSC 境界 (next build)、
-  fixture KPI と operational のラベル分離。
+  + `GROUP BY` + range cutoff を含む (capturing session、ADR-00039 先例)。
+- **公式 drift guard (no-DB、F-009)**: 各 KPI の status set / denominator / time source が既存 metric service
+  (`ApprovalWaitMsMetricService` の status set、`OrchestratorKpiRollupService` の completed denominator、
+  `AdoptedArtifactCitationCoverageService` の final-adopted) の定数と一致。threshold/unit/direction は backend
+  authority (frontend で再定義しない) を assert。
+- **citation final-adopted 境界 (DB-gated、F-001)**: draft / non-adopted / 中間 research claim が **分母に入らない**
+  (final-adopted artifact のみ)、negative test。
+- **cost measured/unmeasured (DB-gated、F-002)**: completed=2 で cost_usd が `0` と `null` の fixture →
+  分母=全 completed (2)、`unmeasured_completed_run_count` で未計測を開示、0 と未計測を分離。
+- **approval contract (DB-gated、F-003)**: `status in ('approved','rejected')` + `decided_at NOT NULL` +
+  `decided_at>=requested_at` のみ集計、`expired/invalidated` / `run_id=null` / stale run_id を除外し
+  `unattributed_approval_count` で開示 (project filter 時に静かに落とさない)。
+- **time_to_merge proxy (DB-gated/no-DB、F-004)**: `repo_pr_opened_to_agent_run_completed` proxy を使い、
+  measurement_kind='proxy'。real merge を使わないことを固定。
+- **bucket state enum (DB-gated、F-008)**: `measured` / `no_denominator` (分母 0) / `partial_unmeasured` /
+  `proxy` を区別、sparse 欠落と `no_denominator` を別物として返す。
+- **project filter + active-scope (DB-gated)**: project_id で当該 project のみ、soft-deleted ticket run を cost
+  集計から除外。
+- **provider breakdown scope (DB-gated、F-005)**: eval_runs.provider 別、tenant-scoped、`scope='tenant'` +
+  `project_filter_applied=false` を返す。
+- **range vocab (no-DB、F-006)**: `week=7d / month=30d / quarter=90d` の cutoff、OpenAPI enum が `week|month|quarter`。
+- **frontend**: range tab、project filter、state 別文言 (measured/no_denominator/partial_unmeasured/proxy/取得失敗)
+  区別、provider table の tenant-wide 明示、text-only、RSC 境界 (next build)、fixture KPI と operational のラベル分離。
 
 ## Hard Gates / KPI への trace
 
