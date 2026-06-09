@@ -4,7 +4,7 @@ import builtins
 from typing import Any, NoReturn, cast
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.models.evidence_source import EvidenceSource
@@ -86,7 +86,32 @@ class EvidenceSourceRepository(BaseRepository[EvidenceSource]):
             EvidenceSource.tenant_id == tenant_id,
             EvidenceSource.id == evidence_source_id,
         )
-        return cast(EvidenceSource | None, await self.session.scalar(stmt))
+        return cast("EvidenceSource | None", await self.session.scalar(stmt))
+
+    async def set_trust(
+        self,
+        *,
+        tenant_id: int,
+        evidence_source_id: UUID,
+        trust_level: str | None,
+        trust_score: float | None,
+    ) -> EvidenceSource | None:
+        """SP-027 (ADR-00053): per-source manual trust の set/clear (owner-gated mutation)。
+
+        trust_level / trust_score 以外は変更しない (read-only fields は不変)。score 単独禁止 +
+        範囲は Pydantic + DB CHECK で enforce。actor tenant 内の source のみ更新 (cross-tenant は 0 rows)。
+        """
+        await self._ensure_tenant_context(tenant_id)
+        result = await self.session.execute(
+            update(EvidenceSource)
+            .where(
+                EvidenceSource.tenant_id == tenant_id,
+                EvidenceSource.id == evidence_source_id,
+            )
+            .values(trust_level=trust_level, trust_score=trust_score)
+            .returning(EvidenceSource)
+        )
+        return result.scalar_one_or_none()
 
     @staticmethod
     def _require_page_bounds(*, limit: int, offset: int) -> None:
