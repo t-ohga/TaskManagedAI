@@ -14,6 +14,8 @@ import {
 } from "@/lib/api/research";
 
 import { loadResearchAdvancedSummary } from "@/lib/api/research-advanced";
+import { loadSourceTrust } from "@/lib/api/source-trust";
+import type { EffectiveSourceTrust } from "@/lib/domain/source-trust";
 
 import { UUID_V1_TO_V5_PATTERN } from "../../_lib/route-id";
 import {
@@ -29,6 +31,7 @@ import {
   ResearchTaskCard
 } from "./_components";
 import { ResearchAdvancedSection } from "./_advanced-components";
+import { SourceTrustSection } from "./_source-trust-components";
 
 export const dynamic = "force-dynamic";
 
@@ -153,6 +156,18 @@ export default async function ResearchDetailPage({ params }: ResearchDetailPageP
       ? await loadResearchAdvancedSummary(detail.task.project_id, id)
       : null;
 
+  // SP-027 (ADR-00053): source trust を独立 fail-closed で取得 (bounded な 1 query)。
+  // provenance は adversarial R2 F-001 により SSR prefetch せず、mode=provenance のとき client が lazy 取得。
+  let sourceTrust: EffectiveSourceTrust[] = [];
+  let claimIds: string[] = [];
+  if (detail !== null) {
+    const trustResult = await loadSourceTrust(detail.task.project_id, id);
+    if (trustResult.ok) {
+      sourceTrust = trustResult.data.items;
+    }
+    claimIds = detail.claims.map((claim) => claim.id);
+  }
+
   return (
     <AdminPageShell
       description={
@@ -231,6 +246,18 @@ export default async function ResearchDetailPage({ params }: ResearchDetailPageP
                 リサーチ高度化情報の読込に失敗しました。
               </p>
             )}
+          </Panel>
+
+          <Panel
+            description="証拠ソースの信頼度 (手動設定 / ドメイン由来) と来歴 (PROV) を表示します。表示モードは端末ごとに保持されます。信頼度の手動設定はオーナーのみ可能です (SP-027 / ADR-00053)。"
+            title="ソース信頼度・引用表示 (SP-027)"
+            titleId="research-detail-source-trust"
+          >
+            <SourceTrustSection
+              researchTaskId={id}
+              sourceTrust={sourceTrust}
+              claimIds={claimIds}
+            />
           </Panel>
 
           <Panel

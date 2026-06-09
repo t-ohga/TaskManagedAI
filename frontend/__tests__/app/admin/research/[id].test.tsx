@@ -16,7 +16,9 @@ const apiMocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => {
     throw new Error("NEXT_NOT_FOUND");
-  })
+  }),
+  // SP-027: research 詳細が SourceTrustSection (client、useRouter) を常時 render するため mock 追加。
+  useRouter: vi.fn(() => ({ refresh: vi.fn(), push: vi.fn() }))
 }));
 
 vi.mock("@/lib/api/research", async (importOriginal) => {

@@ -11,6 +11,7 @@ from backend.app.api import (
     domain_trust,
     eval_analytics,
     evidence_items,
+    evidence_source_trust,
     evidence_sources,
     github_webhooks,
     health,
@@ -21,6 +22,7 @@ from backend.app.api import (
     p0_acceptance_report,
     research_advanced,
     research_tasks,
+    source_trust,
     tags,
     tickets,
     webhook_events,
@@ -38,6 +40,8 @@ api_router.include_router(evidence_items.router)
 api_router.include_router(conflict_groups.router)
 api_router.include_router(research_advanced.router)
 api_router.include_router(domain_trust.router)
+api_router.include_router(evidence_source_trust.router)
+api_router.include_router(source_trust.router)
 api_router.include_router(kpi_rollup.router)
 api_router.include_router(eval_analytics.router)
 api_router.include_router(p0_acceptance_report.router)
