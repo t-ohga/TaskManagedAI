@@ -4,7 +4,7 @@ type: "heavy"
 status: "partial_skeleton"
 sprint_no: 34
 created_at: "2026-05-26"
-updated_at: "2026-05-26"
+updated_at: "2026-06-10"
 target_days: 7
 max_days: 10
 adr_refs:
@@ -219,3 +219,160 @@ uv run mypy backend/app/mcp_server.py
 - ✅ idempotency (#323 ADR-00049、`test_create_idempotency_*`) / input validation (invalid uuid/role/status/dispatch deny)
 
 → `partial_skeleton` は core を過小評価 (security-critical は tested)。ただし **残 acceptance**: per-actor rate limit + max concurrent (BudgetGuard pre-spend) / stdio hardening (absolute argv / no shell / max request bytes / env allowlist) / caller-supplied server-owned field reject の明示 negative test が test suite に未確認 → これら hardening 系を実装・検証してから completed 化する (over-claim 回避、台帳 honesty)。本 audit では status 不変 (security-critical 充足の証跡記録 + 残 hardening gap 明示)。
+
+(2026-06-10 hardening 実装) **3 security hardening gap を closure** (status は `partial_skeleton` 維持、下記理由)。
+
+- **Codex adversarial R7 HIGH (F-10) + R8 HIGH (F-12) adopt**: Discord 通知を `python -c` subprocess
+  (`import httpx`) で送っていたが、token-bearing child の import-path / interpreter symlink hijack で token が
+  別 process の repo コードに読まれ得た。**subprocess を全廃し in-process httpx へ移行** (`_SEND_SCRIPT` /
+  `_PYTHON_EXECUTABLE` / `_hardened_subprocess_env` / `_terminate_child` 削除、`httpx.AsyncClient` bounded
+  timeout best-effort)。token は親 process memory に留まり **child env / argv に一切出ない** (R5 F-8 の
+  subprocess timeout cleanup も自然解消)。
+  R8 F-12 / R9 F-13 の残論点 (in-process でも `python -m backend.app.mcp` 起動で project-local `httpx.py` が
+  **親 process の** import を shadow し得る) には **defense-in-depth gate を追加**: `httpx.__file__` が
+  `site-packages` / `dist-packages` から来ているかを検証し、shadow 疑い時は通知を **fail-closed**
+  (token を resolve/使用せず no-op) にする (`_is_trusted_dependency_path` / `_HTTPX_TRUSTED`)。
+  **honest 限界 (R9 F-13)**: 本 gate は post-import チェックのため shadow module の **import-time
+  top-level code 実行自体は防げない** (HTTP call で token を untrusted httpx へ渡さない防御に留まる)。
+  根本的に、repo の import path へ `httpx.py` を書ける攻撃者は `discord_notify.py` を含む backend 全モジュール
+  を既に制御でき token は server 全体と同等露出 = **server コード完全性** (deployment / file 権限) の問題で
+  **SP-034 (MCP gateway) scope 外**。よって本項は完全 closure ではなく best-effort gate + honest 限界明記。
+  regression (`TestDiscordInProcessNotify`: subprocess machinery 不在 / token は Authorization header のみ /
+  token 不在 no-op / HTTP error 握り潰し / untrusted httpx で fail-closed / 実 httpx は trusted)。
+- **Codex adversarial R7 MEDIUM (F-11) adopt**: ingress guard 拒否を `ToolResult` で返していたため MCP client
+  には `isError=false` の成功扱いになり、blocked mutation を automation が「成功」と誤認し得た。拒否を
+  **`ToolError`** (FastMCP → MCP protocol で `isError=true`) に変更、payload 正本 key を `error` → **`error_code`**
+  に統一。fail-open try の **外** で raise し guard bypass を防ぐ。regression (`test_ingress_rejection_is_protocol_error`:
+  `_call_tool_mcp` で ToolError 伝播、`test_mutating_tool_over_rate_limit_rejected` / `test_oversized_read_tool_rejected`
+  で ToolError + error_code 検証)。
+- **gap #1 (per-actor rate limit + max concurrent + max input bytes)**: `backend/app/mcp/hardening.py` +
+  `middleware.py` で in-process な FastMCP `MutationGuardMiddleware` (`on_call_tool` hook) を追加。
+  mutating tool (19) のみ gate し read tool (20) は素通し。sliding-window rate limit + concurrency 上限 +
+  per tool-call input byte 上限を **actor-keyed** で適用。現状 MCP は固定 default actor で動くため
+  enforcement は実質 global だが、`resolve_actor_key` は caller 申告を無視して server-owned key を返す
+  ため、SP-016 で per-actor 認証が wired されると自動的に per-actor になる (idempotency table と同じ
+  forward-compat)。閾値は env-tunable (`TASKMANAGEDAI_MCP_MUTATION_RATE_LIMIT` / `_WINDOW_SEC` /
+  `_MAX_CONCURRENT_MUTATIONS` / `_MAX_TOOL_INPUT_BYTES`) で単一ユーザー通常利用では発火しない generous
+  既定値 (240/60s / 32 concurrent / 256 KiB)。guard 内部エラーは **fail-open** (可用性優先)。本 ingress
+  guard は per-run `BudgetGuard` (token/cost gate) を **置き換えず補完** する (entry 時の rate/concurrency/size)。
+- **gap #2 (stdio hardening)**: MCP-reachable な subprocess は **唯一 agent_spawner のみ** (Discord 通知は
+  R7 F-10 で subprocess を全廃し in-process httpx 化済 = 子 process なし。下記 F-10/F-12 参照)。
+  - **agent_spawner** (`superintendent_agent_start` MCP tool 経由、Codex R5 F-7 / R6 F-9): provider
+    executable (`claude`/`codex`/`echo`) を bare name から **絶対 path 解決** (`_resolve_executable`:
+    shutil.which → realpath → 絶対 assert)。**project-local binary を拒否** (解決先が project_dir 配下なら
+    ValueError、poisoned PATH / project-local hijack で user 資格情報露出する command hijack を防ぐ)。
+    加えて (Codex R10 F-15) **ambient PATH poisoning 拒否**: 解決先が tmp / user-writable transient
+    prefix (`/tmp` / `/private/tmp` / `/var/tmp` / `/dev/shm` / `$TMPDIR`) 配下なら ValueError、子 process の
+    PATH を ambient から継承させず **最小 trusted PATH** (system 標準 dir + 解決済み executable の dir) に
+    **再構成** (poisoned PATH を agent へ持ち越さない)。さらに (Codex R12 F-17) **group/world-writable な
+    executable / dir を stat で拒否** (他ユーザ writable = command hijack vector、user-owned 755 の
+    `~/.local/bin` 等の正規 install 先は通す)。設定済み絶対パス executable allowlist (環境依存) は SP-035
+    architecture へ defer。
+    加えて **process lifecycle hygiene** (R6 F-9): 未使用 pipe を **DEVNULL** (stdin/stdout/stderr、prompt
+    未書込 / 出力未 drain による hang を防ぐ)、`stop_agent` を **process group kill** (`os.killpg` +
+    fallback、`start_new_session=True` の child の descendant 残留を防ぐ、kill_all_agents と同 semantics)。
+    **honest 限界 (R10 F-15)**: 設定済み絶対パス executable allowlist 化 (環境依存、claude/codex の install
+    先が `~/.local/bin` 等で固定 allowlist 不可) は SP-035 agent-supervision architecture (task #16) の範囲。
+  - max request bytes は middleware の per tool-call argument byte 上限で実現 (post-parse、F-4 参照)。
+  - scope 外: cli_artifact launcher / sops_resolver / runner_adapter / anti_gaming の subprocess は MCP 経由で
+    呼ばれない別 subsystem (各 Sprint の hardening 範囲)。
+- **gap #3 (caller-supplied server-owned field reject)**: 全 39 tool の inputSchema が `additionalProperties:False`
+  (FastMCP が extra field を reject) + server-owned field (actor_id/tenant_id/policy_profile 等) を露出する tool
+  ゼロ、を **明示 negative test 化**。read/mutate partition (MUTATION_TOOLS 19 / READ_TOOLS 20) は 5+ source
+  drift guard (`test_partition_covers_all_registered_tools`) で全 39 と一致を固定。
+  - **Codex R11 F-16 + R12 F-18 adopt (secret leak 防止)**: FastMCP/Pydantic の additionalProperties rejection は
+    **raw field value を ValidationError / WARNING ログへ露出**する (例: `capability_token` の secret 値)。これを
+    防ぐため `MutationGuardMiddleware` で **FastMCP validation 到達前**に `SERVER_OWNED_FORBIDDEN_FIELDS` を
+    検出し、**field 名のみ**の `ToolError` (`error_code=caller_supplied_field_rejected`, `fields=[...]`) で拒否
+    (raw value は log / 例外 / payload に一切出さない)。**F-18**: 検出 set を server-owned identity 9 種に加え
+    repo canonical な `_PROHIBITED_PAYLOAD_KEYS` (api_key / secret_capability_token / raw_token / session_token /
+    provider_key 等の alias) と **union** (drift 回避)。**F-20**: 判定を **case-insensitive** 化
+    (`API_KEY` / `Raw_Token` 等の大文字 alias が guard を擦り抜け FastMCP validation で raw value 露出するのを
+    防ぐ、original 名は response に保持)。regression は複数 secret-alias + **case variant** に **parametrize**
+    (`capability_token` / `API_KEY` 等の canary が例外文字列・caplog・MCP payload のどこにも出ない、middleware 直 +
+    `_call_tool_mcp` protocol 経由)。
+  - **Codex R15 F-23 + R16 F-24 adopt (unknown-field secret leak 防止 + fail-closed)**: forbidden 名でない
+    **unknown** top-level 引数 (`unexpected="sk-proj-..."`) や secret-shaped **key** (`{"sk-proj-...": x}`) は
+    FastMCP の additionalProperties rejection で raw value が ValidationError / WARNING へ露出する。FastMCP
+    validation 到達前に `arguments_contain_secret` で検出し、**generic** error (`caller_supplied_secret_detected`、
+    field 名 / 値を一切含めない) で reject。**F-24**: scanner を **bounded iterative** (明示 stack、`RecursionError`
+    で fail-open する経路を排除) + node 上限超の巨大/深い payload は **fail-closed** で secret 疑い扱い。さらに
+    middleware を **security check (fail-CLOSED)** と **availability check (rate/concurrency、fail-open)** に
+    **分離** (security scan の例外は素通しせず reject)。`estimate_input_bytes` も bounded iterative 化。
+    **F-25**: scanner が **全 depth** の dict key を `SERVER_OWNED_FORBIDDEN_FIELDS` (prohibited 名、case-insensitive)
+    と照合 (broad pattern 非該当の短い token でも nested `{"capability_token": "short"}` を止める)。regression は
+    unknown-field / secret-shaped-key / nested-value / **nested-prohibited-key** + **3000-deep nesting** +
+    node-cap fail-closed + scan-crash fail-closed (secret fragment が例外・caplog・payload に出ない)。**副次効果**:
+    許可 field の secret-shaped 値も MCP ingress で reject (F-22 の MCP-write path closure)。
+  - **Codex R12 F-19 + R14 F-21 adopt (nested secret echo 防止)**: `delegation_create` の free-form `task_spec`
+    JSON は `bridge_delegation_create` が response に raw echo する。`task_spec={"capability_token": "<secret>"}`
+    が DB / MCP payload へ漏れるため、bridge 冒頭で `_assert_freeform_payload_no_secret` (再帰検査) を実行し、
+    hit 時は store / echo 前に generic error (`task_spec_contains_secret`、raw value 非露出) で **fail-closed
+    reject**。検査対象は (a) dict **key** の prohibited 名 + **broad scanner** (F-21: `{"sk-proj-...": ...}` の
+    secret-shaped key も拒否)、(b) string **値** の broad scanner、を再帰。regression (helper の prohibited-key /
+    secret-shaped-key / value-pattern / clean + bridge が DB access 前に reject)。
+- **Codex adversarial R1 HIGH (F-1) adopt**: `run_cost` を read 風の名前で READ 分類していたが、
+  `bridge_run_cost` が `AgentRun.cost_usd` / `tokens_*` を書き込み commit する mutating path で guard を
+  bypass していた (cost/KPI 汚染リスク)。`run_cost` を MUTATION_TOOLS へ移動 (18→19) + **semantic drift
+  guard** (`test_committing_bridges_are_classified_mutating`: commit する bridge を呼ぶ tool が READ 分類なら
+  fail、AST 解析) を追加し再発防止。set 数だけの drift guard では捕捉できなかった class を semantic に固定。
+- **Codex adversarial R2 MEDIUM (F-3) adopt**: input-size cap を mutating tool のみに適用していたが、
+  oversized **read** 引数 (ticket_search / context_auto 等) で memory/CPU/DB-heavy path に誘導され得る。
+  input-size 判定を `input_size_exceeded` に分離し middleware の read/mutate split **前** に全 tool へ適用
+  (transport-wide)。rate-limit + concurrency は mutating のみ維持。regression test
+  (`test_oversized_read_tool_rejected`) 追加。
+- **Codex adversarial R2 HIGH (F-2) adopt (honest scoping、shared backend は SP-016/P0.1 へ defer)**:
+  rate/concurrency state は module-global = **当該 server process 内に閉じる**。stdio deployment で
+  client ごとに別 server process が spawn されると process ごとに quota 独立 → cross-process な global
+  per-actor quota にはならない。本 guard を「**per-process DoS 緩和** (単一 process 内の runaway loop /
+  write storm 抑止)」と claim を正直化 (code docstring + 本 §)。cross-process enforcement は共有 counter
+  backend (Redis / PG advisory lock) が必要で per-actor 認証 (SP-016) + multi-agent orchestration (P0.1)
+  と結合するため、そこで shared-backend 化する (現状固定単一 actor では cross-process 共有の実益も限定的)。
+  この scope 限定が `partial_skeleton` 維持の追加理由 (over-claim 回避)。
+- **Codex adversarial R3 MEDIUM (F-5) + R4 MEDIUM (F-6) adopt**: `bridge_ticket_list` (F-5) と
+  `bridge_ticket_search` (F-6) が raw `limit` を実 query (`LIMIT :limit`) へ渡していた (小 input でも
+  `limit=1e9` で tenant-wide unbounded read)。両者を **clamp-before-query** へ修正 + regression
+  (`test_ticket_list_clamps_query_limit_before_db` / `test_ticket_search_clamps_query_limit_before_db`:
+  limit=1e9 → 実 SQL bind は `MAX_LIMIT=200`)。`LIMIT :limit` 系 read bridge 全件監査済
+  (ticket_list / ticket_list_all / ticket_search / audit_list / run_list / delegation_inbox は全て
+  clamp-before-query)。残: notification_list は SQL `LIMIT :raw` ではなく repo 全件 fetch → Python
+  `[:limit]` slice (per-actor 件数で自然に bounded、別 pattern)。
+- **Codex adversarial R3 HIGH (F-4) adopt (honest scoping)**: 引数 byte cap は FastMCP が JSON-RPC frame
+  を deserialize した **後** に効く **post-parse argument cap** (defense-in-depth) であり、raw stdio frame
+  の transport-level size limit ではない。`MAX_TOOL_INPUT_BYTES` の claim を正直化 (code docstring + 本 §)。
+  local trusted stdio (MCP client = user 自身の Claude Code/Codex、network 露出なし) では transport-frame
+  DoS は低優先 + FastMCP が transport size 設定を露出しないため、真の frame-size 制限は transport layer
+  patch を要する follow-up とする (P0 は post-parse cap で defense-in-depth)。
+
+### partial_skeleton 維持の残 acceptance (completed 化の前提、honest)
+
+本 hardening 後も以下が未達のため `completed` にしない (over-claim 回避):
+- explicit outputSchema (mutating tool の構造化出力 model) + tool annotations (readOnlyHint/idempotentHint)。
+- cross-process な per-actor rate/concurrency enforcement (shared counter backend、SP-016/P0.1)。
+- raw stdio transport frame-size limit (transport layer、上記 F-4)。
+- read-side の rate/cost guard (DB-heavy read tool、現状は per-tool clamp + 引数 cap のみ)。
+- agent_spawner の **full process supervision** (startup health timeout 強制 / bounded output capture /
+  prompt 受け渡し protocol / descendant 監督 semantics、Codex R6 F-9 の architecture-level 部分) は
+  SP-035 cross-process agent supervisor architecture sprint (task #16、ADR-00048) の範囲。本 PR は spawn
+  hygiene (DEVNULL pipe + 絶対 argv + process-group stop) のみ closure。
+- Discord 通知 path の **import-time module shadow 防止** (Codex R9 F-13): project-local `httpx.py` の
+  import-time code 実行は application layer では完全に防げず、server コード完全性 (deployment / file 権限)
+  の問題で SP-034 scope 外。本 PR は post-import trust gate (fail-closed) の defense-in-depth に留める。
+- **MCP-wide な許可 free-form text 値の secret scanning** (Codex R14 F-22、partial closure 済 + residual defer):
+  R15 F-23 の `arguments_contain_secret` により MCP ingress では **secret-shaped 値** (`description="sk-proj-..."`
+  等) も reject されるようになった (MCP-write path の closure)。**残る F-22 residual** = (a) **既に DB 保存済の
+  legacy 値** の read 時 redaction、(b) **web UI 等 MCP 以外の入口** からの同種入力、(c) どの field を
+  reject vs redaction にするかの **app-wide design** + false-positive policy。これらは MCP ingress hardening の
+  範囲外で、専用 Pack / ADR で決める **別 follow-up** (task #26、honest defer)。
+- **検証**: `tests/mcp/test_mcp_hardening.py` 22 passed、full `tests/mcp/` 63 passed + 10 DB-gated skip
+  (regression なし、middleware は直接 tool 呼び出しを bypass)。ruff clean / 新規 file mypy clean
+  (mcp/ 残 5 mypy は pre-existing baseline)。
+- **completed 化しない理由 (台帳 honesty、over-claim 回避)**: acceptance「all mutating tool に inputSchema +
+  **outputSchema** + **annotations** 定義」のうち、inputSchema は充足 (additionalProperties:False) だが、
+  **explicit outputSchema (構造化出力 model) と tool annotations (readOnlyHint/idempotentHint 等の advisory
+  client hint) が未設定**。これらは security 制御ではなく client metadata だが acceptance に列挙されており、
+  未達のまま completed 化すると over-claim になる。よって status は `partial_skeleton` 維持、残項目を本 §に
+  明示する (annotations/outputSchema は FastMCP decorator への付与 + 出力 model 定義が必要な別 scope)。
+- 実装 file: `backend/app/mcp/hardening.py` (新) / `middleware.py` (新) / `server.py` (+middleware 登録) /
+  `discord_notify.py` (subprocess hardening) / `tests/mcp/test_mcp_hardening.py` (新、22 tests)。
+  codex-adversarial-review + 採否判定済 (PR で記録)。

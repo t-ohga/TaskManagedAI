@@ -992,3 +992,10 @@ async def notification_resolve(notification_id: str) -> dict[str, Any]:
             )
     except Exception as e:
         return {"error": str(type(e).__name__), "notification_id": notification_id}
+
+
+# SP-034 (ADR-00026): mutating tool の ingress guard (rate limit / max concurrent /
+# max input bytes) を全 tool call に適用する。read tool は素通し、guard 内部エラーは fail-open。
+from backend.app.mcp.middleware import MutationGuardMiddleware  # noqa: E402
+
+mcp.add_middleware(MutationGuardMiddleware())
