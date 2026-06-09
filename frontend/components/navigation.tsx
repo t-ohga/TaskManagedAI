@@ -3,6 +3,7 @@ import Link from "next/link";
 import { NotificationBadge } from "@/components/notification-badge";
 import { NavLink } from "@/components/nav-link";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { FeatureTourTrigger } from "@/components/feature-tour-trigger";
 import { MobileNav } from "@/components/mobile-nav";
 
 const navItems = [
@@ -40,6 +41,7 @@ export function Navigation({ actorLabel }: NavigationProps) {
             <p className="rounded-md border border-line px-2 py-1 font-mono text-xs text-muted-foreground">
               {actorLabel}
             </p>
+            <FeatureTourTrigger />
             <ThemeToggle />
             <NotificationBadge />
           </div>

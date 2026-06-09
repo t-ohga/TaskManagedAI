@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { Navigation } from "@/components/navigation";
 import { CommandPalette } from "@/components/command-palette";
+import { FeatureTour } from "@/components/feature-tour";
 import { ToastProvider } from "@/components/toast";
 import {
   DEV_SESSION_COOKIE_NAME,
@@ -40,6 +41,8 @@ export default async function AdminLayout({ children }: { children: ReactNode })
       <ToastProvider>
         <Navigation actorLabel={actorLabel} />
         <CommandPalette />
+        {/* P-2: 初回訪問で自動表示する機能ツアー (ナビの「ガイド」から再表示)。 */}
+        <FeatureTour />
         <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">{children}</main>
       </ToastProvider>
     </div>
