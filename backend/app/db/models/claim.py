@@ -47,6 +47,19 @@ class Claim(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             "id",
             name="claims_uq_tenant_project_id",
         ),
+        # SP-032 (ADR-00052): 4-col 複合 FK で conflict_group を同一 (tenant, project,
+        # research_task) に束縛。MATCH SIMPLE のため conflict_group_id IS NULL は未割当 (FK skip)。
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "project_id", "research_task_id", "conflict_group_id"],
+            [
+                "conflict_groups.tenant_id",
+                "conflict_groups.project_id",
+                "conflict_groups.research_task_id",
+                "conflict_groups.id",
+            ],
+            name="claims_conflict_group_fkey",
+            ondelete="RESTRICT",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -60,6 +73,9 @@ class Claim(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
     claim_text: Mapped[str] = mapped_column(sa.Text, nullable=False)
     provenance_json: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
     freshness_score: Mapped[float | None] = mapped_column(sa.Double, nullable=True)
+    # SP-032 (ADR-00052): conflict group 割当 (nullable = 未割当)。server-owned、API では
+    # 専用 assign/unassign endpoint 経由でのみ設定 (create/update body では受け付けない)。
+    conflict_group_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     metadata_: Mapped[JsonDict] = mapped_column(
         "metadata",
         JSONB,

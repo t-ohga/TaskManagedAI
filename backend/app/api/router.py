@@ -7,6 +7,8 @@ from backend.app.api import (
     auth,
     auth_cli,
     claims,
+    conflict_groups,
+    domain_trust,
     eval_analytics,
     evidence_items,
     evidence_sources,
@@ -17,6 +19,7 @@ from backend.app.api import (
     memory,
     onboarding,
     p0_acceptance_report,
+    research_advanced,
     research_tasks,
     tags,
     tickets,
@@ -32,6 +35,9 @@ api_router.include_router(research_tasks.router)
 api_router.include_router(evidence_sources.router)
 api_router.include_router(claims.router)
 api_router.include_router(evidence_items.router)
+api_router.include_router(conflict_groups.router)
+api_router.include_router(research_advanced.router)
+api_router.include_router(domain_trust.router)
 api_router.include_router(kpi_rollup.router)
 api_router.include_router(eval_analytics.router)
 api_router.include_router(p0_acceptance_report.router)
