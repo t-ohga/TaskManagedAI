@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.ticket import Ticket
+from backend.app.repositories._payload_secret_scan import _PROHIBITED_PAYLOAD_KEYS
 from backend.app.repositories.ticket import (
     ProjectArchivedError,
     TicketNotActionableError,
@@ -31,12 +32,37 @@ from backend.app.services.mcp_idempotency import (
     compute_request_fingerprint,
     reserve_or_lookup,
 )
+from backend.app.services.security.secret_text_scan import assert_no_secret_in_text
 
 MAX_LIMIT = 200
 
 
 def _clamp(limit: int, offset: int) -> tuple[int, int]:
     return min(max(1, limit), MAX_LIMIT), max(0, offset)
+
+
+def _assert_freeform_payload_no_secret(value: object, *, path: str = "task_spec") -> None:
+    """free-form JSON payload (task_spec 等) を再帰 scan し secret を fail-closed で reject (R12 F-19)。
+
+    MCP tool が受け取り response に echo する自由形式 payload に prohibited key (capability_token 等) や
+    secret-pattern 値が入ると raw secret が MCP response / DB に漏れる。dict **key** (prohibited 名 +
+    broad scanner、R14 F-21: secret-shaped key `{"sk-proj-...": ...}` も拒否) と string **値** (broad
+    secret scanner) を再帰検査し、いずれか hit で ``ValueError`` を raise する (raw key / value は例外に
+    含めない、generic message)。caller は generic error へ畳んで返す。
+    """
+    if isinstance(value, dict):
+        for key, sub in value.items():
+            key_str = str(key)
+            if key_str.lower() in _PROHIBITED_PAYLOAD_KEYS:
+                raise ValueError("prohibited secret key in payload")
+            # R14 F-21: key 文字列自体が secret-shaped (provider token / canary) なら拒否。
+            assert_no_secret_in_text(key_str, field="payload_key")
+            _assert_freeform_payload_no_secret(sub, path=f"{path}.<key>")
+    elif isinstance(value, list):
+        for item in value:
+            _assert_freeform_payload_no_secret(item, path=f"{path}[]")
+    elif isinstance(value, str):
+        assert_no_secret_in_text(value, field=path)
 
 
 def _title_to_slug(title: str) -> str:
@@ -57,6 +83,11 @@ async def bridge_ticket_list(
     from sqlalchemy import text as sa_text
 
     from backend.app.db.models.ticket import Ticket
+
+    # Codex adversarial R3 F-5: 小さい input でも limit=1e9 等で unbounded read DoS を通さないため、
+    # query 構築 **前** に clamp する (bridge_audit_list と同様。従来は response metadata だけ clamp し
+    # 実 query には raw limit/offset を渡していた)。
+    limit, offset = _clamp(limit, offset)
 
     # Q-3 (ADR-00037): active scope。soft-deleted ticket は MCP の count / list からも除外する
     # (repository だけでなく直接 query 経路も active-scope を適用、read path 漏れ防止)。
@@ -81,7 +112,7 @@ async def bridge_ticket_list(
         .offset(offset)
     )
     tickets = result.scalars().all()
-    clamped_limit, clamped_offset = _clamp(limit, offset)
+    clamped_limit, clamped_offset = limit, offset
     return {
         "tickets": [
             {
@@ -771,6 +802,9 @@ async def bridge_ticket_search(
 
     query = query[:200]
     search_pattern = f"%{query}%"
+    # Codex adversarial R4 F-6: bridge_ticket_list (R3 F-5) と同 class。raw limit を LIMIT :limit へ
+    # 直渡しすると小 input でも tenant-wide unbounded read を通すため query 構築前に clamp する。
+    limit = min(max(1, limit), MAX_LIMIT)
     # Q-3 (ADR-00037 / Codex adversarial R2 #2): search も active scope を強制 (soft-deleted を除外)。
     result = await session.execute(
         sa_text("""
@@ -1068,6 +1102,14 @@ async def bridge_delegation_create(
     import hashlib
     import json as json_mod
     from datetime import UTC, datetime, timedelta
+
+    # Codex R12 F-19: free-form な task_spec に prohibited key / secret 値が入ると DB と MCP response
+    # (raw echo) に raw secret が漏れる。store / echo 前に fail-closed で reject する (generic error、
+    # raw value は返さない)。
+    try:
+        _assert_freeform_payload_no_secret(task_spec, path="task_spec")
+    except ValueError:
+        return {"error": "task_spec_contains_secret"}
 
     # ADR-00037 R16/R17 (Codex adversarial): parent_run_id の run 自体の actionable 検証は chokepoint の
     # bridge_run_create に集約済 (削除済/不在 parent は TicketNotActionableError を raise)。delegation
