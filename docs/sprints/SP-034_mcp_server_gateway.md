@@ -358,15 +358,21 @@ uv run mypy backend/app/mcp_server.py
 - Discord 通知 path の **import-time module shadow 防止** (Codex R9 F-13): project-local `httpx.py` の
   import-time code 実行は application layer では完全に防げず、server コード完全性 (deployment / file 権限)
   の問題で SP-034 scope 外。本 PR は post-import trust gate (fail-closed) の defense-in-depth に留める。
-- **MCP-wide な許可 free-form text 値の secret scanning** (Codex R14 F-22、partial closure 済 + residual defer):
-  R15 F-23 の `arguments_contain_secret` により MCP ingress では **secret-shaped 値** (`description="sk-proj-..."`
-  等) も reject されるようになった (MCP-write path の closure)。**残る F-22 residual** = (a) **既に DB 保存済の
-  legacy 値** の read 時 redaction、(b) **web UI 等 MCP 以外の入口** からの同種入力、(c) どの field を
-  reject vs redaction にするかの **app-wide design** + false-positive policy。これらは MCP ingress hardening の
-  範囲外で、専用 Pack / ADR で決める **別 follow-up** (task #26、honest defer)。
-- **検証**: `tests/mcp/test_mcp_hardening.py` 22 passed、full `tests/mcp/` 63 passed + 10 DB-gated skip
-  (regression なし、middleware は直接 tool 呼び出しを bypass)。ruff clean / 新規 file mypy clean
-  (mcp/ 残 5 mypy は pre-existing baseline)。
+- **MCP-wide な許可 free-text content の secret scanning** (Codex R14 F-22 + R18 F-26、partial closure 済 +
+  residual defer): **構造化 caller argument** の secret-reject (dict key/value を全 depth、prohibited 名 +
+  broad pattern、bounded + fail-closed) は本 PR (F-16〜F-25) で **網羅 closure**。**実 token (sk-proj- 等) は
+  F-23 の value scanner が free-text 文字列内でも捕捉**する。**残る residual** = free-text 文字列 content が
+  「JSON 風 + prohibited **key 名** (`{"capability_token":"<regex非該当値>"}`) 」のような場合 (R18 F-26)、および
+  (a) DB 保存済 legacy 値の read 時 redaction、(b) web UI 等 MCP 以外の入口。これらは **app-wide な input
+  sanitization design** (全 string を JSON parse して scan するか / どの field を / reject vs redaction /
+  false-positive 許容度。`description` に "capability_token" を含む正規文を reject すると FP 多発) を要し、
+  ad-hoc な string-JSON-parse は parse DoS + FP リスクで本 ingress hardening PR の範囲外。専用 Pack / ADR で
+  決める **別 follow-up** (task #26、honest defer)。
+- **検証 (最終、adversarial R18 後)**: `tests/mcp/test_mcp_hardening.py` 113 passed、full `tests/mcp/`
+  113 passed + 10 DB-gated skip (regression なし、middleware は直接 tool 呼び出しを bypass)。ruff clean /
+  新規 file mypy clean (mcp/ 残 4 mypy は pre-existing baseline)。全 suite collection error なし (5476 collected) /
+  security + research scanner consumers regression pass。frontend CI pass、backend ruff red は pre-existing
+  (`tests/parity/test_ui_cli_parity.py` 等、SP-034 file 交差ゼロ)。
 - **completed 化しない理由 (台帳 honesty、over-claim 回避)**: acceptance「all mutating tool に inputSchema +
   **outputSchema** + **annotations** 定義」のうち、inputSchema は充足 (additionalProperties:False) だが、
   **explicit outputSchema (構造化出力 model) と tool annotations (readOnlyHint/idempotentHint 等の advisory
@@ -374,5 +380,7 @@ uv run mypy backend/app/mcp_server.py
   未達のまま completed 化すると over-claim になる。よって status は `partial_skeleton` 維持、残項目を本 §に
   明示する (annotations/outputSchema は FastMCP decorator への付与 + 出力 model 定義が必要な別 scope)。
 - 実装 file: `backend/app/mcp/hardening.py` (新) / `middleware.py` (新) / `server.py` (+middleware 登録) /
-  `discord_notify.py` (subprocess hardening) / `tests/mcp/test_mcp_hardening.py` (新、22 tests)。
-  codex-adversarial-review + 採否判定済 (PR で記録)。
+  `discord_notify.py` (subprocess 全廃 → in-process httpx + trust gate) / `api_bridge.py` (task_spec 再帰 secret
+  scan + ticket_list/search clamp) / `backend/app/services/superintendent/agent_spawner.py` (絶対 argv / PATH /
+  lifecycle hardening) / `tests/mcp/test_mcp_hardening.py` (新、113 tests)。
+  codex-adversarial-review **R1-R18 で F-1〜F-25 全 adopt** (実 fix or honest scoping)、PR #333 merged。
