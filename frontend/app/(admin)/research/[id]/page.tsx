@@ -13,6 +13,8 @@ import {
   type ResearchTaskDetail
 } from "@/lib/api/research";
 
+import { loadResearchAdvancedSummary } from "@/lib/api/research-advanced";
+
 import { UUID_V1_TO_V5_PATTERN } from "../../_lib/route-id";
 import {
   AdminPageShell,
@@ -26,6 +28,7 @@ import {
   ResearchMetricSummary,
   ResearchTaskCard
 } from "./_components";
+import { ResearchAdvancedSection } from "./_advanced-components";
 
 export const dynamic = "force-dynamic";
 
@@ -143,6 +146,13 @@ export default async function ResearchDetailPage({ params }: ResearchDetailPageP
     loadError = error;
   }
 
+  // SP-032 (ADR-00052): research advanced summary を独立 fail-closed で取得
+  // (取得失敗時は advanced section だけ degrade し、detail 本体には影響させない)。
+  const advanced =
+    detail !== null
+      ? await loadResearchAdvancedSummary(detail.task.project_id, id)
+      : null;
+
   return (
     <AdminPageShell
       description={
@@ -207,6 +217,20 @@ export default async function ResearchDetailPage({ params }: ResearchDetailPageP
               items={detail.allEvidenceItems}
               sourcesById={detail.sourcesById}
             />
+          </Panel>
+
+          <Panel
+            description="矛盾検出 (反証を持つ主張)、矛盾グループの管理、主張の鮮度、証拠ドメインの信頼度を表示します (SP-032 / ADR-00052)。グループの作成・割当・状態変更はオーナーのみ可能です。"
+            title="リサーチ高度化 (矛盾・信頼度・鮮度)"
+            titleId="research-detail-advanced"
+          >
+            {advanced && advanced.ok ? (
+              <ResearchAdvancedSection researchTaskId={id} summary={advanced.data} />
+            ) : (
+              <p role="alert" className="rounded-md border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 p-3 text-sm text-danger">
+                リサーチ高度化情報の読込に失敗しました。
+              </p>
+            )}
           </Panel>
 
           <Panel
