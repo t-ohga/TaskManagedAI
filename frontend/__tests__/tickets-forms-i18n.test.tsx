@@ -50,7 +50,9 @@ describe("ticket form i18n", () => {
           due_date: ticketFixture.due_date,
           status: ticketFixture.status,
           priority: ticketFixture.priority,
-          assignee_actor_id: ticketFixture.assignee_actor_id
+          assignee_actor_id: ticketFixture.assignee_actor_id,
+          // C-5 R3: updated_at は loader strict validate 済の必須 version (string)。
+          updated_at: "2026-06-10T00:00:00Z"
         }}
         assignableActors={[]}
         assignableActorsDegraded={false}
@@ -87,7 +89,9 @@ describe("ticket assignee selector", () => {
       due_date: ticketFixture.due_date,
       status: ticketFixture.status,
       priority: ticketFixture.priority,
-      assignee_actor_id: assigneeActorId
+      assignee_actor_id: assigneeActorId,
+      // C-5 R3: updated_at は loader strict validate 済の必須 version (string)。
+      updated_at: "2026-06-10T00:00:00Z"
     };
   }
 

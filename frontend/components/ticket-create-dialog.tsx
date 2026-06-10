@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 
@@ -37,12 +38,11 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
   useEffect(() => {
     if (state.kind === "ok") {
       // G-5 (UI 監査 fix): 作成後は一覧 refresh ではなく作成したチケット詳細へ遷移する。
-      const ticketId = state.ticket_id;
-      const timer = setTimeout(() => {
-        setOpen(false);
-        router.push(`/tickets/${ticketId}` as Route);
-      }, 1200);
-      return () => clearTimeout(timer);
+      // C-4 UX fix (Mac 実機検証): 旧版は 1.2s setTimeout 後に遷移していたが、action 成功後の
+      // revalidatePath 再レンダーと effect cleanup が競合すると timer が発火せず「成功 banner +
+      // 開いたままの form」で止まる。timer を廃して即時遷移し、遷移が遅延した場合の fallback と
+      // して成功 banner に明示の詳細 link も出す (下記 JSX)。
+      router.push(`/tickets/${state.ticket_id}` as Route);
     }
   }, [state, router]);
 
@@ -62,7 +62,13 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
     <div className="rounded-lg border border-line bg-panel p-4 shadow-md">
       <h3 className="mb-3 text-sm font-semibold">新規チケット作成</h3>
       {state.kind === "ok" ? <div className="mb-3 rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
-          チケットを作成しました
+          チケットを作成しました。詳細ページへ移動します…{" "}
+          <Link
+            href={`/tickets/${state.ticket_id}` as Route}
+            className="font-medium underline underline-offset-2"
+          >
+            移動しない場合はこちら
+          </Link>
         </div> : null}
       {state.kind === "error" ? <div className="mb-3 rounded-md bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-700 dark:text-red-300">
           {state.message}

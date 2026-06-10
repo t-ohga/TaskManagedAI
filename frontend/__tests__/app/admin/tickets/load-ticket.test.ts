@@ -37,7 +37,7 @@ function ticketPayload(id: string) {
     priority: null,
     due_date: null,
     created_at: null,
-    updated_at: null,
+    updated_at: "2026-06-10T00:00:00Z",
     project_id: "ignored-by-loader",
     // A-6 (ADR-00046): backend TicketRead は assignee_actor_id を常に返す (nullable)。loader が
     // strict validate するため fixture も explicit null を持たせる。欠落ケースは別 test で検証する。

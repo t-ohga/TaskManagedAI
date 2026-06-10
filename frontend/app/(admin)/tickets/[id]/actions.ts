@@ -34,9 +34,27 @@ const TicketUpdateFormSchema = z.object({
   assignee_actor_id: z.string().regex(UUID_PATTERN, "担当者の形式が不正です").nullable().optional()
 });
 
+// C-5 fix R2 (Codex adversarial): PATCH response (= DB truth) の編集対象 field snapshot。
+// form は成功直後からこの snapshot を defaultValue / remount key の正本に使い、
+// 「action 完了 (React 19 auto-reset で stale defaults に戻る) 〜 router.refresh 到着」の間に
+// stale DOM を再 submit して DB を巻き戻す window を構造的に閉じる。
+export type UpdatedTicketSnapshot = {
+  id: string;
+  title: string;
+  description: string | null;
+  due_date: string | null;
+  status: string;
+  priority: string | null;
+  assignee_actor_id: string | null;
+  // C-5 R2 (Codex adversarial): snapshot と props の新旧を決める version。refresh / 外部更新で
+  // props がこれより新しい updated_at を運んだら、form は snapshot を捨てて props を正本に戻す
+  // (古い成功 snapshot が新しい DB truth を恒久遮断して巻き戻す経路の封鎖)。
+  updated_at: string;
+};
+
 export type UpdateTicketState =
   | { kind: "idle" }
-  | { kind: "ok"; ticket_id: string }
+  | { kind: "ok"; ticket_id: string; ticket: UpdatedTicketSnapshot }
   | { kind: "error"; message: string };
 
 /**
@@ -122,7 +140,20 @@ export async function updateTicketAction(
     revalidatePath("/tickets");
     // A-6 (R1 F-010): 担当者変更は Today / Inbox 分類に影響するため /today も再検証。
     revalidatePath("/today");
-    return { kind: "ok", ticket_id: updated.id };
+    return {
+      kind: "ok",
+      ticket_id: updated.id,
+      ticket: {
+        id: updated.id,
+        title: updated.title,
+        description: updated.description ?? null,
+        due_date: updated.due_date,
+        status: updated.status,
+        priority: updated.priority,
+        assignee_actor_id: updated.assignee_actor_id,
+        updated_at: updated.updated_at
+      }
+    };
   } catch (error: unknown) {
     const message =
       error instanceof Error ? error.message : "チケット更新に失敗しました。";

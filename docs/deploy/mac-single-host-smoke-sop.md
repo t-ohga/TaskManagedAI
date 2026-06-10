@@ -146,8 +146,14 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.l
 set -o pipefail
 
 # api container 内で alembic upgrade head 実行
-# scripts/alembic_wrapper.sh は host/container の TASKMANAGEDAI_DATABASE_URL / DATABASE_URL
-# override を Alembic process から strip し、.env.local + container 内設定を正本にする。
+# scripts/alembic_wrapper.sh は host 側 shell の TASKMANAGEDAI_DATABASE_URL / DATABASE_URL
+# override を docker compose 起動前に strip し (compose 補間への漏れ防止)、container 内では
+# .env.local 由来の env (実行中 api と同一) を正本として Alembic を実行する。
+# (B-4 fix: container 内まで unset すると Settings の default password へ fallback して
+#  password authentication failed になるため、container 内 env は strip しない。)
+# preflight: 選択 env file の TASKMANAGEDAI_DATABASE_URL と api container 実 env を masked 比較し、
+# 不一致 (container が別/stale env で起動) は exit 3 で fail-closed → `up -d --force-recreate api`
+# で container を再作成してから再実行する。
 bash scripts/alembic_wrapper.sh current
 # expected: revision id (空または未 apply の状態)
 
