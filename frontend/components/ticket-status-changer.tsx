@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 
+import { confirmDiscardUnsavedTicketEdit } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 
 import { updateTicketAction, type UpdateTicketState } from "@/app/(admin)/tickets/[id]/actions";
@@ -36,6 +37,9 @@ export function TicketStatusChanger({ ticketId, currentStatus }: Props) {
 
   function handleStatusChange(newStatus: string) {
     if (newStatus === optimisticStatus || isPending) return;
+    // R2 (Codex adversarial HIGH): 未保存編集の破棄確認は mutation **前**。キャンセルなら
+    // server action を実行しない (post-commit 確認だと stale form 保存で commit を巻き戻せる)。
+    if (!confirmDiscardUnsavedTicketEdit()) return;
     setError(null);
     setOptimisticStatus(newStatus);
 

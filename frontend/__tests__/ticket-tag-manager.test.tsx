@@ -9,9 +9,11 @@ import type { TagRead } from "@/lib/domain/tag";
 // C-5 第 2 round: hook は full reload (lib/full-reload seam) を行う。jsdom の location を
 // 再定義せず、seam module を mock して検証する (Codex adversarial F-3)。
 const reload = vi.fn(() => true);
+const discardConfirm = vi.fn(() => true);
 vi.mock("@/lib/full-reload", () => ({
   fullReload: () => reload(),
-  hasUnsavedTicketEdit: () => false
+  hasUnsavedTicketEdit: () => false,
+  confirmDiscardUnsavedTicketEdit: () => discardConfirm()
 }));
 
 const actionCalls: { name: string; entries: Record<string, string> }[] = [];

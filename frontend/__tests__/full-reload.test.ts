@@ -3,7 +3,11 @@
 // チケット編集フォームの未保存入力を警告なしに破棄しないこと (dirty 検知 + confirm guard)。
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { fullReload, hasUnsavedTicketEdit } from "@/lib/full-reload";
+import {
+  confirmDiscardUnsavedTicketEdit,
+  fullReload,
+  hasUnsavedTicketEdit
+} from "@/lib/full-reload";
 
 function mountEditForm(html: string): void {
   document.body.innerHTML = `<form data-testid="edit-ticket-form">${html}</form>`;
@@ -48,32 +52,34 @@ describe("hasUnsavedTicketEdit (C-5 F-1)", () => {
   });
 });
 
-describe("fullReload (C-5 F-1 confirm guard)", () => {
-  it("dirty なし → confirm を出さず reload する", () => {
-    const reload = vi.fn();
+describe("confirmDiscardUnsavedTicketEdit (C-5 R2 pre-commit gate)", () => {
+  it("dirty なし → confirm を出さず true (mutation 続行)", () => {
     const confirmSpy = vi.spyOn(window, "confirm");
-    expect(fullReload(reload)).toBe(true);
-    expect(reload).toHaveBeenCalledOnce();
+    expect(confirmDiscardUnsavedTicketEdit()).toBe(true);
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 
-  it("dirty + confirm キャンセル → reload せず false (未保存入力を破棄しない)", () => {
+  it("dirty + キャンセル → false (mutation 自体を実行させない)", () => {
     mountEditForm('<input name="title" value="t" />');
     const input = document.querySelector("input");
     if (input) input.value = "edited";
-    const reload = vi.fn();
     vi.spyOn(window, "confirm").mockReturnValue(false);
-    expect(fullReload(reload)).toBe(false);
-    expect(reload).not.toHaveBeenCalled();
+    expect(confirmDiscardUnsavedTicketEdit()).toBe(false);
   });
 
-  it("dirty + confirm 承認 → reload する (ユーザー選択で破棄)", () => {
+  it("dirty + 承認 → true (ユーザー選択で破棄を許可)", () => {
     mountEditForm('<input name="title" value="t" />');
     const input = document.querySelector("input");
     if (input) input.value = "edited";
-    const reload = vi.fn();
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    expect(fullReload(reload)).toBe(true);
+    expect(confirmDiscardUnsavedTicketEdit()).toBe(true);
+  });
+});
+
+describe("fullReload (R2: 確認は pre-commit gate に移管済)", () => {
+  it("無条件で reload する (gate 通過後にのみ呼ばれる契約)", () => {
+    const reload = vi.fn();
+    fullReload(reload);
     expect(reload).toHaveBeenCalledOnce();
   });
 });

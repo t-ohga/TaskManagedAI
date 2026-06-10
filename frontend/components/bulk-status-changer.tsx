@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { confirmDiscardUnsavedTicketEdit } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 
 import { useToast } from "@/components/toast";
@@ -29,6 +30,9 @@ export function BulkStatusChanger({ selectedIds, onClear, onSelectionChange }: B
 
   function handleApply() {
     if (!targetStatus) return;
+    // R2 (Codex adversarial HIGH): 未保存編集の破棄確認は mutation **前**。キャンセルなら
+    // server action を実行しない (post-commit 確認だと stale form 保存で commit を巻き戻せる)。
+    if (!confirmDiscardUnsavedTicketEdit()) return;
     setError(null);
     startTransition(async () => {
       const { updateTicketAction } = await import("@/app/(admin)/tickets/[id]/actions");

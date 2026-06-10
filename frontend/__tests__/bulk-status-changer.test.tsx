@@ -12,9 +12,11 @@ import { BulkStatusChanger } from "@/components/bulk-status-changer";
 // C-5 第 2 round: hook は full reload (lib/full-reload seam) を行う。jsdom の location を
 // 再定義せず、seam module を mock して検証する (Codex adversarial F-3)。
 const reload = vi.fn(() => true);
+const discardConfirm = vi.fn(() => true);
 vi.mock("@/lib/full-reload", () => ({
   fullReload: () => reload(),
-  hasUnsavedTicketEdit: () => false
+  hasUnsavedTicketEdit: () => false,
+  confirmDiscardUnsavedTicketEdit: () => discardConfirm()
 }));
 
 const updateCalls: Record<string, string>[] = [];
@@ -51,6 +53,8 @@ function Harness({ ids = ["00000000-0000-4000-8000-00000000c001"] }: { ids?: str
 
 beforeEach(() => {
   reload.mockClear();
+  discardConfirm.mockClear();
+  discardConfirm.mockReturnValue(true);
   updateCalls.length = 0;
   failingIds.clear();
 });
@@ -79,6 +83,19 @@ describe("BulkStatusChanger (C-5 deferred refresh)", () => {
     await screen.findByText(/1 件の更新に失敗/);
     // 失敗があるときは画面を消さない (reload は全件成功時のみ)。
     await new Promise((r) => setTimeout(r, 50));
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("未保存編集の破棄を拒否したら server action 自体を実行しない (R2 pre-commit gate)", async () => {
+    discardConfirm.mockReturnValue(false);
+    render(<Harness />);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "closed" } });
+    fireEvent.click(screen.getByRole("button", { name: /適用|変更|更新/ }));
+
+    await new Promise((r) => setTimeout(r, 50));
+    // キャンセル時は DB も画面も一切変えない (post-commit 確認だと stale form 保存で
+    // commit 済み status を巻き戻せるため、gate は mutation 前)。
+    expect(updateCalls).toHaveLength(0);
     expect(reload).not.toHaveBeenCalled();
   });
 });

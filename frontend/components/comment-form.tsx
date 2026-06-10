@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect, useState } from "react";
 
+import { confirmDiscardUnsavedTicketEdit } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 
 import { MarkdownEditor } from "@/components/markdown-editor";
@@ -36,7 +37,18 @@ export function CommentForm({ ticketId, onSubmit }: CommentFormProps) {
   }, [state, requestRefresh]);
 
   return (
-    <form action={formAction} className="grid gap-3">
+    <form
+      action={formAction}
+      // R2 (Codex adversarial HIGH): 投稿成功は reload を伴うため、未保存のチケット編集が
+      // あれば mutation **前** に破棄確認する。キャンセル時は preventDefault で action 自体を
+      // 実行しない (post-commit 確認では stale form 保存で巻き戻せるため)。
+      onSubmit={(event) => {
+        if (!confirmDiscardUnsavedTicketEdit()) {
+          event.preventDefault();
+        }
+      }}
+      className="grid gap-3"
+    >
       <input type="hidden" name="ticket_id" value={ticketId} />
       <MarkdownEditor
         name="body"
