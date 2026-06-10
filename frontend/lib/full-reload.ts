@@ -44,9 +44,42 @@ export function confirmDiscardUnsavedDrafts(except?: Element | null): boolean {
   if (!hasUnsavedDraft(except)) {
     return true;
   }
-  return window.confirm(
+  const approved = window.confirm(
     "このページに未保存の入力があります。この操作を行うと画面が更新され、未保存の入力は破棄されます。続行しますか？"
   );
+  if (approved) {
+    // R9 (Codex adversarial HIGH): 「承認 = 即破棄」。承認した draft をその場で物理的に破棄
+    // (dirty クリア + form.reset() で defaultValue = server 値へ) しないと、reload 直前の
+    // 再確認 (R7) を拒否した場合に**承認済みの stale draft が生き残り**、編集していた field は
+    // R8 の unchanged-field drop をすり抜けて直前 mutation を巻き戻せる。即破棄により:
+    // - 再確認の対象は自然に「mutation 中の新規 draft のみ」になる
+    // - 拒否で reload しなくても form は server 値に戻っており、保存は all-unchanged = no-op
+    discardDrafts(except);
+  }
+  return approved;
+}
+
+function discardDrafts(except?: Element | null): void {
+  for (const guard of Array.from(document.querySelectorAll(GUARD_SELECTOR))) {
+    if (!(guard instanceof HTMLElement)) {
+      continue;
+    }
+    if (except && (guard === except || guard.contains(except) || except.contains(guard))) {
+      continue;
+    }
+    if (guard.dataset.dirty !== "true") {
+      continue;
+    }
+    delete guard.dataset.dirty;
+    if (guard instanceof HTMLFormElement) {
+      guard.reset();
+    } else {
+      // form 以外の guard 領域 (タグ管理等) は内包する form を reset する。
+      for (const form of Array.from(guard.querySelectorAll("form"))) {
+        form.reset();
+      }
+    }
+  }
 }
 
 /**

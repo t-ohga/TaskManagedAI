@@ -68,6 +68,38 @@ describe("confirmDiscardUnsavedDrafts (C-5 R2 pre-commit gate)", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     expect(confirmDiscardUnsavedDrafts()).toBe(true);
   });
+
+  it("承認 = 即破棄: dirty クリア + form.reset で server 値へ戻る (R9)", () => {
+    // R9 シナリオ封鎖の核: 承認済み draft が物理的に消えるため、reload 直前再確認 (R7) の
+    // 対象にならず、拒否で残った form も defaultValue (server 値) = R8 drop で巻き戻し不能。
+    const form = mountGuard(true, '<input name="title" value="server-value" />');
+    const input = document.querySelector("input");
+    if (input) input.value = "stale-draft";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    expect(confirmDiscardUnsavedDrafts()).toBe(true);
+    expect((form as HTMLElement).dataset.dirty).toBeUndefined();
+    expect(hasUnsavedDraft()).toBe(false);
+    expect(input?.value).toBe("server-value");
+  });
+
+  it("承認時も except 領域の draft は破棄しない", () => {
+    const form = mountGuard(true, '<input name="title" value="server-value" />');
+    const input = document.querySelector("input");
+    if (input) input.value = "my-own-draft";
+    // 別領域の dirty guard を追加して confirm を発生させる
+    const other = document.createElement("div");
+    other.setAttribute("data-unsaved-guard", "");
+    other.dataset.dirty = "true";
+    document.body.appendChild(other);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    expect(confirmDiscardUnsavedDrafts(form)).toBe(true);
+    // except (自領域) の draft は保持、他領域は破棄。
+    expect(input?.value).toBe("my-own-draft");
+    expect((form as HTMLElement).dataset.dirty).toBe("true");
+    expect(other.dataset.dirty).toBeUndefined();
+  });
 });
 
 describe("fullReload (R2: 確認は pre-commit gate に移管済)", () => {
