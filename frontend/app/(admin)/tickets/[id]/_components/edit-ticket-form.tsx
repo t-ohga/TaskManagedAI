@@ -171,6 +171,15 @@ export function EditTicketForm({
       data-unsaved-guard=""
     >
       <input type="hidden" name="ticket_id" value={serverTicket.id} />
+      {/* R8 (Codex adversarial HIGH): F-C2 の「変更時のみ送信」を全 field に一般化するための
+          original_*。Server Action は original と一致する field を PATCH payload から落とすため、
+          stale な form (reload 拒否後など) を保存しても**ユーザーが実際に触った field だけ**が
+          送信され、直前の status/bulk mutation を未変更 field の再送で巻き戻せない。 */}
+      <input type="hidden" name="original_title" value={serverTicket.title} />
+      <input type="hidden" name="original_description" value={serverTicket.description ?? ""} />
+      <input type="hidden" name="original_due_date" value={serverTicket.due_date ?? ""} />
+      <input type="hidden" name="original_status" value={serverTicket.status} />
+      <input type="hidden" name="original_priority" value={serverTicket.priority ?? ""} />
       {/* Codex App F-C2: 更新前の assignee。Server Action が「変更時のみ assignee を送信」判定に使う
           (legacy 非 human assignee 付き ticket でも他 field だけ編集でき、unchanged な不正値を再送して
           422 で全編集不能にしない)。 */}

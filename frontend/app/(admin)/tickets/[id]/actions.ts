@@ -126,6 +126,25 @@ export async function updateTicketAction(
   if (rest.assignee_actor_id === originalAssignee) {
     rest.assignee_actor_id = undefined;
   }
+  // R8 (Codex adversarial HIGH): F-C2 を全 field に一般化 — original_* (form render 時の server 値)
+  // と一致する field は PATCH payload から落とす。「PATCH = ユーザーが実際に触った field のみ」に
+  // なり、stale form (reload 拒否後等) の保存が、直前の status/bulk mutation を未変更 field の
+  // 再送で巻き戻す経路を構造的に封鎖する (R2 snapshot 防御と独立の第 2 層)。
+  const originalComparable: ["title" | "description" | "due_date" | "status" | "priority", string][] = [
+    ["title", "original_title"],
+    ["description", "original_description"],
+    ["due_date", "original_due_date"],
+    ["status", "original_status"],
+    ["priority", "original_priority"]
+  ];
+  for (const [field, originalKey] of originalComparable) {
+    const original = clearableField(formData.get(originalKey));
+    // original hidden が無い (legacy form / 他 caller) 場合は従来どおり送信する。
+    if (typeof formData.get(originalKey) !== "string") continue;
+    if (rest[field] === original) {
+      rest[field] = undefined;
+    }
+  }
   // Zod optional fields は undefined を残すので、undefined 排除。
   // `null` (explicit clear) は payload に残す = backend に null として送り clear。
   const updatePayload: Record<string, string | null> = {};
