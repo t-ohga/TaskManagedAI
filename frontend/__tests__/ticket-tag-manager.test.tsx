@@ -1,23 +1,18 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TicketTagManager } from "@/components/ticket-tag-manager";
 import type { TagRead } from "@/lib/domain/tag";
 
 // Server Action と router を mock し、各操作が正しい action / FormData を呼ぶことを検証する。
 // C-5 第 2 round: hook は router.refresh ではなく full reload (確実性実測済) を行う。
-const reload = vi.fn();
-// jsdom の location.reload は non-configurable のため、window.location ごと差し替えて spy する。
-const originalLocation = window.location;
-beforeAll(() => {
-  Object.defineProperty(window, "location", {
-    configurable: true,
-    value: { ...originalLocation, reload }
-  });
-});
-afterAll(() => {
-  Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
-});
+// C-5 第 2 round: hook は full reload (lib/full-reload seam) を行う。jsdom の location を
+// 再定義せず、seam module を mock して検証する (Codex adversarial F-3)。
+const reload = vi.fn(() => true);
+vi.mock("@/lib/full-reload", () => ({
+  fullReload: () => reload(),
+  hasUnsavedTicketEdit: () => false
+}));
 
 const actionCalls: { name: string; entries: Record<string, string> }[] = [];
 function record(name: string) {

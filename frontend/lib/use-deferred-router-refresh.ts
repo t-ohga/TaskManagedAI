@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { fullReload } from "@/lib/full-reload";
+
 /**
  * C-5 root cause workaround (Playwright 実測 + Next.js 既知 regression):
  * Next.js 16 (16.2.6 / 16.2.9 で実測) / React 19 では、Server Action 完了直後の
@@ -26,7 +28,9 @@ export function useDeferredRouterRefresh(): () => void {
 
   useEffect(() => {
     if (tick > 0) {
-      window.location.reload();
+      // F-1/F-3 (Codex adversarial): reload は seam (lib/full-reload) 経由 —
+      // 未保存のチケット編集入力がある場合は確認してから / test では module mock。
+      fullReload();
     }
   }, [tick]);
 

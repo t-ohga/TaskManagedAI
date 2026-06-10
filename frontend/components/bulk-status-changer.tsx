@@ -44,8 +44,6 @@ export function BulkStatusChanger({ selectedIds, onClear, onSelectionChange }: B
           failedIds.push(id);
         }
       }
-      // C-5 workaround: transition 内の router.refresh() は isPending を固める (lib/use-deferred-router-refresh.ts 参照)。
-      requestRefresh();
       if (failedIds.length > 0) {
         const succeeded = selectedIds.length - failedIds.length;
         setError(`${failedIds.length} 件の更新に失敗しました (権限またはプロジェクト境界を確認してください)`);
@@ -57,6 +55,9 @@ export function BulkStatusChanger({ selectedIds, onClear, onSelectionChange }: B
       } else {
         toast(`${selectedIds.length} 件のステータスを更新しました`, "success");
         onClear();
+        // C-5 / F-2 (Codex adversarial): reload は**全件成功時のみ**。部分失敗時に reload すると
+        // エラー表示と failedIds の再選択 (復旧導線) が消えるため、失敗時は現状表示を維持する。
+        requestRefresh();
       }
     });
   }
