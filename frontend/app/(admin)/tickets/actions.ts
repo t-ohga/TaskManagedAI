@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { BackendApiError, fetchBackendJson } from "@/lib/api/client";
@@ -74,9 +73,12 @@ export async function createTicketAction(
         body: JSON.stringify(parsed.data)
       }
     );
-    revalidatePath("/tickets");
-    // A-6 (R1 F-010): 新規 ticket (担当者付き含む) は Today / Inbox 分類に影響するため /today も再検証。
-    revalidatePath("/today");
+    // C-5 root cause workaround (Playwright 実測で確定、Next.js 16 / React 19 既知 regression):
+    // Server Action 内の revalidatePath() は action transition の isPending を永遠に解除しない
+    // (https://github.com/vercel/next.js/discussions/82289 / discussions/88767)。
+    // 対象 page は全て force-dynamic + client Router Cache の dynamic staleTime=0 のため、
+    // revalidatePath なしでも navigation は常に最新を取得する。現在画面の即時反映は client 側の
+    // transition 外 refresh (create dialog の即時 push / CommentForm の成功時 effect refresh) が担う。
     return { kind: "ok", ticket_id: created.id };
   } catch (error: unknown) {
     const message =
@@ -123,7 +125,6 @@ export async function addTicketCommentAction(
   try {
     const projectId = await getCurrentProjectId();
     await createTicketComment(projectId, parsed.data.ticket_id, parsed.data.body);
-    revalidatePath(`/tickets/${parsed.data.ticket_id}`);
     return { kind: "ok" };
   } catch (error: unknown) {
     // 422 (secret pattern hit / 文字数超過) は backend が detail を返すが raw 値は含まない。

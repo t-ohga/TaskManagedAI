@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 import { useState, useTransition } from "react";
 
 import {
@@ -76,7 +76,7 @@ function ColorPicker({
 }
 
 export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
-  const router = useRouter();
+  const requestRefresh = useDeferredRouterRefresh();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -103,7 +103,8 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
         setError(result.message);
       } else {
         onOk?.();
-        router.refresh();
+      // C-5 workaround: transition 内の router.refresh() は isPending を固める (lib/use-deferred-router-refresh.ts 参照)。
+        requestRefresh();
       }
     });
   }
