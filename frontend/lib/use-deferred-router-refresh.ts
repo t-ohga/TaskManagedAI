@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { fullReload } from "@/lib/full-reload";
+import { confirmDiscardUnsavedDrafts, fullReload } from "@/lib/full-reload";
 
 /**
  * C-5 root cause workaround (Playwright 実測 + Next.js 既知 regression):
@@ -28,9 +28,15 @@ export function useDeferredRouterRefresh(): () => void {
 
   useEffect(() => {
     if (tick > 0) {
-      // F-1/F-3 (Codex adversarial): reload は seam (lib/full-reload) 経由 —
-      // 未保存のチケット編集入力がある場合は確認してから / test では module mock。
-      fullReload();
+      // R7 (Codex adversarial HIGH): handler 冒頭の pre-commit gate 通過後〜reload 発火までの間
+      // (bulk では秒単位) に**新しく作られた** draft は再確認されないと無確認破棄される。
+      // reload 直前に except なしで再評価する — この時点で各操作の consume 対象 draft は
+      // クリア済 (comment は body クリア / edit は key remount / tag は領域 unmount) のため、
+      // ここで検出されるのは「mutation 中に新規作成された draft」のみ。拒否時は reload しない
+      // (draft 保持を優先、表示は次の操作 / 手動更新で収束)。
+      if (confirmDiscardUnsavedDrafts()) {
+        fullReload();
+      }
     }
   }, [tick]);
 
