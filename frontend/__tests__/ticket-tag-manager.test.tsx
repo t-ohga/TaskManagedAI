@@ -1,14 +1,23 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TicketTagManager } from "@/components/ticket-tag-manager";
 import type { TagRead } from "@/lib/domain/tag";
 
 // Server Action と router を mock し、各操作が正しい action / FormData を呼ぶことを検証する。
-const refresh = vi.fn();
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh })
-}));
+// C-5 第 2 round: hook は router.refresh ではなく full reload (確実性実測済) を行う。
+const reload = vi.fn();
+// jsdom の location.reload は non-configurable のため、window.location ごと差し替えて spy する。
+const originalLocation = window.location;
+beforeAll(() => {
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: { ...originalLocation, reload }
+  });
+});
+afterAll(() => {
+  Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
+});
 
 const actionCalls: { name: string; entries: Record<string, string> }[] = [];
 function record(name: string) {
@@ -33,7 +42,7 @@ const TAG_B: TagRead = { id: "00000000-0000-4000-8000-00000000b002", name: "docs
 
 beforeEach(() => {
   actionCalls.length = 0;
-  refresh.mockClear();
+  reload.mockClear();
 });
 
 describe("TicketTagManager", () => {
@@ -45,9 +54,8 @@ describe("TicketTagManager", () => {
       name: "detach",
       entries: { ticket_id: TICKET_ID, tag_id: TAG_A.id }
     });
-    // C-5 workaround: refresh は transition 内即時呼びでなく useDeferredRouterRefresh の
-    // effect 経由 (transition 外) に変更されたため、非同期到達を待つ。
-    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    // C-5 workaround: useDeferredRouterRefresh の effect 経由で reload が非同期到達する。
+    await waitFor(() => expect(reload).toHaveBeenCalled());
   });
 
   it("attaches an available (unassigned) tag via attachTagAction", async () => {

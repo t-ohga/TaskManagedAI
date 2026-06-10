@@ -4,15 +4,25 @@
 // selectedIds 非依存) で条件 render するため、clear 後も component は mount されたまま
 // `return null` になるだけ — tick state と effect は生存し、router.refresh() は確実に発火する。
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 
 import { BulkStatusChanger } from "@/components/bulk-status-changer";
 
-const refresh = vi.fn();
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh })
-}));
+// C-5 第 2 round: hook は router.refresh ではなく full reload を行う (refresh/replace は
+// Server Action 直後に確率的に適用されない regression を 3-run 実測で確認したため)。
+const reload = vi.fn();
+// jsdom の location.reload は non-configurable のため、window.location ごと差し替えて spy する。
+const originalLocation = window.location;
+beforeAll(() => {
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: { ...originalLocation, reload }
+  });
+});
+afterAll(() => {
+  Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
+});
 
 const updateCalls: Record<string, string>[] = [];
 vi.mock("@/app/(admin)/tickets/[id]/actions", () => ({
@@ -42,19 +52,19 @@ function Harness() {
 }
 
 beforeEach(() => {
-  refresh.mockClear();
+  reload.mockClear();
   updateCalls.length = 0;
 });
 
 describe("BulkStatusChanger (C-5 deferred refresh)", () => {
-  it("全件成功 → onClear で selectedIds が空になっても deferred refresh が発火する", async () => {
+  it("全件成功 → onClear で selectedIds が空になっても deferred reload が発火する", async () => {
     render(<Harness />);
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "closed" } });
     fireEvent.click(screen.getByRole("button", { name: /適用|変更|更新/ }));
 
     await waitFor(() => expect(updateCalls).toHaveLength(1));
     expect(updateCalls[0]).toMatchObject({ status: "closed" });
-    // clear 後 (component は return null) でも effect 経由の refresh が到達する。
-    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    // clear 後 (component は return null) でも effect 経由の reload が到達する。
+    await waitFor(() => expect(reload).toHaveBeenCalled());
   });
 });

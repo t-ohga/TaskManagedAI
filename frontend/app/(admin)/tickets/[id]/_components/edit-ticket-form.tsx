@@ -1,7 +1,8 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useActionState, useEffect } from "react";
+
+import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 
 import { formatTicketPriority, formatTicketStatus } from "@/lib/i18n/ticket-labels";
 import { assigneeSelectOptions, type AssignableActor } from "@/lib/domain/assignee";
@@ -89,7 +90,7 @@ export function EditTicketForm({
   assignableActorsDegraded,
   assignableActorsTruncated
 }: EditTicketFormProps) {
-  const router = useRouter();
+  const requestRefresh = useDeferredRouterRefresh();
 
   // SP-012-11.1 BL-TCU-016: React 19 useActionState (Codex PR #120 P2 完全 migration)
   const [state, formAction, isPending] = useActionState(
@@ -97,12 +98,16 @@ export function EditTicketForm({
     INITIAL_STATE
   );
 
-  // 成功時 router.refresh で 詳細 + 一覧 再 fetch (revalidatePath 連動)
+  // 成功時の周辺表示 (ヘッダー/基本情報/上部ボタン) 再同期。
+  // C-5 第 2 round (Playwright 実測): effect 内でも **直接** router.refresh() を呼ぶと、action 完了
+  // 直後の render から発火した refresh が action transition に合流し、RSC GET は飛ぶのに応答が
+  // 適用されない (header が古いまま)。useDeferredRouterRefresh は tick state で 1 render 遅らせて
+  // から refresh するため合流せず、適用まで完了する (status changer 経由で 418ms 全要素整合を実測)。
   useEffect(() => {
     if (state.kind === "ok") {
-      router.refresh();
+      requestRefresh();
     }
-  }, [state, router]);
+  }, [state, requestRefresh]);
 
   // C-5 R6 (Codex adversarial HIGH): useActionState の state は次 submit (error 含む) で置き換わる。
   // ok→(refresh 未着)→error の遷移で成功 snapshot を失うと stale props へ戻る再入口になるため、
