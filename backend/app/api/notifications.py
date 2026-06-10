@@ -219,6 +219,7 @@ async def snooze_notification(
         tenant_id=tenant_id,
         event_id=notification_id,
         snoozed_until=snoozed_until,
+        recipient_actor_id=actor_id,
     )
     if updated is None:
         raise HTTPException(
@@ -270,6 +271,7 @@ async def resolve_notification(
         tenant_id=tenant_id,
         event_id=notification_id,
         resolved_by_actor_id=actor_id,
+        recipient_actor_id=actor_id,
     )
     if updated is None:
         raise HTTPException(

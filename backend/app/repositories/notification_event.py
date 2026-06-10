@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.app_role import (
@@ -144,17 +144,51 @@ class NotificationEventRepository:
         limit: int = 50,
         state: str | None = None,
     ) -> list[NotificationEvent]:
+        # Mac 実機検証 C-13 fix: 旧版は state を完全に無視し read_at IS NULL だけで filter していた
+        # (triage の open/snoozed/resolved tab が全く機能しない stub)。triage は read/unread ではなく
+        # lifecycle (open=未解決かつ未 snooze / snoozed=snooze 中 / resolved=解決済) であり、model の
+        # resolved_at / snoozed_until 列で判定する。DB-gated spec test (tests/api/test_notifications.py の
+        # test_triage_lists_open_owned_items_without_raw_payload_values) を満たす。
         await self._ensure_tenant_context(tenant_id)
         bounded_limit = min(max(limit, 1), 200)
+        conditions = [
+            NotificationEvent.tenant_id == tenant_id,
+            NotificationEvent.recipient_actor_id == recipient_actor_id,
+            NotificationEvent.event_type != TICKET_COMMENT_EVENT_TYPE,
+        ]
+        if state == "snoozed":
+            conditions.append(NotificationEvent.resolved_at.is_(None))
+            conditions.append(NotificationEvent.snoozed_until.is_not(None))
+            conditions.append(NotificationEvent.snoozed_until > func.now())
+        elif state == "resolved":
+            conditions.append(NotificationEvent.resolved_at.is_not(None))
+        elif state == "all":
+            pass
+        else:  # "open" (default): 未解決かつ現在 snooze 期限が切れている / 未 snooze
+            conditions.append(NotificationEvent.resolved_at.is_(None))
+            conditions.append(
+                or_(
+                    NotificationEvent.snoozed_until.is_(None),
+                    NotificationEvent.snoozed_until <= func.now(),
+                )
+            )
+        # triage 表示順: severity 高い順 → due_at 近い順 → 作成順 (triage_open index の意図に整合)。
+        severity_priority = case(
+            (NotificationEvent.severity == "critical", 4),
+            (NotificationEvent.severity == "high", 3),
+            (NotificationEvent.severity == "medium", 2),
+            (NotificationEvent.severity == "low", 1),
+            else_=0,
+        )
         result = await self.session.execute(
             select(NotificationEvent)
-            .where(
-                NotificationEvent.tenant_id == tenant_id,
-                NotificationEvent.recipient_actor_id == recipient_actor_id,
-                NotificationEvent.read_at.is_(None),
-                NotificationEvent.event_type != TICKET_COMMENT_EVENT_TYPE,
+            .where(*conditions)
+            .order_by(
+                severity_priority.desc(),
+                NotificationEvent.due_at.asc().nulls_last(),
+                NotificationEvent.created_at.asc(),
+                NotificationEvent.id.asc(),
             )
-            .order_by(NotificationEvent.created_at.desc(), NotificationEvent.id.desc())
             .limit(bounded_limit)
         )
         return list(result.scalars().all())
@@ -187,8 +221,32 @@ class NotificationEventRepository:
         event_id: UUID,
         *,
         snoozed_until: datetime | str | None = None,
+        recipient_actor_id: UUID | None = None,
     ) -> NotificationEvent | None:
-        return await self.mark_read(tenant_id, event_id)
+        # Mac 実機検証 C-13 fix: 旧版は snoozed_until を無視し mark_read に委譲していた (snooze が
+        # 全く効かない stub)。snoozed_until を実際に永続化する。WHERE に ticket_comment guard
+        # (event_type 除外、mark_read と同じ単一防御点) と resolved_at IS NULL guard (解決済は
+        # snooze 不可、API 側 409 と二重防御) を持つ。0 rows は None を返す (REST=404/409、MCP=not_found)。
+        # Codex adversarial R1 (HIGH): recipient_actor_id を WHERE に必須で持たせ、他 actor 宛通知への
+        # cross-recipient 操作を atomic に封じる (REST _assert_owned との二重防御 + TOCTOU 防止)。
+        if snoozed_until is None:
+            raise ValueError("snoozed_until is required to snooze a notification.")
+        if recipient_actor_id is None:
+            raise ValueError("recipient_actor_id is required to snooze a notification.")
+        await self._ensure_tenant_context(tenant_id)
+        result = await self.session.execute(
+            update(NotificationEvent)
+            .where(
+                NotificationEvent.tenant_id == tenant_id,
+                NotificationEvent.id == event_id,
+                NotificationEvent.recipient_actor_id == recipient_actor_id,
+                NotificationEvent.event_type != TICKET_COMMENT_EVENT_TYPE,
+                NotificationEvent.resolved_at.is_(None),
+            )
+            .values(snoozed_until=snoozed_until)
+            .returning(NotificationEvent)
+        )
+        return result.scalar_one_or_none()
 
     async def resolve(
         self,
@@ -196,8 +254,41 @@ class NotificationEventRepository:
         event_id: UUID,
         *,
         resolved_by_actor_id: UUID | None = None,
+        recipient_actor_id: UUID | None = None,
     ) -> NotificationEvent | None:
-        return await self.mark_read(tenant_id, event_id)
+        # Mac 実機検証 C-13 fix: 旧版は resolved_by_actor_id を無視し mark_read に委譲していた
+        # (resolved_at 未設定で triage open に残り続ける stub)。resolved_at + resolved_by_actor_id を
+        # CHECK constraint (両方 set or 両方 null) 遵守で同時 set し、snooze を解除 (snoozed_until=null)、
+        # resolve は read も含意するため read_at も set する (DB-gated spec
+        # test_triage_resolve_marks_read_clears_snooze_and_omits_resolution_note_body)。
+        # WHERE に ticket_comment guard + resolved_at IS NULL guard (二重 resolve は 0 rows→None→API 409)。
+        # Codex adversarial R1 (HIGH): recipient_actor_id を WHERE に必須で持たせ、MCP 経路 (REST の
+        # _assert_owned が無い) も含め、他 actor 宛通知を別 actor が resolve して相手の triage から
+        # 消す cross-recipient 攻撃を atomic に封じる。MCP bridge は解決 actor 自身を recipient guard に使う。
+        if resolved_by_actor_id is None:
+            raise ValueError("resolved_by_actor_id is required to resolve a notification.")
+        if recipient_actor_id is None:
+            raise ValueError("recipient_actor_id is required to resolve a notification.")
+        await self._ensure_tenant_context(tenant_id)
+        now = datetime.now(tz=UTC)
+        result = await self.session.execute(
+            update(NotificationEvent)
+            .where(
+                NotificationEvent.tenant_id == tenant_id,
+                NotificationEvent.id == event_id,
+                NotificationEvent.recipient_actor_id == recipient_actor_id,
+                NotificationEvent.event_type != TICKET_COMMENT_EVENT_TYPE,
+                NotificationEvent.resolved_at.is_(None),
+            )
+            .values(
+                resolved_at=now,
+                resolved_by_actor_id=resolved_by_actor_id,
+                snoozed_until=None,
+                read_at=func.coalesce(NotificationEvent.read_at, now),
+            )
+            .returning(NotificationEvent)
+        )
+        return result.scalar_one_or_none()
 
     async def _ensure_tenant_context(self, tenant_id: int) -> None:
         self._require_tenant_id(tenant_id)

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -160,14 +160,19 @@ def _to_detail(approval: ApprovalRequest) -> ApprovalDetail:
 
 @router.get("", response_model=list[ApprovalListItem])
 async def list_pending_approvals(
+    status_filter: Annotated[ApprovalStatusLiteral | None, Query(alias="status")] = None,
     tenant_id: int = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[ApprovalListItem]:
     repo = ApprovalRequestRepository(session)
-    approvals = await repo.list_by_status(tenant_id=tenant_id, status="pending")
+    # Mac 実機検証 C-8 fix: 旧版は status="pending" ハードコードで `?status=approved` 等を無視していた。
+    # frontend approvals page は 5 status を filter UI で出すため、optional status query を honor する。
+    # 未指定時は inbox default の "pending"。enum 外は FastAPI が 422 で reject (ApprovalStatusLiteral)。
+    approvals = await repo.list_by_status(tenant_id=tenant_id, status=status_filter or "pending")
     # ADR-00037 R18 (Codex adversarial): soft-deleted ticket / archived project に bound な stale approval を
     # inbox から隠す (全 read path active-scope)。承認は decide guard で既に block されるが、列挙でも
     # 露出させない。restore で再び現れる。非 ticket resource_ref の approval は対象外。
+    # 全 status に active-scope を適用 (decided 履歴も work-queue 一貫性で stale を隠す、restore で再表示)。
     items: list[ApprovalListItem] = []
     for approval in approvals:
         if await is_approval_target_actionable(

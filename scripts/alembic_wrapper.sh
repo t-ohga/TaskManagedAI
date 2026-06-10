@@ -38,7 +38,7 @@ compose_cmd=(
   --env-file "$env_file"
   exec -T api
   env -u TASKMANAGEDAI_DATABASE_URL -u DATABASE_URL
-  uv run alembic
+  uv run --no-sync alembic
   "${alembic_args[@]}"
 )
 host_env=(env -u TASKMANAGEDAI_DATABASE_URL -u DATABASE_URL)

@@ -77,7 +77,9 @@ export type AuditEventType = z.infer<typeof AuditEventTypeEnum>;
 export const AuditEventSchema = z.object({
   id: z.string().uuid(),
   event_type: z.string(),
-  actor_id: z.string().uuid(),
+  // Mac 実機検証 C-15 fix: backend AuditEventRead.actor_id は `UUID | None` (nullable)。
+  // 旧 schema は non-null 必須で、actor 不明 audit (system event 等) を strict parse で落としていた。
+  actor_id: z.string().uuid().nullable(),
   principal_id: z.string().uuid().nullable().optional(),
   run_id: z.string().uuid().nullable().optional(),
   tenant_id: z.number().int().positive().optional(),
@@ -93,28 +95,25 @@ export const AuditEventSchema = z.object({
 
 export type AuditEvent = z.infer<typeof AuditEventSchema>;
 
-export const AuditListResponseSchema = z.object({
-  events: z.array(AuditEventSchema),
-  next_cursor: z.string().nullable()
-});
-
-export type AuditListResponse = z.infer<typeof AuditListResponseSchema>;
-
+// Mac 実機検証 C-15 fix: backend `GET /api/v1/audit_events` は offset/limit pagination
+// (`{events, total, limit, offset}`)。旧 schema は `next_cursor` 必須で実 response を parse できず
+// /timeline の audit source が常に fail-soft で空表示していた。backend 契約に整合させる。
+// (旧 cursor-based `AuditListResponseSchema` は未使用 dead schema のため削除。)
 const AuditEventListResponseSchema = z.object({
   events: z.array(AuditEventSchema),
   total: z.number().int().nonnegative(),
-  next_cursor: z.string().nullable()
+  limit: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative()
 });
 
 export type AuditEventListResponse = z.infer<typeof AuditEventListResponseSchema>;
 
 export async function listAuditEvents(
-  options: { limit?: number; offset?: number; cursor?: string; eventType?: AuditEventType } = {}
+  options: { limit?: number; offset?: number; eventType?: AuditEventType } = {}
 ): Promise<AuditEventListResponse> {
   const params = new URLSearchParams();
   if (options.limit != null) params.set("limit", String(options.limit));
   if (options.offset != null) params.set("offset", String(options.offset));
-  if (options.cursor) params.set("cursor", options.cursor);
   if (options.eventType) params.set("event_type", options.eventType);
   const qs = params.toString();
   const path: `/${string}` = qs
