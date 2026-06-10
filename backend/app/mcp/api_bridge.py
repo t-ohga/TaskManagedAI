@@ -674,13 +674,46 @@ async def bridge_notification_resolve(
     *,
     tenant_id: int,
     notification_id: UUID,
+    actor_id: UUID | None = None,
 ) -> dict[str, Any]:
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
     from backend.app.repositories.notification_event import NotificationEventRepository
 
+    # ADR-00049 (SP-034) pattern: actor は MCP context 解決値 (caller 申告でない)。未指定時は
+    # superintendent actor で attribution する。C-13 fix で resolve は resolved_by_actor_id 必須
+    # (resolved_at + resolved_by を CHECK 遵守で同時 set するため)。
+    # Codex adversarial R1 (HIGH): REST の _assert_owned が無い MCP 経路で他 recipient 宛通知を
+    # 解決して相手の triage から消せる cross-recipient 攻撃を封じるため、解決 actor 自身を
+    # recipient_actor_id guard にも使う。自分宛でない通知は 0 rows→not_found に倒れる。
+    resolved_actor_id = actor_id if actor_id is not None else DEFAULT_SUPERINTENDENT_ACTOR_ID
     repo = NotificationEventRepository(session)
-    event = await repo.resolve(tenant_id=tenant_id, event_id=notification_id)
+    event = await repo.resolve(
+        tenant_id=tenant_id,
+        event_id=notification_id,
+        resolved_by_actor_id=resolved_actor_id,
+        recipient_actor_id=resolved_actor_id,
+    )
     if event is None:
         return {"error": "not_found", "notification_id": str(notification_id)}
+    # Codex adversarial R2 (HIGH): MCP resolve は real lifecycle transition (resolved_at set) になった
+    # ため、REST と同様に metadata-only の notification_resolved audit を残す (state 変更を証跡なしに
+    # しない、abuse / accidental resolve の reconstruct 可能性確保)。raw secret は含めない。
+    from backend.app.repositories.audit_event import AuditEventRepository
+
+    await AuditEventRepository(session).append(
+        tenant_id=tenant_id,
+        event_type="notification_resolved",
+        payload={
+            "notification_id": str(event.id),
+            "event_type": event.event_type,
+            "severity": event.severity,
+            "required_action": event.required_action,
+            "resolved_at": event.resolved_at.isoformat() if event.resolved_at is not None else None,
+            "resolution_note_present": False,
+            "via": "mcp",
+        },
+        actor_id=resolved_actor_id,
+    )
     await session.commit()
     return {"notification_id": str(event.id), "resolved": True}
 

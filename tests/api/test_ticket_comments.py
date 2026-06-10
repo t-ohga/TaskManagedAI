@@ -15,6 +15,7 @@ seed-based DB negative は ADR-00041 テスト指針に従い CI Compose postgre
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
@@ -324,17 +325,51 @@ def test_mark_read_update_excludes_ticket_comment() -> None:
     _assert_mark_read_guard(session.executed[-1])
 
 
-def test_snooze_delegates_to_guarded_mark_read() -> None:
-    # snooze は mark_read に委譲するため同じ event_type guard を継承する。
-    session = _CaptureSession(tenant_id=1)
-    repo = NotificationEventRepository(cast(AsyncSession, session))
-    assert asyncio.run(repo.snooze(tenant_id=1, event_id=uuid4())) is None
-    _assert_mark_read_guard(session.executed[-1])
+def _assert_recipient_guard(executed_stmt: Any) -> None:
+    # Codex adversarial R1 (HIGH): snooze / resolve の UPDATE が recipient_actor_id 条件を持つこと
+    # (cross-recipient 操作を atomic に封じる)。
+    sql = _compiled_sql(executed_stmt).lower()
+    assert "recipient_actor_id" in sql
 
 
-def test_resolve_delegates_to_guarded_mark_read() -> None:
-    # resolve も mark_read に委譲するため同じ event_type guard を継承する。
+def test_snooze_preserves_ticket_comment_and_recipient_guard() -> None:
+    # C-13 fix: snooze は mark_read 委譲から snoozed_until 永続化に変更されたが、ticket_comment を
+    # direct-id で claim させない event_type guard (mark_read と同じ単一防御点) を WHERE に維持する。
+    # Codex R1 (HIGH): recipient_actor_id guard も WHERE に持つ。
     session = _CaptureSession(tenant_id=1)
     repo = NotificationEventRepository(cast(AsyncSession, session))
-    assert asyncio.run(repo.resolve(tenant_id=1, event_id=uuid4())) is None
+    snoozed_until = datetime.now(tz=UTC) + timedelta(hours=1)
+    assert (
+        asyncio.run(
+            repo.snooze(
+                tenant_id=1,
+                event_id=uuid4(),
+                snoozed_until=snoozed_until,
+                recipient_actor_id=uuid4(),
+            )
+        )
+        is None
+    )
     _assert_mark_read_guard(session.executed[-1])
+    _assert_recipient_guard(session.executed[-1])
+
+
+def test_resolve_preserves_ticket_comment_and_recipient_guard() -> None:
+    # C-13 fix: resolve は mark_read 委譲から resolved_at/resolved_by 永続化に変更されたが、
+    # ticket_comment を direct-id で claim させない event_type guard を WHERE に維持する。
+    # Codex R1 (HIGH): recipient_actor_id guard も WHERE に持ち、cross-recipient resolve を封じる。
+    session = _CaptureSession(tenant_id=1)
+    repo = NotificationEventRepository(cast(AsyncSession, session))
+    assert (
+        asyncio.run(
+            repo.resolve(
+                tenant_id=1,
+                event_id=uuid4(),
+                resolved_by_actor_id=uuid4(),
+                recipient_actor_id=uuid4(),
+            )
+        )
+        is None
+    )
+    _assert_mark_read_guard(session.executed[-1])
+    _assert_recipient_guard(session.executed[-1])

@@ -20,6 +20,7 @@ from backend.app.api.approval_inbox import get_db_session
 from backend.app.config import Settings, get_settings
 from backend.app.db.session import create_engine
 from backend.app.main import create_app
+from backend.app.repositories.notification_event import NotificationEventRepository
 from backend.app.seeds.initial import DEFAULT_ACTOR_ID
 
 _DEFAULT_DATABASE_URL = (
@@ -643,6 +644,131 @@ async def test_mark_read_unknown_id_returns_404(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "notification not found"
+
+
+@pytest.mark.asyncio
+async def test_resolve_rejects_cross_recipient_notification(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    # Codex adversarial R1 (HIGH): repo.resolve は recipient_actor_id guard を WHERE に持つため、
+    # 別 recipient 宛通知 (MCP 経路は REST の _assert_owned が無い) を別 actor が resolve して相手の
+    # triage から消すことはできない (0 rows→None、row は未解決のまま)。
+    await _setup_notification_fixtures(session_factory)
+    async with session_factory.begin() as session:
+        await _insert_notification(
+            session,
+            notification_id=OTHER_NOTIFICATION_ID,
+            recipient_actor_id=OTHER_ACTOR_ID,
+        )
+
+    async with session_factory() as session:
+        repo = NotificationEventRepository(session)
+        result = await repo.resolve(
+            tenant_id=1,
+            event_id=OTHER_NOTIFICATION_ID,
+            resolved_by_actor_id=DEFAULT_ACTOR_ID,
+            recipient_actor_id=DEFAULT_ACTOR_ID,
+        )
+        await session.commit()
+
+    assert result is None
+
+    async with session_factory() as session:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    select resolved_at, resolved_by_actor_id, read_at
+                    from notification_events
+                    where tenant_id = 1 and id = :notification_id
+                    """
+                ),
+                {"notification_id": OTHER_NOTIFICATION_ID},
+            )
+        ).mappings().one()
+
+    assert row["resolved_at"] is None
+    assert row["resolved_by_actor_id"] is None
+    assert row["read_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_bridge_notification_resolve_self_resolves_audits_and_blocks_cross_recipient(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    # Codex adversarial R2 (HIGH): MCP bridge は (1) 自分 (superintendent) 宛通知のみ resolve でき、
+    # (2) notification_resolved audit を残し、(3) 別 recipient 宛通知は not_found で state 不変。
+    # P0 では DEFAULT_ACTOR_ID == DEFAULT_SUPERINTENDENT_ACTOR_ID (同一 UUID)。
+    from backend.app.mcp.api_bridge import bridge_notification_resolve
+
+    await _setup_notification_fixtures(session_factory)
+    async with session_factory.begin() as session:
+        await _insert_notification(
+            session,
+            notification_id=NOTIFICATION_ID,
+            recipient_actor_id=DEFAULT_ACTOR_ID,
+        )
+        await _insert_notification(
+            session,
+            notification_id=OTHER_NOTIFICATION_ID,
+            recipient_actor_id=OTHER_ACTOR_ID,
+        )
+
+    async with session_factory() as session:
+        resolved = await bridge_notification_resolve(
+            session, tenant_id=1, notification_id=NOTIFICATION_ID
+        )
+    assert resolved == {"notification_id": str(NOTIFICATION_ID), "resolved": True}
+
+    async with session_factory() as session:
+        denied = await bridge_notification_resolve(
+            session, tenant_id=1, notification_id=OTHER_NOTIFICATION_ID
+        )
+    assert denied == {"error": "not_found", "notification_id": str(OTHER_NOTIFICATION_ID)}
+
+    async with session_factory() as session:
+        own_resolved_at = await session.scalar(
+            text(
+                "select resolved_at from notification_events where tenant_id = 1 and id = :id"
+            ),
+            {"id": NOTIFICATION_ID},
+        )
+        other_resolved_at = await session.scalar(
+            text(
+                "select resolved_at from notification_events where tenant_id = 1 and id = :id"
+            ),
+            {"id": OTHER_NOTIFICATION_ID},
+        )
+        audit_count = await session.scalar(
+            text(
+                """
+                select count(*)
+                from audit_events
+                where tenant_id = 1 and event_type = 'notification_resolved'
+                """
+            )
+        )
+        audit_payload = await session.scalar(
+            text(
+                """
+                select event_payload
+                from audit_events
+                where tenant_id = 1 and event_type = 'notification_resolved'
+                order by created_at desc
+                limit 1
+                """
+            )
+        )
+
+    assert own_resolved_at is not None
+    assert other_resolved_at is None
+    assert audit_count == 1
+    # R3: MCP resolve audit は via=mcp marker を持ち、raw notification payload (approval_id 等) を
+    # 混入しない (metadata-only)。
+    assert isinstance(audit_payload, dict)
+    assert audit_payload["via"] == "mcp"
+    assert audit_payload["notification_id"] == str(NOTIFICATION_ID)
+    assert "approval_id" not in audit_payload
 
 
 @pytest.mark.asyncio

@@ -30,7 +30,9 @@ def test_alembic_wrapper_dry_run_strips_host_database_env() -> None:
     assert "env -u TASKMANAGEDAI_DATABASE_URL -u DATABASE_URL" in result.stdout
     assert "docker compose" in result.stdout
     assert "exec -T api" in result.stdout
-    assert "uv run alembic upgrade head" in result.stdout
+    # B-4 fix: ro mount で egg-info Permission denied を避けるため --no-sync を付与
+    # (base compose api/worker と整合)。
+    assert "uv run --no-sync alembic upgrade head" in result.stdout
     assert "secret@example" not in result.stdout
     assert "secret2@example" not in result.stdout
 
@@ -45,7 +47,7 @@ def test_alembic_wrapper_dry_run_defaults_to_current() -> None:
     )
 
     assert result.returncode == 0
-    assert "uv run alembic current" in result.stdout
+    assert "uv run --no-sync alembic current" in result.stdout
 
 
 def test_smoke_sop_uses_alembic_wrapper_and_documents_env_strip() -> None:

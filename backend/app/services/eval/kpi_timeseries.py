@@ -137,7 +137,7 @@ def _bucketed_acceptance_sql() -> sa.TextClause:
           from acceptance_criteria ac
          where ac.tenant_id = :tenant_id
            and ac.created_at >= :cutoff
-           and (:project_id is null or ac.project_id = cast(:project_id as uuid))
+           and (cast(:project_id as uuid) is null or ac.project_id = cast(:project_id as uuid))
            and not exists (
                select 1 from tickets t
                 where t.tenant_id = ac.tenant_id
@@ -168,7 +168,7 @@ def _bucketed_approval_sql() -> sa.TextClause:
            and arq.decided_at is not null
            and arq.decided_at >= arq.requested_at
            and arq.requested_at >= :cutoff
-           and (:project_id is null or ar.project_id = cast(:project_id as uuid))
+           and (cast(:project_id as uuid) is null or ar.project_id = cast(:project_id as uuid))
          group by 1
          order by 1
         """
@@ -214,7 +214,7 @@ def _bucketed_citation_sql() -> sa.TextClause:
              where aa.tenant_id = :tenant_id
                and aa.adoption_state = 'final'
                and aa.finalized_at >= :cutoff
-               and (:project_id is null or aa.project_id = cast(:project_id as uuid))
+               and (cast(:project_id as uuid) is null or aa.project_id = cast(:project_id as uuid))
                -- adversarial F-1 fix: artifact の run が soft-deleted ticket に紐づく場合は除外
                -- (cost / time_to_merge / acceptance と同じ soft_deleted_ticket_run_exclusion 整合)。
                and not exists (
@@ -280,7 +280,7 @@ def _bucketed_cost_sql() -> sa.TextClause:
                and ar.status = 'completed'
                and ar.completed_at is not null
                and ar.completed_at >= :cutoff
-               and (:project_id is null or ar.project_id = cast(:project_id as uuid))
+               and (cast(:project_id as uuid) is null or ar.project_id = cast(:project_id as uuid))
                and not exists (
                    select 1 from tickets t
                     where t.tenant_id = ar.tenant_id
@@ -332,7 +332,7 @@ def _bucketed_time_to_merge_sql() -> sa.TextClause:
                and ar.status = 'completed'
                and ar.completed_at is not null
                and ar.completed_at >= :cutoff
-               and (:project_id is null or ar.project_id = cast(:project_id as uuid))
+               and (cast(:project_id as uuid) is null or ar.project_id = cast(:project_id as uuid))
                and not exists (
                    select 1 from tickets t
                     where t.tenant_id = ar.tenant_id
