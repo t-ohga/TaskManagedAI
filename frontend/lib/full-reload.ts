@@ -12,30 +12,21 @@
 
 const EDIT_FORM_SELECTOR = '[data-testid="edit-ticket-form"]';
 
+/**
+ * R3 (Codex adversarial HIGH): dirty 判定は DOM の value vs defaultValue 比較では不十分 —
+ * 説明欄 (MarkdownEditor) は controlled で、DOM の defaultValue が編集後の値に追従し得るため
+ * description のみの編集が gate をすり抜ける。代わりに **編集フォーム自身が input で
+ * `data-dirty="true"` を立てる** (EditTicketForm の form onChange。controlled でも input event は
+ * bubble するため全 field を確実に捕捉)。保存成功時は snapshot key remount で新しい form 要素に
+ * なり、dirty flag は自然にクリアされる。「編集して元に戻した」ケースも dirty 扱い (確認が
+ * 1 回多く出るだけの安全側 false positive)。
+ */
 export function hasUnsavedTicketEdit(): boolean {
   const form = document.querySelector(EDIT_FORM_SELECTOR);
   if (!(form instanceof HTMLFormElement)) {
     return false;
   }
-  for (const el of Array.from(form.elements)) {
-    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-      if (el instanceof HTMLInputElement && el.type === "hidden") {
-        continue;
-      }
-      if (el.value !== el.defaultValue) {
-        return true;
-      }
-    } else if (el instanceof HTMLSelectElement) {
-      const options = Array.from(el.options);
-      const defaultIndex = options.findIndex((o) => o.defaultSelected);
-      // defaultSelected が無い select はブラウザ既定で先頭が選択される。
-      const expected = defaultIndex === -1 ? 0 : defaultIndex;
-      if (el.selectedIndex !== expected) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return form.dataset.dirty === "true";
 }
 
 /**

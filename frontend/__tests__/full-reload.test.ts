@@ -1,6 +1,6 @@
-// C-5 第 2 round / Codex adversarial F-1 の回帰 test:
-// 副次 mutation (コメント / タグ / ステータス) 成功後の full reload が、同一ページの
-// チケット編集フォームの未保存入力を警告なしに破棄しないこと (dirty 検知 + confirm guard)。
+// C-5 第 2 round / Codex adversarial F-1/R2/R3 の回帰 test:
+// 副次 mutation (コメント / タグ / ステータス / 中止) が、同一ページのチケット編集フォームの
+// 未保存入力を警告なしに破棄しないこと (data-dirty 検知 + pre-commit confirm gate)。
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -18,37 +18,21 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("hasUnsavedTicketEdit (C-5 F-1)", () => {
+describe("hasUnsavedTicketEdit (C-5 R3: data-dirty 一本化)", () => {
   it("編集フォームが無いページでは false", () => {
     expect(hasUnsavedTicketEdit()).toBe(false);
   });
 
-  it("未変更 (value == defaultValue) は false", () => {
-    mountEditForm('<input name="title" value="t" /><textarea name="description">d</textarea>');
-    expect(hasUnsavedTicketEdit()).toBe(false);
-  });
-
-  it("text 入力の変更を dirty と判定する", () => {
+  it("data-dirty 未設定 (未編集) は false", () => {
     mountEditForm('<input name="title" value="t" />');
-    const input = document.querySelector("input");
-    if (input) input.value = "edited";
-    expect(hasUnsavedTicketEdit()).toBe(true);
-  });
-
-  it("select の変更を dirty と判定する", () => {
-    mountEditForm(
-      '<select name="status"><option value="open" selected>open</option><option value="closed">closed</option></select>'
-    );
-    const select = document.querySelector("select");
-    if (select) select.selectedIndex = 1;
-    expect(hasUnsavedTicketEdit()).toBe(true);
-  });
-
-  it("hidden input の差分は dirty 扱いしない (React が管理する内部 field)", () => {
-    mountEditForm('<input type="hidden" name="ticket_id" value="x" />');
-    const hidden = document.querySelector("input");
-    if (hidden) hidden.value = "y";
     expect(hasUnsavedTicketEdit()).toBe(false);
+  });
+
+  it("form の data-dirty=true で dirty と判定する (controlled 含む全 field を input bubble で捕捉)", () => {
+    mountEditForm('<input name="title" value="t" />');
+    const form = document.querySelector("form");
+    if (form) form.dataset.dirty = "true";
+    expect(hasUnsavedTicketEdit()).toBe(true);
   });
 });
 
@@ -61,16 +45,16 @@ describe("confirmDiscardUnsavedTicketEdit (C-5 R2 pre-commit gate)", () => {
 
   it("dirty + キャンセル → false (mutation 自体を実行させない)", () => {
     mountEditForm('<input name="title" value="t" />');
-    const input = document.querySelector("input");
-    if (input) input.value = "edited";
+    const form = document.querySelector("form");
+    if (form) form.dataset.dirty = "true";
     vi.spyOn(window, "confirm").mockReturnValue(false);
     expect(confirmDiscardUnsavedTicketEdit()).toBe(false);
   });
 
   it("dirty + 承認 → true (ユーザー選択で破棄を許可)", () => {
     mountEditForm('<input name="title" value="t" />');
-    const input = document.querySelector("input");
-    if (input) input.value = "edited";
+    const form = document.querySelector("form");
+    if (form) form.dataset.dirty = "true";
     vi.spyOn(window, "confirm").mockReturnValue(true);
     expect(confirmDiscardUnsavedTicketEdit()).toBe(true);
   });

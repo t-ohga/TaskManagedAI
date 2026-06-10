@@ -150,6 +150,12 @@ export function EditTicketForm({
     <form
       key={serverTicketKey}
       action={formAction}
+      // R3 (Codex adversarial): 未保存編集の検知は form 自身が input (bubble) で data-dirty を
+      // 立てる (lib/full-reload.ts hasUnsavedTicketEdit が参照)。controlled な MarkdownEditor も
+      // 含め全 field の編集を確実に捕捉。保存成功時は serverTicketKey の remount で自然にクリア。
+      onChange={(event) => {
+        event.currentTarget.dataset.dirty = "true";
+      }}
       className="rounded-lg border border-line bg-panel p-5 shadow-sm"
       data-testid="edit-ticket-form"
     >
