@@ -110,6 +110,49 @@ describe("EditTicketForm dirty 検知 (R3: 実 form + MarkdownEditor)", () => {
   });
 });
 
+describe("EditTicketForm 保存と他領域 draft (R5)", () => {
+  it("他 guard 領域が dirty なら保存前に確認し、拒否時は action を実行しない", async () => {
+    render(
+      <EditTicketForm
+        ticket={TICKET}
+        assignableActors={[]}
+        assignableActorsDegraded={false}
+        assignableActorsTruncated={false}
+      />
+    );
+    // 別領域 (例: コメント form) の draft を模擬
+    const other = document.createElement("div");
+    other.setAttribute("data-unsaved-guard", "");
+    other.dataset.dirty = "true";
+    document.body.appendChild(other);
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.submit(screen.getByTestId("edit-ticket-form"));
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("自 form の dirty だけなら確認なしで保存できる (except=自 form)", async () => {
+    render(
+      <EditTicketForm
+        ticket={TICKET}
+        assignableActors={[]}
+        assignableActorsDegraded={false}
+        assignableActorsTruncated={false}
+      />
+    );
+    fireEvent.change(screen.getByRole("combobox", { name: "状態" }), {
+      target: { value: "in_progress" }
+    });
+    const confirmSpy = vi.spyOn(window, "confirm");
+    fireEvent.submit(screen.getByTestId("edit-ticket-form"));
+    await waitFor(() => expect(updateCalls).toHaveLength(1));
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("TicketDeleteButton (R3 F-2: pre-commit gate)", () => {
   it("未保存編集の破棄を拒否したら action も遷移も実行しない", async () => {
     render(

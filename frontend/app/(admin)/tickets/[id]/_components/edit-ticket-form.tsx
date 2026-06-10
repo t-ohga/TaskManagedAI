@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect } from "react";
 
+import { confirmDiscardUnsavedDrafts } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 
 import { formatTicketPriority, formatTicketStatus } from "@/lib/i18n/ticket-labels";
@@ -155,6 +156,15 @@ export function EditTicketForm({
       // 含め全 field の編集を確実に捕捉。保存成功時は serverTicketKey の remount で自然にクリア。
       onChange={(event) => {
         event.currentTarget.dataset.dirty = "true";
+      }}
+      // R5 (Codex adversarial HIGH): 保存成功は reload を伴うため、**他領域** の未保存 draft
+      // (コメント下書き / タグ編集中 等) があれば action 実行前に破棄確認する。except=自 form
+      // (自分の編集は保存対象そのものなので confirm を出さない)。キャンセルは preventDefault で
+      // server action を実行しない。
+      onSubmit={(event) => {
+        if (!confirmDiscardUnsavedDrafts(event.currentTarget)) {
+          event.preventDefault();
+        }
       }}
       className="rounded-lg border border-line bg-panel p-5 shadow-sm"
       data-testid="edit-ticket-form"
