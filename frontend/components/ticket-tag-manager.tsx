@@ -79,7 +79,11 @@ function ColorPicker({
 export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
   const requestRefresh = useDeferredRouterRefresh();
   const [isPending, startTransition] = useTransition();
-  const rootRef = useRef<HTMLDivElement | null>(null);
+  // R6 (Codex adversarial HIGH): guard は create / rename を**個別領域**にする。root 全体を
+  // except すると attach/detach が同 panel 内の別 draft (新規タグ名 / rename 中) を gate なしで
+  // 破棄できるため、except は「その draft を実際に consume する操作」だけに渡す。
+  const createGuardRef = useRef<HTMLDivElement | null>(null);
+  const renameGuardRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [creating, setCreating] = useState(false);
@@ -96,11 +100,13 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
   function run(
     action: (s: TagActionState, fd: FormData) => Promise<TagActionState>,
     fd: FormData,
-    onOk?: () => void
+    onOk?: () => void,
+    // R6: その操作が consume する draft 領域のみ except (attach/detach は null = 全 draft 対象)。
+    except: Element | null = null
   ) {
     // R2 (Codex adversarial HIGH): 未保存編集の破棄確認は mutation **前**。キャンセルなら
     // server action を実行しない (post-commit 確認だと stale form 保存で commit を巻き戻せる)。
-    if (!confirmDiscardUnsavedDrafts(rootRef.current)) return;
+    if (!confirmDiscardUnsavedDrafts(except)) return;
     setError(null);
     startTransition(async () => {
       const result = await action(IDLE, fd);
@@ -140,7 +146,9 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
         setNewName("");
         setNewColor("slate");
         setCreating(false);
-      }
+      },
+      // R6: 作成操作は新規タグ draft を consume する — create 領域のみ except。
+      createGuardRef.current
     );
   }
 
@@ -164,26 +172,24 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
         name: editName.trim(),
         color: editColor
       }),
-      () => setEditingId(null)
+      () => setEditingId(null),
+      // R6: rename 確定は rename draft を consume する — rename 領域のみ except。
+      renameGuardRef.current
     );
   }
 
   function handleDelete(tagId: string) {
-    run(deleteTagAction, buildForm({ ticket_id: ticketId, tag_id: tagId }), () =>
-      setEditingId(null)
+    // R6: 削除は rename 編集 UI 内から行う操作 (編集中タグの削除) — rename 領域のみ except。
+    run(
+      deleteTagAction,
+      buildForm({ ticket_id: ticketId, tag_id: tagId }),
+      () => setEditingId(null),
+      renameGuardRef.current
     );
   }
 
   return (
-    <div
-      ref={rootRef}
-      className="grid gap-4"
-      // R4 F-2 (Codex adversarial): 新規タグ名 / rename の入力も reload で失われ得る draft。
-      // 汎用 guard convention (lib/full-reload.ts) に登録する。タグ操作自身は except=本領域で
-      // confirm を出さない (自分の文脈の draft consume)。
-      data-unsaved-guard=""
-      data-dirty={(creating && newName.trim()) || editingId !== null ? "true" : undefined}
-    >
+    <div className="grid gap-4">
       {/* 付与中のタグ */}
       <div>
         <p className="mb-2 text-xs font-medium text-muted-foreground">付与中</p>
@@ -233,7 +239,13 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
       {/* 新規作成 */}
       <div>
         {creating ? (
-          <div className="grid gap-2 rounded-md border border-line p-3">
+          <div
+            ref={createGuardRef}
+            className="grid gap-2 rounded-md border border-line p-3"
+            // R6: 新規タグ draft の guard 領域 (作成操作のみ except)。
+            data-unsaved-guard=""
+            data-dirty={newName.trim() ? "true" : undefined}
+          >
             <input
               type="text"
               value={newName}
@@ -293,7 +305,14 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
           <div className="grid gap-2 border-t border-line p-3">
             {allTags.map((tag) =>
               editingId === tag.id ? (
-                <div key={tag.id} className="grid gap-2 rounded border border-line p-2">
+                <div
+                  key={tag.id}
+                  ref={renameGuardRef}
+                  className="grid gap-2 rounded border border-line p-2"
+                  // R6: rename draft の guard 領域 (rename 確定 / 編集中タグの削除のみ except)。
+                  data-unsaved-guard=""
+                  data-dirty="true"
+                >
                   <input
                     type="text"
                     value={editName}
