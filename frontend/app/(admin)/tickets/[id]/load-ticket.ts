@@ -22,7 +22,10 @@ export type TicketDetail = {
   // assignable-actors map で解決する (TicketRead 契約不変)。
   assignee_actor_id: string | null;
   created_at: string | null;
-  updated_at: string | null;
+  // C-5 R3 (Codex adversarial HIGH): updated_at は edit form の snapshot/props 新旧判定 version。
+  // backend TicketRead は必須で返すため、loader で strict validate して required string に固定する
+  // (null/欠落を許すと「古い成功 snapshot が version 不明 props を恒久遮断する」経路が型レベルで残る)。
+  updated_at: string;
   project_id: string;
   // 看板への戻り導線で使う project slug (tickets 一覧の ?project= は slug を期待する)。
   project_slug: string;
@@ -106,11 +109,22 @@ export async function loadTicket(id: string): Promise<TicketDetail | null> {
           if (!assigneeOk) {
             throw new Error("ticket assignee_actor_id is missing or not a valid UUID");
           }
+          // C-5 R3 (Codex adversarial HIGH): updated_at を strict validate (必須 + parseable timestamp)。
+          // backend TicketRead は必須で返す。null / 欠落 / 非 timestamp を fail-closed で throw し、
+          // edit form の snapshot/props 新旧判定 (resolveServerTicket) に「順序不明」な version を
+          // 渡さない (due_date / tags / assignee と同じ strict-all-surface 方針)。
+          const rawUpdatedAt = (ticketRes as Record<string, unknown>)?.updated_at;
+          const updatedAtOk =
+            typeof rawUpdatedAt === "string" && !Number.isNaN(Date.parse(rawUpdatedAt));
+          if (!updatedAtOk) {
+            throw new Error("ticket updated_at is missing or not a parseable timestamp");
+          }
           return {
             ...ticket,
             project_id: pid,
             project_slug: slug,
             assignee_actor_id: rawAssignee as string | null,
+            updated_at: rawUpdatedAt,
             tags: tagsParsed.data
           };
         }

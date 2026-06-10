@@ -33,6 +33,12 @@ def test_alembic_wrapper_dry_run_strips_host_database_env() -> None:
     # B-4 fix: ro mount で egg-info Permission denied を避けるため --no-sync を付与
     # (base compose api/worker と整合)。
     assert "uv run --no-sync alembic upgrade head" in result.stdout
+    # B-4 fix (PR #336 再検証 FAIL): env strip は host 側 (docker compose 起動前) の 1 回のみ。
+    # container 内で TASKMANAGEDAI_DATABASE_URL を unset すると Alembic が default password の
+    # _DEV_DATABASE_URL に fallback し InvalidPasswordError になる。container 内 (.env.local 由来、
+    # 実行中 api と同一) の env を正本として alembic を直接実行する。
+    assert result.stdout.count("env -u TASKMANAGEDAI_DATABASE_URL") == 1
+    assert "exec -T api uv run --no-sync alembic" in result.stdout
     assert "secret@example" not in result.stdout
     assert "secret2@example" not in result.stdout
 
@@ -48,6 +54,32 @@ def test_alembic_wrapper_dry_run_defaults_to_current() -> None:
 
     assert result.returncode == 0
     assert "uv run --no-sync alembic current" in result.stdout
+
+
+def test_alembic_wrapper_fails_closed_when_env_file_lacks_database_url(
+    tmp_path: Path,
+) -> None:
+    # R3 (Codex adversarial MEDIUM): env file に TASKMANAGEDAI_DATABASE_URL が無い場合、
+    # preflight は docker を呼ぶ前に exit 3 で fail-closed する (expected/actual が空同士で
+    # 一致扱いになり、Alembic が Settings の default URL へ fallback したまま migration する
+    # 経路の封鎖)。docker 不要で決定的に検証できる。
+    env_file = tmp_path / "no-db-url.env"
+    env_file.write_text("POSTGRES_USER=taskmanagedai\n", encoding="utf-8")
+    env = dict(os.environ)
+    env["TASKHUB_ALEMBIC_ENV_FILE"] = str(env_file)
+
+    result = subprocess.run(  # noqa: S603
+        ["/bin/bash", str(WRAPPER), "current"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 3
+    assert "TASKMANAGEDAI_DATABASE_URL" in result.stderr
+    assert "fail-closed" in result.stderr
 
 
 def test_smoke_sop_uses_alembic_wrapper_and_documents_env_strip() -> None:

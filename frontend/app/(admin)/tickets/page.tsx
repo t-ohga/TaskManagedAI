@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Route } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
@@ -511,18 +512,38 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
       </Suspense>
 
       {selectedProject === "all" ? (
-        <div className="rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 px-4 py-2 text-xs text-blue-700 dark:text-blue-300">
-          全プロジェクト横断表示中。チケットの作成・更新するにはプロジェクトを選択してください。
+        // C-4 UX fix (Mac 実機検証所見): 「なぜ作成ボタンが無いのか」を説明だけで終わらせず、
+        // 現在プロジェクトの view へ 1 click で移動できる actionable な導線を併置する。
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 px-4 py-2 text-xs text-blue-700 dark:text-blue-300">
+          <span>全プロジェクト横断表示中。チケットの作成・更新はプロジェクト単位で行います。</span>
+          {currentProject ? (
+            <Link
+              href={`/tickets?project=${encodeURIComponent(currentProject.slug)}` as Route}
+              className="inline-flex items-center rounded-md border border-blue-300 dark:border-blue-700 px-2.5 py-1 font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40"
+            >
+              + 「{currentProject.name}」でチケットを作成
+            </Link>
+          ) : null}
         </div>
       ) : currentProject && selectedProject === currentProject.slug ? (
         <TicketCreateDialog assignableActors={assignableActors} />
       ) : (
-        <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
-          チケットは現在のプロジェクト
-          {currentProject ? `「${currentProject.name}」` : ""}に作成されます。
-          {currentProject
-            ? `この project でチケットを作成するには、上のタブで「${currentProject.name}」を選択してください。`
-            : "現在のプロジェクトを取得できませんでした。再読み込みしてください。"}
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
+          <span>
+            チケットは現在のプロジェクト
+            {currentProject ? `「${currentProject.name}」` : ""}に作成されます。
+            {currentProject
+              ? ""
+              : "現在のプロジェクトを取得できませんでした。再読み込みしてください。"}
+          </span>
+          {currentProject ? (
+            <Link
+              href={`/tickets?project=${encodeURIComponent(currentProject.slug)}` as Route}
+              className="inline-flex items-center rounded-md border border-amber-300 dark:border-amber-700 px-2.5 py-1 font-medium hover:bg-amber-100 dark:hover:bg-amber-900/40"
+            >
+              + 「{currentProject.name}」でチケットを作成
+            </Link>
+          ) : null}
         </div>
       )}
 
