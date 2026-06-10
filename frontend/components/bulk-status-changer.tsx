@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 
 import { useToast } from "@/components/toast";
 
@@ -19,7 +19,7 @@ const STATUSES = [
 ];
 
 export function BulkStatusChanger({ selectedIds, onClear, onSelectionChange }: BulkStatusChangerProps) {
-  const router = useRouter();
+  const requestRefresh = useDeferredRouterRefresh();
   const { toast } = useToast();
   const [isPending, startTransition] = useTransition();
   const [targetStatus, setTargetStatus] = useState("");
@@ -44,7 +44,8 @@ export function BulkStatusChanger({ selectedIds, onClear, onSelectionChange }: B
           failedIds.push(id);
         }
       }
-      router.refresh();
+      // C-5 workaround: transition 内の router.refresh() は isPending を固める (lib/use-deferred-router-refresh.ts 参照)。
+      requestRefresh();
       if (failedIds.length > 0) {
         const succeeded = selectedIds.length - failedIds.length;
         setError(`${failedIds.length} 件の更新に失敗しました (権限またはプロジェクト境界を確認してください)`);

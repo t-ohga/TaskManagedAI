@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 
 import { BackendApiError } from "@/lib/api/client";
 import { getCurrentProjectId } from "@/lib/api/session";
@@ -47,10 +46,12 @@ function mapTagError(error: unknown): string {
   return error instanceof Error ? error.message : "操作に失敗しました。";
 }
 
-function revalidateTicket(ticketId: string): void {
-  revalidatePath(`/tickets/${ticketId}`);
-  revalidatePath("/tickets");
-}
+// C-5 root cause workaround (Playwright 実測で確定、Next.js 16 / React 19 既知 regression):
+// Server Action 内の revalidatePath() は action transition の isPending を永遠に解除しない
+// (https://github.com/vercel/next.js/discussions/82289 / discussions/88767) ため、本 file の
+// 全 action から revalidatePath を撤去した。対象 page は全て force-dynamic + client Router Cache の
+// dynamic staleTime=0 のため、navigation は常に最新を取得する。現在画面の即時反映は client 側
+// (TicketTagManager) の transition 外 refresh (useDeferredRouterRefresh) が担う。
 
 export async function attachTagAction(
   _prev: TagActionState,
@@ -64,7 +65,6 @@ export async function attachTagAction(
   try {
     const projectId = await getCurrentProjectId();
     await attachTag(projectId, ticketId, tagId);
-    revalidateTicket(ticketId);
     return { kind: "ok" };
   } catch (error) {
     return { kind: "error", message: mapTagError(error) };
@@ -83,7 +83,6 @@ export async function detachTagAction(
   try {
     const projectId = await getCurrentProjectId();
     await detachTag(projectId, ticketId, tagId);
-    revalidateTicket(ticketId);
     return { kind: "ok" };
   } catch (error) {
     return { kind: "error", message: mapTagError(error) };
@@ -111,7 +110,6 @@ export async function createTagAndAttachAction(
     // create + attach を単一 backend transaction で実行 (atomic、Codex R5 HIGH)。
     // attach 失敗時に tag 作成も rollback され、孤立 tag が残らない。
     await createAndAttachTag(projectId, ticketId, { name, color: colorParsed.data });
-    revalidateTicket(ticketId);
     return { kind: "ok" };
   } catch (error) {
     return { kind: "error", message: mapTagError(error) };
@@ -122,7 +120,6 @@ export async function renameTagAction(
   _prev: TagActionState,
   formData: FormData
 ): Promise<TagActionState> {
-  const ticketId = String(formData.get("ticket_id") ?? "");
   const tagId = String(formData.get("tag_id") ?? "");
   const name = String(formData.get("name") ?? "").trim();
   const colorParsed = TagColorEnum.safeParse(formData.get("color"));
@@ -138,8 +135,6 @@ export async function renameTagAction(
   try {
     const projectId = await getCurrentProjectId();
     await renameTag(projectId, tagId, { name, color: colorParsed.data });
-    if (UUID_PATTERN.test(ticketId)) revalidateTicket(ticketId);
-    else revalidatePath("/tickets");
     return { kind: "ok" };
   } catch (error) {
     return { kind: "error", message: mapTagError(error) };
@@ -150,7 +145,6 @@ export async function deleteTagAction(
   _prev: TagActionState,
   formData: FormData
 ): Promise<TagActionState> {
-  const ticketId = String(formData.get("ticket_id") ?? "");
   const tagId = String(formData.get("tag_id") ?? "");
   if (!UUID_PATTERN.test(tagId)) {
     return { kind: "error", message: "不正なタグ ID です。" };
@@ -158,8 +152,6 @@ export async function deleteTagAction(
   try {
     const projectId = await getCurrentProjectId();
     await deleteTag(projectId, tagId);
-    if (UUID_PATTERN.test(ticketId)) revalidateTicket(ticketId);
-    else revalidatePath("/tickets");
     return { kind: "ok" };
   } catch (error) {
     return { kind: "error", message: mapTagError(error) };

@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { fetchBackendJson } from "@/lib/api/client";
@@ -55,7 +54,23 @@ export type UpdatedTicketSnapshot = {
 export type UpdateTicketState =
   | { kind: "idle" }
   | { kind: "ok"; ticket_id: string; ticket: UpdatedTicketSnapshot }
-  | { kind: "error"; message: string };
+  // C-5 R6: error は直近の成功 snapshot を carry する。useActionState の state は次 submit で
+  // 置き換わるため、ok→(refresh 未着)→error の遷移で snapshot を失うと stale props へ戻る
+  // 再入口になる。client 側で別 state/ref に保持する案は React 19 で action transition を壊す
+  // (render 中 setState は commit 不能、render 中 ref は react-hooks/refs 違反) ため、
+  // **server action が _prevState から carry する** 純データ設計にする。
+  | { kind: "error"; message: string; last_ok_ticket: UpdatedTicketSnapshot | null };
+
+// 直前 state から「直近の成功 snapshot」を引き継ぐ (ok→error→error... の連鎖でも保持)。
+function carriedSnapshot(prev: UpdateTicketState): UpdatedTicketSnapshot | null {
+  if (prev.kind === "ok") {
+    return prev.ticket;
+  }
+  if (prev.kind === "error") {
+    return prev.last_ok_ticket;
+  }
+  return null;
+}
 
 /**
  * formData value を 3 状態に分類:
@@ -98,7 +113,8 @@ export async function updateTicketAction(
   if (!parsed.success) {
     return {
       kind: "error",
-      message: parsed.error.issues.map((issue) => issue.message).join(", ")
+      message: parsed.error.issues.map((issue) => issue.message).join(", "),
+      last_ok_ticket: carriedSnapshot(_prevState)
     };
   }
 
@@ -120,7 +136,11 @@ export async function updateTicketAction(
   }
 
   if (Object.keys(updatePayload).length === 0) {
-    return { kind: "error", message: "更新する項目を入力してください" };
+    return {
+      kind: "error",
+      message: "更新する項目を入力してください",
+      last_ok_ticket: carriedSnapshot(_prevState)
+    };
   }
 
   try {
@@ -136,10 +156,12 @@ export async function updateTicketAction(
         body: JSON.stringify(updatePayload)
       }
     );
-    revalidatePath(`/tickets/${ticket_id}`);
-    revalidatePath("/tickets");
-    // A-6 (R1 F-010): 担当者変更は Today / Inbox 分類に影響するため /today も再検証。
-    revalidatePath("/today");
+    // C-5 root cause workaround (Playwright 実測で確定、Next.js 16 / React 19 既知 regression):
+    // Server Action 内の revalidatePath() は action transition の isPending を永遠に解除しない
+    // (https://github.com/vercel/next.js/discussions/82289 / discussions/88767)。
+    // 対象 page は全て force-dynamic + client Router Cache の dynamic staleTime=0 のため、
+    // revalidatePath なしでも navigation は常に最新を取得する。現在画面の即時反映は client 側の
+    // transition 外 router.refresh() (useDeferredRouterRefresh / useEffect) が担う。
     return {
       kind: "ok",
       ticket_id: updated.id,
@@ -157,6 +179,6 @@ export async function updateTicketAction(
   } catch (error: unknown) {
     const message =
       error instanceof Error ? error.message : "チケット更新に失敗しました。";
-    return { kind: "error", message };
+    return { kind: "error", message, last_ok_ticket: carriedSnapshot(_prevState) };
   }
 }

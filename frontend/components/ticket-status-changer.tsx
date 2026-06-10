@@ -1,7 +1,8 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
+
+import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 
 import { updateTicketAction, type UpdateTicketState } from "@/app/(admin)/tickets/[id]/actions";
 
@@ -20,7 +21,7 @@ type Props = {
 };
 
 export function TicketStatusChanger({ ticketId, currentStatus }: Props) {
-  const router = useRouter();
+  const requestRefresh = useDeferredRouterRefresh();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [optimisticStatus, setOptimisticStatus] = useState(currentStatus);
@@ -48,7 +49,8 @@ export function TicketStatusChanger({ ticketId, currentStatus }: Props) {
         setError(result.message);
         setOptimisticStatus(currentStatus);
       } else {
-        router.refresh();
+      // C-5 workaround: transition 内の router.refresh() は isPending を固める (lib/use-deferred-router-refresh.ts 参照)。
+        requestRefresh();
       }
     });
   }

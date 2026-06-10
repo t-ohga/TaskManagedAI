@@ -45,7 +45,9 @@ describe("TicketTagManager", () => {
       name: "detach",
       entries: { ticket_id: TICKET_ID, tag_id: TAG_A.id }
     });
-    expect(refresh).toHaveBeenCalled();
+    // C-5 workaround: refresh は transition 内即時呼びでなく useDeferredRouterRefresh の
+    // effect 経由 (transition 外) に変更されたため、非同期到達を待つ。
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
   it("attaches an available (unassigned) tag via attachTagAction", async () => {

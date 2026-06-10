@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect } from "react";
 
 import { formatTicketPriority, formatTicketStatus } from "@/lib/i18n/ticket-labels";
 import { assigneeSelectOptions, type AssignableActor } from "@/lib/domain/assignee";
@@ -106,14 +106,18 @@ export function EditTicketForm({
 
   // C-5 R6 (Codex adversarial HIGH): useActionState の state は次 submit (error 含む) で置き換わる。
   // ok→(refresh 未着)→error の遷移で成功 snapshot を失うと stale props へ戻る再入口になるため、
-  // 直近の成功 snapshot を action state と独立した state に保持する。保存は React 公式の
-  // 「render 中に前回 render の情報を保存する」pattern (You Might Not Need an Effect /
-  // Adjusting state when props change) — 参照同値 guard で無限再 render を防ぐ。
-  const [lastOkTicket, setLastOkTicket] = useState<UpdatedTicketSnapshot | null>(null);
-  if (state.kind === "ok" && state.ticket !== lastOkTicket) {
-    setLastOkTicket(state.ticket);
-  }
-  const candidateSnapshot = state.kind === "ok" ? state.ticket : lastOkTicket;
+  // **server action が error state に直近 ok snapshot を carry する** (actions.ts carriedSnapshot)。
+  // 【C-5 再 FAIL root cause (Playwright 実測 04:07 で確定)】: client 側で「render 中 setState」
+  // 保持を実装すると、React 19 の action transition の結果 render を sync 再 render が破棄し、
+  // action state の commit と isPending 解除が永遠に完了しない (Server Action POST は 200/27ms で
+  // 返るのに「保存中...」が解除されない)。render 中 ref も react-hooks/refs 違反。よって client は
+  // hook を追加せず、action state からの**純 render 派生のみ**で snapshot を得る。
+  const candidateSnapshot =
+    state.kind === "ok"
+      ? state.ticket
+      : state.kind === "error"
+        ? state.last_ok_ticket
+        : null;
 
   // C-5 fix (Mac 実機検証 + Codex adversarial R1): React 19 は form action 完了後に uncontrolled
   // field を defaultValue へ自動 reset するが、その時点の props は refresh 前の stale ticket のため、

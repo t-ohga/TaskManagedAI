@@ -91,20 +91,18 @@ function statusBadge(status: string) {
   const colors: Record<string, string> = {
     open: "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300",
     in_progress: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300",
+    blocked: "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300",
+    review: "bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300",
     closed: "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400",
     cancelled: "bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400",
   };
-  const labels: Record<string, string> = {
-    open: "未着手",
-    in_progress: "進行中",
-    closed: "完了",
-    cancelled: "中止",
-  };
+  // Mac 再検証所見 fix: 旧 local labels map は blocked / review を欠き raw 値で表示していた。
+  // 同 page の STATUS_LABELS (6 status 完備、activity timeline と共用) に統一して drift 解消。
   return (
     <span
       className={`rounded-full px-3 py-1 text-sm font-medium ${colors[status] ?? "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"}`}
     >
-      {labels[status] ?? status}
+      {statusLabel(status)}
     </span>
   );
 }

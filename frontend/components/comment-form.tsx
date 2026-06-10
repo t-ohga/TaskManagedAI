@@ -1,6 +1,8 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
+
+import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 
 import { MarkdownEditor } from "@/components/markdown-editor";
 
@@ -14,6 +16,7 @@ type CommentFormProps = {
 
 export function CommentForm({ ticketId, onSubmit }: CommentFormProps) {
   const [body, setBody] = useState("");
+  const requestRefresh = useDeferredRouterRefresh();
   const [state, formAction, pending] = useActionState<CommentState, FormData>(
     async (_prev, formData) => {
       const result = await onSubmit(formData);
@@ -22,6 +25,15 @@ export function CommentForm({ ticketId, onSubmit }: CommentFormProps) {
     },
     { kind: "idle" }
   );
+
+  // C-5 workaround: action 側の revalidatePath を撤去したため (isPending 固着 regression、
+  // lib/use-deferred-router-refresh.ts 参照)、投稿成功後のコメント一覧反映は transition 外の
+  // refresh で行う。
+  useEffect(() => {
+    if (state.kind === "ok") {
+      requestRefresh();
+    }
+  }, [state, requestRefresh]);
 
   return (
     <form action={formAction} className="grid gap-3">
