@@ -4,13 +4,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  confirmDiscardUnsavedTicketEdit,
+  confirmDiscardUnsavedDrafts,
   fullReload,
-  hasUnsavedTicketEdit
+  hasUnsavedDraft
 } from "@/lib/full-reload";
 
-function mountEditForm(html: string): void {
-  document.body.innerHTML = `<form data-testid="edit-ticket-form">${html}</form>`;
+function mountGuard(dirty: boolean, html = ""): HTMLElement {
+  document.body.innerHTML = `<form data-testid="edit-ticket-form" data-unsaved-guard${dirty ? ' data-dirty="true"' : ""}>${html}</form>`;
+  const el = document.querySelector("form");
+  if (!el) throw new Error("guard mount failed");
+  return el;
 }
 
 afterEach(() => {
@@ -18,45 +21,52 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("hasUnsavedTicketEdit (C-5 R3: data-dirty 一本化)", () => {
+describe("hasUnsavedDraft (C-5 R3: data-dirty 一本化)", () => {
   it("編集フォームが無いページでは false", () => {
-    expect(hasUnsavedTicketEdit()).toBe(false);
+    expect(hasUnsavedDraft()).toBe(false);
   });
 
   it("data-dirty 未設定 (未編集) は false", () => {
-    mountEditForm('<input name="title" value="t" />');
-    expect(hasUnsavedTicketEdit()).toBe(false);
+    mountGuard(false);
+    expect(hasUnsavedDraft()).toBe(false);
   });
 
-  it("form の data-dirty=true で dirty と判定する (controlled 含む全 field を input bubble で捕捉)", () => {
-    mountEditForm('<input name="title" value="t" />');
-    const form = document.querySelector("form");
-    if (form) form.dataset.dirty = "true";
-    expect(hasUnsavedTicketEdit()).toBe(true);
+  it("guard 領域の data-dirty=true で dirty と判定する", () => {
+    mountGuard(true);
+    expect(hasUnsavedDraft()).toBe(true);
+  });
+
+  it("except に渡した領域 (自分の draft) は無視する (R4: 自操作で confirm を出さない)", () => {
+    const el = mountGuard(true);
+    expect(hasUnsavedDraft(el)).toBe(false);
+  });
+
+  it("except 外の別 guard 領域の draft は検知する (R4: コメント draft 等の保護)", () => {
+    document.body.innerHTML =
+      '<form id="a" data-unsaved-guard data-dirty="true"></form>' +
+      '<div id="b" data-unsaved-guard></div>';
+    const b = document.querySelector("#b");
+    expect(hasUnsavedDraft(b)).toBe(true);
   });
 });
 
-describe("confirmDiscardUnsavedTicketEdit (C-5 R2 pre-commit gate)", () => {
+describe("confirmDiscardUnsavedDrafts (C-5 R2 pre-commit gate)", () => {
   it("dirty なし → confirm を出さず true (mutation 続行)", () => {
     const confirmSpy = vi.spyOn(window, "confirm");
-    expect(confirmDiscardUnsavedTicketEdit()).toBe(true);
+    expect(confirmDiscardUnsavedDrafts()).toBe(true);
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 
   it("dirty + キャンセル → false (mutation 自体を実行させない)", () => {
-    mountEditForm('<input name="title" value="t" />');
-    const form = document.querySelector("form");
-    if (form) form.dataset.dirty = "true";
+    mountGuard(true);
     vi.spyOn(window, "confirm").mockReturnValue(false);
-    expect(confirmDiscardUnsavedTicketEdit()).toBe(false);
+    expect(confirmDiscardUnsavedDrafts()).toBe(false);
   });
 
   it("dirty + 承認 → true (ユーザー選択で破棄を許可)", () => {
-    mountEditForm('<input name="title" value="t" />');
-    const form = document.querySelector("form");
-    if (form) form.dataset.dirty = "true";
+    mountGuard(true);
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    expect(confirmDiscardUnsavedTicketEdit()).toBe(true);
+    expect(confirmDiscardUnsavedDrafts()).toBe(true);
   });
 });
 

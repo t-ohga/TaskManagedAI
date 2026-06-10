@@ -1,53 +1,57 @@
 "use client";
 
 /**
- * C-5 第 2 round: mutation 後の表示同期に使う full reload の seam。
- * - test では本 module を vi.mock する (jsdom の window.location を再定義しない)。
- * - Codex adversarial F-1: 同一ページの **チケット編集フォームに未保存入力**がある状態で
- *   副次 mutation (コメント / タグ / ステータス変更) が成功すると、無条件 reload が入力を
- *   警告なしに破棄する。編集フォームは uncontrolled (value vs defaultValue が dirty の正確な
- *   指標) のため DOM だけで dirty を判定し、dirty 時は確認ダイアログを挟む。
- *   キャンセル時は reload しない (入力保持を優先。周辺表示は次の navigation / 手動更新で収束)。
+ * C-5 第 2 round: mutation 後の表示同期に使う full reload の seam と、
+ * 未保存 draft の pre-commit 破棄確認 gate。
+ * test では本 module を vi.mock する (jsdom の window.location を再定義しない)。
  */
-
-const EDIT_FORM_SELECTOR = '[data-testid="edit-ticket-form"]';
 
 /**
- * R3 (Codex adversarial HIGH): dirty 判定は DOM の value vs defaultValue 比較では不十分 —
- * 説明欄 (MarkdownEditor) は controlled で、DOM の defaultValue が編集後の値に追従し得るため
- * description のみの編集が gate をすり抜ける。代わりに **編集フォーム自身が input で
- * `data-dirty="true"` を立てる** (EditTicketForm の form onChange。controlled でも input event は
- * bubble するため全 field を確実に捕捉)。保存成功時は snapshot key remount で新しい form 要素に
- * なり、dirty flag は自然にクリアされる。「編集して元に戻した」ケースも dirty 扱い (確認が
- * 1 回多く出るだけの安全側 false positive)。
+ * R3/R4 (Codex adversarial): 未保存 draft の検知は **汎用 convention** で行う —
+ * reload で失われ得る入力を持つ領域 (チケット編集フォーム / コメント / タグ管理 /
+ * 新規チケット作成) は `data-unsaved-guard` 属性を持ち、draft がある間
+ * `data-dirty="true"` を立てる。
+ * - DOM の value/defaultValue 比較は controlled field (MarkdownEditor) をすり抜けるため不採用。
+ * - toolbar 由来の変更は MarkdownEditor が bubbling input event を dispatch して通知する。
+ * - `except` には「mutation を起こした領域自身」を渡す (自分の draft を consume する操作で
+ *   自分に confirm を出さない。例: コメント送信はコメント form を、タグ操作はタグ管理領域を除外)。
  */
-export function hasUnsavedTicketEdit(): boolean {
-  const form = document.querySelector(EDIT_FORM_SELECTOR);
-  if (!(form instanceof HTMLFormElement)) {
-    return false;
+const GUARD_SELECTOR = "[data-unsaved-guard]";
+
+export function hasUnsavedDraft(except?: Element | null): boolean {
+  for (const guard of Array.from(document.querySelectorAll(GUARD_SELECTOR))) {
+    if (!(guard instanceof HTMLElement)) {
+      continue;
+    }
+    if (except && (guard === except || guard.contains(except) || except.contains(guard))) {
+      continue;
+    }
+    if (guard.dataset.dirty === "true") {
+      return true;
+    }
   }
-  return form.dataset.dirty === "true";
+  return false;
 }
 
 /**
- * Codex adversarial R2 (HIGH): 未保存編集の確認は **mutation 実行前 (pre-commit)** に行う。
+ * R2 (Codex adversarial HIGH): 未保存 draft の破棄確認は **mutation 実行前 (pre-commit)** に行う。
  * post-commit の確認だと、キャンセルで stale な編集フォームが残り、それを後から保存すると
  * 直前に commit された変更 (例: ステータス) を旧値で巻き戻せてしまう。本 gate を副次 mutation
- * (コメント / タグ / ステータス / 一括変更) の handler 冒頭で呼び、false なら **server action を
- * 実行しない** (DB も画面も変化せず、矛盾構造が生まれない)。
+ * (コメント / タグ / ステータス / 一括変更 / 中止) の handler 冒頭で呼び、false なら
+ * **server action を実行しない** (DB も画面も変化せず、矛盾構造が生まれない)。
  */
-export function confirmDiscardUnsavedTicketEdit(): boolean {
-  if (!hasUnsavedTicketEdit()) {
+export function confirmDiscardUnsavedDrafts(except?: Element | null): boolean {
+  if (!hasUnsavedDraft(except)) {
     return true;
   }
   return window.confirm(
-    "チケット編集フォームに未保存の変更があります。この操作を行うと画面が更新され、未保存の変更は破棄されます。続行しますか？"
+    "このページに未保存の入力があります。この操作を行うと画面が更新され、未保存の入力は破棄されます。続行しますか？"
   );
 }
 
 /**
- * 確実な表示同期 (full reload) を実行する。未保存編集の確認は呼び出し側が
- * confirmDiscardUnsavedTicketEdit() で **mutation 前に**済ませている前提 (R2)。
+ * 確実な表示同期 (full reload) を実行する。未保存 draft の確認は呼び出し側が
+ * confirmDiscardUnsavedDrafts() で **mutation 前に**済ませている前提 (R2)。
  */
 export function fullReload(
   // test 注入用 seam (jsdom は location.reload を実行できないため)。

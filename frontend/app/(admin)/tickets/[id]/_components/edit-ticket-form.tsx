@@ -158,6 +158,7 @@ export function EditTicketForm({
       }}
       className="rounded-lg border border-line bg-panel p-5 shadow-sm"
       data-testid="edit-ticket-form"
+      data-unsaved-guard=""
     >
       <input type="hidden" name="ticket_id" value={serverTicket.id} />
       {/* Codex App F-C2: 更新前の assignee。Server Action が「変更時のみ assignee を送信」判定に使う

@@ -1,8 +1,8 @@
 "use client";
 
-import { confirmDiscardUnsavedTicketEdit } from "@/lib/full-reload";
+import { confirmDiscardUnsavedDrafts } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 
 import {
   attachTagAction,
@@ -79,6 +79,7 @@ function ColorPicker({
 export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
   const requestRefresh = useDeferredRouterRefresh();
   const [isPending, startTransition] = useTransition();
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [creating, setCreating] = useState(false);
@@ -99,7 +100,7 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
   ) {
     // R2 (Codex adversarial HIGH): 未保存編集の破棄確認は mutation **前**。キャンセルなら
     // server action を実行しない (post-commit 確認だと stale form 保存で commit を巻き戻せる)。
-    if (!confirmDiscardUnsavedTicketEdit()) return;
+    if (!confirmDiscardUnsavedDrafts(rootRef.current)) return;
     setError(null);
     startTransition(async () => {
       const result = await action(IDLE, fd);
@@ -174,7 +175,15 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
   }
 
   return (
-    <div className="grid gap-4">
+    <div
+      ref={rootRef}
+      className="grid gap-4"
+      // R4 F-2 (Codex adversarial): 新規タグ名 / rename の入力も reload で失われ得る draft。
+      // 汎用 guard convention (lib/full-reload.ts) に登録する。タグ操作自身は except=本領域で
+      // confirm を出さない (自分の文脈の draft consume)。
+      data-unsaved-guard=""
+      data-dirty={(creating && newName.trim()) || editingId !== null ? "true" : undefined}
+    >
       {/* 付与中のタグ */}
       <div>
         <p className="mb-2 text-xs font-medium text-muted-foreground">付与中</p>

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type { Route } from "next";
 
 import { createTicketAction, type CreateTicketState } from "@/app/(admin)/tickets/actions";
+import { confirmDiscardUnsavedDrafts } from "@/lib/full-reload";
 import { assigneeSelectOptions, type AssignableActor } from "@/lib/domain/assignee";
 import { MarkdownEditor } from "@/components/markdown-editor";
 
@@ -73,7 +74,22 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
       {state.kind === "error" ? <div className="mb-3 rounded-md bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-700 dark:text-red-300">
           {state.message}
         </div> : null}
-      <form action={formAction} className="grid gap-3">
+      <form
+        action={formAction}
+        // R4 F-2 (Codex adversarial): 新規チケットの下書きも reload (一覧の一括変更等) で失われ得る
+        // draft。汎用 guard convention (lib/full-reload.ts) に登録し、入力で data-dirty を立てる。
+        // 作成 submit 自身は except=自 form で confirm を出さない (自分の draft の consume)。
+        onChange={(event) => {
+          event.currentTarget.dataset.dirty = "true";
+        }}
+        onSubmit={(event) => {
+          if (!confirmDiscardUnsavedDrafts(event.currentTarget)) {
+            event.preventDefault();
+          }
+        }}
+        data-unsaved-guard=""
+        className="grid gap-3"
+      >
         <input type="hidden" name="slug" value={slug} />
         <div>
           <label htmlFor="title" className="text-xs font-medium text-muted-foreground">

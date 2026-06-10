@@ -73,6 +73,14 @@ export function MarkdownEditor({
     } else {
       setInternal(next);
     }
+    // R4 (Codex adversarial HIGH): toolbar (太字/見出し/箇条書き等) 由来の変更は native input
+    // event を発火しないため、祖先 form の onChange (未保存 draft guard、lib/full-reload.ts) に
+    // 届かない。event 配送に依存せず、祖先の guard 領域へ同期的に data-dirty を直書きする
+    // (typing 経由は祖先 form の onChange が立てる。二重に立っても同値で無害)。
+    const guard = textareaRef.current?.closest("[data-unsaved-guard]");
+    if (guard instanceof HTMLElement) {
+      guard.dataset.dirty = "true";
+    }
   }
 
   function applyWrap(before: string, after: string, ph: string): void {

@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EditTicketForm } from "../app/(admin)/tickets/[id]/_components/edit-ticket-form";
 import { TicketDeleteButton } from "@/components/ticket-delete-button";
-import { hasUnsavedTicketEdit } from "@/lib/full-reload";
+import { hasUnsavedDraft } from "@/lib/full-reload";
 
 const routerMocks = vi.hoisted(() => ({ refresh: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -71,11 +71,27 @@ describe("EditTicketForm dirty 検知 (R3: 実 form + MarkdownEditor)", () => {
         assignableActorsTruncated={false}
       />
     );
-    expect(hasUnsavedTicketEdit()).toBe(false);
+    expect(hasUnsavedDraft()).toBe(false);
     fireEvent.change(screen.getByLabelText("説明"), {
       target: { value: "edited description" }
     });
-    expect(hasUnsavedTicketEdit()).toBe(true);
+    expect(hasUnsavedDraft()).toBe(true);
+  });
+
+  it("MarkdownEditor の toolbar 操作 (太字) でも dirty と判定される (R4: guard 直書き)", async () => {
+    render(
+      <EditTicketForm
+        ticket={TICKET}
+        assignableActors={[]}
+        assignableActorsDegraded={false}
+        assignableActorsTruncated={false}
+      />
+    );
+    expect(hasUnsavedDraft()).toBe(false);
+    // toolbar の太字ボタンは native input event を発火しないため、MarkdownEditor が祖先の
+    // guard 領域へ同期的に data-dirty を直書きする。
+    fireEvent.click(screen.getByRole("button", { name: /太字/ }));
+    expect(hasUnsavedDraft()).toBe(true);
   });
 
   it("status select の編集も dirty と判定される", () => {
@@ -90,7 +106,7 @@ describe("EditTicketForm dirty 検知 (R3: 実 form + MarkdownEditor)", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "状態" }), {
       target: { value: "in_progress" }
     });
-    expect(hasUnsavedTicketEdit()).toBe(true);
+    expect(hasUnsavedDraft()).toBe(true);
   });
 });
 

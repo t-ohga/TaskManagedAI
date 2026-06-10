@@ -12,8 +12,8 @@ const reload = vi.fn(() => true);
 const discardConfirm = vi.fn(() => true);
 vi.mock("@/lib/full-reload", () => ({
   fullReload: () => reload(),
-  hasUnsavedTicketEdit: () => false,
-  confirmDiscardUnsavedTicketEdit: () => discardConfirm()
+  hasUnsavedDraft: () => false,
+  confirmDiscardUnsavedDrafts: () => discardConfirm()
 }));
 
 const actionCalls: { name: string; entries: Record<string, string> }[] = [];
