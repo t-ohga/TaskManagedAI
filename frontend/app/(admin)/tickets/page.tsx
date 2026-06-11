@@ -21,6 +21,7 @@ import {
   type ProjectBoardItem,
   type TicketItem
 } from "@/lib/api/tickets-board";
+import { mapWithConcurrency } from "@/lib/map-with-concurrency";
 import type { TagRead } from "@/lib/domain/tag";
 import { isValidYmd, ticketDueBucket, type DueDateBucket } from "@/lib/domain/due-date";
 import { ProjectTab } from "@/components/project-tab";
@@ -62,6 +63,15 @@ const STATUS_TO_KANBAN: Record<string, KanbanGroup> = {
 // 未知 status を backend (ticket_status: TicketStatus) に渡すと 422 になり、selected project は error
 // boundary / all view は全 project omission で空画面に昇格する。未知値は「絞り込みなし」として扱う。
 const VALID_TICKET_STATUSES = new Set(Object.keys(STATUS_TO_KANBAN));
+
+// A-3 (board 体感改善): 横断 (all view) の per-project ticket fetch の同時実行上限。逐次 (=1) では
+// project 数だけ round-trip が積み上がり遅い一方、無制限 Promise.all は project 数だけ同時 fetch を
+// 投げ単一 VPS backend / DB pool を枯らす (Codex adversarial finding)。backend の SQLAlchemy pool は
+// pool_size=5 + max_overflow=5 = 10 connection (backend/app/db/session.py)。board fan-out を pool budget
+// の十分下に抑え、Wave 1 fetch / background worker / 複数同時 render の余地を残すため 3 並列に bound
+// する (逐次よりは速く、無制限よりは安全)。将来 project 数が大きく増えるなら、all-view 集約を 1
+// session/query budget で完結する backend endpoint へ移すのが root fix (本 perf PR では scope 外)。
+const BOARD_FETCH_CONCURRENCY = 3;
 
 const KANBAN_COLUMNS: { key: KanbanGroup; title: string; color: string; hint: string }[] = [
   { key: "todo", title: "未着手", color: "bg-blue-50 dark:bg-blue-950/40", hint: "新しいチケットがここに入ります" },
@@ -243,46 +253,60 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   // 横断 (all view) は fail-soft だが **row-level omission** で取得する (Codex R6 HIGH: 1 行の
   // malformed project が全 project を消すのを防ぎ、valid project を保持して omission を warning 化)。
   const isProjectFailClosed = selectedProject !== "all" || Boolean(tagFilter);
-  let projects: ProjectBoardItem[];
-  let malformedProjects = 0;
-  // R10 F-001: all view の whole-list failure (project 一覧そのものが読めない) を空状態と区別する。
-  let projectListDegraded = false;
+
+  // A-3 (board 体感改善): 独立した top-level fetch を並列化して逐次 await の round-trip 積み上げを
+  // 畳む。ただし orchestration は path で分ける (R3 medium: 失敗時の無駄な backend fan-out を避ける):
+  //  - optional fetch (currentProject / dateContext / assignableActors): 描画まで不要かつ独立。各々
+  //    .catch で握り reject させない (floating rejection なし)。
+  //  - currentProject: 作成 CTA 用 (Codex B2b: URL 選択と session current_project の乖離による
+  //    wrong-project write 防止)。
+  //  - dateContext: A-7 (ADR-00045 R2 F-002) の単一 "today" authority。失敗は fail-closed で null に
+  //    倒し期限強調を neutral 化するが、R9 F-001 で ok/error を保持し degradation を warning 可視化する。
+  //  - assignableActors: A-6 (ADR-00046) の担当者候補。truncated (cap 超過) と degraded (取得失敗) を
+  //    別保持して可視化する (Codex adversarial F-A3)。
+  const runOptionalFetches = () =>
+    Promise.all([
+      getCurrentProject().catch(() => null),
+      fetchDateContext()
+        .then((ctx) => ({ ok: true as const, ctx }))
+        .catch(() => ({ ok: false as const })),
+      fetchAssignableActors()
+        .then((resp) => ({ ok: true as const, resp }))
+        .catch(() => ({ ok: false as const })),
+    ] as const);
+
+  // projects は後続 (tags / tickets) の前提。
+  //  - fail-closed 経路 (具体 project / tag filter 中): loadProjects(true) は reject しうる
+  //    (→ error boundary)。projects を先に await し、成功後にだけ optional を並列化する。これにより
+  //    project 一覧の auth/backend/schema 失敗時・retry 時に、結果に使えない optional fetch を投げて
+  //    pool=10 を圧迫しない (pool 枯渇対策と方向を揃える)。旧逐次 4 本 → 2 波に短縮しつつ無駄打ちゼロ。
+  //  - all-view 経路: loadProjectsAllView は内部で degraded / row-level omission に倒れ reject しない
+  //    (optional 結果は degraded でも全て描画に使う) ため、projects と optional を 1 波で並列化する。
+  let projectsResult: { items: ProjectBoardItem[]; omittedProjects: number; degraded: boolean };
+  let optional: Awaited<ReturnType<typeof runOptionalFetches>>;
   if (isProjectFailClosed) {
-    projects = await loadProjects(true);
+    projectsResult = { items: await loadProjects(true), omittedProjects: 0, degraded: false };
+    optional = await runOptionalFetches();
   } else {
-    const allViewProjects = await loadProjectsAllView();
-    projects = allViewProjects.items;
-    malformedProjects = allViewProjects.omittedProjects;
-    projectListDegraded = allViewProjects.degraded;
+    [projectsResult, optional] = await Promise.all([loadProjectsAllView(), runOptionalFetches()]);
   }
-  // 作成先は server action が session の current_project から resolve する。
-  // 表示中 project (URL ?project=) と current_project が一致するときだけ作成 CTA を出す
-  // (Codex B2b finding: URL 選択と session current_project の乖離による wrong-project write 防止)。
-  const currentProject = await getCurrentProject().catch(() => null);
-  // A-7 (ADR-00045 R2 F-002): 期限強調用の単一 "today" authority を一度だけ取得する (all view の
-  // 複数 list 呼びでも全 row に同一基準を適用)。取得失敗 / schema 不正は fail-closed で null に倒し、
-  // 基準日不明のまま赤/橙を誤表示せず neutral 表示にする。
-  // R9 F-001: 失敗を silent に neutral 化すると、open/active の超過/本日 ticket の強調が消えても
-  // ユーザーが検知できず dashboard reminder panel と silent に乖離する。ok/error を保持し、失敗時は
-  // degraded warning を可視化する (強調は neutral のまま、degradation を visible にする)。
-  const dateContextResult = await fetchDateContext()
-    .then((ctx) => ({ ok: true as const, ctx }))
-    .catch(() => ({ ok: false as const }));
+  const [currentProject, dateContextResult, assignableActorsResult] = optional;
+
+  const projects: ProjectBoardItem[] = projectsResult.items;
+  // malformedProjects: all view の row-level omission 件数 (fail-closed 経路は 0)。
+  const malformedProjects = projectsResult.omittedProjects;
+  // R10 F-001: all view の whole-list failure (project 一覧そのものが読めない) を空状態と区別する。
+  const projectListDegraded = projectsResult.degraded;
+
   const referenceDate = dateContextResult.ok ? dateContextResult.ctx.reference_date : undefined;
   const thresholdDays = dateContextResult.ok ? dateContextResult.ctx.threshold_days : undefined;
 
-  // A-6 (ADR-00046): 担当者候補 (tenant 内 human)。作成 dialog の選択肢 + 一覧 (Kanban/list) の
-  // assignee display (UUID -> display_name) に使う。Codex adversarial F-A3: truncated (cap 超過) と
-  // degraded (取得失敗) を別々に保持して可視化する (silent cap / silent failure を A-6 要件どおり表示)。
   let assignableActors: AssignableActor[] = [];
   let assignableActorsTruncated = false;
-  let assignableActorsDegraded = false;
-  try {
-    const assignableResp = await fetchAssignableActors();
-    assignableActors = assignableResp.actors;
-    assignableActorsTruncated = assignableResp.truncated;
-  } catch {
-    assignableActorsDegraded = true;
+  const assignableActorsDegraded = !assignableActorsResult.ok;
+  if (assignableActorsResult.ok) {
+    assignableActors = assignableActorsResult.resp.actors;
+    assignableActorsTruncated = assignableActorsResult.resp.truncated;
   }
   const assigneeNameById = buildAssigneeNameMap(assignableActors);
 
@@ -327,21 +351,42 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   let omittedProjects = malformedProjects;
 
   if (selectedProject === "all") {
-    for (const p of projects) {
-      const pid = String((p as Record<string, unknown>).project_id ?? (p as Record<string, unknown>).id ?? "");
-      if (!pid) continue;
+    // A-3 (board 体感改善): project ごとの ticket fetch を逐次 await から bounded 並列に変える。N
+    // project の round-trip を畳む (横断 view の体感遅延の主要因) 一方、無制限 fan-out で単一 VPS
+    // backend / DB pool を枯らさないよう同時実行数を BOARD_FETCH_CONCURRENCY で bound する (Codex
+    // adversarial finding)。fail-soft の per-project omission を保持するため各 fetch を try/catch で
+    // ラップして「結果 / 欠落 / skip」に正規化し (callback が reject しないので helper も reject しない
+    // = fail-soft 維持)、mapWithConcurrency の入力順保証 (projects 配列順) を使って集約 (allTickets /
+    // boardTotalUnfiltered / boardTruncated) を決定的に保つ。
+    const boards = await mapWithConcurrency(projects, BOARD_FETCH_CONCURRENCY, async (p) => {
+      const pid = String(
+        (p as Record<string, unknown>).project_id ?? (p as Record<string, unknown>).id ?? ""
+      );
+      if (!pid) return { kind: "skip" as const };
       try {
         const board = await loadTickets(pid, undefined, ticketLoadOptions);
-        const projectActive = p.status === "active";
-        allTickets.push(
-          ...board.items.map((t) => ({ ...t, projectSlug: p.slug, projectActive }))
-        );
-        boardTotalUnfiltered += board.totalUnfiltered;
-        if (board.truncated) boardTruncated = true;
+        return { kind: "ok" as const, project: p, board };
       } catch {
         // all view は 1 project の一時障害で全体を落とさず、欠落を warning で可視化 (fail-soft)。
+        return { kind: "omit" as const };
+      }
+    });
+    for (const result of boards) {
+      if (result.kind === "ok") {
+        const projectActive = result.project.status === "active";
+        allTickets.push(
+          ...result.board.items.map((t) => ({
+            ...t,
+            projectSlug: result.project.slug,
+            projectActive,
+          }))
+        );
+        boardTotalUnfiltered += result.board.totalUnfiltered;
+        if (result.board.truncated) boardTruncated = true;
+      } else if (result.kind === "omit") {
         omittedProjects += 1;
       }
+      // kind === "skip" (pid 欠落) は現状の `continue` と同じく集約に寄与しない。
     }
   } else {
     const project = projects.find((p) => p.slug === selectedProject);
