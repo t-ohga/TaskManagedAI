@@ -262,6 +262,10 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
             data-unsaved-guard=""
             data-dirty={newName.trim() ? "true" : undefined}
           >
+            {/* R12/R13 convention: controlled-state-only draft (色は ColorPicker の button + state で
+                native control に値が出ない) は guardSignature が捕捉できるよう hidden input に反映する。
+                これがないと承認後の色変更が signature 不一致にならず無確認破棄される (lib/full-reload.ts)。 */}
+            <input type="hidden" name="__draft_new_color" value={newColor} readOnly />
             <input
               type="text"
               value={newName}
@@ -329,6 +333,8 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
                   data-unsaved-guard=""
                   data-dirty="true"
                 >
+                  {/* R12/R13 convention: 色 (editColor) を guardSignature 用 hidden input に反映。 */}
+                  <input type="hidden" name="__draft_edit_color" value={editColor} readOnly />
                   <input
                     type="text"
                     value={editName}
