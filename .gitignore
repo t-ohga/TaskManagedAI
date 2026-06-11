@@ -22,6 +22,22 @@ build/
 .env.local
 *.log
 
+# Secrets — repo is PUBLIC, never commit secret material (SOPS-encrypted や否やに関わらず local-only)
+# 正本: rules/secretbroker-boundary.md / DD-06。実 secret は SOPS+age で local 管理し repo に置かない。
+config/secrets/
+.sops.yaml
+# age / private key / SOPS 復号出力 (defense-in-depth、誤 add を物理的に防ぐ)
+*.agekey
+age-key.txt
+keys.txt
+*.dec
+id_rsa
+id_ed25519
+*.pem
+*.key
+*.p12
+*.pfx
+
 # Local databases
 *.sqlite3
 *.db
