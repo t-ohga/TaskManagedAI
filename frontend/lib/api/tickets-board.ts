@@ -44,7 +44,11 @@ export type TicketItem = z.infer<typeof TicketItemSchema>;
 // truncated filtered result と誤表示しない (explicit items:[] は有効なので array 自体は許容)。
 const TicketBoardResponseSchema = z.object({
   items: z.array(TicketItemSchema),
-  total: z.number()
+  total: z.number(),
+  // ADR-00054: status filter 前 (tag filter 後) 件数。additive metadata のため optional + total へ
+  // fallback (欠落しても hint が無効になるだけで core データの誤表示にはならない。core の items/total
+  // は従来どおり fail-closed)。
+  total_unfiltered: z.number().optional()
 });
 
 export const TICKET_BOARD_PAGE_LIMIT = 200;
@@ -57,7 +61,17 @@ export const TICKET_BOARD_PAGE_LIMIT = 200;
 export type TicketBoardResult = {
   items: TicketItem[];
   total: number;
+  // ADR-00054: status/exclude_cancelled filter 前 (tag filter 後) 件数。board が「中止のみ」と
+  // 「真の空」を区別する。backend が返さない場合は total へ fallback。
+  totalUnfiltered: number;
   truncated: boolean;
+};
+
+// ADR-00054: board の server-side status 絞り込み option。`status` 指定で exact filter、
+// 未指定 + `excludeCancelled` で中止除外 (既定 board)。pagination 前に backend で適用。
+export type LoadTicketsOptions = {
+  status?: string;
+  excludeCancelled?: boolean;
 };
 
 /**
@@ -70,10 +84,17 @@ export type TicketBoardResult = {
  */
 export async function loadTickets(
   projectId: string,
-  tagId?: string
+  tagId?: string,
+  options?: LoadTicketsOptions
 ): Promise<TicketBoardResult> {
   const params = new URLSearchParams({ limit: String(TICKET_BOARD_PAGE_LIMIT) });
   if (tagId) params.set("tag_id", tagId);
+  // ADR-00054: status 指定 (exact) が precedence 最優先。未指定 + excludeCancelled で中止除外。
+  if (options?.status) {
+    params.set("status", options.status);
+  } else if (options?.excludeCancelled) {
+    params.set("exclude_cancelled", "true");
+  }
   const path = `/api/v1/projects/${projectId}/tickets?${params.toString()}` as `/${string}`;
   const res = await fetchBackendRaw(path);
   // response 全体 (items 配列 + total number + 各 row の tags) を fail-closed validate。
@@ -83,8 +104,13 @@ export async function loadTickets(
   if (!parsed.success) {
     throw new Error("ticket board response missing or failed schema validation");
   }
-  const { items, total } = parsed.data;
-  return { items, total, truncated: total > items.length };
+  const { items, total, total_unfiltered } = parsed.data;
+  return {
+    items,
+    total,
+    totalUnfiltered: total_unfiltered ?? total,
+    truncated: total > items.length
+  };
 }
 
 // project row は slug + (project_id | id) が必須。degraded response で欠落した row を成功扱いしない

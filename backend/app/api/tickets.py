@@ -80,11 +80,34 @@ def _correlation_id(request: Request) -> str:
     return ""
 
 
+def apply_board_status_filter(
+    tickets: list[Ticket],
+    *,
+    ticket_status: TicketStatus | None,
+    exclude_cancelled: bool,
+) -> list[Ticket]:
+    """ADR-00054: board の status 絞り込み (pagination 前に全件へ適用)。
+
+    precedence: ``ticket_status`` (exact filter) が最優先、未指定かつ ``exclude_cancelled`` の時のみ
+    中止 (board 既定) を除外する。両方未指定なら従来どおり全 status (非破壊)。pure function (DB/HTTP
+    非依存) として切り出し、precedence と除外を unit-test 可能にする。
+    """
+    if ticket_status is not None:
+        return [t for t in tickets if t.status == ticket_status]
+    if exclude_cancelled:
+        return [t for t in tickets if t.status != "cancelled"]
+    return tickets
+
+
 class TicketListResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     items: list[TicketRead]
     total: int
+    # ADR-00054: status / exclude_cancelled filter **適用前** (tag filter 後) の件数。
+    # board が「中止のみ project (total=0, total_unfiltered>0)」と「真の空 (total_unfiltered=0)」を
+    # 区別するために使う。param なし call では total_unfiltered == total (非破壊、追加 field のみ)。
+    total_unfiltered: int
     limit: int
     offset: int
 
@@ -115,12 +138,22 @@ async def list_tickets_endpoint(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     tag_id: UUID | None = Query(default=None),  # ADR-00044 (A-5): tag による絞り込み
+    # ADR-00054: board の status 絞り込み。外部 query 名は `status`、内部変数は `ticket_status` で
+    # `from fastapi import ... status` (status.HTTP_404_NOT_FOUND) の shadow を回避する (plan-review R4)。
+    ticket_status: TicketStatus | None = Query(default=None, alias="status"),
+    exclude_cancelled: bool = Query(default=False),
     _cli_capability: object = Depends(maybe_require_cli_capability("task_list")),  # noqa: B008
     actor_id: UUID = Depends(get_current_actor_id),  # noqa: B008  # FastAPI Depends pattern
     tenant_id: int = Depends(get_tenant_id),  # noqa: B008
     session: AsyncSession = Depends(get_db_session),  # noqa: B008
 ) -> TicketListResponse:
-    """List tickets in project (paginated)。任意で tag_id による絞り込み + per-ticket tag を埋め込む。"""
+    """List tickets in project (paginated)。任意で tag_id / status による絞り込み + per-ticket tag を埋め込む。
+
+    ADR-00054: status 絞り込みは **pagination 前** (全件 in-memory) に適用するため、上限 200 件を
+    超える project でも cap 越えの非対象 ticket を silent に隠さない。`status` 指定時は exact filter
+    (precedence 最優先)、未指定かつ `exclude_cancelled=true` の時は中止 (board 既定) を除外する。
+    `total` は filter 後件数、`total_unfiltered` は status filter 前 (tag filter 後) 件数。
+    """
     repo = TicketRepository(session)
     tag_repo = TagRepository(session)
     tickets = await repo.list_in_project(tenant_id=tenant_id, project_id=project_id)
@@ -136,6 +169,12 @@ async def list_tickets_endpoint(
                 detail="tag not found for project",
             ) from exc
         tickets = [t for t in tickets if t.id in allowed]
+    # ADR-00054: tag filter 後・status filter 前の件数 (board の中止のみ/真の空 区別用)。
+    total_unfiltered = len(tickets)
+    # status 絞り込みは pagination の **前** に全件へ適用する (cap 越えを誤って隠さない)。
+    tickets = apply_board_status_filter(
+        tickets, ticket_status=ticket_status, exclude_cancelled=exclude_cancelled
+    )
     total = len(tickets)
     paginated = tickets[offset : offset + limit]
     tags_by_ticket = await tag_repo.tags_for_tickets(
@@ -146,7 +185,13 @@ async def list_tickets_endpoint(
         read = TicketRead.model_validate(ticket)
         read.tags = [TagRead.model_validate(t) for t in tags_by_ticket.get(ticket.id, [])]
         items.append(read)
-    return TicketListResponse(items=items, total=total, limit=limit, offset=offset)
+    return TicketListResponse(
+        items=items,
+        total=total,
+        total_unfiltered=total_unfiltered,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/{ticket_id}", response_model=TicketRead)

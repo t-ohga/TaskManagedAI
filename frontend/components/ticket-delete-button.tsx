@@ -44,7 +44,7 @@ export function TicketDeleteButton({ ticketId }: TicketDeleteButtonProps) {
   return (
     <ConfirmDialog
       title="チケットを中止しますか？"
-      message="チケットのステータスが「中止」に変更されます。看板から非表示になります。"
+      message="チケットのステータスが「中止」に変更され、看板・一覧から非表示になります。ステータスで「中止」を選ぶと再表示できます。"
       confirmLabel="中止する"
       cancelLabel="キャンセル"
       variant="danger"

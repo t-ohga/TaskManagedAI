@@ -788,3 +788,148 @@ async def test_update_endpoint_records_assignee_change_in_audit(
             and row.event_payload.get("previous_assignee_actor_id") is None
             for row in rows
         ), "assignee 変更が audit に previous/new で記録されていない (F-A1 regression)"
+
+
+# ADR-00054: board の status 絞り込み (server-side、pagination 前) endpoint-level contract test。
+# endpoint 関数を直接呼ぶ (HTTP client 不要、FastAPI Depends を明示値で渡す)。DB-gated。
+
+_CANCELLED_TICKET_ID = UUID("00000000-0000-4000-8000-000000055099")
+
+
+async def _insert_cancelled_ticket_a(session: AsyncSession) -> None:
+    """project_a に中止 ticket を 1 件追加する (exclude_cancelled / status=cancelled 検証用)."""
+    await session.execute(
+        text(
+            """
+            insert into tickets (
+              id, tenant_id, project_id, slug, title, status, created_by_actor_id, metadata
+            )
+            values (:tid, 1, :project_a_id, 'ticket-a-cancelled', 'Ticket A Cancelled',
+              'cancelled', :actor_id, '{"rls_ready": true}'::jsonb)
+            """
+        ),
+        {"tid": _CANCELLED_TICKET_ID, "project_a_id": PROJECT_A_ID, "actor_id": ACTOR_ID},
+    )
+    await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_list_endpoint_default_excludes_cancelled(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """exclude_cancelled=True で中止が除外され total_unfiltered>total (中止のみ/真の空 区別用)."""
+    from backend.app.api.tickets import list_tickets_endpoint
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+        await _insert_cancelled_ticket_a(session)
+
+    async with session_factory() as session:
+        resp = await list_tickets_endpoint(
+            project_id=PROJECT_A_ID,
+            limit=50,
+            offset=0,
+            tag_id=None,
+            ticket_status=None,
+            exclude_cancelled=True,
+            _cli_capability=None,
+            actor_id=ACTOR_ID,
+            tenant_id=1,
+            session=session,
+        )
+    assert "cancelled" not in {t.status for t in resp.items}
+    # project_a: A1(open) + A2(in_progress) = 2 非中止 + 中止 1 = total_unfiltered 3。
+    assert resp.total == 2
+    assert resp.total_unfiltered == 3
+
+
+@pytest.mark.asyncio
+async def test_list_endpoint_status_cancelled_returns_only_cancelled(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """status=cancelled で中止のみ返る (StatusFilter=中止 の証跡参照 + precedence)."""
+    from backend.app.api.tickets import list_tickets_endpoint
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+        await _insert_cancelled_ticket_a(session)
+
+    async with session_factory() as session:
+        resp = await list_tickets_endpoint(
+            project_id=PROJECT_A_ID,
+            limit=50,
+            offset=0,
+            tag_id=None,
+            ticket_status="cancelled",
+            exclude_cancelled=True,  # status が precedence (exclude より優先)
+            _cli_capability=None,
+            actor_id=ACTOR_ID,
+            tenant_id=1,
+            session=session,
+        )
+    assert [t.status for t in resp.items] == ["cancelled"]
+    assert resp.total == 1
+
+
+@pytest.mark.asyncio
+async def test_list_endpoint_no_param_includes_cancelled(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """param なしは従来どおり全 status (非破壊)。total_unfiltered == total."""
+    from backend.app.api.tickets import list_tickets_endpoint
+
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+        await _insert_cancelled_ticket_a(session)
+
+    async with session_factory() as session:
+        resp = await list_tickets_endpoint(
+            project_id=PROJECT_A_ID,
+            limit=50,
+            offset=0,
+            tag_id=None,
+            ticket_status=None,
+            exclude_cancelled=False,
+            _cli_capability=None,
+            actor_id=ACTOR_ID,
+            tenant_id=1,
+            session=session,
+        )
+    assert "cancelled" in {t.status for t in resp.items}
+    assert resp.total == 3
+    assert resp.total_unfiltered == 3
+
+
+@pytest.mark.asyncio
+async def test_list_endpoint_invalid_tag_still_404_with_status_param(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """(plan-review R4) status param 追加後も invalid tag は 404 のまま (fastapi.status shadow なし)."""
+    from fastapi import HTTPException
+
+    from backend.app.api.tickets import list_tickets_endpoint
+
+    nonexistent_tag = uuid4()
+    async with session_factory() as session:
+        await _reset_tables(session)
+        await _insert_fixtures(session)
+
+    async with session_factory() as session:
+        with pytest.raises(HTTPException) as exc_info:
+            await list_tickets_endpoint(
+                project_id=PROJECT_A_ID,
+                limit=50,
+                offset=0,
+                tag_id=nonexistent_tag,
+                ticket_status=None,
+                exclude_cancelled=True,
+                _cli_capability=None,
+                actor_id=ACTOR_ID,
+                tenant_id=1,
+                session=session,
+            )
+    # 500 退行ではなく 404 (status param が fastapi.status を shadow していない)。
+    assert exc_info.value.status_code == 404
