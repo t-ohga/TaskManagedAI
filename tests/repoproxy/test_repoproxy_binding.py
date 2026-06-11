@@ -7,8 +7,6 @@ import inspect
 from dataclasses import replace
 from uuid import UUID
 
-import pytest
-
 from backend.app.domain.agent_runtime.operation_context import canonical_json_dumps
 from backend.app.services.repoproxy.repoproxy import (
     DraftPRApprovalState,

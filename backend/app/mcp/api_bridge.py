@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any
+from decimal import Decimal
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.ticket import Ticket
+from backend.app.domain.agent_runtime.status import AgentRunStatus
 from backend.app.repositories._payload_secret_scan import _PROHIBITED_PAYLOAD_KEYS
 from backend.app.repositories.ticket import (
     ProjectArchivedError,
@@ -1041,7 +1043,8 @@ async def bridge_run_update(
         return {"error": str(type(exc).__name__), "run_id": str(run_id)}
 
     old_status = run.status
-    run.status = status
+    # status は上の valid_statuses で検証済 (AgentRunStatus literal の subset) → cast は安全。
+    run.status = cast(AgentRunStatus, status)
     if status == "blocked":
         run.blocked_reason = "runtime_blocked"
     elif run.blocked_reason and status != "blocked":
@@ -1402,7 +1405,15 @@ async def bridge_delegation_submit(
     except (ProjectArchivedError, TicketNotActionableError) as exc:
         return {"error": str(type(exc).__name__), "parent_run_id": str(parent_run_id)}
 
-    run_status = "completed" if result_status == "completed" else "failed" if result_status == "failed" else "running"
+    # result_status を AgentRunStatus literal に分岐代入する (cast 不要、各 literal が型安全に narrow
+    # される)。run_status は後続 return dict ("status") でも使うため typed 変数で保持する。
+    run_status: AgentRunStatus
+    if result_status == "completed":
+        run_status = "completed"
+    elif result_status == "failed":
+        run_status = "failed"
+    else:
+        run_status = "running"
     run.status = run_status
 
     spec_json = json_mod.dumps(result_spec, sort_keys=True, ensure_ascii=False)
@@ -1725,7 +1736,7 @@ async def bridge_run_cost(
     except (ProjectArchivedError, TicketNotActionableError) as exc:
         return {"error": str(type(exc).__name__), "run_id": str(run_id)}
 
-    run.cost_usd = cost_usd
+    run.cost_usd = Decimal(str(cost_usd))  # float param → Decimal 列 (str 経由で precision-safe 変換)
     run.tokens_input = tokens_input
     run.tokens_output = tokens_output
     await session.commit()

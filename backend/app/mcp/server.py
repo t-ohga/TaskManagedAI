@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from fastmcp import FastMCP
@@ -791,6 +791,9 @@ async def superintendent_agent_register(
     role_id: str, project_id: str, provider: str = "claude"
 ) -> dict[str, Any]:
     """Agent を登録して role を割り当てる。provider: claude / codex / custom。"""
+    if provider not in ("claude", "codex", "custom"):
+        return {"error": "invalid_provider", "valid": ["claude", "codex", "custom"]}
+
     from datetime import UTC, datetime
     from uuid import UUID, uuid4
 
@@ -807,9 +810,14 @@ async def superintendent_agent_register(
         superintendent_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
         created_at=datetime.now(UTC),
     )
-    from backend.app.services.superintendent.agent_spawner import SpawnedAgent, _active_agents
+    from backend.app.services.superintendent.agent_spawner import (
+        AgentProvider,
+        SpawnedAgent,
+        _active_agents,
+    )
+    # provider は上で {claude,codex,custom} に検証済 → AgentProvider literal への cast は安全。
     _active_agents[agent_id] = SpawnedAgent(
-        agent_id=agent_id, provider=provider,
+        agent_id=agent_id, provider=cast(AgentProvider, provider),
     )
     return {
         "agent_id": str(agent_id),

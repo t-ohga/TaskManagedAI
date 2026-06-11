@@ -1253,7 +1253,11 @@ def test_commit_marker_finalization_preimage_includes_required_fields() -> None:
 def test_verify_commit_marker_pass_for_valid_invariants() -> None:
     """§9.7 R6 F-001 + §9.9 R9 F-001 logic correction: 全 host confirmation + committed_at が正しい順序."""
     cm = _make_commit_marker()  # committed_at=10:05, max(confirmed)=10:01, lease=09:55-11:55
-    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"), host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures)
+    ok, reason = ar.verify_commit_marker_invariants(
+        cm,
+        ("host-source", "host-target"),
+        host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures,
+    )
     assert ok is True
     assert reason == ""
 
@@ -1269,7 +1273,11 @@ def test_verify_commit_marker_rejects_partial_host_confirmation() -> None:
         ),
         required_host_ids=("host-source", "host-target"),  # hash consistent with caller's expectation
     )
-    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"), host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures)
+    ok, reason = ar.verify_commit_marker_invariants(
+        cm,
+        ("host-source", "host-target"),
+        host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures,
+    )
     assert ok is False
     assert reason == "taskhub_cutover_lease_required_host_partial_confirmation"
 
@@ -1307,7 +1315,11 @@ def test_verify_commit_marker_rejects_empty_required_hosts() -> None:
         host_confirmations=(),
         required_host_ids=(),
     )
-    ok, reason = ar.verify_commit_marker_invariants(cm, (), host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures)
+    ok, reason = ar.verify_commit_marker_invariants(
+        cm,
+        (),
+        host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures,
+    )
     assert ok is False
     assert reason == "taskhub_cutover_lease_required_host_partial_confirmation"
 
@@ -1317,7 +1329,11 @@ def test_verify_commit_marker_handles_duplicate_required_host_ids_via_fail_close
     compute_required_host_ids_hash が ValueError を raise するが、verify は catch して fail-closed."""
     cm = _make_commit_marker()  # default required = ("host-source", "host-target")
     # caller passes duplicates — should NOT crash, should return (False, reason)
-    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-source", "host-target"), host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures)
+    ok, reason = ar.verify_commit_marker_invariants(
+        cm,
+        ("host-source", "host-source", "host-target"),
+        host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures,
+    )
     assert ok is False
     assert reason == "taskhub_cutover_required_host_ids_hash_mismatch"
 
@@ -1471,7 +1487,11 @@ def test_verify_commit_marker_rejects_confirmed_at_before_lease_acquired() -> No
         ("host-source", "2026-05-21T09:50:00Z"),  # before lease_acquired_at 09:55
         ("host-target", "2026-05-21T10:01:00Z"),
     ))
-    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"), host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures)
+    ok, reason = ar.verify_commit_marker_invariants(
+        cm,
+        ("host-source", "host-target"),
+        host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures,
+    )
     assert ok is False
     assert reason == "taskhub_cutover_commit_confirmed_at_outside_lease_window"
 
@@ -1482,7 +1502,11 @@ def test_verify_commit_marker_rejects_confirmed_at_after_lease_expires() -> None
         ("host-source", "2026-05-21T10:00:00Z"),
         ("host-target", "2026-05-21T12:00:00Z"),  # after lease_expires_at 11:55
     ))
-    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"), host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures)
+    ok, reason = ar.verify_commit_marker_invariants(
+        cm,
+        ("host-source", "host-target"),
+        host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures,
+    )
     assert ok is False
     assert reason == "taskhub_cutover_commit_confirmed_at_outside_lease_window"
 
@@ -1496,7 +1520,11 @@ def test_verify_commit_marker_rejects_committed_before_max_confirmed() -> None:
             ("host-target", "2026-05-21T10:01:00Z"),
         ),
     )
-    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"), host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures)
+    ok, reason = ar.verify_commit_marker_invariants(
+        cm,
+        ("host-source", "host-target"),
+        host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures,
+    )
     assert ok is False
     assert reason == "taskhub_cutover_committed_at_after_confirmation_window_rejected"
 
@@ -1510,7 +1538,11 @@ def test_verify_commit_marker_rejects_committed_at_after_lease_expires() -> None
             ("host-target", "2026-05-21T10:01:00Z"),
         ),
     )
-    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"), host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures)
+    ok, reason = ar.verify_commit_marker_invariants(
+        cm,
+        ("host-source", "host-target"),
+        host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures,
+    )
     assert ok is False
     assert reason == "taskhub_cutover_commit_confirmed_at_outside_lease_window"
 
@@ -1524,7 +1556,11 @@ def test_verify_commit_marker_rejects_committed_at_exceeds_skew_tolerance() -> N
             ("host-target", "2026-05-21T10:01:00Z"),
         ),
     )
-    ok, reason = ar.verify_commit_marker_invariants(cm, ("host-source", "host-target"), host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures)
+    ok, reason = ar.verify_commit_marker_invariants(
+        cm,
+        ("host-source", "host-target"),
+        host_signer_public_key_resolver=ar.accept_unverified_commit_marker_signatures,
+    )
     assert ok is False
     assert reason == "taskhub_cutover_committed_at_after_confirmation_window_rejected"
 

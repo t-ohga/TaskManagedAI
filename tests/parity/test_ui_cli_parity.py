@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-import pytest
-
 from fastapi.routing import APIRoute
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
