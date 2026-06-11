@@ -105,7 +105,15 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
     engine = create_engine(settings.database_url)
     factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as session:
+    # seed_initial は呼び出し側 commit 前提。begin() で確実に commit し、per-test に ticket/run/
+    # idempotency_key を reset (test 間で ticket slug が蓄積し unique 衝突するのを防ぐ)。
+    async with factory.begin() as session:
+        await session.execute(
+            text(
+                "truncate tickets, agent_runs, mcp_idempotency_keys "
+                "restart identity cascade"
+            )
+        )
         await seed_initial(session)
         await _seed_second_actor(session)
     try:
