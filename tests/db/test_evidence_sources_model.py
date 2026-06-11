@@ -302,6 +302,9 @@ def test_evidence_source_model_declares_expected_table_columns_and_types() -> No
         "metadata",
         "created_at",
         "updated_at",
+        # 0046 (SP-027 source trust): per-source manual trust。
+        "trust_level",
+        "trust_score",
     }
 
     assert isinstance(table.c.id.type, PG_UUID)

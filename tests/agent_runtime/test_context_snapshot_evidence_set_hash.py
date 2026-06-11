@@ -84,6 +84,9 @@ def _snapshot_payload() -> dict[str, Any]:
         "provider_continuation_ref": None,
         "provider_request_fingerprint": {"model_resolved": "mock-model"},
         "snapshot_kind": "input",
+        # tool_manifest は ContextSnapshot 10 必須列の 1 つ (allowlist_hash + registry_version 必須)。
+        # inherit を使わない非 resume snapshot は caller が直接供給する。
+        "tool_manifest": current_tool_manifest(),
     }
 
 

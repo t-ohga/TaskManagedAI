@@ -1000,7 +1000,9 @@ async def test_workspace_project_repository_contract_columns_and_constraints(
     assert project_columns["status"]["is_nullable"] == "NO"
     assert "active" in str(project_columns["status"]["column_default"])
     assert project_columns["policy_profile"]["data_type"] == "text"
-    assert project_columns["policy_profile"]["is_nullable"] == "YES"
+    # 0027 で policy_profile は server-owned (default 'default') の NOT NULL 列化された。
+    assert project_columns["policy_profile"]["is_nullable"] == "NO"
+    assert "default" in str(project_columns["policy_profile"]["column_default"])
     assert project_unique == ("tenant_id", "workspace_id", "slug")
     assert "active" in project_status_check
     assert "archived" in project_status_check

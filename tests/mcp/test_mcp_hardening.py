@@ -848,6 +848,10 @@ class TestAgentSpawnerArgvHardening:
         from backend.app.services.superintendent import agent_spawner
 
         monkeypatch.setattr(agent_spawner.shutil, "which", lambda _name: "/usr/local/bin/claude")
+        # CI runner では /usr/local/bin が group/world-writable な場合があり、実 stat に依存すると
+        # writable 拒否で本 positive case が落ちる。perm 拒否は test_group_world_writable_executable_rejected
+        # で別途検証するため、ここでは安全 mode (0o755) を mock し path の絶対化のみ検証する (環境非依存)。
+        monkeypatch.setattr(agent_spawner, "_path_mode", lambda _p: 0o755)
         cmd = agent_spawner._build_agent_command("claude", "/srv/project")
         assert cmd[0] == "/usr/local/bin/claude"
         assert os.path.isabs(cmd[0])

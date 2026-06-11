@@ -112,7 +112,8 @@ async def test_ticket_tags_fk_delete_actions(
                 "where conrelid = 'ticket_tags'::regclass and contype = 'f'"
             )
         )
-        actions = {r[0]: r[1] for r in rows}
+        # confdeltype は pg "char" 型で asyncpg は bytes (b'r') を返すため decode して比較する。
+        actions = {r[0]: (r[1].decode() if isinstance(r[1], bytes) else r[1]) for r in rows}
     assert actions["ticket_tags_tag_fkey"] == "r"  # RESTRICT (使用中 tag 削除を DB で拒否)
     assert actions["ticket_tags_ticket_fkey"] == "c"  # CASCADE
 
@@ -146,8 +147,8 @@ async def _seed_project_ticket_tag(
     workspace_id = str(uuid4())
     await session.execute(
         text(
-            "insert into workspaces (id, tenant_id, slug, name) "
-            "values (:id, 1, :slug, :name)"
+            "insert into workspaces (id, tenant_id, slug, name, owner_actor_id) "
+            "values (:id, 1, :slug, :name, '00000000-0000-4000-8000-00000000b001')"
         ),
         {"id": workspace_id, "slug": f"ws-{workspace_id[:8]}", "name": "ws"},
     )
@@ -162,10 +163,10 @@ async def _seed_project_ticket_tag(
         actor_id = str(uuid4())
         await session.execute(
             text(
-                "insert into actors (id, tenant_id, actor_type, display_name) "
-                "values (:id, 1, 'human', 'seed')"
+                "insert into actors (id, tenant_id, actor_type, actor_id, display_name) "
+                "values (:id, 1, 'human', :actor_handle, 'seed')"
             ),
-            {"id": actor_id},
+            {"id": actor_id, "actor_handle": f"human:seed-{actor_id[:8]}"},
         )
         await session.execute(
             text(

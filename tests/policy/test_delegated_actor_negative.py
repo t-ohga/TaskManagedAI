@@ -104,7 +104,10 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
 async def _reset_approval_tables(session: AsyncSession) -> None:
     await session.execute(
-        text("truncate notification_events, policy_decisions, approval_requests restart identity")
+        text(
+            "truncate notification_events, policy_decisions, approval_requests "
+            "restart identity cascade"
+        )
     )
 
 
