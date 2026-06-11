@@ -10,6 +10,7 @@ import type { TagRead } from "@/lib/domain/tag";
 // 再定義せず、seam module を mock して検証する (Codex adversarial F-3)。
 const reload = vi.fn(() => true);
 const discardConfirm = vi.fn(() => true);
+const commitDiscard = vi.fn();
 vi.mock("@/lib/full-reload", async (importOriginal) => {
   // R6: except 粒度 (create/rename guard) を実 hasUnsavedDraft で検証するため、
   // gate の判定は実装を使い、confirm と reload だけ差し替える。
@@ -22,7 +23,12 @@ vi.mock("@/lib/full-reload", async (importOriginal) => {
     confirmDiscardUnsavedDrafts: (except?: Element | null) => {
       if (!actual.hasUnsavedDraft(except)) return true;
       return discardConfirm();
-    }
+    },
+    // R11: pre-commit は確認のみ、破棄は成功時 commit。except 粒度は実 hasUnsavedDraft で判定。
+    prepareDiscardOnCommit: (except?: Element | null) => ({
+      approved: actual.hasUnsavedDraft(except) ? discardConfirm() : true,
+      commit: commitDiscard
+    })
   };
 });
 

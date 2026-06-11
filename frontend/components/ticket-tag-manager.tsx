@@ -1,6 +1,6 @@
 "use client";
 
-import { confirmDiscardUnsavedDrafts } from "@/lib/full-reload";
+import { prepareDiscardOnCommit } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 import { useRef, useState, useTransition } from "react";
@@ -119,7 +119,9 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
   ) {
     // R2 (Codex adversarial HIGH): 未保存編集の破棄確認は mutation **前**。キャンセルなら
     // server action を実行しない (post-commit 確認だと stale form 保存で commit を巻き戻せる)。
-    if (!confirmDiscardUnsavedDrafts(except)) return;
+    // R11: 確認のみ pre-commit、破棄は成功時に commit (失敗時は他領域 draft 無傷)。
+    const { approved, commit } = prepareDiscardOnCommit(except);
+    if (!approved) return;
     setError(null);
     startTransition(async () => {
       const result = await action(IDLE, fd);
@@ -127,6 +129,7 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
         setError(result.message);
       } else {
         onOk?.();
+        commit();
       // C-5 workaround: transition 内の router.refresh() は isPending を固める (lib/use-deferred-router-refresh.ts 参照)。
         requestRefresh();
       }

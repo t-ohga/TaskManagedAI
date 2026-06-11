@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { confirmDiscardUnsavedDrafts } from "@/lib/full-reload";
+import { prepareDiscardOnCommit } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 
 import { useToast } from "@/components/toast";
@@ -32,7 +32,9 @@ export function BulkStatusChanger({ selectedIds, onClear, onSelectionChange }: B
     if (!targetStatus) return;
     // R2 (Codex adversarial HIGH): 未保存編集の破棄確認は mutation **前**。キャンセルなら
     // server action を実行しない (post-commit 確認だと stale form 保存で commit を巻き戻せる)。
-    if (!confirmDiscardUnsavedDrafts()) return;
+    // R11: 確認のみ pre-commit、破棄は **全件成功時にのみ** commit (部分失敗時は draft 無傷)。
+    const { approved, commit } = prepareDiscardOnCommit();
+    if (!approved) return;
     setError(null);
     startTransition(async () => {
       const { updateTicketAction } = await import("@/app/(admin)/tickets/[id]/actions");
@@ -59,6 +61,7 @@ export function BulkStatusChanger({ selectedIds, onClear, onSelectionChange }: B
       } else {
         toast(`${selectedIds.length} 件のステータスを更新しました`, "success");
         onClear();
+        commit();
         // C-5 / F-2 (Codex adversarial): reload は**全件成功時のみ**。部分失敗時に reload すると
         // エラー表示と failedIds の再選択 (復旧導線) が消えるため、失敗時は現状表示を維持する。
         requestRefresh();

@@ -45,30 +45,60 @@ export function hasUnsavedDraft(except?: Element | null): boolean {
 /**
  * R2 (Codex adversarial HIGH): 未保存 draft の破棄確認は **mutation 実行前 (pre-commit)** に行う。
  * post-commit の確認だと、キャンセルで stale な編集フォームが残り、それを後から保存すると
- * 直前に commit された変更 (例: ステータス) を旧値で巻き戻せてしまう。本 gate を副次 mutation
- * (コメント / タグ / ステータス / 一括変更 / 中止) の handler 冒頭で呼び、false なら
- * **server action を実行しない** (DB も画面も変化せず、矛盾構造が生まれない)。
+ * 直前に commit された変更 (例: ステータス) を旧値で巻き戻せてしまう。
+ *
+ * 本関数は **確認のみ** (破棄しない)。reload 直前の再確認 (R7、useDeferredRouterRefresh) 用。
+ * 副次 mutation の handler 冒頭で破棄を伴う gate が必要な経路は `prepareDiscardOnCommit` を使う。
  */
 export function confirmDiscardUnsavedDrafts(except?: Element | null): boolean {
   if (!hasUnsavedDraft(except)) {
     return true;
   }
+  return window.confirm(
+    "このページに未保存の入力があります。この操作を行うと画面が更新され、未保存の入力は破棄されます。続行しますか？"
+  );
+}
+
+/**
+ * R11 (Codex adversarial HIGH): pre-commit gate。破棄を **mutation 成功時まで遅延**する。
+ *
+ * R9/R10 は承認直後 (= server action の前) に React state まで物理破棄していたが、その後 mutation が
+ * 失敗 (権限 / project 境界 / network / validation) すると DB は変わらないのに無関係な draft が
+ * 不可逆に失われていた。本関数は:
+ * - 確認時点の dirty guard を **参照で捕捉** (`pending`)。confirm 承認まで何も破棄しない。
+ * - 返り値 `commit()` を **mutation 成功時にのみ呼ぶ**と、捕捉済み guard だけを破棄する。
+ *   失敗時は `commit()` を呼ばなければ draft は無傷。
+ * - 捕捉は呼び出し時点の dirty guard に固定されるため、mutation 中に新規作成された draft N は
+ *   `pending` に含まれず、reload 直前の `confirmDiscardUnsavedDrafts` 再確認 (R7) で別途扱われる
+ *   (= 二重 confirm を生まずに新規 draft を保護)。
+ *
+ * 破棄の rollback 防御 (R8 の touched-field-only PATCH) は維持される — 成功時に commit() で
+ * 捕捉 draft を server 値へ戻すため、reload を拒否しても stale form で巻き戻せない。
+ */
+export function prepareDiscardOnCommit(except?: Element | null): {
+  approved: boolean;
+  commit: () => void;
+} {
+  const pending = collectDirtyGuards(except);
+  if (pending.length === 0) {
+    return { approved: true, commit: noop };
+  }
   const approved = window.confirm(
     "このページに未保存の入力があります。この操作を行うと画面が更新され、未保存の入力は破棄されます。続行しますか？"
   );
-  if (approved) {
-    // R9 (Codex adversarial HIGH): 「承認 = 即破棄」。承認した draft をその場で物理的に破棄
-    // (dirty クリア + form.reset() で defaultValue = server 値へ) しないと、reload 直前の
-    // 再確認 (R7) を拒否した場合に**承認済みの stale draft が生き残り**、編集していた field は
-    // R8 の unchanged-field drop をすり抜けて直前 mutation を巻き戻せる。即破棄により:
-    // - 再確認の対象は自然に「mutation 中の新規 draft のみ」になる
-    // - 拒否で reload しなくても form は server 値に戻っており、保存は all-unchanged = no-op
-    discardDrafts(except);
+  if (!approved) {
+    return { approved: false, commit: noop };
   }
-  return approved;
+  return { approved: true, commit: () => discardGuards(pending) };
 }
 
-function discardDrafts(except?: Element | null): void {
+/** 破棄なし (dirty 無し or 確認拒否時) の commit プレースホルダ。 */
+export function noop(): void {
+  /* no-op */
+}
+
+function collectDirtyGuards(except?: Element | null): HTMLElement[] {
+  const result: HTMLElement[] = [];
   for (const guard of Array.from(document.querySelectorAll(GUARD_SELECTOR))) {
     if (!(guard instanceof HTMLElement)) {
       continue;
@@ -76,9 +106,15 @@ function discardDrafts(except?: Element | null): void {
     if (except && (guard === except || guard.contains(except) || except.contains(guard))) {
       continue;
     }
-    if (guard.dataset.dirty !== "true") {
-      continue;
+    if (guard.dataset.dirty === "true") {
+      result.push(guard);
     }
+  }
+  return result;
+}
+
+function discardGuards(guards: HTMLElement[]): void {
+  for (const guard of guards) {
     delete guard.dataset.dirty;
     if (guard instanceof HTMLFormElement) {
       guard.reset();

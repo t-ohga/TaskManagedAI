@@ -1,12 +1,12 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 
 import { createTicketAction, type CreateTicketState } from "@/app/(admin)/tickets/actions";
-import { confirmDiscardUnsavedDrafts } from "@/lib/full-reload";
+import { noop, prepareDiscardOnCommit } from "@/lib/full-reload";
 import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 import { assigneeSelectOptions, type AssignableActor } from "@/lib/domain/assignee";
 import { MarkdownEditor } from "@/components/markdown-editor";
@@ -38,6 +38,8 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
     setSlug("ticket");
     setDiscardNonce((n) => n + 1);
   });
+  // R11: 他領域 draft の破棄は作成成功時にのみ commit する (失敗時は draft 無傷)。
+  const commitDiscardRef = useRef<() => void>(noop);
 
   function deriveSlug(title: string): string {
     const base = title
@@ -50,6 +52,9 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
 
   useEffect(() => {
     if (state.kind === "ok") {
+      // R11: 成功確定後に捕捉済み他領域 draft を破棄してから遷移 (失敗時はここに来ない)。
+      commitDiscardRef.current();
+      commitDiscardRef.current = noop;
       // G-5 (UI 監査 fix): 作成後は一覧 refresh ではなく作成したチケット詳細へ遷移する。
       // C-4 UX fix (Mac 実機検証): 旧版は 1.2s setTimeout 後に遷移していたが、action 成功後の
       // revalidatePath 再レンダーと effect cleanup が競合すると timer が発火せず「成功 banner +
@@ -96,10 +101,14 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
         onChange={(event) => {
           event.currentTarget.dataset.dirty = "true";
         }}
+        // R11: 確認のみ pre-commit、破棄は作成成功時に commit (失敗時は draft 無傷)。
         onSubmit={(event) => {
-          if (!confirmDiscardUnsavedDrafts(event.currentTarget)) {
+          const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+          if (!approved) {
             event.preventDefault();
+            return;
           }
+          commitDiscardRef.current = commit;
         }}
         data-unsaved-guard=""
         className="grid gap-3"

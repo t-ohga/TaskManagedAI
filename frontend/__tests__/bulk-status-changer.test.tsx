@@ -13,10 +13,13 @@ import { BulkStatusChanger } from "@/components/bulk-status-changer";
 // 再定義せず、seam module を mock して検証する (Codex adversarial F-3)。
 const reload = vi.fn(() => true);
 const discardConfirm = vi.fn(() => true);
+const commitDiscard = vi.fn();
 vi.mock("@/lib/full-reload", () => ({
   fullReload: () => reload(),
   hasUnsavedDraft: () => false,
-  confirmDiscardUnsavedDrafts: () => discardConfirm()
+  confirmDiscardUnsavedDrafts: () => discardConfirm(),
+  // R11: pre-commit は確認のみ、破棄は成功時 commit。bulk は確認結果を approved に反映。
+  prepareDiscardOnCommit: () => ({ approved: discardConfirm(), commit: commitDiscard })
 }));
 
 const updateCalls: Record<string, string>[] = [];

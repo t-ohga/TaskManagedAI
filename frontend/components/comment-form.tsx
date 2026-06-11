@@ -1,8 +1,8 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 
-import { confirmDiscardUnsavedDrafts } from "@/lib/full-reload";
+import { noop, prepareDiscardOnCommit } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 
@@ -22,6 +22,8 @@ export function CommentForm({ ticketId, onSubmit }: CommentFormProps) {
   // DOM 操作だけでは次 render で draft が復活する。discard event で state を正本ごと破棄する。
   const discardGuardRef = useDraftDiscardRef<HTMLFormElement>(() => setBody(""));
   const requestRefresh = useDeferredRouterRefresh();
+  // R11: 他領域 draft の破棄は **投稿成功時にのみ** commit する (失敗時は draft 無傷)。
+  const commitDiscardRef = useRef<() => void>(noop);
   const [state, formAction, pending] = useActionState<CommentState, FormData>(
     async (_prev, formData) => {
       const result = await onSubmit(formData);
@@ -36,6 +38,9 @@ export function CommentForm({ ticketId, onSubmit }: CommentFormProps) {
   // refresh で行う。
   useEffect(() => {
     if (state.kind === "ok") {
+      // R11: 成功確定後に捕捉済み他領域 draft を破棄してから reload (失敗時はここに来ない)。
+      commitDiscardRef.current();
+      commitDiscardRef.current = noop;
       requestRefresh();
     }
   }, [state, requestRefresh]);
@@ -50,9 +55,13 @@ export function CommentForm({ ticketId, onSubmit }: CommentFormProps) {
       onSubmit={(event) => {
         // except=自 form: コメント送信は自分の draft を consume する操作なので、自分の
         // 入力では confirm を出さない (他領域の draft があるときだけ確認)。
-        if (!confirmDiscardUnsavedDrafts(event.currentTarget)) {
+        // R11: 確認のみ pre-commit、破棄は成功時に commit (失敗時は draft 無傷)。
+        const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+        if (!approved) {
           event.preventDefault();
+          return;
         }
+        commitDiscardRef.current = commit;
       }}
       className="grid gap-3"
       // R4 F-2 (Codex adversarial): コメント下書き (最大 4000 字) も reload で失われ得る draft。

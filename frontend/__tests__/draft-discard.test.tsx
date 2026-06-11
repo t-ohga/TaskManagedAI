@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CommentForm } from "@/components/comment-form";
 import { TicketTagManager } from "@/components/ticket-tag-manager";
 import { EditTicketForm } from "../app/(admin)/tickets/[id]/_components/edit-ticket-form";
-import { confirmDiscardUnsavedDrafts } from "@/lib/full-reload";
+import { prepareDiscardOnCommit } from "@/lib/full-reload";
 import type { TagRead } from "@/lib/domain/tag";
 
 const routerMocks = vi.hoisted(() => ({ refresh: vi.fn(), push: vi.fn() }));
@@ -39,15 +39,25 @@ beforeEach(() => {
   vi.restoreAllMocks();
 });
 
-// 破棄確認を承認する (他領域の mutation handler 冒頭から呼ばれる経路の再現。except なし =
-// 画面上の全 draft が破棄対象)。
-function approveDiscard(): void {
+// 他領域 mutation が「成功」した経路を再現する: pre-commit で確認・捕捉 (prepareDiscardOnCommit)
+// → 成功時に commit() で破棄。except なし = 画面上の全 draft が捕捉・破棄対象。
+function approveAndCommitDiscard(): void {
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  let approved = false;
   act(() => {
-    approved = confirmDiscardUnsavedDrafts();
+    const { approved, commit } = prepareDiscardOnCommit();
+    expect(approved).toBe(true);
+    commit();
   });
-  expect(approved).toBe(true);
+}
+
+// 他領域 mutation が「失敗」した経路: 確認・捕捉までは行うが commit() を呼ばない (R11)。
+function approveButDoNotCommit(): void {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  act(() => {
+    const { approved } = prepareDiscardOnCommit();
+    expect(approved).toBe(true);
+    // commit() を呼ばない = mutation 失敗。draft は無傷であるべき。
+  });
 }
 
 describe("R10: 承認済み discard が React state ごと draft を破棄する", () => {
@@ -59,7 +69,7 @@ describe("R10: 承認済み discard が React state ごと draft を破棄する
     const form = textarea.closest("form") as HTMLFormElement;
     expect(form.dataset.dirty).toBe("true");
 
-    approveDiscard();
+    approveAndCommitDiscard();
 
     // state (body) が破棄され、controlled textarea も空、state 由来の dirty も再付与されない
     expect(textarea.value).toBe("");
@@ -79,7 +89,7 @@ describe("R10: 承認済み discard が React state ごと draft を破棄する
     const guard = nameInput.closest("[data-unsaved-guard]") as HTMLElement;
     expect(guard.dataset.dirty).toBe("true");
 
-    approveDiscard();
+    approveAndCommitDiscard();
 
     expect(nameInput.value).toBe("");
     expect(guard.dataset.dirty).toBeUndefined();
@@ -93,7 +103,7 @@ describe("R10: 承認済み discard が React state ごと draft を破棄する
     const editInput = screen.getByLabelText("タグ「bug」の新しい名前") as HTMLInputElement;
     expect(editInput).toBeInTheDocument();
 
-    approveDiscard();
+    approveAndCommitDiscard();
 
     // editingId が破棄され、dirty="true" の編集行ごと閉じる
     expect(screen.queryByLabelText("タグ「bug」の新しい名前")).not.toBeInTheDocument();
@@ -124,12 +134,59 @@ describe("R10: 承認済み discard が React state ごと draft を破棄する
     const form = screen.getByTestId("edit-ticket-form") as HTMLFormElement;
     expect(form.dataset.dirty).toBe("true");
 
-    approveDiscard();
+    approveAndCommitDiscard();
 
     // nonce remount で MarkdownEditor 内部 state ごと server 値へ戻る
     const after = screen.getByLabelText("説明") as HTMLTextAreaElement;
     expect(after.value).toBe("server description");
     const formAfter = screen.getByTestId("edit-ticket-form") as HTMLFormElement;
     expect(formAfter.dataset.dirty).toBeUndefined();
+  });
+});
+
+describe("R11: mutation 失敗 (commit 未呼び出し) では draft が破棄されない", () => {
+  it("CommentForm: 承認後に他領域 mutation が失敗しても body draft が残る", () => {
+    render(<CommentForm ticketId={TICKET_ID} onSubmit={async () => ({ kind: "ok" as const })} />);
+    const textarea = screen.getByLabelText("コメント本文") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "失われてはいけない下書き" } });
+    const form = textarea.closest("form") as HTMLFormElement;
+    expect(form.dataset.dirty).toBe("true");
+
+    approveButDoNotCommit();
+
+    // 承認したが mutation 失敗 (commit 未呼び出し) → draft 完全保持
+    expect(textarea.value).toBe("失われてはいけない下書き");
+    expect(form.dataset.dirty).toBe("true");
+  });
+
+  it("EditTicketForm: 承認後に他領域 mutation が失敗しても description draft が残る", () => {
+    render(
+      <EditTicketForm
+        ticket={{
+          id: TICKET_ID,
+          title: "server title",
+          description: "server description",
+          due_date: null,
+          status: "open",
+          priority: null,
+          assignee_actor_id: null,
+          updated_at: "2026-06-11T00:00:00Z"
+        }}
+        assignableActors={[]}
+        assignableActorsDegraded={false}
+        assignableActorsTruncated={false}
+      />
+    );
+    const description = screen.getByLabelText("説明") as HTMLTextAreaElement;
+    fireEvent.change(description, { target: { value: "編集中の作業 (失敗で消えてはいけない)" } });
+    const form = screen.getByTestId("edit-ticket-form") as HTMLFormElement;
+    expect(form.dataset.dirty).toBe("true");
+
+    approveButDoNotCommit();
+
+    // remount せず draft 保持 (mutation 失敗で server 値に巻き戻さない)
+    const after = screen.getByLabelText("説明") as HTMLTextAreaElement;
+    expect(after.value).toBe("編集中の作業 (失敗で消えてはいけない)");
+    expect(screen.getByTestId("edit-ticket-form").dataset.dirty).toBe("true");
   });
 });

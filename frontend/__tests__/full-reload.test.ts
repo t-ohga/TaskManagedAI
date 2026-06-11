@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   confirmDiscardUnsavedDrafts,
   fullReload,
-  hasUnsavedDraft
+  hasUnsavedDraft,
+  prepareDiscardOnCommit
 } from "@/lib/full-reload";
 
 function mountGuard(dirty: boolean, html = ""): HTMLElement {
@@ -50,55 +51,117 @@ describe("hasUnsavedDraft (C-5 R3: data-dirty 一本化)", () => {
   });
 });
 
-describe("confirmDiscardUnsavedDrafts (C-5 R2 pre-commit gate)", () => {
+describe("confirmDiscardUnsavedDrafts (確認のみ: R7 reload 直前再確認 / R11 で破棄分離)", () => {
   it("dirty なし → confirm を出さず true (mutation 続行)", () => {
     const confirmSpy = vi.spyOn(window, "confirm");
     expect(confirmDiscardUnsavedDrafts()).toBe(true);
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 
-  it("dirty + キャンセル → false (mutation 自体を実行させない)", () => {
+  it("dirty + キャンセル → false (reload しない)", () => {
     mountGuard(true);
     vi.spyOn(window, "confirm").mockReturnValue(false);
     expect(confirmDiscardUnsavedDrafts()).toBe(false);
   });
 
-  it("dirty + 承認 → true (ユーザー選択で破棄を許可)", () => {
-    mountGuard(true);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    expect(confirmDiscardUnsavedDrafts()).toBe(true);
-  });
-
-  it("承認 = 即破棄: dirty クリア + form.reset で server 値へ戻る (R9)", () => {
-    // R9 シナリオ封鎖の核: 承認済み draft が物理的に消えるため、reload 直前再確認 (R7) の
-    // 対象にならず、拒否で残った form も defaultValue (server 値) = R8 drop で巻き戻し不能。
+  it("dirty + 承認 → true。**破棄はしない** (R11: 確認のみ、破棄は commit 経由)", () => {
     const form = mountGuard(true, '<input name="title" value="server-value" />');
     const input = document.querySelector("input");
     if (input) input.value = "stale-draft";
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     expect(confirmDiscardUnsavedDrafts()).toBe(true);
+    // 確認のみ。dirty / 入力値は保持される (破棄は prepareDiscardOnCommit().commit() の責務)。
+    expect((form as HTMLElement).dataset.dirty).toBe("true");
+    expect(input?.value).toBe("stale-draft");
+  });
+});
+
+describe("prepareDiscardOnCommit (R11: 破棄は成功時 commit のみ、失敗時は無傷)", () => {
+  it("dirty なし → confirm を出さず approved=true / commit は no-op", () => {
+    const confirmSpy = vi.spyOn(window, "confirm");
+    const { approved, commit } = prepareDiscardOnCommit();
+    expect(approved).toBe(true);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(() => commit()).not.toThrow();
+  });
+
+  it("dirty + キャンセル → approved=false / commit は no-op (draft 無傷)", () => {
+    const form = mountGuard(true, '<input name="title" value="server-value" />');
+    const input = document.querySelector("input");
+    if (input) input.value = "stale-draft";
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    const { approved, commit } = prepareDiscardOnCommit();
+    expect(approved).toBe(false);
+    commit();
+    // 拒否 → mutation 中止。draft は完全に無傷。
+    expect((form as HTMLElement).dataset.dirty).toBe("true");
+    expect(input?.value).toBe("stale-draft");
+  });
+
+  it("承認 + **commit 未呼び出し (mutation 失敗)** → draft 無傷 (R11 の核)", () => {
+    const form = mountGuard(true, '<input name="title" value="server-value" />');
+    const input = document.querySelector("input");
+    if (input) input.value = "stale-draft";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const { approved } = prepareDiscardOnCommit();
+    expect(approved).toBe(true);
+    // mutation 失敗 → commit() を呼ばない。承認済みでも draft は消えない。
+    expect((form as HTMLElement).dataset.dirty).toBe("true");
+    expect(hasUnsavedDraft()).toBe(true);
+    expect(input?.value).toBe("stale-draft");
+  });
+
+  it("承認 + **commit 呼び出し (mutation 成功)** → dirty クリア + form.reset で server 値へ", () => {
+    // 成功時のみ破棄 = R8 の touched-field-only PATCH と整合 (server 値へ戻り巻き戻し不能)。
+    const form = mountGuard(true, '<input name="title" value="server-value" />');
+    const input = document.querySelector("input");
+    if (input) input.value = "stale-draft";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const { approved, commit } = prepareDiscardOnCommit();
+    expect(approved).toBe(true);
+    commit();
     expect((form as HTMLElement).dataset.dirty).toBeUndefined();
     expect(hasUnsavedDraft()).toBe(false);
     expect(input?.value).toBe("server-value");
   });
 
-  it("承認時も except 領域の draft は破棄しない", () => {
+  it("commit は except 領域の draft を破棄しない (自操作の自分の draft を保持)", () => {
     const form = mountGuard(true, '<input name="title" value="server-value" />');
     const input = document.querySelector("input");
     if (input) input.value = "my-own-draft";
-    // 別領域の dirty guard を追加して confirm を発生させる
     const other = document.createElement("div");
     other.setAttribute("data-unsaved-guard", "");
     other.dataset.dirty = "true";
     document.body.appendChild(other);
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    expect(confirmDiscardUnsavedDrafts(form)).toBe(true);
-    // except (自領域) の draft は保持、他領域は破棄。
+    const { approved, commit } = prepareDiscardOnCommit(form);
+    expect(approved).toBe(true);
+    commit();
+    // except (自領域) の draft は保持、他領域のみ破棄。
     expect(input?.value).toBe("my-own-draft");
     expect((form as HTMLElement).dataset.dirty).toBe("true");
     expect(other.dataset.dirty).toBeUndefined();
+  });
+
+  it("commit は捕捉時点の dirty guard のみ破棄 (commit 前に新規 dirty 化した guard N は保持 = R7 へ)", () => {
+    mountGuard(true);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { commit } = prepareDiscardOnCommit();
+
+    // mutation 中に新規 draft N が作られた状況を再現 (捕捉後に dirty 化)
+    const fresh = document.createElement("div");
+    fresh.setAttribute("data-unsaved-guard", "");
+    fresh.dataset.dirty = "true";
+    document.body.appendChild(fresh);
+
+    commit();
+    // 捕捉済みの旧 guard は破棄されるが、捕捉後に dirty 化した N は保持 (reload 直前 R7 再確認の対象)。
+    expect(fresh.dataset.dirty).toBe("true");
   });
 });
 

@@ -1,8 +1,8 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 
-import { confirmDiscardUnsavedDrafts } from "@/lib/full-reload";
+import { noop, prepareDiscardOnCommit } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 
@@ -105,8 +105,14 @@ export function EditTicketForm({
   // 直後の render から発火した refresh が action transition に合流し、RSC GET は飛ぶのに応答が
   // 適用されない (header が古いまま)。useDeferredRouterRefresh は tick state で 1 render 遅らせて
   // から refresh するため合流せず、適用まで完了する (status changer 経由で 418ms 全要素整合を実測)。
+  // R11: 他領域 draft の破棄は保存成功時にのみ commit する (失敗時は draft 無傷)。
+  const commitDiscardRef = useRef<() => void>(noop);
+
   useEffect(() => {
     if (state.kind === "ok") {
+      // R11: 成功確定後に捕捉済み他領域 draft を破棄してから reload (失敗時はここに来ない)。
+      commitDiscardRef.current();
+      commitDiscardRef.current = noop;
       requestRefresh();
     }
   }, [state, requestRefresh]);
@@ -174,10 +180,14 @@ export function EditTicketForm({
       // (コメント下書き / タグ編集中 等) があれば action 実行前に破棄確認する。except=自 form
       // (自分の編集は保存対象そのものなので confirm を出さない)。キャンセルは preventDefault で
       // server action を実行しない。
+      // R11: 確認のみ pre-commit、破棄は保存成功時に commit (失敗時は draft 無傷)。
       onSubmit={(event) => {
-        if (!confirmDiscardUnsavedDrafts(event.currentTarget)) {
+        const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+        if (!approved) {
           event.preventDefault();
+          return;
         }
+        commitDiscardRef.current = commit;
       }}
       className="rounded-lg border border-line bg-panel p-5 shadow-sm"
       data-testid="edit-ticket-form"
