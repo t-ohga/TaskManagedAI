@@ -1,7 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useActionState, useEffect, useRef, useState } from "react";
 
 import { trustTierLabel, trustTierTone } from "@/lib/domain/research-advanced";
 import {
@@ -17,6 +16,9 @@ import {
   writeCitationRenderMode,
   type CitationRenderMode
 } from "@/lib/citation-render-mode";
+import { noop, prepareDiscardOnCommit } from "@/lib/full-reload";
+import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
+import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 
 import {
   fetchClaimProvenanceAction,
@@ -57,9 +59,27 @@ function ManualTrustForm({
   readonly trust: EffectiveSourceTrust;
   readonly onSuccess: () => void;
 }) {
-  const [state, action, pending] = useActionState(setSourceTrustAction, INITIAL);
+  const formRef = useRef<HTMLFormElement>(null);
+  // C-5: 手動信頼度の編集は full reload で失われ得る draft。defaultValue=現在値のため成功時 reset せず
+  // (reset すると巻き戻る、F-001)、reload で再構成。source は独立で巻き戻しは source 単位で閉じる。
+  const [dirty, setDirty] = useState(false);
+  const discardGuardRef = useDraftDiscardRef<HTMLFormElement>(() => setDirty(false), formRef);
+  const commitDiscardRef = useRef<() => void>(noop);
+  // 自分の dirty だけ wrapper でクリアし保存成功後の reload を自分自身が阻害しないようにする (adversarial finding)。
+  const [state, action, pending] = useActionState(
+    async (prev: SourceTrustActionState, formData: FormData): Promise<SourceTrustActionState> => {
+      const result = await setSourceTrustAction(prev, formData);
+      if (result.kind === "ok") setDirty(false);
+      return result;
+    },
+    INITIAL
+  );
   useEffect(() => {
-    if (state.kind === "ok") onSuccess();
+    if (state.kind === "ok") {
+      commitDiscardRef.current();
+      commitDiscardRef.current = noop;
+      onSuccess();
+    }
   }, [state, onSuccess]);
   const currentLevel = trust.origin === "manual" ? (trust.trust_level ?? "") : "";
   // Codex adversarial R1 MEDIUM (F-003): 既存 manual score を空欄で silently null 化させない。
@@ -67,7 +87,23 @@ function ManualTrustForm({
   const currentScore =
     trust.origin === "manual" && trust.trust_score !== null ? String(trust.trust_score) : "";
   return (
-    <form action={action} className="flex flex-wrap items-end gap-2" data-testid="source-trust-form">
+    <form
+      ref={discardGuardRef}
+      action={action}
+      onChange={() => setDirty(true)}
+      onSubmit={(event) => {
+        const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+        if (!approved) {
+          event.preventDefault();
+          return;
+        }
+        commitDiscardRef.current = commit;
+      }}
+      className="flex flex-wrap items-end gap-2"
+      data-testid="source-trust-form"
+      data-unsaved-guard=""
+      data-dirty={dirty ? "true" : undefined}
+    >
       <input type="hidden" name="research_task_id" value={researchTaskId} />
       <input type="hidden" name="evidence_source_id" value={trust.evidence_source_id} />
       <label className="grid gap-1 text-xs">
@@ -131,7 +167,8 @@ export function SourceTrustSection({
   readonly sourceTrust: readonly EffectiveSourceTrust[];
   readonly claimIds: readonly string[];
 }) {
-  const router = useRouter();
+  // C-5: action 側 revalidatePath 撤去のため表示更新は client full reload。requestRefresh は安定参照 (F-005)。
+  const requestRefresh = useDeferredRouterRefresh();
   const [mode, setMode] = useState<CitationRenderMode>("detailed");
   // adversarial R2 F-001: provenance は mode=provenance のときだけ lazy 取得 (page load 時の全 claim
   // prefetch DoS を防ぐ)。
@@ -161,7 +198,6 @@ export function SourceTrustSection({
     writeCitationRenderMode(next);
     setMode(next);
   };
-  const refresh = () => router.refresh();
 
   const tierCounts = sourceTrust.reduce<Record<string, number>>((acc, t) => {
     const key = t.trust_level ?? "unset";
@@ -200,7 +236,7 @@ export function SourceTrustSection({
                 <span className="font-mono">ソース {shortId(trust.evidence_source_id)}{trust.domain ? ` ・ ${trust.domain}` : ""}</span>
                 <TrustBadge trust={trust} />
               </div>
-              <ManualTrustForm researchTaskId={researchTaskId} trust={trust} onSuccess={refresh} />
+              <ManualTrustForm researchTaskId={researchTaskId} trust={trust} onSuccess={requestRefresh} />
             </li>
           ))}
         </ul>

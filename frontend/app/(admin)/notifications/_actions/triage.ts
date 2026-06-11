@@ -1,7 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-
 import {
   resolveNotification,
   snoozeNotification
@@ -23,10 +21,12 @@ function readNotificationId(formData: FormData): string | null {
   return value;
 }
 
-function revalidateNotificationSurfaces(): void {
-  revalidatePath("/notifications");
-  revalidatePath("/", "layout");
-}
+// C-5 系統適用: Server Action 内 revalidatePath() は client transition の isPending を解除せず
+// 確率的に未 commit になる Next.js 16 (16.2.6) + React 19 regression。撤去し、表示更新は呼び出し側の
+// full reload (useDeferredRouterRefresh) に委譲する。navbar 通知バッジは full reload の layout 再取得で
+// 更新される (撤去前: revalidateNotificationSurfaces = revalidatePath("/notifications") +
+// revalidatePath("/", "layout"))。参照: vercel/next.js discussions #82289 / #88767。
+// Next 修正後は呼び出し側 hook を router.refresh() へ戻すだけで復帰する。
 
 export async function snoozeNotificationTriageAction(
   formData: FormData
@@ -46,7 +46,6 @@ export async function snoozeNotificationTriageAction(
     await snoozeNotification(notificationId, {
       snoozed_until: new Date(Date.now() + minutes * 60_000).toISOString()
     });
-    revalidateNotificationSurfaces();
     return { ok: true, notification_id: notificationId };
   } catch (error: unknown) {
     return {
@@ -66,7 +65,6 @@ export async function resolveNotificationTriageAction(
 
   try {
     await resolveNotification(notificationId, { resolution_note: null });
-    revalidateNotificationSurfaces();
     return { ok: true, notification_id: notificationId };
   } catch (error: unknown) {
     return {

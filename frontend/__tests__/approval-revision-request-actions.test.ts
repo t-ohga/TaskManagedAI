@@ -82,8 +82,8 @@ describe("requestApprovalRevisionAction", () => {
     expect(apiMocks.requestApprovalRevision).toHaveBeenCalledWith(APPROVAL_ID, {
       rationale: "Please update the tests."
     });
-    expect(cacheMocks.revalidatePath).toHaveBeenCalledWith("/approvals");
-    expect(cacheMocks.revalidatePath).toHaveBeenCalledWith(`/approvals/${APPROVAL_ID}`);
+    // C-5 系統適用: action 内 revalidatePath は撤去済 (表示更新は client full reload)。回帰防止に非呼出を検証。
+    expect(cacheMocks.revalidatePath).not.toHaveBeenCalled();
   });
 });
 

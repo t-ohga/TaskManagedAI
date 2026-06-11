@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { BackendApiError } from "@/lib/api/client";
@@ -82,7 +81,6 @@ export async function updateProjectProfileAction(
 
   try {
     await updateProjectProfile(project_id, payload);
-    revalidatePath("/settings");
     return { kind: "ok", message: "プロジェクト基本情報を更新しました" };
   } catch (error: unknown) {
     const message =
@@ -116,7 +114,6 @@ export async function updateAutonomyLevelAction(
       parsed.data.autonomy_level,
       parsed.data.expected_autonomy_level
     );
-    revalidatePath("/settings");
     return {
       kind: "ok",
       message: `AI 自律レベルを ${updated.autonomy_level} に更新しました`
@@ -138,7 +135,8 @@ export async function updateAutonomyLevelAction(
 
 // =====================================================================
 // Q-2〜Q-4 (ADR-00037): データ管理 (破壊的操作)。owner gate は backend で enforce。
-// 全 mutation で revalidatePath。CAS / archived は 409 を user-facing message に写像。
+// C-5 系統適用: revalidatePath は撤去 (Next.js 16 + React 19 の isPending 固着 regression、表示更新は
+// client full reload に委譲、参照 #82289/#88767)。CAS / archived は 409 を user-facing message に写像。
 // =====================================================================
 
 const ArchiveFormSchema = z.object({
@@ -170,7 +168,6 @@ export async function archiveProjectAction(
       archived,
       parsed.data.expected_status
     );
-    revalidatePath("/settings");
     return {
       kind: "ok",
       message:
@@ -220,7 +217,6 @@ export async function bulkSoftDeleteAction(
       parsed.data.project_id,
       parsed.data.expected_active_count
     );
-    revalidatePath("/settings");
     if (result.soft_deleted_count === 0 || result.deleted_batch_id === null) {
       // no-op (active 0 件): batch は発行されない。
       return { kind: "ok", message: "削除対象のアクティブ ticket はありませんでした。" };
@@ -274,7 +270,6 @@ export async function restoreBatchAction(
       parsed.data.project_id,
       parsed.data.deleted_batch_id
     );
-    revalidatePath("/settings");
     if (result.restored_count === 0) {
       return {
         kind: "ok",
@@ -374,7 +369,6 @@ export async function importTicketsAction(
         json: parsed.data.tickets_json
       };
     }
-    revalidatePath("/settings");
     return {
       kind: "ok",
       message: `${result.imported_count} 件の ticket をインポートしました。`

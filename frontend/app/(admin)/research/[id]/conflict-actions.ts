@@ -1,7 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-
 import { BackendApiError } from "@/lib/api/client";
 import { getCurrentProjectId } from "@/lib/api/session";
 import {
@@ -18,6 +16,11 @@ import { ConflictGroupStatusEnum } from "@/lib/domain/research-advanced";
  * project_id は server-owned (getCurrentProjectId、session current_project)。research_task_id /
  * claim_id / group_id は formData だが、backend が project/research_task 境界を 404/FK で enforce。
  * owner gate は backend (require_project_owner)。
+ *
+ * C-5 系統適用: Server Action 内 revalidatePath() は client transition の isPending を解除せず確率的に
+ * 未 commit になる Next.js 16 (16.2.6) + React 19 regression のため撤去。表示更新は呼び出し側の
+ * full reload (useDeferredRouterRefresh) に委譲 (撤去前: revalidate() = revalidatePath(`/research/${id}`))。
+ * 参照: vercel/next.js discussions #82289 / #88767。
  */
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -45,10 +48,6 @@ function mapError(error: unknown): string {
   return error instanceof Error ? error.message : "操作に失敗しました。";
 }
 
-function revalidate(researchTaskId: string): void {
-  revalidatePath(`/research/${researchTaskId}`);
-}
-
 export async function createConflictGroupAction(
   _prev: ConflictActionState,
   formData: FormData
@@ -64,7 +63,6 @@ export async function createConflictGroupAction(
   try {
     const projectId = await getCurrentProjectId();
     await createConflictGroup(projectId, researchTaskId, { title });
-    revalidate(researchTaskId);
     return { kind: "ok", message: "矛盾グループを作成しました。" };
   } catch (error) {
     return { kind: "error", message: mapError(error) };
@@ -97,7 +95,6 @@ export async function setConflictGroupStatusAction(
       status: statusParsed.data,
       resolution_note: noteRaw.length > 0 ? noteRaw : null
     });
-    revalidate(researchTaskId);
     return { kind: "ok", message: "矛盾グループの状態を更新しました。" };
   } catch (error) {
     return { kind: "error", message: mapError(error) };
@@ -117,7 +114,6 @@ export async function assignClaimAction(
   try {
     const projectId = await getCurrentProjectId();
     await assignClaimToConflictGroup(projectId, researchTaskId, groupId, claimId);
-    revalidate(researchTaskId);
     return { kind: "ok", message: "主張を矛盾グループに割り当てました。" };
   } catch (error) {
     return { kind: "error", message: mapError(error) };
@@ -137,7 +133,6 @@ export async function unassignClaimAction(
   try {
     const projectId = await getCurrentProjectId();
     await unassignClaimFromConflictGroup(projectId, researchTaskId, groupId, claimId);
-    revalidate(researchTaskId);
     return { kind: "ok", message: "主張をグループから外しました。" };
   } catch (error) {
     return { kind: "error", message: mapError(error) };

@@ -6,8 +6,7 @@ import {
   formatRiskLevel
 } from "@/lib/i18n/approval-labels";
 
-import { ApprovalDecideForm } from "./_components/approval-decide-form";
-import { ApprovalRevisionRequestForm } from "./_components/approval-revision-request-form";
+import { ApprovalPendingActions } from "./_components/approval-pending-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -98,10 +97,7 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
               (承認 / 却下 / 修正依頼) は印刷物に出さない (.no-print)。承認パケット / 監査用出力を
               操作 UI 混じりにしない (Codex adversarial R3 F-MEDIUM)。 */}
           {approval.status === "pending" ? (
-            <div className="no-print grid gap-4">
-              <ApprovalDecideForm approvalId={approval.id} initialStatus={approval.status} />
-              <ApprovalRevisionRequestForm approvalId={approval.id} initialStatus={approval.status} />
-            </div>
+            <ApprovalPendingActions approvalId={approval.id} initialStatus={approval.status} />
           ) : null}
         </aside>
       </div>

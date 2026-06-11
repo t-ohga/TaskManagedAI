@@ -1,7 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-
 import { BackendApiError } from "@/lib/api/client";
 import { getCurrentProjectId } from "@/lib/api/session";
 import { loadClaimProvenance, setEvidenceSourceTrust } from "@/lib/api/source-trust";
@@ -80,7 +78,6 @@ export async function setSourceTrustAction(
   _prev: SourceTrustActionState,
   formData: FormData
 ): Promise<SourceTrustActionState> {
-  const researchTaskId = String(formData.get("research_task_id") ?? "");
   const sourceId = String(formData.get("evidence_source_id") ?? "");
   const rawLevel = String(formData.get("trust_level") ?? "");
   const rawScore = String(formData.get("trust_score") ?? "").trim();
@@ -109,11 +106,10 @@ export async function setSourceTrustAction(
       trust_level: levelParsed === null ? null : levelParsed.data,
       trust_score: trustScore
     });
-    if (UUID_PATTERN.test(researchTaskId)) {
-      revalidatePath(`/research/${researchTaskId}`);
-    } else {
-      revalidatePath("/research");
-    }
+    // C-5 系統適用: Server Action 内 revalidatePath() は client transition の isPending を解除せず確率的に
+    // 未 commit になる Next.js 16 (16.2.6) + React 19 regression のため撤去。表示更新は呼び出し側の
+    // full reload (useDeferredRouterRefresh) に委譲 (撤去前: revalidatePath(`/research/${id}` or "/research"))。
+    // 参照: vercel/next.js discussions #82289 / #88767。
     return { kind: "ok", message: isClear ? "信頼度をクリアしました。" : "信頼度を設定しました。" };
   } catch (error) {
     return { kind: "error", message: mapError(error) };

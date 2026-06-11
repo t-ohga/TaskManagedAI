@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { markNotificationReadAction } from "../_actions/mark-read";
@@ -15,13 +14,14 @@ import {
   formatNotificationRequiredAction,
   formatNotificationSeverity
 } from "@/lib/i18n/notification-labels";
+import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 
 type NotificationTriageListItemProps = {
   notification: NotificationTriageItem;
 };
 
 export function NotificationTriageListItem({ notification }: NotificationTriageListItemProps) {
-  const router = useRouter();
+  const requestRefresh = useDeferredRouterRefresh();
   const [result, setResult] = useState<NotificationTriageActionResult | null>(null);
   const [isPending, startTransition] = useTransition();
   const isRead = notification.read_at !== null;
@@ -37,7 +37,8 @@ export function NotificationTriageListItem({ notification }: NotificationTriageL
         .then((nextResult) => {
           setResult(nextResult);
           if (nextResult.ok) {
-            router.refresh();
+            // C-5: action 側 revalidatePath 撤去のため client full reload で表示同期 (draft 源なし)
+            requestRefresh();
           }
         })
         .catch((error: unknown) => {
@@ -54,7 +55,7 @@ export function NotificationTriageListItem({ notification }: NotificationTriageL
     startTransition(() => {
       void markNotificationReadAction(formData)
         .then(() => {
-          router.refresh();
+          requestRefresh();
         })
         .catch((error: unknown) => {
           setResult({
