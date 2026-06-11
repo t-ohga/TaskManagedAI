@@ -106,26 +106,37 @@ describe("approvals print scope (Codex adversarial R3 F-MEDIUM regression guard)
   // print hide を .no-print 限定にしたため、各操作フォームは個別に .no-print が必要。
   // 承認詳細は「判定者/判定日時/理由 (判定メタデータ) は印刷に残るが、pending の判定/修正依頼
   // フォームは印刷物から消える」ことを source 構造で固定する (パケット/監査出力に操作 UI を混ぜない)。
+  // Codex auto-review P2 fix で操作 form は ApprovalPendingActions (sibling 協調 wrapper) に分離。
+  // .no-print container は wrapper 側に移ったため、page は委譲のみを検証する。
   const src = readFileSync(
     join(process.cwd(), "app/(admin)/approvals/[id]/page.tsx"),
     "utf8"
   );
+  const wrapperSrc = readFileSync(
+    join(process.cwd(), "app/(admin)/approvals/[id]/_components/approval-pending-actions.tsx"),
+    "utf8"
+  );
 
-  it("keeps decision metadata printable (not wrapped in .no-print)", () => {
-    // 判定メタデータの DetailRow (判定者) は no-print より前に現れる = 印刷対象。
+  it("keeps decision metadata printable and delegates pending forms to the no-print wrapper", () => {
+    // 判定メタデータの DetailRow (判定者) は印刷対象。操作 form 本体 (ApprovalDecideForm) を
+    // page に直接置かず ApprovalPendingActions へ委譲する (印刷除外を wrapper の .no-print に集約)。
     const metaIndex = src.indexOf('label="判定者"');
-    const noPrintIndex = src.indexOf("no-print");
+    // import 文ではなく JSX 描画位置 (<ApprovalPendingActions) で順序を見る。
+    const actionsIndex = src.indexOf("<ApprovalPendingActions");
     expect(metaIndex).toBeGreaterThanOrEqual(0);
-    expect(noPrintIndex).toBeGreaterThanOrEqual(0);
-    expect(metaIndex).toBeLessThan(noPrintIndex);
+    expect(actionsIndex).toBeGreaterThanOrEqual(0);
+    expect(metaIndex).toBeLessThan(actionsIndex);
+    // page に操作 form 本体を直接描画しない (no-print の外に漏らさない)。
+    expect(src).not.toContain("<ApprovalDecideForm");
+    expect(src).not.toContain("<ApprovalRevisionRequestForm");
   });
 
   it("wraps the pending decision/revision forms in a .no-print container", () => {
-    // pending branch の操作フォームは no-print の div 内に置かれる。
-    const wrapStart = src.indexOf('className="no-print grid gap-4"');
+    // pending branch の操作フォームは ApprovalPendingActions 内の no-print の div に置かれる。
+    const wrapStart = wrapperSrc.indexOf('className="no-print grid gap-4"');
     expect(wrapStart).toBeGreaterThanOrEqual(0);
-    const wrapEnd = src.indexOf("</div>", wrapStart);
-    const wrapped = src.slice(wrapStart, wrapEnd);
+    const wrapEnd = wrapperSrc.indexOf("</div>", wrapStart);
+    const wrapped = wrapperSrc.slice(wrapStart, wrapEnd);
     expect(wrapped).toContain("ApprovalDecideForm");
     expect(wrapped).toContain("ApprovalRevisionRequestForm");
   });

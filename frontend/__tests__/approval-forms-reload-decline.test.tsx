@@ -10,6 +10,7 @@ import type * as FullReloadModule from "@/lib/full-reload";
 
 import { ApprovalDecideForm } from "../app/(admin)/approvals/[id]/_components/approval-decide-form";
 import { ApprovalRevisionRequestForm } from "../app/(admin)/approvals/[id]/_components/approval-revision-request-form";
+import { ApprovalPendingActions } from "../app/(admin)/approvals/[id]/_components/approval-pending-actions";
 
 // reload seam を mock。confirmDiscardUnsavedDrafts は test ごとに返り値を制御し、
 // 「reload 直前の破棄確認をユーザーが拒否 → fullReload 呼ばれない」状況を再現する。
@@ -161,5 +162,58 @@ describe("ApprovalRevisionRequestForm — reload 拒否後の terminal lock (R7)
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "修正依頼" })).toBeEnabled()
     );
+  });
+});
+
+describe("ApprovalPendingActions — sibling form 協調 (Codex auto-review P2)", () => {
+  it("判定 form の成功で sibling の修正依頼 form も無効化される", async () => {
+    decideSpy.mockResolvedValue({ ok: true, status: "approved" });
+    // reload を拒否させ、両 form が unmount されず mount のまま残る状況で sibling 無効化を検証。
+    reloadConfirmReturn = false;
+
+    render(
+      <ApprovalPendingActions
+        approvalId="00000000-0000-4000-8000-000000007001"
+        initialStatus="pending"
+      />
+    );
+
+    const approveButton = screen.getByRole("button", { name: "承認" });
+    const revisionButton = screen.getByRole("button", { name: "修正依頼" });
+    expect(approveButton).toBeEnabled();
+    expect(revisionButton).toBeEnabled();
+
+    fireEvent.click(approveButton);
+    await waitFor(() => expect(decideSpy).toHaveBeenCalledTimes(1));
+
+    // 判定成功で判定 form (decided) と修正依頼 form (siblingTerminal) の両方が無効化される。
+    await waitFor(() => expect(screen.getByRole("button", { name: "承認" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "却下" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "修正依頼" })).toBeDisabled();
+    // sibling の action は一度も呼ばれない (stale な二重 terminal action を防ぐ)。
+    expect(revisionSpy).not.toHaveBeenCalled();
+  });
+
+  it("修正依頼 form の成功で sibling の判定 form も無効化される", async () => {
+    revisionSpy.mockResolvedValue({ ok: true, status: "pending" });
+    reloadConfirmReturn = false;
+
+    render(
+      <ApprovalPendingActions
+        approvalId="00000000-0000-4000-8000-000000007001"
+        initialStatus="pending"
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("修正理由"), {
+      target: { value: "再提出前に直す内容" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "修正依頼" }));
+    await waitFor(() => expect(revisionSpy).toHaveBeenCalledTimes(1));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "修正依頼" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "承認" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "却下" })).toBeDisabled();
+    expect(decideSpy).not.toHaveBeenCalled();
   });
 });

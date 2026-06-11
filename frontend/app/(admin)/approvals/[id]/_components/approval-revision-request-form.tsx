@@ -15,11 +15,18 @@ import {
 type ApprovalRevisionRequestFormProps = {
   approvalId: string;
   initialStatus: string;
+  // Codex auto-review P2: 同一 approval の判定 form と sibling。片方が terminal に成功すると
+  // approval が動くため、もう片方も無効化する。
+  siblingTerminal?: boolean;
+  // 自分が terminal 化したことを親に通知し、sibling form を無効化させる。
+  onTerminal?: () => void;
 };
 
 export function ApprovalRevisionRequestForm({
   approvalId,
-  initialStatus
+  initialStatus,
+  siblingTerminal = false,
+  onTerminal
 }: ApprovalRevisionRequestFormProps) {
   const requestRefresh = useDeferredRouterRefresh();
   const formRef = useRef<HTMLFormElement>(null);
@@ -60,6 +67,8 @@ export function ApprovalRevisionRequestForm({
             // R7: 修正依頼は terminal。reload 有無に依存せず requested で form を無効化する
             // (reload が別 draft の破棄確認でキャンセルされても dead button にならない)。
             setRequested(true);
+            // sibling (判定 form) も無効化させる (approval が terminal へ動いた)。
+            onTerminal?.();
             inFlightRef.current = false;
             requestRefresh();
           } else {
@@ -82,8 +91,8 @@ export function ApprovalRevisionRequestForm({
       // C-5: 依頼成功は full reload を伴うため、他領域の未保存 draft があれば mutation 前に破棄確認
       // (except=自form: 自分の修正理由入力では確認しない)。キャンセル時は action を実行しない。
       onSubmit={(event) => {
-        // in-flight 中 (inFlightRef) または依頼済み (requested) は再 submit を弾く。
-        if (inFlightRef.current || requested) {
+        // in-flight 中 (inFlightRef) / 依頼済み (requested) / sibling terminal は再 submit を弾く。
+        if (inFlightRef.current || requested || siblingTerminal) {
           event.preventDefault();
           return;
         }
@@ -100,7 +109,10 @@ export function ApprovalRevisionRequestForm({
       data-unsaved-guard=""
       data-dirty={dirty ? "true" : undefined}
     >
-      <fieldset className="grid gap-4" disabled={!canRequestRevision || isPending || requested}>
+      <fieldset
+        className="grid gap-4"
+        disabled={!canRequestRevision || isPending || requested || siblingTerminal}
+      >
         <legend className="text-base font-semibold">修正依頼</legend>
 
         <label className="grid gap-2 text-sm">

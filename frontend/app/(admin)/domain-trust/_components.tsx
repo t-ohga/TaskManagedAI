@@ -158,9 +158,42 @@ function AddForm({ onSuccess }: { readonly onSuccess: () => void }) {
 function DomainTrustRow({ entry, onSuccess }: { readonly entry: DomainTrust; readonly onSuccess: () => void }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const editFormRef = useRef<HTMLFormElement>(null);
-  // C-5: 編集中の trust_tier / rationale は full reload で失われ得る draft。
-  const [editDirty, setEditDirty] = useState(false);
-  const editDiscardRef = useDraftDiscardRef<HTMLFormElement>(() => setEditDirty(false), editFormRef);
+  const entryRationale = entry.rationale ?? "";
+  // C-5 / Codex auto-review P2: trust_tier / rationale を controlled state で持つ。React 19 の form
+  // action は完了後に uncontrolled field を defaultValue へ自動 reset するが、保存成功後に reload が
+  // 別 draft 確認でキャンセルされると prop (entry) は古いまま残り、旧値へ巻き戻りつつ dirty も解除済に
+  // なる → 「stale 値の再 save が保存済み trust を revert」する。controlled 化 + 保存済み値の baseline
+  // 追従 (effectiveTier/effectiveRationale) で、reload 有無に依存せず保存後も saved 値を表示・送信する。
+  const [tierValue, setTierValue] = useState<TrustTier>(entry.trust_tier);
+  const [rationaleValue, setRationaleValue] = useState(entryRationale);
+  const [serverTierBaseline, setServerTierBaseline] = useState<TrustTier>(entry.trust_tier);
+  const [serverRationaleBaseline, setServerRationaleBaseline] = useState(entryRationale);
+  const [savedTier, setSavedTier] = useState<TrustTier | null>(null);
+  const [savedRationale, setSavedRationale] = useState<string | null>(null);
+  if (entry.trust_tier !== serverTierBaseline || entryRationale !== serverRationaleBaseline) {
+    // prop (server 値) が更新された (reload / 別 mutation) → controlled state を同期し saved を破棄。
+    // render 中の state 調整 (React 公式パターン)。effect ではないため set-state-in-effect 非該当。
+    setServerTierBaseline(entry.trust_tier);
+    setServerRationaleBaseline(entryRationale);
+    setTierValue(entry.trust_tier);
+    setRationaleValue(entryRationale);
+    setSavedTier(null);
+    setSavedRationale(null);
+  }
+  // 保存後 reload までの自分自身の dirty 抑止に使う基準 (reload 直前 confirm が自分を未保存と
+  // 誤検知して full reload を止めるのを防ぐ)。dirty 判定と discard reset に使う。
+  const effectiveTier = savedTier ?? entry.trust_tier;
+  const effectiveRationale = savedRationale ?? entryRationale;
+  const editDirty = tierValue !== effectiveTier || rationaleValue !== effectiveRationale;
+  // R9 (autonomy と同型対策): 保存済み値を「新 server baseline」として恒久信頼すると、server が
+  // 元の値へ戻った soft-refresh で saved を解除できず stale 値の再 save が server を巻き戻す穴になる。
+  // 保存後は edit form を lock し、stale baseline からの chained edit を物理禁止する (reload/remount
+  // or 真の prop 値変化で解除、fail-safe)。delete は独立操作なので lock しない。
+  const editLocked = savedTier !== null || savedRationale !== null;
+  const editDiscardRef = useDraftDiscardRef<HTMLFormElement>(() => {
+    setTierValue(effectiveTier);
+    setRationaleValue(effectiveRationale);
+  }, editFormRef);
   // adversarial R2/R4: pre-commit gate の承認済み draft 破棄関数を action ごとに保持 (shared ref は並行 submit で誤破棄)。
   const updateCommitRef = useRef<() => void>(noop);
   const deleteCommitRef = useRef<() => void>(noop);
@@ -170,14 +203,14 @@ function DomainTrustRow({ entry, onSuccess }: { readonly entry: DomainTrust; rea
     ref.current = noop;
     onSuccess();
   };
-  // 編集 form は成功時に form.reset() しない (defaultValue=entry prop で巻き戻る、F-001)。代わりに自分の
-  // dirty だけを wrapper 内 (成功確定後 / requestRefresh 前) でクリアし、保存成功後の reload 直前 confirm が
-  // 自分自身を誤検知しないようにする (adversarial finding: saved-form-dirty が full reload を阻害し表示 stale 化)。
+  // 編集 form は controlled。成功時に保存値を baseline として記録し、effectiveTier/Rationale を更新する
+  // (reload 有無に依存せず保存後も saved 値を表示・送信、dirty も自然に解除されて reload 阻害しない)。
   const [updateState, updateAction, updatePending] = useActionState(
     async (prev: DomainTrustActionState, formData: FormData): Promise<DomainTrustActionState> => {
       const result = await updateDomainTrustAction(prev, formData);
       if (result.kind === "ok") {
-        setEditDirty(false);
+        setSavedTier(tierValue);
+        setSavedRationale(rationaleValue);
         finish(updateCommitRef);
       }
       return result;
@@ -207,7 +240,6 @@ function DomainTrustRow({ entry, onSuccess }: { readonly entry: DomainTrust; rea
       <form
         ref={editDiscardRef}
         action={updateAction}
-        onChange={() => setEditDirty(true)}
         onSubmit={(event) => {
           const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
           if (!approved) {
@@ -226,8 +258,9 @@ function DomainTrustRow({ entry, onSuccess }: { readonly entry: DomainTrust; rea
           <span className="font-medium">信頼度を変更</span>
           <select
             name="trust_tier"
-            defaultValue={entry.trust_tier}
-            disabled={anyPending}
+            value={tierValue}
+            onChange={(event) => setTierValue(event.target.value as TrustTier)}
+            disabled={anyPending || editLocked}
             className="rounded-md border border-line bg-canvas px-2 py-1 text-sm"
           >
             {TIER_OPTIONS.map((tier) => (
@@ -241,21 +274,29 @@ function DomainTrustRow({ entry, onSuccess }: { readonly entry: DomainTrust; rea
           <span className="font-medium">理由</span>
           <input
             name="rationale"
-            defaultValue={entry.rationale ?? ""}
+            value={rationaleValue}
+            onChange={(event) => setRationaleValue(event.target.value)}
             maxLength={1000}
-            disabled={anyPending}
+            disabled={anyPending || editLocked}
             className="rounded-md border border-line bg-canvas px-2 py-1 text-sm"
           />
         </label>
         <button
           type="submit"
-          disabled={anyPending}
+          disabled={anyPending || editLocked}
           className="rounded-md border border-line px-3 py-1 text-sm font-medium hover:bg-canvas disabled:opacity-60"
         >
           {updatePending ? "保存中..." : "保存"}
         </button>
       </form>
       <StatusMessage state={updateState} />
+      {editLocked ? (
+        // R9: 保存後 reload がキャンセルされ edit form が lock された状態。続けて編集するには
+        // 最新の server 値を取り直す必要があるため、再読み込みを促す (stale baseline で編集させない)。
+        <p role="status" className="text-xs text-muted-foreground">
+          保存しました。続けて編集するにはページを再読み込みしてください。
+        </p>
+      ) : null}
 
       {confirmDelete ? (
         <form

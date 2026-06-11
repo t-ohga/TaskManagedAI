@@ -15,9 +15,19 @@ import {
 type ApprovalDecideFormProps = {
   approvalId: string;
   initialStatus: string;
+  // Codex auto-review P2: 同一 approval の判定 form と修正依頼 form は sibling。片方が terminal
+  // mutation に成功すると approval は approved/rejected/invalidated へ動くため、もう片方も無効化する。
+  siblingTerminal?: boolean;
+  // 自分が terminal 化したことを親に通知し、sibling form を無効化させる。
+  onTerminal?: () => void;
 };
 
-export function ApprovalDecideForm({ approvalId, initialStatus }: ApprovalDecideFormProps) {
+export function ApprovalDecideForm({
+  approvalId,
+  initialStatus,
+  siblingTerminal = false,
+  onTerminal
+}: ApprovalDecideFormProps) {
   const requestRefresh = useDeferredRouterRefresh();
   const formRef = useRef<HTMLFormElement>(null);
   // uncontrolled textarea の draft 検知 (onChange で立てる)。full reload で失われ得る入力。
@@ -57,6 +67,8 @@ export function ApprovalDecideForm({ approvalId, initialStatus }: ApprovalDecide
             // R7: 判定は terminal。reload 有無に依存せず decided で form を無効化する
             // (reload が別 draft の破棄確認でキャンセルされても dead button にならない)。
             setDecided(true);
+            // sibling (修正依頼 form) も無効化させる (approval が terminal へ動いた)。
+            onTerminal?.();
             inFlightRef.current = false;
             requestRefresh();
           } else {
@@ -80,8 +92,8 @@ export function ApprovalDecideForm({ approvalId, initialStatus }: ApprovalDecide
       // C-5: 判定成功は full reload を伴うため、他領域の未保存 draft があれば mutation 前に破棄確認
       // (except=自form: 自分の理由入力では確認しない)。キャンセル時は action を実行しない。
       onSubmit={(event) => {
-        // in-flight 中 (inFlightRef) または判定済み (decided) は再 submit を弾く。
-        if (inFlightRef.current || decided) {
+        // in-flight 中 (inFlightRef) / 判定済み (decided) / sibling terminal は再 submit を弾く。
+        if (inFlightRef.current || decided || siblingTerminal) {
           event.preventDefault();
           return;
         }
@@ -97,7 +109,7 @@ export function ApprovalDecideForm({ approvalId, initialStatus }: ApprovalDecide
       data-unsaved-guard=""
       data-dirty={dirty ? "true" : undefined}
     >
-      <fieldset className="grid gap-4" disabled={!canDecide || isPending || decided}>
+      <fieldset className="grid gap-4" disabled={!canDecide || isPending || decided || siblingTerminal}>
         <legend className="text-base font-semibold">レビュー判定</legend>
 
         <label className="grid gap-2 text-sm">

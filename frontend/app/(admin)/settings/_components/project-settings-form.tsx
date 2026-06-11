@@ -85,7 +85,17 @@ export function ProjectSettingsForm({
     setAutonomyValue(autonomyLevel);
     setAutonomySaved(null);
   }
+  // R9 (Codex adversarial HIGH): 保存済み値を「新 baseline」として CAS expected に流用する設計は、
+  // freshness token が無い限り危険。元 prop が L0、save L2、その後 server が L0 へ戻る (別 owner が
+  // revert 等) と prop 値は baseline と同じ L0 のままで resync が発火せず、saved=L2 が解除されない →
+  // CAS expected が L2 のまま汚染され、AI 権限制御で 409 / 編集不能の stuck になる。
+  // 対策: CAS expected は **常に prop (server 由来)** を送り、保存成功後は form を lock して stale
+  // baseline からの chained edit を物理的に禁止する (reload/remount or 真の prop 値変化で解除、fail-safe)。
+  // autonomySaved は「保存後 reload までの自分自身の dirty 抑止」(reload 直前 confirm が自分を未保存と
+  // 誤検知して full reload を止めるのを防ぐ) と lock 判定にのみ使う。
   const autonomyDirty = autonomyValue !== autonomyLevel && autonomyValue !== autonomySaved;
+  // 保存成功〜reload/remount (or 真の prop 値変化) までの terminal lock。chained CAS edit を禁止。
+  const autonomyLocked = autonomySaved !== null;
 
   // C-5: full reload で失われ得る未保存編集を draft guard に登録 (他 form の mutation 時に reload 直前 confirm)。
   // 編集 form のため成功時 reset せず (touched-field-only + CAS が巻き戻しを防ぐ)、reload で再構成。
@@ -247,9 +257,9 @@ export function ProjectSettingsForm({
         data-dirty={autonomyDirty ? "true" : undefined}
       >
         <input type="hidden" name="project_id" value={projectId} />
-        {/* compare-and-swap baseline: ユーザーが編集の基にした現在の server 値。 */}
+        {/* compare-and-swap baseline: 常に server 由来の prop を送る (保存済み値で汚染しない、R9)。 */}
         <input type="hidden" name="expected_autonomy_level" value={autonomyLevel} />
-        <fieldset className="grid gap-4" disabled={anyPending}>
+        <fieldset className="grid gap-4" disabled={anyPending || autonomyLocked}>
           <legend className="text-sm font-medium">AI 自律レベル</legend>
 
           <label className="grid gap-2 text-sm">
@@ -293,6 +303,13 @@ export function ProjectSettingsForm({
             </button>
           </div>
           <StatusMessage state={autonomyState} />
+          {autonomyLocked ? (
+            // R9: 保存後 reload がキャンセルされ form が lock された状態。続けて変更するには
+            // 最新の server 値を取り直す必要があるため、再読み込みを促す (stale baseline で編集させない)。
+            <p role="status" className="text-xs text-muted-foreground">
+              自律レベルを保存しました。続けて変更するにはページを再読み込みしてください。
+            </p>
+          ) : null}
         </fieldset>
       </form>
     </div>

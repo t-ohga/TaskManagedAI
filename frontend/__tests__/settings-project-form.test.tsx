@@ -339,3 +339,58 @@ describe("ProjectSettingsForm autonomy dirty guard (M-3 / ADR-00035, Codex R6 HI
     confirmSpy.mockRestore();
   });
 });
+
+describe("ProjectSettingsForm autonomy lock-after-save (Codex adversarial R9 HIGH)", () => {
+  // R9: 保存済み値を CAS baseline に流用すると、server が元値へ戻る soft-refresh で saved を解除できず
+  // CAS expected が汚染され AI 権限制御が編集不能になる穴がある。対策として CAS expected は常に prop を
+  // 送り、保存成功後は form を lock (reload/remount で解除) して stale baseline からの chained edit を
+  // 物理禁止する。本 test はその 2 点 (expected=prop / 保存後 lock) を固定する。
+  it("CAS expected は常に prop を送り、保存成功後は form を lock して chained edit を禁止する", async () => {
+    vi.mocked(updateAutonomyLevelAction).mockResolvedValue({ kind: "ok", message: "更新しました" });
+
+    const { container } = render(
+      <ProjectSettingsForm
+        projectId={PROJECT_ID}
+        name="My Project"
+        description={null}
+        autonomyLevel="L0"
+        policyProfile="default"
+      />
+    );
+
+    const select = screen.getByRole("combobox", { name: /autonomy_level/u });
+    const expectedInput = () =>
+      container.querySelector('input[name="expected_autonomy_level"]');
+
+    // 初期: prop が CAS expected、form は編集可。
+    expect(expectedInput()).toHaveValue("L0");
+    expect(select).toBeEnabled();
+
+    // L0 → L2 へ変更して保存成功。
+    fireEvent.change(select, { target: { value: "L2" } });
+    fireEvent.click(screen.getByRole("button", { name: "自律レベルを保存" }));
+    await waitFor(() =>
+      expect(vi.mocked(updateAutonomyLevelAction)).toHaveBeenCalledTimes(1)
+    );
+
+    // 1 回目 submit の CAS expected は server 由来の prop (L0)、saved 値で汚染しない。
+    const firstFormData = vi.mocked(updateAutonomyLevelAction).mock.calls[0]?.[1] as
+      | FormData
+      | undefined;
+    expect(firstFormData?.get("expected_autonomy_level")).toBe("L0");
+    expect(firstFormData?.get("autonomy_level")).toBe("L2");
+
+    // 保存後 (reload は mock で no-op = reload 拒否相当) は form が lock され、select / 保存ボタンが
+    // disabled になる → stale baseline からの chained CAS edit が物理的に不能。
+    await waitFor(() => expect(select).toBeDisabled());
+    expect(screen.getByRole("button", { name: "自律レベルを保存" })).toBeDisabled();
+    // 再読み込みを促すメッセージを表示する。
+    expect(screen.getByText(/続けて変更するにはページを再読み込み/u)).toBeVisible();
+    // CAS expected は prop のまま (L2 に汚染されない)。
+    expect(expectedInput()).toHaveValue("L0");
+  });
+
+  // lock の解除 (server prop が真に更新されたら resync して再び編集可能) は、prop 更新時の
+  // controlled state 同期を検証する既存 test "does not resend a stale autonomy level after a
+  // props update" がカバーする (resync block が autonomySaved=null も同時にクリアし lock を外す)。
+});
