@@ -17,6 +17,7 @@ import {
   loadProjects,
   loadProjectsAllView,
   loadTickets,
+  type LoadTicketsOptions,
   type ProjectBoardItem,
   type TicketItem
 } from "@/lib/api/tickets-board";
@@ -57,10 +58,15 @@ const STATUS_TO_KANBAN: Record<string, KanbanGroup> = {
   cancelled: "done",
 };
 
+// ADR-00054 (code review fix): status は backend へ渡すため、URL 由来の未知値を allowlist で弾く。
+// 未知 status を backend (ticket_status: TicketStatus) に渡すと 422 になり、selected project は error
+// boundary / all view は全 project omission で空画面に昇格する。未知値は「絞り込みなし」として扱う。
+const VALID_TICKET_STATUSES = new Set(Object.keys(STATUS_TO_KANBAN));
+
 const KANBAN_COLUMNS: { key: KanbanGroup; title: string; color: string; hint: string }[] = [
   { key: "todo", title: "未着手", color: "bg-blue-50 dark:bg-blue-950/40", hint: "新しいチケットがここに入ります" },
   { key: "active", title: "進行中", color: "bg-amber-50 dark:bg-amber-950/40", hint: "作業中・レビュー中・ブロック中のチケット" },
-  { key: "done", title: "完了", color: "bg-emerald-50 dark:bg-emerald-950/40", hint: "完了・中止されたチケット" },
+  { key: "done", title: "完了", color: "bg-emerald-50 dark:bg-emerald-950/40", hint: "完了したチケット（中止は既定で非表示）" },
 ];
 
 function priorityBadge(priority: string | null | undefined) {
@@ -223,7 +229,10 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   const params = await searchParams;
   const selectedProject = params.project ?? "all";
   const searchQuery = params.q ?? "";
-  const statusFilter = params.status ?? "";
+  // ADR-00054 (code review fix): URL の未知 status は backend へ渡さず「絞り込みなし」に倒す
+  // (422 を error boundary / project omission に昇格させない)。
+  const rawStatusFilter = params.status ?? "";
+  const statusFilter = VALID_TICKET_STATUSES.has(rawStatusFilter) ? rawStatusFilter : "";
   const priorityFilter = params.priority ?? "";
   const rangeFilter = params.range ?? "";
   const tagFilter = params.tag ?? "";
@@ -298,6 +307,15 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   // projectActive: 各 ticket の project が active か (R4 F-001: archived project の ticket は
   // 期限強調しない、backend reminders の projects.status='active' と整合)。
   let allTickets: (TicketItem & { projectSlug: string; projectActive: boolean })[] = [];
+  // ADR-00054: status 絞り込みは backend (pagination 前、全件 in-memory) で適用する。statusFilter
+  // 指定時は exact filter、未指定の既定 board は中止を除外する。client-side status filter / cancelled
+  // 除外は撤去した (cap 越えの非対象 ticket を誤って隠さない、plan-review R1/R3)。
+  const ticketLoadOptions: LoadTicketsOptions = statusFilter
+    ? { status: statusFilter }
+    : { excludeCancelled: true };
+  // ADR-00054: status filter 前 (tag filter 後) の合計件数 (中止のみ/真の空 区別用) と truncation 集約。
+  let boardTotalUnfiltered = 0;
+  let boardTruncated = false;
   // tag 絞り込みは specific project でのみ backend query を使う (all view は project 混在で
   // tag scope が曖昧)。指定タグが無効 (404) のときは絞り込みを解除して全件を出し、UI で通知する。
   let tagFilterInvalid = false;
@@ -313,11 +331,13 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
       const pid = String((p as Record<string, unknown>).project_id ?? (p as Record<string, unknown>).id ?? "");
       if (!pid) continue;
       try {
-        const board = await loadTickets(pid);
+        const board = await loadTickets(pid, undefined, ticketLoadOptions);
         const projectActive = p.status === "active";
         allTickets.push(
           ...board.items.map((t) => ({ ...t, projectSlug: p.slug, projectActive }))
         );
+        boardTotalUnfiltered += board.totalUnfiltered;
+        if (board.truncated) boardTruncated = true;
       } catch {
         // all view は 1 project の一時障害で全体を落とさず、欠落を warning で可視化 (fail-soft)。
         omittedProjects += 1;
@@ -340,9 +360,11 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
       const projectActive = project.status === "active";
       if (tagFilter) {
         try {
-          const board = await loadTickets(pid, tagFilter);
+          const board = await loadTickets(pid, tagFilter, ticketLoadOptions);
           allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug, projectActive }));
+          boardTotalUnfiltered += board.totalUnfiltered;
           if (board.truncated) {
+            boardTruncated = true;
             tagFilterTruncated = { total: board.total, shown: board.items.length };
           }
         } catch (error) {
@@ -351,8 +373,10 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             // fallback の loadTickets も失敗を throw → error boundary に流す (fail-closed、R5 HIGH:
             // 「filter cleared, all displayed」を 0 件で見せない)。
             tagFilterInvalid = true;
-            const board = await loadTickets(pid);
+            const board = await loadTickets(pid, undefined, ticketLoadOptions);
             allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug, projectActive }));
+            boardTotalUnfiltered += board.totalUnfiltered;
+            if (board.truncated) boardTruncated = true;
           } else {
             // auth / backend / network 障害は「該当なし」と誤表示せず error boundary に流す
             // (fail-closed、Codex frontend R2 HIGH)。
@@ -362,8 +386,10 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
       } else {
         // selected-project load は fail-closed (loadTickets が throw → error boundary、R5 HIGH:
         // 障害を「ticket 0 件の project」と誤表示しない)。
-        const board = await loadTickets(pid);
+        const board = await loadTickets(pid, undefined, ticketLoadOptions);
         allTickets = board.items.map((t) => ({ ...t, projectSlug: project.slug, projectActive }));
+        boardTotalUnfiltered += board.totalUnfiltered;
+        if (board.truncated) boardTruncated = true;
       }
     }
   }
@@ -375,9 +401,9 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
       t.title.toLowerCase().includes(q) || (t.description?.toLowerCase().includes(q) ?? false)
     );
   }
-  if (statusFilter) {
-    filteredTickets = filteredTickets.filter((t) => t.status === statusFilter);
-  }
+  // ADR-00054: status 絞り込み (statusFilter 指定の exact / 既定 board の中止除外) は backend
+  // (pagination 前) で適用済のため、ここでの client-side status filter は撤去した。search /
+  // priority / range は引き続き client-side (pre-existing、cap 越えは truncation 警告で可視化)。
   if (priorityFilter) {
     filteredTickets = filteredTickets.filter((t) => t.priority === priorityFilter);
   }
@@ -416,6 +442,26 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
   const showProjectBadge = selectedProject === "all";
   const totalFiltered = filteredTickets.length;
   const totalAll = allTickets.length;
+  // ADR-00054 表示ルール:
+  // - 純粋な既定 view = statusFilter 未指定 AND q/priority/range 未指定 (client-side filter なし)。
+  //   この時のみ server count (allTickets=非中止) と実画面が一致し、cancelled-only/真の空 を区別できる。
+  const pureDefaultView =
+    !statusFilter && !searchQuery && !priorityFilter && !rangeFilter;
+  // - 純粋既定 view かつ非 truncated で、非中止が 0 件だが ticket 自体は存在 (=中止のみ) →
+  //   silent empty にせず hint を出す。文言は「現在の表示条件」scope (project 全体を断定しない)。
+  // - (code review fix) all view で project/ticket 取得が欠落 (omittedProjects / projectListDegraded)
+  //   している間は「中止のみ」と断定しない。読めなかった project に非中止がある可能性があり、
+  //   fail-soft 欠落 warning を優先する (誤った復旧行動を促さない)。
+  const cancelledOnlyEmpty =
+    pureDefaultView &&
+    !boardTruncated &&
+    omittedProjects === 0 &&
+    !projectListDegraded &&
+    totalAll === 0 &&
+    boardTotalUnfiltered > 0;
+  // - truncation 警告は board.truncated の時は常に出す (default / status=中止>200 / client filter を
+  //   一律カバー)。tag 専用の詳細警告 (tagFilterTruncated) がある時はそちらに委ねる。
+  const showBoardTruncatedWarning = boardTruncated && tagFilterTruncated === null;
 
   return (
     <section aria-label="チケット看板ボード" className="grid gap-4">
@@ -470,6 +516,21 @@ export default async function TicketsKanbanPage({ searchParams }: Props) {
             このタグには {tagFilterTruncated.total} 件のチケットがマッチしますが、最初の
             {tagFilterTruncated.shown} 件のみ表示しています。すべて確認するにはステータスや期間で
             さらに絞り込んでください。
+          </div>
+        ) : null}
+        {/* ADR-00054: board.truncated の時は常に不完全を可視化する (default / status=中止>200 /
+            client-side filter を一律カバー、cap 越えを silent partial にしない)。 */}
+        {showBoardTruncatedWarning ? (
+          <div role="status" className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
+            チケット件数が多いため一部のみ読み込んでいます。検索 / 期限 / 優先度の絞り込み結果や
+            件数は不完全な可能性があります。ステータスやタグでさらに絞り込んでください。
+          </div>
+        ) : null}
+        {/* ADR-00054: 純粋既定 view で表示対象が中止のみ (silent empty 回避)。文言は「現在の表示
+            条件」scope で project 全体を断定しない (tag/scope 由来の誤誘導を避ける)。 */}
+        {cancelledOnlyEmpty ? (
+          <div role="status" className="rounded-md border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 px-4 py-2 text-xs text-sky-700 dark:text-sky-300">
+            現在の表示条件では中止チケットのみです。ステータスで「中止」を選ぶと表示されます。
           </div>
         ) : null}
         {/* R10 F-001: 横断表示で project 一覧そのものが読めなかった (auth 失効 / backend 障害 /
