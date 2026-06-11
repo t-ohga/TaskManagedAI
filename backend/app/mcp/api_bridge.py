@@ -71,7 +71,9 @@ def _title_to_slug(title: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     if not slug:
         slug = "ticket"
-    return f"{slug}-{int(time.time()) % 100000}"
+    # time だけでは同一秒の同 title 2 件で (tenant, project, slug) unique 衝突する
+    # (idempotency_key=None は毎回新規作成のため)。uuid 断片で一意性を保証する。
+    return f"{slug}-{int(time.time()) % 100000}-{uuid4().hex[:6]}"
 
 
 async def bridge_ticket_list(

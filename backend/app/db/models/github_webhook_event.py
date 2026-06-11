@@ -100,9 +100,13 @@ class GitHubWebhookEvent(TenantIdMixin, CreatedAtMixin, Base):
             name="github_webhook_events_status_check",
         ),
         # status='quarantined' のときのみ reason NOT NULL かつ enum、accepted は reason NULL (R2 F-004)。
+        # `IS NOT NULL` を明示する: PostgreSQL の CHECK は NULL を「違反なし」扱いするため、これが無いと
+        # quarantined + reason NULL が `reason IN (...)` → NULL → CHECK 素通りで保存できてしまう
+        # (intent「quarantined のとき reason NOT NULL」と不一致、migration 0047 で tightening)。
         sa.CheckConstraint(
             "(status = 'accepted' AND quarantine_reason IS NULL) "
-            "OR (status = 'quarantined' AND quarantine_reason IN "
+            "OR (status = 'quarantined' AND quarantine_reason IS NOT NULL "
+            "AND quarantine_reason IN "
             "('unregistered_repo', 'repo_lookup_ambiguous', 'payload_shape_mismatch', "
             "'header_event_mismatch', 'parse_validation_failed'))",
             name="github_webhook_events_quarantine_reason_check",
