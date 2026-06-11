@@ -1,7 +1,10 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useActionState, useRef, useState, type RefObject } from "react";
+
+import { noop, prepareDiscardOnCommit } from "@/lib/full-reload";
+import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
+import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 
 import {
   archiveProjectAction,
@@ -59,19 +62,40 @@ export function DataManagementPanel({
   status,
   activeTicketCount
 }: DataManagementPanelProps) {
-  const router = useRouter();
+  // C-5: action 側 revalidatePath 撤去のため表示更新は client full reload。requestRefresh は安定参照 (F-005)。
+  const requestRefresh = useDeferredRouterRefresh();
   const archived = status === "archived";
 
   const [archiveConfirming, setArchiveConfirming] = useState(false);
   const [deleteConfirming, setDeleteConfirming] = useState(false);
   const [importJson, setImportJson] = useState("");
+  // C-5: full reload で失われ得る入力 (import JSON / 復元バッチ ID) を draft guard に登録。
+  // discard callback は同画面に startTransition 型 form がある場合のみ発火 (将来備え)。
+  const [restoreDirty, setRestoreDirty] = useState(false);
+  const importDiscardRef = useDraftDiscardRef<HTMLFormElement>(() => setImportJson(""));
+  const restoreDiscardRef = useDraftDiscardRef<HTMLFormElement>(() => setRestoreDirty(false));
+  // adversarial R2/R4: pre-commit gate の承認済み draft 破棄関数を action ごとに保持する。
+  // shared ref は並行 submit で別 action の draft を誤破棄するため per-action ref にする (R4)。
+  const archiveCommitRef = useRef<() => void>(noop);
+  const deleteCommitRef = useRef<() => void>(noop);
+  const restoreCommitRef = useRef<() => void>(noop);
+  const importCommitRef = useRef<() => void>(noop);
 
-  // confirm state の reset は action callback 内で行う (effect 内 setState を避ける、
-  // 既存 ProjectSettingsForm と同じ pattern)。effect は router.refresh() のみ担う。
+  // confirm state の reset は action callback 内で行う (effect 内 setState を避ける)。
+  // adversarial R3: 副作用は any-ok effect ではなく各 action wrapper で action-scoped に実行する
+  // (過去の ok state が別 action の error で再発火し、失敗操作の draft を成功扱いで破棄するのを防ぐ)。
+  const finish = (ref: RefObject<() => void>) => {
+    ref.current();
+    ref.current = noop;
+    requestRefresh();
+  };
   const [archiveState, archiveAction, archivePending] = useActionState(
     async (prev: SettingsActionState, formData: FormData): Promise<SettingsActionState> => {
       const result = await archiveProjectAction(prev, formData);
-      if (result.kind === "ok") setArchiveConfirming(false);
+      if (result.kind === "ok") {
+        setArchiveConfirming(false);
+        finish(archiveCommitRef);
+      }
       return result;
     },
     INITIAL_STATE
@@ -79,30 +103,38 @@ export function DataManagementPanel({
   const [deleteState, deleteAction, deletePending] = useActionState(
     async (prev: SettingsActionState, formData: FormData): Promise<SettingsActionState> => {
       const result = await bulkSoftDeleteAction(prev, formData);
-      if (result.kind === "ok") setDeleteConfirming(false);
+      if (result.kind === "ok") {
+        setDeleteConfirming(false);
+        finish(deleteCommitRef);
+      }
       return result;
     },
     INITIAL_STATE
   );
   const [restoreState, restoreAction, restorePending] = useActionState(
-    restoreBatchAction,
+    async (prev: SettingsActionState, formData: FormData): Promise<SettingsActionState> => {
+      const result = await restoreBatchAction(prev, formData);
+      if (result.kind === "ok") {
+        setRestoreDirty(false);
+        finish(restoreCommitRef);
+      }
+      return result;
+    },
     INITIAL_STATE
   );
   const [importState, importAction, importPending] = useActionState(
-    importTicketsAction,
+    async (prev: ImportActionState, formData: FormData): Promise<ImportActionState> => {
+      const result = await importTicketsAction(prev, formData);
+      if (result.kind === "ok") {
+        setImportJson("");
+        finish(importCommitRef);
+      }
+      return result;
+    },
     INITIAL_IMPORT_STATE
   );
-
-  useEffect(() => {
-    if (
-      archiveState.kind === "ok" ||
-      deleteState.kind === "ok" ||
-      restoreState.kind === "ok" ||
-      importState.kind === "ok"
-    ) {
-      router.refresh();
-    }
-  }, [archiveState, deleteState, restoreState, importState, router]);
+  // adversarial R4: 並行 submit を防ぐため、いずれかの mutation が pending 中は全 form の submit を block。
+  const anyPending = archivePending || deletePending || restorePending || importPending;
 
   // import: プレビュー成功かつ JSON が編集されていない場合のみ「実行」を許可する
   // (プレビュー後に textarea を編集したら再プレビューを要求し stale な確認での import を防ぐ)。
@@ -126,7 +158,19 @@ export function DataManagementPanel({
           凍結されます (アーカイブ解除で再開)。
         </p>
 
-        <form action={archiveAction} className="grid gap-3" data-testid="archive-form">
+        <form
+          action={archiveAction}
+          onSubmit={(event) => {
+            const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+            if (!approved) {
+              event.preventDefault();
+              return;
+            }
+            archiveCommitRef.current = commit;
+          }}
+          className="grid gap-3"
+          data-testid="archive-form"
+        >
           <input type="hidden" name="project_id" value={projectId} />
           {/* compare-and-swap baseline: 現在の status。別操作で変わっていれば 409。 */}
           <input type="hidden" name="expected_status" value={status} />
@@ -154,7 +198,7 @@ export function DataManagementPanel({
                 <button
                   type="submit"
                   className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-accent/90 disabled:opacity-60"
-                  disabled={archivePending}
+                  disabled={anyPending}
                 >
                   {archivePending
                     ? "処理中..."
@@ -196,7 +240,19 @@ export function DataManagementPanel({
             プロジェクトがアーカイブされているため一括削除は無効です。アーカイブを解除してください。
           </p>
         ) : (
-          <form action={deleteAction} className="grid gap-3" data-testid="bulk-delete-form">
+          <form
+            action={deleteAction}
+            onSubmit={(event) => {
+              const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+              if (!approved) {
+                event.preventDefault();
+                return;
+              }
+              deleteCommitRef.current = commit;
+            }}
+            className="grid gap-3"
+            data-testid="bulk-delete-form"
+          >
             <input type="hidden" name="project_id" value={projectId} />
             {/* CAS: 表示した件数を宣言。backend current と不一致なら 409。 */}
             <input
@@ -230,7 +286,7 @@ export function DataManagementPanel({
                   <button
                     type="submit"
                     className="rounded-md bg-rose-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-rose-700 disabled:opacity-60"
-                    disabled={deletePending}
+                    disabled={anyPending}
                   >
                     {deletePending ? "削除中..." : `${activeTicketCount} 件の削除を確定`}
                   </button>
@@ -266,7 +322,23 @@ export function DataManagementPanel({
             プロジェクトがアーカイブされているため復元は無効です。アーカイブを解除してください。
           </p>
         ) : (
-          <form action={restoreAction} className="grid gap-3" data-testid="restore-form">
+          <form
+            ref={restoreDiscardRef}
+            action={restoreAction}
+            onChange={() => setRestoreDirty(true)}
+            onSubmit={(event) => {
+              const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+              if (!approved) {
+                event.preventDefault();
+                return;
+              }
+              restoreCommitRef.current = commit;
+            }}
+            className="grid gap-3"
+            data-testid="restore-form"
+            data-unsaved-guard=""
+            data-dirty={restoreDirty ? "true" : undefined}
+          >
             <input type="hidden" name="project_id" value={projectId} />
             <label className="grid gap-2 text-sm">
               <span className="font-medium">復元バッチ ID (UUID)</span>
@@ -280,7 +352,7 @@ export function DataManagementPanel({
               <button
                 type="submit"
                 className="rounded-md border border-line bg-panel px-4 py-2 text-sm font-medium text-ink shadow-sm hover:bg-canvas disabled:opacity-60"
-                disabled={restorePending}
+                disabled={anyPending}
               >
                 {restorePending ? "復元中..." : "バッチを復元"}
               </button>
@@ -309,7 +381,22 @@ export function DataManagementPanel({
             プロジェクトがアーカイブされているためインポートは無効です。アーカイブを解除してください。
           </p>
         ) : (
-          <form action={importAction} className="grid gap-3" data-testid="import-form">
+          <form
+            ref={importDiscardRef}
+            action={importAction}
+            onSubmit={(event) => {
+              const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+              if (!approved) {
+                event.preventDefault();
+                return;
+              }
+              importCommitRef.current = commit;
+            }}
+            className="grid gap-3"
+            data-testid="import-form"
+            data-unsaved-guard=""
+            data-dirty={importJson.trim() ? "true" : undefined}
+          >
             <input type="hidden" name="project_id" value={projectId} />
             <input type="hidden" name="tickets_json" value={importJson} />
             <label className="grid gap-2 text-sm">
@@ -330,7 +417,7 @@ export function DataManagementPanel({
                 name="dry_run"
                 value="true"
                 className="rounded-md border border-line bg-panel px-4 py-2 text-sm font-medium text-ink shadow-sm hover:bg-canvas disabled:opacity-60"
-                disabled={importPending || importJson.trim().length === 0}
+                disabled={anyPending || importJson.trim().length === 0}
               >
                 {importPending ? "検証中..." : "プレビュー (検証のみ)"}
               </button>
@@ -339,7 +426,7 @@ export function DataManagementPanel({
                 name="dry_run"
                 value="false"
                 className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-accent/90 disabled:opacity-60"
-                disabled={importPending || !importPreviewValidForCurrentJson}
+                disabled={anyPending || !importPreviewValidForCurrentJson}
               >
                 {importPending ? "インポート中..." : "インポートを実行"}
               </button>

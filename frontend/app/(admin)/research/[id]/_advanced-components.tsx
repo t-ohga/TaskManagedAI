@@ -1,7 +1,6 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useActionState, useEffect, useRef, useState, type RefObject } from "react";
 
 import {
   conflictStatusLabel,
@@ -15,6 +14,9 @@ import {
   type EvidenceDomainTrust,
   type ResearchAdvancedSummary
 } from "@/lib/domain/research-advanced";
+import { noop, prepareDiscardOnCommit } from "@/lib/full-reload";
+import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
+import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 
 import {
   assignClaimAction,
@@ -70,12 +72,48 @@ function StatusBadge({ status }: { readonly status: ConflictGroup["status"] }) {
 }
 
 function CreateGroupForm({ researchTaskId, onSuccess }: { readonly researchTaskId: string; readonly onSuccess: () => void }) {
-  const [state, action, pending] = useActionState(createConflictGroupAction, INITIAL);
+  const formRef = useRef<HTMLFormElement>(null);
+  // C-5: full reload で失われ得る入力 (グループ名) を draft guard に登録。
+  const [dirty, setDirty] = useState(false);
+  const discardGuardRef = useDraftDiscardRef<HTMLFormElement>(() => setDirty(false), formRef);
+  const commitDiscardRef = useRef<() => void>(noop);
+  // 成功時の入力クリアは action wrapper 内で行う (effect 内 setState を避ける、comment-form と同 pattern)。
+  const [state, action, pending] = useActionState(
+    async (prev: ConflictActionState, formData: FormData): Promise<ConflictActionState> => {
+      const result = await createConflictGroupAction(prev, formData);
+      if (result.kind === "ok") {
+        formRef.current?.reset();
+        setDirty(false);
+      }
+      return result;
+    },
+    INITIAL
+  );
   useEffect(() => {
-    if (state.kind === "ok") onSuccess();
+    if (state.kind === "ok") {
+      commitDiscardRef.current();
+      commitDiscardRef.current = noop;
+      onSuccess();
+    }
   }, [state, onSuccess]);
   return (
-    <form action={action} className="flex flex-wrap items-end gap-2 rounded-md border border-line bg-canvas p-3" data-testid="conflict-group-create-form">
+    <form
+      ref={discardGuardRef}
+      action={action}
+      onChange={() => setDirty(true)}
+      onSubmit={(event) => {
+        const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+        if (!approved) {
+          event.preventDefault();
+          return;
+        }
+        commitDiscardRef.current = commit;
+      }}
+      className="flex flex-wrap items-end gap-2 rounded-md border border-line bg-canvas p-3"
+      data-testid="conflict-group-create-form"
+      data-unsaved-guard=""
+      data-dirty={dirty ? "true" : undefined}
+    >
       <input type="hidden" name="research_task_id" value={researchTaskId} />
       <label className="grid gap-1 text-xs flex-1 min-w-48">
         <span className="font-medium">新しい矛盾グループ</span>
@@ -101,12 +139,46 @@ function CreateGroupForm({ researchTaskId, onSuccess }: { readonly researchTaskI
 }
 
 function GroupStatusForm({ researchTaskId, group, onSuccess }: { readonly researchTaskId: string; readonly group: ConflictGroup; readonly onSuccess: () => void }) {
-  const [state, action, pending] = useActionState(setConflictGroupStatusAction, INITIAL);
+  const formRef = useRef<HTMLFormElement>(null);
+  // C-5: 編集中の状態 / 解決メモは full reload で失われ得る draft。group は独立のため巻き戻しは group 単位で閉じる。
+  const [dirty, setDirty] = useState(false);
+  const discardGuardRef = useDraftDiscardRef<HTMLFormElement>(() => setDirty(false), formRef);
+  const commitDiscardRef = useRef<() => void>(noop);
+  // 編集 form は成功時 reset しない (defaultValue=group prop で巻き戻る、F-001)。自分の dirty だけ wrapper で
+  // クリアし保存成功後の reload を自分自身が阻害しないようにする (adversarial finding)。
+  const [state, action, pending] = useActionState(
+    async (prev: ConflictActionState, formData: FormData): Promise<ConflictActionState> => {
+      const result = await setConflictGroupStatusAction(prev, formData);
+      if (result.kind === "ok") setDirty(false);
+      return result;
+    },
+    INITIAL
+  );
   useEffect(() => {
-    if (state.kind === "ok") onSuccess();
+    if (state.kind === "ok") {
+      commitDiscardRef.current();
+      commitDiscardRef.current = noop;
+      onSuccess();
+    }
   }, [state, onSuccess]);
   return (
-    <form action={action} className="flex flex-wrap items-end gap-2" data-testid="conflict-group-status-form">
+    <form
+      ref={discardGuardRef}
+      action={action}
+      onChange={() => setDirty(true)}
+      onSubmit={(event) => {
+        const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+        if (!approved) {
+          event.preventDefault();
+          return;
+        }
+        commitDiscardRef.current = commit;
+      }}
+      className="flex flex-wrap items-end gap-2"
+      data-testid="conflict-group-status-form"
+      data-unsaved-guard=""
+      data-dirty={dirty ? "true" : undefined}
+    >
       <input type="hidden" name="research_task_id" value={researchTaskId} />
       <input type="hidden" name="group_id" value={group.id} />
       <label className="grid gap-1 text-xs">
@@ -140,12 +212,42 @@ function CandidateRow({
   readonly groups: readonly ConflictGroup[];
   readonly onSuccess: () => void;
 }) {
-  const [assignState, assignAction, assignPending] = useActionState(assignClaimAction, INITIAL);
-  const [unassignState, unassignAction, unassignPending] = useActionState(unassignClaimAction, INITIAL);
-  useEffect(() => {
-    if (assignState.kind === "ok" || unassignState.kind === "ok") onSuccess();
-  }, [assignState, unassignState, onSuccess]);
+  const assignFormRef = useRef<HTMLFormElement>(null);
+  // C-5: 割当先選択は full reload で失われ得る draft (assign form のみ、unassign は hidden)。
+  const [assignDirty, setAssignDirty] = useState(false);
+  const assignDiscardRef = useDraftDiscardRef<HTMLFormElement>(() => setAssignDirty(false), assignFormRef);
+  const assignCommitRef = useRef<() => void>(noop);
+  const unassignCommitRef = useRef<() => void>(noop);
+  // adversarial R3: 副作用は any-ok effect ではなく各 action wrapper で action-scoped に実行する。
+  const finish = (ref: RefObject<() => void>) => {
+    ref.current();
+    ref.current = noop;
+    onSuccess();
+  };
+  // assign form は成功時 reset しない (defaultValue=firstAssignable で巻き戻る、F-001)。自分の dirty だけ
+  // wrapper でクリアし保存成功後の reload を自分自身が阻害しないようにする (adversarial finding)。
+  const [assignState, assignAction, assignPending] = useActionState(
+    async (prev: ConflictActionState, formData: FormData): Promise<ConflictActionState> => {
+      const result = await assignClaimAction(prev, formData);
+      if (result.kind === "ok") {
+        setAssignDirty(false);
+        finish(assignCommitRef);
+      }
+      return result;
+    },
+    INITIAL
+  );
+  const [unassignState, unassignAction, unassignPending] = useActionState(
+    async (prev: ConflictActionState, formData: FormData): Promise<ConflictActionState> => {
+      const result = await unassignClaimAction(prev, formData);
+      if (result.kind === "ok") finish(unassignCommitRef);
+      return result;
+    },
+    INITIAL
+  );
 
+  // adversarial R4: 並行 submit を防ぐため、いずれかの mutation が pending 中は両 form を block。
+  const anyPending = assignPending || unassignPending;
   const assignableGroups = groups.filter((g) => g.status !== "dismissed");
   const firstAssignable = assignableGroups[0];
 
@@ -158,30 +260,58 @@ function CandidateRow({
         </span>
       </div>
       {candidate.conflict_group_id ? (
-        <form action={unassignAction} className="flex items-center gap-2" data-testid="conflict-candidate-unassign-form">
+        <form
+          action={unassignAction}
+          onSubmit={(event) => {
+            const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+            if (!approved) {
+              event.preventDefault();
+              return;
+            }
+            unassignCommitRef.current = commit;
+          }}
+          className="flex items-center gap-2"
+          data-testid="conflict-candidate-unassign-form"
+        >
           <input type="hidden" name="research_task_id" value={researchTaskId} />
           <input type="hidden" name="group_id" value={candidate.conflict_group_id} />
           <input type="hidden" name="claim_id" value={candidate.claim_id} />
           <span className="text-xs text-muted-foreground">
             グループ {shortId(candidate.conflict_group_id)} に割当済み
           </span>
-          <button type="submit" disabled={unassignPending} className="rounded-md border border-line px-2 py-1 text-xs hover:bg-canvas disabled:opacity-60">
+          <button type="submit" disabled={anyPending} className="rounded-md border border-line px-2 py-1 text-xs hover:bg-canvas disabled:opacity-60">
             {unassignPending ? "解除中..." : "解除"}
           </button>
           <StatusMessage state={unassignState} />
         </form>
       ) : firstAssignable ? (
-        <form action={assignAction} className="flex flex-wrap items-center gap-2" data-testid="conflict-candidate-assign-form">
+        <form
+          ref={assignDiscardRef}
+          action={assignAction}
+          onChange={() => setAssignDirty(true)}
+          onSubmit={(event) => {
+            const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+            if (!approved) {
+              event.preventDefault();
+              return;
+            }
+            assignCommitRef.current = commit;
+          }}
+          className="flex flex-wrap items-center gap-2"
+          data-testid="conflict-candidate-assign-form"
+          data-unsaved-guard=""
+          data-dirty={assignDirty ? "true" : undefined}
+        >
           <input type="hidden" name="research_task_id" value={researchTaskId} />
           <input type="hidden" name="claim_id" value={candidate.claim_id} />
-          <select name="group_id" defaultValue={firstAssignable.id} disabled={assignPending} className="rounded-md border border-line bg-canvas px-2 py-1 text-xs">
+          <select name="group_id" defaultValue={firstAssignable.id} disabled={anyPending} className="rounded-md border border-line bg-canvas px-2 py-1 text-xs">
             {assignableGroups.map((g) => (
               <option key={g.id} value={g.id}>
                 {g.title}
               </option>
             ))}
           </select>
-          <button type="submit" disabled={assignPending} className="rounded-md border border-line px-2 py-1 text-xs hover:bg-canvas disabled:opacity-60">
+          <button type="submit" disabled={anyPending} className="rounded-md border border-line px-2 py-1 text-xs hover:bg-canvas disabled:opacity-60">
             {assignPending ? "割当中..." : "グループに割当"}
           </button>
           <StatusMessage state={assignState} />
@@ -215,8 +345,9 @@ export function ResearchAdvancedSection({
   readonly researchTaskId: string;
   readonly summary: ResearchAdvancedSummary;
 }) {
-  const router = useRouter();
-  const refresh = () => router.refresh();
+  // C-5: action 側 revalidatePath 撤去のため、表示更新は client full reload。
+  // requestRefresh は安定参照のため onSuccess に直接渡せる (effect 再発火による reload ループを防ぐ、F-005)。
+  const requestRefresh = useDeferredRouterRefresh();
 
   const coveragePct = Math.round(Math.max(0, Math.min(1, summary.relation_coverage)) * 100);
   const freshnessByClaim = new Map(summary.claim_freshness.map((f) => [f.claim_id, f]));
@@ -234,7 +365,7 @@ export function ResearchAdvancedSection({
         <h3 id="conflict-groups-heading" className="text-sm font-semibold">
           矛盾グループ
         </h3>
-        <CreateGroupForm researchTaskId={researchTaskId} onSuccess={refresh} />
+        <CreateGroupForm researchTaskId={researchTaskId} onSuccess={requestRefresh} />
         {summary.conflict_groups.length === 0 ? (
           <p className="text-sm text-muted-foreground">矛盾グループはまだありません。</p>
         ) : (
@@ -248,7 +379,7 @@ export function ResearchAdvancedSection({
                 {group.resolution_note ? (
                   <p className="text-xs text-muted-foreground">解決メモ: {group.resolution_note}</p>
                 ) : null}
-                <GroupStatusForm researchTaskId={researchTaskId} group={group} onSuccess={refresh} />
+                <GroupStatusForm researchTaskId={researchTaskId} group={group} onSuccess={requestRefresh} />
               </li>
             ))}
           </ul>
@@ -269,7 +400,7 @@ export function ResearchAdvancedSection({
                 researchTaskId={researchTaskId}
                 candidate={candidate}
                 groups={summary.conflict_groups}
-                onSuccess={refresh}
+                onSuccess={requestRefresh}
               />
             ))}
           </ul>

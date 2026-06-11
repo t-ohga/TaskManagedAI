@@ -1,7 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-
 import { BackendApiError } from "@/lib/api/client";
 import {
   createDomainTrust,
@@ -15,6 +13,11 @@ import { TrustTierEnum } from "@/lib/domain/research-advanced";
  *
  * tenant_id は server 側 session で resolve (caller-supplied なし)。owner gate は backend が enforce
  * (非 owner / service / agent は 403)。domain の厳密正規化も backend (normalize_domain)。
+ *
+ * C-5 系統適用: Server Action 内 revalidatePath() は client transition の isPending を解除せず確率的に
+ * 未 commit になる Next.js 16 (16.2.6) + React 19 regression のため撤去。表示更新は呼び出し側の
+ * full reload (useDeferredRouterRefresh) に委譲 (撤去前: 各 CRUD で revalidatePath("/domain-trust"))。
+ * 参照: vercel/next.js discussions #82289 / #88767。
  */
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -66,7 +69,6 @@ export async function createDomainTrustAction(
       trust_tier: tierParsed.data,
       rationale: rationaleRaw.length > 0 ? rationaleRaw : null
     });
-    revalidatePath("/domain-trust");
     return { kind: "ok", message: `ドメイン ${domain} の信頼設定を登録しました。` };
   } catch (error) {
     return { kind: "error", message: mapError(error) };
@@ -94,7 +96,6 @@ export async function updateDomainTrustAction(
       trust_tier: tierParsed.data,
       rationale: rationaleRaw.length > 0 ? rationaleRaw : null
     });
-    revalidatePath("/domain-trust");
     return { kind: "ok", message: "信頼設定を更新しました。" };
   } catch (error) {
     return { kind: "error", message: mapError(error) };
@@ -111,7 +112,6 @@ export async function deleteDomainTrustAction(
   }
   try {
     await deleteDomainTrust(entryId);
-    revalidatePath("/domain-trust");
     return { kind: "ok", message: "信頼設定を削除しました。" };
   } catch (error) {
     return { kind: "error", message: mapError(error) };

@@ -3,7 +3,7 @@
 // 親の selectedIds が空になっても失われないことを実証する。親は `bulkEnabled` (project view 固定、
 // selectedIds 非依存) で条件 render するため、clear 後も component は mount されたまま
 // `return null` になるだけ — tick state と effect は生存し、router.refresh() は確実に発火する。
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 
@@ -100,5 +100,63 @@ describe("BulkStatusChanger (C-5 deferred refresh)", () => {
     // commit 済み status を巻き戻せるため、gate は mutation 前)。
     expect(updateCalls).toHaveLength(0);
     expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("同 tick の二重 click は inFlightRef で 1 回だけ実行する (R6 同期 lock)", async () => {
+    render(<Harness />);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "closed" } });
+    const button = screen.getByRole("button", { name: /適用|変更|更新/ });
+
+    // 単一 act 内で 2 連続 dispatch することで、1 回目の startTransition で isPending=true に
+    // なっても **再 render (disabled 反映) が flush される前** に 2 回目の click を発火させる。
+    // isPending / disabled は次 render まで遅延するため、これが React 19 の sub-tick race を再現する。
+    // inFlightRef が無いと startTransition が二重起動し updateTicketAction が 2 回走る (二重 mutation)。
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    await waitFor(() => expect(reload).toHaveBeenCalled());
+    // 二重 click でも updateTicketAction は 1 回だけ (同期 lock が 2 回目を弾く)。
+    expect(updateCalls).toHaveLength(1);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("部分失敗時は lock を解放し再試行を許す (R6 失敗時 reset)", async () => {
+    const ngId = "00000000-0000-4000-8000-00000000c002";
+    failingIds.add(ngId);
+    render(<Harness ids={[ngId]} />);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "closed" } });
+    const button = screen.getByRole("button", { name: /適用|変更|更新/ });
+
+    fireEvent.click(button);
+    await screen.findByText(/1 件の更新に失敗/);
+    expect(updateCalls).toHaveLength(1);
+
+    // 失敗後は lock 解放済み → 再 click で再試行できる (lock が居残ると永久に再実行不能)。
+    failingIds.clear();
+    fireEvent.click(button);
+    await waitFor(() => expect(updateCalls).toHaveLength(2));
+    await waitFor(() => expect(reload).toHaveBeenCalled());
+  });
+
+  it("全件成功後も lock を解放し、bar が残れば再実行できる (R7 成功時 reset)", async () => {
+    // reload (full reload) が別 draft 確認でキャンセルされ bar が mount のまま残る状況を、
+    // onClear を no-op にして再現する (実際は selectedIds 空 → null だが、reload 拒否後に
+    // 再選択されると bar が再表示される。その時 lock が居残ると dead button になる)。
+    const id = "00000000-0000-4000-8000-00000000c001";
+    render(
+      <BulkStatusChanger selectedIds={[id]} onClear={vi.fn()} onSelectionChange={vi.fn()} />
+    );
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "closed" } });
+    const button = screen.getByRole("button", { name: /適用|変更|更新/ });
+
+    fireEvent.click(button);
+    await waitFor(() => expect(updateCalls).toHaveLength(1));
+    await waitFor(() => expect(reload).toHaveBeenCalled());
+
+    // 成功後も lock は解放されているので、bar が残っていれば次の操作を実行できる。
+    fireEvent.click(button);
+    await waitFor(() => expect(updateCalls).toHaveLength(2));
   });
 });

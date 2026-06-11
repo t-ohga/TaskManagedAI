@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requestApprovalRevision } from "@/lib/api/approvals";
@@ -39,8 +38,11 @@ export async function requestApprovalRevisionAction(
     const result = await requestApprovalRevision(parsedApprovalId.data, {
       rationale: parsedRationale.data
     });
-    revalidatePath("/approvals");
-    revalidatePath(`/approvals/${parsedApprovalId.data}`);
+    // C-5 系統適用: Server Action 内 revalidatePath() は client transition の isPending を解除せず
+    // 確率的に未 commit になる Next.js 16 (16.2.6) + React 19 regression。撤去し、表示更新は
+    // 呼び出し側の full reload (useDeferredRouterRefresh) に委譲する
+    // (撤去前: revalidatePath("/approvals") + revalidatePath(`/approvals/${id}`))。
+    // 参照: vercel/next.js discussions #82289 / #88767。
     return {
       ok: true,
       status: result.approval.status,

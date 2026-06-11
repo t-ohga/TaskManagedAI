@@ -65,7 +65,8 @@ describe("notification triage server actions", () => {
     expect(apiMocks.snoozeNotification).toHaveBeenCalledWith(notificationId, {
       snoozed_until: "2026-05-24T01:00:00.000Z"
     });
-    expect(cacheMocks.revalidatePath).toHaveBeenCalledWith("/notifications");
+    // C-5 系統適用: action 内 revalidatePath は撤去済 (表示更新は client full reload)。回帰防止に非呼出を検証。
+    expect(cacheMocks.revalidatePath).not.toHaveBeenCalled();
   });
 
   it("resolves without sending a free-form note body", async () => {
@@ -80,6 +81,7 @@ describe("notification triage server actions", () => {
     expect(apiMocks.resolveNotification).toHaveBeenCalledWith(notificationId, {
       resolution_note: null
     });
-    expect(cacheMocks.revalidatePath).toHaveBeenCalledWith("/notifications");
+    // C-5 系統適用: action 内 revalidatePath は撤去済 (表示更新は client full reload)。回帰防止に非呼出を検証。
+    expect(cacheMocks.revalidatePath).not.toHaveBeenCalled();
   });
 });

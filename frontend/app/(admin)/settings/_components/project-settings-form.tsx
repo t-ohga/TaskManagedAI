@@ -1,7 +1,10 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useActionState, useRef, useState, type RefObject } from "react";
+
+import { noop, prepareDiscardOnCommit } from "@/lib/full-reload";
+import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
+import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 
 import {
   updateAutonomyLevelAction,
@@ -53,7 +56,8 @@ export function ProjectSettingsForm({
   autonomyLevel,
   policyProfile
 }: ProjectSettingsFormProps) {
-  const router = useRouter();
+  // C-5: action 側 revalidatePath 撤去のため表示更新は client full reload。requestRefresh は安定参照 (F-005)。
+  const requestRefresh = useDeferredRouterRefresh();
 
   // Codex adversarial R4/R5 (MEDIUM): 基本情報フォームは name / description を両方持つが、
   // ユーザーが実際に編集した (touch した) field だけを送信する。これにより stale なタブから
@@ -71,13 +75,37 @@ export function ProjectSettingsForm({
   const [autonomyValue, setAutonomyValue] = useState<AutonomyLevel>(autonomyLevel);
   const [autonomyServerBaseline, setAutonomyServerBaseline] =
     useState<AutonomyLevel>(autonomyLevel);
+  // C-5 adversarial finding: 保存成功した autonomy をそのまま dirty 扱いすると、reload 直前 confirm が
+  // 自分自身を未保存と誤検知して full reload を止める。保存済み値を記録し dirty 判定から除外する。
+  const [autonomySaved, setAutonomySaved] = useState<AutonomyLevel | null>(null);
   if (autonomyLevel !== autonomyServerBaseline) {
     // server 値が変わった (refresh / 別タブ更新) → controlled state を同期し古い選択を破棄。
     // render 中の state 調整 (React 公式パターン)。effect ではないため set-state-in-effect 非該当。
     setAutonomyServerBaseline(autonomyLevel);
     setAutonomyValue(autonomyLevel);
+    setAutonomySaved(null);
   }
-  const autonomyDirty = autonomyValue !== autonomyLevel;
+  const autonomyDirty = autonomyValue !== autonomyLevel && autonomyValue !== autonomySaved;
+
+  // C-5: full reload で失われ得る未保存編集を draft guard に登録 (他 form の mutation 時に reload 直前 confirm)。
+  // 編集 form のため成功時 reset せず (touched-field-only + CAS が巻き戻しを防ぐ)、reload で再構成。
+  // discard callback は同画面に startTransition 型 form がある場合のみ発火 (将来備え)。
+  const profileDiscardRef = useDraftDiscardRef<HTMLFormElement>(() => {
+    setNameDirty(false);
+    setDescriptionDirty(false);
+  });
+  const autonomyDiscardRef = useDraftDiscardRef<HTMLFormElement>(() => {
+    setAutonomyValue(autonomyLevel);
+  });
+  // adversarial R2/R4: pre-commit gate の承認済み draft 破棄関数を action ごとに保持 (shared ref は並行 submit で誤破棄)。
+  const profileCommitRef = useRef<() => void>(noop);
+  const autonomyCommitRef = useRef<() => void>(noop);
+  // adversarial R3: 副作用は any-ok effect ではなく各 action wrapper で action-scoped に実行する。
+  const finish = (ref: RefObject<() => void>) => {
+    ref.current();
+    ref.current = noop;
+    requestRefresh();
+  };
 
   const [profileState, profileAction, profilePending] = useActionState(
     async (
@@ -114,6 +142,7 @@ export function ProjectSettingsForm({
         // する (effect 内 setState を避けるため action callback 内でリセットする)。
         setNameDirty(false);
         setDescriptionDirty(false);
+        finish(profileCommitRef);
       }
       return result;
     },
@@ -131,26 +160,40 @@ export function ProjectSettingsForm({
       if (!autonomyDirty) {
         return { kind: "error", message: "自律レベルは変更されていません" };
       }
-      return updateAutonomyLevelAction(prevState, formData);
+      const result = await updateAutonomyLevelAction(prevState, formData);
+      // adversarial finding: 保存成功した値を記録し autonomyDirty を解除 (reload を自分自身が阻害しない)。
+      if (result.kind === "ok") {
+        setAutonomySaved(autonomyValue);
+        finish(autonomyCommitRef);
+      }
+      return result;
     },
     INITIAL_STATE
   );
 
-  useEffect(() => {
-    if (profileState.kind === "ok" || autonomyState.kind === "ok") {
-      router.refresh();
-    }
-  }, [profileState, autonomyState, router]);
+  // adversarial R4: 並行 submit を防ぐため、いずれかの mutation が pending 中は両 form を block。
+  const anyPending = profilePending || autonomyPending;
 
   return (
     <div className="grid gap-6">
       <form
+        ref={profileDiscardRef}
         action={profileAction}
+        onSubmit={(event) => {
+          const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+          if (!approved) {
+            event.preventDefault();
+            return;
+          }
+          profileCommitRef.current = commit;
+        }}
         className="grid gap-4"
         data-testid="project-profile-form"
+        data-unsaved-guard=""
+        data-dirty={nameDirty || descriptionDirty ? "true" : undefined}
       >
         <input type="hidden" name="project_id" value={projectId} />
-        <fieldset className="grid gap-4" disabled={profilePending}>
+        <fieldset className="grid gap-4" disabled={anyPending}>
           <legend className="sr-only">プロジェクト基本情報</legend>
 
           <label className="grid gap-2 text-sm">
@@ -188,14 +231,25 @@ export function ProjectSettingsForm({
       </form>
 
       <form
+        ref={autonomyDiscardRef}
         action={autonomyAction}
+        onSubmit={(event) => {
+          const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+          if (!approved) {
+            event.preventDefault();
+            return;
+          }
+          autonomyCommitRef.current = commit;
+        }}
         className="grid gap-4 border-t border-line pt-6"
         data-testid="autonomy-level-form"
+        data-unsaved-guard=""
+        data-dirty={autonomyDirty ? "true" : undefined}
       >
         <input type="hidden" name="project_id" value={projectId} />
         {/* compare-and-swap baseline: ユーザーが編集の基にした現在の server 値。 */}
         <input type="hidden" name="expected_autonomy_level" value={autonomyLevel} />
-        <fieldset className="grid gap-4" disabled={autonomyPending}>
+        <fieldset className="grid gap-4" disabled={anyPending}>
           <legend className="text-sm font-medium">AI 自律レベル</legend>
 
           <label className="grid gap-2 text-sm">

@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ProjectSettingsForm } from "../app/(admin)/settings/_components/project-settings-form";
+import { fullReload } from "../lib/full-reload";
+import type * as FullReloadModule from "../lib/full-reload";
 import {
   updateAutonomyLevelAction,
   updateProjectProfileAction
@@ -16,6 +18,13 @@ vi.mock("../app/(admin)/settings/actions", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() })
 }));
+
+// C-5: useDeferredRouterRefresh は内部で fullReload (window.location.reload) を呼ぶため mock。
+// confirmDiscardUnsavedDrafts は実ロジックを使い、saved-form-dirty による false confirm を検証する。
+vi.mock("../lib/full-reload", async (importOriginal) => {
+  const actual = await importOriginal<typeof FullReloadModule>();
+  return { ...actual, fullReload: vi.fn() };
+});
 
 const PROJECT_ID = "00000000-0000-4000-8000-0000000cc001";
 
@@ -284,5 +293,49 @@ describe("ProjectSettingsForm autonomy dirty guard (M-3 / ADR-00035, Codex R6 HI
     });
     // stale な L3 を再送して server の L0 を巻き戻さない
     expect(vi.mocked(updateAutonomyLevelAction)).not.toHaveBeenCalled();
+  });
+
+  // C-5 adversarial finding: 保存成功した autonomy form 自身が dirty のまま残ると、reload 直前の
+  // confirmDiscardUnsavedDrafts が自分自身を未保存と誤検知し full reload を止めてしまう。
+  // 保存成功で自分の dirty を解除し、他に draft が無ければ confirm なしで reload へ進むことを固定する。
+  it("clears its own dirty after a successful autonomy save so reload is not blocked by a false confirm", async () => {
+    vi.mocked(updateAutonomyLevelAction).mockResolvedValueOnce({
+      kind: "ok",
+      message: "更新しました"
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const { container } = render(
+      <ProjectSettingsForm
+        projectId={PROJECT_ID}
+        name="My Project"
+        description={null}
+        autonomyLevel="L0"
+        policyProfile="default"
+      />
+    );
+
+    const select = screen.getByRole("combobox", { name: /autonomy_level/u });
+    fireEvent.change(select, { target: { value: "L2" } });
+
+    const autonomyForm = container.querySelector('[data-testid="autonomy-level-form"]');
+    expect(autonomyForm).toHaveAttribute("data-dirty", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "自律レベルを保存" }));
+
+    await waitFor(() => {
+      expect(vi.mocked(updateAutonomyLevelAction)).toHaveBeenCalledTimes(1);
+    });
+    // 保存成功で自分の dirty は解除される (修正前: dirty のまま残り false confirm を誘発)
+    await waitFor(() => {
+      expect(autonomyForm).not.toHaveAttribute("data-dirty");
+    });
+    // 他に未保存 draft が無いので、reload 直前の破棄確認は出ず full reload へ進む
+    await waitFor(() => {
+      expect(vi.mocked(fullReload)).toHaveBeenCalled();
+    });
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    confirmSpy.mockRestore();
   });
 });

@@ -5,8 +5,10 @@ import { useTransition } from "react";
 import { markNotificationReadAction } from "../_actions/mark-read";
 
 import type { NotificationItem } from "@/lib/api/notifications";
+import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 
 export function NotificationListItem({ notification }: { notification: NotificationItem }) {
+  const requestRefresh = useDeferredRouterRefresh();
   const [isPending, startTransition] = useTransition();
   const isRead = notification.read_at !== null;
 
@@ -28,8 +30,10 @@ export function NotificationListItem({ notification }: { notification: Notificat
         {!isRead ? (
           <form
             action={(formData) => {
-              startTransition(() => {
-                void markNotificationReadAction(formData);
+              startTransition(async () => {
+                await markNotificationReadAction(formData);
+                // C-5: action 側 revalidatePath 撤去のため client full reload で表示同期 (draft 源なし)
+                requestRefresh();
               });
             }}
           >
