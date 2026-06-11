@@ -163,6 +163,37 @@ describe("prepareDiscardOnCommit (R11: 破棄は成功時 commit のみ、失敗
     // 捕捉済みの旧 guard は破棄されるが、捕捉後に dirty 化した N は保持 (reload 直前 R7 再確認の対象)。
     expect(fresh.dataset.dirty).toBe("true");
   });
+
+  it("R12: 承認後に同じ捕捉 guard を編集したら commit は破棄せず dirty を残す (R7 へ委譲)", () => {
+    const form = mountGuard(true, '<input name="title" value="server-value" />');
+    const input = document.querySelector("input");
+    if (input) input.value = "approved-content";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const { approved, commit } = prepareDiscardOnCommit();
+    expect(approved).toBe(true);
+
+    // 承認後〜commit の間にユーザーが同じ draft を編集し続ける (cross-component の slow mutation 中)
+    if (input) input.value = "edited-after-approval";
+
+    commit();
+    // signature 不一致 → 破棄されず、編集内容と dirty が保持される (無確認破棄の封鎖)
+    expect((form as HTMLElement).dataset.dirty).toBe("true");
+    expect(input?.value).toBe("edited-after-approval");
+    expect(hasUnsavedDraft()).toBe(true);
+  });
+
+  it("R12: 承認後に編集せず commit すれば従来どおり破棄される (signature 一致)", () => {
+    const form = mountGuard(true, '<input name="title" value="server-value" />');
+    const input = document.querySelector("input");
+    if (input) input.value = "approved-content";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const { commit } = prepareDiscardOnCommit();
+    commit();
+    expect((form as HTMLElement).dataset.dirty).toBeUndefined();
+    expect(input?.value).toBe("server-value");
+  });
 });
 
 describe("fullReload (R2: 確認は pre-commit gate に移管済)", () => {
