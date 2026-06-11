@@ -4,6 +4,7 @@ import { useActionState, useEffect, useState } from "react";
 
 import { confirmDiscardUnsavedDrafts } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
+import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 
 import { MarkdownEditor } from "@/components/markdown-editor";
 
@@ -17,6 +18,9 @@ type CommentFormProps = {
 
 export function CommentForm({ ticketId, onSubmit }: CommentFormProps) {
   const [body, setBody] = useState("");
+  // R10 (Codex adversarial HIGH): data-dirty は body state 由来のため、discardDrafts() の
+  // DOM 操作だけでは次 render で draft が復活する。discard event で state を正本ごと破棄する。
+  const discardGuardRef = useDraftDiscardRef<HTMLFormElement>(() => setBody(""));
   const requestRefresh = useDeferredRouterRefresh();
   const [state, formAction, pending] = useActionState<CommentState, FormData>(
     async (_prev, formData) => {
@@ -38,6 +42,7 @@ export function CommentForm({ ticketId, onSubmit }: CommentFormProps) {
 
   return (
     <form
+      ref={discardGuardRef}
       action={formAction}
       // R2 (Codex adversarial HIGH): 投稿成功は reload を伴うため、未保存のチケット編集が
       // あれば mutation **前** に破棄確認する。キャンセル時は preventDefault で action 自体を

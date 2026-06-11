@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 
 import { confirmDiscardUnsavedDrafts } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
+import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 
 import { formatTicketPriority, formatTicketStatus } from "@/lib/i18n/ticket-labels";
 import { assigneeSelectOptions, type AssignableActor } from "@/lib/domain/assignee";
@@ -134,6 +135,15 @@ export function EditTicketForm({
   // window は構造的にゼロ。優先順位は resolveServerTicket (pure helper、回帰 test 対象) — snapshot は
   // 同一 ticket かつ props と同等以上に新しい間だけ正本、props が新しくなったら props に戻る。
   const serverTicket = resolveServerTicket(candidateSnapshot, ticket);
+
+  // R10 (Codex adversarial HIGH): form.reset() は MarkdownEditor の内部 state (常時 controlled
+  // render) を戻せないため、discard event で nonce を進めて form subtree を server 値で remount
+  // する (dirty 属性は discardDrafts が削除済み、native field は remount で defaultValue へ)。
+  const [discardNonce, setDiscardNonce] = useState(0);
+  const discardGuardRef = useDraftDiscardRef<HTMLFormElement>(() =>
+    setDiscardNonce((n) => n + 1)
+  );
+
   // R1 F-009: 現 assignee が候補一覧に無くても option に保持 (select が現在値を失わない)。
   // 保存後は snapshot の assignee を保持対象にする (props より新しい DB truth)。
   const assigneeOptions = assigneeSelectOptions(assignableActors, serverTicket.assignee_actor_id);
@@ -143,13 +153,16 @@ export function EditTicketForm({
     serverTicket.due_date ?? "",
     serverTicket.status,
     serverTicket.priority ?? "",
-    serverTicket.assignee_actor_id ?? ""
+    serverTicket.assignee_actor_id ?? "",
+    // R10: discard 回数も remount key に含める (固定 prefix 付き、NUL 区切りで field 値と衝突しない)
+    `discard:${discardNonce}`
     // separator は field 値に現れない NUL escape。隣接 field の値またぎ衝突を防ぐ。
   ].join("\u0000");
 
   return (
     <form
       key={serverTicketKey}
+      ref={discardGuardRef}
       action={formAction}
       // R3 (Codex adversarial): 未保存編集の検知は form 自身が input (bubble) で data-dirty を
       // 立てる (lib/full-reload.ts hasUnsavedTicketEdit が参照)。controlled な MarkdownEditor も

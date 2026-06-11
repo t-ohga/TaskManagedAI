@@ -2,6 +2,7 @@
 
 import { confirmDiscardUnsavedDrafts } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
+import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 import { useRef, useState, useTransition } from "react";
 
 import {
@@ -93,6 +94,18 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editColor, setEditColor] = useState<TagColor>("slate");
+
+  // R10 (Codex adversarial HIGH): create / rename の data-dirty は newName / editingId state 由来。
+  // discardDrafts() の DOM 操作だけでは次 render で draft が復活するため、discard event で
+  // state を正本ごと破棄する (mirrorRef で既存の except 用 object ref を維持)。
+  const createDiscardRef = useDraftDiscardRef<HTMLDivElement>(() => {
+    setNewName("");
+    setNewColor("slate");
+  }, createGuardRef);
+  const renameDiscardRef = useDraftDiscardRef<HTMLDivElement>(() => {
+    setEditingId(null);
+    setEditName("");
+  }, renameGuardRef);
 
   const currentIds = new Set(currentTags.map((t) => t.id));
   const available = allTags.filter((t) => !currentIds.has(t.id));
@@ -240,7 +253,7 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
       <div>
         {creating ? (
           <div
-            ref={createGuardRef}
+            ref={createDiscardRef}
             className="grid gap-2 rounded-md border border-line p-3"
             // R6: 新規タグ draft の guard 領域 (作成操作のみ except)。
             data-unsaved-guard=""
@@ -307,7 +320,7 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
               editingId === tag.id ? (
                 <div
                   key={tag.id}
-                  ref={renameGuardRef}
+                  ref={renameDiscardRef}
                   className="grid gap-2 rounded border border-line p-2"
                   // R6: rename draft の guard 領域 (rename 確定 / 編集中タグの削除のみ except)。
                   data-unsaved-guard=""

@@ -7,6 +7,7 @@ import type { Route } from "next";
 
 import { createTicketAction, type CreateTicketState } from "@/app/(admin)/tickets/actions";
 import { confirmDiscardUnsavedDrafts } from "@/lib/full-reload";
+import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 import { assigneeSelectOptions, type AssignableActor } from "@/lib/domain/assignee";
 import { MarkdownEditor } from "@/components/markdown-editor";
 
@@ -26,6 +27,17 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
   const [titleError, setTitleError] = useState<string | null>(null);
   const [slug, setSlug] = useState("ticket");
   const [state, formAction, pending] = useActionState(createTicketAction, initialState);
+
+  // R10 (Codex adversarial HIGH): form.reset() は MarkdownEditor の内部 state を戻せず、slug /
+  // titleError state も残る。discard event で state を初期化し、nonce remount で editor 内部
+  // state ごと破棄する (破棄後に title だけ入れて submit すると stale description が送信される
+  // 経路の封鎖)。
+  const [discardNonce, setDiscardNonce] = useState(0);
+  const discardGuardRef = useDraftDiscardRef<HTMLFormElement>(() => {
+    setTitleError(null);
+    setSlug("ticket");
+    setDiscardNonce((n) => n + 1);
+  });
 
   function deriveSlug(title: string): string {
     const base = title
@@ -75,6 +87,8 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
           {state.message}
         </div> : null}
       <form
+        key={`create-form-discard:${discardNonce}`}
+        ref={discardGuardRef}
         action={formAction}
         // R4 F-2 (Codex adversarial): 新規チケットの下書きも reload (一覧の一括変更等) で失われ得る
         // draft。汎用 guard convention (lib/full-reload.ts) に登録し、入力で data-dirty を立てる。

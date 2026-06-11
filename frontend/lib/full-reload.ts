@@ -18,6 +18,15 @@
  */
 const GUARD_SELECTOR = "[data-unsaved-guard]";
 
+/**
+ * R10 (Codex adversarial HIGH): discardDrafts() の DOM 操作 (dirty 削除 + form.reset()) は
+ * React state を正本とする draft (コメント body / タグ名 / MarkdownEditor 内部 state) を
+ * 破棄できない — controlled value は次 render で復活し、state 由来の data-dirty も再付与される。
+ * そのため discard 時に guard 要素へ本 event を dispatch し、各 component が listener
+ * (lib/use-draft-discard.ts) で **自身の React state を破棄**する。
+ */
+export const DRAFT_DISCARD_EVENT = "unsaved-draft:discard";
+
 export function hasUnsavedDraft(except?: Element | null): boolean {
   for (const guard of Array.from(document.querySelectorAll(GUARD_SELECTOR))) {
     if (!(guard instanceof HTMLElement)) {
@@ -79,6 +88,9 @@ function discardDrafts(except?: Element | null): void {
         form.reset();
       }
     }
+    // R10: React state 由来の draft は DOM 操作では消えない — component 側 listener に
+    // state 破棄を委譲する (上記 DRAFT_DISCARD_EVENT のコメント参照)。
+    guard.dispatchEvent(new CustomEvent(DRAFT_DISCARD_EVENT));
   }
 }
 
