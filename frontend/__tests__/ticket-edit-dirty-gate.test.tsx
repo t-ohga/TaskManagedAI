@@ -14,17 +14,26 @@ vi.mock("next/navigation", () => ({
   useRouter: () => routerMocks
 }));
 
-const updateCalls: unknown[] = [];
+// R14: action 実行中の副作用 (= ユーザーが mutation 中に draft を編集する状況) を test から注入する。
+// vi.hoisted で mock factory より先に初期化される共有 state を確保する。
+const shared = vi.hoisted(() => ({
+  updateCalls: [] as unknown[],
+  actionSideEffect: undefined as undefined | (() => void)
+}));
+const updateCalls = shared.updateCalls;
+// factory は hoist されるため shared (hoisted) のみ参照する literal を直接渡す。
 vi.mock("../app/(admin)/tickets/[id]/actions", () => ({
   updateTicketAction: async (_s: unknown, fd: FormData) => {
-    updateCalls.push(fd);
+    shared.updateCalls.push(fd);
+    shared.actionSideEffect?.();
     return { kind: "ok" as const, ticket_id: "x", ticket: null };
   }
 }));
 // delete button は alias import (@/app/...) 経由 — 同 module を alias でも mock する。
 vi.mock("@/app/(admin)/tickets/[id]/actions", () => ({
   updateTicketAction: async (_s: unknown, fd: FormData) => {
-    updateCalls.push(fd);
+    shared.updateCalls.push(fd);
+    shared.actionSideEffect?.();
     return { kind: "ok" as const, ticket_id: "x", ticket: null };
   }
 }));
@@ -186,5 +195,38 @@ describe("TicketDeleteButton (R3 F-2: pre-commit gate)", () => {
     fireEvent.click(confirmBtn);
     await waitFor(() => expect(updateCalls).toHaveLength(1));
     await waitFor(() => expect(routerMocks.push).toHaveBeenCalledWith("/tickets"));
+  });
+
+  it("R14: 承認後に draft を編集 (in-flight) → commit skip → 遷移前再確認を拒否で router.push しない", async () => {
+    render(
+      <>
+        <EditTicketForm
+          ticket={TICKET}
+          assignableActors={[]}
+          assignableActorsDegraded={false}
+          assignableActorsTruncated={false}
+        />
+        <TicketDeleteButton ticketId={TICKET.id} projectId="p" />
+      </>
+    );
+    const description = screen.getByLabelText("説明") as HTMLTextAreaElement;
+    fireEvent.change(description, { target: { value: "approved draft" } });
+
+    // action 実行中 (= 中止 mutation in-flight) に同じ draft を編集 → signature 変化で commit が skip。
+    shared.actionSideEffect = () => {
+      fireEvent.change(description, { target: { value: "edited after approval" } });
+    };
+    // pre-commit 承認 (true) → 遷移前 R7 再確認は拒否 (false)。
+    vi.spyOn(window, "confirm").mockReturnValueOnce(true).mockReturnValue(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "チケットを中止" }));
+    fireEvent.click(await screen.findByRole("button", { name: "中止する" }));
+
+    await waitFor(() => expect(updateCalls).toHaveLength(1)); // 中止 mutation は成功
+    await new Promise((r) => setTimeout(r, 50));
+    // post-approval 編集が commit で skip され dirty 残存 → 遷移前再確認で拒否 → 遷移せず draft 保持
+    expect(routerMocks.push).not.toHaveBeenCalled();
+    expect(description.value).toBe("edited after approval");
+    shared.actionSideEffect = undefined;
   });
 });

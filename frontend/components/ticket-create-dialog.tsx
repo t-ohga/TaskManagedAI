@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import type { Route } from "next";
 
 import { createTicketAction, type CreateTicketState } from "@/app/(admin)/tickets/actions";
-import { noop, prepareDiscardOnCommit } from "@/lib/full-reload";
+import { confirmDiscardUnsavedDrafts, noop, prepareDiscardOnCommit } from "@/lib/full-reload";
 import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 import { assigneeSelectOptions, type AssignableActor } from "@/lib/domain/assignee";
 import { MarkdownEditor } from "@/components/markdown-editor";
@@ -33,11 +33,13 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
   // state ごと破棄する (破棄後に title だけ入れて submit すると stale description が送信される
   // 経路の封鎖)。
   const [discardNonce, setDiscardNonce] = useState(0);
+  // R14: 作成成功後の R7 再確認で「作成済の自 form」を except するため、guard 要素を mirror 保持。
+  const formRef = useRef<HTMLFormElement | null>(null);
   const discardGuardRef = useDraftDiscardRef<HTMLFormElement>(() => {
     setTitleError(null);
     setSlug("ticket");
     setDiscardNonce((n) => n + 1);
-  });
+  }, formRef);
   // R11: 他領域 draft の破棄は作成成功時にのみ commit する (失敗時は draft 無傷)。
   const commitDiscardRef = useRef<() => void>(noop);
 
@@ -55,6 +57,11 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
       // R11: 成功確定後に捕捉済み他領域 draft を破棄してから遷移 (失敗時はここに来ない)。
       commitDiscardRef.current();
       commitDiscardRef.current = noop;
+      // R14 (Codex adversarial HIGH): 本 path も router.push 遷移で R7 最終再確認を通らない。
+      // 承認後に編集され commit() で skip された draft が遷移で無確認消失しないよう、遷移前に再確認。
+      // except=自 form (作成済の create form 自身は consume 済のため確認対象にしない)。
+      // 拒否時は遷移を中止 (作成は成功済、詳細 link で手動遷移可)。
+      if (!confirmDiscardUnsavedDrafts(formRef.current)) return;
       // G-5 (UI 監査 fix): 作成後は一覧 refresh ではなく作成したチケット詳細へ遷移する。
       // C-4 UX fix (Mac 実機検証): 旧版は 1.2s setTimeout 後に遷移していたが、action 成功後の
       // revalidatePath 再レンダーと effect cleanup が競合すると timer が発火せず「成功 banner +
