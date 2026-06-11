@@ -1,11 +1,13 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 
 import { createTicketAction, type CreateTicketState } from "@/app/(admin)/tickets/actions";
+import { confirmDiscardUnsavedDrafts, noop, prepareDiscardOnCommit } from "@/lib/full-reload";
+import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 import { assigneeSelectOptions, type AssignableActor } from "@/lib/domain/assignee";
 import { MarkdownEditor } from "@/components/markdown-editor";
 
@@ -26,6 +28,21 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
   const [slug, setSlug] = useState("ticket");
   const [state, formAction, pending] = useActionState(createTicketAction, initialState);
 
+  // R10 (Codex adversarial HIGH): form.reset() は MarkdownEditor の内部 state を戻せず、slug /
+  // titleError state も残る。discard event で state を初期化し、nonce remount で editor 内部
+  // state ごと破棄する (破棄後に title だけ入れて submit すると stale description が送信される
+  // 経路の封鎖)。
+  const [discardNonce, setDiscardNonce] = useState(0);
+  // R14: 作成成功後の R7 再確認で「作成済の自 form」を except するため、guard 要素を mirror 保持。
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const discardGuardRef = useDraftDiscardRef<HTMLFormElement>(() => {
+    setTitleError(null);
+    setSlug("ticket");
+    setDiscardNonce((n) => n + 1);
+  }, formRef);
+  // R11: 他領域 draft の破棄は作成成功時にのみ commit する (失敗時は draft 無傷)。
+  const commitDiscardRef = useRef<() => void>(noop);
+
   function deriveSlug(title: string): string {
     const base = title
       .toLowerCase()
@@ -37,6 +54,14 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
 
   useEffect(() => {
     if (state.kind === "ok") {
+      // R11: 成功確定後に捕捉済み他領域 draft を破棄してから遷移 (失敗時はここに来ない)。
+      commitDiscardRef.current();
+      commitDiscardRef.current = noop;
+      // R14 (Codex adversarial HIGH): 本 path も router.push 遷移で R7 最終再確認を通らない。
+      // 承認後に編集され commit() で skip された draft が遷移で無確認消失しないよう、遷移前に再確認。
+      // except=自 form (作成済の create form 自身は consume 済のため確認対象にしない)。
+      // 拒否時は遷移を中止 (作成は成功済、詳細 link で手動遷移可)。
+      if (!confirmDiscardUnsavedDrafts(formRef.current)) return;
       // G-5 (UI 監査 fix): 作成後は一覧 refresh ではなく作成したチケット詳細へ遷移する。
       // C-4 UX fix (Mac 実機検証): 旧版は 1.2s setTimeout 後に遷移していたが、action 成功後の
       // revalidatePath 再レンダーと effect cleanup が競合すると timer が発火せず「成功 banner +
@@ -73,7 +98,28 @@ export function TicketCreateDialog({ assignableActors = [] }: TicketCreateDialog
       {state.kind === "error" ? <div className="mb-3 rounded-md bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-700 dark:text-red-300">
           {state.message}
         </div> : null}
-      <form action={formAction} className="grid gap-3">
+      <form
+        key={`create-form-discard:${discardNonce}`}
+        ref={discardGuardRef}
+        action={formAction}
+        // R4 F-2 (Codex adversarial): 新規チケットの下書きも reload (一覧の一括変更等) で失われ得る
+        // draft。汎用 guard convention (lib/full-reload.ts) に登録し、入力で data-dirty を立てる。
+        // 作成 submit 自身は except=自 form で confirm を出さない (自分の draft の consume)。
+        onChange={(event) => {
+          event.currentTarget.dataset.dirty = "true";
+        }}
+        // R11: 確認のみ pre-commit、破棄は作成成功時に commit (失敗時は draft 無傷)。
+        onSubmit={(event) => {
+          const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+          if (!approved) {
+            event.preventDefault();
+            return;
+          }
+          commitDiscardRef.current = commit;
+        }}
+        data-unsaved-guard=""
+        className="grid gap-3"
+      >
         <input type="hidden" name="slug" value={slug} />
         <div>
           <label htmlFor="title" className="text-xs font-medium text-muted-foreground">

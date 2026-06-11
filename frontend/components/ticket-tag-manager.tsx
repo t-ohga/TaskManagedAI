@@ -1,7 +1,9 @@
 "use client";
 
+import { prepareDiscardOnCommit } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
-import { useState, useTransition } from "react";
+import { useDraftDiscardRef } from "@/lib/use-draft-discard";
+import { useRef, useState, useTransition } from "react";
 
 import {
   attachTagAction,
@@ -78,6 +80,11 @@ function ColorPicker({
 export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
   const requestRefresh = useDeferredRouterRefresh();
   const [isPending, startTransition] = useTransition();
+  // R6 (Codex adversarial HIGH): guard は create / rename を**個別領域**にする。root 全体を
+  // except すると attach/detach が同 panel 内の別 draft (新規タグ名 / rename 中) を gate なしで
+  // 破棄できるため、except は「その draft を実際に consume する操作」だけに渡す。
+  const createGuardRef = useRef<HTMLDivElement | null>(null);
+  const renameGuardRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [creating, setCreating] = useState(false);
@@ -88,14 +95,33 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
   const [editName, setEditName] = useState("");
   const [editColor, setEditColor] = useState<TagColor>("slate");
 
+  // R10 (Codex adversarial HIGH): create / rename の data-dirty は newName / editingId state 由来。
+  // discardDrafts() の DOM 操作だけでは次 render で draft が復活するため、discard event で
+  // state を正本ごと破棄する (mirrorRef で既存の except 用 object ref を維持)。
+  const createDiscardRef = useDraftDiscardRef<HTMLDivElement>(() => {
+    setNewName("");
+    setNewColor("slate");
+  }, createGuardRef);
+  const renameDiscardRef = useDraftDiscardRef<HTMLDivElement>(() => {
+    setEditingId(null);
+    setEditName("");
+  }, renameGuardRef);
+
   const currentIds = new Set(currentTags.map((t) => t.id));
   const available = allTags.filter((t) => !currentIds.has(t.id));
 
   function run(
     action: (s: TagActionState, fd: FormData) => Promise<TagActionState>,
     fd: FormData,
-    onOk?: () => void
+    onOk?: () => void,
+    // R6: その操作が consume する draft 領域のみ except (attach/detach は null = 全 draft 対象)。
+    except: Element | null = null
   ) {
+    // R2 (Codex adversarial HIGH): 未保存編集の破棄確認は mutation **前**。キャンセルなら
+    // server action を実行しない (post-commit 確認だと stale form 保存で commit を巻き戻せる)。
+    // R11: 確認のみ pre-commit、破棄は成功時に commit (失敗時は他領域 draft 無傷)。
+    const { approved, commit } = prepareDiscardOnCommit(except);
+    if (!approved) return;
     setError(null);
     startTransition(async () => {
       const result = await action(IDLE, fd);
@@ -103,6 +129,7 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
         setError(result.message);
       } else {
         onOk?.();
+        commit();
       // C-5 workaround: transition 内の router.refresh() は isPending を固める (lib/use-deferred-router-refresh.ts 参照)。
         requestRefresh();
       }
@@ -135,7 +162,9 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
         setNewName("");
         setNewColor("slate");
         setCreating(false);
-      }
+      },
+      // R6: 作成操作は新規タグ draft を consume する — create 領域のみ except。
+      createGuardRef.current
     );
   }
 
@@ -159,13 +188,19 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
         name: editName.trim(),
         color: editColor
       }),
-      () => setEditingId(null)
+      () => setEditingId(null),
+      // R6: rename 確定は rename draft を consume する — rename 領域のみ except。
+      renameGuardRef.current
     );
   }
 
   function handleDelete(tagId: string) {
-    run(deleteTagAction, buildForm({ ticket_id: ticketId, tag_id: tagId }), () =>
-      setEditingId(null)
+    // R6: 削除は rename 編集 UI 内から行う操作 (編集中タグの削除) — rename 領域のみ except。
+    run(
+      deleteTagAction,
+      buildForm({ ticket_id: ticketId, tag_id: tagId }),
+      () => setEditingId(null),
+      renameGuardRef.current
     );
   }
 
@@ -220,7 +255,17 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
       {/* 新規作成 */}
       <div>
         {creating ? (
-          <div className="grid gap-2 rounded-md border border-line p-3">
+          <div
+            ref={createDiscardRef}
+            className="grid gap-2 rounded-md border border-line p-3"
+            // R6: 新規タグ draft の guard 領域 (作成操作のみ except)。
+            data-unsaved-guard=""
+            data-dirty={newName.trim() ? "true" : undefined}
+          >
+            {/* R12/R13 convention: controlled-state-only draft (色は ColorPicker の button + state で
+                native control に値が出ない) は guardSignature が捕捉できるよう hidden input に反映する。
+                これがないと承認後の色変更が signature 不一致にならず無確認破棄される (lib/full-reload.ts)。 */}
+            <input type="hidden" name="__draft_new_color" value={newColor} readOnly />
             <input
               type="text"
               value={newName}
@@ -280,7 +325,16 @@ export function TicketTagManager({ ticketId, currentTags, allTags }: Props) {
           <div className="grid gap-2 border-t border-line p-3">
             {allTags.map((tag) =>
               editingId === tag.id ? (
-                <div key={tag.id} className="grid gap-2 rounded border border-line p-2">
+                <div
+                  key={tag.id}
+                  ref={renameDiscardRef}
+                  className="grid gap-2 rounded border border-line p-2"
+                  // R6: rename draft の guard 領域 (rename 確定 / 編集中タグの削除のみ except)。
+                  data-unsaved-guard=""
+                  data-dirty="true"
+                >
+                  {/* R12/R13 convention: 色 (editColor) を guardSignature 用 hidden input に反映。 */}
+                  <input type="hidden" name="__draft_edit_color" value={editColor} readOnly />
                   <input
                     type="text"
                     value={editName}

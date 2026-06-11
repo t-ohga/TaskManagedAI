@@ -9,17 +9,30 @@ import { useState } from "react";
 
 import { BulkStatusChanger } from "@/components/bulk-status-changer";
 
-const refresh = vi.fn();
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh })
+// C-5 第 2 round: hook は full reload (lib/full-reload seam) を行う。jsdom の location を
+// 再定義せず、seam module を mock して検証する (Codex adversarial F-3)。
+const reload = vi.fn(() => true);
+const discardConfirm = vi.fn(() => true);
+const commitDiscard = vi.fn();
+vi.mock("@/lib/full-reload", () => ({
+  fullReload: () => reload(),
+  hasUnsavedDraft: () => false,
+  confirmDiscardUnsavedDrafts: () => discardConfirm(),
+  // R11: pre-commit は確認のみ、破棄は成功時 commit。bulk は確認結果を approved に反映。
+  prepareDiscardOnCommit: () => ({ approved: discardConfirm(), commit: commitDiscard })
 }));
 
 const updateCalls: Record<string, string>[] = [];
+// id ごとに結果を制御 (F-2 部分失敗 test 用)。default は全件成功。
+const failingIds = new Set<string>();
 vi.mock("@/app/(admin)/tickets/[id]/actions", () => ({
   updateTicketAction: async (_state: unknown, fd: FormData) => {
     const entries: Record<string, string> = {};
     for (const [k, v] of fd.entries()) entries[k] = String(v);
     updateCalls.push(entries);
+    if (failingIds.has(entries.ticket_id ?? "")) {
+      return { kind: "error" as const, message: "boom", last_ok_ticket: null };
+    }
     return { kind: "ok" as const };
   }
 }));
@@ -30,8 +43,8 @@ vi.mock("@/components/toast", () => ({
 
 // 親の selectedIds 管理を再現: onClear で空にするが、BulkStatusChanger 自体は
 // mount したまま (selectable-ticket-list の bulkEnabled は selectedIds 非依存)。
-function Harness() {
-  const [selectedIds, setSelectedIds] = useState(["00000000-0000-4000-8000-00000000c001"]);
+function Harness({ ids = ["00000000-0000-4000-8000-00000000c001"] }: { ids?: string[] }) {
+  const [selectedIds, setSelectedIds] = useState(ids);
   return (
     <BulkStatusChanger
       selectedIds={selectedIds}
@@ -42,19 +55,50 @@ function Harness() {
 }
 
 beforeEach(() => {
-  refresh.mockClear();
+  reload.mockClear();
+  discardConfirm.mockClear();
+  discardConfirm.mockReturnValue(true);
   updateCalls.length = 0;
+  failingIds.clear();
 });
 
 describe("BulkStatusChanger (C-5 deferred refresh)", () => {
-  it("全件成功 → onClear で selectedIds が空になっても deferred refresh が発火する", async () => {
+  it("全件成功 → onClear で selectedIds が空になっても deferred reload が発火する", async () => {
     render(<Harness />);
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "closed" } });
     fireEvent.click(screen.getByRole("button", { name: /適用|変更|更新/ }));
 
     await waitFor(() => expect(updateCalls).toHaveLength(1));
     expect(updateCalls[0]).toMatchObject({ status: "closed" });
-    // clear 後 (component は return null) でも effect 経由の refresh が到達する。
-    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    // clear 後 (component は return null) でも effect 経由の reload が到達する。
+    await waitFor(() => expect(reload).toHaveBeenCalled());
+  });
+
+  it("部分失敗時は reload せず、エラー表示と失敗 ID の再選択 (復旧導線) を残す (F-2)", async () => {
+    const okId = "00000000-0000-4000-8000-00000000c001";
+    const ngId = "00000000-0000-4000-8000-00000000c002";
+    failingIds.add(ngId);
+    render(<Harness ids={[okId, ngId]} />);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "closed" } });
+    fireEvent.click(screen.getByRole("button", { name: /適用|変更|更新/ }));
+
+    await waitFor(() => expect(updateCalls).toHaveLength(2));
+    await screen.findByText(/1 件の更新に失敗/);
+    // 失敗があるときは画面を消さない (reload は全件成功時のみ)。
+    await new Promise((r) => setTimeout(r, 50));
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("未保存編集の破棄を拒否したら server action 自体を実行しない (R2 pre-commit gate)", async () => {
+    discardConfirm.mockReturnValue(false);
+    render(<Harness />);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "closed" } });
+    fireEvent.click(screen.getByRole("button", { name: /適用|変更|更新/ }));
+
+    await new Promise((r) => setTimeout(r, 50));
+    // キャンセル時は DB も画面も一切変えない (post-commit 確認だと stale form 保存で
+    // commit 済み status を巻き戻せるため、gate は mutation 前)。
+    expect(updateCalls).toHaveLength(0);
+    expect(reload).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,10 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
+
+import { noop, prepareDiscardOnCommit } from "@/lib/full-reload";
+import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
+import { useDraftDiscardRef } from "@/lib/use-draft-discard";
 
 import { formatTicketPriority, formatTicketStatus } from "@/lib/i18n/ticket-labels";
 import { assigneeSelectOptions, type AssignableActor } from "@/lib/domain/assignee";
@@ -89,7 +92,7 @@ export function EditTicketForm({
   assignableActorsDegraded,
   assignableActorsTruncated
 }: EditTicketFormProps) {
-  const router = useRouter();
+  const requestRefresh = useDeferredRouterRefresh();
 
   // SP-012-11.1 BL-TCU-016: React 19 useActionState (Codex PR #120 P2 完全 migration)
   const [state, formAction, isPending] = useActionState(
@@ -97,12 +100,22 @@ export function EditTicketForm({
     INITIAL_STATE
   );
 
-  // 成功時 router.refresh で 詳細 + 一覧 再 fetch (revalidatePath 連動)
+  // 成功時の周辺表示 (ヘッダー/基本情報/上部ボタン) 再同期。
+  // C-5 第 2 round (Playwright 実測): effect 内でも **直接** router.refresh() を呼ぶと、action 完了
+  // 直後の render から発火した refresh が action transition に合流し、RSC GET は飛ぶのに応答が
+  // 適用されない (header が古いまま)。useDeferredRouterRefresh は tick state で 1 render 遅らせて
+  // から refresh するため合流せず、適用まで完了する (status changer 経由で 418ms 全要素整合を実測)。
+  // R11: 他領域 draft の破棄は保存成功時にのみ commit する (失敗時は draft 無傷)。
+  const commitDiscardRef = useRef<() => void>(noop);
+
   useEffect(() => {
     if (state.kind === "ok") {
-      router.refresh();
+      // R11: 成功確定後に捕捉済み他領域 draft を破棄してから reload (失敗時はここに来ない)。
+      commitDiscardRef.current();
+      commitDiscardRef.current = noop;
+      requestRefresh();
     }
-  }, [state, router]);
+  }, [state, requestRefresh]);
 
   // C-5 R6 (Codex adversarial HIGH): useActionState の state は次 submit (error 含む) で置き換わる。
   // ok→(refresh 未着)→error の遷移で成功 snapshot を失うと stale props へ戻る再入口になるため、
@@ -128,6 +141,15 @@ export function EditTicketForm({
   // window は構造的にゼロ。優先順位は resolveServerTicket (pure helper、回帰 test 対象) — snapshot は
   // 同一 ticket かつ props と同等以上に新しい間だけ正本、props が新しくなったら props に戻る。
   const serverTicket = resolveServerTicket(candidateSnapshot, ticket);
+
+  // R10 (Codex adversarial HIGH): form.reset() は MarkdownEditor の内部 state (常時 controlled
+  // render) を戻せないため、discard event で nonce を進めて form subtree を server 値で remount
+  // する (dirty 属性は discardDrafts が削除済み、native field は remount で defaultValue へ)。
+  const [discardNonce, setDiscardNonce] = useState(0);
+  const discardGuardRef = useDraftDiscardRef<HTMLFormElement>(() =>
+    setDiscardNonce((n) => n + 1)
+  );
+
   // R1 F-009: 現 assignee が候補一覧に無くても option に保持 (select が現在値を失わない)。
   // 保存後は snapshot の assignee を保持対象にする (props より新しい DB truth)。
   const assigneeOptions = assigneeSelectOptions(assignableActors, serverTicket.assignee_actor_id);
@@ -137,18 +159,50 @@ export function EditTicketForm({
     serverTicket.due_date ?? "",
     serverTicket.status,
     serverTicket.priority ?? "",
-    serverTicket.assignee_actor_id ?? ""
+    serverTicket.assignee_actor_id ?? "",
+    // R10: discard 回数も remount key に含める (固定 prefix 付き、NUL 区切りで field 値と衝突しない)
+    `discard:${discardNonce}`
     // separator は field 値に現れない NUL escape。隣接 field の値またぎ衝突を防ぐ。
   ].join("\u0000");
 
   return (
     <form
       key={serverTicketKey}
+      ref={discardGuardRef}
       action={formAction}
+      // R3 (Codex adversarial): 未保存編集の検知は form 自身が input (bubble) で data-dirty を
+      // 立てる (lib/full-reload.ts hasUnsavedTicketEdit が参照)。controlled な MarkdownEditor も
+      // 含め全 field の編集を確実に捕捉。保存成功時は serverTicketKey の remount で自然にクリア。
+      onChange={(event) => {
+        event.currentTarget.dataset.dirty = "true";
+      }}
+      // R5 (Codex adversarial HIGH): 保存成功は reload を伴うため、**他領域** の未保存 draft
+      // (コメント下書き / タグ編集中 等) があれば action 実行前に破棄確認する。except=自 form
+      // (自分の編集は保存対象そのものなので confirm を出さない)。キャンセルは preventDefault で
+      // server action を実行しない。
+      // R11: 確認のみ pre-commit、破棄は保存成功時に commit (失敗時は draft 無傷)。
+      onSubmit={(event) => {
+        const { approved, commit } = prepareDiscardOnCommit(event.currentTarget);
+        if (!approved) {
+          event.preventDefault();
+          return;
+        }
+        commitDiscardRef.current = commit;
+      }}
       className="rounded-lg border border-line bg-panel p-5 shadow-sm"
       data-testid="edit-ticket-form"
+      data-unsaved-guard=""
     >
       <input type="hidden" name="ticket_id" value={serverTicket.id} />
+      {/* R8 (Codex adversarial HIGH): F-C2 の「変更時のみ送信」を全 field に一般化するための
+          original_*。Server Action は original と一致する field を PATCH payload から落とすため、
+          stale な form (reload 拒否後など) を保存しても**ユーザーが実際に触った field だけ**が
+          送信され、直前の status/bulk mutation を未変更 field の再送で巻き戻せない。 */}
+      <input type="hidden" name="original_title" value={serverTicket.title} />
+      <input type="hidden" name="original_description" value={serverTicket.description ?? ""} />
+      <input type="hidden" name="original_due_date" value={serverTicket.due_date ?? ""} />
+      <input type="hidden" name="original_status" value={serverTicket.status} />
+      <input type="hidden" name="original_priority" value={serverTicket.priority ?? ""} />
       {/* Codex App F-C2: 更新前の assignee。Server Action が「変更時のみ assignee を送信」判定に使う
           (legacy 非 human assignee 付き ticket でも他 field だけ編集でき、unchanged な不正値を再送して
           422 で全編集不能にしない)。 */}

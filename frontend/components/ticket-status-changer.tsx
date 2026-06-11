@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 
+import { prepareDiscardOnCommit } from "@/lib/full-reload";
 import { useDeferredRouterRefresh } from "@/lib/use-deferred-router-refresh";
 
 import { updateTicketAction, type UpdateTicketState } from "@/app/(admin)/tickets/[id]/actions";
@@ -36,6 +37,11 @@ export function TicketStatusChanger({ ticketId, currentStatus }: Props) {
 
   function handleStatusChange(newStatus: string) {
     if (newStatus === optimisticStatus || isPending) return;
+    // R2 (Codex adversarial HIGH): 未保存編集の破棄確認は mutation **前**。キャンセルなら
+    // server action を実行しない (post-commit 確認だと stale form 保存で commit を巻き戻せる)。
+    // R11: 確認のみ pre-commit、破棄は成功時に commit (失敗時は draft 無傷)。
+    const { approved, commit } = prepareDiscardOnCommit();
+    if (!approved) return;
     setError(null);
     setOptimisticStatus(newStatus);
 
@@ -49,6 +55,7 @@ export function TicketStatusChanger({ ticketId, currentStatus }: Props) {
         setError(result.message);
         setOptimisticStatus(currentStatus);
       } else {
+        commit();
       // C-5 workaround: transition 内の router.refresh() は isPending を固める (lib/use-deferred-router-refresh.ts 参照)。
         requestRefresh();
       }

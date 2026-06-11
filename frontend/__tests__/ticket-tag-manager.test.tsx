@@ -5,10 +5,32 @@ import { TicketTagManager } from "@/components/ticket-tag-manager";
 import type { TagRead } from "@/lib/domain/tag";
 
 // Server Action と router を mock し、各操作が正しい action / FormData を呼ぶことを検証する。
-const refresh = vi.fn();
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh })
-}));
+// C-5 第 2 round: hook は router.refresh ではなく full reload (確実性実測済) を行う。
+// C-5 第 2 round: hook は full reload (lib/full-reload seam) を行う。jsdom の location を
+// 再定義せず、seam module を mock して検証する (Codex adversarial F-3)。
+const reload = vi.fn(() => true);
+const discardConfirm = vi.fn(() => true);
+const commitDiscard = vi.fn();
+vi.mock("@/lib/full-reload", async (importOriginal) => {
+  // R6: except 粒度 (create/rename guard) を実 hasUnsavedDraft で検証するため、
+  // gate の判定は実装を使い、confirm と reload だけ差し替える。
+  const actual = (await importOriginal()) as {
+    hasUnsavedDraft: (except?: Element | null) => boolean;
+  } & Record<string, unknown>;
+  return {
+    ...actual,
+    fullReload: () => reload(),
+    confirmDiscardUnsavedDrafts: (except?: Element | null) => {
+      if (!actual.hasUnsavedDraft(except)) return true;
+      return discardConfirm();
+    },
+    // R11: pre-commit は確認のみ、破棄は成功時 commit。except 粒度は実 hasUnsavedDraft で判定。
+    prepareDiscardOnCommit: (except?: Element | null) => ({
+      approved: actual.hasUnsavedDraft(except) ? discardConfirm() : true,
+      commit: commitDiscard
+    })
+  };
+});
 
 const actionCalls: { name: string; entries: Record<string, string> }[] = [];
 function record(name: string) {
@@ -33,7 +55,7 @@ const TAG_B: TagRead = { id: "00000000-0000-4000-8000-00000000b002", name: "docs
 
 beforeEach(() => {
   actionCalls.length = 0;
-  refresh.mockClear();
+  reload.mockClear();
 });
 
 describe("TicketTagManager", () => {
@@ -45,9 +67,8 @@ describe("TicketTagManager", () => {
       name: "detach",
       entries: { ticket_id: TICKET_ID, tag_id: TAG_A.id }
     });
-    // C-5 workaround: refresh は transition 内即時呼びでなく useDeferredRouterRefresh の
-    // effect 経由 (transition 外) に変更されたため、非同期到達を待つ。
-    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    // C-5 workaround: useDeferredRouterRefresh の effect 経由で reload が非同期到達する。
+    await waitFor(() => expect(reload).toHaveBeenCalled());
   });
 
   it("attaches an available (unassigned) tag via attachTagAction", async () => {
@@ -81,3 +102,33 @@ describe("TicketTagManager", () => {
     expect(screen.getByText("タグ名を入力してください。")).toBeInTheDocument();
   });
 });
+
+// R6 (Codex adversarial HIGH) 回帰: tag panel 内の draft 粒度。
+describe("TicketTagManager guard granularity (R6)", () => {
+  it("新規タグ draft 入力中に attach すると確認され、拒否なら action も reload も実行しない", async () => {
+    discardConfirm.mockReturnValue(false);
+    render(<TicketTagManager ticketId={TICKET_ID} currentTags={[TAG_A]} allTags={[TAG_A, TAG_B]} />);
+    // 新規作成パネルを開いて draft を入力
+    fireEvent.click(screen.getByRole("button", { name: /新しいタグ|新規/ }));
+    fireEvent.change(screen.getByLabelText("新しいタグ名"), { target: { value: "draft-tag" } });
+    // 別タグの attach (draft を consume しない操作)
+    fireEvent.click(screen.getByLabelText("タグ「docs」をこのチケットに付与する"));
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(discardConfirm).toHaveBeenCalled();
+    expect(actionCalls).toHaveLength(0);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("新規タグ draft の作成確定 (consume) は確認なしで実行される (except=create 領域)", async () => {
+    render(<TicketTagManager ticketId={TICKET_ID} currentTags={[TAG_A]} allTags={[TAG_A, TAG_B]} />);
+    fireEvent.click(screen.getByRole("button", { name: /新しいタグ|新規/ }));
+    fireEvent.change(screen.getByLabelText("新しいタグ名"), { target: { value: "draft-tag" } });
+    fireEvent.click(screen.getByRole("button", { name: "作成して付与" }));
+
+    await waitFor(() => expect(actionCalls).toHaveLength(1));
+    expect(actionCalls[0]?.name).toBe("create");
+    expect(discardConfirm).not.toHaveBeenCalled();
+  });
+});
+
