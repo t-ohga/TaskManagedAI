@@ -125,10 +125,19 @@ def test_baseline_document_includes_corpus_load_results() -> None:
 
 def test_baseline_document_includes_anti_gaming_disclaimer() -> None:
     """Anti-Gaming: baseline_metadata に sut_results_provided=False と disclaimer."""
+    # scope は platform_system ベースで derive されるため、host_metadata を inject して
+    # ambient host (CI=Linux) に依存させない (Darwin → scope=mac_only を決定的に固定)。
     doc = build_kpi_baseline_document(
         "t-ohga-mac",
         rollup_summary=_make_summary(),
         corpus_load_results=_make_corpus_results(),
+        host_metadata=HostMetadata(
+            host_id="t-ohga-mac",
+            platform_system="Darwin",
+            platform_release="25.5.0",
+            python_version="3.12.11",
+            machine="arm64",
+        ),
     )
     meta = doc["baseline_metadata"]
     assert meta["sut_results_provided"] is False
