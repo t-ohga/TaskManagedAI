@@ -27,7 +27,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.app.config import Settings, get_settings
 from backend.app.db.session import create_engine
-from backend.app.seeds.initial import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID, seed_initial
+from backend.app.seeds.initial import (
+    DEFAULT_ACTOR_ID,
+    DEFAULT_PROJECT_ID,
+    DEFAULT_TENANT_ID,
+    seed_initial,
+)
 from backend.app.services.eval.kpi_timeseries import KPI_DEFINITIONS, KpiTimeseriesService
 
 _DEFAULT_DATABASE_URL = (
@@ -84,7 +89,14 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     await asyncio.to_thread(_run_alembic_upgrade, settings.database_url)
     engine = create_engine(settings.database_url)
     factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as session:
+    # seed_initial は呼び出し側 commit が前提 (内部 commit しない)。begin() で確実に commit し、
+    # 他 test file の seed に依存せず本 file 単独でも project/actor が存在する状態にする。
+    # さらに data table を reset し、test 間で acceptance_criteria/tickets が蓄積して KPI 集計が
+    # 混ざるのを防ぐ (本 file は per-test の独立 data を前提)。
+    async with factory.begin() as session:
+        await session.execute(
+            text("truncate acceptance_criteria, tickets restart identity cascade")
+        )
         await seed_initial(session)
     try:
         yield factory
@@ -137,10 +149,17 @@ async def test_acceptance_pass_rate_ratio_and_state(
         ticket_id = uuid4()
         await session.execute(
             text(
-                "insert into tickets (id, tenant_id, project_id, slug, title, status, priority) "
-                "values (:id, :t, :p, :slug, 'KPI acceptance', 'open', 'medium')"
+                "insert into tickets (id, tenant_id, project_id, slug, title, status, priority, "
+                "created_by_actor_id) "
+                "values (:id, :t, :p, :slug, 'KPI acceptance', 'open', 'medium', :actor)"
             ),
-            {"id": ticket_id, "t": DEFAULT_TENANT_ID, "p": DEFAULT_PROJECT_ID, "slug": f"acc-{ticket_id}"},
+            {
+                "id": ticket_id,
+                "t": DEFAULT_TENANT_ID,
+                "p": DEFAULT_PROJECT_ID,
+                "slug": f"acc-{ticket_id}",
+                "actor": str(DEFAULT_ACTOR_ID),
+            },
         )
         for status_value, n in (("satisfied", 2), ("rejected", 1)):
             for _ in range(n):
@@ -185,10 +204,17 @@ async def test_acceptance_no_denominator_state(
         ticket_id = uuid4()
         await session.execute(
             text(
-                "insert into tickets (id, tenant_id, project_id, slug, title, status, priority) "
-                "values (:id, :t, :p, :slug, 'KPI pending', 'open', 'medium')"
+                "insert into tickets (id, tenant_id, project_id, slug, title, status, priority, "
+                "created_by_actor_id) "
+                "values (:id, :t, :p, :slug, 'KPI pending', 'open', 'medium', :actor)"
             ),
-            {"id": ticket_id, "t": DEFAULT_TENANT_ID, "p": DEFAULT_PROJECT_ID, "slug": f"pend-{ticket_id}"},
+            {
+                "id": ticket_id,
+                "t": DEFAULT_TENANT_ID,
+                "p": DEFAULT_PROJECT_ID,
+                "slug": f"pend-{ticket_id}",
+                "actor": str(DEFAULT_ACTOR_ID),
+            },
         )
         await session.execute(
             text(

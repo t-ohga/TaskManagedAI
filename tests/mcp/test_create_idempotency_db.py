@@ -105,7 +105,15 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
     engine = create_engine(settings.database_url)
     factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as session:
+    # seed_initial は呼び出し側 commit 前提。begin() で確実に commit し、per-test に ticket/run/
+    # idempotency_key を reset (test 間で ticket slug が蓄積し unique 衝突するのを防ぐ)。
+    async with factory.begin() as session:
+        await session.execute(
+            text(
+                "truncate tickets, agent_runs, mcp_idempotency_keys "
+                "restart identity cascade"
+            )
+        )
         await seed_initial(session)
         await _seed_second_actor(session)
     try:
@@ -225,6 +233,48 @@ async def test_ticket_create_null_key_creates_each_time(
             session, tenant_id=DEFAULT_TENANT_ID, project_id=DEFAULT_PROJECT_ID, title="n"
         )
     assert a["ticket_id"] != b["ticket_id"]
+
+
+@pytest.mark.asyncio
+async def test_ticket_create_slug_is_deterministically_unique(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """同一 title の 2 件でも slug は ticket id (PK) の full hex を埋め込むため構造的に一意。
+
+    slug 一意性が確率的 suffix (旧 uuid4().hex[:6] = 24bit) の birthday collision ではなく
+    PK 一意性に束縛されることを固定する (Codex adversarial review F-medium、time 同秒衝突も排除)。
+    """
+    async with session_factory() as session:
+        a = await bridge_ticket_create(
+            session, tenant_id=DEFAULT_TENANT_ID, project_id=DEFAULT_PROJECT_ID, title="dup title"
+        )
+    async with session_factory() as session:
+        b = await bridge_ticket_create(
+            session, tenant_id=DEFAULT_TENANT_ID, project_id=DEFAULT_PROJECT_ID, title="dup title"
+        )
+
+    assert a["ticket_id"] != b["ticket_id"]
+
+    async with session_factory() as session:
+        rows = {
+            str(tid): slug
+            for tid, slug in (
+                await session.execute(
+                    text(
+                        "select id, slug from tickets "
+                        "where id in (cast(:a as uuid), cast(:b as uuid))"
+                    ),
+                    {"a": a["ticket_id"], "b": b["ticket_id"]},
+                )
+            ).all()
+        }
+
+    slug_a, slug_b = rows[a["ticket_id"]], rows[b["ticket_id"]]
+    # slug は distinct (DB unique 衝突で create が失敗しない)。
+    assert slug_a != slug_b
+    # deterministic: slug は対応する ticket id の full hex で終わる (PK 一意 => slug 一意)。
+    assert slug_a.endswith(UUID(a["ticket_id"]).hex)
+    assert slug_b.endswith(UUID(b["ticket_id"]).hex)
 
 
 @pytest.mark.asyncio

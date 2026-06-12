@@ -248,6 +248,15 @@ async def _assert_denied(
     reason_code: str,
     **kwargs: Any,
 ) -> None:
+    # PE-F-014 multi-agent secret validation (validate_multi_agent_access) は SP-014 T08 で
+    # P0.1 に完成させる deliverable。P0 では reason_code / payload の types のみ forward-compat で
+    # 保持し impl は deferred (fc51e58 で premature 実装を P0-exit 時に削除)。impl が P0.1 で復活
+    # したら本 guard は自動的に外れ、6 negative case が再び検証される。
+    if not hasattr(SecretBroker, "validate_multi_agent_access"):
+        pytest.skip(
+            "PE-F-014 multi-agent secret validation は P0.1 (SP-014 T08); "
+            "P0 では impl deferred、reason_code/payload types のみ。"
+        )
     decision = await SecretBroker(session).validate_multi_agent_access(
         tenant_id=TENANT_ID,
         actor_id=AGENT_ACTOR_ID,

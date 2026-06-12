@@ -95,7 +95,14 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
     engine = create_engine(settings.database_url)
     factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as session:
+    # seed_initial は呼び出し側 commit 前提。begin() で確実に commit し、repository
+    # (external_id=DEFAULT_REPOSITORY_EXTERNAL_ID) を含む seed を永続化する (未 commit だと webhook が
+    # repo 解決できず unregistered_repo quarantine になる)。github_webhook_events は per-test に reset
+    # して event 蓄積で idempotency/一覧 test が混ざるのを防ぐ (repo は seed が毎回再作成)。
+    async with factory.begin() as session:
+        await session.execute(
+            text("truncate github_webhook_events, audit_events restart identity cascade")
+        )
         await seed_initial(session)
     try:
         yield factory

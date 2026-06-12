@@ -325,6 +325,7 @@ async def _insert_artifact(
     artifact_id: UUID | None = None,
     tenant_id: int = 1,
     run_id: UUID = TENANT_ONE_RUN_A_ID,
+    project_id: UUID = TENANT_ONE_PROJECT_ID,
     kind: str = "plan",
     content_jsonb: dict[str, Any] | None = None,
     content_hash: str | None = None,
@@ -342,6 +343,7 @@ async def _insert_artifact(
               id,
               tenant_id,
               run_id,
+              project_id,
               kind,
               content_hash,
               content_jsonb,
@@ -353,6 +355,7 @@ async def _insert_artifact(
               :artifact_id,
               :tenant_id,
               :run_id,
+              :project_id,
               :kind,
               :content_hash,
               cast(:content_jsonb as jsonb),
@@ -366,6 +369,7 @@ async def _insert_artifact(
             "artifact_id": artifact_id,
             "tenant_id": tenant_id,
             "run_id": run_id,
+            "project_id": project_id,
             "kind": kind,
             "content_hash": content_hash,
             "content_jsonb": json.dumps(content_jsonb),
@@ -571,6 +575,10 @@ async def test_parent_artifact_cross_run_and_cross_tenant_are_rejected(
                 session,
                 tenant_id=2,
                 run_id=TENANT_TWO_RUN_ID,
+                # tenant 2 の valid project を明示指定する。default の TENANT_ONE_PROJECT_ID は
+                # tenant 2 に存在せず、複合 FK artifacts_project_fkey が先に発火して狙った
+                # artifacts_parent_artifact_fkey (cross-tenant parent 拒否) を隠してしまう。
+                project_id=TENANT_TWO_PROJECT_ID,
                 parent_artifact_id=PARENT_ARTIFACT_ID,
             )
             await session.commit()

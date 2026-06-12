@@ -115,10 +115,15 @@ async def notification_api_client(
 
 
 async def _reset_tables(session: AsyncSession) -> None:
+    # actors も truncate (cascade) する。canonical handle 'human:default' は多数の test file が
+    # 各自の UUID で seed する (me_api=...aa001 / tickets_api=...55001 等) ため、actors を残すと
+    # 直前に走った test が残した 'human:default' 行と本 file の DEFAULT_ACTOR_ID(...0001) 挿入が
+    # actors_uq_tenant_actor_id (tenant_id, actor_id) で衝突する (ON CONFLICT (id) では捕捉不可)。
+    # 他 reset 系 test (test_me_api 等) と同じく actors を含めて clean state から seed する。
     await session.execute(
         text(
             "truncate audit_events, notification_events, policy_decisions, "
-            "approval_requests restart identity cascade"
+            "approval_requests, actors restart identity cascade"
         )
     )
 

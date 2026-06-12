@@ -361,7 +361,7 @@ async def test_project_repository_create_injects_matching_tenant_id(
                 "slug": "created-project",
                 "name": "created-project",
                 "status": "active",
-                "policy_profile": None,
+                # policy_profile は server-owned (project caller が供給不可) → payload から渡さない。
                 "metadata": {"rls_ready": True, "source": "repository-test"},
             },
         )

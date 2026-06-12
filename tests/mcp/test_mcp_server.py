@@ -109,3 +109,21 @@ class TestMcpServerImport:
     def test_server_has_instructions(self) -> None:
         assert mcp.instructions is not None
         assert "human-only" in mcp.instructions or "approval_decide" in mcp.instructions
+
+
+class TestSuperintendentAgentRegisterValidation:
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_provider_fail_closed(self) -> None:
+        # provider は {claude, codex, custom} のみ許可 (AgentProvider literal)。不正値は agent 生成・
+        # project_id parse の前に fail-closed で reject し、不正 provider の spawn を防ぐ。
+        from backend.app.mcp.server import superintendent_agent_register
+
+        result = await superintendent_agent_register(
+            role_id="role-x",
+            project_id="ignored-before-validation",
+            provider="malicious-provider",
+        )
+        assert result == {
+            "error": "invalid_provider",
+            "valid": ["claude", "codex", "custom"],
+        }

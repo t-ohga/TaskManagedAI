@@ -336,6 +336,10 @@ def _binding(
         tenant_id=tenant_id,
         approval_id=approval_id,
         agent_run_id=run_id,
+        repo_full_name="acme/widgets",
+        base_branch="main",
+        head_branch="codex/run-branch",
+        draft=True,
     )
 
 

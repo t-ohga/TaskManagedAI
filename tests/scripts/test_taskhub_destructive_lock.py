@@ -61,7 +61,18 @@ def test_acquire_destructive_lock_busy_returns_blocker(
         fcntl.flock(fd, fcntl.LOCK_EX)
         os.lseek(fd, 0, os.SEEK_SET)
         os.ftruncate(fd, 0)
-        os.write(fd, json.dumps({{"subcommand": "backup", "approval_id": "drill-blocker-1", "pid": os.getpid(), "started_at_utc": "2026-05-20T10:00:00Z"}}, sort_keys=True).encode())
+        os.write(
+            fd,
+            json.dumps(
+                {{
+                    "subcommand": "backup",
+                    "approval_id": "drill-blocker-1",
+                    "pid": os.getpid(),
+                    "started_at_utc": "2026-05-20T10:00:00Z",
+                }},
+                sort_keys=True,
+            ).encode(),
+        )
         os.fsync(fd)
         sys.stdout.write("ready\\n"); sys.stdout.flush()
         time.sleep(5)

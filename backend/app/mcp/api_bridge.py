@@ -8,8 +8,8 @@ Server-owned fields are never accepted from MCP tool input.
 from __future__ import annotations
 
 import re
-import time
-from typing import Any
+from decimal import Decimal
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.ticket import Ticket
+from backend.app.domain.agent_runtime.status import AgentRunStatus
 from backend.app.repositories._payload_secret_scan import _PROHIBITED_PAYLOAD_KEYS
 from backend.app.repositories.ticket import (
     ProjectArchivedError,
@@ -65,11 +66,15 @@ def _assert_freeform_payload_no_secret(value: object, *, path: str = "task_spec"
         assert_no_secret_in_text(value, field=path)
 
 
-def _title_to_slug(title: str) -> str:
+def _title_to_slug(title: str, ticket_id: UUID) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     if not slug:
         slug = "ticket"
-    return f"{slug}-{int(time.time()) % 100000}"
+    # (tenant, project, slug) unique を ticket の PK (= ticket_id) の一意性で deterministically
+    # 担保する。ticket_id.hex (lowercase [a-f0-9]{32}) を full-width で付与するため、id が一意な
+    # 限り slug も一意 = 衝突は構造的に発生しない (短縮 suffix の birthday collision や time 同秒
+    # 衝突を排除、IntegrityError retry も不要)。hex は slug url-safe CHECK にも適合する。
+    return f"{slug}-{ticket_id.hex}"
 
 
 async def bridge_ticket_list(
@@ -161,12 +166,15 @@ async def bridge_ticket_create(
         # Q-4 (ADR-00037 R5 #2): create_in_project は _assert_project_active を通るため、archived
         # project への MCP 経由 ticket create は ProjectArchivedError -> 409 で fail-closed になる
         # (base create は guard を通らないので使わない、全 mutation 境界で archive freeze を enforce)。
+        # slug 一意性を ticket PK の一意性で担保するため id を Python 側で生成し slug に埋め込む。
+        new_ticket_id = uuid4()
         return await repo.create_in_project(
             tenant_id,
             project_id,
             {
+                "id": new_ticket_id,
                 "title": title,
-                "slug": _title_to_slug(title),
+                "slug": _title_to_slug(title, new_ticket_id),
                 "description": description,
                 "status": "open",
                 "created_by_actor_id": resolved_actor_id,
@@ -1041,7 +1049,8 @@ async def bridge_run_update(
         return {"error": str(type(exc).__name__), "run_id": str(run_id)}
 
     old_status = run.status
-    run.status = status
+    # status は上の valid_statuses で検証済 (AgentRunStatus literal の subset) → cast は安全。
+    run.status = cast(AgentRunStatus, status)
     if status == "blocked":
         run.blocked_reason = "runtime_blocked"
     elif run.blocked_reason and status != "blocked":
@@ -1402,7 +1411,15 @@ async def bridge_delegation_submit(
     except (ProjectArchivedError, TicketNotActionableError) as exc:
         return {"error": str(type(exc).__name__), "parent_run_id": str(parent_run_id)}
 
-    run_status = "completed" if result_status == "completed" else "failed" if result_status == "failed" else "running"
+    # result_status を AgentRunStatus literal に分岐代入する (cast 不要、各 literal が型安全に narrow
+    # される)。run_status は後続 return dict ("status") でも使うため typed 変数で保持する。
+    run_status: AgentRunStatus
+    if result_status == "completed":
+        run_status = "completed"
+    elif result_status == "failed":
+        run_status = "failed"
+    else:
+        run_status = "running"
     run.status = run_status
 
     spec_json = json_mod.dumps(result_spec, sort_keys=True, ensure_ascii=False)
@@ -1725,7 +1742,7 @@ async def bridge_run_cost(
     except (ProjectArchivedError, TicketNotActionableError) as exc:
         return {"error": str(type(exc).__name__), "run_id": str(run_id)}
 
-    run.cost_usd = cost_usd
+    run.cost_usd = Decimal(str(cost_usd))  # float param → Decimal 列 (str 経由で precision-safe 変換)
     run.tokens_input = tokens_input
     run.tokens_output = tokens_output
     await session.commit()

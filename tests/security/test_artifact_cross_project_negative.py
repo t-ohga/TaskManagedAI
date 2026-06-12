@@ -213,13 +213,11 @@ async def _insert_fixtures(session: AsyncSession) -> None:
         text(
             """
             insert into agent_runs (
-              id, tenant_id, project_id, status, intent, intent_summary, metadata
+              id, tenant_id, project_id, status
             )
             values
-              (:run_a_id, 1, :project_a_id, 'queued', 'test', 'test artifact A',
-                '{"rls_ready": true}'::jsonb),
-              (:run_b_id, 1, :project_b_id, 'queued', 'test', 'test artifact B',
-                '{"rls_ready": true}'::jsonb)
+              (:run_a_id, 1, :project_a_id, 'queued'),
+              (:run_b_id, 1, :project_b_id, 'queued')
             """
         ),
         {

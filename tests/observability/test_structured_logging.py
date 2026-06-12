@@ -30,8 +30,15 @@ from backend.app.observability.logging import (
 
 @pytest.fixture(autouse=True)
 def _reset_logging() -> Generator[None, None, None]:
-    """各 test 終了時に logging state を reset."""
+    """各 test の前後で logging state を reset.
 
+    `setup_logging()` は module-global `_logging_state['configured']` で idempotent guard
+    するため、他 test file (app 起動の lifespan 等) が configured=True を立てたまま reset せず、
+    その後 root.handlers が別経路でクリアされると本 file の `setup_logging()` が no-op になり
+    handler が attach されない汚染が起きる。前後で reset して各 test を clean state から始める。
+    """
+
+    reset_logging_state()
     yield
     reset_logging_state()
 

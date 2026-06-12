@@ -23,6 +23,7 @@ import pytest
 
 from scripts import taskhub_restore_orchestrator as ro
 from scripts.taskhub_subprocess_runner import (
+    SafeSubprocessConfig,
     SubprocessResult,
 )
 
@@ -236,7 +237,9 @@ def test_tar_size_limit_constants_set() -> None:
     assert ro.SNIFF_MAX_READ_BYTES == 4096
 
 
-def test_verify_tar_members_safe_rejects_member_count_overflow(tmp_path: Path, monkeypatch) -> None:
+def test_verify_tar_members_safe_rejects_member_count_overflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """R11-F-001 adopt: member count > TAR_MAX_MEMBER_COUNT rejected.
     Use a small constant override for the test (avoid creating 100k entries in tar).
     """
@@ -287,7 +290,7 @@ def test_invoke_pg_restore_argv_uses_compose_exec_prefix(tmp_path: Path) -> None
     dump_file = tmp_path / "dump.bin"
     dump_file.write_bytes(b"fake dump")
 
-    def fake_run(argv, *, config):
+    def fake_run(argv: list[str], *, config: SafeSubprocessConfig | None = None) -> SubprocessResult:
         captured.append(argv)
         return _mock_result(0)
 
@@ -307,7 +310,7 @@ def test_invoke_redis_save_sync_uses_save_not_bgsave(tmp_path: Path) -> None:
     options = _minimal_options(tmp_path)
     captured: list[list[str]] = []
 
-    def fake_run(argv, *, config):
+    def fake_run(argv: list[str], *, config: SafeSubprocessConfig | None = None) -> SubprocessResult:
         captured.append(argv)
         return _mock_result(0)
 
@@ -325,7 +328,7 @@ def test_acquire_redis_data_host_path_uses_compose_ps_all(tmp_path: Path) -> Non
     options = _minimal_options(tmp_path)
     call_argvs: list[list[str]] = []
 
-    def fake_run(argv, *, config):
+    def fake_run(argv: list[str], *, config: SafeSubprocessConfig | None = None) -> SubprocessResult:
         call_argvs.append(argv)
         if "ps" in argv:
             return _mock_result(0, stdout=b"deadbeef123\n")
@@ -346,7 +349,7 @@ def test_acquire_redis_data_host_path_no_data_mount_rejected(tmp_path: Path) -> 
     """R17-F-004 adopt: Mounts に /data destination 不在で deny."""
     options = _minimal_options(tmp_path)
 
-    def fake_run(argv, *, config):
+    def fake_run(argv: list[str], *, config: SafeSubprocessConfig | None = None) -> SubprocessResult:
         if "ps" in argv:
             return _mock_result(0, stdout=b"deadbeef\n")
         if "inspect" in argv:
@@ -370,7 +373,7 @@ def _compose_config_skeleton(
     pg_port: str = "5432", pg_host_ip: str = "127.0.0.1",
     pg_db: str = "taskhub", pg_user: str = "taskhub",
     redis_port: str = "6379", redis_host_ip: str = "127.0.0.1",
-    artifacts_host_path: str = "/tmp/test_artifacts",
+    artifacts_host_path: str = "/tmp/test_artifacts",  # noqa: S108 — mock compose の host volume path fixture (実 IO なし)
     artifacts_container_path: str = "/app/data/artifacts",
     api_volumes: list | None = None,
     worker_volumes: list | None = None,
@@ -398,7 +401,7 @@ def test_verify_target_binding_consistency_postgres_port_mismatch_rejected(tmp_p
     options = _minimal_options(tmp_path)
     cfg = _compose_config_skeleton(pg_port="9999")  # claim is 5432
 
-    def fake_run(argv, *, config):
+    def fake_run(argv: list[str], *, config: SafeSubprocessConfig | None = None) -> SubprocessResult:
         if "config" in argv:
             return _mock_result(0, stdout=json.dumps(cfg).encode())
         return _mock_result(0)
@@ -413,9 +416,9 @@ def test_verify_target_binding_consistency_postgres_port_mismatch_rejected(tmp_p
 def test_verify_target_binding_postgres_host_ip_must_be_loopback(tmp_path: Path) -> None:
     """R13-F-001 adopt: 明示 127.0.0.1 bind 必須."""
     options = _minimal_options(tmp_path)
-    cfg = _compose_config_skeleton(pg_host_ip="0.0.0.0")
+    cfg = _compose_config_skeleton(pg_host_ip="0.0.0.0")  # noqa: S104 — 0.0.0.0 bind が reject されることを検証する negative test
 
-    def fake_run(argv, *, config):
+    def fake_run(argv: list[str], *, config: SafeSubprocessConfig | None = None) -> SubprocessResult:
         if "config" in argv:
             return _mock_result(0, stdout=json.dumps(cfg).encode())
         return _mock_result(0)
@@ -436,7 +439,7 @@ def test_verify_target_binding_artifacts_must_bind_to_both_api_worker(tmp_path: 
         artifacts_container_path=options.target_artifacts_container_path,
     )
 
-    def fake_run(argv, *, config):
+    def fake_run(argv: list[str], *, config: SafeSubprocessConfig | None = None) -> SubprocessResult:
         if "config" in argv:
             return _mock_result(0, stdout=json.dumps(cfg).encode())
         return _mock_result(0)
@@ -453,7 +456,7 @@ def test_verify_target_binding_postgres_db_user_must_match(tmp_path: Path) -> No
     options = _minimal_options(tmp_path)
     cfg = _compose_config_skeleton(pg_db="OTHER_DB")  # claim is "taskhub"
 
-    def fake_run(argv, *, config):
+    def fake_run(argv: list[str], *, config: SafeSubprocessConfig | None = None) -> SubprocessResult:
         if "config" in argv:
             return _mock_result(0, stdout=json.dumps(cfg).encode())
         return _mock_result(0)
