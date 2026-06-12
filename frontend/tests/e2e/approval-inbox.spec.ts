@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const APPROVAL_RENDER_TEXT =
-  /no pending approvals|failed to load approvals|task_write|repo_write|pr_open|secret_access|merge|deploy|provider_call/i;
+  /承認 request はありません|取得に失敗しました|no pending approvals|failed to load approvals|task_write|repo_write|pr_open|secret_access|merge|deploy|provider_call/i;
 
 function readDevLoginToken(): string {
   return process.env.TASKMANAGEDAI_DEV_LOGIN_TOKEN ?? process.env.DEV_LOGIN_TOKEN ?? "dev-login-token";
@@ -22,10 +22,12 @@ test.describe("Approval Inbox", () => {
     // page.goto("/approvals") が cookie 無しで送信されて middleware に /login redirect される。
     // dashboard の heading が visible になるまで wait することで cookie 永続化を保証する
     // (admin-shell.spec.ts が同 pattern で安定動作している実績の踏襲)。
-    await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
 
     await page.goto("/approvals");
-    await expect(page.getByRole("heading", { name: /approval inbox/i })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "承認一覧", exact: true })
+    ).toBeVisible();
     await expect(page.getByText(APPROVAL_RENDER_TEXT).first()).toBeVisible();
   });
 });
