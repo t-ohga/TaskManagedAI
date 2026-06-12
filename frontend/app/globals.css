@@ -73,9 +73,15 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
+/* @layer base に入れる: unlayered だと Tailwind v4 の text 色 utility (text-white / text-accent 等)
+ * より優先されてしまい、<a class="bg-accent text-white"> が inherit (ink) で描画され accent pill /
+ * CTA が緑背景に dark text = WCAG contrast 違反になる。base layer に置くと utility が正しく勝ち、
+ * 色 utility を持たない anchor は従来通り inherit を維持する。 */
+@layer base {
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
 }
 
 button,

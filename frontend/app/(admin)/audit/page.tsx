@@ -210,7 +210,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
 
       <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/40 px-4 py-3">
         <p className="text-sm font-medium text-red-700 dark:text-red-300">AC-HARD-02 監査マスク</p>
-        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+        <p className="mt-1 text-xs text-red-700 dark:text-red-400">
           生のシークレット、トークン、プロバイダーキーは表示されません。reason_code、パターン検出、ハッシュ参照のみ。
         </p>
       </div>

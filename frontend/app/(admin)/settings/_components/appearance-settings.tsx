@@ -34,11 +34,11 @@ export function AppearanceSettings() {
             className={`grid gap-1 rounded-md border px-3 py-3 text-left text-sm transition-colors outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
               selected
                 ? "border-accent bg-accent/5 text-ink"
-                : "border-line bg-panel text-muted hover:border-accent/40 hover:text-ink"
+                : "border-line bg-panel text-muted-foreground hover:border-accent/40 hover:text-ink"
             }`}
           >
             <span className="font-medium">{option.label}</span>
-            <span className="text-xs text-muted">{option.description}</span>
+            <span className="text-xs text-muted-foreground">{option.description}</span>
           </button>
         );
       })}
