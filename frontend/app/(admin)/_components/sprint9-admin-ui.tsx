@@ -389,7 +389,10 @@ export function AdminPageShell({
   children
 }: AdminPageShellProps) {
   return (
-    <section aria-label={regionLabel} className="grid gap-5">
+    // grid-cols-1 (= minmax(0,1fr)) で単一列を viewport 幅に cap する。暗黙の `auto` 列は
+    // 子孫 (matrix table の sr-only caption 等) の max-content に膨張し tablet 幅で横 overflow を
+    // 起こすため、明示 1fr 列で track を available 幅に固定する (overflow する table は内部 scroll)。
+    <section aria-label={regionLabel} className="grid grid-cols-1 gap-5">
       <header className="max-w-5xl">
         <p className="text-sm font-medium text-accent">{eyebrow}</p>
         <h1 className="text-3xl font-semibold tracking-normal text-ink">{title}</h1>
@@ -610,7 +613,12 @@ export function ContextSnapshotDefinitionList() {
 
 export function ProviderComplianceMatrixTable() {
   return (
-    <div className="overflow-x-auto rounded-md border border-line">
+    <div
+      className="overflow-x-auto rounded-md border border-line focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+      // 横スクロールする matrix を keyboard でスクロール可能にする (axe scrollable-region-focusable)。
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+      tabIndex={0}
+    >
       <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
         <caption className="sr-only">
           Provider Compliance Matrix with provider, api_or_feature, allowed_data_class,

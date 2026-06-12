@@ -44,7 +44,12 @@ export function SecretRefsInventory({ secretRefs }: { secretRefs: SecretRefListI
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div
+      className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+      // 横スクロールする table を keyboard でスクロール可能にする (axe scrollable-region-focusable)。
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+      tabIndex={0}
+    >
       <table className="w-full text-left text-sm">
         <caption className="sr-only">登録済シークレットのインベントリ (読み取り専用)</caption>
         <thead>
