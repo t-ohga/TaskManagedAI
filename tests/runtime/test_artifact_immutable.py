@@ -575,6 +575,10 @@ async def test_parent_artifact_cross_run_and_cross_tenant_are_rejected(
                 session,
                 tenant_id=2,
                 run_id=TENANT_TWO_RUN_ID,
+                # tenant 2 の valid project を明示指定する。default の TENANT_ONE_PROJECT_ID は
+                # tenant 2 に存在せず、複合 FK artifacts_project_fkey が先に発火して狙った
+                # artifacts_parent_artifact_fkey (cross-tenant parent 拒否) を隠してしまう。
+                project_id=TENANT_TWO_PROJECT_ID,
                 parent_artifact_id=PARENT_ARTIFACT_ID,
             )
             await session.commit()

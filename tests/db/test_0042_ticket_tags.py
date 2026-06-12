@@ -144,6 +144,22 @@ async def _seed_project_ticket_tag(
     session: AsyncSession, *, project_id: str, ticket_id: str | None, tag_id: str | None
 ) -> None:
     """tenant_id=1 配下に最小の project (+ 任意で ticket / tag) を seed する。"""
+    # full suite では先行 test の truncate cascade で tenants / actors が消えるため、本 helper を
+    # self-contained にする (isolation では migration seed の tenant 1 が残るが、それに依存しない)。
+    # tenant 1 → actor b001 (workspaces.owner_actor_id FK) を ON CONFLICT (id) DO NOTHING で冪等 seed。
+    await session.execute(
+        text(
+            "insert into tenants (id, name) values (1, 'ticket-tags-tenant') "
+            "on conflict (id) do nothing"
+        )
+    )
+    await session.execute(
+        text(
+            "insert into actors (id, tenant_id, actor_type, actor_id, display_name) "
+            "values ('00000000-0000-4000-8000-00000000b001', 1, 'human', "
+            "'human:ws-owner-b001', 'ws owner') on conflict (id) do nothing"
+        )
+    )
     workspace_id = str(uuid4())
     await session.execute(
         text(

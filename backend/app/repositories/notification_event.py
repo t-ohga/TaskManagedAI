@@ -12,7 +12,11 @@ from backend.app.db.app_role import (
     get_tenant_context,
     set_tenant_context,
 )
-from backend.app.db.models.notification_event import NotificationEvent
+from backend.app.db.models.notification_event import (
+    NotificationEvent,
+    NotificationRequiredAction,
+    NotificationSeverity,
+)
 
 # ADR-00041: ticket コメントは notification_events に保存されるが、通知 (inbox / triage) では
 # ない。全 notification read surface から除外し、投稿者の未読 / badge / triage を汚染しない (R1-3 / R2-3)。
@@ -30,20 +34,25 @@ class NotificationEventRepository:
         payload: dict[str, Any],
         recipient_actor_id: UUID,
         *,
-        severity: str | None = None,
-        required_action: str | None = None,
+        severity: NotificationSeverity = "info",
+        required_action: NotificationRequiredAction = "acknowledge",
+        due_at: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> NotificationEvent:
+        # severity / required_action / due_at / dedupe_key は NotificationEvent の実 column。
+        # triage 表示順 (severity_priority) と read surface が column を読むため、payload に
+        # 混ぜず column に設定する (fc51e58 の mypy 簡略化で payload enrich に退行していたのを復旧、
+        # test_request_revision_..._metadata_only_events で実証: column 'info' のまま / payload 汚染)。
         await self._ensure_tenant_context(tenant_id)
-        enriched_payload = {**payload}
-        if severity is not None:
-            enriched_payload["severity"] = severity
-        if required_action is not None:
-            enriched_payload["required_action"] = required_action
         event = NotificationEvent(
             tenant_id=tenant_id,
             event_type=event_type,
-            payload=enriched_payload,
+            payload=payload,
             recipient_actor_id=recipient_actor_id,
+            severity=severity,
+            required_action=required_action,
+            due_at=due_at,
+            dedupe_key=dedupe_key,
         )
         self.session.add(event)
         await self.session.flush()
