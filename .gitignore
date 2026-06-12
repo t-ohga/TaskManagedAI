@@ -48,6 +48,8 @@ id_ed25519
 # Claude Code hook state (session-local)
 .claude/.hook-state/
 .claude/worktrees/
+# Claude harness local-only working files (handoff / codex task spec 等、PUBLIC repo へ commit しない)
+.claude/local/
 
 # Codex Quality Loop runtime state (local run ledgers and archives)
 .codex/plans/
