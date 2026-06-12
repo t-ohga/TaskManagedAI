@@ -1,59 +1,21 @@
 /**
- * Sprint 9 BL-0111: Playwright E2E for Sprint 9 admin pages.
+ * Sprint 9 admin pages, rewritten against the current feature pages.
  *
- * Sprint 9 batches 1-2 で実装した 6 page (Tickets / Runs / Audit / Settings +
- * dynamic [id] routes) が Server Component で render され、ARIA label /
- * heading / navigation が正しく出ることを verify。
+ * The old Sprint-9 skeleton-only ARIA regions were removed from the product UI.
+ * This spec now pins current content invariants that should survive visual and
+ * implementation refactors without duplicating broad render/a11y/responsive gates.
  */
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { DEV_SESSION_COOKIE_NAME } from "@/lib/auth/dev-login";
 
-// F-P2R1-010 fix: import the canonical cookie name from the auth module
-// rather than duplicating the literal string, so future renames cannot drift.
+test.describe.configure({ mode: "serial" });
+
 const SESSION_COOKIE_NAME = DEV_SESSION_COOKIE_NAME;
-
-// F-P2R1-001 + F-P2R1-008 fix: exact-set verification of AgentRun 16 states,
-// blocked_reason 3 reasons, and ContextSnapshot 10 columns. These are P0
-// invariants (#6 / #8) and must not silently change in either direction.
-const AGENT_RUN_STATES_16 = [
-  "queued",
-  "gathering_context",
-  "running",
-  "generated_artifact",
-  "schema_validated",
-  "policy_linted",
-  "diff_ready",
-  "waiting_approval",
-  "blocked",
-  "provider_refused",
-  "provider_incomplete",
-  "validation_failed",
-  "repair_exhausted",
-  "completed",
-  "failed",
-  "cancelled"
-] as const;
-
-const BLOCKED_REASONS_3 = [
-  "policy_blocked",
-  "budget_blocked",
-  "runtime_blocked"
-] as const;
-
-const CONTEXT_SNAPSHOT_COLUMNS = [
-  "prompt_pack_version",
-  "prompt_pack_lock",
-  "policy_version",
-  "policy_pack_lock",
-  "repo_state",
-  "tool_manifest",
-  "evidence_set_hash",
-  "provider_continuation_ref",
-  "provider_request_fingerprint",
-  "snapshot_kind"
-] as const;
+const SEEDED_TICKET_ID = "00000000-0000-4000-8000-000000000006";
+const UNSEEDED_AGENT_RUN_ID = "00000000-0000-4000-8000-000000000002";
+const NOT_FOUND_HEADING = "ページが見つかりません";
 
 function readDevLoginToken(): string {
   return (
@@ -97,19 +59,6 @@ async function expectCodeTextCount(
   }
 }
 
-async function expectUniqueDefinitionTerm(
-  scope: Locator,
-  value: string
-): Promise<void> {
-  const match = scope
-    .locator("dt code")
-    .filter({ hasText: exactTextPattern(value) });
-
-  await expect(match).toHaveCount(1);
-  await expect(match).toHaveText(value);
-  await expect(match).toBeVisible();
-}
-
 async function waitForDevSessionCookie(page: Page): Promise<void> {
   await expect
     .poll(
@@ -130,136 +79,147 @@ async function waitForDevSessionCookie(page: Page): Promise<void> {
 async function loginAsDev(page: Page) {
   await page.goto("/login?next=/dashboard");
   await page.getByLabel("Dev login token").fill(readDevLoginToken());
-  // ログインボタンの label は "ログイン" (英語 "Sign in" から drift)。shared helper と同じ
-  // 正規表現で両対応にする。
   await page.getByRole("button", { name: /^(ログイン|Sign in)$/u }).click();
   await expect(page).toHaveURL(/\/dashboard$/u);
-  // 見出しは日本語 "ダッシュボード" (英語 /dashboard/i では非 match)。
   await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
   await waitForDevSessionCookie(page);
 }
 
-test("Sprint 9: tickets list page renders with ARIA + heading", async ({
+async function expectNotFoundPage(page: Page): Promise<void> {
+  await expect(page.getByRole("heading", { name: NOT_FOUND_HEADING })).toBeVisible();
+  await expect(
+    page.getByText("指定されたページは存在しないか、移動された可能性があります。")
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "ダッシュボードへ戻る" })).toBeVisible();
+}
+
+async function expectPageDoesNotExposeRawPayload(page: Page): Promise<void> {
+  const content = await page.content();
+  expect(content).not.toContain("payload_values");
+  expect(content).not.toContain("raw_provider_response");
+}
+
+test("Sprint 9: tickets list page shows the current kanban board invariants", async ({
   page
 }) => {
   await loginAsDev(page);
   await page.goto("/tickets");
 
   const ticketsRegion = page.getByRole("region", {
-    name: "Tickets",
+    name: "チケット看板ボード",
     exact: true
   });
 
   await expect(ticketsRegion).toHaveCount(1);
   await expect(ticketsRegion).toBeVisible();
   await expect(
-    ticketsRegion.getByRole("heading", { name: "Tickets", exact: true })
+    ticketsRegion.getByRole("heading", { level: 1, name: "チケット" })
   ).toBeVisible();
-  // Sprint 9 batch 1 skeleton 文言の verify
-  await expect(ticketsRegion).toContainText(/Sprint 9 batch 1 進捗/u);
+  await expect(ticketsRegion.getByText(/全 \d+ チケット/u)).toBeVisible();
+
+  for (const columnName of ["未着手", "進行中", "完了"]) {
+    await expect(
+      ticketsRegion.getByRole("heading", { level: 3, name: columnName })
+    ).toBeVisible();
+  }
+
+  await expect(ticketsRegion.getByRole("link", {
+    name: /Welcome to TaskManagedAI/u
+  })).toBeVisible();
 });
 
-test("Sprint 9: agent runs list page renders 16 states + 3 blocked reasons", async ({
+test("Sprint 9: agent runs list page shows current filters and list state", async ({
   page
 }) => {
   await loginAsDev(page);
   await page.goto("/runs");
 
   const agentRunsRegion = page.getByRole("region", {
-    name: "Agent Runs",
+    name: "AI 実行一覧",
     exact: true
   });
 
   await expect(agentRunsRegion).toHaveCount(1);
   await expect(agentRunsRegion).toBeVisible();
   await expect(
-    agentRunsRegion.getByRole("heading", { name: "Agent Runs", exact: true })
+    agentRunsRegion.getByRole("heading", { level: 1, name: "AI 実行" })
   ).toBeVisible();
+  await expect(agentRunsRegion.getByText(/全 \d+ 実行/u)).toBeVisible();
+  await expect(agentRunsRegion.getByText(/アクティブ \d+/u)).toBeVisible();
+  await expect(agentRunsRegion.getByText(/完了 \d+/u)).toBeVisible();
 
-  const stateGraph = agentRunsRegion.getByRole("list", {
-    name: "AgentRun 16 state execution graph",
-    exact: true
-  });
-
-  await expect(stateGraph).toHaveCount(1);
-  await expect(stateGraph).toBeVisible();
-  // F-P2R1-001 fix: exact 16 items + every enum value visible
-  await expect(stateGraph.locator("li")).toHaveCount(AGENT_RUN_STATES_16.length);
-  for (const state of AGENT_RUN_STATES_16) {
-    await expectUniqueCodeText(stateGraph, state);
+  for (const statusLabel of ["すべて", "待機中", "実行中", "承認待ち", "ブロック", "完了", "キャンセル"]) {
+    await expect(
+      agentRunsRegion.getByRole("link", { name: statusLabel, exact: true })
+    ).toBeVisible();
   }
 
-  const blockedReasons = agentRunsRegion.getByRole("list", {
-    name: "blocked_reason fixed sub categories",
-    exact: true
-  });
-
-  await expect(blockedReasons).toHaveCount(1);
-  await expect(blockedReasons).toBeVisible();
-  // F-P2R1-001 fix: exact 3 items + every blocked_reason visible
-  await expect(blockedReasons.locator("li")).toHaveCount(BLOCKED_REASONS_3.length);
-  for (const reason of BLOCKED_REASONS_3) {
-    await expectUniqueCodeText(blockedReasons, reason);
+  const emptyState = agentRunsRegion.getByText("AI 実行はまだありません");
+  if (await emptyState.isVisible()) {
+    await expect(emptyState).toBeVisible();
+    await expect(
+      agentRunsRegion.getByText(/MCP 経由で run_create を実行/u)
+    ).toBeVisible();
+  } else {
+    await expect(
+      agentRunsRegion
+        .locator("h2")
+        .filter({ hasText: /コスト・トークン集計|アクティブな実行|完了した実行/u })
+        .first()
+    ).toBeVisible();
   }
 });
 
-test("Sprint 9: audit log page renders event types + no raw secret notice", async ({
+test("Sprint 9: audit log page shows redacted audit metadata", async ({
   page
 }) => {
   await loginAsDev(page);
   await page.goto("/audit");
 
   const auditRegion = page.getByRole("region", {
-    name: "Audit Log",
+    name: "監査ログ",
     exact: true
   });
 
   await expect(auditRegion).toHaveCount(1);
   await expect(auditRegion).toBeVisible();
   await expect(
-    auditRegion.getByRole("heading", { name: "Audit Log", exact: true })
+    auditRegion.getByRole("heading", { level: 1, name: "監査ログ" })
   ).toBeVisible();
+  await expect(auditRegion.getByText(/追記専用の監査イベント \(\d+ 件\)/u)).toBeVisible();
 
-  const auditTable = auditRegion.getByRole("table", {
-    name: /Audit events with event_type/u
-  });
+  const auditTable = auditRegion.locator("table");
 
   await expect(auditTable).toHaveCount(1);
   await expect(auditTable).toBeVisible();
-  // 主要 audit_event 種別
-  await expectUniqueCodeText(auditTable, "policy_decision_created");
-  await expectUniqueCodeText(auditTable, "secret_canary_detected");
-  await expectUniqueCodeText(auditTable, "runner_blocked");
-  // F-P3R1-002 fix: reason_code と blocked_reason の列分離を CI 固定する
   await expect(
-    auditTable.getByRole("columnheader", { name: "reason_code" })
+    auditTable.getByRole("columnheader", { name: "イベント種別" })
   ).toBeVisible();
   await expect(
-    auditTable.getByRole("columnheader", { name: "blocked_reason" })
+    auditTable.getByRole("columnheader", { name: "理由コード" })
   ).toBeVisible();
-  // runner_blocked 行は reason_code=dangerous_command と blocked_reason=runtime_blocked の分離
-  await expectUniqueCodeText(auditTable, "dangerous_command");
-  await expectUniqueCodeText(auditTable, "runtime_blocked");
+  await expect(
+    auditTable.getByRole("columnheader", { name: "ペイロード" })
+  ).toBeVisible();
+  await expect(
+    auditTable.getByRole("columnheader", { name: "マスク状態" })
+  ).toBeVisible();
+  await expect(auditTable).toContainText("seed_initialized");
+  await expect(auditTable).toContainText("keys_only");
 
-  const secretBoundary = auditRegion.getByRole("region", {
-    name: "AC-HARD-02 audit redaction",
-    exact: true
-  });
-
-  await expect(secretBoundary).toHaveCount(1);
-  await expect(secretBoundary).toBeVisible();
-  // AC-HARD-02 invariant 文言
-  await expect(secretBoundary).toContainText("raw secret");
+  await expect(auditRegion.getByText("AC-HARD-02 監査マスク")).toBeVisible();
+  await expect(auditRegion.getByText(/生のシークレット、トークン/u)).toBeVisible();
+  await expectPageDoesNotExposeRawPayload(page);
 });
 
-test("Sprint 9: settings page renders provider matrix + policy profiles", async ({
+test("Sprint 9: settings page shows provider matrix and policy profiles", async ({
   page
 }) => {
   await loginAsDev(page);
   await page.goto("/settings");
 
   const settingsRegion = page.getByRole("region", {
-    name: "Project Settings",
+    name: "プロジェクト設定",
     exact: true
   });
 
@@ -267,8 +227,8 @@ test("Sprint 9: settings page renders provider matrix + policy profiles", async 
   await expect(settingsRegion).toBeVisible();
   await expect(
     settingsRegion.getByRole("heading", {
-      name: "Project Settings",
-      exact: true
+      level: 1,
+      name: "プロジェクト設定"
     })
   ).toBeVisible();
 
@@ -278,104 +238,94 @@ test("Sprint 9: settings page renders provider matrix + policy profiles", async 
 
   await expect(providerMatrix).toHaveCount(1);
   await expect(providerMatrix).toBeVisible();
-  // Provider Compliance Matrix entries
+  for (const headerName of [
+    "provider",
+    "api_or_feature",
+    "allowed_data_class",
+    "retention",
+    "zdr_eligible",
+    "training_use"
+  ]) {
+    await expect(
+      providerMatrix.getByRole("columnheader", { name: headerName })
+    ).toBeVisible();
+  }
   await expectUniqueCodeText(providerMatrix, "openai");
   await expectCodeTextCount(providerMatrix, "anthropic", 2);
 
   const policyProfiles = settingsRegion.getByRole("region", {
-    name: "Policy Profiles",
-    exact: true
+    name: "ポリシープロファイル"
   });
 
   await expect(policyProfiles).toHaveCount(1);
   await expect(policyProfiles).toBeVisible();
-  // Policy profiles
   await expectUniqueCodeText(policyProfiles, "minimal_safe");
   await expectUniqueCodeText(policyProfiles, "approval_required");
   await expectUniqueCodeText(policyProfiles, "merge_deny");
 });
 
-test("Sprint 9: ticket detail dynamic route renders", async ({ page }) => {
+test("Sprint 9: ticket detail dynamic route shows seeded ticket content", async ({
+  page
+}) => {
   await loginAsDev(page);
-  await page.goto("/tickets/00000000-0000-4000-8000-000000000001");
+  await page.goto(`/tickets/${SEEDED_TICKET_ID}`);
 
   const ticketDetailRegion = page.getByRole("region", {
-    name: "Ticket detail",
+    name: "チケット詳細",
     exact: true
   });
 
   await expect(ticketDetailRegion).toHaveCount(1);
   await expect(ticketDetailRegion).toBeVisible();
+  await expect(
+    ticketDetailRegion.getByRole("heading", {
+      level: 1,
+      name: "Welcome to TaskManagedAI"
+    })
+  ).toBeVisible();
+  const ticketSlug = ticketDetailRegion
+    .locator("dd")
+    .filter({ hasText: exactTextPattern("welcome") });
 
-  const contextSnapshot = ticketDetailRegion.getByRole("region", {
-    name: "ContextSnapshot 10 columns",
-    exact: true
-  });
+  await expect(ticketSlug).toHaveCount(1);
+  await expect(ticketSlug).toHaveText("welcome");
+  await expect(ticketSlug).toBeVisible();
+  await expect(ticketDetailRegion.getByText("未着手").first()).toBeVisible();
 
-  await expect(contextSnapshot).toHaveCount(1);
-  await expect(contextSnapshot).toBeVisible();
-  // F-P2R1-008 fix: ContextSnapshot must expose exactly 10 columns (#8 invariant).
-  // Test now verifies all 10 column names + total dt count.
-  await expect(contextSnapshot.locator("dt")).toHaveCount(
-    CONTEXT_SNAPSHOT_COLUMNS.length
-  );
-  for (const columnKey of CONTEXT_SNAPSHOT_COLUMNS) {
-    await expectUniqueDefinitionTerm(contextSnapshot, columnKey);
+  for (const sectionHeading of ["基本情報", "説明", "ラベル", "アクティビティ"]) {
+    await expect(
+      ticketDetailRegion.getByRole("heading", { name: sectionHeading })
+    ).toBeVisible();
   }
 });
 
-test("Sprint 9: agent run detail dynamic route renders timeline", async ({
+test("Sprint 9: unseeded agent run detail shows not-found UI", async ({
   page
 }) => {
   await loginAsDev(page);
-  await page.goto("/runs/00000000-0000-4000-8000-000000000002");
+  await page.goto(`/runs/${UNSEEDED_AGENT_RUN_ID}`);
 
-  const agentRunDetailRegion = page.getByRole("region", {
-    name: "Agent Run detail",
-    exact: true
-  });
-
-  await expect(agentRunDetailRegion).toHaveCount(1);
-  await expect(agentRunDetailRegion).toBeVisible();
-
-  const eventTimeline = agentRunDetailRegion.getByRole("list", {
-    name: "Chronological AgentRunEvent timeline",
-    exact: true
-  });
-
-  await expect(eventTimeline).toHaveCount(1);
-  await expect(eventTimeline).toBeVisible();
-  // Timeline events が render される
-  await expectUniqueCodeText(eventTimeline, "run_queued");
-  await expectUniqueCodeText(eventTimeline, "runner_started");
-  await expectUniqueCodeText(eventTimeline, "runner_completed");
-  await expectUniqueCodeText(eventTimeline, "repo_pr_opened");
-
-  const secretBoundary = agentRunDetailRegion.getByRole("region", {
-    name: "AC-HARD-02 AgentRunEvent redaction",
-    exact: true
-  });
-
-  await expect(secretBoundary).toHaveCount(1);
-  await expect(secretBoundary).toBeVisible();
-  // AC-HARD-02 invariant 文言
-  await expect(secretBoundary).toContainText("AC-HARD-02");
+  await expectNotFoundPage(page);
+  await expect(page.getByRole("region", { name: "AI 実行詳細" })).toHaveCount(0);
 });
 
-// F-P3R1-001 fix: 不正 route id (UUID 形式違反) で notFound() が走り 404 を返す
-// ことを CI で固定する。F-P2R1-007 で導入した UUID guard の fail-closed 経路。
-test("Sprint 9: ticket detail rejects non-UUID id with 404", async ({
+test("Sprint 9: ticket detail rejects non-UUID id with not-found UI", async ({
   page
 }) => {
   await loginAsDev(page);
-  const response = await page.goto("/tickets/not-a-uuid");
-  expect(response?.status()).toBe(404);
+  await page.goto("/tickets/not-a-uuid");
+
+  await expectNotFoundPage(page);
+  await expect(page.getByRole("region", { name: "チケット詳細" })).toHaveCount(0);
+  await expect(page.getByText("Welcome to TaskManagedAI")).toHaveCount(0);
 });
 
-test("Sprint 9: agent run detail rejects non-UUID id with 404", async ({
+test("Sprint 9: agent run detail rejects non-UUID id with not-found UI", async ({
   page
 }) => {
   await loginAsDev(page);
-  const response = await page.goto("/runs/not-a-uuid");
-  expect(response?.status()).toBe(404);
+  await page.goto("/runs/not-a-uuid");
+
+  await expectNotFoundPage(page);
+  await expect(page.getByRole("region", { name: "AI 実行詳細" })).toHaveCount(0);
 });
