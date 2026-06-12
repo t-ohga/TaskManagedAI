@@ -9,12 +9,15 @@ import pytest
 import pytest_asyncio
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.app.config import Settings, get_settings
 from backend.app.db.models.actor import Actor
+from backend.app.db.models.agent_run import AgentRun
+from backend.app.db.models.agent_run_event import AgentRunEvent
+from backend.app.db.models.approval_request import ApprovalRequest
 from backend.app.db.models.principal import Principal
 from backend.app.db.models.project import Project
 from backend.app.db.models.repository import Repository
@@ -25,6 +28,18 @@ from backend.app.seeds.initial import (
     DEFAULT_ACTOR_ID,
     DEFAULT_ACTOR_STABLE_ID,
     DEFAULT_ACTOR_TYPE,
+    DEFAULT_AGENT_ACTOR_ID,
+    DEFAULT_AGENT_ACTOR_NAME,
+    DEFAULT_AGENT_ACTOR_STABLE_ID,
+    DEFAULT_AGENT_ACTOR_TYPE,
+    DEFAULT_AGENT_RUN_ID,
+    DEFAULT_AGENT_RUN_STATUS,
+    DEFAULT_APPROVAL_ACTION_CLASS,
+    DEFAULT_APPROVAL_POLICY_VERSION,
+    DEFAULT_APPROVAL_REQUEST_ID,
+    DEFAULT_APPROVAL_RESOURCE_REF,
+    DEFAULT_APPROVAL_RISK_LEVEL,
+    DEFAULT_APPROVAL_STATUS,
     DEFAULT_PRINCIPAL_ID,
     DEFAULT_PROJECT_ID,
     DEFAULT_PROJECT_NAME,
@@ -39,10 +54,12 @@ from backend.app.seeds.initial import (
     DEFAULT_REPOSITORY_PROVIDER,
     DEFAULT_TENANT_ID,
     DEFAULT_TENANT_NAME,
+    DEFAULT_TICKET_ID,
     DEFAULT_USER_NAME,
     DEFAULT_WORKSPACE_ID,
     DEFAULT_WORKSPACE_NAME,
     DEFAULT_WORKSPACE_SLUG,
+    seed_golden_flow_fixtures,
     seed_initial,
 )
 
@@ -177,13 +194,19 @@ async def test_seed_initial_is_idempotent(
         workspace_count = await session.scalar(select(func.count(Workspace.id)))
         project_count = await session.scalar(select(func.count(Project.id)))
         repository_count = await session.scalar(select(func.count(Repository.id)))
+        approval_count = await session.scalar(select(func.count(ApprovalRequest.id)))
+        run_count = await session.scalar(select(func.count(AgentRun.id)))
 
     assert tenant_count == 1
+    # base seed_initial は human actor 1 件のみ (golden-flow agent は test 専用 fixture へ分離)。
     assert actor_count == 1
     assert principal_count == 1
     assert workspace_count == 1
     assert project_count == 1
     assert repository_count == 1
+    # 本番 seed (seed_initial 単体) は pending approval / run を作らない (Codex R2: 本番非汚染)。
+    assert approval_count == 0
+    assert run_count == 0
 
 
 @pytest.mark.asyncio
@@ -267,3 +290,154 @@ async def test_seed_initial_creates_default_core_records(
     assert repository.metadata_["rls_ready"] is True
     assert repository.metadata_["placeholder"] is True
     assert repository.metadata_["integration_target"] == "repo_proxy_github_app_sprint8"
+
+
+@pytest.mark.asyncio
+async def test_seed_golden_flow_fixtures_creates_actionable_approval_and_run(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """SP-009 golden flow fixture (test 専用): agent actor が requester の actionable な
+    pending approval + 完了 run + events を base seed の上に冪等追加する。"""
+    async with session_factory.begin() as session:
+        await _reset_seed_tables(session)
+        await seed_initial(session)
+        # base record の上に golden-flow fixture を重ねる。二重呼び出しでも冪等。
+        await seed_golden_flow_fixtures(session)
+        await seed_golden_flow_fixtures(session)
+
+    async with session_factory() as session:
+        agent_actor = await session.scalar(
+            select(Actor).where(
+                Actor.tenant_id == DEFAULT_TENANT_ID,
+                Actor.actor_id == DEFAULT_AGENT_ACTOR_STABLE_ID,
+            )
+        )
+        approval = await session.scalar(
+            select(ApprovalRequest).where(
+                ApprovalRequest.id == DEFAULT_APPROVAL_REQUEST_ID
+            )
+        )
+        run = await session.scalar(
+            select(AgentRun).where(AgentRun.id == DEFAULT_AGENT_RUN_ID)
+        )
+        events = (
+            await session.scalars(
+                select(AgentRunEvent)
+                .where(AgentRunEvent.run_id == DEFAULT_AGENT_RUN_ID)
+                .order_by(AgentRunEvent.seq_no)
+            )
+        ).all()
+        # 二重呼び出し後も on_conflict_do_nothing で冪等 (actor=2: human + agent)。
+        actor_count = await session.scalar(select(func.count(Actor.id)))
+        approval_count = await session.scalar(select(func.count(ApprovalRequest.id)))
+        run_count = await session.scalar(select(func.count(AgentRun.id)))
+        event_count = await session.scalar(select(func.count(AgentRunEvent.id)))
+
+    assert actor_count == 2
+    assert approval_count == 1
+    assert run_count == 1
+    assert event_count == 3
+
+    assert agent_actor is not None
+    assert agent_actor.id == DEFAULT_AGENT_ACTOR_ID
+    assert agent_actor.tenant_id == DEFAULT_TENANT_ID
+    assert agent_actor.actor_type == DEFAULT_AGENT_ACTOR_TYPE
+    assert agent_actor.actor_id == DEFAULT_AGENT_ACTOR_STABLE_ID
+    assert agent_actor.display_name == DEFAULT_AGENT_ACTOR_NAME
+
+    assert approval is not None
+    assert approval.tenant_id == DEFAULT_TENANT_ID
+    assert approval.status == DEFAULT_APPROVAL_STATUS
+    assert approval.action_class == DEFAULT_APPROVAL_ACTION_CLASS
+    assert approval.risk_level == DEFAULT_APPROVAL_RISK_LEVEL
+    assert approval.policy_version == DEFAULT_APPROVAL_POLICY_VERSION
+    assert approval.resource_ref == DEFAULT_APPROVAL_RESOURCE_REF
+    assert approval.resource_ref == f"ticket:{DEFAULT_TICKET_ID}"
+    # raw secret を持ち込まないこと (artifact / diff / fingerprint は seed では未設定)。
+    assert approval.artifact_hash is None
+    assert approval.diff_hash is None
+    assert approval.provider_request_fingerprint is None
+    # pending なので未決定。
+    assert approval.decided_by_actor_id is None
+    assert approval.decided_at is None
+    # self-approval 禁止 (requester は agent、human DEFAULT_ACTOR が decide 可能)。
+    assert approval.requested_by_actor_id == DEFAULT_AGENT_ACTOR_ID
+    assert approval.requested_by_actor_id != DEFAULT_ACTOR_ID
+    assert approval.metadata_["rls_ready"] is True
+
+    # 完了済み AgentRun (terminal status、blocked_reason は null)。
+    assert run is not None
+    assert run.tenant_id == DEFAULT_TENANT_ID
+    assert run.project_id == DEFAULT_PROJECT_ID
+    assert run.ticket_id == DEFAULT_TICKET_ID
+    assert run.status == DEFAULT_AGENT_RUN_STATUS
+    assert run.status == "completed"
+    assert run.blocked_reason is None
+
+    # 追記専用 AgentRunEvent タイムライン (seq_no 1..3、event_type は enum 整合)。
+    assert [event.seq_no for event in events] == [1, 2, 3]
+    assert [event.event_type for event in events] == [
+        "run_queued",
+        "provider_responded",
+        "run_completed",
+    ]
+    for event in events:
+        assert event.run_id == DEFAULT_AGENT_RUN_ID
+
+    # rollback-safety invariant (migration 0040 downgrade preflight): ticket-bound run の
+    # 非 null ticket_id は canonical run_queued (seq_no 最小) event payload の ticket_id と
+    # lossless 一致しなければ downgrade が拒否される。seed が rollback blocker にならないことを固定。
+    queued_event = events[0]
+    assert queued_event.event_type == "run_queued"
+    assert queued_event.event_payload["ticket_id"] == str(run.ticket_id)
+    assert queued_event.event_payload["ticket_id"] == str(DEFAULT_TICKET_ID)
+    # provider_responded / run_completed は migration 非依存の最小 payload。
+    for event in events[1:]:
+        assert event.event_payload == {"note": "golden-flow-seed"}
+
+
+@pytest.mark.asyncio
+async def test_seed_golden_flow_fixtures_resets_decided_approval(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """reused test DB で approval が decide 済みでも reseed で pending へ戻す (state-repairing)。
+
+    Codex adversarial R4 [medium]: insert-only だと一度 approve/reject された fixture が terminal の
+    まま残り、golden-flow gate (pending filter で listed 要求) が reseed 後も fail する。
+    """
+    async with session_factory.begin() as session:
+        await _reset_seed_tables(session)
+        await seed_initial(session)
+        await seed_golden_flow_fixtures(session)
+
+    # fixture を approved へ遷移させる (decider は human DEFAULT_ACTOR、requester は agent なので
+    # self-approval CHECK を満たす)。decided_at は requested_at 以降。
+    async with session_factory.begin() as session:
+        await session.execute(
+            update(ApprovalRequest)
+            .where(ApprovalRequest.id == DEFAULT_APPROVAL_REQUEST_ID)
+            .values(
+                status="approved",
+                decided_by_actor_id=DEFAULT_ACTOR_ID,
+                decided_at=func.now(),
+                rationale="approved in test",
+            )
+        )
+
+    # reseed すると state-repairing upsert で pending へ戻り decision fields が clear される。
+    async with session_factory.begin() as session:
+        await seed_golden_flow_fixtures(session)
+
+    async with session_factory() as session:
+        approval = await session.scalar(
+            select(ApprovalRequest).where(ApprovalRequest.id == DEFAULT_APPROVAL_REQUEST_ID)
+        )
+        approval_count = await session.scalar(select(func.count(ApprovalRequest.id)))
+
+    assert approval is not None
+    assert approval.status == "pending"
+    assert approval.decided_by_actor_id is None
+    assert approval.decided_at is None
+    assert approval.rationale is None
+    # 物理削除でなく upsert なので件数は 1 のまま。
+    assert approval_count == 1
