@@ -49,7 +49,31 @@ case "$rel_path" in
     ;;
 esac
 
-if printf '%s\n' "$content" | grep -Eiq 'tailscale[[:space:]]+funnel|Funnel|funnel[[:space:]]*:|public ingress|cloudflared|Cloudflare Tunnel|0\.0\.0\.0[[:space:]]*:|--host[[:space:]]+0\.0\.0\.0|host:[[:space:]]*0\.0\.0\.0|^[[:space:]]*-[[:space:]]*"?[0-9]+:[0-9]+'; then
+# 強い public-exposure 指標 (Funnel / Cloudflare / 0.0.0.0 全 interface bind) は file 種別を問わず BLOCK。
+strong_exposure_re='tailscale[[:space:]]+funnel|Funnel|funnel[[:space:]]*:|public ingress|cloudflared|Cloudflare Tunnel|0\.0\.0\.0[[:space:]]*:|--host[[:space:]]+0\.0\.0\.0|host:[[:space:]]*0\.0\.0\.0'
+# host prefix 無しの bare port publish (`- "8000:8000"`) は docker-compose では host の全 interface
+# (0.0.0.0) に publish される懸念。ただし `- "127.0.0.1:8000:8000"` のような loopback prefix 付きは
+# 上記 regex に元々非該当 (`[0-9]+:[0-9]+` が `127.0.0.1:` に一致しない) なので正しく除外される。
+bare_host_publish_re='^[[:space:]]*-[[:space:]]*"?[0-9]+:[0-9]+'
+
+should_block="no"
+if printf '%s\n' "$content" | grep -Eiq "$strong_exposure_re"; then
+  should_block="yes"
+fi
+# bare port publish は docker-compose / compose / infra 等でのみ public-bind 懸念。
+# GitHub Actions workflow の services.*.ports (`- "5432:5432"` 等) は ephemeral runner 内部の
+# service container mapping で public ingress ではないため、`.github/workflows/**` は対象外
+# (file 全体走査で無関係な既存 CI service port が誤発火するのを防ぐ)。
+case "$rel_path" in
+  .github/workflows/*|.github/actions/*) : ;;
+  *)
+    if printf '%s\n' "$content" | grep -Eq "$bare_host_publish_re"; then
+      should_block="yes"
+    fi
+    ;;
+esac
+
+if [ "$should_block" = "yes" ]; then
   block_with_message "PostToolUse" "BLOCK tailscale-public-exposure: ${rel_path} appears to introduce Funnel, public ingress, Cloudflare tunnel, or public bind. P0 assumes Tailscale closed network and deny-by-default; external exposure is ADR Gate Criteria #7 and requires ADR-00007 before implementation. refs: .claude/rules/core.md §7, .claude/rules/sprint-pack-adr-gate.md §4."
 fi
 

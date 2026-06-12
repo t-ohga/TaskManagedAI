@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { revealAdminNav } from "./_helpers/nav";
+
 function readDevLoginToken(): string {
   return process.env.TASKMANAGEDAI_DEV_LOGIN_TOKEN ?? process.env.DEV_LOGIN_TOKEN ?? "dev-login-token";
 }
@@ -12,9 +14,11 @@ test("login renders the admin dashboard shell and exposes the logout skeleton", 
 
   await expect(page).toHaveURL(/\/dashboard$/u);
   await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "管理ナビゲーション" })).toBeVisible();
+  // モバイル幅では nav はハンバーガーに折りたたまれるため開いてから可視を確認する。
+  await revealAdminNav(page);
 
-  const dashboardLink = page.getByRole("link", { name: "ダッシュボード" });
+  // exact 指定なしだと "評価ダッシュボード" にも一致して strict-mode 違反になる。
+  const dashboardLink = page.getByRole("link", { name: "ダッシュボード", exact: true });
   await expect(dashboardLink).toHaveAttribute("aria-current", "page");
 
   const logoutLink = page.getByRole("link", { name: "ログアウト" });

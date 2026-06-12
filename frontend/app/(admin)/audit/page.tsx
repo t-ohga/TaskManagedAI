@@ -210,13 +210,22 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
 
       <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/40 px-4 py-3">
         <p className="text-sm font-medium text-red-700 dark:text-red-300">AC-HARD-02 監査マスク</p>
-        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+        <p className="mt-1 text-xs text-red-700 dark:text-red-400">
           生のシークレット、トークン、プロバイダーキーは表示されません。reason_code、パターン検出、ハッシュ参照のみ。
         </p>
       </div>
 
       {events.length > 0 ? (
-        <div className="overflow-x-auto rounded-lg border border-line">
+        // a11y (scrollable-region-focusable): 横スクロールする table 領域は keyboard で
+        // スクロールできるよう focusable にする (WAI-ARIA scrollable region pattern)。
+        <div
+          className="overflow-x-auto rounded-lg border border-line focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          // 横スクロールする table 領域を keyboard でスクロール可能にする (axe
+          // scrollable-region-focusable)。role/aria-label は付けない (外側 region
+          // 「監査ログ」と getByRole name の部分一致衝突を避ける、focusable のみが要件)。
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+          tabIndex={0}
+        >
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-line bg-slate-50 dark:bg-slate-800">
               <tr>

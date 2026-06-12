@@ -45,6 +45,13 @@ async function expectMainAndNavigationVisible(page: Page): Promise<void> {
 }
 
 async function expectNoHorizontalOverflow(page: Page): Promise<void> {
+  // overflow は **settled (hydration / client data load 完了後) のページ** で測定する。
+  // 主要ページの load 直後はデータ取得に伴う一時的レイアウトシフトで数 px の transient overflow が
+  // 出ることがあり (settled では解消)、それを responsive 破綻と誤検出しないよう networkidle を待つ。
+  // 永続的な overflow は settled 後も残るため引き続き検出できる。
+  await page.waitForLoadState("networkidle").catch(() => {
+    // networkidle に到達しない (長時間 polling 等) 場合も overflow 測定は続行する。
+  });
   // window.innerWidth と document.documentElement.scrollWidth がほぼ同等
   // (≤ 1px、scrollbar / sub-pixel 誤差) であることを verify。
   // 横スクロールが発生していれば overflow と判断 (responsive 破綻)。

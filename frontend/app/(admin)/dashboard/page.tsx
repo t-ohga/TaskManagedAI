@@ -251,7 +251,7 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
           <p className="mt-1 text-2xl font-bold text-blue-700 dark:text-blue-300">{activeProjectTotal ?? "—"}</p>
         </article>
         <article className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-4 shadow-sm">
-          <p className="text-xs text-amber-600 dark:text-amber-400">アーカイブ済プロジェクト</p>
+          <p className="text-xs text-amber-800 dark:text-amber-400">アーカイブ済プロジェクト</p>
           <p className="mt-1 text-2xl font-bold text-amber-700 dark:text-amber-300">
             {projectTotal != null && activeProjectTotal != null ? projectTotal - activeProjectTotal : "—"}
           </p>
@@ -288,7 +288,7 @@ export default async function DashboardPage({ searchParams }: DashboardProps) {
               </div>
               <div>
                 <p className="text-muted-foreground">残り</p>
-                <p className="text-lg font-bold text-amber-600 dark:text-amber-400">{totalTickets - closedTickets}</p>
+                <p className="text-lg font-bold text-amber-700 dark:text-amber-400">{totalTickets - closedTickets}</p>
               </div>
             </div>
           </article>

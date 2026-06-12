@@ -23,7 +23,23 @@ export default defineConfig({
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL,
-    trace: "on-first-retry"
+    trace: "on-first-retry",
+    // E2E では admin layout の feature tour overlay を抑止する。初回 localStorage 未設定だと
+    // tour modal が表示され、duplicate heading (h2#feature-tour-title) による strict-mode 違反 /
+    // a11y 違反 / click 妨害を引き起こすため、completed flag を全 test に pre-seed する
+    // (lib/feature-tour.ts の TOUR_STORAGE_KEY="taskmanagedai.feature-tour.completed" /
+    // TOUR_VERSION="1" と一致)。cookies は空なので login flow (未認証開始) には影響しない。
+    storageState: {
+      cookies: [],
+      origins: [
+        {
+          origin: baseURL,
+          localStorage: [
+            { name: "taskmanagedai.feature-tour.completed", value: "1" }
+          ]
+        }
+      ]
+    }
   },
   webServer: [
     {

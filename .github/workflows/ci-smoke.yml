@@ -204,7 +204,11 @@ jobs:
       TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET: test-cookie-secret-for-ci-only
       TASKMANAGEDAI_DEV_LOGIN_TOKEN: test-dev-login-token-for-ci-only
       TASKMANAGEDAI_RUN_DB_TESTS: "1"
-      PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+      # playwright.config.ts の webServer は frontend を `pnpm dev --port 3900` で起動するため、
+      # baseURL も 3900 に揃える。port 移行 (3000→3900、fc51e58) で config default / dev command は
+      # 更新されたが本 env が 3000 のまま残り、Playwright が 3000 を待って dev server (3900) に永遠に
+      # 到達せず `Timed out waiting 120000ms from config.webServer` で fail していた。
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:3900
       PLAYWRIGHT_BACKEND_URL: http://127.0.0.1:8000
     steps:
       - uses: actions/checkout@v4
