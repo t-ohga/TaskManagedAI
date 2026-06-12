@@ -8,7 +8,6 @@ Server-owned fields are never accepted from MCP tool input.
 from __future__ import annotations
 
 import re
-import time
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -67,13 +66,15 @@ def _assert_freeform_payload_no_secret(value: object, *, path: str = "task_spec"
         assert_no_secret_in_text(value, field=path)
 
 
-def _title_to_slug(title: str) -> str:
+def _title_to_slug(title: str, ticket_id: UUID) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     if not slug:
         slug = "ticket"
-    # time だけでは同一秒の同 title 2 件で (tenant, project, slug) unique 衝突する
-    # (idempotency_key=None は毎回新規作成のため)。uuid 断片で一意性を保証する。
-    return f"{slug}-{int(time.time()) % 100000}-{uuid4().hex[:6]}"
+    # (tenant, project, slug) unique を ticket の PK (= ticket_id) の一意性で deterministically
+    # 担保する。ticket_id.hex (lowercase [a-f0-9]{32}) を full-width で付与するため、id が一意な
+    # 限り slug も一意 = 衝突は構造的に発生しない (短縮 suffix の birthday collision や time 同秒
+    # 衝突を排除、IntegrityError retry も不要)。hex は slug url-safe CHECK にも適合する。
+    return f"{slug}-{ticket_id.hex}"
 
 
 async def bridge_ticket_list(
@@ -165,12 +166,15 @@ async def bridge_ticket_create(
         # Q-4 (ADR-00037 R5 #2): create_in_project は _assert_project_active を通るため、archived
         # project への MCP 経由 ticket create は ProjectArchivedError -> 409 で fail-closed になる
         # (base create は guard を通らないので使わない、全 mutation 境界で archive freeze を enforce)。
+        # slug 一意性を ticket PK の一意性で担保するため id を Python 側で生成し slug に埋め込む。
+        new_ticket_id = uuid4()
         return await repo.create_in_project(
             tenant_id,
             project_id,
             {
+                "id": new_ticket_id,
                 "title": title,
-                "slug": _title_to_slug(title),
+                "slug": _title_to_slug(title, new_ticket_id),
                 "description": description,
                 "status": "open",
                 "created_by_actor_id": resolved_actor_id,

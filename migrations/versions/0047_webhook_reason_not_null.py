@@ -41,6 +41,17 @@ _NEW = (
 
 
 def upgrade() -> None:
+    # preflight remediation: 旧 CHECK は NULL semantics で status='quarantined' AND
+    # quarantine_reason IS NULL を許していた。新 CHECK (IS NOT NULL) を貼る前にその legacy 状態の
+    # row を generic な 'parse_validation_failed' へ coerce する。parser は status='quarantined' の
+    # とき必ず reason を設定するため production では 0 件想定だが、直接書込 / 旧 parser バグ経路 /
+    # 手動修復 等の anomaly row が 1 件でも残っていると create_check_constraint が失敗して
+    # deployment 全体を block するため、それを防ぐ (auditable に最も汎用な失敗理由へ寄せる)。
+    op.execute(
+        "update github_webhook_events "
+        "set quarantine_reason = 'parse_validation_failed' "
+        "where status = 'quarantined' and quarantine_reason is null"
+    )
     op.drop_constraint(_CONSTRAINT, _TABLE, type_="check")
     op.create_check_constraint(_CONSTRAINT, _TABLE, _NEW)
 
