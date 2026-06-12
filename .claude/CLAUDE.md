@@ -21,6 +21,7 @@ P0 は個人専用、Tailscale 閉域、単一 VPS、Docker Compose を前提に
 7. **用語不変条件** → `rules/core.md` §7 (payload_data_class / allowed_data_class / gateway 名)
 8. **ContextSnapshot 10 カラム** → `rules/agentrun-state-machine.md` §11
 9. **Hard Gates 7 / Quality KPIs 5** → `rules/core.md` §6 + `.claude/reference/hard-gates-and-kpis.md`
+10. **Docker stack 残骸防止 (worktree/検証 stack は起動した側が down、実運用 volume 保護)** → `rules/docker-stack-hygiene.md`
 
 ## 3. 技術スタック
 
