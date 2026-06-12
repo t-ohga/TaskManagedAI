@@ -14,7 +14,8 @@ test("login renders the admin dashboard shell and exposes the logout skeleton", 
   await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "管理ナビゲーション" })).toBeVisible();
 
-  const dashboardLink = page.getByRole("link", { name: "ダッシュボード" });
+  // exact 指定なしだと "評価ダッシュボード" にも一致して strict-mode 違反になる。
+  const dashboardLink = page.getByRole("link", { name: "ダッシュボード", exact: true });
   await expect(dashboardLink).toHaveAttribute("aria-current", "page");
 
   const logoutLink = page.getByRole("link", { name: "ログアウト" });

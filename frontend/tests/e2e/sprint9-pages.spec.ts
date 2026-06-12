@@ -130,9 +130,12 @@ async function waitForDevSessionCookie(page: Page): Promise<void> {
 async function loginAsDev(page: Page) {
   await page.goto("/login?next=/dashboard");
   await page.getByLabel("Dev login token").fill(readDevLoginToken());
-  await page.getByRole("button", { name: "Sign in" }).click();
+  // ログインボタンの label は "ログイン" (英語 "Sign in" から drift)。shared helper と同じ
+  // 正規表現で両対応にする。
+  await page.getByRole("button", { name: /^(ログイン|Sign in)$/u }).click();
   await expect(page).toHaveURL(/\/dashboard$/u);
-  await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible();
+  // 見出しは日本語 "ダッシュボード" (英語 /dashboard/i では非 match)。
+  await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
   await waitForDevSessionCookie(page);
 }
 

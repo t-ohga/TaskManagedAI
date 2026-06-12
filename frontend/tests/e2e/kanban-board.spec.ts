@@ -13,9 +13,11 @@ test.describe("Kanban board", () => {
     await page.goto("/tickets");
 
     await expect(page.getByRole("heading", { name: "チケット" })).toBeVisible();
-    await expect(page.getByText("未着手")).toBeVisible();
-    await expect(page.getByText("進行中")).toBeVisible();
-    await expect(page.getByText("完了")).toBeVisible();
+    // getByText("未着手") は count badge / status filter option / ticket status chip にも一致して
+    // strict-mode 違反になる。kanban 列見出し (h3) に scope する。
+    await expect(page.getByRole("heading", { name: "未着手" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "進行中" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "完了", exact: true })).toBeVisible();
   });
 
   test("shows project tab with all projects option", async ({ page }) => {

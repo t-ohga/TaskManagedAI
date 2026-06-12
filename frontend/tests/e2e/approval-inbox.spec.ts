@@ -12,7 +12,8 @@ test.describe("Approval Inbox", () => {
     await page.goto("/login?next=/dashboard");
 
     await page.getByLabel("Dev login token").fill(readDevLoginToken());
-    await page.getByRole("button", { name: "Sign in" }).click();
+    // ログインボタン label は "ログイン" (英語 "Sign in" から drift)。両対応の正規表現にする。
+    await page.getByRole("button", { name: /^(ログイン|Sign in)$/u }).click();
 
     await expect(page).toHaveURL(/\/dashboard$/u);
     // Server Action redirect (x-action-redirect: /dashboard;push) は RSC payload で URL を

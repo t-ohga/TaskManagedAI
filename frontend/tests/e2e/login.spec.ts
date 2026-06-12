@@ -33,10 +33,10 @@ test("dev login proxies through the backend and shows the authenticated actor", 
   await expect(page).toHaveURL(/\/dashboard$/u);
   await expect(page.getByText("human:default")).toBeVisible();
   await expect(page.getByRole("navigation", { name: "管理ナビゲーション" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "ダッシュボード" })).toHaveAttribute(
-    "aria-current",
-    "page"
-  );
+  // exact 指定なしだと "評価ダッシュボード" link にも一致して strict-mode 違反になる。
+  await expect(
+    page.getByRole("link", { name: "ダッシュボード", exact: true })
+  ).toHaveAttribute("aria-current", "page");
 
   await expectBackendIssuedSessionCookie(context);
 });
