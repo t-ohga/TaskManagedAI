@@ -278,6 +278,8 @@ def _bucketed_cost_sql() -> sa.TextClause:
               from agent_runs ar
              where ar.tenant_id = :tenant_id
                and ar.status = 'completed'
+               -- SP-029 (ADR-00055 §設計制約 8): shadow run の cost を production KPI から除外。
+               and ar.run_mode = 'production'
                and ar.completed_at is not null
                and ar.completed_at >= :cutoff
                and (cast(:project_id as uuid) is null or ar.project_id = cast(:project_id as uuid))
@@ -330,6 +332,8 @@ def _bucketed_time_to_merge_sql() -> sa.TextClause:
               from agent_runs ar
              where ar.tenant_id = :tenant_id
                and ar.status = 'completed'
+               -- SP-029 (ADR-00055 §設計制約 8): shadow run を production time_to_merge KPI から除外。
+               and ar.run_mode = 'production'
                and ar.completed_at is not null
                and ar.completed_at >= :cutoff
                and (cast(:project_id as uuid) is null or ar.project_id = cast(:project_id as uuid))

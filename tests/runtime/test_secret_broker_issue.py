@@ -65,6 +65,8 @@ def _approved(**overrides: object) -> SimpleNamespace:
         "resource_ref": "repo:owner/repo:main",
         "diff_hash": "a" * 64,
         "provider_request_fingerprint": None,
+        # SP-029 (Codex R6 F-2): repo mutation approval は同一 run binding 必須。
+        "run_id": RUN_ID,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -233,6 +235,12 @@ def test_allowed_consumers_and_operations_are_required_for_issue() -> None:
         (_approved(diff_hash="b" * 64), "approval_diff_hash_mismatch"),
         (_approved(resource_ref="repo:owner/other:main"), "approval_target_mismatch"),
         (_approved(tenant_id=2), "approval_tenant_mismatch"),
+        # SP-029 (Codex R6 F-2): repo mutation approval は同一 run binding 必須。
+        (_approved(run_id=None), "approval_run_mismatch"),
+        (
+            _approved(run_id=UUID("00000000-0000-4000-8000-0000000046ff")),
+            "approval_run_mismatch",
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -246,6 +254,7 @@ async def test_issue_validates_approval_binding_for_repo_push(
         await broker._validate_approval(  # noqa: SLF001
             tenant_id=TENANT_ID,
             approval_id=APPROVAL_ID,
+            run_id=RUN_ID,
             requested_operation="repo.push",
             target={"repo_full_name": "owner/repo", "branch": "main", "commit_sha": "a" * 40},
             payload_hash="a" * 64,
@@ -261,6 +270,7 @@ async def test_issue_accepts_approval_binding_for_repo_push() -> None:
     await broker._validate_approval(  # noqa: SLF001
         tenant_id=TENANT_ID,
         approval_id=APPROVAL_ID,
+        run_id=RUN_ID,
         requested_operation="repo.push",
         target={"repo_full_name": "owner/repo", "branch": "main", "commit_sha": "a" * 40},
         payload_hash="a" * 64,
@@ -283,6 +293,7 @@ async def test_issue_validates_provider_call_approval_binding_when_present() -> 
     await broker._validate_approval(  # noqa: SLF001
         tenant_id=TENANT_ID,
         approval_id=APPROVAL_ID,
+        run_id=RUN_ID,
         requested_operation="provider.call",
         target={
             "provider": "openai",

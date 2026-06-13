@@ -14,6 +14,7 @@ import sqlalchemy as sa
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.approval_request import ApprovalRequest
 from backend.app.db.models.secret_capability_token import SecretCapabilityToken
 from backend.app.db.models.secret_ref import SecretRef
@@ -42,7 +43,10 @@ IssueDenyReason = Literal[
     "approval_diff_hash_mismatch",
     "approval_target_mismatch",
     "approval_tenant_mismatch",
+    "approval_run_mismatch",
     "ttl_out_of_bounds",
+    "shadow_run_mutation_forbidden",
+    "run_required_for_repo_mutation",
 ]
 RedeemDenyReason = Literal[
     "not_found",
@@ -63,6 +67,14 @@ RedeemDenyReason = Literal[
 
 T = TypeVar("T")
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+
+# SP-029 (ADR-00055 §設計制約 3、Codex R1 F-2): shadow run は repo mutation の
+# capability token を発行できない (downstream の repo write / PR open / merge を
+# transitively 封鎖)。provider.call は shadow でも通常経路で許可される (§7)、
+# secret.verify / rotation.* は read/admin のため対象外。
+_SHADOW_FORBIDDEN_OPERATIONS: frozenset[RequestedOperation] = frozenset(
+    {"repo.push", "repo.pr_open"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,6 +195,15 @@ class SecretBroker:
         if ttl < timedelta(minutes=5) or ttl > timedelta(minutes=30):
             raise BrokerIssueDenied("ttl_out_of_bounds")
 
+        # SP-029 (Codex R1 F-2 / R3 F-1): repo mutation capability は production run に
+        # binding 必須。run_mode は DB row から解決し caller 申告に依存しない
+        # (server-owned boundary)。
+        await self._assert_repo_mutation_run_is_production(
+            tenant_id=tenant_id,
+            run_id=run_id,
+            requested_operation=requested_operation,
+        )
+
         resolved_payload_hash = _resolve_payload_hash(payload=payload, payload_hash=payload_hash)
 
         secret_ref = await self._get_secret_ref(
@@ -201,6 +222,7 @@ class SecretBroker:
         await self._validate_approval(
             tenant_id=tenant_id,
             approval_id=approval_id,
+            run_id=run_id,
             requested_operation=requested_operation,
             target=target,
             payload_hash=resolved_payload_hash,
@@ -410,6 +432,38 @@ class SecretBroker:
             operation_result=result,
         )
 
+    async def _assert_repo_mutation_run_is_production(
+        self,
+        *,
+        tenant_id: int,
+        run_id: UUID | None,
+        requested_operation: RequestedOperation,
+    ) -> None:
+        """repo mutation capability を production run に binding 必須で fail-closed 化する。
+
+        repo.push / repo.pr_open のみが対象 (provider.call / secret.verify /
+        rotation.* は対象外で run binding 任意)。caller が ``run_id`` を落とす / 不在
+        UUID を詐称して shadow guard を迂回するのを防ぐため、repo mutation は
+        ``run_id`` 必須 + ``(tenant_id, run_id)`` 実在 + ``run_mode='production'`` を
+        要求する (Codex R1 F-2 / R3 F-1、server-owned boundary)。run_mode は creation
+        後 immutable なので issue 時 1 回の確認で十分 (redeem 側 re-check 不要)。
+        """
+
+        if requested_operation not in _SHADOW_FORBIDDEN_OPERATIONS:
+            return
+        if run_id is None:
+            raise BrokerIssueDenied("run_required_for_repo_mutation")
+        run = await self.session.scalar(
+            sa.select(AgentRun).where(
+                AgentRun.tenant_id == tenant_id,
+                AgentRun.id == run_id,
+            )
+        )
+        if run is None:
+            raise BrokerIssueDenied("run_required_for_repo_mutation")
+        if run.run_mode != "production":
+            raise BrokerIssueDenied("shadow_run_mutation_forbidden")
+
     async def _get_secret_ref(
         self,
         *,
@@ -444,6 +498,7 @@ class SecretBroker:
         *,
         tenant_id: int,
         approval_id: UUID | None,
+        run_id: UUID | None,
         requested_operation: RequestedOperation,
         target: Mapping[str, Any],
         payload_hash: str,
@@ -473,6 +528,11 @@ class SecretBroker:
         if requested_operation in {"repo.push", "repo.pr_open"}:
             if approval.diff_hash != payload_hash:
                 raise BrokerIssueDenied("approval_diff_hash_mismatch")
+            # SP-029 (Codex R6 F-2): repo mutation approval は capability と同一 run に
+            # binding 必須。run_id を借用した別 run の approval で shadow diff を push する
+            # 経路を塞ぐ (approval と capability の run binding 一致 = server-owned)。
+            if approval.run_id is None or approval.run_id != run_id:
+                raise BrokerIssueDenied("approval_run_mismatch")
         elif requested_operation == "provider.call":
             if approval.provider_request_fingerprint != payload_hash:
                 raise BrokerIssueDenied("approval_diff_hash_mismatch")

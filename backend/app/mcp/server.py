@@ -181,22 +181,32 @@ async def kpi_show() -> dict[str, Any]:
     # ADR-00037 R12/R13/R15 (Codex adversarial): soft-deleted ticket bound の run を KPI 集計から
     # 除外する (全 read path active-scope の共通 predicate)。ticket-less run は含む。
     active_run = soft_deleted_ticket_run_exclusion()
+    # SP-029 (ADR-00055 §8、Codex R10 F-2): production KPI は shadow run を除外する
+    # (kpi_show の success_rate / total / completed / failed に shadow completed/failed を
+    # 混入させない、REST cost_summary / eval KPI と同じ run_mode='production' active-scope)。
+    production_only = AgentRun.run_mode == "production"
 
     try:
         async with get_db_session() as session:
             total_runs = (await session.execute(
                 select(sa.func.count()).select_from(AgentRun).where(
-                    AgentRun.tenant_id == DEFAULT_TENANT_ID, active_run
+                    AgentRun.tenant_id == DEFAULT_TENANT_ID, active_run, production_only
                 )
             )).scalar() or 0
             completed = (await session.execute(
                 select(sa.func.count()).select_from(AgentRun).where(
-                    AgentRun.tenant_id == DEFAULT_TENANT_ID, AgentRun.status == "completed", active_run
+                    AgentRun.tenant_id == DEFAULT_TENANT_ID,
+                    AgentRun.status == "completed",
+                    active_run,
+                    production_only,
                 )
             )).scalar() or 0
             failed = (await session.execute(
                 select(sa.func.count()).select_from(AgentRun).where(
-                    AgentRun.tenant_id == DEFAULT_TENANT_ID, AgentRun.status == "failed", active_run
+                    AgentRun.tenant_id == DEFAULT_TENANT_ID,
+                    AgentRun.status == "failed",
+                    active_run,
+                    production_only,
                 )
             )).scalar() or 0
             return {
@@ -385,7 +395,14 @@ async def run_create(
     parent_run_id: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
-    """AI 実行 (AgentRun) を開始。role_id で役割指定、parent_run_id で親子関係構築。"""
+    """AI 実行 (AgentRun) を開始。role_id で役割指定、parent_run_id で親子関係構築。
+
+    SP-029 (ADR-00055): shadow run_mode は backend plumbing 完成済だが、shadow terminal
+    を駆動する runtime worker (Sprint 6+) が未実装のため **MCP 表面には未公開** (公開すると
+    schema_validated で stuck する。production run も同様に runtime 駆動待ち)。shadow run の
+    作成は internal `bridge_run_create(run_mode='shadow')` + `shadow_mode_enabled` 経由のみ
+    (runtime driver と同時に公開する、Codex SP-029 R5 F-1)。
+    """
     from backend.app.mcp.api_bridge import bridge_run_create
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
 

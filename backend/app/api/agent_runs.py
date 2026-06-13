@@ -20,6 +20,7 @@ from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.agent_run_event import AgentRunEvent
 from backend.app.db.models.context_snapshot import ContextSnapshot
 from backend.app.domain.agent_runtime.active_scope import soft_deleted_ticket_run_exclusion
+from backend.app.domain.agent_runtime.run_mode import RunMode
 from backend.app.domain.agent_runtime.status import AgentRunStatus, BlockedReason
 from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
 from backend.app.repositories.artifact import ArtifactRepository
@@ -55,6 +56,8 @@ class AgentRunResponse(BaseModel):
 class AgentRunRead(AgentRunResponse):
     role_id: str | None
     role_scope: str | None
+    # SP-029 (ADR-00055): production / shadow の直交次元。shadow run を read で識別可能にする。
+    run_mode: RunMode
     orchestrator_lease_expires_at: datetime | None
     last_progress_at: datetime | None
     progress_seq: int
@@ -191,6 +194,7 @@ def _to_read(run: AgentRun) -> AgentRunRead:
         completed_at=run.completed_at,
         role_id=run.role_id,
         role_scope=run.role_scope,
+        run_mode=run.run_mode,
         orchestrator_lease_expires_at=run.orchestrator_lease_expires_at,
         last_progress_at=run.last_progress_at,
         progress_seq=run.progress_seq,
@@ -337,6 +341,9 @@ async def cost_summary_endpoint(
     # ADR-00037 R12/R13/R15 (Codex adversarial): soft-deleted ticket bound の run を cost/KPI 集計から
     # 除外する (全 read path active-scope の共通 predicate)。ticket-less run は含む、restore で復帰。
     conditions.append(soft_deleted_ticket_run_exclusion())
+    # SP-029 (ADR-00055 §設計制約 8): shadow run の cost を production cost 集計に混入させない
+    # (per-run cost は detail で可視、aggregate からは除外)。
+    conditions.append(AgentRun.run_mode == "production")
 
     totals = (
         await session.execute(
@@ -450,6 +457,8 @@ async def activity_timeseries_endpoint(
         conditions.append(AgentRun.created_at >= cutoff)
     # cost_summary / list と同じ active-scope (soft-deleted ticket bound run を除外)。
     conditions.append(soft_deleted_ticket_run_exclusion())
+    # SP-029 (ADR-00055 §設計制約 8): shadow run を production activity/cost 時系列から除外。
+    conditions.append(AgentRun.run_mode == "production")
 
     # date_trunc は timestamptz を **DB session TimeZone** で切り詰めるため、session が非 UTC だと
     # bucket 境界がずれる (Codex ADR-00040 R2)。PostgreSQL 16 の 3 引数形で UTC を明示し、session

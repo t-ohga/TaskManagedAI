@@ -135,6 +135,9 @@ _ROLLUP_SQL = sa.text(
           from agent_runs ar
          where ar.tenant_id = :tenant_id
            and ar.id = cast(:root_run_id as uuid)
+           -- SP-029 (ADR-00055 §設計制約 8): shadow run を production KPI から除外する。
+           -- root が shadow なら lineage_run_count=0 で None を返し KPI に出さない。
+           and ar.run_mode = 'production'
 
         union all
 
@@ -153,6 +156,8 @@ _ROLLUP_SQL = sa.text(
            and parent.project_id = child.project_id
            and parent.id = child.parent_run_id
          where not child.id = any(parent.path)
+           -- SP-029: shadow child も production lineage から除外 (混在 KPI 防止)。
+           and child.run_mode = 'production'
     ),
     dedup_events as (
         select distinct on (e.run_id, e.seq_no)

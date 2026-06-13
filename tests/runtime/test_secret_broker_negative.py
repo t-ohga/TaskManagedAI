@@ -30,6 +30,10 @@ TENANT_ID = 1
 ACTOR_ID = UUID("00000000-0000-4000-8000-000000004801")
 DECIDER_ID = UUID("00000000-0000-4000-8000-000000004802")
 RUN_ID = UUID("00000000-0000-4000-8000-000000004803")
+# SP-029 (Codex R3 F-1): repo.push capability は production run binding 必須になったため、
+# repo.push を発行する negative test 用に production run を seed する。
+WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000004804")
+PROJECT_ID = UUID("00000000-0000-4000-8000-000000004805")
 SECRET_REF_ID_1 = UUID("00000000-0000-4000-8000-000000004811")
 SECRET_REF_ID_2 = UUID("00000000-0000-4000-8000-000000004812")
 APPROVAL_ID_1 = UUID("00000000-0000-4000-8000-000000004821")
@@ -128,6 +132,36 @@ async def _setup_actor_fixture(session: AsyncSession) -> None:
             ),
             {"actor_id": actor_id, "stable_id": stable_id},
         )
+    # SP-029 (Codex R3 F-1): repo.push capability の production-run binding 必須化に伴い、
+    # repo.push を発行する negative test 用に production AgentRun を seed する
+    # (workspace -> project -> agent_run、run_mode='production')。
+    await session.execute(
+        text(
+            """
+            insert into workspaces (id, tenant_id, slug, name, owner_actor_id, metadata)
+            values (:id, 1, 'sbn-ws', 'sbn-ws', :owner, '{"rls_ready": true}'::jsonb)
+            """
+        ),
+        {"id": WORKSPACE_ID, "owner": ACTOR_ID},
+    )
+    await session.execute(
+        text(
+            """
+            insert into projects (id, tenant_id, workspace_id, slug, name, metadata)
+            values (:id, 1, :ws, 'sbn-proj', 'sbn-proj', '{"rls_ready": true}'::jsonb)
+            """
+        ),
+        {"id": PROJECT_ID, "ws": WORKSPACE_ID},
+    )
+    await session.execute(
+        text(
+            """
+            insert into agent_runs (id, tenant_id, project_id, status, run_mode)
+            values (:id, 1, :project, 'running', 'production')
+            """
+        ),
+        {"id": RUN_ID, "project": PROJECT_ID},
+    )
 
 
 async def _insert_secret_ref(
@@ -188,7 +222,10 @@ async def _insert_approval(
     resource_ref: str,
     diff_hash: str,
     action_class: str = "repo_write",
+    run_id: UUID | None = RUN_ID,
 ) -> None:
+    # SP-029 (Codex R6 F-2): repo mutation approval は capability と同一 production run に
+    # binding 必須になったため、seed 済 production RUN_ID を default で紐付ける。
     await session.execute(
         text(
             """
@@ -204,6 +241,7 @@ async def _insert_approval(
               requested_by_actor_id,
               decided_by_actor_id,
               decided_at,
+              run_id,
               metadata
             )
             values (
@@ -218,6 +256,7 @@ async def _insert_approval(
               :requested_by_actor_id,
               :decided_by_actor_id,
               :decided_at,
+              :run_id,
               '{"rls_ready": true}'::jsonb
             )
             """
@@ -227,6 +266,7 @@ async def _insert_approval(
             "action_class": action_class,
             "resource_ref": resource_ref,
             "diff_hash": diff_hash,
+            "run_id": run_id,
             "requested_by_actor_id": ACTOR_ID,
             "decided_by_actor_id": DECIDER_ID,
             "decided_at": datetime.now(tz=UTC),
