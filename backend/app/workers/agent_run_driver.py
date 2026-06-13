@@ -492,7 +492,14 @@ async def _fail_run_closed(
 
     R6-A2: 補償 transaction の失敗 (DB 不通 / session invalid / event append 失敗 等) は
     **握り潰さず re-raise** する。caller (execute_agent_run) はこの例外を伝播させ、arq に job
-    失敗を認識させ retry/可視化する (run が非終端のまま "failed" success を偽報告しない)。
+    失敗を認識させ可視化する (run が非終端のまま "failed" success を偽報告しない)。
+
+    R7-A1 (limitation): re-raise は **observability** を提供するが **auto-recovery ではない**。
+    durable claim 済 (gathering_context 以降) で補償も失敗した run は非終端のまま残り、arq retry
+    は claim (status != queued) で claim_miss を返す (再駆動しない)。これは worker-crash-mid-drive
+    と同じ **deferred crash-recovery class** (ADR-00057 §残課題: lease/resume/reclaim sweeper)。
+    本 slice の保証は「double-drive しない + silent failed-success を出さない (例外を surface)」
+    までで、補償失敗後の自動 resume は後続 increment。stuck run は status で可視 (silent loss なし)。
     """
 
     logger.exception(

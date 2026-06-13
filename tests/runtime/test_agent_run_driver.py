@@ -499,6 +499,16 @@ async def test_driver_compensation_failure_propagates(
     with pytest.raises(RuntimeError, match="compensation DB failure"):
         await execute_agent_run({}, run_id=run_id, tenant_id=DEFAULT_TENANT_ID)
 
+    # R7-A1 (documented deferral): 補償失敗後、run は durable claim 済の非終端 (gathering_context)
+    # のまま残る。re-raise は observability (arq surface) を提供するが auto-recovery ではない。
+    # この stuck-non-terminal の自動 resume/reclaim は deferred crash-recovery class (lease/sweeper、
+    # ADR-00057 §残課題)。再駆動は claim (status != queued) で claim_miss (再駆動しない) になる。
+    # 検証は test factory 直 query (driver mock 経由しない)。
+    async with session_factory() as session:
+        run = await session.scalar(select(AgentRun).where(AgentRun.id == UUID(run_id)))
+        assert run is not None
+        assert run.status == "gathering_context"  # 非終端で可視 (silent loss なし)
+
 
 # ---------------------------------------------------------------------------
 # R2-A2: provenance mismatch (result fp != driver request) は fail-closed

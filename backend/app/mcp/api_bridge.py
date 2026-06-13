@@ -727,10 +727,21 @@ async def bridge_run_cancel(
     # 統一する。従来の `run.status="cancelled"` 直接 set は `run_cancelled` event を append せず
     # AgentRunEvent 正本 invariant を破壊し、worker driver の cancel 検知 (post-commit DB status
     # 再読) とも不整合だった。`cancel_agent_run` は transition_with_event (event append) +
-    # publish_cancel_signal (best-effort) を行うが **commit はしない** (caller 責務) ため、
-    # MCP session (get_db_session は yield のみ) では呼出後に明示 commit が必須。
+    # publish_cancel_signal を行うが **commit はしない** (caller 責務) ため、MCP session
+    # (get_db_session は yield のみ) では呼出後に明示 commit が必須。
+    #
+    # R7-A2: cancel_agent_run は内部で commit 前に Redis publish を await する。Redis が
+    # black-hole 化 (接続維持で無応答) すると await がハングし、FOR UPDATE 下の cancelled 遷移が
+    # 未 commit のまま固着する (driver は post-commit DB status を正本にするため cancel が観測
+    # されない)。MCP cancel は signal に依存しない (driver は DB-status 再読で検知) ため、**no-op
+    # publisher を渡して Redis 依存を外し DB-first commit** にする (統一前の MCP cancel の
+    # Redis 非依存性を維持。REST 経路の pre-commit publish hang は本 ADR scope 外の別 follow-up)。
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
     from backend.app.services.agent_runtime.cancel import cancel_agent_run
+
+    class _NoOpCancelPublisher:
+        async def publish(self, channel: str, message: str) -> None:
+            return None
 
     try:
         run = await cancel_agent_run(
@@ -739,6 +750,7 @@ async def bridge_run_cancel(
             None,
             DEFAULT_SUPERINTENDENT_ACTOR_ID,
             tenant_id=tenant_id,
+            publisher=_NoOpCancelPublisher(),
         )
     except LookupError:
         return {"error": "not_found", "run_id": str(run_id)}
