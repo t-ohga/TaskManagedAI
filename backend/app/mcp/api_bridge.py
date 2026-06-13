@@ -726,17 +726,20 @@ async def bridge_run_cancel(
         return {"error": "not_found", "run_id": str(run_id)}
     except ValueError as exc:
         # terminal / non-cancelable は cancel_agent_run が ValueError。run の現状を返す。
+        # status は rollback **前** に読む (rollback で expire され、後で読むと sync lazy-load =
+        # MissingGreenlet になるため)。
         existing = await session.scalar(
             select(AgentRun).where(
                 AgentRun.tenant_id == tenant_id,
                 AgentRun.id == run_id,
             )
         )
+        existing_status = existing.status if existing is not None else None
         await session.rollback()
         return {
             "error": "already_terminal",
             "run_id": str(run_id),
-            "status": existing.status if existing is not None else None,
+            "status": existing_status,
             "detail": str(exc),
         }
 

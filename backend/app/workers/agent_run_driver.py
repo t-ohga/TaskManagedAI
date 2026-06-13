@@ -47,7 +47,7 @@ from backend.app.domain.agent_runtime.status import TERMINAL_STATES, AgentRunSta
 from backend.app.domain.provider.fingerprint import provider_request_fingerprint_payload
 from backend.app.domain.provider.request import ProviderMessage, ProviderRequest
 from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
-from backend.app.repositories.artifact import compute_content_hash, create_artifact
+from backend.app.repositories.artifact import ArtifactRepository, compute_content_hash
 from backend.app.repositories.context_snapshot import create_snapshot
 from backend.app.services.agent_runtime.event_log import transition_with_event
 from backend.app.services.agent_runtime.orchestrator import AgentRunOrchestrator
@@ -163,10 +163,12 @@ async def _reload_run(
     することで claim 時の status narrowing をリセットし、各 step で現 status を正しく扱う。
     """
 
+    # populate_existing=True: identity-map に残る run を DB の最新 committed 値で上書きする
+    # (expire_on_commit 設定に依らず external cancel を確実に検知する)。
     run = await session.scalar(
-        sa.select(AgentRun).where(
-            AgentRun.id == run_id, AgentRun.tenant_id == tenant_id
-        )
+        sa.select(AgentRun)
+        .where(AgentRun.id == run_id, AgentRun.tenant_id == tenant_id)
+        .execution_options(populate_existing=True)
     )
     if run is None:
         raise RuntimeError(f"AgentRun {run_id} disappeared mid-drive")
@@ -305,9 +307,11 @@ async def _drive_shadow_run(
             run = await _reload_run(session, run_id=run_id, tenant_id=tenant_id)
             if _is_cancelled_or_terminal(run.status):
                 return {"status": run.status, "run_id": str(run_id)}
-            artifact = await create_artifact(
-                session,
+            # project_id は artifacts で NOT NULL (migration 0019)。module-level
+            # create_artifact wrapper は project_id を渡さないため repository を直接使う。
+            artifact = await ArtifactRepository(session).create_artifact(
                 tenant_id=run.tenant_id,
+                project_id=run.project_id,
                 run_id=run.id,
                 kind="plan",
                 content_hash=compute_content_hash(content_jsonb),
