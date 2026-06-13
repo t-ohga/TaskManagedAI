@@ -415,6 +415,62 @@ async def bridge_approval_list(
     }
 
 
+async def _enqueue_shadow_run(*, run_id: UUID, tenant_id: int) -> None:
+    """shadow run を arq worker driver (``execute_agent_run``) に keyword 引数で enqueue する。
+
+    SP-004-5 (ADR-00057 R4-F2): task signature が keyword-only のため enqueue も keyword
+    (positional だと ``with_active_registry_gate`` wrapper の転送で worker 実行時 TypeError)。
+    bridge は API process で arq pool を持たない (``ctx["redis"]`` は worker 専用) ため、
+    都度 ``create_pool`` → enqueue → close する。
+    """
+    from arq import create_pool
+
+    from backend.app.workers.main import redis_settings_from_url
+
+    settings = get_settings()
+    pool = await create_pool(redis_settings_from_url(settings.redis_url))
+    try:
+        await pool.enqueue_job(
+            "execute_agent_run", run_id=str(run_id), tenant_id=tenant_id
+        )
+    finally:
+        await pool.aclose()
+
+
+async def _compensate_enqueue_dispatch_failure(
+    session: AsyncSession, *, run_id: UUID, tenant_id: int
+) -> str:
+    """SP-004-5 (ADR-00057 R2-F1): enqueue dispatch 失敗を fail-closed に終端化する。
+
+    enqueue 失敗を呑むと run が永久 ``queued`` の silent orphan になる (誰も claim しない)。
+    補償 transaction で ``queued -> failed`` (additive edge) に終端化し、失敗を run.status に
+    可視化する (再駆動 = caller が新 run を作成)。run が既に queued でなければ no-op。
+    """
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
+    from backend.app.services.agent_runtime.event_log import transition_with_event
+
+    run = await session.scalar(
+        select(AgentRun)
+        .where(AgentRun.tenant_id == tenant_id, AgentRun.id == run_id)
+        .with_for_update()
+    )
+    if run is None:
+        return "failed"
+    if run.status != "queued":
+        return run.status
+    await transition_with_event(
+        session,
+        run=run,
+        to_state="failed",
+        event_type="run_failed",
+        payload={"reason_code": "enqueue_dispatch_failed", "run_mode": "shadow"},
+        actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+        tenant_id=tenant_id,
+    )
+    await session.commit()
+    return "failed"
+
+
 async def bridge_run_create(
     session: AsyncSession,
     *,
@@ -618,9 +674,22 @@ async def bridge_run_create(
     else:
         # commit=False: lock を保持したまま呼出側 transaction に委ねる (run.id は flush 済)。
         await session.flush()
+
+    # SP-004-5 (ADR-00057): shadow run のみ worker driver (execute_agent_run) に enqueue する。
+    # production は post-validation pipeline 未実装のため driver 対象外 (従来通り queued 据置)。
+    # enqueue は run commit 後 (worker が claim する run が DB に可視) かつ commit=True 経路のみ
+    # (commit=False の delegation chain は run_mode=production default で shadow 不到達)。
+    result_status: str = run.status
+    if commit and run_mode == "shadow":
+        try:
+            await _enqueue_shadow_run(run_id=run.id, tenant_id=tenant_id)
+        except Exception:  # noqa: BLE001 - R2-F1 fail-closed: enqueue 失敗で silent orphan を作らない
+            result_status = await _compensate_enqueue_dispatch_failure(
+                session, run_id=run.id, tenant_id=tenant_id
+            )
     return {
         "run_id": str(run.id),
-        "status": run.status,
+        "status": result_status,
         "project_id": str(project_id),
         "ticket_id": ticket_id,
         "purpose": purpose,
@@ -636,24 +705,43 @@ async def bridge_run_cancel(
     tenant_id: int,
     run_id: UUID,
 ) -> dict[str, Any]:
-    result = await session.execute(
-        select(AgentRun).where(
-            AgentRun.tenant_id == tenant_id,
-            AgentRun.id == run_id,
+    # SP-004-5 (ADR-00057 R2-F2 + R3-F1): cancel entrypoint を `cancel_agent_run` service に
+    # 統一する。従来の `run.status="cancelled"` 直接 set は `run_cancelled` event を append せず
+    # AgentRunEvent 正本 invariant を破壊し、worker driver の cancel 検知 (post-commit DB status
+    # 再読) とも不整合だった。`cancel_agent_run` は transition_with_event (event append) +
+    # publish_cancel_signal (best-effort) を行うが **commit はしない** (caller 責務) ため、
+    # MCP session (get_db_session は yield のみ) では呼出後に明示 commit が必須。
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
+    from backend.app.services.agent_runtime.cancel import cancel_agent_run
+
+    try:
+        run = await cancel_agent_run(
+            session,
+            run_id,
+            None,
+            DEFAULT_SUPERINTENDENT_ACTOR_ID,
+            tenant_id=tenant_id,
         )
-    )
-    run = result.scalar_one_or_none()
-    if run is None:
+    except LookupError:
         return {"error": "not_found", "run_id": str(run_id)}
+    except ValueError as exc:
+        # terminal / non-cancelable は cancel_agent_run が ValueError。run の現状を返す。
+        existing = await session.scalar(
+            select(AgentRun).where(
+                AgentRun.tenant_id == tenant_id,
+                AgentRun.id == run_id,
+            )
+        )
+        await session.rollback()
+        return {
+            "error": "already_terminal",
+            "run_id": str(run_id),
+            "status": existing.status if existing is not None else None,
+            "detail": str(exc),
+        }
 
-    terminal = {"completed", "failed", "cancelled", "provider_refused", "repair_exhausted"}
-    if run.status in terminal:
-        return {"error": "already_terminal", "run_id": str(run_id), "status": run.status}
-
-    run.status = "cancelled"
-    run.blocked_reason = None
     await session.commit()
-    return {"run_id": str(run.id), "status": "cancelled"}
+    return {"run_id": str(run.id), "status": run.status}
 
 
 async def bridge_approval_show(
