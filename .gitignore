@@ -15,6 +15,10 @@ node_modules/
 dist/
 build/
 
+# Playwright E2E 生成物 (report / per-test results、commit 対象外)
+frontend/playwright-report/
+frontend/test-results/
+
 # Local environment and logs
 .env
 .env.*
