@@ -19,6 +19,8 @@ risks:
   - "enqueue 失敗 → silent orphan queued run (F2/R2-F1)"
   - "ContextSnapshot/ProviderRequest provenance が placeholder 化 (F4)"
   - "non-terminal closure 取り違え (provider_incomplete→repair_exhausted は不許可、R2-F3)"
+  - "cancel service 化で明示 commit 漏れ → rollback で cancel/event 非永続 (R3-F1)"
+  - "worker-crash-mid-drive で run 非終端残留 (durable resume 後続、R3-F2)"
   - "state machine additive edge が 16 status/event exact set を壊す (R2-F1/F2)"
   - "Mock provider 行が Compliance Matrix 未登録で deny"
   - "production run を誤 enqueue (shadow-only 漏れ)"
@@ -39,6 +41,8 @@ SP-004 (agent_runtime、completed) が「Sprint 4.5」へ defer した **arq wor
 - real provider (OpenAI/Anthropic/Gemini) 駆動 (Mock 固定)
 - provider mid-call kill / Redis per-run channel transport 整合 (step 境界 DB-status cancel のみ in scope、mid-call interruption は後続)
 - orphan の **transient 自動再試行** sweep/outbox (本 slice は enqueue 失敗を fail-closed `failed` で silent orphan 解消、自動再試行のみ後続。F5 closure は in scope)
+- **worker-crash-mid-drive の resume / reclaim** (R3-F2、atomic claim は queued のみ対象、transient state まで進めた run が crash 後 claim-miss で非終端残留 = silent loss ではないが自動 re-drive は後続。stale-run reclaim sweeper defer)
+- **provider_incomplete の durable bounded retry** (R3-F2、retry_count 列 + resume 経路が必要。本 slice は provider_incomplete→即 failed)
 - **bulk/superintendent cancel (api_bridge.py:1686) の event-append 統一** (R2-F2 派生 follow-up、driver は DB status で stop するため driver 動作には非影響、AgentRunEvent invariant 完全 close は別作業)
 
 ## 設計判断 (plan-review R1 F1-F5 + R2 F1-F3 反映、実コード照合済)
@@ -47,8 +51,8 @@ SP-004 (agent_runtime、completed) が「Sprint 4.5」へ defer した **arq wor
 - 既存 orchestrator step / state machine / ContextSnapshot / BudgetGuard / Compliance Gate / SecretBroker を再利用 (再実装なし)。
 - **atomic claim (F3)**: enqueue は run commit 後、task は `UPDATE agent_runs SET status='gathering_context' WHERE tenant_id=:t AND id=:r AND run_mode='shadow' AND status='queued' RETURNING *` で **claim**。**0 rows = benign loser → no-op return (failed にしない)**。concurrent worker / 二重 enqueue / production 誤 enqueue を single-flight + run_mode gate で防御。SP-029/SP-037 の concurrency 前提を満たす。
 - **provenance binding (F4)**: ProviderRequest を先に構築 → ContextSnapshot input に exact fingerprint 格納 (placeholder 禁止)。snapshot/request/result fingerprint + matrix version + Artifact payload_data_class の相互一致を test 固定。
-- **non-terminal closure 分離 (F5 + R2-F3)**: `provider_incomplete` と `validation_failed` は許可遷移が異なる (`state_machine.py:35-36` 照合)。`validation_failed` → `execute_repair_decision_step` → `repair_exhausted`。`provider_incomplete` → bounded retry `running`、上限/retry 不能は `failed` (**`provider_incomplete -> repair_exhausted` は不許可**)。
-- **cancellation = DB-status 検知 + entrypoint 統一 (F1 + R2-F2)**: `cancel_agent_run` は DB-first (cancelled 遷移 commit → best-effort signal) のため driver は **step 境界で run.status 再読**して cancelled 検知 → graceful stop (Redis transport 非依存)。MCP `bridge_run_cancel` (現状 `run.status="cancelled"` 直接 set、`run_cancelled` event 非 append = invariant 破壊、api_bridge.py:653) を `cancel_agent_run` 経由に統一 + actor_id plumbing。
+- **non-terminal closure 分離 + durable 終端 (F5 + R2-F3 + R3-F2)**: `validation_failed` → `execute_repair_decision_step` → `repair_exhausted` (同一 job 内完結、retry_count in-process)。`provider_incomplete` → **即 `failed`** (本 slice、durable retry counter 無し = R3-F2、in-process retry は worker crash で reset し終端保証を破る)。bounded retry (provider_incomplete→running) は durable counter + resume が要るため後続 defer。**`provider_incomplete -> repair_exhausted` は不許可**。
+- **cancellation = post-commit DB-status 検知 + entrypoint 統一 + 明示 commit (F1 + R2-F2 + R3-F1)**: `cancel_agent_run` は **commit しない** (transition_with_event は caller が commit、signal は pre-commit best-effort、event_log.py:49-53 = R3-F1)。driver は **step 境界で post-commit DB status 再読**して cancelled 検知 → graceful stop (Redis transport 非依存、pre-commit signal にも非依存)。MCP `bridge_run_cancel` (現状 `run.status="cancelled"` 直接 set + commit、`run_cancelled` event 非 append = invariant 破壊、api_bridge.py:653) を `cancel_agent_run` 経由に統一 + **明示 commit を残す** (落とすと MCP session yield 後 rollback) + actor_id plumbing。
 - **state machine additive 拡張 (R2-F1/F2 由来、CRITICAL invariant、Python+test のみ migration 不要)**: `queued->failed` (enqueue 失敗補償) + `{queued, gathering_context, generated_artifact, schema_validated}->cancelled` (cancel 統一 regress 防止) を additive 追加。16 status / event exact set 不変。
 - **enqueue 回復 = fail-closed (F2 + R2-F1)**: enqueue 失敗は呑まず **補償遷移で run `failed`** (error_code=enqueue_dispatch_failed) → silent orphan 禁止。「log + queued 残置」は R2-F1 で recovery でないと判明し不採用。自動 sweeper/outbox (transient 再試行) のみ後続 defer。
 - error → failed、blocked → stop (resume 待ち、driver 再駆動しない)。concurrent status-change miss は failed でなく no-op (F3 benign)。
@@ -56,12 +60,12 @@ SP-004 (agent_runtime、completed) が「Sprint 4.5」へ defer した **arq wor
 ## 実装チケット / タスク一覧
 
 1. `services/agent_runtime/state_machine.py` (additive、先に): `ALLOWED_TRANSITIONS` + `EVENT_TYPE_FOR_TRANSITION` に `queued->failed`(run_failed) + `{queued,gathering_context,generated_artifact,schema_validated}->cancelled`(run_cancelled) 追加 + `cancel.py` `_CANCELABLE_STATES` 拡張。state machine test の `EXPECTED_*` 整合 (5+ source)。
-2. `workers/agent_run_driver.py`: `execute_agent_run(ctx, *, run_id, tenant_id)` — gate verify → **atomic claim (F3、`UPDATE...RETURNING`、claim-miss=no-op)** + 同一 tx で context_gathered event + ContextSnapshot(F4 exact fingerprint) → running → execute_provider_step(Mock) → execute_validation_step → execute_shadow_completion_step → **non-terminal 分離 closure (F5+R2-F3: validation_failed→repair→repair_exhausted / provider_incomplete→running or failed)** → **step 境界 DB-status cancel 検知 (F1+R2-F2)** → error→failed。
+2. `workers/agent_run_driver.py`: `execute_agent_run(ctx, *, run_id, tenant_id)` — gate verify → **atomic claim (F3、`UPDATE...RETURNING`、claim-miss=no-op)** + 同一 tx で context_gathered event + ContextSnapshot(F4 exact fingerprint) → running → execute_provider_step(Mock) → execute_validation_step → execute_shadow_completion_step → **non-terminal 分離 closure (F5+R2-F3+R3-F2: validation_failed→repair→repair_exhausted / provider_incomplete→即 failed)** → **step 境界 post-commit DB-status cancel 検知 (F1+R2-F2+R3-F1)** → error→failed。
 3. `workers/main.py`: `functions` に `with_active_registry_gate(execute_agent_run)` 追加。
 4. `mcp/api_bridge.py` `bridge_run_create`: shadow run commit 後に enqueue (production は非 enqueue)。**enqueue 失敗 → 補償遷移で run failed (error_code=enqueue_dispatch_failed、R2-F1 fail-closed)**。
-5. **cancel entrypoint 統一 (F1+R2-F2)**: `mcp/api_bridge.py` `bridge_run_cancel` を `cancel_agent_run` 経由に統一 (run_cancelled event + signal) + `mcp/server.py` `run_cancel` に actor_id plumbing。
+5. **cancel entrypoint 統一 (F1+R2-F2+R3-F1)**: `mcp/api_bridge.py` `bridge_run_cancel` を `cancel_agent_run` 経由に統一 (run_cancelled event + signal) **+ 呼出後に明示 commit** (transition_with_event は commit しないため、R3-F1) + `mcp/server.py` `run_cancel` に actor_id plumbing。
 6. **provenance binding (F4)**: ProviderRequest を先に構築する helper + ContextSnapshot input に exact fingerprint 格納 (10 列 driver default)、Artifact (mock structured output)、ProviderRequest (shadow payload_data_class)。
-7. test: DB-gated end-to-end 駆動 / **atomic claim concurrent (benign-loser-not-failed、F3)** / **enqueue 失敗→failed (silent orphan なし、R2-F1)** / production 非駆動・非 enqueue / blocked stop / **cancel parity (REST + MCP 両方で run_cancelled event + driver stop、R2-F2)** / transient state cancel (新 edge) / **non-terminal 分離 (validation_failed→repair_exhausted、provider_incomplete→failed、repair_exhausted に行かない assert、R2-F3)** / **provenance fingerprint 一致 (F4)** / state machine 新 edge の EXPECTED_* / ContextSnapshot+Artifact+event timeline 検証。
+7. test: DB-gated end-to-end 駆動 / **atomic claim concurrent (benign-loser-not-failed、F3)** / **非 queued run 再駆動=no-op (crash 後 arq 再実行の安全性、R3-F2)** / **enqueue 失敗→failed (silent orphan なし、R2-F1)** / production 非駆動・非 enqueue / blocked stop / **cancel parity (REST + MCP 両方で run_cancelled event を実 DB に永続 + driver stop、R2-F2+R3-F1)** / transient state cancel (新 edge) / **non-terminal 分離 (validation_failed→repair_exhausted、provider_incomplete→即 failed、running/repair_exhausted に行かない assert、R2-F3+R3-F2)** / **provenance fingerprint 一致 (F4)** / state machine 新 edge の EXPECTED_* / ContextSnapshot+Artifact+event timeline 検証。
 
 ## must_ship / defer_if_over_budget 対応表
 
@@ -71,13 +75,16 @@ SP-004 (agent_runtime、completed) が「Sprint 4.5」へ defer した **arq wor
 | shadow-only enqueue (production 非 enqueue) | ✓ | |
 | **atomic claim single-flight (F3、claim-miss=no-op、concurrent 二重駆動防止)** | ✓ | |
 | **provenance binding exact fingerprint (F4、placeholder 禁止)** | ✓ | |
-| **DB-status cooperative cancel + entrypoint 統一 (F1+R2-F2、REST+MCP parity)** | ✓ | |
+| **post-commit DB-status cancel + entrypoint 統一 + 明示 commit (F1+R2-F2+R3-F1、REST+MCP DB 永続 parity)** | ✓ | |
 | **state machine additive edge (queued→failed / transient→cancelled、R2-F1/F2)** | ✓ | |
-| **non-terminal closure 分離 (validation_failed→repair_exhausted / provider_incomplete→failed、F5+R2-F3)** | ✓ | |
+| **non-terminal closure 分離 (validation_failed→repair_exhausted / provider_incomplete→即 failed、F5+R2-F3+R3-F2)** | ✓ | |
 | **enqueue 失敗 fail-closed (補償 failed、silent orphan 禁止、R2-F1)** | ✓ | |
+| **非 queued run 再駆動=no-op (crash 後 arq 再実行で double-drive しない、R3-F2)** | ✓ | |
 | error→failed / blocked→stop | ✓ | |
 | ContextSnapshot input + Artifact + event timeline | ✓ | |
 | provider mid-call kill | | ✓ |
+| **worker-crash-mid-drive の resume/reclaim sweeper (R3-F2、非終端残留は可視・非 silent)** | | ✓ |
+| **provider_incomplete durable bounded retry (durable counter + resume、R3-F2)** | | ✓ |
 | orphan の transient 自動 sweeper / outbox (R2-F1 fail-closed 済、自動再試行のみ defer) | | ✓ |
 | bulk/superintendent cancel の event-append 統一 (api_bridge.py:1686、R2-F2 派生 follow-up) | | ✓ |
 | production runtime / real provider | | ✓ |
@@ -89,8 +96,9 @@ SP-004 (agent_runtime、completed) が「Sprint 4.5」へ defer した **arq wor
 - [ ] **(F3) atomic claim**: 同一 shadow run へ concurrent に 2 回駆動 → 1 個だけ claim 成功、他は no-op (status 不変、failed にならない)。queued でない run も no-op。
 - [ ] production run を `execute_agent_run` に渡すと no-op (atomic claim の run_mode='shadow' 条件で claim-miss)。
 - [ ] **(F4) provenance**: ContextSnapshot input fingerprint == ProviderRequest fingerprint == provider result fingerprint、matrix version 一致、Artifact payload_data_class 一致 (placeholder = test fail)。
-- [ ] **(F5+R2-F3) non-terminal 分離**: Mock forced `validation_failed` → repair loop → `repair_exhausted` terminal。Mock forced `provider_incomplete` → bounded retry `running` → 上限で `failed` (**`repair_exhausted` に行かないことを assert**)。refusal → `provider_refused`。unsupported_schema/schema_mismatch も close。
-- [ ] **(F1+R2-F2) cancel parity**: REST `cancel_agent_run` と MCP `run_cancel` の **両方**で `run_cancelled` event append + driver が step 境界 DB-status 検知で stop。queued / transient state からの cancel も新 edge で `run_cancelled` 付き cancelled 到達。
+- [ ] **(F5+R2-F3+R3-F2) non-terminal 分離 + durable 終端**: Mock forced `validation_failed` → repair loop → `repair_exhausted` terminal。Mock forced `provider_incomplete` → **即 `failed`** (**`running` にも `repair_exhausted` にも行かないことを assert**)。refusal → `provider_refused`。unsupported_schema/schema_mismatch も close。
+- [ ] **(R3-F2) crash 安全性**: 非 queued (transient/terminal) run を `execute_agent_run` に再投入 → claim-miss no-op (double-drive しない)。crash 後 arq 再実行が安全。
+- [ ] **(F1+R2-F2+R3-F1) cancel parity + DB 永続**: REST `cancel_agent_run`(+commit) と MCP `run_cancel` の **両方**で `run_cancelled` event が **実 DB に永続** + driver が step 境界 post-commit DB-status 検知で stop。queued / transient state からの cancel も新 edge で `run_cancelled` 付き cancelled 到達。MCP cancel で session commit が落ちず status/event が永続することを DB-gated で検証。
 - [ ] **(R2-F1) enqueue fail-closed**: enqueue 失敗 (redis 例外) で補償遷移 run `failed` (error_code=enqueue_dispatch_failed)。**queued 残置 = silent orphan を作らないことを assert**。
 - [ ] **(R2-F1/F2) state machine 新 edge**: `queued->failed` / `{queued,gathering_context,generated_artifact,schema_validated}->cancelled` が allowed + 正しい event、16 status / event exact set 不変 (EXPECTED_* 整合)。
 - [ ] provider blocked (budget/usage) で run blocked、driver 再駆動しない。
@@ -120,6 +128,8 @@ TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/runtime/test_agent_run_driver.p
 
 - Mock 固定 (real provider 駆動は後続)。
 - ContextSnapshot driver default 値 (実 prompt pack 配線は後続)。
+- **worker-crash-mid-drive の自動 recovery なし (R3-F2)**: transient state まで進めた run が crash すると非終端で残る (status で可視、silent loss でない、atomic claim で double-drive は防止)。resume/reclaim sweeper は後続。foundational scope の明示的限界。
+- **provider_incomplete は即 failed (R3-F2)**: durable retry counter 不在のため bounded retry は後続。試走では incomplete=failed で許容。
 - enqueue transient 失敗の自動再試行 (fail-closed failed までは in scope、自動 sweeper/outbox は後続)。
 - cancel step 境界のみ (mid-call kill 後続)。
 - bulk/superintendent cancel (api_bridge.py:1686) の event-append 統一は follow-up (driver は DB status で stop するため非影響だが AgentRunEvent invariant 完全 close は別作業)。
@@ -154,4 +164,10 @@ TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/runtime/test_agent_run_driver.p
 - **R2-F2 (HIGH) MCP cancel が worker/event invariant を bypass**: `bridge_run_cancel` (api_bridge.py:653) が `run.status="cancelled"` を直接 set + commit し `run_cancelled` event 非 append。→ **全 cancel entrypoint を `cancel_agent_run` 経由に統一** + actor_id plumbing + driver は DB-status 検知。統一で regress する queued/transient cancel を防ぐため `{queued,gathering_context,generated_artifact,schema_validated}->cancelled` を additive 許可。bulk cancel (1686) は follow-up。
 - **R2-F3 (HIGH) provider_incomplete→repair_exhausted は不許可**: state_machine.py:35 で provider_incomplete は running/failed/cancelled のみ。→ closure を **分離**: validation_failed→repair_exhausted、provider_incomplete→running(retry)/failed。
 
-**scope 再評価 (R2)**: R2 により state machine additive 拡張 (queued→failed / transient→cancelled) + MCP cancel API 契約変更 (actor_id) が in scope に追加。CRITICAL state machine + MCP boundary 直結のため実装後 adversarial loop は findings_zero まで必須。**本 Pack + ADR-00057 は R1+R2 反映済の実装 ready な planning**。実装着手は plan-review R3 (R2 fix 副作用確認) → clean → ADR accepted 昇格 → Codex-first 実装 → adversarial loop。
+**scope 再評価 (R2)**: R2 により state machine additive 拡張 (queued→failed / transient→cancelled) + MCP cancel API 契約変更 (actor_id) が in scope に追加。
+
+(2026-06-13 plan-review R3、**no-ship**) R2 fix を再レビュー、**2 HIGH 追加、全 adopt** (実コード照合済):
+- **R3-F1 (HIGH) cancel_agent_run は DB-first commit でない**: `transition_with_event` は commit せず caller が `session.begin()` で wrap (event_log.py:49-53)。MCP `get_db_session` は yield のみ → `bridge_run_cancel` を service 化する際 **明示 commit を残さないと rollback** され cancel/event 非永続。signal も pre-commit。→ driver 正本を **post-commit DB status 再読**に正確化、bridge_run_cancel に明示 commit、MCP integration test は実 DB 永続まで検証。
+- **R3-F2 (HIGH) provider_incomplete bounded retry が durable でない**: retry_count 列なし、execute_repair_decision_step は validation_failed 専用、worker crash + arq 再実行は claim-miss で非終端残留。→ 本 slice は **provider_incomplete → 即 failed** (durable counter / resume は後続 defer)。worker-crash-mid-drive の resume/reclaim も後続 defer (atomic claim は double-drive 防止、crashed run は非終端で可視・silent loss なし)。
+
+**scope 確定 (R3)**: foundational scope を **最小 robust** に確定 — happy-path 駆動 + atomic claim + cancel (post-commit DB-status + entrypoint 統一 + 明示 commit) + enqueue fail-closed + provenance + non-terminal closure (validation_failed→repair_exhausted / provider_incomplete→即 failed) + state machine additive edge。**durability hardening (durable retry counter / crash resume / reclaim sweeper) + production runtime は明示 defer (残リスク/対象外に記録)**。R1+R2+R3 = 計 10 findings 全 adopt。次: plan-review R4 (R3 fix 副作用確認) → clean → ADR-00057 accepted → Codex-first 実装 → adversarial loop findings_zero。
