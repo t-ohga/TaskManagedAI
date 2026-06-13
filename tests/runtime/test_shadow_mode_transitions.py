@@ -15,6 +15,7 @@ from backend.app.domain.agent_runtime.status import AgentRunStatus
 from backend.app.services.agent_runtime.state_machine import (
     EVENT_TYPE_FOR_TRANSITION,
     SHADOW_EXTRA_TRANSITIONS,
+    SHADOW_FORBIDDEN_TRANSITIONS,
     validate_transition,
 )
 
@@ -50,21 +51,61 @@ def test_shadow_terminal_uses_run_completed_event() -> None:
     )
 
 
-def test_shadow_still_honours_base_transitions() -> None:
-    # base edge (schema_validated -> policy_linted) は shadow でも許可される
-    # (shadow は base + extra の union)。
+def test_shadow_still_honours_non_pipeline_base_transitions() -> None:
+    # side-effect pipeline 以外の base edge は shadow でも許可される。
     assert (
-        validate_transition("schema_validated", "policy_linted", "shadow")
-        == "policy_linted"
+        validate_transition("queued", "gathering_context", "shadow")
+        == "gathering_context"
     )
+    assert (
+        validate_transition("generated_artifact", "schema_validated", "shadow")
+        == "schema_validated"
+    )
+
+
+EXPECTED_SHADOW_FORBIDDEN_TRANSITIONS = {
+    "running": frozenset({"completed"}),
+    "schema_validated": frozenset({"policy_linted"}),
+    "policy_linted": frozenset({"diff_ready"}),
+    "diff_ready": frozenset({"waiting_approval"}),
+    "waiting_approval": frozenset({"running"}),
+}
+
+
+def test_shadow_forbidden_transitions_match_expected() -> None:
+    assert SHADOW_FORBIDDEN_TRANSITIONS == EXPECTED_SHADOW_FORBIDDEN_TRANSITIONS
 
 
 @pytest.mark.parametrize(
     ("from_state", "to_state"),
     [
-        ("running", "completed"),  # production の正規 terminal は維持
-        ("queued", "gathering_context"),
+        ("schema_validated", "policy_linted"),  # side-effect pipeline 進入
+        ("policy_linted", "diff_ready"),
+        ("diff_ready", "waiting_approval"),
         ("waiting_approval", "running"),
+        ("running", "completed"),  # 検証 skip shortcut
+    ],
+)
+def test_shadow_forbids_side_effect_pipeline_edges(
+    from_state: AgentRunStatus,
+    to_state: AgentRunStatus,
+) -> None:
+    # Codex App F-3: shadow は side-effect pipeline 進入 + 検証 skip を禁止される
+    # (production は許可)。
+    with pytest.raises(ValueError, match="is not allowed"):
+        validate_transition(from_state, to_state, "shadow")
+    assert validate_transition(from_state, to_state, "production") == to_state
+
+
+@pytest.mark.parametrize(
+    ("from_state", "to_state"),
+    [
+        # side-effect pipeline 以外の base edge は両 mode で不変。
+        ("queued", "gathering_context"),
+        ("gathering_context", "running"),
+        ("generated_artifact", "schema_validated"),
+        ("running", "failed"),  # exit edge は shadow でも維持
+        ("running", "cancelled"),
     ],
 )
 def test_base_transitions_unchanged_for_both_modes(

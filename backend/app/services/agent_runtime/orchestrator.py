@@ -669,16 +669,18 @@ class AgentRunOrchestrator:
 def _estimate_request_input_tokens(request: ProviderRequest) -> int:
     """prompt (messages) + structured_output_schema から保守的な input token 概算を返す。
 
-    SP-029 (Codex R8/R9 F-2): shadow の per-call preflight で input spend を課金前に bound する
-    ための **tokenizer 非依存・over-estimate** な概算。serialized payload の **文字数** を input
-    token 上限とみなす (実 token <= 文字数 が CJK 含めほぼ常に成立、over-estimate = fail-safe で
-    cap を早めに効かせる)。secret_capability_token 等は含めない (messages + schema のみ)。
+    SP-029 (Codex R8/R9 F-2 / App F-2): shadow の per-call preflight で input spend を課金前に
+    bound するための **tokenizer 非依存・over-estimate** な概算。serialized payload の
+    **UTF-8 byte 数** を input token 上限とみなす。BPE token は最低 1 byte を符号化するため
+    `actual_tokens <= byte_length` が **常に成立** し (codepoint 数だと emoji/ZWJ 系列で
+    1 codepoint が複数 token になり過小評価しうるため byte で取る)、over-estimate = fail-safe で
+    cap を早めに効かせる。secret_capability_token 等は含めない (messages + schema のみ)。
     """
 
     payload = request.model_dump(
         mode="json", include={"messages", "structured_output_schema"}
     )
-    return len(json.dumps(payload, ensure_ascii=False, default=str))
+    return len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"))
 
 
 def _blocked_budget_result() -> ProviderStepResult:

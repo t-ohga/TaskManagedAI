@@ -49,6 +49,19 @@ SHADOW_EXTRA_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = {
     "schema_validated": frozenset({"completed"}),
 }
 
+# SP-029 (Codex App F-3): shadow run は side-effect pipeline (policy_lint -> diff_ready ->
+# approval -> runner/repo) に **進入してはならない**。shadow は base transition を継承しつつ、
+# pipeline 進入 edge と running->completed の検証 skip shortcut を **禁止** し、合法 path を
+# queued..schema_validated -> completed (+ blocked/cancelled/failed/provider_* exit) に confine
+# する。choke point guard (approval/broker/run_cost/run_update) と二重に side-effect 隔離する。
+SHADOW_FORBIDDEN_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = {
+    "running": frozenset({"completed"}),  # 検証 skip の shortcut 禁止 (validated path 必須)
+    "schema_validated": frozenset({"policy_linted"}),  # side-effect pipeline 進入禁止
+    "policy_linted": frozenset({"diff_ready"}),
+    "diff_ready": frozenset({"waiting_approval"}),
+    "waiting_approval": frozenset({"running"}),
+}
+
 EVENT_TYPE_FOR_TRANSITION: Mapping[
     tuple[AgentRunStatus | None, AgentRunStatus],
     frozenset[AgentRunEventType],
@@ -115,11 +128,13 @@ def validate_transition(
 
     # SP-029 (ADR-00055): shadow run のみ SHADOW_EXTRA_TRANSITIONS の追加 edge を許可する。
     # production は ALLOWED_TRANSITIONS のみ (shadow 専用 edge を使えない = run_mode-gated)。
+    # さらに shadow は SHADOW_FORBIDDEN_TRANSITIONS (side-effect pipeline 進入 + 検証 skip
+    # shortcut) を base から **除外** する (Codex App F-3、合法 path を validated terminal に confine)。
     allowed_to_states = ALLOWED_TRANSITIONS[from_state]
     if run_mode == "shadow":
-        allowed_to_states = allowed_to_states | SHADOW_EXTRA_TRANSITIONS.get(
-            from_state, frozenset()
-        )
+        allowed_to_states = (
+            allowed_to_states | SHADOW_EXTRA_TRANSITIONS.get(from_state, frozenset())
+        ) - SHADOW_FORBIDDEN_TRANSITIONS.get(from_state, frozenset())
     if to_state not in allowed_to_states:
         allowed = ", ".join(sorted(allowed_to_states)) or "<none>"
         raise ValueError(
@@ -154,6 +169,7 @@ __all__ = [
     "BLOCKED_EVENT_TYPE_REASON_MAPPING",
     "EVENT_TYPE_FOR_TRANSITION",
     "SHADOW_EXTRA_TRANSITIONS",
+    "SHADOW_FORBIDDEN_TRANSITIONS",
     "validate_event_type_for_transition",
     "validate_transition",
 ]
