@@ -41,8 +41,11 @@ ALLOWED_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = {
         {"schema_validated", "validation_failed", "failed", "cancelled"}
     ),
     "schema_validated": frozenset({"policy_linted", "failed", "cancelled"}),
-    "policy_linted": frozenset({"diff_ready", "blocked"}),
-    "diff_ready": frozenset({"waiting_approval", "blocked"}),
+    # policy_linted / diff_ready は production-only pipeline state。worker driver は
+    # 進入しないが、cancel entrypoint 統一 (R2-F2) で従来 bypass cancel が可能だった
+    # 全 non-terminal からの cancel を保つため `cancelled` exit を additive 維持する (R1-A3)。
+    "policy_linted": frozenset({"diff_ready", "blocked", "cancelled"}),
+    "diff_ready": frozenset({"waiting_approval", "blocked", "cancelled"}),
     "waiting_approval": frozenset({"running", "blocked", "cancelled"}),
     "blocked": frozenset({"waiting_approval", "running", "failed", "cancelled"}),
     "provider_refused": frozenset(),
@@ -132,6 +135,9 @@ EVENT_TYPE_FOR_TRANSITION: Mapping[
     ("schema_validated", "cancelled"): frozenset({"run_cancelled"}),
     ("validation_failed", "failed"): frozenset({"run_failed"}),
     ("validation_failed", "cancelled"): frozenset({"run_cancelled"}),
+    # R1-A3: production-only pipeline state からの cancel (entrypoint 統一の regress 防止)。
+    ("policy_linted", "cancelled"): frozenset({"run_cancelled"}),
+    ("diff_ready", "cancelled"): frozenset({"run_cancelled"}),
 }
 
 BLOCKED_EVENT_TYPE_REASON_MAPPING: Mapping[AgentRunEventType, BlockedReason] = {

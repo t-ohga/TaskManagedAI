@@ -199,8 +199,25 @@ async def test_driver_drives_shadow_run_to_completed(
             )
         )
         assert snapshot is not None
-        # F4: provenance — snapshot fingerprint は ProviderRequest の model_resolved を持つ。
+        # F4 (R1-A4): provenance — snapshot に格納した fingerprint hash が、driver が build した
+        # ProviderRequest の canonical hash と **完全一致**する (driver は provider step 後に
+        # ProviderResult.provider_request_fingerprint との等価も enforce 済 = run completed が証拠)。
+        from backend.app.domain.provider.fingerprint import (
+            compute_provider_request_fingerprint,
+        )
+        from backend.app.services.providers.matrix_loader import load_compliance_matrix
+        from backend.app.workers.agent_run_driver import (
+            _COMPLIANCE_MATRIX_PATH,
+            _build_shadow_provider_request,
+        )
+
+        matrix = load_compliance_matrix(_COMPLIANCE_MATRIX_PATH)
+        rebuilt = _build_shadow_provider_request(run, matrix.matrix_version)
+        expected_fp = compute_provider_request_fingerprint(
+            rebuilt, matrix_version=matrix.matrix_version
+        )
         assert snapshot.provider_request_fingerprint["model_resolved"] == "mock-model"
+        assert snapshot.provider_request_fingerprint["fingerprint_sha256"] == expected_fp
 
         artifact = await session.scalar(
             select(Artifact).where(Artifact.run_id == UUID(run_id))

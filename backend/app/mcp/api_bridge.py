@@ -428,10 +428,20 @@ async def _enqueue_shadow_run(*, run_id: UUID, tenant_id: int) -> None:
     from backend.app.workers.main import redis_settings_from_url
 
     settings = get_settings()
-    pool = await create_pool(redis_settings_from_url(settings.redis_url))
+    # SP-004-5 (ADR-00057 R1-A1 CRITICAL): worker は ``settings.arq_queue_name``
+    # (default ``taskmanagedai:jobs``) を polling する。arq の default queue (``arq:queue``)
+    # に enqueue すると job が拾われず permanent orphan になるため、create_pool /
+    # enqueue_job の両方で worker と同じ queue 名に bind する。
+    pool = await create_pool(
+        redis_settings_from_url(settings.redis_url),
+        default_queue_name=settings.arq_queue_name,
+    )
     try:
         await pool.enqueue_job(
-            "execute_agent_run", run_id=str(run_id), tenant_id=tenant_id
+            "execute_agent_run",
+            run_id=str(run_id),
+            tenant_id=tenant_id,
+            _queue_name=settings.arq_queue_name,
         )
     finally:
         await pool.aclose()
@@ -679,6 +689,14 @@ async def bridge_run_create(
     # production は post-validation pipeline 未実装のため driver 対象外 (従来通り queued 据置)。
     # enqueue は run commit 後 (worker が claim する run が DB に可視) かつ commit=True 経路のみ
     # (commit=False の delegation chain は run_mode=production default で shadow 不到達)。
+    #
+    # R2-F1: enqueue が **例外を返す** (redis 到達不能等) 場合は補償遷移で run を failed に
+    # 終端化し silent orphan を防ぐ。
+    # R1-A2 (residual、ADR-00057 §残課題): run commit 後・enqueue 完了前に **process が kill /
+    # timeout** されると補償が走らず queued orphan が残りうる。これは worker-crash-mid-drive
+    # と同じ durability gap で、transactional outbox / sweeper (後続 increment) で close する。
+    # 本 slice では「例外経路の orphan は close、crash 経路の orphan は後続 sweeper で回収」と
+    # scope を明示する (shadow は flag-off + 未公開のため P0 リスクは限定的)。
     result_status: str = run.status
     if commit and run_mode == "shadow":
         try:

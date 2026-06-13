@@ -30,8 +30,8 @@ EXPECTED_ALLOWED_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = 
         {"schema_validated", "validation_failed", "failed", "cancelled"}
     ),
     "schema_validated": frozenset({"policy_linted", "failed", "cancelled"}),
-    "policy_linted": frozenset({"diff_ready", "blocked"}),
-    "diff_ready": frozenset({"waiting_approval", "blocked"}),
+    "policy_linted": frozenset({"diff_ready", "blocked", "cancelled"}),
+    "diff_ready": frozenset({"waiting_approval", "blocked", "cancelled"}),
     "waiting_approval": frozenset({"running", "blocked", "cancelled"}),
     "blocked": frozenset({"waiting_approval", "running", "failed", "cancelled"}),
     "provider_refused": frozenset(),
@@ -95,6 +95,49 @@ def test_blocked_can_resume_to_waiting_approval_or_running(
     resume_state: AgentRunStatus,
 ) -> None:
     assert validate_transition("blocked", resume_state) == resume_state
+
+
+# SP-004-5 (ADR-00057): worker driver の additive edge。
+# - 全 non-terminal state は cancelled へ exit できる (R2-F2 cancel entrypoint 統一 / R1-A3)。
+# - driver-reachable な non-terminal state は failed へ exit できる (R4-F1 error 終端 / R2-F1)。
+_NON_TERMINAL_STATES: tuple[AgentRunStatus, ...] = (
+    "queued",
+    "gathering_context",
+    "running",
+    "generated_artifact",
+    "schema_validated",
+    "policy_linted",
+    "diff_ready",
+    "waiting_approval",
+    "blocked",
+    "provider_incomplete",
+    "validation_failed",
+)
+_DRIVER_FAILABLE_STATES: tuple[AgentRunStatus, ...] = (
+    "queued",
+    "gathering_context",
+    "running",
+    "generated_artifact",
+    "schema_validated",
+    "validation_failed",
+    "blocked",
+    "provider_incomplete",
+)
+
+
+@pytest.mark.parametrize("from_state", _NON_TERMINAL_STATES)
+def test_every_non_terminal_state_can_cancel(from_state: AgentRunStatus) -> None:
+    assert validate_transition(from_state, "cancelled") == "cancelled"
+    assert validate_transition(from_state, "cancelled", "shadow") == "cancelled"
+    assert EVENT_TYPE_FOR_TRANSITION[(from_state, "cancelled")] == frozenset(
+        {"run_cancelled"}
+    )
+
+
+@pytest.mark.parametrize("from_state", _DRIVER_FAILABLE_STATES)
+def test_driver_reachable_states_can_fail(from_state: AgentRunStatus) -> None:
+    assert validate_transition(from_state, "failed") == "failed"
+    assert EVENT_TYPE_FOR_TRANSITION[(from_state, "failed")] == frozenset({"run_failed"})
 
 
 @pytest.mark.parametrize(

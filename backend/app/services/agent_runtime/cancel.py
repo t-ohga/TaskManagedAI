@@ -31,6 +31,8 @@ _CANCELABLE_STATES = frozenset(
         "generated_artifact",
         "schema_validated",
         "validation_failed",
+        "policy_linted",
+        "diff_ready",
         "blocked",
         "waiting_approval",
         "provider_incomplete",

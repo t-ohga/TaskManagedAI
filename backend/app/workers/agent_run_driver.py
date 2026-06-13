@@ -44,7 +44,10 @@ from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.context_snapshot import ContextSnapshot
 from backend.app.db.session import AsyncSessionFactory
 from backend.app.domain.agent_runtime.status import TERMINAL_STATES, AgentRunStatus
-from backend.app.domain.provider.fingerprint import provider_request_fingerprint_payload
+from backend.app.domain.provider.fingerprint import (
+    compute_provider_request_fingerprint,
+    provider_request_fingerprint_payload,
+)
 from backend.app.domain.provider.request import ProviderMessage, ProviderRequest
 from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
 from backend.app.repositories.artifact import ArtifactRepository, compute_content_hash
@@ -118,12 +121,20 @@ async def _create_input_snapshot(
     run: AgentRun,
     request: ProviderRequest,
     matrix_version: str,
+    request_fingerprint_hash: str,
 ) -> ContextSnapshot:
-    """ContextSnapshot ``input`` を 10 列で作成する (F4: exact fingerprint 格納)。"""
+    """ContextSnapshot ``input`` を 10 列で作成する (F4: exact fingerprint 格納)。
+
+    ``provider_request_fingerprint`` には fingerprint payload (canonical 内容) に加え、
+    その canonical hash (``fingerprint_sha256``) を埋め込む。これは ProviderResult が記録する
+    ``provider_request_fingerprint`` (同 request の hash) と **一致する正本**で、driver が
+    provider step 後に等価検証する (R1-A4: snapshot fp == result fp を実際に enforce)。
+    """
 
     fingerprint_payload = provider_request_fingerprint_payload(
         request, matrix_version=matrix_version
     )
+    fingerprint_payload["fingerprint_sha256"] = request_fingerprint_hash
     return await create_snapshot(
         session,
         tenant_id=run.tenant_id,
@@ -220,6 +231,11 @@ async def _drive_shadow_run(
                 "reason": None if run is None else run.status,
             }
         request = _build_shadow_provider_request(run, matrix_version)
+        # F4 (R1-A4): provider step 後に ProviderResult.provider_request_fingerprint と
+        # 等価検証する canonical hash。snapshot にも埋め込み snapshot fp == result fp を束縛。
+        request_fingerprint_hash = compute_provider_request_fingerprint(
+            request, matrix_version=matrix_version
+        )
         try:
             await transition_with_event(
                 session,
@@ -235,7 +251,7 @@ async def _drive_shadow_run(
             # 変化) = benign loser。failed にせず no-op で返す (F3)。
             return {"status": "claim_miss", "run_id": str(run_id), "reason": "concurrent"}
         input_snapshot = await _create_input_snapshot(
-            session, run, request, matrix_version
+            session, run, request, matrix_version, request_fingerprint_hash
         )
 
     orchestrator = AgentRunOrchestrator(
@@ -301,6 +317,23 @@ async def _drive_shadow_run(
         if provider_result is None:  # generated_artifact は result を伴う (防御的、例外で failed 化)
             raise RuntimeError(
                 "execute_provider_step returned generated_artifact without provider_result"
+            )
+        # F4 (R1-A4): provenance binding を実 enforce。ProviderResult が記録した
+        # provider_request_fingerprint を、driver が build した **同一 ProviderRequest** から
+        # result 自身が報告する api/sdk version で再計算し等価検証する。不一致 = result が
+        # snapshot/driver の request と異なる request を fingerprint した証拠なので fail-closed。
+        # (snapshot の fingerprint_sha256 は input 時点の request identity = api/sdk "unknown"
+        # で別 hash。両者は同一 request content から導かれ、api/sdk のみ差分。)
+        expected_result_fingerprint = compute_provider_request_fingerprint(
+            request,
+            matrix_version=matrix_version,
+            api_version=provider_result.api_version,
+            sdk_version=provider_result.sdk_version,
+        )
+        if provider_result.provider_request_fingerprint != expected_result_fingerprint:
+            raise RuntimeError(
+                "provenance fingerprint mismatch: ProviderResult fingerprint does not "
+                "match the driver-built ProviderRequest (F4 binding violation)"
             )
         content_jsonb = dict(provider_result.redacted_response_summary)
         async with session.begin():
