@@ -110,6 +110,8 @@ async def session_factory(
             text("truncate tickets, agent_runs, mcp_idempotency_keys restart identity cascade")
         )
         await seed_initial(session)
+        # projects は truncate されない共有行。prior test の archive 汚染を防ぐため active へ戻す。
+        await session.execute(text("update projects set status = 'active'"))
     # driver は global AsyncSessionFactory で session を開くため test factory へ向ける。
     monkeypatch.setattr(agent_run_driver, "AsyncSessionFactory", factory)
     # shadow flag を on にする (bridge_run_create が shadow run を作れるように)。
@@ -545,31 +547,41 @@ async def test_driver_skips_run_when_project_archived_after_create(
     run_id = await _create_shadow_run(session_factory, monkeypatch)
 
     # 作成後・dequeue 前に project を archive する (bulk-soft-delete / archive 相当の freeze)。
+    # projects は fixture で truncate されない共有行のため、finally で必ず active へ戻し
+    # 後続 test (pytest-randomly 順) を汚染しない。
     async with session_factory.begin() as session:
         await session.execute(
             text("update projects set status = 'archived' where id = :pid"),
             {"pid": DEFAULT_PROJECT_ID},
         )
+    try:
+        result = await execute_agent_run({}, run_id=run_id, tenant_id=DEFAULT_TENANT_ID)
+        # R4-A1: frozen run は駆動せず skip (fail でなく queued 据置 = freeze は可逆)。
+        assert result["status"] == "skipped_not_actionable"
 
-    result = await execute_agent_run({}, run_id=run_id, tenant_id=DEFAULT_TENANT_ID)
-    # R4-A1: frozen run は駆動せず skip (fail でなく queued 据置 = freeze は可逆)。
-    assert result["status"] == "skipped_not_actionable"
-
-    async with session_factory() as session:
-        run = await session.scalar(select(AgentRun).where(AgentRun.id == UUID(run_id)))
-        assert run is not None
-        assert run.status == "queued"  # 駆動されず queued 据置 (restore で再駆動可能)
-        # provider work / output は一切発生しない (run_queued のみ)。
-        non_queued_events = await session.scalar(
-            select(func.count())
-            .select_from(AgentRunEvent)
-            .where(
-                AgentRunEvent.run_id == UUID(run_id),
-                AgentRunEvent.event_type != "run_queued",
+        async with session_factory() as session:
+            run = await session.scalar(select(AgentRun).where(AgentRun.id == UUID(run_id)))
+            assert run is not None
+            assert run.status == "queued"  # 駆動されず queued 据置 (restore で再駆動可能)
+            # provider work / output は一切発生しない (run_queued のみ)。
+            non_queued_events = await session.scalar(
+                select(func.count())
+                .select_from(AgentRunEvent)
+                .where(
+                    AgentRunEvent.run_id == UUID(run_id),
+                    AgentRunEvent.event_type != "run_queued",
+                )
             )
-        )
-        assert non_queued_events == 0
-        artifact_count = await session.scalar(
-            select(func.count()).select_from(Artifact).where(Artifact.run_id == UUID(run_id))
-        )
-        assert artifact_count == 0
+            assert non_queued_events == 0
+            artifact_count = await session.scalar(
+                select(func.count())
+                .select_from(Artifact)
+                .where(Artifact.run_id == UUID(run_id))
+            )
+            assert artifact_count == 0
+    finally:
+        async with session_factory.begin() as session:
+            await session.execute(
+                text("update projects set status = 'active' where id = :pid"),
+                {"pid": DEFAULT_PROJECT_ID},
+            )
