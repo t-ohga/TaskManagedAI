@@ -11,9 +11,21 @@ from backend.app.domain.agent_runtime.status import (
     BlockedReason,
 )
 
+# SP-004-5 (ADR-00057 R2-F1/R2-F2/R4-F1): worker driver が queued shadow run を
+# end-to-end 駆動するにあたり、不変条件「**driver-reachable な全 non-terminal state は
+# `failed` (error 終端) と `cancelled` (cancel 終端) へ exit できる**」を満たすため、
+# driver が post-commit で取り得る transient state ``queued`` / ``gathering_context`` /
+# ``generated_artifact`` / ``schema_validated`` / ``validation_failed`` から ``failed``
+# (R4-F1: error→failed が全 state で終端化可能、driver transient での例外 stuck 防止 +
+# R2-F1: enqueue dispatch 失敗の補償 ``queued -> failed``) と ``cancelled`` (R2-F2:
+# cancel entrypoint 統一で queued/transient からの cancel が regress しないよう許可) を
+# additive 追加する。production-only pipeline state (``policy_linted`` / ``diff_ready`` /
+# ``waiting_approval``) は shadow driver が SHADOW_FORBIDDEN により進入しないため本 slice
+# では拡張しない (production runtime Sprint で対応)。16 status enum / event exact set は
+# 不変 (新 status / 新 event_type なし、``run_failed`` / ``run_cancelled`` は既存)。
 ALLOWED_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = {
-    "queued": frozenset({"gathering_context"}),
-    "gathering_context": frozenset({"running"}),
+    "queued": frozenset({"gathering_context", "failed", "cancelled"}),
+    "gathering_context": frozenset({"running", "failed", "cancelled"}),
     "running": frozenset(
         {
             "generated_artifact",
@@ -25,15 +37,17 @@ ALLOWED_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = {
             "completed",
         }
     ),
-    "generated_artifact": frozenset({"schema_validated", "validation_failed"}),
-    "schema_validated": frozenset({"policy_linted"}),
+    "generated_artifact": frozenset(
+        {"schema_validated", "validation_failed", "failed", "cancelled"}
+    ),
+    "schema_validated": frozenset({"policy_linted", "failed", "cancelled"}),
     "policy_linted": frozenset({"diff_ready", "blocked"}),
     "diff_ready": frozenset({"waiting_approval", "blocked"}),
     "waiting_approval": frozenset({"running", "blocked", "cancelled"}),
     "blocked": frozenset({"waiting_approval", "running", "failed", "cancelled"}),
     "provider_refused": frozenset(),
     "provider_incomplete": frozenset({"running", "failed", "cancelled"}),
-    "validation_failed": frozenset({"running", "repair_exhausted"}),
+    "validation_failed": frozenset({"running", "repair_exhausted", "failed", "cancelled"}),
     "repair_exhausted": frozenset(),
     "completed": frozenset(),
     "failed": frozenset(),
@@ -105,6 +119,19 @@ EVENT_TYPE_FOR_TRANSITION: Mapping[
     ("blocked", "running"): frozenset({"approval_decided", "repair_retry_scheduled"}),
     ("blocked", "failed"): frozenset({"run_failed"}),
     ("blocked", "cancelled"): frozenset({"run_cancelled"}),
+    # SP-004-5 (ADR-00057 R2-F1/R2-F2/R4-F1): driver-reachable transient state からの
+    # ``failed`` (error 終端 + enqueue dispatch 補償) / ``cancelled`` (cancel entrypoint
+    # 統一) 終端。event type は既存 ``run_failed`` / ``run_cancelled`` (event exact set 不変)。
+    ("queued", "failed"): frozenset({"run_failed"}),
+    ("queued", "cancelled"): frozenset({"run_cancelled"}),
+    ("gathering_context", "failed"): frozenset({"run_failed"}),
+    ("gathering_context", "cancelled"): frozenset({"run_cancelled"}),
+    ("generated_artifact", "failed"): frozenset({"run_failed"}),
+    ("generated_artifact", "cancelled"): frozenset({"run_cancelled"}),
+    ("schema_validated", "failed"): frozenset({"run_failed"}),
+    ("schema_validated", "cancelled"): frozenset({"run_cancelled"}),
+    ("validation_failed", "failed"): frozenset({"run_failed"}),
+    ("validation_failed", "cancelled"): frozenset({"run_cancelled"}),
 }
 
 BLOCKED_EVENT_TYPE_REASON_MAPPING: Mapping[AgentRunEventType, BlockedReason] = {

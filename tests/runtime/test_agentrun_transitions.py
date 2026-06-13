@@ -10,9 +10,11 @@ from backend.app.services.agent_runtime.state_machine import (
     validate_transition,
 )
 
+# SP-004-5 (ADR-00057 R2-F1/R2-F2/R4-F1): driver-reachable transient state からの
+# failed/cancelled exit edge を additive 追加 (state_machine.py と 5+ source 整合)。
 EXPECTED_ALLOWED_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = {
-    "queued": frozenset({"gathering_context"}),
-    "gathering_context": frozenset({"running"}),
+    "queued": frozenset({"gathering_context", "failed", "cancelled"}),
+    "gathering_context": frozenset({"running", "failed", "cancelled"}),
     "running": frozenset(
         {
             "generated_artifact",
@@ -24,15 +26,17 @@ EXPECTED_ALLOWED_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = 
             "completed",
         }
     ),
-    "generated_artifact": frozenset({"schema_validated", "validation_failed"}),
-    "schema_validated": frozenset({"policy_linted"}),
+    "generated_artifact": frozenset(
+        {"schema_validated", "validation_failed", "failed", "cancelled"}
+    ),
+    "schema_validated": frozenset({"policy_linted", "failed", "cancelled"}),
     "policy_linted": frozenset({"diff_ready", "blocked"}),
     "diff_ready": frozenset({"waiting_approval", "blocked"}),
     "waiting_approval": frozenset({"running", "blocked", "cancelled"}),
     "blocked": frozenset({"waiting_approval", "running", "failed", "cancelled"}),
     "provider_refused": frozenset(),
     "provider_incomplete": frozenset({"running", "failed", "cancelled"}),
-    "validation_failed": frozenset({"running", "repair_exhausted"}),
+    "validation_failed": frozenset({"running", "repair_exhausted", "failed", "cancelled"}),
     "repair_exhausted": frozenset(),
     "completed": frozenset(),
     "failed": frozenset(),
