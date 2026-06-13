@@ -7,7 +7,8 @@ created_at: "2026-06-13"
 updated_at: "2026-06-13"
 target_days: 1
 max_days: 2
-adr_refs:
+# ADR-00056 は proposed (deferred、未 accepted) のため planned_adr_refs に置く (App F5: accepted のみ adr_refs)。
+planned_adr_refs:
   - "[ADR-00056](../adr/00056_shadow_aggregate_budget_cap.md)"
 related_sprints:
   - "SP-029_shadow_mode"
@@ -112,4 +113,6 @@ TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/runtime/test_shadow_run_cap.py 
 
 (2026-06-13 plan-review R1) codex plan-review で 2 HIGH + 2 MEDIUM の設計欠陥を実装前に捕捉、全 adopt: F1 preflight prospective projection / F2 cross-run advisory lock 直列化 / F3 cost-aligned event-based 集計 / F4 partial index migration。これにより本増分は **当初想定 (config + 単純 SUM) より大幅に複雑化** (event-based 集計 + DB advisory locking + migration + projection)。
 
-(2026-06-13 **deferred**、user 判断) plan-review で判明した通り、aggregate cap は migration + DB advisory locking を要する高リスク増分で、かつ **解く問題 (cross-run concurrency / 多数 shadow run) は runtime worker driver 不在の現状では発生しない** (shadow は MCP/REST 未公開・未駆動)。よって **実装は runtime driver 増分と同時** (concurrency が実際に発生する時点) へ defer。本 Pack + ADR-00056 (plan-review R1 反映済) は **実装 ready な planning として保存** し、runtime 統合時に plan-review R2 → ADR accepted → 実装する。status は draft 維持 (未着手)。
+(2026-06-13 **deferred**、user 判断) plan-review で判明した通り、aggregate cap は migration + DB advisory locking を要する高リスク増分で、かつ **解く問題 (cross-run concurrency / 多数 shadow run) は runtime worker driver 不在の現状では発生しない** (shadow は MCP/REST 未公開・未駆動)。よって **実装は runtime driver 増分と同時** (concurrency が実際に発生する時点) へ defer。本 Pack + ADR-00056 は **実装 ready な planning として保存** し、runtime 統合時に plan-review R2 → ADR accepted → 実装する。status は draft 維持 (未着手)。
+
+(2026-06-13 Codex App #349 review、7 P2 全 adopt → deferred plan に反映) docs PR の App auto-review が deferred plan の設計矛盾/gap を 7 件捕捉、ADR-00056 に反映: F1 「migration 不要」前提撤回 / F2 test を event timestamp 基準化 / **F3 provider_responded event の cost 未搭載 + ordering** (実装時に event payload cost 追加 or run.cost_usd+updated_at 集計を選択、ADR §実装時未解決事項) / **F4 partial index が production provider_responded も scan** (shadow-selective access path を実装時選択) / F5 proposed ADR は planned_adr_refs へ / F6 advisory lock は 64-bit hash key (bigint tenant_id truncation 回避) / F7 aggregate projection は request-aware preflight に scope。これにより deferred plan は実装着手時の設計判断 (F3/F4) を明示した high-fidelity な状態で保存。
