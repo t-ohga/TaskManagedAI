@@ -213,30 +213,34 @@ async def _drive_shadow_run(
     run_id: UUID,
     tenant_id: int,
 ) -> dict[str, Any]:
-    matrix = load_compliance_matrix(_COMPLIANCE_MATRIX_PATH)
-    matrix_version = matrix.matrix_version
-
-    # ---- 1. atomic claim: queued -> gathering_context + ContextSnapshot(input) ----
-    async with session.begin():
-        run = await session.scalar(
-            sa.select(AgentRun)
-            .where(AgentRun.id == run_id, AgentRun.tenant_id == tenant_id)
-            .with_for_update()
-        )
-        if run is None or run.run_mode != "shadow" or run.status != "queued":
-            # not claimable: 既に駆動済 / production / 不在 / concurrent loser。benign no-op。
-            return {
-                "status": "claim_miss",
-                "run_id": str(run_id),
-                "reason": None if run is None else run.status,
-            }
-        request = _build_shadow_provider_request(run, matrix_version)
-        # F4 (R1-A4): provider step 後に ProviderResult.provider_request_fingerprint と
-        # 等価検証する canonical hash。snapshot にも埋め込み snapshot fp == result fp を束縛。
-        request_fingerprint_hash = compute_provider_request_fingerprint(
-            request, matrix_version=matrix_version
-        )
-        try:
+    # R2-A1: claim 確認後の全 step (matrix load / request build / transition / snapshot /
+    # 駆動) を単一 try で覆い、通常例外を fail-closed (現 status -> failed) に終端化する。
+    # not-claimable は claim block 内で claim_miss return し補償しない (mutation なし)。
+    try:
+        # ---- 1. atomic claim + setup: queued -> gathering_context + ContextSnapshot(input) ----
+        async with session.begin():
+            run = await session.scalar(
+                sa.select(AgentRun)
+                .where(AgentRun.id == run_id, AgentRun.tenant_id == tenant_id)
+                .with_for_update()
+            )
+            if run is None or run.run_mode != "shadow" or run.status != "queued":
+                # not claimable: 既駆動 / production / 不在 / concurrent loser。benign no-op。
+                # FOR UPDATE で直列化済のため loser はここで status != queued を読む (補償不要)。
+                return {
+                    "status": "claim_miss",
+                    "run_id": str(run_id),
+                    "reason": None if run is None else run.status,
+                }
+            # 以降の matrix load / request build / transition / snapshot 失敗は claimable
+            # 確認後の通常例外。outer except で queued->failed に補償する (R2-A1、silent orphan 防止)。
+            matrix = load_compliance_matrix(_COMPLIANCE_MATRIX_PATH)
+            matrix_version = matrix.matrix_version
+            request = _build_shadow_provider_request(run, matrix_version)
+            # F4: snapshot 格納する input 時点の request fingerprint hash (api/sdk "unknown")。
+            request_fingerprint_hash = compute_provider_request_fingerprint(
+                request, matrix_version=matrix_version
+            )
             await transition_with_event(
                 session,
                 run=run,
@@ -246,22 +250,17 @@ async def _drive_shadow_run(
                 actor_id=_DRIVER_ACTOR_ID,
                 tenant_id=tenant_id,
             )
-        except ValueError:
-            # transition_with_event の conditional UPDATE が 0 rows (concurrent に status
-            # 変化) = benign loser。failed にせず no-op で返す (F3)。
-            return {"status": "claim_miss", "run_id": str(run_id), "reason": "concurrent"}
-        input_snapshot = await _create_input_snapshot(
-            session, run, request, matrix_version, request_fingerprint_hash
+            input_snapshot = await _create_input_snapshot(
+                session, run, request, matrix_version, request_fingerprint_hash
+            )
+
+        orchestrator = AgentRunOrchestrator(
+            session=session,
+            compliance_gate=ComplianceGate(matrix_loader=matrix),
+            provider=MockProviderAdapter(),
+            policy_pack=None,
         )
 
-    orchestrator = AgentRunOrchestrator(
-        session=session,
-        compliance_gate=ComplianceGate(matrix_loader=matrix),
-        provider=MockProviderAdapter(),
-        policy_pack=None,
-    )
-
-    try:
         # ---- 2. gathering_context -> running ----
         async with session.begin():
             run = await _reload_run(session, run_id=run_id, tenant_id=tenant_id)
@@ -278,6 +277,9 @@ async def _drive_shadow_run(
             )
 
         # ---- 3. provider step (running -> generated_artifact / blocked / provider_*) ----
+        # R2-A2: provider.execute に渡す前の request を deep copy で正本化し、provenance 検証は
+        # この pre-call 正本から再計算する (adapter が request を in-place mutate しても tamper 検知)。
+        pre_call_request = request.model_copy(deep=True)
         async with session.begin():
             run = await _reload_run(session, run_id=run_id, tenant_id=tenant_id)
             if _is_cancelled_or_terminal(run.status):
@@ -285,6 +287,24 @@ async def _drive_shadow_run(
             provider_step = await orchestrator.execute_provider_step(
                 run=run, request=request, actor_id=_DRIVER_ACTOR_ID
             )
+
+        # F4 + R2-A2: ProviderResult を持つ **全 outcome** で、outcome 分岐の前に provenance を
+        # 検証する (provider_refused / provider_incomplete / blocked_runtime も対象)。pre-call
+        # deep copy から result 報告 api/sdk で再計算し result fingerprint と等価でなければ
+        # fail-closed (tamper / drift 検知 = outer except で failed)。
+        provider_result = provider_step.provider_result
+        if provider_result is not None:
+            expected_result_fingerprint = compute_provider_request_fingerprint(
+                pre_call_request,
+                matrix_version=matrix_version,
+                api_version=provider_result.api_version,
+                sdk_version=provider_result.sdk_version,
+            )
+            if provider_result.provider_request_fingerprint != expected_result_fingerprint:
+                raise RuntimeError(
+                    "provenance fingerprint mismatch: ProviderResult fingerprint does not "
+                    "match the pre-call ProviderRequest (F4 binding violation)"
+                )
 
         if provider_step.outcome != "generated_artifact":
             # blocked_* は resume 待ちで stop。provider_refused は既に terminal。
@@ -313,27 +333,9 @@ async def _drive_shadow_run(
             }
 
         # ---- 4. artifact 生成 + schema validation ----
-        provider_result = provider_step.provider_result
-        if provider_result is None:  # generated_artifact は result を伴う (防御的、例外で failed 化)
+        if provider_result is None:  # generated_artifact は result を伴う (防御的)
             raise RuntimeError(
                 "execute_provider_step returned generated_artifact without provider_result"
-            )
-        # F4 (R1-A4): provenance binding を実 enforce。ProviderResult が記録した
-        # provider_request_fingerprint を、driver が build した **同一 ProviderRequest** から
-        # result 自身が報告する api/sdk version で再計算し等価検証する。不一致 = result が
-        # snapshot/driver の request と異なる request を fingerprint した証拠なので fail-closed。
-        # (snapshot の fingerprint_sha256 は input 時点の request identity = api/sdk "unknown"
-        # で別 hash。両者は同一 request content から導かれ、api/sdk のみ差分。)
-        expected_result_fingerprint = compute_provider_request_fingerprint(
-            request,
-            matrix_version=matrix_version,
-            api_version=provider_result.api_version,
-            sdk_version=provider_result.sdk_version,
-        )
-        if provider_result.provider_request_fingerprint != expected_result_fingerprint:
-            raise RuntimeError(
-                "provenance fingerprint mismatch: ProviderResult fingerprint does not "
-                "match the driver-built ProviderRequest (F4 binding violation)"
             )
         content_jsonb = dict(provider_result.redacted_response_summary)
         async with session.begin():

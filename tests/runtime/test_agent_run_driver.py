@@ -19,6 +19,7 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -287,6 +288,8 @@ async def test_driver_provider_incomplete_closes_to_failed(
             return "mock"
 
         def execute(self, request: ProviderRequest) -> ProviderResult:
+            # fingerprint は報告する api/sdk version と一致させる (driver の provenance 検証
+            # は result 報告の api/sdk で再計算するため、実 adapter と同様 consistent にする)。
             return ProviderResult(
                 status="incomplete",
                 usage=ProviderUsage(tokens_input=12, tokens_output=4, cost_usd=0.0),
@@ -296,6 +299,8 @@ async def test_driver_provider_incomplete_closes_to_failed(
                 provider_request_fingerprint=compute_provider_request_fingerprint(
                     request,
                     matrix_version=request.provider_compliance_matrix_version,
+                    api_version="mock-v1",
+                    sdk_version="mock-1.0",
                 ),
                 redacted_response_summary={"mock_status": "incomplete"},
             )
@@ -423,3 +428,89 @@ async def test_enqueue_dispatch_failure_fails_run_closed(
             .where(AgentRun.status == "queued")
         )
         assert queued_count == 0
+
+
+# ---------------------------------------------------------------------------
+# R2-A1: claim 確認後の setup/snapshot 失敗も fail-closed (queued orphan なし)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_driver_setup_failure_after_claim_fails_closed(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = await _create_shadow_run(session_factory, monkeypatch)
+
+    # claim 確認後の ContextSnapshot 作成で例外を注入 (snapshot 制約違反 / matrix 不備の代理)。
+    async def _boom(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("snapshot setup failure")
+
+    monkeypatch.setattr(agent_run_driver, "_create_input_snapshot", _boom)
+
+    result = await execute_agent_run({}, run_id=run_id, tenant_id=DEFAULT_TENANT_ID)
+    # R2-A1: claim 後の通常例外でも queued 残置 (orphan) でなく failed に終端化。
+    assert result["status"] == "failed"
+
+    async with session_factory() as session:
+        run = await session.scalar(select(AgentRun).where(AgentRun.id == UUID(run_id)))
+        assert run is not None
+        assert run.status == "failed"
+        queued_count = await session.scalar(
+            select(func.count())
+            .select_from(AgentRun)
+            .where(AgentRun.status == "queued")
+        )
+        assert queued_count == 0
+
+
+# ---------------------------------------------------------------------------
+# R2-A2: provenance mismatch (result fp != driver request) は fail-closed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_driver_provenance_mismatch_fails_closed(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.domain.provider.request import ProviderRequest
+    from backend.app.domain.provider.result import ProviderResult, ProviderUsage
+
+    class _TamperProvider:
+        def provider_name(self) -> str:
+            return "mock"
+
+        def api_or_feature(self) -> str:
+            return "mock"
+
+        def execute(self, request: ProviderRequest) -> ProviderResult:
+            # 報告 api/sdk から再計算した hash と一致しない fingerprint を返す (tamper / drift)。
+            return ProviderResult(
+                status="success",
+                usage=ProviderUsage(tokens_input=12, tokens_output=4, cost_usd=0.0),
+                model_resolved=request.model_resolved,
+                api_version="mock-v1",
+                sdk_version="mock-1.0",
+                provider_request_fingerprint="0" * 64,  # 不正 fingerprint
+                redacted_response_summary={"result": "x"},
+            )
+
+    monkeypatch.setattr(agent_run_driver, "MockProviderAdapter", _TamperProvider)
+
+    run_id = await _create_shadow_run(session_factory, monkeypatch)
+    result = await execute_agent_run({}, run_id=run_id, tenant_id=DEFAULT_TENANT_ID)
+    assert result["status"] == "failed"
+
+    async with session_factory() as session:
+        run = await session.scalar(select(AgentRun).where(AgentRun.id == UUID(run_id)))
+        assert run is not None
+        assert run.status == "failed"
+        run_failed = await session.scalar(
+            select(AgentRunEvent).where(
+                AgentRunEvent.run_id == UUID(run_id),
+                AgentRunEvent.event_type == "run_failed",
+            )
+        )
+        assert run_failed is not None
+        assert run_failed.event_payload["reason_code"] == "driver_exception"
