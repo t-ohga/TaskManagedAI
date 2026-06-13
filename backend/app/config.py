@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal, Self
 
@@ -79,6 +80,12 @@ class Settings(BaseSettings):
     taskhub_host_id: str = ""
     taskhub_config_dir: str = "/etc/taskhub"
     memory_api_enabled: bool = False
+
+    # SP-029 shadow mode (ADR-00055). shadow run の feature toggle (default off、operator opt-in)
+    # と per-run hard cap。safety は (1) production budget 非加算 (2) per-run cap で担保するため、
+    # flag は「機能の有効/無効」であり安全 gate ではない。cap は 1 shadow run あたりの累計 cost 上限。
+    shadow_mode_enabled: bool = False
+    shadow_run_max_cost_usd: Decimal = Field(default=Decimal("1.00"), gt=0)
 
     arq_queue_name: str = "taskmanagedai:jobs"
     worker_cancel_channel: str = "taskmanagedai:cancel"

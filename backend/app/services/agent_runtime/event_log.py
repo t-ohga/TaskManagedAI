@@ -64,7 +64,8 @@ class AgentRunEventLogService:
             raise ValueError("AgentRun tenant_id must match transition tenant_id.")
 
         from_state = run.status
-        validate_transition(from_state, to_state)
+        # SP-029 (ADR-00055): run_mode を渡し、shadow 専用 terminal edge を gate する。
+        validate_transition(from_state, to_state, run.run_mode)
         validate_event_type_for_transition(from_state, to_state, event_type)
 
         if to_state == "blocked":

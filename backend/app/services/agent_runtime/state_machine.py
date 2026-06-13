@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from backend.app.domain.agent_runtime.event_type import AgentRunEventType
+from backend.app.domain.agent_runtime.run_mode import RunMode
 from backend.app.domain.agent_runtime.status import (
     ALL_AGENT_RUN_STATUSES,
     TERMINAL_STATES,
@@ -39,6 +40,15 @@ ALLOWED_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = {
     "cancelled": frozenset(),
 }
 
+# SP-029 shadow mode (ADR-00055): run_mode='shadow' のみで許可される追加 edge。
+# shadow run は副作用 stage (waiting_approval / runner / repo) を通らないため、
+# 非 mutating な schema_validated から直接 completed へ run_completed で遷移できる。
+# production はこの edge を使えない (従来の waiting_approval -> running -> completed 必須)。
+# 新 status / 新 event_type は増やさない (16 status 不変、run_completed 既存)。
+SHADOW_EXTRA_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = {
+    "schema_validated": frozenset({"completed"}),
+}
+
 EVENT_TYPE_FOR_TRANSITION: Mapping[
     tuple[AgentRunStatus | None, AgentRunStatus],
     frozenset[AgentRunEventType],
@@ -50,6 +60,9 @@ EVENT_TYPE_FOR_TRANSITION: Mapping[
     ("generated_artifact", "schema_validated"): frozenset({"schema_validated"}),
     ("generated_artifact", "validation_failed"): frozenset({"validation_failed"}),
     ("schema_validated", "policy_linted"): frozenset({"policy_linted"}),
+    # SP-029 shadow mode (ADR-00055): shadow run の合法 terminal (run_mode-gated は
+    # validate_transition で enforce、event type は既存 run_completed)。
+    ("schema_validated", "completed"): frozenset({"run_completed"}),
     ("policy_linted", "diff_ready"): frozenset({"diff_ready"}),
     ("diff_ready", "waiting_approval"): frozenset({"approval_requested"}),
     ("waiting_approval", "running"): frozenset({"approval_decided"}),
@@ -88,7 +101,11 @@ BLOCKED_EVENT_TYPE_REASON_MAPPING: Mapping[AgentRunEventType, BlockedReason] = {
 }
 
 
-def validate_transition(from_state: AgentRunStatus, to_state: AgentRunStatus) -> AgentRunStatus:
+def validate_transition(
+    from_state: AgentRunStatus,
+    to_state: AgentRunStatus,
+    run_mode: RunMode = "production",
+) -> AgentRunStatus:
     if from_state not in ALL_AGENT_RUN_STATUSES:
         raise ValueError(f"unknown AgentRun from_state: {from_state!r}")
     if to_state not in ALL_AGENT_RUN_STATUSES:
@@ -96,12 +113,18 @@ def validate_transition(from_state: AgentRunStatus, to_state: AgentRunStatus) ->
     if from_state in TERMINAL_STATES:
         raise ValueError(f"terminal AgentRun state cannot transition: {from_state!r}")
 
+    # SP-029 (ADR-00055): shadow run のみ SHADOW_EXTRA_TRANSITIONS の追加 edge を許可する。
+    # production は ALLOWED_TRANSITIONS のみ (shadow 専用 edge を使えない = run_mode-gated)。
     allowed_to_states = ALLOWED_TRANSITIONS[from_state]
+    if run_mode == "shadow":
+        allowed_to_states = allowed_to_states | SHADOW_EXTRA_TRANSITIONS.get(
+            from_state, frozenset()
+        )
     if to_state not in allowed_to_states:
         allowed = ", ".join(sorted(allowed_to_states)) or "<none>"
         raise ValueError(
-            f"AgentRun transition {from_state!r} -> {to_state!r} is not allowed; "
-            f"allowed to_states: {allowed}"
+            f"AgentRun transition {from_state!r} -> {to_state!r} is not allowed "
+            f"(run_mode={run_mode!r}); allowed to_states: {allowed}"
         )
 
     return to_state
@@ -130,6 +153,7 @@ __all__ = [
     "ALLOWED_TRANSITIONS",
     "BLOCKED_EVENT_TYPE_REASON_MAPPING",
     "EVENT_TYPE_FOR_TRANSITION",
+    "SHADOW_EXTRA_TRANSITIONS",
     "validate_event_type_for_transition",
     "validate_transition",
 ]

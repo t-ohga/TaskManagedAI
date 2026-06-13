@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.db.models.base import Base, CreatedAtMixin, TenantIdMixin, UpdatedAtMixin
+from backend.app.domain.agent_runtime.run_mode import RunMode
 from backend.app.domain.agent_runtime.status import AgentRunStatus, BlockedReason
 
 
@@ -27,6 +28,10 @@ class AgentRun(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             "blocked_reason is null or blocked_reason in "
             "('policy_blocked','budget_blocked','runtime_blocked')",
             name="agent_runs_ck_blocked_reason",
+        ),
+        sa.CheckConstraint(
+            "run_mode in ('production','shadow')",
+            name="agent_runs_ck_run_mode",
         ),
         sa.CheckConstraint(
             "(status = 'blocked' and blocked_reason is not null) "
@@ -112,6 +117,13 @@ class AgentRun(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         server_default=sa.text("'queued'"),
     )
     blocked_reason: Mapped[BlockedReason | None] = mapped_column(sa.Text, nullable=True)
+    # SP-029 shadow mode (ADR-00055): production / shadow の直交次元 (additive、16 status 不変)。
+    run_mode: Mapped[RunMode] = mapped_column(
+        sa.Text,
+        nullable=False,
+        default="production",
+        server_default=sa.text("'production'"),
+    )
     error_code: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     error_summary: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     cost_usd: Mapped[Decimal | None] = mapped_column(sa.Numeric(12, 6), nullable=True)
