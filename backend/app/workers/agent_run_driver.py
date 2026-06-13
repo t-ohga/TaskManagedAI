@@ -287,24 +287,28 @@ async def _drive_shadow_run(
             provider_step = await orchestrator.execute_provider_step(
                 run=run, request=request, actor_id=_DRIVER_ACTOR_ID
             )
-
-        # F4 + R2-A2: ProviderResult を持つ **全 outcome** で、outcome 分岐の前に provenance を
-        # 検証する (provider_refused / provider_incomplete / blocked_runtime も対象)。pre-call
-        # deep copy から result 報告 api/sdk で再計算し result fingerprint と等価でなければ
-        # fail-closed (tamper / drift 検知 = outer except で failed)。
-        provider_result = provider_step.provider_result
-        if provider_result is not None:
-            expected_result_fingerprint = compute_provider_request_fingerprint(
-                pre_call_request,
-                matrix_version=matrix_version,
-                api_version=provider_result.api_version,
-                sdk_version=provider_result.sdk_version,
-            )
-            if provider_result.provider_request_fingerprint != expected_result_fingerprint:
-                raise RuntimeError(
-                    "provenance fingerprint mismatch: ProviderResult fingerprint does not "
-                    "match the pre-call ProviderRequest (F4 binding violation)"
+            # F4 + R2-A2 + R3-A1: ProviderResult を持つ **全 outcome** で、provider 遷移を commit
+            # する **同一 transaction 内** で provenance を検証する。pre-call deep copy から result
+            # 報告 api/sdk で再計算し result fingerprint と不一致なら **ここで raise して provider
+            # 遷移ごと rollback** する (R3-A1: terminal provider_refused / provider_incomplete を
+            # commit してから検証すると _fail_run_closed が terminal を上書きできず invalid な
+            # 終端 result が残るため、commit 前に検証して running へ rollback → outer except で failed)。
+            provider_result = provider_step.provider_result
+            if provider_result is not None:
+                expected_result_fingerprint = compute_provider_request_fingerprint(
+                    pre_call_request,
+                    matrix_version=matrix_version,
+                    api_version=provider_result.api_version,
+                    sdk_version=provider_result.sdk_version,
                 )
+                if (
+                    provider_result.provider_request_fingerprint
+                    != expected_result_fingerprint
+                ):
+                    raise RuntimeError(
+                        "provenance fingerprint mismatch: ProviderResult fingerprint does "
+                        "not match the pre-call ProviderRequest (F4 binding violation)"
+                    )
 
         if provider_step.outcome != "generated_artifact":
             # blocked_* は resume 待ちで stop。provider_refused は既に terminal。

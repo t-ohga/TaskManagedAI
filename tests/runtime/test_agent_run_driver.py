@@ -469,10 +469,14 @@ async def test_driver_setup_failure_after_claim_fails_closed(
 # ---------------------------------------------------------------------------
 
 
+# R3-A1: terminal outcome (refusal/safety_refusal) でも tamper fingerprint は provider 遷移ごと
+# rollback されて failed に終端化する (invalid な provider_refused terminal を残さない)。
+@pytest.mark.parametrize("provider_status", ["success", "refusal", "safety_refusal"])
 @pytest.mark.asyncio
 async def test_driver_provenance_mismatch_fails_closed(
     session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
+    provider_status: str,
 ) -> None:
     from backend.app.domain.provider.request import ProviderRequest
     from backend.app.domain.provider.result import ProviderResult, ProviderUsage
@@ -487,7 +491,7 @@ async def test_driver_provenance_mismatch_fails_closed(
         def execute(self, request: ProviderRequest) -> ProviderResult:
             # 報告 api/sdk から再計算した hash と一致しない fingerprint を返す (tamper / drift)。
             return ProviderResult(
-                status="success",
+                status=provider_status,  # type: ignore[arg-type]
                 usage=ProviderUsage(tokens_input=12, tokens_output=4, cost_usd=0.0),
                 model_resolved=request.model_resolved,
                 api_version="mock-v1",
@@ -505,6 +509,8 @@ async def test_driver_provenance_mismatch_fails_closed(
     async with session_factory() as session:
         run = await session.scalar(select(AgentRun).where(AgentRun.id == UUID(run_id)))
         assert run is not None
+        # R3-A1: tamper は provider 遷移ごと rollback され failed。terminal provider_refused や
+        # provider_responded event は永続しない。
         assert run.status == "failed"
         run_failed = await session.scalar(
             select(AgentRunEvent).where(
@@ -514,3 +520,12 @@ async def test_driver_provenance_mismatch_fails_closed(
         )
         assert run_failed is not None
         assert run_failed.event_payload["reason_code"] == "driver_exception"
+        provider_responded = await session.scalar(
+            select(func.count())
+            .select_from(AgentRunEvent)
+            .where(
+                AgentRunEvent.run_id == UUID(run_id),
+                AgentRunEvent.event_type == "provider_responded",
+            )
+        )
+        assert provider_responded == 0  # tampered provider outcome は rollback され非永続
