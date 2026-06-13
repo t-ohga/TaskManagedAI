@@ -1,10 +1,10 @@
 ---
 id: "SP-036_ticket_board_cancelled_filter"
 type: "heavy"
-status: "draft"
+status: "completed"
 sprint_no: 36
 created_at: "2026-06-12"
-updated_at: "2026-06-12"
+updated_at: "2026-06-13"
 target_days: 1
 max_days: 2
 adr_refs:
@@ -99,4 +99,9 @@ ADR-00054 採用案 B (additive server-side param)。`GET /tickets` に `status:
 
 - ADR-00054 accepted_at: 2026-06-12 (実装着手直前に proposed→accepted 昇格、§12 準拠)。
 - plan-review (codex-adversarial-review, working-tree): R1 HIGH (total_unfiltered 追加) / R2 HIGH+MED (hint を既定 view scope + tag scope 文言) / R3 HIGH×2 (server count ≠ client-filtered 実画面 → 純粋既定 view 限定 + 一律 truncation 警告 + cap 越え全件保証撤回 + N-hidden hint 撤去) / R4 HIGH (`status` shadow → `ticket_status` + alias + 404 regression) → READY。全 findings adopt。
-- (実装後に追記: code adversarial round、検証結果 frontend vitest/tsc/lint + backend pytest)。
+- 実装 (PR #341, commit 8b8f5a1, code adversarial R1-R2 approve):
+  - **changed**: `backend/app/api/tickets.py` (`list_tickets_endpoint` に `status`(Query alias、内部 `ticket_status` で `fastapi.status` shadow 回避) / `exclude_cancelled` / `total_unfiltered` 追加、tag filter 後・pagination 前に filter、precedence=`status` 優先) / `frontend/lib/api/tickets.ts` (`loadTickets` 引数 + `totalUnfiltered`/`truncated`) / `frontend/app/(admin)/tickets/page.tsx` (client-side status filter + cancelled 除外を撤去、param 渡し、`truncated` 時一律 truncation 警告、純粋既定 view 限定の cancelled-only-empty hint)。
+  - **verified** (#341 merge + main CI green): `tests/api/test_ticket_board_status_filter.py` (status exact / exclude_cancelled / precedence / param なし非破壊 / pagination 相互作用 / `total_unfiltered` / invalid・cross-project tag 併用後も 404 regression) + `frontend/__tests__/tickets-cancelled-kanban.test.tsx` (既定 cancelled 非表示 / StatusFilter=中止 表示 / truncation 警告 / 純粋既定 view の cancelled-only hint + status=blocked・q/priority/range 0 件で hint 非表示 negative)。ruff + mypy + pytest + tsc + eslint + vitest 全 pass。受け入れ条件 §57-68 全項目を満たすことを確認。
+  - **deferred**: search / priority / range の server-side 化 + DB paginate (次スプリント候補、§90-92)。
+  - **risks**: 解消 (adversarial R1 の cap 越え silent 隠蔽は server-side filter + 一律 truncation 警告で構造的に解消)。pre-existing の全件 in-memory 取得 scalability は本 Sprint 対象外で残置。
+- (2026-06-13 台帳 reconcile): #341 で must_ship 完全実装・review 済みだが status=draft + Review 未finalize の drift を訂正 (status draft→completed)。
