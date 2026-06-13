@@ -52,6 +52,11 @@ from backend.app.domain.provider.request import ProviderMessage, ProviderRequest
 from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
 from backend.app.repositories.artifact import ArtifactRepository, compute_content_hash
 from backend.app.repositories.context_snapshot import create_snapshot
+from backend.app.repositories.ticket import (
+    ProjectArchivedError,
+    TicketNotActionableError,
+    TicketRepository,
+)
 from backend.app.services.agent_runtime.event_log import transition_with_event
 from backend.app.services.agent_runtime.orchestrator import AgentRunOrchestrator
 from backend.app.services.providers.compliance_gate import ComplianceGate
@@ -164,6 +169,23 @@ def _is_cancelled_or_terminal(status: AgentRunStatus) -> bool:
     return status == "cancelled" or status in TERMINAL_STATES
 
 
+async def _assert_run_actionable(session: AsyncSession, run: AgentRun) -> None:
+    """R4-A1: run の bound ticket が active かつ project が archived でないことを再検証する。
+
+    ``bridge_run_create`` は作成時のみ actionable を guard するが、worker driver は run 作成後・
+    dequeue 後に駆動するため、作成〜駆動の間に ticket soft-delete / project archive が起きうる
+    (TOCTOU)。``bridge_run_update`` の advance guard と同じ invariant を server-owned
+    ``run.project_id`` / ``run.ticket_id`` で再検証し、freeze 中の provider work / output 生成を
+    防ぐ。frozen なら ``TicketNotActionableError`` / ``ProjectArchivedError`` を raise する
+    (project row FOR UPDATE で archive/bulk-soft-delete と直列化。freeze 経路は project->tickets
+    の lock 順で agent_runs を lock しないため driver の run->project 順と deadlock しない)。
+    """
+
+    await TicketRepository(session).assert_ticket_actionable(
+        run.tenant_id, run.project_id, str(run.ticket_id)
+    )
+
+
 async def _reload_run(
     session: AsyncSession, *, run_id: UUID, tenant_id: int
 ) -> AgentRun:
@@ -232,6 +254,18 @@ async def _drive_shadow_run(
                     "run_id": str(run_id),
                     "reason": None if run is None else run.status,
                 }
+            # R4-A1: 作成後・dequeue 後に ticket soft-delete / project archive されていないか
+            # 再検証する (freeze invariant)。frozen なら driver は駆動せず run を queued 据置で
+            # skip する (freeze は可逆 = fail にしない、restore + 再 enqueue で駆動可能)。
+            # claim block 内で catch し outer except (fail) へ伝播させない。
+            try:
+                await _assert_run_actionable(session, run)
+            except (TicketNotActionableError, ProjectArchivedError):
+                return {
+                    "status": "skipped_not_actionable",
+                    "run_id": str(run_id),
+                    "reason": "ticket_or_project_frozen",
+                }
             # 以降の matrix load / request build / transition / snapshot 失敗は claimable
             # 確認後の通常例外。outer except で queued->failed に補償する (R2-A1、silent orphan 防止)。
             matrix = load_compliance_matrix(_COMPLIANCE_MATRIX_PATH)
@@ -284,6 +318,10 @@ async def _drive_shadow_run(
             run = await _reload_run(session, run_id=run_id, tenant_id=tenant_id)
             if _is_cancelled_or_terminal(run.status):
                 return {"status": run.status, "run_id": str(run_id)}
+            # R4-A1: provider work (課金 / output) 直前に freeze を再検証する。claim 後に ticket
+            # soft-delete / project archive された場合、ここで raise → outer except → running->failed
+            # (mid-drive freeze は fail-closed。claim 時 skip と異なり既に running のため failed 終端)。
+            await _assert_run_actionable(session, run)
             provider_step = await orchestrator.execute_provider_step(
                 run=run, request=request, actor_id=_DRIVER_ACTOR_ID
             )

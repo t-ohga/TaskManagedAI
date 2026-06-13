@@ -529,3 +529,47 @@ async def test_driver_provenance_mismatch_fails_closed(
             )
         )
         assert provider_responded == 0  # tampered provider outcome は rollback され非永続
+
+
+# ---------------------------------------------------------------------------
+# R4-A1: freeze invariant — 作成後に ticket soft-delete / project archive された run は
+# driver が駆動せず queued 据置で skip する (provider work / output を作らない)。
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_driver_skips_run_when_project_archived_after_create(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = await _create_shadow_run(session_factory, monkeypatch)
+
+    # 作成後・dequeue 前に project を archive する (bulk-soft-delete / archive 相当の freeze)。
+    async with session_factory.begin() as session:
+        await session.execute(
+            text("update projects set status = 'archived' where id = :pid"),
+            {"pid": DEFAULT_PROJECT_ID},
+        )
+
+    result = await execute_agent_run({}, run_id=run_id, tenant_id=DEFAULT_TENANT_ID)
+    # R4-A1: frozen run は駆動せず skip (fail でなく queued 据置 = freeze は可逆)。
+    assert result["status"] == "skipped_not_actionable"
+
+    async with session_factory() as session:
+        run = await session.scalar(select(AgentRun).where(AgentRun.id == UUID(run_id)))
+        assert run is not None
+        assert run.status == "queued"  # 駆動されず queued 据置 (restore で再駆動可能)
+        # provider work / output は一切発生しない (run_queued のみ)。
+        non_queued_events = await session.scalar(
+            select(func.count())
+            .select_from(AgentRunEvent)
+            .where(
+                AgentRunEvent.run_id == UUID(run_id),
+                AgentRunEvent.event_type != "run_queued",
+            )
+        )
+        assert non_queued_events == 0
+        artifact_count = await session.scalar(
+            select(func.count()).select_from(Artifact).where(Artifact.run_id == UUID(run_id))
+        )
+        assert artifact_count == 0
