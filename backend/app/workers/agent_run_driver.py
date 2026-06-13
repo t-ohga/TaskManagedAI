@@ -128,18 +128,22 @@ async def _create_input_snapshot(
     matrix_version: str,
     request_fingerprint_hash: str,
 ) -> ContextSnapshot:
-    """ContextSnapshot ``input`` を 10 列で作成する (F4: exact fingerprint 格納)。
+    """ContextSnapshot ``input`` を 10 列で作成する (F4 provenance record)。
 
-    ``provider_request_fingerprint`` には fingerprint payload (canonical 内容) に加え、
-    その canonical hash (``fingerprint_sha256``) を埋め込む。これは ProviderResult が記録する
-    ``provider_request_fingerprint`` (同 request の hash) と **一致する正本**で、driver が
-    provider step 後に等価検証する (R1-A4: snapshot fp == result fp を実際に enforce)。
+    ``provider_request_fingerprint`` には fingerprint payload (canonical 内容: model_resolved
+    等) に加え、**pre-call の request-identity hash** (``request_payload_sha256``、api/sdk は
+    呼出前のため ``unknown``) を埋め込む。これは「driver が build した request の記録」であり、
+    **ProviderResult の versioned fingerprint (api/sdk 入り) とは別物**である (R8-A2: 両者は
+    api/sdk 分だけ hash が異なり、同一性は主張しない)。result ↔ request の binding は driver の
+    provider step 内 in-tx check (``result.provider_request_fingerprint ==
+    compute_provider_request_fingerprint(pre_call_request, result.api/sdk)``) が enforce する
+    (R3-A1)。snapshot は input 時点に何の request を送ろうとしたかを記録する provenance record。
     """
 
     fingerprint_payload = provider_request_fingerprint_payload(
         request, matrix_version=matrix_version
     )
-    fingerprint_payload["fingerprint_sha256"] = request_fingerprint_hash
+    fingerprint_payload["request_payload_sha256"] = request_fingerprint_hash
     return await create_snapshot(
         session,
         tenant_id=run.tenant_id,

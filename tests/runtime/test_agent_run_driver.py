@@ -202,9 +202,10 @@ async def test_driver_drives_shadow_run_to_completed(
             )
         )
         assert snapshot is not None
-        # F4 (R1-A4): provenance — snapshot に格納した fingerprint hash が、driver が build した
-        # ProviderRequest の canonical hash と **完全一致**する (driver は provider step 後に
-        # ProviderResult.provider_request_fingerprint との等価も enforce 済 = run completed が証拠)。
+        # F4 (R8-A2): snapshot は pre-call の request-identity hash (api/sdk='unknown') を記録する。
+        # これは driver が build した ProviderRequest の canonical hash と一致する (provenance
+        # record)。result ↔ request の binding は driver の in-tx check が enforce 済 (run completed
+        # が証拠)。snapshot hash と result hash は api/sdk 分だけ異なる別物 (同一性は主張しない)。
         from backend.app.domain.provider.fingerprint import (
             compute_provider_request_fingerprint,
         )
@@ -216,11 +217,14 @@ async def test_driver_drives_shadow_run_to_completed(
 
         matrix = load_compliance_matrix(_COMPLIANCE_MATRIX_PATH)
         rebuilt = _build_shadow_provider_request(run, matrix.matrix_version)
-        expected_fp = compute_provider_request_fingerprint(
+        expected_request_hash = compute_provider_request_fingerprint(
             rebuilt, matrix_version=matrix.matrix_version
         )
         assert snapshot.provider_request_fingerprint["model_resolved"] == "mock-model"
-        assert snapshot.provider_request_fingerprint["fingerprint_sha256"] == expected_fp
+        assert (
+            snapshot.provider_request_fingerprint["request_payload_sha256"]
+            == expected_request_hash
+        )
 
         artifact = await session.scalar(
             select(Artifact).where(Artifact.run_id == UUID(run_id))

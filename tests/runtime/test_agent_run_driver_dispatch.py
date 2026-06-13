@@ -89,3 +89,37 @@ async def test_enqueue_shadow_run_propagates_failure_for_fail_closed(
 
     with pytest.raises(RuntimeError, match="redis down"):
         await api_bridge._enqueue_shadow_run(run_id=uuid4(), tenant_id=1)
+
+
+@pytest.mark.asyncio
+async def test_enqueue_shadow_run_swallows_close_failure_after_successful_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R8-A1: enqueue 成功後の pool.aclose() 失敗は伝播させない (dispatch failure と誤分類して
+    enqueue 済 run を failed 補償しないため)。enqueue_job 自体の失敗のみ伝播する。"""
+    state: dict[str, Any] = {"enqueued": False}
+
+    class _FlakyClosePool:
+        async def enqueue_job(self, function: str, *args: Any, **kwargs: Any) -> None:
+            state["enqueued"] = True
+
+        async def aclose(self) -> None:
+            raise RuntimeError("pool close boom")
+
+    async def _fake_create_pool(_settings: Any, **kwargs: Any) -> _FlakyClosePool:
+        return _FlakyClosePool()
+
+    monkeypatch.setattr(arq, "create_pool", _fake_create_pool)
+    monkeypatch.setattr(
+        api_bridge,
+        "get_settings",
+        lambda: Settings(
+            database_url="postgresql+asyncpg://u:p@127.0.0.1:5432/db",
+            redis_url="redis://127.0.0.1:6379/1",
+            dev_login_cookie_secret="x" * 16,
+        ),
+    )
+
+    # enqueue は成功し close だけ失敗 → 例外を伝播させない (補償されない = run は queued のまま)。
+    await api_bridge._enqueue_shadow_run(run_id=uuid4(), tenant_id=1)
+    assert state["enqueued"] is True

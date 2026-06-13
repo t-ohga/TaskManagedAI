@@ -7,6 +7,7 @@ Server-owned fields are never accepted from MCP tool input.
 
 from __future__ import annotations
 
+import logging
 import re
 from decimal import Decimal
 from typing import Any, cast
@@ -36,6 +37,8 @@ from backend.app.services.mcp_idempotency import (
     reserve_or_lookup,
 )
 from backend.app.services.security.secret_text_scan import assert_no_secret_in_text
+
+logger = logging.getLogger(__name__)
 
 MAX_LIMIT = 200
 
@@ -436,6 +439,10 @@ async def _enqueue_shadow_run(*, run_id: UUID, tenant_id: int) -> None:
         redis_settings_from_url(settings.redis_url),
         default_queue_name=settings.arq_queue_name,
     )
+    # R8-A1: enqueue_job の成否と pool cleanup の成否を分離する。enqueue_job 失敗のみ caller へ
+    # 伝播させ (→ fail-closed 補償)、enqueue 成功後の aclose 失敗は **log のみ** で握り潰す
+    # (enqueue 済 = job は Redis に投入済なので、cleanup 失敗を dispatch failure と誤分類して
+    # run を failed に補償すると、実行可能な run を unexecutable terminal failed にしてしまう)。
     try:
         await pool.enqueue_job(
             "execute_agent_run",
@@ -443,8 +450,18 @@ async def _enqueue_shadow_run(*, run_id: UUID, tenant_id: int) -> None:
             tenant_id=tenant_id,
             _queue_name=settings.arq_queue_name,
         )
-    finally:
+    except Exception:
+        # enqueue 自体の失敗: cleanup を試みた上で伝播 (caller が queued->failed 補償)。
+        try:
+            await pool.aclose()
+        except Exception:
+            logger.warning("arq_pool_close_failed_after_enqueue_error", exc_info=True)
+        raise
+    # enqueue 成功。cleanup 失敗は dispatch failure ではないので握り潰す (log のみ)。
+    try:
         await pool.aclose()
+    except Exception:
+        logger.warning("arq_pool_close_failed", exc_info=True)
 
 
 async def _compensate_enqueue_dispatch_failure(
