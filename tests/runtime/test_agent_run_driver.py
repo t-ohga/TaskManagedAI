@@ -433,7 +433,8 @@ async def test_enqueue_dispatch_failure_fails_run_closed(
 
 
 # ---------------------------------------------------------------------------
-# R2-A1: claim 確認後の setup/snapshot 失敗も fail-closed (queued orphan なし)
+# R2-A1 + R6-A1: claim を durable に commit してから fallible setup を行う。setup 失敗は
+# gathering_context->failed に補償し、run は queued に戻らない (重複 worker race / orphan なし)。
 # ---------------------------------------------------------------------------
 
 
@@ -444,14 +445,14 @@ async def test_driver_setup_failure_after_claim_fails_closed(
 ) -> None:
     run_id = await _create_shadow_run(session_factory, monkeypatch)
 
-    # claim 確認後の ContextSnapshot 作成で例外を注入 (snapshot 制約違反 / matrix 不備の代理)。
+    # durable claim 後の ContextSnapshot 作成で例外を注入 (snapshot 制約違反 / matrix 不備の代理)。
     async def _boom(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("snapshot setup failure")
 
     monkeypatch.setattr(agent_run_driver, "_create_input_snapshot", _boom)
 
     result = await execute_agent_run({}, run_id=run_id, tenant_id=DEFAULT_TENANT_ID)
-    # R2-A1: claim 後の通常例外でも queued 残置 (orphan) でなく failed に終端化。
+    # claim 後の通常例外でも queued 残置 (orphan) でなく failed に終端化。
     assert result["status"] == "failed"
 
     async with session_factory() as session:
@@ -464,6 +465,39 @@ async def test_driver_setup_failure_after_claim_fails_closed(
             .where(AgentRun.status == "queued")
         )
         assert queued_count == 0
+
+    # R6-A1: setup 失敗で run は queued に戻らず failed terminal。よって重複 worker / 再 enqueue が
+    # 再駆動しようとしても claim (status != queued) で claim_miss になる (setup mock は claim より
+    # 後なので未到達、durable claim を実証)。
+    redrive = await execute_agent_run({}, run_id=run_id, tenant_id=DEFAULT_TENANT_ID)
+    assert redrive["status"] == "claim_miss"
+
+
+@pytest.mark.asyncio
+async def test_driver_compensation_failure_propagates(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # R6-A2: 補償 (queued/gathering_context->failed) 自体が失敗したら execute_agent_run は
+    # 例外を握り潰さず re-raise する (arq に job 失敗を伝播 = "failed" success を偽報告しない)。
+    run_id = await _create_shadow_run(session_factory, monkeypatch)
+
+    real_twe = agent_run_driver.transition_with_event
+
+    async def _twe(session: Any, *, run: Any, to_state: str, **kwargs: Any) -> Any:
+        if to_state == "failed":
+            raise RuntimeError("compensation DB failure")
+        return await real_twe(session, run=run, to_state=to_state, **kwargs)
+
+    async def _boom(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("setup failure forcing compensation")
+
+    monkeypatch.setattr(agent_run_driver, "transition_with_event", _twe)
+    monkeypatch.setattr(agent_run_driver, "_create_input_snapshot", _boom)
+
+    # setup 失敗 → 補償 (to_state=failed) → _twe が raise → _fail_run_closed re-raise → propagate。
+    with pytest.raises(RuntimeError, match="compensation DB failure"):
+        await execute_agent_run({}, run_id=run_id, tenant_id=DEFAULT_TENANT_ID)
 
 
 # ---------------------------------------------------------------------------

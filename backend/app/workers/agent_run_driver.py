@@ -52,7 +52,11 @@ from backend.app.domain.provider.request import ProviderMessage, ProviderRequest
 from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
 from backend.app.repositories.artifact import ArtifactRepository, compute_content_hash
 from backend.app.repositories.context_snapshot import create_snapshot
-from backend.app.repositories.ticket import TicketRepository
+from backend.app.repositories.ticket import (
+    ProjectArchivedError,
+    TicketNotActionableError,
+    TicketRepository,
+)
 from backend.app.services.agent_runtime.event_log import transition_with_event
 from backend.app.services.agent_runtime.orchestrator import AgentRunOrchestrator
 from backend.app.services.providers.compliance_gate import ComplianceGate
@@ -231,65 +235,86 @@ async def _drive_shadow_run(
     run_id: UUID,
     tenant_id: int,
 ) -> dict[str, Any]:
-    # R2-A1: claim 確認後の全 step (matrix load / request build / transition / snapshot /
-    # 駆動) を単一 try で覆い、通常例外を fail-closed (現 status -> failed) に終端化する。
-    # not-claimable は claim block 内で claim_miss return し補償しない (mutation なし)。
-    try:
-        # ---- 1. atomic claim + setup: queued -> gathering_context + ContextSnapshot(input) ----
-        async with session.begin():
-            run = await session.scalar(
-                sa.select(AgentRun)
-                .where(AgentRun.id == run_id, AgentRun.tenant_id == tenant_id)
-                .with_for_update()
-            )
-            if run is None or run.run_mode != "shadow" or run.status != "queued":
-                # not claimable: 既駆動 / production / 不在 / concurrent loser。benign no-op。
-                # FOR UPDATE で直列化済のため loser はここで status != queued を読む (補償不要)。
-                return {
-                    "status": "claim_miss",
-                    "run_id": str(run_id),
-                    "reason": None if run is None else run.status,
-                }
-            # R4-A1 + R5-A2: 作成後・dequeue 後に ticket soft-delete / project archive されて
-            # いないか再検証する (freeze invariant)。frozen なら raise → outer except →
-            # queued->failed に terminalize する (R5-A2: queued 据置 skip は consumed-job orphan を
-            # 作り R2 が却下した class を再導入するため、fail-closed に visible terminalize。restore
-            # 後は新 run 作成が recovery contract)。
+    # R6-A1: claim を fallible setup より **先に durable に commit** する。claim transaction は
+    # lock + actionable + queued->gathering_context のみ行い、rollback で queued に戻して待機中の
+    # 重複 worker に claim を奪われる窓を作らない。matrix/request/snapshot 等の fallible setup は
+    # claim commit 後 (run は gathering_context = 既 claim) に行い、失敗は gathering_context->failed
+    # に補償する (重複 worker は status != queued を見て claim_miss、single-flight 維持)。
+    # ---- 1. durable atomic claim: queued -> gathering_context ----
+    async with session.begin():
+        run = await session.scalar(
+            sa.select(AgentRun)
+            .where(AgentRun.id == run_id, AgentRun.tenant_id == tenant_id)
+            .with_for_update()
+        )
+        if run is None or run.run_mode != "shadow" or run.status != "queued":
+            # not claimable: 既駆動 / production / 不在 / concurrent loser。benign no-op。
+            return {
+                "status": "claim_miss",
+                "run_id": str(run_id),
+                "reason": None if run is None else run.status,
+            }
+        # R4-A1 + R5-A2: freeze invariant 再検証。frozen なら **この claim transaction 内で**
+        # queued->failed に terminalize して commit する (rollback で queued に戻さない =
+        # 重複 worker race も consumed-job orphan も作らない、R6-A1/R5-A2)。restore 後は新 run
+        # 作成が recovery contract。
+        try:
             await _assert_run_actionable(session, run)
-            # 以降の matrix load / request build / transition / snapshot 失敗は claimable
-            # 確認後の通常例外。outer except で queued->failed に補償する (R2-A1、silent orphan 防止)。
-            matrix = load_compliance_matrix(_COMPLIANCE_MATRIX_PATH)
-            matrix_version = matrix.matrix_version
-            request = _build_shadow_provider_request(run, matrix_version)
-            # F4: snapshot 格納する input 時点の request fingerprint hash (api/sdk "unknown")。
-            request_fingerprint_hash = compute_provider_request_fingerprint(
-                request, matrix_version=matrix_version
-            )
+        except (TicketNotActionableError, ProjectArchivedError):
             await transition_with_event(
                 session,
                 run=run,
-                to_state="gathering_context",
-                event_type="context_gathered",
-                payload={"run_mode": "shadow", "driver": "agent_run_driver"},
+                to_state="failed",
+                event_type="run_failed",
+                payload={
+                    "reason_code": "ticket_or_project_frozen",
+                    "run_mode": "shadow",
+                },
                 actor_id=_DRIVER_ACTOR_ID,
                 tenant_id=tenant_id,
             )
-            input_snapshot = await _create_input_snapshot(
-                session, run, request, matrix_version, request_fingerprint_hash
-            )
+            return {
+                "status": "failed",
+                "run_id": str(run_id),
+                "reason": "ticket_or_project_frozen",
+            }
+        # actionable: durable claim を commit する (fallible setup は後続 transaction)。
+        await transition_with_event(
+            session,
+            run=run,
+            to_state="gathering_context",
+            event_type="context_gathered",
+            payload={"run_mode": "shadow", "driver": "agent_run_driver"},
+            actor_id=_DRIVER_ACTOR_ID,
+            tenant_id=tenant_id,
+        )
 
+    # claim 済 (gathering_context、durable commit)。以降の失敗は run を gathering_context 以降
+    # から failed に補償する (queued には戻らず重複 worker は claim_miss、R6-A1)。
+    try:
+        # ---- 2. setup (matrix/request/fingerprint は pure) + snapshot + gathering_context -> running ----
+        matrix = load_compliance_matrix(_COMPLIANCE_MATRIX_PATH)
+        matrix_version = matrix.matrix_version
         orchestrator = AgentRunOrchestrator(
             session=session,
             compliance_gate=ComplianceGate(matrix_loader=matrix),
             provider=MockProviderAdapter(),
             policy_pack=None,
         )
-
-        # ---- 2. gathering_context -> running ----
         async with session.begin():
             run = await _reload_run(session, run_id=run_id, tenant_id=tenant_id)
             if _is_cancelled_or_terminal(run.status):
                 return {"status": run.status, "run_id": str(run_id)}
+            # run を fresh load した本 transaction 内で request build / snapshot を行う
+            # (post-commit expired run の lazy-load = MissingGreenlet を避ける)。
+            request = _build_shadow_provider_request(run, matrix_version)
+            # F4: snapshot 格納する input 時点の request fingerprint hash (api/sdk "unknown")。
+            request_fingerprint_hash = compute_provider_request_fingerprint(
+                request, matrix_version=matrix_version
+            )
+            input_snapshot = await _create_input_snapshot(
+                session, run, request, matrix_version, request_fingerprint_hash
+            )
             await transition_with_event(
                 session,
                 run=run,
@@ -438,10 +463,17 @@ async def _drive_shadow_run(
         return {"status": "completed", "run_id": str(run_id)}
 
     except Exception as exc:  # noqa: BLE001 - 全例外を fail-closed 終端化する
-        await _fail_run_closed(
+        # R6-A2: 補償が成功すれば run の実際の terminal status を返す。補償自体が失敗 (DB 不通
+        # 等) すれば _fail_run_closed が re-raise し、arq に job 失敗を伝播させて retry/可視化する
+        # (compensation 失敗を握り潰して "failed" success を偽報告しない)。
+        final_status = await _fail_run_closed(
             session, run_id=run_id, tenant_id=tenant_id, exc=exc
         )
-        return {"status": "failed", "run_id": str(run_id), "error_code": type(exc).__name__}
+        return {
+            "status": final_status,
+            "run_id": str(run_id),
+            "error_code": type(exc).__name__,
+        }
 
 
 async def _fail_run_closed(
@@ -450,46 +482,47 @@ async def _fail_run_closed(
     run_id: UUID,
     tenant_id: int,
     exc: Exception,
-) -> None:
-    """R4-F1: 例外時に run を現在の committed status から ``failed`` へ終端化する。
+) -> str:
+    """R4-F1: 例外時に run を現在の committed status から ``failed`` へ終端化し、最終 status を返す。
 
-    全 driver-reachable non-terminal state からの ``failed`` edge (state_machine
-    additive) を使い、固定 from-state を仮定しない。既に terminal / concurrent に
-    status 変化した場合は no-op (cancelled 等を failed で上書きしない)。raw secret を
-    payload に入れない (error type 名のみ)。
+    全 driver-reachable non-terminal state からの ``failed`` edge (state_machine additive) を
+    使い、固定 from-state を仮定しない。既に terminal / concurrent に status 変化した場合は
+    その実 status を返す (cancelled 等を failed で上書きしない)。raw secret は payload に入れない
+    (error type 名のみ)。
+
+    R6-A2: 補償 transaction の失敗 (DB 不通 / session invalid / event append 失敗 等) は
+    **握り潰さず re-raise** する。caller (execute_agent_run) はこの例外を伝播させ、arq に job
+    失敗を認識させ retry/可視化する (run が非終端のまま "failed" success を偽報告しない)。
     """
 
     logger.exception(
         "agent_run_driver_failed",
         extra={"run_id": str(run_id), "tenant_id": tenant_id},
     )
-    try:
-        async with session.begin():
-            run = await session.scalar(
-                sa.select(AgentRun)
-                .where(AgentRun.id == run_id, AgentRun.tenant_id == tenant_id)
-                .with_for_update()
-            )
-            if run is None or run.status in TERMINAL_STATES:
-                return
-            await transition_with_event(
-                session,
-                run=run,
-                to_state="failed",
-                event_type="run_failed",
-                payload={
-                    "reason_code": "driver_exception",
-                    "error_code": type(exc).__name__,
-                    "run_mode": "shadow",
-                },
-                actor_id=_DRIVER_ACTOR_ID,
-                tenant_id=tenant_id,
-            )
-    except Exception:  # noqa: BLE001 - 終端化失敗は元例外を握り潰さずログのみ
-        logger.exception(
-            "agent_run_driver_fail_close_error",
-            extra={"run_id": str(run_id), "tenant_id": tenant_id},
+    async with session.begin():
+        run = await session.scalar(
+            sa.select(AgentRun)
+            .where(AgentRun.id == run_id, AgentRun.tenant_id == tenant_id)
+            .with_for_update()
         )
+        if run is None:
+            return "failed"  # 不在 (想定外) は failed 扱いで返す。
+        if run.status in TERMINAL_STATES:
+            return run.status  # 既に terminal (cancelled 等) なら実 status を返す。
+        await transition_with_event(
+            session,
+            run=run,
+            to_state="failed",
+            event_type="run_failed",
+            payload={
+                "reason_code": "driver_exception",
+                "error_code": type(exc).__name__,
+                "run_mode": "shadow",
+            },
+            actor_id=_DRIVER_ACTOR_ID,
+            tenant_id=tenant_id,
+        )
+    return "failed"
 
 
 __all__ = ["execute_agent_run"]
