@@ -51,6 +51,7 @@ Sprint 4 Batch 4 で確立した ``transition_with_event`` 三重 guard (status 
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Literal
@@ -80,7 +81,11 @@ from backend.app.services.output_validator.core import RepairDecision, decide_re
 from backend.app.services.policy_pack.loader import PolicyPack, get_policy_pack
 from backend.app.services.providers.compliance_gate import ComplianceGate
 from backend.app.services.providers.preflight import provider_request_preflight
-from backend.app.services.providers.usage_logger import record_provider_usage
+from backend.app.services.providers.usage_logger import (
+    preflight_shadow_budget,
+    preflight_shadow_request_tokens,
+    record_provider_usage,
+)
 
 ProviderStepOutcome = Literal[
     "generated_artifact",
@@ -113,6 +118,20 @@ class ValidationStepResult:
     event: AgentRunEvent
     validation_passed: bool
     validation_errors: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ShadowCompletionStepResult:
+    """Outcome of one ``execute_shadow_completion_step`` invocation (SP-029).
+
+    shadow run の合法 terminal (``schema_validated -> completed`` を
+    ``run_completed`` event で). production run はこの step を使えない
+    (ValueError)。
+    """
+
+    to_state: AgentRunStatus
+    event_type: AgentRunEventType
+    event: AgentRunEvent
 
 
 @dataclass(frozen=True)
@@ -205,6 +224,29 @@ class AgentRunOrchestrator:
 
         _assert_run_request_boundary(run, request)
 
+        # SP-029 (ADR-00055 §5、Codex R4 F-2): shadow run は provider 課金前に kill switch +
+        # 既存累計 cap を preflight する。usage=None の合法レスポンスでも緊急停止を効かせ、
+        # 既に cap 到達済みの shadow run の次 call を課金前に block する (post-execution の
+        # record_provider_usage accumulator と二重で bound)。production run は no-op。
+        shadow_preflight = await preflight_shadow_budget(
+            self._session, run=run, actor_id=actor_id
+        )
+        if shadow_preflight is not None and shadow_preflight.exceeded:
+            return _blocked_budget_result()
+
+        # SP-029 (Codex R7): shadow の単一 call を request.max_tokens で課金前に上限化する
+        # (max_tokens 未宣言 / 残 token cap 超過なら provider.execute せず block、overshoot 防止)。
+        if run.run_mode == "shadow":
+            shadow_request_bound = await preflight_shadow_request_tokens(
+                self._session,
+                run=run,
+                actor_id=actor_id,
+                request_max_tokens=request.max_tokens,
+                estimated_input_tokens=_estimate_request_input_tokens(request),
+            )
+            if shadow_request_bound is not None and shadow_request_bound.exceeded:
+                return _blocked_budget_result()
+
         decision = self._compliance_gate.evaluate(request)
         if decision.decision == "deny":
             event = await transition_with_event(
@@ -261,6 +303,44 @@ class AgentRunOrchestrator:
             )
 
         provider_result = self._provider.execute(request)
+        target = _resolve_provider_transition_target(provider_result)
+
+        # SP-029 (Codex R7/R9/R13/R14 F-1): shadow run で provider.execute が返った (= 課金可能)
+        # のに usage が **検証不能** だと cost/token を正しく計上できず cap を enforce できない。
+        # **record_provider_usage の前** に、**status 不問** で usage=None または
+        # ``usage.tokens_input <= 0`` を fail-closed (runtime_blocked) にする。実 provider call は
+        # 必ず prompt の input token を伴うため tokens_input<=0 は usage 欠落の正規化 (0,0,0) =
+        # unverifiable。成功 (generated_artifact) だけでなく provider_incomplete (timeout/max_token)
+        # も対象にし、degraded response が record_provider_usage で 0 累積 → retry ループで cap を
+        # 迂回するのを防ぐ。cost-only 欠落 (cost=0 だが token あり) は record_provider_usage の
+        # token-floor が累積 cost を担保するため、ここでは block しない。
+        usage = provider_result.usage
+        if run.run_mode == "shadow" and (usage is None or usage.tokens_input <= 0):
+            event = await transition_with_event(
+                self._session,
+                run=run,
+                to_state="blocked",
+                event_type="runtime_blocked",
+                payload={
+                    "reason_code": "shadow_usage_unverifiable",
+                    "provider": request.provider,
+                    "api_or_feature": request.api_or_feature,
+                    "provider_result_kind": provider_result.status,
+                    "run_mode": "shadow",
+                },
+                actor_id=actor_id,
+                blocked_reason="runtime_blocked",
+                idempotency_key=idempotency_key,
+            )
+            return ProviderStepResult(
+                outcome="blocked_runtime",
+                to_state="blocked",
+                event_type="runtime_blocked",
+                event=event,
+                provider_result=provider_result,
+                compliance_decision=decision,
+                blocked_reason="runtime_blocked",
+            )
 
         if provider_result.usage is not None:
             budget_result = await record_provider_usage(
@@ -285,7 +365,6 @@ class AgentRunOrchestrator:
                     blocked_reason="budget_blocked",
                 )
 
-        target = _resolve_provider_transition_target(provider_result)
         outcome = _provider_outcome_for_target(provider_result.status, target)
         event_type = _provider_event_type_for_target(provider_result.status, target)
 
@@ -410,6 +489,48 @@ class AgentRunOrchestrator:
             event=event,
             validation_passed=False,
             validation_errors=error_summaries,
+        )
+
+    async def execute_shadow_completion_step(
+        self,
+        *,
+        run: AgentRun,
+        actor_id: UUID,
+        idempotency_key: str | None = None,
+    ) -> ShadowCompletionStepResult:
+        """SP-029 (ADR-00055): shadow run を ``schema_validated -> completed`` で
+        terminal 化する。
+
+        shadow run は production state を汚さない試走であり、副作用 stage
+        (``policy_linted`` / ``diff_ready`` / ``waiting_approval`` -> runner / repo /
+        approval) を **一切通らず**、非 mutating な ``schema_validated`` から直接
+        ``completed`` へ ``run_completed`` event で遷移する。この合法 terminal edge は
+        state machine で run_mode-gated (``run_mode='shadow'`` のみ許可、production は
+        ``transition_with_event`` 内の ``validate_transition`` で reject) されている。
+
+        production run がこの step を呼ぶのは設計エラー (ValueError)。
+        """
+
+        if run.run_mode != "shadow":
+            raise ValueError(
+                "execute_shadow_completion_step requires run_mode='shadow'; "
+                f"got run_mode={run.run_mode!r} (production runs must use the "
+                "policy_lint -> diff_ready -> approval pipeline)."
+            )
+
+        event = await transition_with_event(
+            self._session,
+            run=run,
+            to_state="completed",
+            event_type="run_completed",
+            payload={"run_mode": "shadow", "shadow_terminal": True},
+            actor_id=actor_id,
+            idempotency_key=idempotency_key,
+        )
+        return ShadowCompletionStepResult(
+            to_state="completed",
+            event_type="run_completed",
+            event=event,
         )
 
     async def execute_repair_decision_step(
@@ -543,6 +664,40 @@ class AgentRunOrchestrator:
             provider_request_fingerprint=new_provider_request_fingerprint,
             snapshot_kind="resume",
         )
+
+
+def _estimate_request_input_tokens(request: ProviderRequest) -> int:
+    """prompt (messages) + structured_output_schema から保守的な input token 概算を返す。
+
+    SP-029 (Codex R8/R9 F-2 / App F-2): shadow の per-call preflight で input spend を課金前に
+    bound するための **tokenizer 非依存・over-estimate** な概算。serialized payload の
+    **UTF-8 byte 数** を input token 上限とみなす。BPE token は最低 1 byte を符号化するため
+    `actual_tokens <= byte_length` が **常に成立** し (codepoint 数だと emoji/ZWJ 系列で
+    1 codepoint が複数 token になり過小評価しうるため byte で取る)、over-estimate = fail-safe で
+    cap を早めに効かせる。secret_capability_token 等は含めない (messages + schema のみ)。
+    """
+
+    payload = request.model_dump(
+        mode="json", include={"messages", "structured_output_schema"}
+    )
+    return len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"))
+
+
+def _blocked_budget_result() -> ProviderStepResult:
+    """shadow preflight (budget / request token) が block 済の際に返す共通 result。
+
+    transition_with_event は preflight 側で実行済 (running -> blocked / budget_blocked) のため、
+    ここでは re-transition せず outcome ラベルのみ surface する。"""
+
+    return ProviderStepResult(
+        outcome="blocked_budget",
+        to_state="blocked",
+        event_type="budget_blocked",
+        event=None,
+        provider_result=None,
+        compliance_decision=None,
+        blocked_reason="budget_blocked",
+    )
 
 
 def _assert_run_request_boundary(run: AgentRun, request: ProviderRequest) -> None:
@@ -718,6 +873,7 @@ __all__ = [
     "ProviderStepOutcome",
     "ProviderStepResult",
     "RepairStepResult",
+    "ShadowCompletionStepResult",
     "ValidationStepOutcome",
     "ValidationStepResult",
 ]

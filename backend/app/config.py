@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal, Self
 
@@ -79,6 +80,21 @@ class Settings(BaseSettings):
     taskhub_host_id: str = ""
     taskhub_config_dir: str = "/etc/taskhub"
     memory_api_enabled: bool = False
+
+    # SP-029 shadow mode (ADR-00055). shadow run の feature toggle (default off、operator opt-in)
+    # と per-run hard cap。safety は (1) production budget 非加算 (2) per-run cap で担保するため、
+    # flag は「機能の有効/無効」であり安全 gate ではない。cap は 1 shadow run あたりの累計 cost 上限。
+    shadow_mode_enabled: bool = False
+    shadow_run_max_cost_usd: Decimal = Field(default=Decimal("1.00"), gt=0)
+    # USD 非依存の shadow per-run bound (Codex SP-029 R6 F-1)。provider が cost_usd=0 /
+    # 未報告でも shadow run の provider spend を token 累計で必ず上限化する (production の
+    # BudgetGuard hard_tokens_limit を skip するため、shadow 専用に必須)。
+    shadow_run_max_total_tokens: int = Field(default=2_000_000, gt=0)
+    # shadow の **pre-execution USD projection** 用の保守的 worst-case 単価 ($/token、Codex R11 F-1)。
+    # per-model pricing table が無いため、(estimated_input + max_tokens) * 本単価で 1 call の USD を
+    # over-estimate し、`current_usd + projected > shadow_run_max_cost_usd` を provider 課金前に block
+    # する。fail-safe (過大見積) 方向の単一 ceiling。default は premium output 級 (~$20/1M tokens)。
+    shadow_run_max_usd_per_token: Decimal = Field(default=Decimal("0.00002"), gt=0)
 
     arq_queue_name: str = "taskmanagedai:jobs"
     worker_cancel_channel: str = "taskmanagedai:cancel"

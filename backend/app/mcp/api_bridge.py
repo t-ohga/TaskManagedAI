@@ -16,9 +16,11 @@ import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.config import get_settings
 from backend.app.db.models.agent_run import AgentRun
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.ticket import Ticket
+from backend.app.domain.agent_runtime.run_mode import ALL_RUN_MODES, DEFAULT_RUN_MODE, RunMode
 from backend.app.domain.agent_runtime.status import AgentRunStatus
 from backend.app.repositories._payload_secret_scan import _PROHIBITED_PAYLOAD_KEYS
 from backend.app.repositories.ticket import (
@@ -425,6 +427,7 @@ async def bridge_run_create(
     commit: bool = True,
     idempotency_key: str | None = None,
     actor_id: UUID | None = None,
+    run_mode: RunMode = DEFAULT_RUN_MODE,
 ) -> dict[str, Any]:
     """AgentRun を作成する run/delegation/dispatch の chokepoint。
 
@@ -443,6 +446,13 @@ async def bridge_run_create(
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
 
     resolved_actor_id = actor_id if actor_id is not None else DEFAULT_SUPERINTENDENT_ACTOR_ID
+
+    # SP-029 (ADR-00055 §設計制約 6): run_mode enum 検証 (早期)。shadow feature toggle gate は
+    # **idempotency replay の後** に置く (Codex R12 F-3: flag off 後でも既存 shadow reservation の
+    # 冪等 replay は返す、flag は **新規 create** のみ gate する = exactly-once create recovery を壊さない)。
+    if run_mode not in ALL_RUN_MODES:
+        raise ValueError(f"unknown run_mode: {run_mode!r}")
+
     # ADR-00049 R3 F-O3: 空文字 / 空白のみの idempotency_key は「未指定」とみなし None 正規化する。
     if idempotency_key is not None and not idempotency_key.strip():
         idempotency_key = None
@@ -459,15 +469,21 @@ async def bridge_run_create(
         if not commit:
             # delegation chain (commit=False) は idempotency_key を渡さない契約。誤用は fail-closed。
             raise ValueError("idempotency_key is not supported with commit=False")
-        fingerprint = compute_request_fingerprint(
-            {
-                "project_id": str(project_id),
-                "ticket_id": ticket_id,
-                "purpose": purpose,
-                "role_id": role_id,
-                "parent_run_id": str(parent_run_id) if parent_run_id else None,
-            }
-        )
+        fingerprint_payload: dict[str, Any] = {
+            "project_id": str(project_id),
+            "ticket_id": ticket_id,
+            "purpose": purpose,
+            "role_id": role_id,
+            "parent_run_id": str(parent_run_id) if parent_run_id else None,
+        }
+        # SP-029 (Codex R2 F-1): production は **legacy fingerprint を維持** (run_mode 列導入前に
+        # 保存済の production reservation を deploy 跨ぎ retry しても fingerprint 不一致で
+        # IdempotencyConflictError にしない = exactly-once create recovery を壊さない)。shadow のみ
+        # run_mode を fingerprint に加え、同一 key+params の production reservation と区別する
+        # (cross-mode の key 再利用は conflict として surface)。
+        if run_mode != DEFAULT_RUN_MODE:
+            fingerprint_payload["run_mode"] = run_mode
+        fingerprint = compute_request_fingerprint(fingerprint_payload)
         outcome = await reserve_or_lookup(
             session,
             tenant_id=tenant_id,
@@ -503,9 +519,20 @@ async def bridge_run_create(
                 "purpose": purpose,
                 "role_id": role_id,
                 "parent_run_id": str(parent_run_id) if parent_run_id else None,
+                "run_mode": existing_run.run_mode,
                 "idempotent_replay": True,
             }
         reservation_winner_id = outcome.reservation_id
+
+    # SP-029 (ADR-00055 §6、Codex R12 F-3): shadow feature toggle gate は **新規 create** にのみ適用する。
+    # idempotency replay は上で既に return 済のため、ここに到達するのは新規 create (idempotent winner /
+    # non-idempotent) のみ。flag off で新規 shadow 作成を拒否しつつ、flag off 後でも既存 shadow run の
+    # 冪等 replay は壊さない。safety は production budget 非加算 (§4) + per-run cap (§5) で担保。
+    if run_mode == "shadow" and not get_settings().shadow_mode_enabled:
+        raise ValueError(
+            "shadow run_mode is disabled; enable TASKMANAGEDAI_SHADOW_MODE_ENABLED to "
+            "create shadow runs."
+        )
 
     # Q-3/Q-4 (ADR-00037 / Codex adversarial R3): soft-deleted ticket / archived project への
     # 作業開始を拒否する。run_create は run/delegation/dispatch の chokepoint (bridge_delegation_create
@@ -531,6 +558,16 @@ async def bridge_run_create(
                 f"parent run {parent_run_id} not found in project {project_id}"
             )
         await _assert_run_ticket_actionable(session, tenant_id=tenant_id, run=parent)
+        # SP-029 (ADR-00055 §設計制約 3、Codex R1 F-1): child は parent の run_mode を
+        # 厳密に継承する。shadow/production の lineage を混ぜない (shadow parent から
+        # production child を作って production budget/KPI/mutating pipeline に流入させる
+        # leak を防ぐ)。delegation/dispatch は run_mode 未指定で default production を渡すため、
+        # shadow parent への delegation はここで fail-closed に reject される。
+        if parent.run_mode != run_mode:
+            raise ValueError(
+                f"child run_mode {run_mode!r} must match parent run_mode "
+                f"{parent.run_mode!r} (shadow/production lineage must not mix)."
+            )
 
     # ADR-00037 R12: ticket binding を server-owned column へ記録する (assert_ticket_actionable で
     # 検証済みのため UUID parse は安全)。guard / KPI active-scope はこの column を直読みする。
@@ -542,6 +579,7 @@ async def bridge_run_create(
         role_id=role_id,
         role_scope="project" if role_id else None,
         parent_run_id=parent_run_id,
+        run_mode=run_mode,
     )
     session.add(run)
     await session.flush()
@@ -557,6 +595,8 @@ async def bridge_run_create(
             "project_id": str(project_id),
             "role_id": role_id,
             "parent_run_id": str(parent_run_id) if parent_run_id else None,
+            # SP-029: run_mode を run_queued event payload にも記録 (audit / timeline 可視性)。
+            "run_mode": run_mode,
         },
         # ADR-00049 App F-P1: reservation と同じ resolved_actor_id で event attribution する
         # (非 default actor の per-actor MCP create で audit/event が actor 不一致にならない)。
@@ -586,6 +626,7 @@ async def bridge_run_create(
         "purpose": purpose,
         "role_id": role_id,
         "parent_run_id": str(parent_run_id) if parent_run_id else None,
+        "run_mode": run_mode,
     }
 
 
@@ -1047,6 +1088,14 @@ async def bridge_run_update(
         await _assert_run_ticket_actionable(session, tenant_id=tenant_id, run=run)
     except (ProjectArchivedError, TicketNotActionableError) as exc:
         return {"error": str(type(exc).__name__), "run_id": str(run_id)}
+
+    # SP-029 (ADR-00055、Codex R12 F-1): shadow run の status は orchestrator の run_mode-gated
+    # transition (transition_with_event) のみが管理する。run_update は caller 指定 status を直書きし
+    # blocked_reason をクリアするため、budget/kill-switch/shadow_usage_unverifiable で blocked にした
+    # shadow run を running へ戻して fail-closed を迂回できる。shadow への手動 run_update は拒否する
+    # (進行停止は bridge_run_cancel のみ)。
+    if run.run_mode == "shadow":
+        return {"error": "shadow_run_update_forbidden", "run_id": str(run_id)}
 
     old_status = run.status
     # status は上の valid_statuses で検証済 (AgentRunStatus literal の subset) → cast は安全。
@@ -1665,6 +1714,8 @@ async def bridge_workflow_status(
             sa.text(
                 "SELECT status, role_id, count(*) as cnt FROM agent_runs "
                 "WHERE tenant_id = :tid AND project_id = :pid "
+                # SP-029 (ADR-00055 §8、Codex R10 F-2): production summary は shadow run を除外。
+                "AND agent_runs.run_mode = 'production' "
                 "AND NOT EXISTS ("
                 "SELECT 1 FROM tickets t "
                 "WHERE t.tenant_id = agent_runs.tenant_id "
@@ -1681,6 +1732,8 @@ async def bridge_workflow_status(
             sa.text(
                 "SELECT status, role_id, count(*) as cnt FROM agent_runs "
                 "WHERE tenant_id = :tid "
+                # SP-029 (ADR-00055 §8、Codex R10 F-2): production summary は shadow run を除外。
+                "AND agent_runs.run_mode = 'production' "
                 "AND NOT EXISTS ("
                 "SELECT 1 FROM tickets t "
                 "WHERE t.tenant_id = agent_runs.tenant_id "
@@ -1741,6 +1794,13 @@ async def bridge_run_cost(
         await _assert_run_ticket_actionable(session, tenant_id=tenant_id, run=run)
     except (ProjectArchivedError, TicketNotActionableError) as exc:
         return {"error": str(type(exc).__name__), "run_id": str(run_id)}
+
+    # SP-029 (ADR-00055、Codex R10 F-1): shadow run の cost/tokens は record_provider_usage
+    # (accumulator) が権威であり、shadow per-run cap (USD/token) はこの列を信頼して enforce する。
+    # caller 指定の手動上書きを許すと cap 直前で 0 にリセットして実質 uncapped にできるため、
+    # shadow run への run_cost 手動補正は fail-closed で拒否する。
+    if run.run_mode == "shadow":
+        return {"error": "shadow_run_cost_immutable", "run_id": str(run_id)}
 
     run.cost_usd = Decimal(str(cost_usd))  # float param → Decimal 列 (str 経由で precision-safe 変換)
     run.tokens_input = tokens_input

@@ -99,9 +99,22 @@ class ApprovalRequestRepository(BaseRepository[ApprovalRequest]):
         transaction commit / rollback; this method only flushes rows.
         """
 
+        from backend.app.services.agent_runtime.shadow_guard import assert_run_id_not_shadow
         from backend.app.services.notifications.approval_notifier import ApprovalNotifierService
 
         await self._ensure_tenant_context(tenant_id)
+
+        # SP-029 (ADR-00055 §設計制約 3): shadow run は approval を起動できない。
+        # approval は repo_write / pr_open / runner mutation の前提 gate なので、
+        # ここで fail-closed に拒否すれば downstream の mutating 経路が transitively
+        # 封鎖される (orchestrator stage skip と二重防御)。run 非紐付 (run_id=None) の
+        # ticket-level approval は対象外。
+        await assert_run_id_not_shadow(
+            self.session,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            operation="approval_request_create",
+        )
 
         approval = ApprovalRequest(
             tenant_id=tenant_id,
