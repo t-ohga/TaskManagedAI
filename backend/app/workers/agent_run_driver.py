@@ -52,11 +52,7 @@ from backend.app.domain.provider.request import ProviderMessage, ProviderRequest
 from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
 from backend.app.repositories.artifact import ArtifactRepository, compute_content_hash
 from backend.app.repositories.context_snapshot import create_snapshot
-from backend.app.repositories.ticket import (
-    ProjectArchivedError,
-    TicketNotActionableError,
-    TicketRepository,
-)
+from backend.app.repositories.ticket import TicketRepository
 from backend.app.services.agent_runtime.event_log import transition_with_event
 from backend.app.services.agent_runtime.orchestrator import AgentRunOrchestrator
 from backend.app.services.providers.compliance_gate import ComplianceGate
@@ -254,18 +250,12 @@ async def _drive_shadow_run(
                     "run_id": str(run_id),
                     "reason": None if run is None else run.status,
                 }
-            # R4-A1: 作成後・dequeue 後に ticket soft-delete / project archive されていないか
-            # 再検証する (freeze invariant)。frozen なら driver は駆動せず run を queued 据置で
-            # skip する (freeze は可逆 = fail にしない、restore + 再 enqueue で駆動可能)。
-            # claim block 内で catch し outer except (fail) へ伝播させない。
-            try:
-                await _assert_run_actionable(session, run)
-            except (TicketNotActionableError, ProjectArchivedError):
-                return {
-                    "status": "skipped_not_actionable",
-                    "run_id": str(run_id),
-                    "reason": "ticket_or_project_frozen",
-                }
+            # R4-A1 + R5-A2: 作成後・dequeue 後に ticket soft-delete / project archive されて
+            # いないか再検証する (freeze invariant)。frozen なら raise → outer except →
+            # queued->failed に terminalize する (R5-A2: queued 据置 skip は consumed-job orphan を
+            # 作り R2 が却下した class を再導入するため、fail-closed に visible terminalize。restore
+            # 後は新 run 作成が recovery contract)。
+            await _assert_run_actionable(session, run)
             # 以降の matrix load / request build / transition / snapshot 失敗は claimable
             # 確認後の通常例外。outer except で queued->failed に補償する (R2-A1、silent orphan 防止)。
             matrix = load_compliance_matrix(_COMPLIANCE_MATRIX_PATH)
@@ -384,6 +374,10 @@ async def _drive_shadow_run(
             run = await _reload_run(session, run_id=run_id, tenant_id=tenant_id)
             if _is_cancelled_or_terminal(run.status):
                 return {"status": run.status, "run_id": str(run_id)}
+            # R5-A1: output (Artifact) を publish する transaction でも freeze を再検証する
+            # (provider step 後・artifact 前に archive/soft-delete された run の output 生成を防ぐ)。
+            # frozen なら raise → outer except → generated_artifact->failed。
+            await _assert_run_actionable(session, run)
             # project_id は artifacts で NOT NULL (migration 0019)。module-level
             # create_artifact wrapper は project_id を渡さないため repository を直接使う。
             artifact = await ArtifactRepository(session).create_artifact(
@@ -412,6 +406,7 @@ async def _drive_shadow_run(
                 run = await _reload_run(session, run_id=run_id, tenant_id=tenant_id)
                 if _is_cancelled_or_terminal(run.status):
                     return {"status": run.status, "run_id": str(run_id)}
+                await _assert_run_actionable(session, run)  # R5-A1: repair も freeze 再検証
                 repair_step = await orchestrator.execute_repair_decision_step(
                     run=run,
                     retry_count=0,
@@ -434,6 +429,9 @@ async def _drive_shadow_run(
             run = await _reload_run(session, run_id=run_id, tenant_id=tenant_id)
             if _is_cancelled_or_terminal(run.status):
                 return {"status": run.status, "run_id": str(run_id)}
+            # R5-A1: completed へ進める transaction でも freeze を再検証する (frozen work を
+            # completed terminal にしない)。frozen なら raise → outer except → schema_validated->failed。
+            await _assert_run_actionable(session, run)
             await orchestrator.execute_shadow_completion_step(
                 run=run, actor_id=_DRIVER_ACTOR_ID
             )

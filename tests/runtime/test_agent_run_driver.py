@@ -534,13 +534,13 @@ async def test_driver_provenance_mismatch_fails_closed(
 
 
 # ---------------------------------------------------------------------------
-# R4-A1: freeze invariant — 作成後に ticket soft-delete / project archive された run は
-# driver が駆動せず queued 据置で skip する (provider work / output を作らない)。
+# R4-A1 + R5-A2: freeze invariant — 作成後に ticket soft-delete / project archive された run は
+# driver が駆動せず fail-closed terminalize する (queued 据置 = consumed-job orphan を作らない)。
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_driver_skips_run_when_project_archived_after_create(
+async def test_driver_fails_closed_when_project_archived_after_create(
     session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -556,32 +556,80 @@ async def test_driver_skips_run_when_project_archived_after_create(
         )
     try:
         result = await execute_agent_run({}, run_id=run_id, tenant_id=DEFAULT_TENANT_ID)
-        # R4-A1: frozen run は駆動せず skip (fail でなく queued 据置 = freeze は可逆)。
-        assert result["status"] == "skipped_not_actionable"
+        # R5-A2: frozen run は queued 据置 skip (orphan) でなく failed に terminalize。
+        assert result["status"] == "failed"
 
         async with session_factory() as session:
             run = await session.scalar(select(AgentRun).where(AgentRun.id == UUID(run_id)))
             assert run is not None
-            assert run.status == "queued"  # 駆動されず queued 据置 (restore で再駆動可能)
-            # provider work / output は一切発生しない (run_queued のみ)。
-            non_queued_events = await session.scalar(
-                select(func.count())
-                .select_from(AgentRunEvent)
-                .where(
-                    AgentRunEvent.run_id == UUID(run_id),
-                    AgentRunEvent.event_type != "run_queued",
-                )
-            )
-            assert non_queued_events == 0
+            assert run.status == "failed"  # consumed-job orphan を作らない
+            # provider work / output は一切発生しない (run_queued + run_failed のみ)。
             artifact_count = await session.scalar(
                 select(func.count())
                 .select_from(Artifact)
                 .where(Artifact.run_id == UUID(run_id))
             )
             assert artifact_count == 0
+            provider_responded = await session.scalar(
+                select(func.count())
+                .select_from(AgentRunEvent)
+                .where(
+                    AgentRunEvent.run_id == UUID(run_id),
+                    AgentRunEvent.event_type == "provider_responded",
+                )
+            )
+            assert provider_responded == 0
     finally:
         async with session_factory.begin() as session:
             await session.execute(
                 text("update projects set status = 'active' where id = :pid"),
                 {"pid": DEFAULT_PROJECT_ID},
             )
+
+
+@pytest.mark.asyncio
+async def test_driver_freeze_after_provider_step_blocks_output(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # R5-A1: provider step 後・artifact/completion 前に freeze された場合も output を作らず
+    # fail-closed。_assert_run_actionable を claim+provider step は通し、post-provider 呼出で
+    # raise させて「provider step 後の freeze」を模す。
+    from backend.app.repositories.ticket import ProjectArchivedError
+
+    run_id = await _create_shadow_run(session_factory, monkeypatch)
+
+    real_guard = agent_run_driver._assert_run_actionable
+    state = {"calls": 0}
+
+    async def _guard_after_provider(session: AsyncSession, run: AgentRun) -> None:
+        state["calls"] += 1
+        # claim (1) と provider step (2) は通し、post-provider (3+) で freeze を発火。
+        if state["calls"] >= 3:
+            raise ProjectArchivedError(project_id=run.project_id)
+        await real_guard(session, run)
+
+    monkeypatch.setattr(agent_run_driver, "_assert_run_actionable", _guard_after_provider)
+
+    result = await execute_agent_run({}, run_id=run_id, tenant_id=DEFAULT_TENANT_ID)
+    assert result["status"] == "failed"
+
+    async with session_factory() as session:
+        run = await session.scalar(select(AgentRun).where(AgentRun.id == UUID(run_id)))
+        assert run is not None
+        assert run.status == "failed"  # frozen work は completed にならない
+        completed = await session.scalar(
+            select(func.count())
+            .select_from(AgentRunEvent)
+            .where(
+                AgentRunEvent.run_id == UUID(run_id),
+                AgentRunEvent.event_type == "run_completed",
+            )
+        )
+        assert completed == 0
+        artifact_count = await session.scalar(
+            select(func.count())
+            .select_from(Artifact)
+            .where(Artifact.run_id == UUID(run_id))
+        )
+        assert artifact_count == 0  # post-provider freeze で artifact 生成しない

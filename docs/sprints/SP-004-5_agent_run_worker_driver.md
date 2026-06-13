@@ -191,5 +191,13 @@ TASKMANAGEDAI_RUN_DB_TESTS=1 uv run pytest tests/runtime/test_agent_run_driver.p
 - `workers/agent_run_driver.py`: atomic claim (SELECT FOR UPDATE + transition_with_event 内蔵 conditional UPDATE、claim-miss=benign no-op) → gathering_context→running→execute_provider_step(Mock)→Artifact→execute_validation_step→execute_shadow_completion_step、non-terminal 分離 (provider_incomplete→即 failed / validation_failed→repair_exhausted)、cancel = step 境界 post-commit DB-status 再読 (populate_existing=True)、error→現 state から failed。
 - `mcp/api_bridge.py`: bridge_run_create shadow keyword enqueue (arq create_pool) + 失敗時 fail-closed 補償 queued→failed / bridge_run_cancel cancel_agent_run 統一 + 明示 commit + actor。
 - 実装で確定: Artifact は ArtifactRepository 直接 (project_id NOT NULL)、validation_failed closure は repair_budget=0 で repair_exhausted 強制 (foundational)。
-- **検証**: ruff + **full mypy backend 384 clean** / 非DB runtime+mcp **757 passed** / DB-gated runtime+mcp **860 passed** + driver **7 passed** (回帰ゼロ)。tests/runtime/test_agent_run_driver.py 7 tests で end-to-end / claim-miss / production no-op / provider_incomplete→failed / cancel parity + event 永続 / enqueue fail-closed を DB-gated 検証。
-- 次: Codex adversarial loop (実コード review、findings_zero CRITICAL=0/HIGH≤2) → PR #350 更新 → CI green → user merge。
+- **初期検証**: ruff + full mypy backend 384 clean / 非DB 757 passed / DB-gated 860 passed + driver 7 passed。
+
+(2026-06-13〜14 **Codex adversarial code review loop R1-R5**、実コード review、§14.1 CRITICAL gate) 実装に対し findings を全 adopt し収束させた:
+- **R1** (1 CRITICAL + 3 HIGH): A1 enqueue が arq default queue (arq:queue) に投入し worker (taskmanagedai:jobs) が拾えず orphan → create_pool default_queue_name + enqueue_job _queue_name で worker queue bind / A2 post-commit crash window orphan → residual 明示 / A3 cancel が policy_linted/diff_ready 除外 → 全 non-terminal → cancelled / A4 F4 provenance 未 enforce → result api/sdk で再計算・等価検証。
+- **R2** (3 HIGH): A1 claim/setup 失敗が fail-closed 外 → claim+setup を単一 try で覆い queued→failed 補償 / A2 provenance が非 artifact outcome 未検証 + post-call mutable request で tamper 盲目 → deep-copy pre-call 正本 + 全 ProviderResult outcome で検証 / A3 test_worker.py functions len 不整合 → 2 件 registration contract。
+- **R3** (1 HIGH): A1 provenance が provider 遷移 commit 後で terminal refusal を上書き不可 → 検証を provider step と同一 transaction 内に移し mismatch で provider 遷移ごと rollback。
+- **R4** (1 HIGH): A1 driver が actionable freeze guard を迂回 (作成後 ticket soft-delete/project archive を自律実行) → `_assert_run_actionable` を claim + provider step に追加。
+- **R5** (2 HIGH): A1 freeze が provider step 後 (artifact/repair/completion) で勝てる → 全 post-provider output transaction で再検証 / A2 claim-time skip が consumed-job orphan (R2 却下 class 再導入) → **freeze は全 point で fail-closed terminalize** (queued→failed、skip 廃止。restore 後は新 run 作成が recovery)。
+- 検証 (R5 後): ruff + **full mypy backend 384 clean** / 非DB 65 + DB-gated runtime+mcp+worker **891 passed/1 skipped** (driver 13 含む、回帰ゼロ)。test pollution (archive test の共有 projects 行) を try/finally restore + fixture reset で解消。
+- 次: adversarial R6 で findings_zero 確認 → PR #350 description 更新 → CI green → user merge。
