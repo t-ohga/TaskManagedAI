@@ -7,6 +7,7 @@ Server-owned fields are never accepted from MCP tool input.
 
 from __future__ import annotations
 
+import logging
 import re
 from decimal import Decimal
 from typing import Any, cast
@@ -36,6 +37,8 @@ from backend.app.services.mcp_idempotency import (
     reserve_or_lookup,
 )
 from backend.app.services.security.secret_text_scan import assert_no_secret_in_text
+
+logger = logging.getLogger(__name__)
 
 MAX_LIMIT = 200
 
@@ -415,6 +418,86 @@ async def bridge_approval_list(
     }
 
 
+async def _enqueue_shadow_run(*, run_id: UUID, tenant_id: int) -> None:
+    """shadow run を arq worker driver (``execute_agent_run``) に keyword 引数で enqueue する。
+
+    SP-004-5 (ADR-00057 R4-F2): task signature が keyword-only のため enqueue も keyword
+    (positional だと ``with_active_registry_gate`` wrapper の転送で worker 実行時 TypeError)。
+    bridge は API process で arq pool を持たない (``ctx["redis"]`` は worker 専用) ため、
+    都度 ``create_pool`` → enqueue → close する。
+    """
+    from arq import create_pool
+
+    from backend.app.workers.main import redis_settings_from_url
+
+    settings = get_settings()
+    # SP-004-5 (ADR-00057 R1-A1 CRITICAL): worker は ``settings.arq_queue_name``
+    # (default ``taskmanagedai:jobs``) を polling する。arq の default queue (``arq:queue``)
+    # に enqueue すると job が拾われず permanent orphan になるため、create_pool /
+    # enqueue_job の両方で worker と同じ queue 名に bind する。
+    pool = await create_pool(
+        redis_settings_from_url(settings.redis_url),
+        default_queue_name=settings.arq_queue_name,
+    )
+    # R8-A1: enqueue_job の成否と pool cleanup の成否を分離する。enqueue_job 失敗のみ caller へ
+    # 伝播させ (→ fail-closed 補償)、enqueue 成功後の aclose 失敗は **log のみ** で握り潰す
+    # (enqueue 済 = job は Redis に投入済なので、cleanup 失敗を dispatch failure と誤分類して
+    # run を failed に補償すると、実行可能な run を unexecutable terminal failed にしてしまう)。
+    try:
+        await pool.enqueue_job(
+            "execute_agent_run",
+            run_id=str(run_id),
+            tenant_id=tenant_id,
+            _queue_name=settings.arq_queue_name,
+        )
+    except Exception:
+        # enqueue 自体の失敗: cleanup を試みた上で伝播 (caller が queued->failed 補償)。
+        try:
+            await pool.aclose()
+        except Exception:
+            logger.warning("arq_pool_close_failed_after_enqueue_error", exc_info=True)
+        raise
+    # enqueue 成功。cleanup 失敗は dispatch failure ではないので握り潰す (log のみ)。
+    try:
+        await pool.aclose()
+    except Exception:
+        logger.warning("arq_pool_close_failed", exc_info=True)
+
+
+async def _compensate_enqueue_dispatch_failure(
+    session: AsyncSession, *, run_id: UUID, tenant_id: int
+) -> str:
+    """SP-004-5 (ADR-00057 R2-F1): enqueue dispatch 失敗を fail-closed に終端化する。
+
+    enqueue 失敗を呑むと run が永久 ``queued`` の silent orphan になる (誰も claim しない)。
+    補償 transaction で ``queued -> failed`` (additive edge) に終端化し、失敗を run.status に
+    可視化する (再駆動 = caller が新 run を作成)。run が既に queued でなければ no-op。
+    """
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
+    from backend.app.services.agent_runtime.event_log import transition_with_event
+
+    run = await session.scalar(
+        select(AgentRun)
+        .where(AgentRun.tenant_id == tenant_id, AgentRun.id == run_id)
+        .with_for_update()
+    )
+    if run is None:
+        return "failed"
+    if run.status != "queued":
+        return run.status
+    await transition_with_event(
+        session,
+        run=run,
+        to_state="failed",
+        event_type="run_failed",
+        payload={"reason_code": "enqueue_dispatch_failed", "run_mode": "shadow"},
+        actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+        tenant_id=tenant_id,
+    )
+    await session.commit()
+    return "failed"
+
+
 async def bridge_run_create(
     session: AsyncSession,
     *,
@@ -618,9 +701,30 @@ async def bridge_run_create(
     else:
         # commit=False: lock を保持したまま呼出側 transaction に委ねる (run.id は flush 済)。
         await session.flush()
+
+    # SP-004-5 (ADR-00057): shadow run のみ worker driver (execute_agent_run) に enqueue する。
+    # production は post-validation pipeline 未実装のため driver 対象外 (従来通り queued 据置)。
+    # enqueue は run commit 後 (worker が claim する run が DB に可視) かつ commit=True 経路のみ
+    # (commit=False の delegation chain は run_mode=production default で shadow 不到達)。
+    #
+    # R2-F1: enqueue が **例外を返す** (redis 到達不能等) 場合は補償遷移で run を failed に
+    # 終端化し silent orphan を防ぐ。
+    # R1-A2 (residual、ADR-00057 §残課題): run commit 後・enqueue 完了前に **process が kill /
+    # timeout** されると補償が走らず queued orphan が残りうる。これは worker-crash-mid-drive
+    # と同じ durability gap で、transactional outbox / sweeper (後続 increment) で close する。
+    # 本 slice では「例外経路の orphan は close、crash 経路の orphan は後続 sweeper で回収」と
+    # scope を明示する (shadow は flag-off + 未公開のため P0 リスクは限定的)。
+    result_status: str = run.status
+    if commit and run_mode == "shadow":
+        try:
+            await _enqueue_shadow_run(run_id=run.id, tenant_id=tenant_id)
+        except Exception:  # noqa: BLE001 - R2-F1 fail-closed: enqueue 失敗で silent orphan を作らない
+            result_status = await _compensate_enqueue_dispatch_failure(
+                session, run_id=run.id, tenant_id=tenant_id
+            )
     return {
         "run_id": str(run.id),
-        "status": run.status,
+        "status": result_status,
         "project_id": str(project_id),
         "ticket_id": ticket_id,
         "purpose": purpose,
@@ -636,24 +740,58 @@ async def bridge_run_cancel(
     tenant_id: int,
     run_id: UUID,
 ) -> dict[str, Any]:
-    result = await session.execute(
-        select(AgentRun).where(
-            AgentRun.tenant_id == tenant_id,
-            AgentRun.id == run_id,
+    # SP-004-5 (ADR-00057 R2-F2 + R3-F1): cancel entrypoint を `cancel_agent_run` service に
+    # 統一する。従来の `run.status="cancelled"` 直接 set は `run_cancelled` event を append せず
+    # AgentRunEvent 正本 invariant を破壊し、worker driver の cancel 検知 (post-commit DB status
+    # 再読) とも不整合だった。`cancel_agent_run` は transition_with_event (event append) +
+    # publish_cancel_signal を行うが **commit はしない** (caller 責務) ため、MCP session
+    # (get_db_session は yield のみ) では呼出後に明示 commit が必須。
+    #
+    # R7-A2: cancel_agent_run は内部で commit 前に Redis publish を await する。Redis が
+    # black-hole 化 (接続維持で無応答) すると await がハングし、FOR UPDATE 下の cancelled 遷移が
+    # 未 commit のまま固着する (driver は post-commit DB status を正本にするため cancel が観測
+    # されない)。MCP cancel は signal に依存しない (driver は DB-status 再読で検知) ため、**no-op
+    # publisher を渡して Redis 依存を外し DB-first commit** にする (統一前の MCP cancel の
+    # Redis 非依存性を維持。REST 経路の pre-commit publish hang は本 ADR scope 外の別 follow-up)。
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
+    from backend.app.services.agent_runtime.cancel import cancel_agent_run
+
+    class _NoOpCancelPublisher:
+        async def publish(self, channel: str, message: str) -> None:
+            return None
+
+    try:
+        run = await cancel_agent_run(
+            session,
+            run_id,
+            None,
+            DEFAULT_SUPERINTENDENT_ACTOR_ID,
+            tenant_id=tenant_id,
+            publisher=_NoOpCancelPublisher(),
         )
-    )
-    run = result.scalar_one_or_none()
-    if run is None:
+    except LookupError:
         return {"error": "not_found", "run_id": str(run_id)}
+    except ValueError as exc:
+        # terminal / non-cancelable は cancel_agent_run が ValueError。run の現状を返す。
+        # status は rollback **前** に読む (rollback で expire され、後で読むと sync lazy-load =
+        # MissingGreenlet になるため)。
+        existing = await session.scalar(
+            select(AgentRun).where(
+                AgentRun.tenant_id == tenant_id,
+                AgentRun.id == run_id,
+            )
+        )
+        existing_status = existing.status if existing is not None else None
+        await session.rollback()
+        return {
+            "error": "already_terminal",
+            "run_id": str(run_id),
+            "status": existing_status,
+            "detail": str(exc),
+        }
 
-    terminal = {"completed", "failed", "cancelled", "provider_refused", "repair_exhausted"}
-    if run.status in terminal:
-        return {"error": "already_terminal", "run_id": str(run_id), "status": run.status}
-
-    run.status = "cancelled"
-    run.blocked_reason = None
     await session.commit()
-    return {"run_id": str(run.id), "status": "cancelled"}
+    return {"run_id": str(run.id), "status": run.status}
 
 
 async def bridge_approval_show(
