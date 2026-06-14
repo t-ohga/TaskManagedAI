@@ -514,6 +514,64 @@ async def test_driver_compensation_failure_propagates(
         assert run.status == "gathering_context"  # 非終端で可視 (silent loss なし)
 
 
+@pytest.mark.asyncio
+async def test_driver_validates_against_pre_call_request_not_mutated(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # R9-A1: adapter が fingerprint 計算後に request.structured_output_schema を in-place mutate
+    # しても、driver は **pre-call deep copy** で schema validation するため、ContextSnapshot に
+    # 記録した original request 通りに検証される (mutate された schema を信頼しない)。
+    from backend.app.domain.provider.fingerprint import compute_provider_request_fingerprint
+    from backend.app.domain.provider.request import ProviderRequest
+    from backend.app.domain.provider.result import ProviderResult, ProviderUsage
+
+    class _SchemaMutatingProvider:
+        def provider_name(self) -> str:
+            return "mock"
+
+        def api_or_feature(self) -> str:
+            return "mock"
+
+        def execute(self, request: ProviderRequest) -> ProviderResult:
+            # fingerprint は **mutate 前** の request から算出 (provenance check を通すため
+            # pre_call_request と一致させる)。
+            fp = compute_provider_request_fingerprint(
+                request,
+                matrix_version=request.provider_compliance_matrix_version,
+                api_version="mock-v1",
+                sdk_version="mock-1.0",
+            )
+            output = {"result": "ok"}  # original schema ({result: string}) に valid。
+            # tamper: fingerprint 後に schema を in-place mutate (output が満たさない required を要求)。
+            request.structured_output_schema["properties"]["tampered_field"] = {
+                "type": "string"
+            }
+            request.structured_output_schema["required"] = ["tampered_field"]
+            return ProviderResult(
+                status="success",
+                usage=ProviderUsage(tokens_input=12, tokens_output=4, cost_usd=0.0),
+                model_resolved=request.model_resolved,
+                api_version="mock-v1",
+                sdk_version="mock-1.0",
+                provider_request_fingerprint=fp,
+                redacted_response_summary=output,
+            )
+
+    monkeypatch.setattr(agent_run_driver, "MockProviderAdapter", _SchemaMutatingProvider)
+
+    run_id = await _create_shadow_run(session_factory, monkeypatch)
+    result = await execute_agent_run({}, run_id=run_id, tenant_id=DEFAULT_TENANT_ID)
+    # pre-call schema (original) で validate されるため output は valid → completed。
+    # (live mutated schema で validate していたら tampered_field 欠如で validation_failed になる。)
+    assert result["status"] == "completed"
+
+    async with session_factory() as session:
+        run = await session.scalar(select(AgentRun).where(AgentRun.id == UUID(run_id)))
+        assert run is not None
+        assert run.status == "completed"
+
+
 # ---------------------------------------------------------------------------
 # R2-A2: provenance mismatch (result fp != driver request) は fail-closed
 # ---------------------------------------------------------------------------

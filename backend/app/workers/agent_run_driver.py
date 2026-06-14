@@ -330,8 +330,14 @@ async def _drive_shadow_run(
             )
 
         # ---- 3. provider step (running -> generated_artifact / blocked / provider_*) ----
-        # R2-A2: provider.execute に渡す前の request を deep copy で正本化し、provenance 検証は
-        # この pre-call 正本から再計算する (adapter が request を in-place mutate しても tamper 検知)。
+        # R2-A2 + R9-A1: provider.execute に渡す前の request を deep copy で正本化する。
+        # `request` は frozen でも nested dict/list (structured_output_schema / messages) は mutable で、
+        # adapter が in-place mutate しうる。よって provenance 検証だけでなく **provider step 後の
+        # 全 output 判断 (schema validation / artifact payload_data_class / repair fingerprint)** も
+        # この pre-call 正本から行い、mutate された `request` を信頼しない (R9-A1: live request で
+        # validate すると ContextSnapshot 記録の request と異なる schema で schema_validated/completed
+        # にされ provenance/output-validation invariant が破れる)。`request` は execute_provider_step
+        # に渡すのみ、以降は read しない。
         pre_call_request = request.model_copy(deep=True)
         async with session.begin():
             run = await _reload_run(session, run_id=run_id, tenant_id=tenant_id)
@@ -416,13 +422,13 @@ async def _drive_shadow_run(
                 kind="plan",
                 content_hash=compute_content_hash(content_jsonb),
                 content_jsonb=content_jsonb,
-                payload_data_class=request.payload_data_class,
+                payload_data_class=pre_call_request.payload_data_class,
                 exportable=False,
             )
             validation_step = await orchestrator.execute_validation_step(
                 run=run,
                 artifact=artifact,
-                schema=request.structured_output_schema,
+                schema=pre_call_request.structured_output_schema,
                 actor_id=_DRIVER_ACTOR_ID,
             )
 
@@ -443,7 +449,7 @@ async def _drive_shadow_run(
                     actor_id=_DRIVER_ACTOR_ID,
                     previous_snapshot=input_snapshot,
                     new_provider_request_fingerprint=provider_request_fingerprint_payload(
-                        request, matrix_version=matrix_version
+                        pre_call_request, matrix_version=matrix_version
                     ),
                 )
             run = await _reload_run(session, run_id=run_id, tenant_id=tenant_id)
