@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.app_role import (
@@ -84,8 +84,11 @@ class MaterialReconciliationService:
     ) -> ReconciliationReport:
         await self._ensure_tenant_context(tenant_id)
         report = ReconciliationReport()
+        # (1) writing-orphan を revoked+purging へ tombstone する (DB owner を残す)。row を delete すると
+        #     grace 超過後に resume した late writer が owner なし orphan material を生む (Codex F2)。
+        # (2) 続けて revoke-orphan (tombstone 済 + 通常 revoked) の material を idempotent に purge する。
+        await self._tombstone_writing_orphans(tenant_id, writing_grace_seconds, report)
         await self._purge_revoke_orphans(tenant_id, report)
-        await self._rollback_writing_orphans(tenant_id, writing_grace_seconds, report)
         return report
 
     async def _purge_revoke_orphans(self, tenant_id: int, report: ReconciliationReport) -> None:
@@ -134,7 +137,7 @@ class MaterialReconciliationService:
                 report.purged.append(str(secret_ref_id))
             await self.session.commit()
 
-    async def _rollback_writing_orphans(
+    async def _tombstone_writing_orphans(
         self, tenant_id: int, writing_grace_seconds: int, report: ReconciliationReport
     ) -> None:
         cutoff = datetime.now(UTC) - timedelta(seconds=writing_grace_seconds)
@@ -149,36 +152,34 @@ class MaterialReconciliationService:
         )
         ids = [row[0] for row in rows.all()]
         for secret_ref_id in ids:
-            # partial material を削除 (idempotent) してから pending+writing row を破棄。
-            try:
-                self.store.delete(tenant_id, secret_ref_id)
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "gc-orphans writing-rollback store delete failed",
-                    extra={"tenant_id": tenant_id, "secret_ref_id": str(secret_ref_id)},
-                )
-                report.purge_failed.append(str(secret_ref_id))
-                continue
-            # audit を先に append (row 破棄後は scope/name 参照不可、同 transaction)。
-            await self._audit(
-                tenant_id=tenant_id,
-                event_type="secret_material_orphan_rolled_back",
-                secret_ref_id=secret_ref_id,
-                reason="gc_orphans_writing_rollback",
-            )
+            # row を delete せず revoked+purging に tombstone する。DB owner を残すことで late writer の
+            # promote (WHERE pending+writing) は 0 rows となり、material は revoke-orphan purge 経路が
+            # durable に削除する (Codex F2: row 消滅だと owner なし orphan material が残る)。
             result = await self.session.execute(
-                delete(SecretRef).where(
+                update(SecretRef)
+                .where(
                     SecretRef.tenant_id == tenant_id,
                     SecretRef.id == secret_ref_id,
                     SecretRef.status == "pending",
                     SecretRef.material_state == "writing",
                 )
+                .values(
+                    status="revoked",
+                    material_state="purging",
+                    revoked_at=datetime.now(UTC),
+                )
             )
             if cast("Any", result).rowcount == 1:
+                await self._audit(
+                    tenant_id=tenant_id,
+                    event_type="secret_material_orphan_tombstoned",
+                    secret_ref_id=secret_ref_id,
+                    reason="gc_orphans_writing_tombstoned",
+                )
                 report.rolled_back.append(str(secret_ref_id))
                 await self.session.commit()
             else:
-                # 競合で状態が変わっていた (register 完了等) → audit を含め rollback。
+                # 競合で状態が変わっていた (register/rotate 完了等) → no-op。
                 await self.session.rollback()
 
 

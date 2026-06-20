@@ -117,6 +117,55 @@ def test_insecure_master_key_permission_rejected(tmp_path: Path) -> None:
         _store(tmp_path).resolve(tid, sid)
 
 
+class _FakeKeyringLocked:
+    """delete 時に not-found 以外の KeyringError を返す backend (keyring locked 相当)。"""
+
+    def get_password(self, service: str, account: str) -> str:
+        return "ZmFrZQ=="  # 存在する (base64)
+
+    def delete_password(self, service: str, account: str) -> None:
+        import backend.app.services.secrets.local_secret_store as lss
+
+        raise lss._KeyringError("keyring locked")  # noqa: SLF001
+
+
+class _FakeKeyringEmpty:
+    """material 不在 backend (get→None)。delete は呼ばれてはならない。"""
+
+    def get_password(self, service: str, account: str) -> str | None:
+        return None
+
+    def delete_password(self, service: str, account: str) -> None:  # pragma: no cover
+        raise AssertionError("delete_password must not be called when material is absent")
+
+
+def test_keyring_delete_failure_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex F1 (CRITICAL): keyring delete 失敗 (locked 等) は成功扱いせず伝播する。
+
+    握り潰すと material 残留のまま purged 化され raw secret が残るため、caller (revoke/gc) が
+    purge_attempts++ + material_purged_at NULL で再試行できるよう例外を上げる。
+    """
+    import backend.app.services.secrets.local_secret_store as lss
+
+    monkeypatch.setattr(lss, "_keyring", _FakeKeyringLocked())
+    store = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True)
+    with pytest.raises(lss.LocalSecretStoreError):
+        store.delete(1, uuid4())
+
+
+def test_keyring_delete_missing_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """material 不在は idempotent no-op (delete_password を呼ばない)。"""
+    import backend.app.services.secrets.local_secret_store as lss
+
+    monkeypatch.setattr(lss, "_keyring", _FakeKeyringEmpty())
+    store = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True)
+    store.delete(1, uuid4())  # 例外なし
+
+
 def test_symlink_material_file_rejected(tmp_path: Path) -> None:
     store = _store(tmp_path)
     tid, sid = 1, uuid4()

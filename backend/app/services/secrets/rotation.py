@@ -338,6 +338,25 @@ class SecretRotationService:
                 error_message="rotated_from_id_mismatch",
             )
 
+        # material lifecycle gate (Codex F3 HIGH / ADR-00058 finding-2): 未検証 material (writing) /
+        # purge 中・済 (purging/purged) の row を active 化しない。0050 以降 material_state 未設定 insert は
+        # 'writing' default のため、status のみで promote すると false-present row が active 化しうる。
+        if getattr(new_ref, "material_state", "present") != "present":
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="promote",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(old_secret_ref_id),
+                new_secret_ref_id=str(new_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    f"new must have material_state=present, got "
+                    f"{getattr(new_ref, 'material_state', None)}"
+                ),
+                error_message="invalid_new_material_state",
+            )
+
         # Atomic claim UPDATE (F-PR48-004 P1): expected status を WHERE に含める,
         # row count を verify (concurrent transition で stale row update 防止).
         old_result = await self.session.execute(
@@ -370,6 +389,7 @@ class SecretRotationService:
                 SecretRef.tenant_id == tenant_id,
                 SecretRef.id == new_secret_ref_id,
                 SecretRef.status == "pending",  # expected status
+                SecretRef.material_state == "present",  # Codex F3: 未検証 material を active 化しない
             )
             .values(status="active", updated_at=timestamp)
         )

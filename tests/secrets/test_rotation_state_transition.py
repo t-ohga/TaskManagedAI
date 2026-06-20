@@ -54,8 +54,13 @@ def _mock_secret_ref(
     name: str = "provider-openai",
     rotated_from_id: UUID | None = None,
     metadata_: dict | None = None,
+    material_state: str = "present",
 ) -> MagicMock:
-    """Codex F-PR48-001/002 P1/P2 adopt: scope/name/rotated_from_id/metadata_ も mock 化."""
+    """Codex F-PR48-001/002 P1/P2 adopt: scope/name/rotated_from_id/metadata_ も mock 化。
+
+    material_state は SP-PHASE0 (Codex F3) で追加。MagicMock は属性を auto-vivify するため、
+    promote の material_state gate が誤発火しないよう明示設定する (default present)。
+    """
 
     ref = MagicMock()
     ref.id = secret_ref_id
@@ -65,6 +70,7 @@ def _mock_secret_ref(
     ref.name = name
     ref.rotated_from_id = rotated_from_id
     ref.metadata_ = metadata_ if metadata_ is not None else {}
+    ref.material_state = material_state
     return ref
 
 
@@ -273,6 +279,35 @@ async def test_promote_rotated_from_id_mismatch_rejected() -> None:
     )
     assert result.success is False
     assert result.error_message == "rotated_from_id_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_promote_unverified_material_rejected() -> None:
+    """SP-PHASE0 Codex F3 (HIGH): new の material_state が present 以外 (writing) なら promote reject.
+
+    legacy rotation.promote が status のみで false-present (material_state=writing) row を active 化
+    する穴を塞ぐ (未検証 material を active にしない、ADR-00058 finding-2)。
+    """
+
+    svc, session = _build_evaluator()
+    old_id = uuid4()
+    new_id = uuid4()
+    session.scalar = AsyncMock(
+        side_effect=[
+            _mock_secret_ref(secret_ref_id=old_id, status="active"),
+            _mock_secret_ref(
+                secret_ref_id=new_id,
+                status="pending",
+                rotated_from_id=old_id,
+                material_state="writing",  # store 未完了 = 未検証 material
+            ),
+        ]
+    )
+    result = await svc.promote(
+        tenant_id=_TENANT_ID, old_secret_ref_id=old_id, new_secret_ref_id=new_id
+    )
+    assert result.success is False
+    assert result.error_message == "invalid_new_material_state"
 
 
 @pytest.mark.asyncio

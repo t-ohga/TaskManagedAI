@@ -33,10 +33,14 @@ from cryptography.fernet import Fernet, InvalidToken
 try:  # keyring は optional (ADR-00020 Framework Intake)。不在環境は Fernet file fallback。
     import keyring as _keyring
     from keyring.errors import KeyringError as _KeyringError
+    from keyring.errors import PasswordDeleteError as _PasswordDeleteError
 except ImportError:  # pragma: no cover - depends on environment
     _keyring = None  # type: ignore[assignment]
 
     class _KeyringError(Exception):  # type: ignore[no-redef]
+        pass
+
+    class _PasswordDeleteError(_KeyringError):  # type: ignore[no-redef]
         pass
 
 
@@ -158,14 +162,23 @@ class LocalSecretStore:
 
     def _keyring_delete(self, tenant_id: int, secret_ref_id: UUID) -> None:
         kr = _require_keyring()
+        service = self._material_service(tenant_id, secret_ref_id)
+        # 不在は idempotent no-op。**削除失敗 (keyring locked / permission denied 等) は伝播**させ、
+        # caller (revoke/gc) が material_purged_at を set せず purge_attempts++ で再試行する
+        # (Codex F1 CRITICAL: 全 KeyringError を成功扱いすると material 残留のまま purged 化する)。
         try:
-            kr.delete_password(
-                self._material_service(tenant_id, secret_ref_id),
-                _MATERIAL_KEYRING_ACCOUNT,
-            )
-        except _KeyringError:
-            # idempotent: 不在 (PasswordDeleteError) は no-op。
+            existing = kr.get_password(service, _MATERIAL_KEYRING_ACCOUNT)
+        except _KeyringError as exc:  # pragma: no cover - backend specific
+            raise LocalSecretStoreError("keyring read failed during delete") from exc
+        if existing is None:
+            return  # 不在 = idempotent success (delete を呼ばない)
+        try:
+            kr.delete_password(service, _MATERIAL_KEYRING_ACCOUNT)
+        except _PasswordDeleteError:
+            # get 後に別経路で消えた (TOCTOU) → 既に不在 = idempotent。
             return
+        except _KeyringError as exc:  # pragma: no cover - backend specific
+            raise LocalSecretStoreError("keyring delete failed") from exc
 
     # ---- file mode (Fernet) ----
 
@@ -205,6 +218,9 @@ class LocalSecretStore:
             path.unlink()
         except FileNotFoundError:
             return  # idempotent
+        # parent dir を fsync し削除を durable 化 (Codex F4: power-loss で purged 済 file が復活すると
+        # material_purged_at non-NULL のため gc が再試行せず raw material が残る)。
+        self._fsync_dir(path.parent)
 
     # ---- master key custody (file mode) ----
 
@@ -237,6 +253,23 @@ class LocalSecretStore:
         os.chmod(tmp, _SECURE_FILE_MODE)
         os.replace(tmp, path)
         os.chmod(path, _SECURE_FILE_MODE)
+        # parent dir を fsync し rename を durable 化 (Codex F4: power-loss で DB が present に進んだのに
+        # file rename が失われる乖離を防ぐ)。
+        self._fsync_dir(path.parent)
+
+    @staticmethod
+    def _fsync_dir(directory: Path) -> None:
+        """directory entry を durable 化する (rename/unlink の crash-safety)。"""
+        try:
+            fd = os.open(str(directory), os.O_RDONLY)
+        except OSError:  # pragma: no cover - platform (一部 FS は dir fsync 不可)
+            return
+        try:
+            os.fsync(fd)
+        except OSError:  # pragma: no cover - platform
+            pass
+        finally:
+            os.close(fd)
 
     @staticmethod
     def _assert_secure_file_mode(path: Path) -> None:

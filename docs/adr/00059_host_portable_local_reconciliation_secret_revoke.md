@@ -94,3 +94,28 @@ ADR Gate Criteria #8 (破壊的操作: host-portable reconciliation + secret rev
 3. 削除途中 crash (DB revoked / material 残存): `secret gc-orphans` reconciliation (`status='revoked' AND material_purged_at IS NULL` を idempotent purge) で収束、DB revoked 維持。
 4. **material_lifecycle migration (0050) の downgrade (finding R8/R19 反映)**: `material_state` / `material_purged_at` / `purge_attempts` 列削除は in-flight material の source of truth を消すため **無条件 lossless にしない**。downgrade は **(a) `status='revoked' AND material_purged_at IS NULL` が 0 件、(b) `material_state IN ('writing','purging')` が 0 件、(c) `secret_uri LIKE 'secret://local/%'` の row が 0 件 (local backend material が残っていない、sops へ migrate 済 or revoked+purged 済)** の **3 条件すべて**を **preflight で要求**。これにより full rollback (0050 downgrade → 0049 downgrade) の順序で、local row が残ったまま lifecycle source of truth (material_state 等) だけが先に消える skew を防ぐ (0049 の `secret://local/%` 拒否 preflight と整合、0050 が先に fail-fast)。未収束時は fail-fast し `secret gc-orphans` / local→sops migrate を促す。3 条件 0 件確認後にのみ 3 列を削除。
 5. 検証: restore preflight `verify_target_binding_consistency` が loopback で PASS、再登録した secret_ref の redeem 成功、crash-window test (revoke + create/rotate 双方) で reconciliation 収束、**downgrade preflight test (未 purge revoked / material_state writing/purging / `secret://local/%` row のいずれかが残る状態で 0050 downgrade を fail-fast、解消後に downgrade 成功)**、**full rollback regression test (local present row がある状態で 0050→0049 downgrade が lifecycle 列削除前に停止)**。
+
+## 実装 amendment (2026-06-20、SP-PHASE0 batch-1、§12.3 drift 解消 + Codex adversarial R1 adopt)
+
+実装着手時に確定した詳細を本 ADR に追記する (proposed への戻しは不可、accepted のまま amend)。
+
+### A-1. material lifecycle の対象 = broker-owned (local) material
+
+`material_state` / `material_purged_at` / `purge_attempts` は **broker-owned material、すなわち `local`
+backend** を統治する。`sops` backend の material は外部 (SOPS file) 管理で本 lifecycle の対象外。
+これに伴い:
+
+- **migration 0050 backfill**: 既存 row は 非 revoked→`present` / **revoked→`purged` + `material_purged_at=COALESCE(revoked_at, now())`**。pre-0050 の revoked row は broker-owned local material を持たない (local backend は本 Phase 新設) ため「既に purge 済 (broker-owned material 無し)」が honest。
+- **runtime revoke**: `local` は `material_state='purging'` + `material_purged_at NULL` (gc-orphans 対象)、**非 local (sops) は `material_purged_at=now()` を即 set** (broker-owned material 無し)。
+- 結果、**`material_purged_at IS NULL` を「local revoked + purge 待ち」のみが真**とする globally-consistent 不変条件が成立し、downgrade condition (a) (`revoked AND material_purged_at IS NULL`=0) が既存 sops revoked row で deadlock しない。当初本文の「revoked 行は material_purged_at NULL のまま backfill」は **新規 runtime local revoke** を指し、pre-0050 既存 revoked row の backfill には適用しない (上記が正)。
+
+### A-2. Codex adversarial R1 findings adopt (4 件、CRITICAL×2 + HIGH×2)
+
+- **F1 (CRITICAL)**: `LocalSecretStore.delete` の keyring 失敗を成功扱いしない。不在のみ idempotent no-op、locked / permission-denied 等は伝播し caller が `purge_attempts++` + `material_purged_at NULL` で再試行 (material 残留のまま purged 化を防止)。
+- **F2 (CRITICAL)**: `gc-orphans` の writing-orphan は **row を delete せず `revoked`+`purging` に tombstone** (DB owner を残す)。grace 超過後に resume した late writer の promote (WHERE pending+writing) は 0 rows となり、material は revoke-orphan purge 経路が durable に削除。register/rotate も promote 失敗時に best-effort `store.delete` で自分の material を cleanup (durable backstop = gc-orphans)。row 消滅により owner なし orphan material が残る経路を排除。
+- **F3 (HIGH)**: legacy `SecretRotationService.promote` にも `material_state='present'` gate を追加 (precheck + conditional UPDATE WHERE)。status のみで false-present (writing) row を active 化する穴を塞ぐ。
+- **F4 (HIGH)**: file backend は write (`os.replace`) / delete (`unlink`) 後に **parent dir を fsync** し crash-safety を確保 (power-loss で DB `present`/`purged` と store の乖離を防ぐ)。
+
+### A-3. 残リスク (Phase 0 accepted)
+
+late writer が tombstone+purge 後に `store.store` で material を再作成し、その直後 (cleanup 前) に crash する極小 window では owner row が `purged` のため gc が再走査しない。**local 単一 user・register/rotate は秒単位完了 (grace 300s)** のため Phase 0 で accepted。完全閉塞には registration lease / purged tombstone re-verification が必要 (将来 D-1 multi-host で検討)。

@@ -168,6 +168,10 @@ class SecretRegistrationService:
         )
         if cast("Any", result).rowcount != 1:
             await self.session.rollback()
+            # row が reconcile で revoked+purging へ tombstone された等で promote 不能。書いた material が
+            # DB owner を失わないよう best-effort cleanup (Codex F2: late writer orphan)。失敗しても
+            # tombstone 済 row を gc-orphans が durable に purge する。
+            self._best_effort_cleanup_material(tenant_id, secret_ref_id)
             raise SecretRegistrationConflict(
                 "register promote failed: row not in pending+writing state"
             )
@@ -246,6 +250,7 @@ class SecretRegistrationService:
         )
         if cast("Any", result).rowcount != 1:
             await self.session.rollback()
+            self._best_effort_cleanup_material(tenant_id, new_id)
             raise SecretRegistrationConflict("rotate material placement failed")
         await self._audit(
             tenant_id=tenant_id,
@@ -431,6 +436,20 @@ class SecretRegistrationService:
             .values(material_state="purged", material_purged_at=_now_utc())
         )
         await self.session.commit()
+
+    def _best_effort_cleanup_material(self, tenant_id: int, secret_ref_id: UUID) -> None:
+        """promote 失敗時に書き込んだ material を best-effort で削除する (Codex F2: late writer orphan)。
+
+        失敗しても DB owner row は reconcile で revoked+purging に残るため gc-orphans が durable に purge
+        する。よって本 cleanup は best-effort で良い (例外を握り潰す)。
+        """
+        try:
+            self.store.delete(tenant_id, secret_ref_id)
+        except Exception:  # noqa: BLE001 - best-effort、durable backstop は gc-orphans
+            logger.warning(
+                "best-effort material cleanup after promote failure failed; gc-orphans will reconcile",
+                extra={"tenant_id": tenant_id, "secret_ref_id": str(secret_ref_id)},
+            )
 
     @staticmethod
     def _reject_self_rotating(metadata: dict[str, Any] | None) -> None:
