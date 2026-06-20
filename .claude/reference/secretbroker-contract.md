@@ -162,7 +162,8 @@ operation-specific `target`:
 3. SecretBroker が `secret_ref` metadata を確認。
 4. `allowed_consumers` に caller があるか確認。
 5. `allowed_operations` に operation があるか確認。
-6. status が発行可能か確認。
+6. status が発行可能か確認 (`active`、rotation.verify は `pending` も可)。
+6b. `material_state='present'` を確認 (`writing`/`purging`/`purged` は false-present として deny、ADR-00058/00059)。
 7. TTL が 5-30 分内か確認。
 8. raw token を生成。
 9. **broker が canonical OperationContext を組み立てて fingerprint を計算**（caller-supplied 値ではなく server 側計算）。
@@ -176,6 +177,7 @@ operation-specific `target`:
 |---|---|
 | `secret_ref_missing` | URI / metadata 不在 |
 | `secret_ref_not_active` | status 不正 |
+| `material_not_present` | `material_state != 'present'` (writing/purging/purged = store material 未完了/削除中、ADR-00058/00059) |
 | `consumer_not_allowed` | caller 不許可 |
 | `operation_not_allowed` | operation 不許可 |
 | `ttl_out_of_range` | TTL 5-30 分外 |
@@ -224,6 +226,7 @@ returning id, secret_ref_id, allowed_operations, scope_constraint;
 6. 1 row -> claim success。
 7. **同一 transaction 内で `secret_refs` を `for update` lock + 再検証**:
    - `status='active'`（rotation.verify は `pending` も可）
+   - `material_state='present'`（writing/purging/purged は `material_not_present` で deny、ADR-00058/00059)
    - `caller ∈ allowed_consumers`
    - `requested_operation ∈ allowed_operations`
    - `scope` が capability token の `scope_constraint` と一致
