@@ -211,6 +211,23 @@ R8-F1 の atomic claim が present 化時点しか塞げない post-present wind
   - 残リスク: gc 実行間隔の間は stale pending+present が一時残存 (broker gate で issue/redeem 不可、次回 gc で
     回収)。eventually-consistent 収束は Phase 0 accepted (A-6 と同方針)。
 
+### A-6f. Codex adversarial R10 findings adopt (1 件、backstop delete 失敗時の false-purged 撤回)
+
+R2-F2/R3-F2 で導入した「purged 行も全件走査する backstop delete」の delete 失敗時 fail-open を封鎖
+(HIGH×1、CRITICAL=0 継続):
+
+- **R10-F1 (HIGH)**: `_purge_revoke_orphans` は purged 確定済 local revoked 行も走査し、late-writer が
+  再作成した material を backstop delete する。しかし **delete 失敗時** は purge_attempts++ と report 追記
+  のみで `material_state='purged'` / `material_purged_at` non-null を維持していた。late-writer 再作成 +
+  delete 失敗のシナリオでは **material が実在するのに DB source of truth と `/api/v1/me` inventory が
+  「secret-at-rest 削除済」と言い続ける false-purged (fail-open)** になる (purge_attempts は履歴回数で
+  absence 検証状態を表さない)。fix: already-purged 行の delete 失敗時は **`material_state='purging'` +
+  `material_purged_at=NULL` へ撤回** (purge_attempts++ と併せ)。これにより inventory / 0050 downgrade
+  preflight (condition (a): `revoked AND material_purged_at IS NULL AND local`) が「未 purge」と認識し
+  fail-closed、次回 gc が再 delete を試行する。material_purged_at non-null = durable 削除済 (A-1/A-3) の
+  invariant を absence 検証不能時に偽証しない。DB-gated regression test 追加 (purged 行 + delete 失敗 →
+  purging+NULL+purge_attempts++ + purge_failed 報告)。
+
 ### A-6. 残リスク (Phase 0 accepted)
 
 R2-F2 + R3-F1 で late-writer 永久 orphan + 実行経路欠如は解消。gc 実行間隔の間は再作成 material が一時的に

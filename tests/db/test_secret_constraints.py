@@ -5,6 +5,7 @@ import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
@@ -17,6 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.app.config import Settings, get_settings
 from backend.app.db.session import create_engine
+from backend.app.services.secrets.material_reconciliation import (
+    MaterialReconciliationService,
+)
 
 _DEFAULT_DATABASE_URL = (
     "postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test"
@@ -1227,6 +1231,68 @@ async def test_gc_preserves_rotation_candidate_when_old_active(
             {"id": SECRET_REF_TWO_ID},
         )
         assert row.one() == ("pending", "present")
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_gc_backstop_delete_failure_reverts_false_purged(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R10-F1: purged 確定行で backstop delete が失敗したら purged を撤回し fail-closed 化。
+
+    late-writer が material を再作成し store.delete も失敗した場合、material 存在を absence 検証
+    できない。material_state='purged' / material_purged_at non-null を維持すると DB / inventory が
+    「secret-at-rest 削除済」と言い続ける fail-open になる。gc は purging + material_purged_at=NULL へ
+    撤回し (次回 gc 再試行)、purge_failed で報告することを担保する。
+    """
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        # local revoked + purged (material_purged_at 確定済) の行。late-writer が material を再作成した状態。
+        await session.execute(
+            text(
+                """
+                insert into secret_refs
+                  (id, tenant_id, secret_uri, scope, name, version, status, runner_injectable,
+                   allowed_consumers, allowed_operations, owner_actor_id, metadata,
+                   revoked_at, material_state, material_purged_at, purge_attempts)
+                values
+                  (:id, 1, 'secret://local/project/purged-x#v1', 'project', 'purged-x', 'v1',
+                    'revoked', false, '["api:provider_adapter"]'::jsonb, '["provider.call"]'::jsonb,
+                    :actor, '{"rls_ready": true}'::jsonb, now(), 'purged', now(), 0)
+                """
+            ),
+            {"id": SECRET_REF_ONE_ID, "actor": TENANT_ONE_ACTOR_ID},
+        )
+        await session.commit()
+
+        # store.delete が失敗する (再作成 material を消せない) reconciliation を実行。
+        store = MagicMock()
+        store.delete.side_effect = RuntimeError("simulated delete failure")
+        svc = MaterialReconciliationService(session, store)
+        report = await svc.gc_orphans(tenant_id=1, writing_grace_seconds=1)
+
+        assert str(SECRET_REF_ONE_ID) in report.purge_failed
+        assert str(SECRET_REF_ONE_ID) not in report.purged
+        row = await session.execute(
+            text(
+                "select status, material_state, material_purged_at, purge_attempts "
+                "from secret_refs where id = :id"
+            ),
+            {"id": SECRET_REF_ONE_ID},
+        )
+        status, material_state, purged_at, attempts = row.one()
+        assert status == "revoked"
+        # false-purged 撤回: purging + material_purged_at=NULL (fail-closed、未 purge と認識)。
+        assert material_state == "purging"
+        assert purged_at is None
+        assert attempts == 1
         await session.rollback()
 
 

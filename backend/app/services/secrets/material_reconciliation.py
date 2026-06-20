@@ -128,10 +128,24 @@ class MaterialReconciliationService:
                 # already_purged 含め **全失敗を durable に記録** (Codex R3-F2): purged 行の backstop
                 # delete 失敗 (late-writer 再作成 material が消せない) を report に出さないと、operator が
                 # clean 収束と residual material を区別できない。purge_attempts++ で再試行 signal を残す。
+                values: dict[str, Any] = {"purge_attempts": SecretRef.purge_attempts + 1}
+                if already_purged:
+                    # false-purged 撤回 (Codex R10-F1): purged 確定行で late-writer が material を再作成し
+                    # backstop delete も失敗した = material 存在を absence 検証できない。ここで material_state
+                    # ='purged' / material_purged_at non-null を維持すると、DB source of truth と /me inventory
+                    # が「secret-at-rest 削除済」と言い続ける fail-open になる (material は実在)。purging +
+                    # material_purged_at=NULL へ撤回し fail-closed 化する (inventory/downgrade preflight が
+                    # 未 purge と認識、次回 gc が再 delete を試行)。
+                    values["material_state"] = "purging"
+                    values["material_purged_at"] = None
                 await self.session.execute(
                     update(SecretRef)
-                    .where(SecretRef.tenant_id == tenant_id, SecretRef.id == secret_ref_id)
-                    .values(purge_attempts=SecretRef.purge_attempts + 1)
+                    .where(
+                        SecretRef.tenant_id == tenant_id,
+                        SecretRef.id == secret_ref_id,
+                        SecretRef.status == "revoked",
+                    )
+                    .values(**values)
                 )
                 await self.session.commit()
                 report.purge_failed.append(str(secret_ref_id))
