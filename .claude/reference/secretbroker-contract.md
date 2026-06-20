@@ -7,7 +7,7 @@ raw secret 禁止を P0 の安全境界として固定する。
 
 | 項目 | Contract |
 |---|---|
-| secret storage | SOPS + age、DB は `secret_ref` のみ |
+| secret storage | backend = SOPS+age \| LocalSecretStore (OS keychain / 暗号化ファイル)、DB は `secret_ref` (backend metadata) のみ。Phase 0 = LocalSecretStore (`local`) backend 先行、SOPS 移行は D-4 (ADR-00058) |
 | raw secret DB 保存 | 禁止 |
 | AI への secret 値渡し | 禁止 |
 | runner env secret 注入 | 禁止 |
