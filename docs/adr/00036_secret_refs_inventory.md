@@ -84,7 +84,7 @@ rotation 状況・利用主体を列挙でき、session 乗っ取り時の被害
 | `status` | 公開 | active/deprecated/revoked/pending バッジ |
 | `rotated` (bool) | 公開 | `rotated_from_id is not null` を bool 化 (lineage の有無のみ、別 id は露出しない) |
 | `created_at` / `updated_at` / `deprecated_at` / `revoked_at` | 公開 | rotation/失効の時系列 |
-| **`secret_uri`** | **非公開** | `secret://sops/<scope>/<name>#<version>` 文字列は DOM/log/screenshot に残る identifier。scope/name/version を個別に出すため URI 自体は返さない |
+| **`secret_uri`** | **非公開** | `secret://<backend>/<scope>/<name>#<version>` (backend=`local`|`sops`、ADR-00058) 文字列は DOM/log/screenshot に残る identifier。scope/name/version を個別に出すため URI 自体は返さない |
 | **`allowed_consumers`** | **非公開** | 内部 authz topology (どの actor が使えるか)。管理画面に不要、機微 |
 | **`allowed_operations`** | **非公開** | 同上 (どの operation に使えるか) |
 | **`owner_actor_id`** | **非公開** | tenant 内 actor 識別子。authz 構造露出。明示除外 |

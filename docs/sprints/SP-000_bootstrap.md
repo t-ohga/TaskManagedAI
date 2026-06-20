@@ -63,7 +63,7 @@ risks:
 | BL-0001 | 軽量 / 重量 Sprint Pack template を正式化する | F-001 | 0.4 | - | `docs/sprints/_template_light.md` / `docs/sprints/_template_heavy.md` の正式運用 | `docs/基本設計/00_全体アーキテクチャ.md` |
 | BL-0002 | ADR 番号体系と index 運用を決める | F-001 | 0.3 | BL-0001 | `docs/adr/README.md` と ADR template 運用 | `docs/基本設計/04_セキュリティ_権限_監査設計.md` |
 | BL-0003 | Tailscale Serve / Funnel 不使用 / device approval checklist を作る | NF-002 | 0.4 | - | network boundary checklist と ADR-00007 draft | `docs/基本設計/05_ネットワーク境界設計.md` |
-| BL-0004 | `secret_ref` URI と SecretBroker contract を固定する | NF-003 | 0.5 | - | `secret://sops/<scope>/<name>#<version>` と `app.secrets.broker` interface draft | `docs/基本設計/06_秘密管理設計.md`, `docs/基本設計/04_セキュリティ_権限_監査設計.md`, `docs/基本設計/01_拡張境界とAdapter設計.md` |
+| BL-0004 | `secret_ref` URI と SecretBroker contract を固定する | NF-003 | 0.5 | - | `secret://<backend>/<scope>/<name>#<version>` (backend=local\|sops、ADR-00058 で拡張) と `app.secrets.broker` interface draft | `docs/基本設計/06_秘密管理設計.md`, `docs/基本設計/04_セキュリティ_権限_監査設計.md`, `docs/基本設計/01_拡張境界とAdapter設計.md` |
 | BL-0005 | Worker / Queue arq job schema と cancel propagation を固定する | F-008,NF-011 | 0.5 | - | arq job schema、idempotency key、retry/backoff、DLQ、Redis pub/sub cancel contract | `docs/基本設計/00_全体アーキテクチャ.md`, `docs/基本設計/03_AIオーケストレーション設計.md` |
 | BL-0006 | Gold Task Seed v0 の保存 schema と除外基準を決める | F-019,NF-009 | 0.4 | BL-0001 | Gold Task Seed v0 schema、sanitize / 除外基準、dataset version 方針 | `docs/基本設計/03_AIオーケストレーション設計.md`, `docs/基本設計/07_可観測性設計.md` |
 | BL-0007 | Provider Compliance Matrix TOML の列と初期値を確定する | F-012,NF-004 | 0.5 | BL-0004 | `config/provider_compliance.toml` と 5 provider / feature 行 | `docs/基本設計/04_セキュリティ_権限_監査設計.md`, `docs/基本設計/01_拡張境界とAdapter設計.md` |
@@ -83,7 +83,7 @@ risks:
 - [ ] machine naming rule `app-<env>-<role>-<NN>` を ADR-00007 に記録し、CT log 漏えい対策として固定する。
 - [ ] grants は `src=自分の identity` から `dst=tag:taskhub` の TCP/443 のみを許可する前提で checklist 化する。
 - [ ] Docker public bind 禁止、`127.0.0.1` bind、PostgreSQL / Redis no public bind の確認項目を作る。
-- [ ] `secret_ref` URI を `secret://sops/<scope>/<name>#<version>` に固定する。
+- [ ] `secret_ref` URI を `secret://<backend>/<scope>/<name>#<version>` (backend=local|sops、ADR-00058 で拡張、当時は sops) に固定する。
 - [ ] SecretBroker の `get_capability_token` / `redeem_token` / `resolve_secret_ref` contract draft を `app.secrets.broker` に書く。
 - [ ] SecretBroker が raw secret value を caller、AI、runner、artifact export に返さない invariant を文書と skeleton に入れる。
 - [ ] capability token の TTL、scope、operation、actor、run_id、one-time redeem、audit event を固定する。
@@ -107,7 +107,7 @@ risks:
 
 ## 受け入れ条件
 
-- [ ] `secret_ref` URI 仕様（`secret://sops/<scope>/<name>#<version>`）が決まっており、SecretBroker の draft interface が `app.secrets.broker` に書かれている。
+- [ ] `secret_ref` URI 仕様（`secret://<backend>/<scope>/<name>#<version>`、backend=local|sops、ADR-00058）が決まっており、SecretBroker の draft interface が `app.secrets.broker` に書かれている。
 - [ ] **SecretBroker contract** に以下を明記: redeem は check→execute→mark used を**禁止**し、単一 transaction / conditional UPDATE による **atomic claim**（`actor_id` / `run_id` / `expected_request_fingerprint = :computed_fingerprint` (broker-computed canonical OperationContext fingerprint、caller-supplied 不可) / `requested_operation` binding 必須、0 件 RETURNING 時 deny、raw secret 非返却）。Sprint 4 実装前の skeleton comment / test placeholder まで Sprint 0 で固定する。
 - [ ] Tailscale Serve / Funnel 不使用 / device approval / 中立 machine 命名規則が ADR-00007 で proposed 化されている。
 - [ ] **`tag:taskhub-ci` grants 方針**を ADR-00007 に明記: `tagOwners.tag:taskhub-ci`、`src=tag:taskhub-ci` → `dst=tag:taskhub` TCP/443、ephemeral auth key、reusable key 禁止、Loki log mask。実本運用は Sprint 11.5 で defer、方針固定は Sprint 0 must_ship。

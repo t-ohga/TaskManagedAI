@@ -397,13 +397,13 @@ type SecretAdapter = {
 
 ### 8.3 secret_ref URI
 
-P0 の形式は次を基準にする。
+P0 の形式は次を基準にする (backend=`local`|`sops`、ADR-00058、Phase 0 default=`local`、SOPS は D-4 移行先、未知 backend fail-closed)。
 
 ```text
-secret://sops/<scope>/<name>#<version>
+secret://<backend>/<scope>/<name>#<version>
 ```
 
-DB にはこの URI のみ保存する。secret 値、provider key、GitHub App private key、installation token は DB、AI prompt、runner environment、artifact export に保存しない。
+`secret://sops/...` は `sops` backend の後方互換例。regex は単一定数 `SECRET_URI_PATTERN` 集約 (5+source 整合)。DB にはこの URI (backend metadata) のみ保存する。secret 値、provider key、GitHub App private key、installation token は DB、AI prompt、runner environment、CLI subprocess env/argv、artifact export に保存しない。
 
 ### 8.4 Vault 移行余地
 

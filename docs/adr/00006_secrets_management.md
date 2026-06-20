@@ -42,7 +42,7 @@ superseded_by: "ADR-00058 (partial: secret_ref URI を backend=sops|local へ拡
   - `backend/app/models/secret.py`
   - `migrations/versions/*_secret_broker.py`
 - 実装ガイダンス:
-  - `secret_ref` は `secret://sops/<scope>/<name>#<version>` に固定し、domain model は opaque reference として扱う。
+  - `secret_ref` は `secret://<backend>/<scope>/<name>#<version>` (backend=`local`|`sops`、ADR-00058 で additive 拡張、本 ADR 当時は sops のみ) を基準とし、domain model は opaque reference として扱う。
   - capability token は TTL 5-30 分、one-time redeem、token hash only storage、`issued_to_actor_id` / `issued_run_id` / `expected_request_fingerprint` binding を必須にする。
   - **token 発行前検証**: `requested_operation` が `secret_refs.allowed_operations` に含まれること、caller が `secret_refs.allowed_consumers` に含まれること、`secret_refs.status='active'` (rotation.verify 専用は `pending` も許可) を SQL レベルで確認。
   - **OperationContext canonical schema**: broker が以下の必須 field を validated request から組み立てて fingerprint を計算する: `tenant_id`, `actor_id`, `run_id`, `secret_ref_id`, `requested_operation`, `target` (operation-specific canonical 構造)、`payload_hash` (provider.call / repo.push 等の SHA-256)、`approval_id`, `policy_version`, `provider_compliance_matrix_version`。NFC UTF-8 + JCS canonical JSON + SHA-256 で fingerprint。
