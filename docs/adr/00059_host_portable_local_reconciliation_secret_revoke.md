@@ -173,6 +173,19 @@ R6 で mirror gate 網羅後、R7 は「register と rotate の非対称」「lo
   DB CHECK が弾く非 canonical scope (例 `secret://sops/cluster/...`) を resolver boundary だけが受理し、
   注入 resolver 直接利用で cross-source-enum-integrity §1 が破れていた。
 
+### A-6d. Codex adversarial R8 findings adopt (1 件、rotate present 化の atomic claim 化)
+
+R7-F1 の precondition gate が **fetch 時点の stale precheck** に過ぎない TOCTOU を封鎖 (HIGH×1、CRITICAL=0 継続):
+
+- **R8-F1 (HIGH)**: `rotate()` の present 化 UPDATE を **old が現在も active+present であること** に
+  atomic 条件付けした (非相関 EXISTS、`old.status='active' AND old.material_state='present'`)。R7-F1 の
+  precheck (fetch 時) から present 化 UPDATE までの間に別操作が old を promote/revoke/deprecate すると、
+  UPDATE が new の status/material_state しか見ないため new が pending+present として残り、promote_rotated
+  (old=active 必須) が永久失敗 + gc-orphans (pending+writing のみ tombstone) でも回収されない durable
+  orphan + pending≤1 index 占有になっていた。EXISTS 不一致時は UPDATE が 0 行 → new は pending+writing の
+  まま (gc-orphans が tombstone) + material best-effort cleanup + conflict 返却。DB-gated SQL invariant
+  test 追加 (old deprecated→0 行/writing 維持、old active→1 行/present)。並行 service レベル e2e は S4。
+
 ### A-6. 残リスク (Phase 0 accepted)
 
 R2-F2 + R3-F1 で late-writer 永久 orphan + 実行経路欠如は解消。gc 実行間隔の間は再作成 material が一時的に

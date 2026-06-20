@@ -31,6 +31,7 @@ from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from backend.app.db.app_role import (
     assert_tenant_context,
@@ -258,6 +259,24 @@ class SecretRegistrationService:
 
         self.store.store(tenant_id, new_id, raw_material)
 
+        # present 化を **old が現在も active+present であること** に atomic 条件付けする (Codex R8-F1)。
+        # §215 の precondition gate は fetch 時点の stale precheck に過ぎず、precheck→ここの間に別操作が
+        # old を promote/revoke/deprecate すると、本 UPDATE が new の status/material_state しか見ないため
+        # new は pending+present として残り、promote_rotated (old=active 必須) が永久に失敗 + gc-orphans
+        # (pending+writing のみ tombstone) でも回収されない durable orphan になる。old を非相関 EXISTS で
+        # 同一文 re-validate し、不一致なら UPDATE が 0 行 → new は pending+writing のまま (gc-orphans が
+        # tombstone) + material を best-effort cleanup + conflict を返す。
+        old_ref = aliased(SecretRef)
+        old_still_active = (
+            select(old_ref.id)
+            .where(
+                old_ref.tenant_id == tenant_id,
+                old_ref.id == old_secret_ref_id,
+                old_ref.status == "active",
+                old_ref.material_state == "present",
+            )
+            .exists()
+        )
         result = await self.session.execute(
             update(SecretRef)
             .where(
@@ -265,13 +284,17 @@ class SecretRegistrationService:
                 SecretRef.id == new_id,
                 SecretRef.status == "pending",
                 SecretRef.material_state == "writing",
+                old_still_active,
             )
             .values(material_state="present")  # status は pending のまま (未検証は active 化しない)
         )
         if cast("Any", result).rowcount != 1:
             await self.session.rollback()
             self._best_effort_cleanup_material(tenant_id, new_id)
-            raise SecretRegistrationConflict("rotate material placement failed")
+            raise SecretRegistrationConflict(
+                "rotate material placement failed: new not in pending+writing "
+                "or old no longer active+present"
+            )
         await self._audit(
             tenant_id=tenant_id,
             event_type="secret_rotation_material_placed",

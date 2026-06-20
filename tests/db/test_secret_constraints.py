@@ -1012,6 +1012,94 @@ async def test_secret_refs_accept_local_writing_material(
 
 
 @pytest.mark.asyncio
+async def test_rotate_present_promotion_requires_old_active(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R8-F1: present 化 UPDATE は old が現在も active+present のときだけ 1 行成立する。
+
+    rotate() の precondition gate は fetch 時の stale precheck に過ぎず、precheck→present 化 UPDATE
+    の間に別操作が old を deprecate/revoke すると pending+present orphan が残り得た。present 化を old
+    の active+present に atomic 条件付け (非相関 EXISTS) することで、old が active でない間は 0 行 →
+    new は pending+writing のまま (gc-orphans が tombstone) で orphan を作らないことを担保する。
+    """
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        # old は local deprecated+present (precheck 後に並行 deprecate された状態を模擬)。
+        await _insert_secret_ref(
+            session,
+            id=SECRET_REF_ONE_ID,
+            scope="project",
+            name="rot-test",
+            version="v1",
+            status="deprecated",
+            secret_uri="secret://local/project/rot-test#v1",
+            material_state="present",
+        )
+        # new は local pending+writing (present 化待ち)。
+        await _insert_secret_ref(
+            session,
+            id=SECRET_REF_TWO_ID,
+            scope="project",
+            name="rot-test",
+            version="v2",
+            status="pending",
+            secret_uri="secret://local/project/rot-test#v2",
+            material_state="writing",
+        )
+        await session.commit()
+
+        # service の present 化 UPDATE を mirror (old active+present の非相関 EXISTS 条件付き)。
+        promote_sql = text(
+            """
+            update secret_refs as nw
+               set material_state = 'present'
+             where nw.tenant_id = :tenant_id
+               and nw.id = :new_id
+               and nw.status = 'pending'
+               and nw.material_state = 'writing'
+               and exists (
+                 select 1 from secret_refs as od
+                  where od.tenant_id = :tenant_id
+                    and od.id = :old_id
+                    and od.status = 'active'
+                    and od.material_state = 'present'
+               )
+            """
+        )
+        params = {"tenant_id": 1, "new_id": SECRET_REF_TWO_ID, "old_id": SECRET_REF_ONE_ID}
+
+        # (1) old が deprecated の間は 0 行 → new は writing のまま (orphan を作らない)。
+        res = await session.execute(promote_sql, params)
+        assert res.rowcount == 0
+        still = await session.execute(
+            text("select material_state from secret_refs where id = :id"),
+            {"id": SECRET_REF_TWO_ID},
+        )
+        assert still.scalar_one() == "writing"
+
+        # (2) old を active+present に戻すと present 化が 1 行成立する (happy path 不破壊)。
+        await session.execute(
+            text("update secret_refs set status = 'active' where id = :id"),
+            {"id": SECRET_REF_ONE_ID},
+        )
+        res2 = await session.execute(promote_sql, params)
+        assert res2.rowcount == 1
+        promoted = await session.execute(
+            text("select status, material_state from secret_refs where id = :id"),
+            {"id": SECRET_REF_TWO_ID},
+        )
+        assert promoted.one() == ("pending", "present")  # status は pending のまま
+        await session.rollback()
+
+
+@pytest.mark.asyncio
 async def test_secret_refs_reject_allowed_consumers_root_object(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
