@@ -217,6 +217,26 @@ class SecretRegistrationService:
             raise SecretRegistrationError("old secret_ref not found")
         if secret_uri_backend(old.secret_uri) != "local":
             raise SecretRegistrationError("rotate manages local backend only")
+        # rotate precondition gate (Codex R7-F1): 新 version を pending+present で配置する前に old が
+        # promote 可能な状態か fail-closed 検証する。promote_rotated は old.status='active' を必須に
+        # するため、非 active / 未 present の old から rotate すると、新 row が **永久に promote 不能な
+        # pending+present orphan** になる (gc-orphans は pending+writing のみ tombstone するため durable
+        # に残り、material at-rest 保持 + (tenant,scope,name) pending≤1 index を占有する)。register と
+        # 対称に、write 前 (create_metadata / store.store 前) に reject する。
+        if old.status != "active":
+            raise SecretRegistrationConflict(
+                "rotate requires the old secret_ref to be active "
+                f"(got status {old.status!r})"
+            )
+        if old.material_state != "present":
+            raise SecretRegistrationConflict(
+                "rotate requires the old secret_ref material_state='present' "
+                f"(got {old.material_state!r})"
+            )
+        if not allowed_consumers or not allowed_operations:
+            raise SecretRegistrationError(
+                "rotated secret requires non-empty allowed_consumers and allowed_operations"
+            )
 
         repo = SecretRefRepository(self.session)
         row = await repo.create_metadata(

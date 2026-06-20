@@ -252,7 +252,10 @@ async def _insert_secret_ref(
     allowed_consumers: str = '["api:provider_adapter"]',
     allowed_operations: str = '["provider.call"]',
     metadata: str = '{"rls_ready": true}',
+    material_state: str = "present",
 ) -> None:
+    # default secret_uri は sops backend のため material_state は 'present' を default にする
+    # (sops 行は writing/purging を取れない、secret_refs_ck_transient_material_local_only)。
     await session.execute(
         text(
             """
@@ -268,7 +271,8 @@ async def _insert_secret_ref(
               allowed_consumers,
               allowed_operations,
               owner_actor_id,
-              metadata
+              metadata,
+              material_state
             )
             values (
               :id,
@@ -282,7 +286,8 @@ async def _insert_secret_ref(
               cast(:allowed_consumers as jsonb),
               cast(:allowed_operations as jsonb),
               :owner_actor_id,
-              cast(:metadata as jsonb)
+              cast(:metadata as jsonb),
+              :material_state
             )
             """
         ),
@@ -299,6 +304,7 @@ async def _insert_secret_ref(
             "allowed_operations": allowed_operations,
             "owner_actor_id": owner_actor_id,
             "metadata": metadata,
+            "material_state": material_state,
         },
     )
 
@@ -928,6 +934,81 @@ async def test_secret_refs_reject_active_with_empty_allowlist(
             constraint_name="secret_refs_ck_active_allowlist_nonempty",
         )
         await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_secret_refs_reject_sops_writing_material(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R7-F2: sops 行の transient material (writing) を insert 時に fail-closed。
+
+    sops material は外部管理で writing/purging を取らない。default server-default 'writing' で
+    material_state を省略した sops 直接登録が **silent に broker-unusable** になるのを、登録失敗
+    (loud) へ前倒しする。
+    """
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        await session.commit()
+
+        with pytest.raises(IntegrityError) as exc_info:
+            await _insert_secret_ref(
+                session,
+                id=SECRET_REF_ONE_ID,
+                # default secret_uri = sops backend。material_state='writing' は local 専用。
+                material_state="writing",
+            )
+            await session.commit()
+
+        _assert_integrity_error(
+            exc_info.value,
+            sqlstate="23514",
+            constraint_name="secret_refs_ck_transient_material_local_only",
+        )
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_secret_refs_accept_local_writing_material(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R7-F2 の対: local backend は transient material (pending+writing) を許容する。
+
+    crash-safe registration の中間状態 (row commit → store 書込 → present) を壊さないことを担保。
+    """
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        await session.commit()
+
+        await _insert_secret_ref(
+            session,
+            id=SECRET_REF_ONE_ID,
+            secret_uri="secret://local/project/provider-openai#v1",
+            status="pending",
+            material_state="writing",
+        )
+        await session.commit()
+
+        row = await session.execute(
+            text(
+                "select material_state from secret_refs where id = :id"
+            ),
+            {"id": SECRET_REF_ONE_ID},
+        )
+        assert row.scalar_one() == "writing"
 
 
 @pytest.mark.asyncio

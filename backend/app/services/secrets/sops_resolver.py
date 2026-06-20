@@ -18,9 +18,9 @@ from pathlib import Path
 from typing import Final
 
 from backend.app.db.models.secret_ref import SecretRef
-
-_SOPS_URI_PATTERN: Final = re.compile(
-    r"\Asecret://sops/(?P<scope>[a-z0-9_]+)/(?P<name>[a-z0-9_-]+)#(?P<version>v\d+)\Z"
+from backend.app.services.secrets.uri_pattern import (
+    SecretUriError,
+    parse_secret_uri,
 )
 
 _RAW_MATERIAL_CANARY_PATTERNS: Final = (
@@ -85,9 +85,19 @@ class SopsSubprocessResolver:
         return await self._decrypt(file_path, secret_ref)
 
     def _validate_uri_scheme(self, uri: str) -> None:
-        if _SOPS_URI_PATTERN.fullmatch(uri) is None:
+        # canonical grammar (uri_pattern.SECRET_URI_PATTERN) を単一 source として検証する
+        # (Codex R7-F3): 独立 regex を持つと scope enum が drift し、DB CHECK が弾く非 canonical scope
+        # (例: secret://sops/cluster/...) を resolver boundary だけが受理してしまう (cross-source-enum
+        # -integrity §1 違反)。backend は sops のみ許可する。
+        try:
+            backend, _, _, _ = parse_secret_uri(uri)
+        except SecretUriError as exc:
             raise SopsUriSchemeError(
                 "URI scheme rejected: expected secret://sops/<scope>/<name>#<version>"
+            ) from exc
+        if backend != "sops":
+            raise SopsUriSchemeError(
+                f"URI scheme rejected: sops resolver does not handle backend {backend!r}"
             )
 
     def _validate_status(self, secret_ref: SecretRef) -> None:
@@ -97,12 +107,16 @@ class SopsSubprocessResolver:
             )
 
     def _resolve_file_path(self, secret_ref: SecretRef) -> Path:
-        match = _SOPS_URI_PATTERN.fullmatch(secret_ref.secret_uri)
-        if not match:
-            raise SopsUriSchemeError("URI parse failed")
-        scope = match.group("scope")
-        name = match.group("name")
-        version = match.group("version")
+        # canonical parse から component を取得 (Codex R7-F3、独立 regex を持たない)。scope は
+        # SECRET_SCOPES enum、name は [a-z0-9_-]+、version は v[0-9]+ に限定され path traversal 不可。
+        try:
+            backend, scope, name, version = parse_secret_uri(secret_ref.secret_uri)
+        except SecretUriError as exc:
+            raise SopsUriSchemeError("URI parse failed") from exc
+        if backend != "sops":
+            raise SopsUriSchemeError(
+                f"sops resolver does not handle backend {backend!r}"
+            )
         lexical_path = self._sops_dir / scope / f"{name}.{version}.enc.yaml"
         self._validate_no_symlink_components(lexical_path)
         if lexical_path.is_symlink():

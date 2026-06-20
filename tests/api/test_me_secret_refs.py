@@ -307,20 +307,20 @@ async def _seed(session: AsyncSession) -> None:
             insert into secret_refs
               (id, tenant_id, secret_uri, scope, name, version, status, runner_injectable,
                allowed_consumers, allowed_operations, owner_actor_id, rotated_from_id, metadata,
-               deprecated_at, revoked_at)
+               deprecated_at, revoked_at, material_state, material_purged_at)
             values
               (:dep, 1, 'secret://sops/provider/provider-openai#v1', 'provider',
                 'provider-openai', 'v1', 'deprecated', false,
                 '["actor:owner1"]'::jsonb, '["provider.call"]'::jsonb, :a1, null,
-                '{"rls_ready": true}'::jsonb, now(), null),
+                '{"rls_ready": true}'::jsonb, now(), null, 'present', null),
               (:act, 1, 'secret://sops/provider/provider-openai#v2', 'provider',
                 'provider-openai', 'v2', 'active', false,
                 '["actor:owner1"]'::jsonb, '["provider.call"]'::jsonb, :a1, :dep,
-                '{"rls_ready": true}'::jsonb, null, null),
+                '{"rls_ready": true}'::jsonb, null, null, 'present', null),
               (:rev, 1, 'secret://sops/repo/github-app-key#v1', 'repo',
                 'github-app-key', 'v1', 'revoked', false,
                 '["actor:owner1"]'::jsonb, '["repo.push"]'::jsonb, :a1, null,
-                '{"rls_ready": true}'::jsonb, now(), now())
+                '{"rls_ready": true}'::jsonb, now(), now(), 'purged', now())
             """
         ),
         {"dep": SECRET_DEPRECATED_ID, "act": SECRET_ACTIVE_ID, "rev": SECRET_REVOKED_ID, "a1": ACTOR_ID},
@@ -332,12 +332,12 @@ async def _seed(session: AsyncSession) -> None:
             insert into secret_refs
               (id, tenant_id, secret_uri, scope, name, version, status, runner_injectable,
                allowed_consumers, allowed_operations, owner_actor_id, rotated_from_id, metadata,
-               deprecated_at, revoked_at)
+               deprecated_at, revoked_at, material_state, material_purged_at)
             values
               (:t2, 2, 'secret://sops/provider/provider-anthropic#v1', 'provider',
                 'provider-anthropic', 'v1', 'active', false,
                 '["actor:owner2"]'::jsonb, '["provider.call"]'::jsonb, :a2, null,
-                '{"rls_ready": true}'::jsonb, null, null)
+                '{"rls_ready": true}'::jsonb, null, null, 'present', null)
             """
         ),
         {"t2": SECRET_T2_ID, "a2": ACTOR_T2_ID},

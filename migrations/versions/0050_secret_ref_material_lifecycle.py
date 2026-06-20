@@ -54,6 +54,7 @@ _CK_STATE = "secret_refs_ck_material_state"
 _CK_ATTEMPTS = "secret_refs_ck_purge_attempts_nonneg"
 _CK_PURGED_STATE = "secret_refs_ck_material_purged_at_state"
 _CK_PURGE_REVOKED = "secret_refs_ck_material_purge_requires_revoked"
+_CK_TRANSIENT_LOCAL = "secret_refs_ck_transient_material_local_only"
 
 
 def upgrade() -> None:
@@ -114,6 +115,19 @@ def upgrade() -> None:
         _TABLE,
         "material_state not in ('purging','purged') or status = 'revoked'",
     )
+    # transient material states (writing/purging) は broker-owned (local) material 専用 (Codex R7-F2):
+    # sops material は外部管理で本 lifecycle 対象外のため、sops 行は present (active/deprecated/pending)
+    # または purged (revoked) のみを取る。0050 の server_default 'writing' は local の false-present 防止に
+    # 必要だが、sops の直接登録 (operational SQL / D-4) が material_state を省略すると default 'writing' で
+    # **silent に broker-unusable** (issue/redeem の material_state='present' gate が material_not_present
+    # で deny) になる。この CHECK は writing/purging を local backend に限定し、sops の broker-unusable な
+    # 永続を **insert 時に fail-closed** にする (use 時の silent deny を loud な登録失敗へ前倒し)。
+    op.create_check_constraint(
+        _CK_TRANSIENT_LOCAL,
+        _TABLE,
+        "material_state not in ('writing','purging') "
+        "or secret_uri like 'secret://local/%'",
+    )
 
 
 def downgrade() -> None:
@@ -162,6 +176,7 @@ def downgrade() -> None:
             + "; ".join(blockers)
         )
 
+    op.drop_constraint(_CK_TRANSIENT_LOCAL, _TABLE, type_="check")
     op.drop_constraint(_CK_PURGE_REVOKED, _TABLE, type_="check")
     op.drop_constraint(_CK_PURGED_STATE, _TABLE, type_="check")
     op.drop_constraint(_CK_ATTEMPTS, _TABLE, type_="check")

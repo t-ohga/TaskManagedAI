@@ -47,21 +47,27 @@ echo -n "YOUR_WEBHOOK_SECRET" | \
 
 ### 4. secret_refs に登録
 
+> **`material_state='present'` は sops 登録で必須** (ADR-00058/00059): SecretBroker の issue/redeem は
+> `material_state='present'` を要求する。省略すると DB default `'writing'` になり、`secret_refs_ck_transient_material_local_only`
+> CHECK で **登録自体が失敗** (sops は外部管理で writing/purging を取らないため、`present` を明示する)。
+
 ```sql
-INSERT INTO secret_refs (tenant_id, scope, name, version, status, secret_uri, allowed_consumers, allowed_operations)
+INSERT INTO secret_refs (tenant_id, scope, name, version, status, secret_uri, allowed_consumers, allowed_operations, material_state)
 VALUES (
   1, 'repo', 'github-app-private-key', 'v1', 'active',
   'secret://sops/repo/github-app-private-key#v1',
   ARRAY['api:repo_proxy'],
-  ARRAY['repo.push', 'repo.pr_open']
+  ARRAY['repo.push', 'repo.pr_open'],
+  'present'
 );
 
-INSERT INTO secret_refs (tenant_id, scope, name, version, status, secret_uri, allowed_consumers, allowed_operations)
+INSERT INTO secret_refs (tenant_id, scope, name, version, status, secret_uri, allowed_consumers, allowed_operations, material_state)
 VALUES (
   1, 'p0', 'github_webhook_hmac', 'v1', 'active',
   'secret://sops/p0/github_webhook_hmac#v1',
   ARRAY['api:repo_proxy'],
-  ARRAY['secret.verify']
+  ARRAY['secret.verify'],
+  'present'
 );
 ```
 

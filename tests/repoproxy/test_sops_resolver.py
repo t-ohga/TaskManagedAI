@@ -73,6 +73,11 @@ class TestUriSchemeReject:
             "secret://sops/p0/name",
             "",
             "secret://sops/../etc/passwd#v1",
+            # Codex R7-F3: canonical SECRET_SCOPES 外の lowercase scope は DB CHECK で弾かれるが、
+            # 以前は resolver の独立 regex ([a-z0-9_]+) だけが受理していた。canonical 集約で reject。
+            "secret://sops/cluster/foo#v1",
+            # non-sops backend (canonical だが local) は sops resolver の対象外として reject。
+            "secret://local/p0/hmac#v1",
         ],
     )
     @pytest.mark.asyncio

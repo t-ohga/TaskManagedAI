@@ -121,6 +121,15 @@ class SecretRef(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             "material_state not in ('purging','purged') or status = 'revoked'",
             name="secret_refs_ck_material_purge_requires_revoked",
         ),
+        # transient material states (writing/purging) は broker-owned (local) material 専用 (Codex R7-F2)。
+        # sops material は外部管理で本 lifecycle 対象外 → sops 行は present/purged のみ。default 'writing'
+        # の sops 直接登録 (operational SQL / D-4) が material_state 省略で silent に broker-unusable になる
+        # のを insert 時に fail-closed (use 時の material_not_present 無言 deny を loud な登録失敗へ前倒し)。
+        sa.CheckConstraint(
+            "material_state not in ('writing','purging') "
+            "or secret_uri like 'secret://local/%'",
+            name="secret_refs_ck_transient_material_local_only",
+        ),
         sa.ForeignKeyConstraint(
             ["tenant_id"],
             ["tenants.id"],
