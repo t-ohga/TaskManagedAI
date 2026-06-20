@@ -285,19 +285,22 @@ returning id, secret_ref_id, allowed_operations, scope_constraint;
 
 ## 13. Rotation
 
-手順:
+backend (`sops` | `local`) ごとに material 配置手順が異なる。`secret_refs` の status 遷移と `material_state` lifecycle (ADR-00058/00059、`local` backend) は共通。
 
-1. SOPS file に新 version を追加。
-2. `secret_refs` に `pending` version を登録。
-3. SecretBroker dry-run verify。
-4. policy / provider / RepoProxy の参照先を新 version に切替。
-5. smoke test。
-6. 新 version を `active`。
-7. 旧 version を `deprecated`。
-8. capability token TTL expiration を待つ。
-9. 旧 version を `revoked`。
-10. `config_changed` と rotation audit event。
-11. Sprint Review に記録。
+**`local` backend (Phase 0 default、ADR-00058)** — create/rotate の crash-safe material lifecycle:
+
+1. `secret_refs` に `pending` + `material_state='writing'` で row を commit (DB が material owner の source of truth)。
+2. LocalSecretStore へ raw material を書込 (material key = `tenant_id + secret_ref_id` 束縛、cross-tenant 同名衝突防止)。
+3. row を `material_state='present'` へ。
+4. SecretBroker dry-run verify → policy / provider / RepoProxy の参照先切替 → smoke test。
+5. 新 version を `active`、旧 version を `deprecated`。
+6. capability token TTL expiration を待つ。
+7. 旧 version を `revoked` (rule §5: active/deprecated/pending → revoked、ADR-00059 の新 revoke 経路)。
+8. revoked 確定後に material 削除 (`material_state='purging'` → `LocalSecretStore.delete()` → `material_state='purged'` + `material_purged_at`)。
+9. crash/失敗は `material_state` (`writing`/`present`/`purging`/`purged`) + `secret gc-orphans` reconciliation で収束 (idempotent、`tenant_id+secret_ref_id` で識別)。
+10. `config_changed` と rotation audit event (raw なし)。Sprint Review に記録。
+
+**`sops` backend (D-4 移行先)**: 上記 2/8 の material 配置/削除を SOPS file の version 追加 / SOPS version switch に置換 (status / material_state lifecycle は共通)。
 
 ## 14. Rotation Drill
 
