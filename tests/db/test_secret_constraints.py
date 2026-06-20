@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.app.config import Settings, get_settings
 from backend.app.db.session import create_engine
+from backend.app.services.secrets.local_secret_store import LocalSecretStore
 from backend.app.services.secrets.material_reconciliation import (
     MaterialReconciliationService,
 )
@@ -1231,6 +1232,65 @@ async def test_gc_preserves_rotation_candidate_when_old_active(
             {"id": SECRET_REF_TWO_ID},
         )
         assert row.one() == ("pending", "present")
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_gc_converges_for_writing_orphan_with_pinned_marker(
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    """Codex R14-F1: register が DB row commit 前に backend marker を pin するため、store 書込前 crash の
+    writing-orphan も gc が delete (marker 必須・fail-closed) で収束する (永久 purge_failed にならない)。
+    """
+    store = LocalSecretStore(base_dir=tmp_path, use_keyring=False)
+    store.ensure_initialized()  # register が DB commit 前に marker を pin したのを模擬
+
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        # store 書込前 crash を模擬: local pending+writing row のみ (material file 無し)。
+        await _insert_secret_ref(
+            session,
+            id=SECRET_REF_ONE_ID,
+            scope="project",
+            name="wo-test",
+            version="v1",
+            status="pending",
+            secret_uri="secret://local/project/wo-test#v1",
+            material_state="writing",
+        )
+        # grace 超過 (writing-orphan tombstone 対象) にするため updated_at を過去化。
+        await session.execute(
+            text("update secret_refs set updated_at = now() - interval '1 hour' where id = :id"),
+            {"id": SECRET_REF_ONE_ID},
+        )
+        await session.commit()
+
+        # 実 LocalSecretStore (marker present、material file 無し → delete は idempotent no-op success)。
+        report = await MaterialReconciliationService(session, store).gc_orphans(
+            tenant_id=1, writing_grace_seconds=1
+        )
+
+        assert str(SECRET_REF_ONE_ID) not in report.purge_failed
+        row = await session.execute(
+            text(
+                "select status, material_state, material_purged_at "
+                "from secret_refs where id = :id"
+            ),
+            {"id": SECRET_REF_ONE_ID},
+        )
+        status, material_state, purged_at = row.one()
+        # writing→revoked+purging→purged に収束 (marker present で delete が fail-closed しない)。
+        assert status == "revoked"
+        assert material_state == "purged"
+        assert purged_at is not None
         await session.rollback()
 
 

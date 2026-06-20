@@ -109,6 +109,16 @@ class LocalSecretStore:
     def uses_keyring(self) -> bool:
         return self._use_keyring
 
+    def ensure_initialized(self) -> None:
+        """material 書込より前に backend marker を durable に pin する (Codex R14-F1)。
+
+        register()/rotate() は pending+writing の DB owner row を store 書込より前に commit するため、
+        marker pin を store() に任せると「DB row commit 後 / store() 前」の crash window で marker 不在の
+        まま row が残る。後続 gc の delete() は marker 必須で fail-closed のため、その row は永久に purge
+        収束できない。caller はこの method を **DB row commit 前**に呼び、marker を先に pin する。
+        """
+        self._ensure_marker_pinned()
+
     def store(self, tenant_id: int, secret_ref_id: UUID, raw: bytes) -> None:
         """material を idempotent に書き込む (既存は上書き)。raw は bytes。
 

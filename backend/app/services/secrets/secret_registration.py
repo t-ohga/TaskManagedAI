@@ -149,6 +149,10 @@ class SecretRegistrationService:
             material_state="writing",
         )
         secret_ref_id = row.id
+        # (0) DB row commit の **前** に backend marker を pin する (Codex R14-F1): marker は store() でも
+        #     pin されるが、「row commit 後 / store() 前」の crash で marker 不在のまま row が残ると、後続
+        #     gc の delete() (marker 必須・fail-closed) で永久に purge 収束できなくなる。marker は非 secret。
+        self.store.ensure_initialized()
         # (1) pending+writing を durable 化してから store 書込 (crash-safe: store のみ成功で row 無し
         #     を防ぐ。逆順だと orphan material を検出する DB source of truth が無い)。
         await self.session.commit()
@@ -255,6 +259,8 @@ class SecretRegistrationService:
             rotated_from_id=old_secret_ref_id,
         )
         new_id = row.id
+        # DB row commit の前に backend marker を pin する (Codex R14-F1、register と同様 crash-window 対策)。
+        self.store.ensure_initialized()
         await self.session.commit()
 
         self.store.store(tenant_id, new_id, raw_material)

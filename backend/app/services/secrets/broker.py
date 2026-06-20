@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import logging
 import re
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
@@ -29,6 +30,20 @@ from backend.app.repositories.secret_capability_token import (
     ClaimDenyReason,
     ClaimResult,
     SecretCapabilityTokenRepository,
+)
+from backend.app.services.secrets.local_secret_store import LocalSecretStoreError
+from backend.app.services.secrets.resolver_dispatch import CompositeResolverError
+from backend.app.services.secrets.sops_resolver import SopsResolverError
+
+logger = logging.getLogger(__name__)
+
+# atomic claim 後の secret resolve で fail-closed に raise する custody/resolver 系例外 (Codex R14-F2)。
+# LocalSecretStore (marker 不在 / backend drift / permission / decrypt 失敗) /
+# CompositeSecretResolver (local material gate / 未知 backend) / SopsSubprocessResolver。
+_RESOLVER_CUSTODY_ERRORS: tuple[type[Exception], ...] = (
+    CompositeResolverError,
+    LocalSecretStoreError,
+    SopsResolverError,
 )
 
 IssueDenyReason = Literal[
@@ -390,7 +405,32 @@ class SecretBroker:
 
         if secret_ref is None:
             raise RuntimeError("SecretBroker invariant violated: secret_ref missing after claim.")
-        resolved_secret = await self._resolve_secret(secret_ref)
+        try:
+            resolved_secret = await self._resolve_secret(secret_ref)
+        except _RESOLVER_CUSTODY_ERRORS:
+            # custody/resolver fail-closed (marker 不在 / backend drift / permission / decrypt 失敗 /
+            # material gate) は atomic claim 済 token を消費したまま例外伝播すると、denied audit と token
+            # revoke を bypass し 500 + token_used 誤分類になる (Codex R14-F2)。claimed token を revoke +
+            # secret_capability_denied audit にして BrokerRedeemDenied を返す (raw secret / 例外詳細は
+            # audit/response に出さない、reason_code のみ)。
+            logger.warning(
+                "secret resolve failed after atomic claim; denying redeem fail-closed",
+                extra={
+                    "tenant_id": tenant_id,
+                    "capability_id": str(capability_id),
+                    "secret_ref_id": str(secret_ref_id),
+                },
+            )
+            denied = BrokerRedeemDenied(
+                reason_code="material_not_present",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=capability_id,
+                secret_ref_id=secret_ref_id,
+            )
+            await self._mark_claimed_token_revoked(tenant_id, capability_id)
+            await self._audit_redeem_denied(tenant_id, actor_id, denied, run_id)
+            return denied
         del resolved_secret
 
         result: T | None = None

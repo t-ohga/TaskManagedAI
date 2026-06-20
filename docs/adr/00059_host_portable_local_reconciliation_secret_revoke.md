@@ -304,6 +304,27 @@ R11/R12 で backend-authority を pin した後に残った **first-store concur
     ext4 は link 対応)。concurrent first-store の loser は (同一 backend なら) winner 値で成功、別 backend
     なら fail-closed → caller retry (rare、recoverable、material loss / false-purge なし)。
 
+### A-6j. Codex adversarial R14 findings adopt (2 件 HIGH、新 fail-closed 挙動の統合整合)
+
+LocalSecretStore の fail-closed 化 (R11-R13) が caller 側に与える 2 つの P0-reachable 不整合を封鎖 (HIGH×2):
+
+- **R14-F1 (HIGH)**: `register()` / `rotate()` は pending+writing の DB owner row を `store.store()`
+  (= marker pin) **より前**に commit する。fresh base_dir で「row commit 後 / store() 前」に crash すると
+  marker 不在のまま row が残り、後続 gc の `delete()` (marker 必須・fail-closed) が永久に purge_failed →
+  `material_purged_at=NULL` のまま収束不能 (ADR-00058 create-crash convergence 違反)。fix:
+  `LocalSecretStore.ensure_initialized()` を公開し、register/rotate が **DB row commit の前**に呼んで
+  marker を先に pin する。test: pinned marker 下で store 前 crash の writing-orphan が gc で revoked→
+  purging→purged に収束 (DB-gated)。
+- **R14-F2 (HIGH)**: `redeem_capability_token()` は atomic claim 後 `_resolve_secret()` を try なしで呼ぶ。
+  LocalSecretStore / CompositeSecretResolver が新たに raise する custody/resolver 失敗 (marker 不在 /
+  drift / permission / decrypt / material gate) が **claim 済 token を消費したまま例外伝播**すると、
+  `secret_capability_denied` audit と token revoke を bypass し 500 + token_used 誤分類になる (custody
+  失敗を隠蔽)。fix: `_resolve_secret()` を custody/resolver 例外 (`CompositeResolverError` /
+  `LocalSecretStoreError` / `SopsResolverError`) で捕捉し、claimed token revoke + `secret_capability_denied`
+  audit + `BrokerRedeemDenied(material_not_present)` を返す (raw secret / 例外詳細は出さず reason_code のみ)。
+  test: claim 後に raise する resolver を注入し denied + operation 未実行 + denied audit + redeemed audit
+  なしを検証 (no-DB)。
+
 ### A-6. 残リスク (Phase 0 accepted)
 
 R2-F2 + R3-F1 で late-writer 永久 orphan + 実行経路欠如は解消。gc 実行間隔の間は再作成 material が一時的に

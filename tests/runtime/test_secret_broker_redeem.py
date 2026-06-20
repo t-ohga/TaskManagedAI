@@ -26,6 +26,7 @@ from backend.app.services.secrets.broker import (
     BrokerRedeemResult,
     SecretBroker,
 )
+from backend.app.services.secrets.local_secret_store import LocalSecretStoreError
 
 TENANT_ID = 1
 ACTOR_ID = UUID("00000000-0000-4000-8000-000000004701")
@@ -389,6 +390,55 @@ async def test_secret_ref_revoked_after_claim_denies_without_operation() -> None
     assert isinstance(result, BrokerRedeemDenied)
     assert result.reason_code == "secret_ref_revoked"
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_resolver_custody_failure_after_claim_denies_and_revokes() -> None:
+    """Codex R14-F2: atomic claim 後の resolver custody 失敗を fail-closed deny にする。
+
+    LocalSecretStore は marker 不在 / backend drift / permission / decrypt 失敗で raise するように
+    なった。これが claim 済 token を消費したまま例外伝播すると、secret_capability_denied audit と token
+    revoke を bypass し 500 + token_used 誤分類になる。broker は例外を捕捉し denied + revoke + audit する。
+    """
+    session = _FakeSession(token=_token(), secret_ref=_secret_ref())  # active + present
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["provider.call"],
+        scope_constraint=_scope_constraint(),
+    )
+    op_called = False
+
+    async def operation(context: broker_module.BrokerOperationContext) -> str:
+        nonlocal op_called
+        op_called = True
+        return "should-not-run"
+
+    async def failing_resolver(secret_ref: object) -> bytes:
+        raise LocalSecretStoreError("backend marker missing (simulated custody failure)")
+
+    result = await SecretBroker(
+        session=session,  # type: ignore[arg-type]
+        secret_resolver=failing_resolver,
+    ).redeem_capability_token(
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="provider.call",
+        target=_target(),
+        payload={"messages": ["hello"]},
+        policy_version="policy-v1",
+        provider_compliance_matrix_version="pcm-v1",
+        operation=operation,
+    )
+
+    assert isinstance(result, BrokerRedeemDenied)
+    assert result.reason_code == "material_not_present"
+    assert op_called is False  # custody 失敗で broker-mediated operation は実行されない
+    # token は burn されず denied audit が残る (redeemed audit は出ない)。
+    assert any(e["event_type"] == "secret_capability_denied" for e in _FakeAuditRepo.events)
+    assert all(e["event_type"] != "secret_capability_redeemed" for e in _FakeAuditRepo.events)
 
 
 async def _reset_integration_tables(session: AsyncSession) -> None:
