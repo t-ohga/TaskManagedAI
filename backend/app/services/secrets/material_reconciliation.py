@@ -92,16 +92,19 @@ class MaterialReconciliationService:
         return report
 
     async def _purge_revoke_orphans(self, tenant_id: int, report: ReconciliationReport) -> None:
+        # local revoked 行を **全件** (purged 含む) 走査し store.delete を idempotent backstop として
+        # 実行する (Codex R2-F2): tombstone+purged 確定後に late writer が store.store で material を
+        # 再作成し cleanup 前に crash した場合でも、次回 gc が再削除し永久 orphan を防ぐ。
         rows = await self.session.execute(
-            select(SecretRef.id).where(
+            select(SecretRef.id, SecretRef.material_purged_at).where(
                 SecretRef.tenant_id == tenant_id,
                 SecretRef.status == "revoked",
-                SecretRef.material_purged_at.is_(None),
                 SecretRef.secret_uri.like(f"{_LOCAL_URI_PREFIX}%"),
             )
         )
-        ids = [row[0] for row in rows.all()]
-        for secret_ref_id in ids:
+        records = rows.all()
+        for secret_ref_id, purged_at in records:
+            already_purged = purged_at is not None
             try:
                 self.store.delete(tenant_id, secret_ref_id)
             except Exception:  # noqa: BLE001 - 失敗は durable に記録し次回再試行
@@ -109,13 +112,17 @@ class MaterialReconciliationService:
                     "gc-orphans purge failed",
                     extra={"tenant_id": tenant_id, "secret_ref_id": str(secret_ref_id)},
                 )
-                await self.session.execute(
-                    update(SecretRef)
-                    .where(SecretRef.tenant_id == tenant_id, SecretRef.id == secret_ref_id)
-                    .values(purge_attempts=SecretRef.purge_attempts + 1)
-                )
-                await self.session.commit()
-                report.purge_failed.append(str(secret_ref_id))
+                if not already_purged:
+                    await self.session.execute(
+                        update(SecretRef)
+                        .where(SecretRef.tenant_id == tenant_id, SecretRef.id == secret_ref_id)
+                        .values(purge_attempts=SecretRef.purge_attempts + 1)
+                    )
+                    await self.session.commit()
+                    report.purge_failed.append(str(secret_ref_id))
+                continue
+            if already_purged:
+                # 既に purged 確定済 → store.delete は backstop (再作成 material を除去)。状態変更なし。
                 continue
             result = await self.session.execute(
                 update(SecretRef)

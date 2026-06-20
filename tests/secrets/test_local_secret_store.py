@@ -139,6 +139,35 @@ class _FakeKeyringEmpty:
         raise AssertionError("delete_password must not be called when material is absent")
 
 
+class _FakeKeyringDeleteErrorStillPresent:
+    """delete が PasswordDeleteError を投げるが material は残存し続ける backend (delete failure)。"""
+
+    def get_password(self, service: str, account: str) -> str:
+        return "ZmFrZQ=="  # 常に残存 (delete failure)
+
+    def delete_password(self, service: str, account: str) -> None:
+        import backend.app.services.secrets.local_secret_store as lss
+
+        raise lss._PasswordDeleteError("delete failed")  # noqa: SLF001
+
+
+class _FakeKeyringDeleteErrorThenGone:
+    """delete が PasswordDeleteError を投げ、再 get で不在になる backend (TOCTOU で既に消えた)。"""
+
+    def __init__(self) -> None:
+        self._calls = 0
+
+    def get_password(self, service: str, account: str) -> str | None:
+        # 1 回目 (delete 前) は存在、2 回目 (delete エラー後の再 get) は不在。
+        self._calls += 1
+        return "ZmFrZQ==" if self._calls == 1 else None
+
+    def delete_password(self, service: str, account: str) -> None:
+        import backend.app.services.secrets.local_secret_store as lss
+
+        raise lss._PasswordDeleteError("already gone")  # noqa: SLF001
+
+
 def test_keyring_delete_failure_propagates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -164,6 +193,33 @@ def test_keyring_delete_missing_is_idempotent(
     monkeypatch.setattr(lss, "_keyring", _FakeKeyringEmpty())
     store = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True)
     store.delete(1, uuid4())  # 例外なし
+
+
+def test_keyring_password_delete_error_still_present_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex R2-F1 (CRITICAL): PasswordDeleteError でも再 get で material が残存すれば伝播する。
+
+    PasswordDeleteError は backend により「不在」と「delete failure」を区別できないため、再 get で
+    不在を確認できた時のみ idempotent success とし、残存していれば成功扱いしない。
+    """
+    import backend.app.services.secrets.local_secret_store as lss
+
+    monkeypatch.setattr(lss, "_keyring", _FakeKeyringDeleteErrorStillPresent())
+    store = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True)
+    with pytest.raises(lss.LocalSecretStoreError):
+        store.delete(1, uuid4())
+
+
+def test_keyring_password_delete_error_then_gone_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PasswordDeleteError でも再 get で不在を確認できれば idempotent success (TOCTOU)。"""
+    import backend.app.services.secrets.local_secret_store as lss
+
+    monkeypatch.setattr(lss, "_keyring", _FakeKeyringDeleteErrorThenGone())
+    store = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True)
+    store.delete(1, uuid4())  # 例外なし (再 get で不在確認)
 
 
 def test_symlink_material_file_rejected(tmp_path: Path) -> None:

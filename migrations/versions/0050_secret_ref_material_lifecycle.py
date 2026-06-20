@@ -25,9 +25,14 @@ broker-owned (local backend) material の create / rotate / revoke を crash-saf
 NULL`` を「local revoked + purge 待ち」のみが真とする globally-consistent 不変条件が成立し、downgrade
 condition (a) (`revoked AND material_purged_at IS NULL` = 0) が既存 sops revoked row で deadlock しない。
 
-**downgrade は 3 条件 preflight** (full rollback 0050→0049 の skew 防止、ADR-00059 finding R8/R19):
-(a) ``status='revoked' AND material_purged_at IS NULL`` 0 件 (gc-orphans 未収束を弾く)
-(b) ``material_state IN ('writing','purging')`` 0 件 (in-flight material 操作を弾く)
+**downgrade は 3 条件 preflight** (full rollback 0050→0049 の skew 防止、ADR-00059 finding R8/R19 +
+Codex R2-F3):
+(a) ``status='revoked' AND material_purged_at IS NULL AND secret_uri LIKE 'secret://local/%'`` 0 件
+    (local の gc-orphans 未収束を弾く。condition (a) は **local backend に scope** する。material
+    lifecycle は broker-owned (local) material 統治で sops の purged_at は適用外のため、sops revoked
+    行を blocker にすると legacy SOPS rotation revoke 後に downgrade が deadlock する)
+(b) ``material_state IN ('writing','purging')`` 0 件 (in-flight material 操作を弾く。writing/purging は
+    local のみ発生)
 (c) ``secret_uri LIKE 'secret://local/%'`` 0 件 (local material が残っていない)
 いずれか残存で fail-fast。3 条件すべて 0 件確認後にのみ 3 列を削除する。
 """
@@ -113,10 +118,14 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
+    # condition (a) は local backend に scope する (Codex R2-F3): material lifecycle は broker-owned
+    # (local) material を統治し、sops の material_purged_at は適用外。sops revoked 行 (purged_at NULL は
+    # sops では正常) を blocker にすると、legacy SOPS rotation revoke 後に downgrade が deadlock する。
     revoked_unpurged = bind.execute(
         sa.text(
             "select count(*) from secret_refs "
-            "where status = 'revoked' and material_purged_at is null"
+            "where status = 'revoked' and material_purged_at is null "
+            "and secret_uri like 'secret://local/%'"
         )
     ).scalar_one()
     in_flight = bind.execute(
