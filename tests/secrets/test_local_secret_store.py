@@ -386,6 +386,42 @@ def test_store_drift_blocks_writing_other_backend(
     assert fake._d == {}  # noqa: SLF001 - keyring に material が書かれていないことを検証
 
 
+def test_atomic_publish_loser_returns_existing_content(tmp_path: Path) -> None:
+    """Codex R13-F1/F2: _atomic_publish は既存 final を上書きせず winner の値を返す (race loser semantics)。"""
+    store = _store(tmp_path)
+    target = tmp_path / "race.bin"
+    first = store._atomic_publish(target, b"winner")  # noqa: SLF001
+    assert first == b"winner"
+    second = store._atomic_publish(target, b"loser")  # noqa: SLF001 - 既存 → winner の値を返す
+    assert second == b"winner"
+    assert target.read_bytes() == b"winner"  # 上書きされていない
+
+
+def test_master_key_creation_uses_existing_key_no_overwrite(tmp_path: Path) -> None:
+    """Codex R13-F1 (CRITICAL): master.key 既存時は上書きせず既存 key を使う (first-store race loser)。
+
+    concurrent first-store で 2 process が別 key を生成し一方が他方を上書きすると、上書き前 key で
+    暗号化された material が復号不能 (false-present / material loss) になる。既存 key を必ず使うことで
+    winner key 暗号化 material が resolve 可能なまま保たれることを担保する。
+    """
+    from cryptography.fernet import Fernet
+
+    keyring_dir = tmp_path / "keyring.d"
+    keyring_dir.mkdir(parents=True)
+    key = Fernet.generate_key()  # winner の key
+    mk = keyring_dir / "master.key"
+    fd = os.open(str(mk), os.O_CREAT | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(key)
+    os.chmod(mk, 0o600)
+
+    store = _store(tmp_path)
+    tid, sid = 1, uuid4()
+    store.store(tid, sid, _RAW)
+    assert mk.read_bytes() == key  # 既存 key を上書きしていない
+    assert store.resolve(tid, sid) == _RAW  # winner key で復号可能 (material loss なし)
+
+
 def test_symlink_material_file_rejected(tmp_path: Path) -> None:
     store = _store(tmp_path)
     tid, sid = 1, uuid4()

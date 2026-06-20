@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import errno
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Final
 from uuid import UUID
@@ -270,31 +271,68 @@ class LocalSecretStore:
         if key_path.is_file():
             self._assert_secure_file_mode(key_path)
             return key_path.read_bytes()
-        key = Fernet.generate_key()
-        self._write_secure_file(key_path, key)
-        return key
+        # 不在 → race-safe に publish (Codex R13-F1): concurrent first-store で 2 process が別 key を
+        # 生成し一方が他方を上書きすると、material が上書き前 key で暗号化されたまま復号不能になる
+        # (false-present / material loss)。temp→os.link の atomic create-if-absent で、winner / loser とも
+        # **同一の最終 key** を返す (loser は winner の完成 file を読む)。
+        final = self._atomic_publish(key_path, Fernet.generate_key())
+        self._assert_secure_file_mode(key_path)
+        if not final:
+            raise LocalSecretStoreError("master key empty after atomic publish")
+        return final
 
     # ---- secure file helpers ----
 
     def _write_secure_file(self, path: Path, data: bytes) -> None:
         path.parent.mkdir(parents=True, exist_ok=True, mode=_SECURE_DIR_MODE)
-        # 0o600 で atomic に書く (O_CREAT|O_TRUNC|O_WRONLY、temp + replace)。
-        tmp = path.with_name(f".{path.name}.tmp")
-        fd = os.open(str(tmp), os.O_CREAT | os.O_TRUNC | os.O_WRONLY, _SECURE_FILE_MODE)
+        # 0o600 で atomic overwrite (unique temp + replace、Codex R13-F1: 共有 temp 名 .{name}.tmp を
+        # 2 process が同時に O_TRUNC すると temp が破損するため、mkstemp で per-call unique temp を使う)。
+        fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+        tmp = Path(tmp_name)
         try:
             with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
                 fh.flush()
                 os.fsync(fh.fileno())
+            os.chmod(tmp, _SECURE_FILE_MODE)
+            os.replace(tmp, path)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
-        os.chmod(tmp, _SECURE_FILE_MODE)
-        os.replace(tmp, path)
         os.chmod(path, _SECURE_FILE_MODE)
         # parent dir を fsync し rename を durable 化 (Codex F4: power-loss で DB が present に進んだのに
         # file rename が失われる乖離を防ぐ)。
         self._fsync_dir(path.parent)
+
+    def _atomic_publish(self, path: Path, content: bytes) -> bytes:
+        """``path`` に ``content`` を race-safe に publish し、最終 authoritative bytes を返す。
+
+        Codex R13-F1/F2: 完全に書いた unique temp を ``os.link`` で final へ **atomic create-if-absent**
+        する (final は完成形でのみ出現)。winner は自分の content が final になり、race loser
+        (``FileExistsError``) は winner の完成 final を読んで返す (partial read なし)。これにより first-store
+        race でも全 caller が同一 authoritative 値 (master key / marker) を観測する。symlink は fail-closed。
+        """
+        if path.is_symlink():
+            raise LocalSecretStorePermissionError(f"{path.name} must not be a symlink")
+        path.parent.mkdir(parents=True, exist_ok=True, mode=_SECURE_DIR_MODE)
+        fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(content)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.chmod(tmp, _SECURE_FILE_MODE)
+            try:
+                os.link(str(tmp), str(path))  # atomic create-if-absent (final は完成形でのみ出現)
+            except FileExistsError:
+                pass  # race loser: final は既に完成形で存在する
+            self._fsync_dir(path.parent)
+        finally:
+            tmp.unlink(missing_ok=True)
+        if path.is_symlink():  # link 後に symlink へ差し替えられていないか再確認
+            raise LocalSecretStorePermissionError(f"{path.name} must not be a symlink")
+        return path.read_bytes()
 
     @staticmethod
     def _fsync_dir(directory: Path) -> None:
@@ -391,15 +429,14 @@ class LocalSecretStore:
             )
 
     def _ensure_marker_pinned(self) -> None:
-        """material 書込前に backend marker を atomic に pin する (Codex R12-F1)。
+        """material 書込前に backend marker を atomic に pin する (Codex R12-F1 / R13-F2)。
 
-        O_CREAT|O_EXCL で初回作成し、既に存在すれば re-read して現在 backend と一致を verify する。
-        concurrent first-store で 2 process が同時に marker 不在を観測しても、O_EXCL 作成は 1 つだけ成功し、
-        loser は EEXIST → re-read で winner の backend を読み、自分の backend と異なれば drift で
-        fail-closed (別 backend へ material を書かない)。
+        既存 marker があれば現在 backend と一致を verify (mismatch は drift fail-closed)。不在なら
+        ``_atomic_publish`` (temp→os.link) で race-safe に作成する。concurrent first-store の loser は
+        winner の完成 marker を読み、**winner の backend が自分と一致しない (別 backend / 削除で read 不能)
+        場合は必ず fail-closed** にする (R13-F2: 旧実装は ``raced is None`` を success で通し、marker 無しで
+        material を書く穴があった)。publish 後も marker を再読し content / mode を verify してから返す。
         """
-        marker = self._backend_marker_path()
-        # 既存 marker の安全性 + drift を先に検証 (symlink/非正規/insecure/別 backend を弾く)。
         recorded = self._read_marker_backend()
         current = self._current_backend()
         if recorded is not None:
@@ -410,29 +447,21 @@ class LocalSecretStore:
                     "in a different backend than the pinned one"
                 )
             return
-        # marker 不在 → atomic に作成を試みる (race-safe)。
-        marker.parent.mkdir(parents=True, exist_ok=True, mode=_SECURE_DIR_MODE)
-        try:
-            fd = os.open(str(marker), os.O_CREAT | os.O_EXCL | os.O_WRONLY, _SECURE_FILE_MODE)
-        except FileExistsError:
-            # race: 別 process が先に作成。re-read して backend 一致を verify (mismatch は drift)。
-            raced = self._read_marker_backend()
-            if raced is not None and raced != current:
-                raise LocalSecretStoreError(
-                    f"secret material backend drift detected during first-store race "
-                    f"(recorded={raced!r}, current={current!r})"
-                ) from None
-            return
-        try:
-            with os.fdopen(fd, "wb") as fh:
-                fh.write(current.encode("ascii"))
-                fh.flush()
-                os.fsync(fh.fileno())
-        except BaseException:
-            marker.unlink(missing_ok=True)
-            raise
-        os.chmod(marker, _SECURE_FILE_MODE)
-        self._fsync_dir(marker.parent)
+        # marker 不在 → race-safe に publish (winner/loser とも winner の完成 marker を観測)。
+        final = self._atomic_publish(self._backend_marker_path(), current.encode("ascii"))
+        if final.decode("ascii", errors="replace").strip() != current:
+            # loser が別 backend の winner marker を読んだ (drift)。fail-closed (別 backend へ書かない)。
+            raise LocalSecretStoreError(
+                f"secret material backend drift detected during first-store race "
+                f"(published={final!r}, current={current!r})"
+            )
+        # publish 後の最終 verify (R13-F2 final-verify): symlink/非正規/insecure/別 backend を再検証。
+        verified = self._read_marker_backend()
+        if verified != current:
+            raise LocalSecretStoreError(
+                f"backend marker re-read mismatch after publish "
+                f"(verified={verified!r}, current={current!r})"
+            )
 
     # ---- keyring detection ----
 
