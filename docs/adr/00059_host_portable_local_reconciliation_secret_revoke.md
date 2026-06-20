@@ -56,7 +56,7 @@ ADR Gate Criteria #8 (破壊的操作: host-portable reconciliation + secret rev
 - 実装対象ファイル:
   - `docs/deploy/host-setup.md` (新規 or 追記、Mac local-first runbook + loopback bind の正本化記述)
   - `tests/deploy/test_compose_loopback_binding.py` (新規、ports 撤回の CI regression guard)
-  - `backend/app/services/secrets/secret_registration.py` (revoke step: `deprecated->revoked` 後に `LocalSecretStore.delete()` を別 step)
+  - `backend/app/services/secrets/secret_registration.py` (直接 `secret revoke` = **rule §5 準拠の新 revoke 経路** `active`/`deprecated`/`pending` → `revoked` を実装。rotation.py.revoke() は rotation 専用 deprecated→revoked で流用せず。revoked 確定後に `material_reconciliation` 経由で `LocalSecretStore.delete()` を別 step、`material_purged_at` set)
   - `backend/app/services/secrets/material_reconciliation.py` (新規、**durable orphan-material reconciliation**: `secret_refs.status='revoked'` を source of truth として走査し store 側 material 残存を検出 → idempotent 削除。secret_refs に `material_purged_at timestamptz NULL` + `purge_attempts int` 列を additive 追加し「revoked だが material 未 purge」を durable に検出・再試行可能にする)
   - `migrations/versions/00NN_secret_ref_material_purge_tracking.py` (新規、`material_purged_at` / `purge_attempts` additive 列。**downgrade は条件付き**: `status='revoked' AND material_purged_at IS NULL` 0 件を preflight してから列削除、未 purge 残存時は fail-fast で orphan 検出 source of truth を保護)
   - `scripts/taskhub_admin.py` (`secret revoke` subcommand、DESTRUCTIVE_SUBCOMMANDS approval gate + `secret gc-orphans` reconciliation subcommand)

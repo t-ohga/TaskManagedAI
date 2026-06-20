@@ -21,8 +21,10 @@ raw secret 禁止を P0 の安全境界として固定する。
 ## 2. `secret_ref` Format
 
 ```text
-secret://sops/<scope>/<name>#<version>
+secret://<backend>/<scope>/<name>#<version>
 ```
+
+`<backend>` = `sops` | `local` (ADR-00058 で `local` を additive 追加、`sops` 後方互換)。regex は単一定数 `SECRET_URI_PATTERN` 集約 (5+source 整合)、未知 backend fail-closed。
 
 例:
 
@@ -30,12 +32,14 @@ secret://sops/<scope>/<name>#<version>
 secret://sops/project/provider-openai#v1
 secret://sops/repo/github-app-private-key#v3
 secret://sops/p0/tailscale-auth-key#v1
+secret://local/project/github-token#v1
 ```
 
+- `sops` = SOPS+age (P0 標準)、`local` = LocalSecretStore (OS keychain / 暗号化ファイル、ADR-00058、SOPS 移行は D-4)。
 - 例は placeholder。
 - 実 token / key は書かない。
 - URI は opaque reference。
-- SecretBroker だけが URI を解釈する。
+- SecretBroker / CompositeSecretResolver (backend dispatch) だけが URI を解釈する。
 - `#<version>` は必須。
 - version は rotation の単位。
 
