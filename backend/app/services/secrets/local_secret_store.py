@@ -109,17 +109,26 @@ class LocalSecretStore:
         return self._use_keyring
 
     def store(self, tenant_id: int, secret_ref_id: UUID, raw: bytes) -> None:
-        """material を idempotent に書き込む (既存は上書き)。raw は bytes。"""
-        self._assert_backend_consistent()
-        self._record_backend()
+        """material を idempotent に書き込む (既存は上書き)。raw は bytes。
+
+        material 書込前に backend marker を **atomic に pin** する (Codex R12-F1): O_CREAT|O_EXCL で
+        初回作成し、既存なら re-read して現在 backend と一致を verify する。concurrent first-store race で
+        loser が別 backend を書くと marker と乖離するため、material 書込前に marker と現在 backend の一致を
+        必ず確認する (mismatch は drift で fail-closed)。
+        """
+        self._ensure_marker_pinned()
         if self._use_keyring:
             self._keyring_set(tenant_id, secret_ref_id, raw)
             return
         self._file_store(tenant_id, secret_ref_id, raw)
 
     def resolve(self, tenant_id: int, secret_ref_id: UUID) -> bytes:
-        """material を返す。不在は LocalSecretMaterialNotFound。broker 内部専用。"""
-        self._assert_backend_consistent()
+        """material を返す。不在は LocalSecretMaterialNotFound。broker 内部専用。
+
+        marker 不在 / drift は fail-closed (Codex R11/R12-F1): authoritative backend を確定できない状態で
+        現在 backend を読むと、別 backend の material を見落として誤った not-found を返す危険があるため。
+        """
+        self._assert_backend_consistent(require_marker=True)
         if self._use_keyring:
             return self._keyring_get(tenant_id, secret_ref_id)
         return self._file_resolve(tenant_id, secret_ref_id)
@@ -127,11 +136,12 @@ class LocalSecretStore:
     def delete(self, tenant_id: int, secret_ref_id: UUID) -> None:
         """material を idempotent に削除する (不在でも例外を出さない)。
 
-        backend drift 時は fail-closed (Codex R11-F1): 登録時と別 backend で実行すると、対象が別 store に
-        残ったまま no-op 成功し caller が material_purged_at を偽証する。drift を検出したら例外を上げ、
-        caller (revoke/gc) が purged 化せず再試行できるようにする。
+        backend drift / marker 不在時は fail-closed (Codex R11/R12-F1): 登録時と別 backend で実行すると
+        対象が別 store に残ったまま no-op 成功し caller が material_purged_at を偽証する。marker が無い
+        (未初期化 / 削除 / base_dir 復元) 場合も authoritative backend を確定できないため、現在 backend の
+        no-op 成功で purged 化させない。例外を上げ caller (revoke/gc) が purged 化せず再試行する。
         """
-        self._assert_backend_consistent()
+        self._assert_backend_consistent(require_marker=True)
         if self._use_keyring:
             self._keyring_delete(tenant_id, secret_ref_id)
             return
@@ -322,7 +332,7 @@ class LocalSecretStore:
                 f"insecure permissions {oct(mode)} on {path.name} (expected 0o600)"
             )
 
-    # ---- backend custody (drift fail-closed、Codex R11-F1) ----
+    # ---- backend custody (drift / marker-absence fail-closed、Codex R11/R12-F1) ----
 
     def _current_backend(self) -> str:
         return _BACKEND_KEYRING if self._use_keyring else _BACKEND_FILE
@@ -330,21 +340,48 @@ class LocalSecretStore:
     def _backend_marker_path(self) -> Path:
         return self._base_dir / _BACKEND_MARKER_NAME
 
-    def _assert_backend_consistent(self) -> None:
-        """runtime 検出 backend が記録済 marker と一致するか確認する (不一致は fail-closed)。
+    def _read_marker_backend(self) -> str | None:
+        """marker から pin 済 backend を返す (不在は None)。非正規 / insecure marker は fail-closed。
 
-        material は keyring か file の一方にしか無いが、backend は runtime 検出で silent fallback する
-        (TASKHUB_DISABLE_KEYRING / keyring import 不在 / probe 例外)。登録時と別 backend で delete/resolve
-        すると対象が別 store に残ったまま no-op になり、delete が成功扱い → material_purged_at 偽証
-        (false-purged、Codex R11-F1)。marker と現在 backend の drift を全 IO の入口で検出し例外化する。
-        marker 未記録 (初回 store 前 / 何も保存していない) は drift 判定せず通す。
+        symlink / 非通常ファイル (dir 等) / group・other writable な marker は改ざん経路のため reject
+        (Codex R12-F1 "reject non-regular or insecure marker files")。
         """
         marker = self._backend_marker_path()
         if marker.is_symlink():
             raise LocalSecretStorePermissionError("backend marker must not be a symlink")
+        if not marker.exists():
+            return None
         if not marker.is_file():
+            raise LocalSecretStorePermissionError(
+                "backend marker must be a regular file (non-regular marker rejected)"
+            )
+        mode = marker.stat().st_mode & 0o777
+        if mode & 0o022:  # group/other writable = 改ざん可能
+            raise LocalSecretStorePermissionError(
+                f"insecure backend marker permissions {oct(mode)} (group/other writable)"
+            )
+        return marker.read_text(encoding="ascii").strip()
+
+    def _assert_backend_consistent(self, *, require_marker: bool) -> None:
+        """runtime 検出 backend が pin 済 marker と一致するか確認する (不一致 / 不在は fail-closed)。
+
+        material は keyring か file の一方にしか無いが、backend は runtime 検出で silent fallback する
+        (TASKHUB_DISABLE_KEYRING / keyring import 不在 / probe 例外)。pin 済 backend と別 backend で
+        delete/resolve すると対象が別 store に残ったまま no-op になり、delete 成功扱い → material_purged_at
+        偽証 (false-purged、R11-F1)。さらに **marker 不在** (未初期化 / 削除 / base_dir 復元 / 初期化 race)
+        は authoritative backend を確定できないため、``require_marker=True`` (resolve/delete) では
+        fail-closed にする (R12-F1: marker 不在を「空 deployment=安全」と誤認すると、material 存在下に
+        現在 backend の no-op 成功で false-purged が再発する)。
+        """
+        recorded = self._read_marker_backend()
+        if recorded is None:
+            if require_marker:
+                raise LocalSecretStoreError(
+                    "backend marker missing; cannot determine the authoritative local secret "
+                    "backend (uninitialized, deleted, or restored without marker). refusing to "
+                    "operate to avoid false-purged material; run store-side init / operator reconcile"
+                )
             return
-        recorded = marker.read_text(encoding="ascii").strip()
         current = self._current_backend()
         if recorded != current:
             raise LocalSecretStoreError(
@@ -353,12 +390,49 @@ class LocalSecretStore:
                 "false-purged material. restore the original backend or migrate material first"
             )
 
-    def _record_backend(self) -> None:
-        """初回 store で deployment の物理 backend を marker に pin する (既存なら no-op)。"""
+    def _ensure_marker_pinned(self) -> None:
+        """material 書込前に backend marker を atomic に pin する (Codex R12-F1)。
+
+        O_CREAT|O_EXCL で初回作成し、既に存在すれば re-read して現在 backend と一致を verify する。
+        concurrent first-store で 2 process が同時に marker 不在を観測しても、O_EXCL 作成は 1 つだけ成功し、
+        loser は EEXIST → re-read で winner の backend を読み、自分の backend と異なれば drift で
+        fail-closed (別 backend へ material を書かない)。
+        """
         marker = self._backend_marker_path()
-        if marker.is_file():
+        # 既存 marker の安全性 + drift を先に検証 (symlink/非正規/insecure/別 backend を弾く)。
+        recorded = self._read_marker_backend()
+        current = self._current_backend()
+        if recorded is not None:
+            if recorded != current:
+                raise LocalSecretStoreError(
+                    f"secret material backend drift detected "
+                    f"(recorded={recorded!r}, current={current!r}); refusing to store material "
+                    "in a different backend than the pinned one"
+                )
             return
-        self._write_secure_file(marker, self._current_backend().encode("ascii"))
+        # marker 不在 → atomic に作成を試みる (race-safe)。
+        marker.parent.mkdir(parents=True, exist_ok=True, mode=_SECURE_DIR_MODE)
+        try:
+            fd = os.open(str(marker), os.O_CREAT | os.O_EXCL | os.O_WRONLY, _SECURE_FILE_MODE)
+        except FileExistsError:
+            # race: 別 process が先に作成。re-read して backend 一致を verify (mismatch は drift)。
+            raced = self._read_marker_backend()
+            if raced is not None and raced != current:
+                raise LocalSecretStoreError(
+                    f"secret material backend drift detected during first-store race "
+                    f"(recorded={raced!r}, current={current!r})"
+                ) from None
+            return
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(current.encode("ascii"))
+                fh.flush()
+                os.fsync(fh.fileno())
+        except BaseException:
+            marker.unlink(missing_ok=True)
+            raise
+        os.chmod(marker, _SECURE_FILE_MODE)
+        self._fsync_dir(marker.parent)
 
     # ---- keyring detection ----
 

@@ -25,6 +25,14 @@ def _store(tmp_path: Path) -> LocalSecretStore:
     return LocalSecretStore(base_dir=tmp_path, use_keyring=False)
 
 
+def _write_keyring_marker(tmp_path: Path) -> None:
+    """marker=keyring を 0o600 で事前 pin する (R12-F1: marker 不在は fail-closed のため初期化済を模擬)。"""
+    marker = tmp_path / "backend.marker"
+    fd = os.open(str(marker), os.O_CREAT | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(b"keyring")
+
+
 def test_file_mode_round_trip(tmp_path: Path) -> None:
     store = _store(tmp_path)
     assert store.uses_keyring is False
@@ -80,6 +88,7 @@ def test_cross_tenant_same_secret_ref_isolated(tmp_path: Path) -> None:
 
 def test_resolve_missing_raises_not_found(tmp_path: Path) -> None:
     store = _store(tmp_path)
+    store.store(1, uuid4(), _RAW)  # marker 初期化 (R12-F1: marker 不在は fail-closed)
     with pytest.raises(LocalSecretMaterialNotFound):
         store.resolve(1, uuid4())
     assert store.exists(1, uuid4()) is False
@@ -179,6 +188,7 @@ def test_keyring_delete_failure_propagates(
     import backend.app.services.secrets.local_secret_store as lss
 
     monkeypatch.setattr(lss, "_keyring", _FakeKeyringLocked())
+    _write_keyring_marker(tmp_path)
     store = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True)
     with pytest.raises(lss.LocalSecretStoreError):
         store.delete(1, uuid4())
@@ -191,8 +201,9 @@ def test_keyring_delete_missing_is_idempotent(
     import backend.app.services.secrets.local_secret_store as lss
 
     monkeypatch.setattr(lss, "_keyring", _FakeKeyringEmpty())
+    _write_keyring_marker(tmp_path)  # marker 初期化 (R12-F1: marker 不在は fail-closed)
     store = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True)
-    store.delete(1, uuid4())  # 例外なし
+    store.delete(1, uuid4())  # marker present + 不在 material は idempotent no-op
 
 
 def test_keyring_password_delete_error_still_present_propagates(
@@ -206,6 +217,7 @@ def test_keyring_password_delete_error_still_present_propagates(
     import backend.app.services.secrets.local_secret_store as lss
 
     monkeypatch.setattr(lss, "_keyring", _FakeKeyringDeleteErrorStillPresent())
+    _write_keyring_marker(tmp_path)
     store = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True)
     with pytest.raises(lss.LocalSecretStoreError):
         store.delete(1, uuid4())
@@ -218,6 +230,7 @@ def test_keyring_password_delete_error_then_gone_is_idempotent(
     import backend.app.services.secrets.local_secret_store as lss
 
     monkeypatch.setattr(lss, "_keyring", _FakeKeyringDeleteErrorThenGone())
+    _write_keyring_marker(tmp_path)
     store = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True)
     store.delete(1, uuid4())  # 例外なし (再 get で不在確認)
 
@@ -301,6 +314,76 @@ def test_backend_drift_resolve_fails_closed(
     fstore = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=False)
     with pytest.raises(lss.LocalSecretStoreError):
         fstore.resolve(tid, sid)
+
+
+def test_delete_with_missing_marker_fails_closed(tmp_path: Path) -> None:
+    """Codex R12-F1 (CRITICAL): marker 不在 (削除 / base_dir 復元) の delete は fail-closed。
+
+    marker を「空 deployment=安全」と誤認すると、keyring material 存在下に file-mode delete が no-op
+    成功 → false-purged。authoritative backend を確定できない以上、delete は例外を上げ purged 化させない。
+    """
+    import backend.app.services.secrets.local_secret_store as lss
+
+    tid, sid = 1, uuid4()
+    store = _store(tmp_path)
+    store.store(tid, sid, _RAW)
+    # marker を削除 (restore-without-marker / base_dir drift を模擬)。
+    (tmp_path / "backend.marker").unlink()
+    with pytest.raises(lss.LocalSecretStoreError):
+        store.delete(tid, sid)
+    # material は残存 (false-purged になっていない)。
+    (tmp_path / "backend.marker").write_text("file", encoding="ascii")
+    assert store.resolve(tid, sid) == _RAW
+
+
+def test_resolve_with_missing_marker_fails_closed(tmp_path: Path) -> None:
+    """Codex R12-F1: marker 不在の resolve も fail-closed (誤った not-found を返さない)。"""
+    import backend.app.services.secrets.local_secret_store as lss
+
+    tid, sid = 1, uuid4()
+    store = _store(tmp_path)
+    store.store(tid, sid, _RAW)
+    (tmp_path / "backend.marker").unlink()
+    with pytest.raises(lss.LocalSecretStoreError):
+        store.resolve(tid, sid)
+
+
+def test_non_regular_marker_rejected(tmp_path: Path) -> None:
+    """Codex R12-F1: marker が dir 等の非正規ファイルなら fail-closed (改ざん経路 reject)。"""
+    store = _store(tmp_path)
+    (tmp_path / "backend.marker").mkdir(parents=True)
+    with pytest.raises(LocalSecretStorePermissionError):
+        store.delete(1, uuid4())
+
+
+def test_world_writable_marker_rejected(tmp_path: Path) -> None:
+    """Codex R12-F1: group/other writable marker は改ざん可能なため fail-closed。"""
+    store = _store(tmp_path)
+    marker = tmp_path / "backend.marker"
+    marker.write_text("file", encoding="ascii")
+    os.chmod(marker, 0o666)  # noqa: S103 - insecure marker を意図的に作り reject を検証
+    with pytest.raises(LocalSecretStorePermissionError):
+        store.resolve(1, uuid4())
+
+
+def test_store_drift_blocks_writing_other_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex R12-F1: pin 済 marker と別 backend での store は material 書込前に fail-closed。
+
+    concurrent first-store race の loser や backend 切替で、material が pin と別 store に入るのを防ぐ。
+    """
+    import backend.app.services.secrets.local_secret_store as lss
+
+    # file mode で先に pin (marker=file)。
+    lss.LocalSecretStore(base_dir=tmp_path, use_keyring=False).store(1, uuid4(), _RAW)
+    # 後から keyring mode で store しようとすると drift で reject (material は keyring に入らない)。
+    fake = _FakeKeyringStore()
+    monkeypatch.setattr(lss, "_keyring", fake)
+    kstore = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True)
+    with pytest.raises(lss.LocalSecretStoreError):
+        kstore.store(1, uuid4(), _RAW)
+    assert fake._d == {}  # noqa: SLF001 - keyring に material が書かれていないことを検証
 
 
 def test_symlink_material_file_rejected(tmp_path: Path) -> None:
