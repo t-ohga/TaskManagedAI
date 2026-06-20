@@ -1359,6 +1359,31 @@ def _cmd_active_registry(args: argparse.Namespace) -> int:
     return 1  # skeleton mode
 
 
+def _cmd_secret_gc_orphans(args: argparse.Namespace) -> int:
+    """`taskhub secret-gc-orphans --tenant-id N` (ADR-00059 batch-1 revoke backstop)。
+
+    revoke 失敗で残った local material orphan / create-rotate writing-orphan を idempotent に
+    reconcile する operational path (Codex R3-F1: gc-orphans を実行可能にして durable convergence を
+    主張可能にする)。raw secret は出力しない (secret_ref_id + 件数のみ)。purge_failed が残れば exit 1。
+    """
+    try:
+        from scripts.taskhub_secret_gc import run_gc_orphans
+    except ModuleNotFoundError:  # pragma: no cover - sys.path fallback
+        repo_root = Path(__file__).resolve().parent.parent
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from scripts.taskhub_secret_gc import run_gc_orphans  # noqa: E402
+
+    result = run_gc_orphans(
+        tenant_id=args.tenant_id,
+        database_url=getattr(args, "database_url", None),
+        writing_grace_seconds=args.writing_grace_seconds,
+    )
+    print(json.dumps(result, sort_keys=True))  # noqa: T201
+    # purge_failed が残る = material 残存 (keyring locked / fsync failure 等) → operator に exit 1 で通知。
+    return 1 if result.get("purge_failed") else 0
+
+
 def _cmd_age_rotate(args: argparse.Namespace) -> int:
     """`taskhub age-rotate` skeleton.
 
@@ -1764,6 +1789,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help="print signed active ledger (source/target 同時 active reject contract、§670)",
     )
     sub_active_registry.set_defaults(func=_cmd_active_registry)
+
+    sub_secret_gc = subparsers.add_parser(
+        "secret-gc-orphans",
+        help="reconcile orphan secret material (revoke backstop、ADR-00059 batch-1)",
+    )
+    sub_secret_gc.add_argument(
+        "--tenant-id",
+        type=int,
+        required=True,
+        help="tenant id to reconcile (tenant scoped)",
+    )
+    sub_secret_gc.add_argument(
+        "--database-url",
+        default=None,
+        help="SQLAlchemy URL (None=Settings.database_url)",
+    )
+    sub_secret_gc.add_argument(
+        "--writing-grace-seconds",
+        type=int,
+        default=300,
+        help="grace before tombstoning create/rotate writing-orphans (default 300)",
+    )
+    sub_secret_gc.set_defaults(func=_cmd_secret_gc_orphans)
 
     sub_migrate = subparsers.add_parser(
         "migrate",

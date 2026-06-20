@@ -112,17 +112,19 @@ class MaterialReconciliationService:
                     "gc-orphans purge failed",
                     extra={"tenant_id": tenant_id, "secret_ref_id": str(secret_ref_id)},
                 )
-                if not already_purged:
-                    await self.session.execute(
-                        update(SecretRef)
-                        .where(SecretRef.tenant_id == tenant_id, SecretRef.id == secret_ref_id)
-                        .values(purge_attempts=SecretRef.purge_attempts + 1)
-                    )
-                    await self.session.commit()
-                    report.purge_failed.append(str(secret_ref_id))
+                # already_purged 含め **全失敗を durable に記録** (Codex R3-F2): purged 行の backstop
+                # delete 失敗 (late-writer 再作成 material が消せない) を report に出さないと、operator が
+                # clean 収束と residual material を区別できない。purge_attempts++ で再試行 signal を残す。
+                await self.session.execute(
+                    update(SecretRef)
+                    .where(SecretRef.tenant_id == tenant_id, SecretRef.id == secret_ref_id)
+                    .values(purge_attempts=SecretRef.purge_attempts + 1)
+                )
+                await self.session.commit()
+                report.purge_failed.append(str(secret_ref_id))
                 continue
             if already_purged:
-                # 既に purged 確定済 → store.delete は backstop (再作成 material を除去)。状態変更なし。
+                # 既に purged 確定済 + backstop delete 成功 → 再作成 material を除去済。状態変更なし。
                 continue
             result = await self.session.execute(
                 update(SecretRef)
