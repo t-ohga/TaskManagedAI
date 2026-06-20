@@ -405,32 +405,24 @@ class SecretBroker:
 
         if secret_ref is None:
             raise RuntimeError("SecretBroker invariant violated: secret_ref missing after claim.")
+        # custody/resolver fail-closed (marker 不在 / backend drift / permission / decrypt 失敗 /
+        # material gate) は **pre-resolve と operation 内の再 resolve の両方**で起き得る (Codex R14-F2 +
+        # R15-F1)。operation path (例: GitHubAppAdapter→HttpxGitHubTransport が installation token を再
+        # resolve) で raise すると、atomic claim 済 token を消費したまま例外伝播し denied audit + token
+        # revoke を bypass する (500 + token_used 誤分類)。両 path を同一 helper で denied 化する。
         try:
             resolved_secret = await self._resolve_secret(secret_ref)
         except _RESOLVER_CUSTODY_ERRORS:
-            # custody/resolver fail-closed (marker 不在 / backend drift / permission / decrypt 失敗 /
-            # material gate) は atomic claim 済 token を消費したまま例外伝播すると、denied audit と token
-            # revoke を bypass し 500 + token_used 誤分類になる (Codex R14-F2)。claimed token を revoke +
-            # secret_capability_denied audit にして BrokerRedeemDenied を返す (raw secret / 例外詳細は
-            # audit/response に出さない、reason_code のみ)。
-            logger.warning(
-                "secret resolve failed after atomic claim; denying redeem fail-closed",
-                extra={
-                    "tenant_id": tenant_id,
-                    "capability_id": str(capability_id),
-                    "secret_ref_id": str(secret_ref_id),
-                },
-            )
-            denied = BrokerRedeemDenied(
-                reason_code="material_not_present",
-                requested_operation=requested_operation,
-                computed_fingerprint=computed_fingerprint,
+            return await self._deny_after_claim_custody_failure(
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                run_id=run_id,
                 capability_id=capability_id,
                 secret_ref_id=secret_ref_id,
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                stage="resolve",
             )
-            await self._mark_claimed_token_revoked(tenant_id, capability_id)
-            await self._audit_redeem_denied(tenant_id, actor_id, denied, run_id)
-            return denied
         del resolved_secret
 
         result: T | None = None
@@ -449,7 +441,21 @@ class SecretBroker:
                     version=secret_ref.version,
                 ),
             )
-            result = await _maybe_await(operation(context))
+            # 非 custody な operation 失敗 (provider 5xx / GitHub API error 等) は従来どおり伝播させ token は
+            # 消費済扱い (boundary §9)。custody/resolver 失敗 (operation 内再 resolve) のみ denied 化する。
+            try:
+                result = await _maybe_await(operation(context))
+            except _RESOLVER_CUSTODY_ERRORS:
+                return await self._deny_after_claim_custody_failure(
+                    tenant_id=tenant_id,
+                    actor_id=actor_id,
+                    run_id=run_id,
+                    capability_id=capability_id,
+                    secret_ref_id=secret_ref_id,
+                    requested_operation=requested_operation,
+                    computed_fingerprint=computed_fingerprint,
+                    stage="operation",
+                )
 
         await self._mark_claimed_token_used(tenant_id, capability_id)
         await AuditEventRepository(self.session).append(
@@ -688,6 +694,44 @@ class SecretBroker:
                 secret_ref_id=claim.secret_ref_id,
             )
         return None
+
+    async def _deny_after_claim_custody_failure(
+        self,
+        *,
+        tenant_id: int,
+        actor_id: UUID,
+        run_id: UUID | None,
+        capability_id: UUID,
+        secret_ref_id: UUID,
+        requested_operation: RequestedOperation,
+        computed_fingerprint: str | None,
+        stage: str,
+    ) -> BrokerRedeemDenied:
+        """atomic claim 後の custody/resolver 失敗を fail-closed deny にする (Codex R14-F2 / R15-F1)。
+
+        claimed token を revoke + ``secret_capability_denied`` audit にして
+        ``BrokerRedeemDenied(material_not_present)`` を返す。raw secret / 例外詳細は audit / response に
+        出さず reason_code と stage (resolve / operation) のみ残す。
+        """
+        logger.warning(
+            "secret custody resolve failed after atomic claim; denying redeem fail-closed",
+            extra={
+                "tenant_id": tenant_id,
+                "capability_id": str(capability_id),
+                "secret_ref_id": str(secret_ref_id),
+                "stage": stage,
+            },
+        )
+        denied = BrokerRedeemDenied(
+            reason_code="material_not_present",
+            requested_operation=requested_operation,
+            computed_fingerprint=computed_fingerprint,
+            capability_id=capability_id,
+            secret_ref_id=secret_ref_id,
+        )
+        await self._mark_claimed_token_revoked(tenant_id, capability_id)
+        await self._audit_redeem_denied(tenant_id, actor_id, denied, run_id)
+        return denied
 
     async def _resolve_secret(self, secret_ref: SecretRef) -> object:
         if self.secret_resolver is None:

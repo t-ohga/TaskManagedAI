@@ -441,6 +441,75 @@ async def test_resolver_custody_failure_after_claim_denies_and_revokes() -> None
     assert all(e["event_type"] != "secret_capability_redeemed" for e in _FakeAuditRepo.events)
 
 
+@pytest.mark.asyncio
+async def test_operation_custody_failure_after_claim_denies_and_revokes() -> None:
+    """Codex R15-F1: operation 内の再 resolve (例: RepoProxy transport が installation token を再 resolve)
+    が custody 失敗で raise した場合も、pre-resolve と同じく denied + token revoke + denied audit にする。
+
+    operation を try 外に置くと、custody 失敗が claim 済 token を消費したまま例外伝播し 500 + token_used
+    誤分類になる。非 custody な operation 失敗 (provider/GitHub error) のみ従来どおり伝播させる。
+    """
+    session = _FakeSession(token=_token(), secret_ref=_secret_ref())  # active + present
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["provider.call"],
+        scope_constraint=_scope_constraint(),
+    )
+
+    async def operation(context: broker_module.BrokerOperationContext) -> str:
+        # operation 内で material 再 resolve が custody 失敗するのを模擬。
+        raise LocalSecretStoreError("backend drift during operation (simulated)")
+
+    result = await SecretBroker(session=session).redeem_capability_token(  # type: ignore[arg-type]
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="provider.call",
+        target=_target(),
+        payload={"messages": ["hello"]},
+        policy_version="policy-v1",
+        provider_compliance_matrix_version="pcm-v1",
+        operation=operation,
+    )
+
+    assert isinstance(result, BrokerRedeemDenied)
+    assert result.reason_code == "material_not_present"
+    assert any(e["event_type"] == "secret_capability_denied" for e in _FakeAuditRepo.events)
+    assert all(e["event_type"] != "secret_capability_redeemed" for e in _FakeAuditRepo.events)
+
+
+@pytest.mark.asyncio
+async def test_non_custody_operation_failure_propagates() -> None:
+    """Codex R15-F1 の対: 非 custody な operation 失敗 (provider/GitHub error) は従来どおり伝播する
+    (custody 失敗のみ denied 化、通常の operation 失敗は token 消費済で例外伝播)。"""
+    session = _FakeSession(token=_token(), secret_ref=_secret_ref())
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["provider.call"],
+        scope_constraint=_scope_constraint(),
+    )
+
+    async def operation(context: broker_module.BrokerOperationContext) -> str:
+        raise RuntimeError("provider 5xx (simulated non-custody failure)")
+
+    with pytest.raises(RuntimeError):
+        await SecretBroker(session=session).redeem_capability_token(  # type: ignore[arg-type]
+            tenant_id=TENANT_ID,
+            actor_id=ACTOR_ID,
+            run_id=RUN_ID,
+            raw_token=RAW_TOKEN,
+            requested_operation="provider.call",
+            target=_target(),
+            payload={"messages": ["hello"]},
+            policy_version="policy-v1",
+            provider_compliance_matrix_version="pcm-v1",
+            operation=operation,
+        )
+
+
 async def _reset_integration_tables(session: AsyncSession) -> None:
     await session.execute(
         text(
