@@ -56,16 +56,20 @@ ADR Gate Criteria #8 (破壊的操作: host-portable reconciliation + secret rev
 - 実装対象ファイル:
   - `docs/deploy/host-setup.md` (新規 or 追記、Mac local-first runbook + loopback bind の正本化記述)
   - `tests/deploy/test_compose_loopback_binding.py` (新規、ports 撤回の CI regression guard)
-  - `backend/app/services/secrets/secret_registration.py` (revoke step: `deprecated->revoked` 後に `LocalSecretStore.delete()` を別 step、削除失敗は orphan GC 記録)
-  - `scripts/taskhub_admin.py` (`secret revoke` subcommand、DESTRUCTIVE_SUBCOMMANDS approval gate)
+  - `backend/app/services/secrets/secret_registration.py` (revoke step: `deprecated->revoked` 後に `LocalSecretStore.delete()` を別 step)
+  - `backend/app/services/secrets/material_reconciliation.py` (新規、**durable orphan-material reconciliation**: `secret_refs.status='revoked'` を source of truth として走査し store 側 material 残存を検出 → idempotent 削除。secret_refs に `material_purged_at timestamptz NULL` + `purge_attempts int` 列を additive 追加し「revoked だが material 未 purge」を durable に検出・再試行可能にする)
+  - `migrations/versions/00NN_secret_ref_material_purge_tracking.py` (新規、`material_purged_at` / `purge_attempts` additive 列 + downgrade lossless)
+  - `scripts/taskhub_admin.py` (`secret revoke` subcommand、DESTRUCTIVE_SUBCOMMANDS approval gate + `secret gc-orphans` reconciliation subcommand)
   - `docs/sprints/SP-001-5_host_portable_amendment.md` (Review 欄に local 決着を記録、status 更新)
 - 実装ガイダンス:
   - loopback bind は現状維持 = 実装変更なし。`test_compose_loopback_binding.py` で `127.0.0.1:5432/6379` の explicit bind を assert し誤った ports 撤回を CI で阻止。ADR-00021 §12.2 (DB/Redis internal-only 目標) は VPS/production 目標として retain (local override と scope 分離、矛盾でない)。
-  - revoke: `SecretRotationService` で `deprecated->revoked` 遷移を commit 後、`SecretRegistrationService` 側で `store.delete()` を実行 (material 操作は rotation.py の外、status-only invariant を壊さない)。削除失敗時は orphan material として GC log 記録し DB revoked は維持。
+  - revoke: `SecretRotationService` で `deprecated->revoked` 遷移を commit。**この時点で material は残存しうる (DB commit と store delete の間で crash しても、revoked は durable に「未 purge」)**。続いて `material_reconciliation` が `store.delete()` を試み、成功時のみ `material_purged_at=now()` を set。失敗時は `purge_attempts++` + 失敗理由を audit に記録し DB revoked + material_purged_at NULL のまま (= 再試行 source of truth として残す)。material 操作は rotation.py の外 (status-only invariant を壊さない)。
+  - **crash-safety**: DB revoked commit 後の crash / store delete 失敗いずれも、`status='revoked' AND material_purged_at IS NULL` を走査する `secret gc-orphans` (idempotent、定期 or 手動) が material を確実に purge し material_purged_at を set する。「revoked = secret-at-rest 削除済」の監査表示は **material_purged_at が non-NULL になって初めて真**とし、revoked かつ未 purge の乖離を可視化する。
   - `taskhub secret revoke` は破壊的 subcommand として approval gate を適用 (誤 revoke 前段防御)。
 - テスト指針:
   - `tests/deploy/test_compose_loopback_binding.py`: docker-compose の `127.0.0.1:5432/6379` explicit bind を assert (regression guard)。
-  - revoke: `deprecated->revoked` 遷移 + store.delete、active から直接 revoke は reject (既存遷移遵守)、削除失敗時 DB revoked 維持 + orphan GC 記録、再登録 (rollback) で新 version active。
+  - revoke: `deprecated->revoked` 遷移 + store.delete + `material_purged_at` set、active から直接 revoke は reject (既存遷移遵守)、再登録 (rollback) で新 version active。
+  - **crash-window test (finding-4)**: ① DB revoked commit 後・store.delete 前に crash を模擬 (store.delete を例外注入) → DB は revoked + `material_purged_at IS NULL` + `purge_attempts` 増加、material は store に残存。② `secret gc-orphans` を再実行 → material が purge され `material_purged_at` set (idempotent、2 回目は no-op)。③ `status='revoked' AND material_purged_at IS NULL` が reconciliation で全件検出されること。
   - restore preflight `verify_target_binding_consistency` が loopback bind で PASS する smoke。
 
 ## 却下案
@@ -79,12 +83,13 @@ ADR Gate Criteria #8 (破壊的操作: host-portable reconciliation + secret rev
 |--------|----------|--------|
 | 誤って ports 撤回が混入し restore 破壊 | `test_compose_loopback_binding.py` CI regression | loopback explicit bind を CI で assert、ADR で正本化 |
 | host から psql 直接到達 (loopback) | - | local のみ・tailnet/外部非公開・P0 個人 1 user で許容 (user 承認済)。VPS internal-only は D-1 |
-| revoke 途中 crash (DB revoked / material 残存) | orphan material GC log | status を source of truth、orphan GC で reconciliation。削除は idempotent |
+| revoke 途中 crash (DB revoked / material 残存) | `status='revoked' AND material_purged_at IS NULL` の durable 走査 (`secret gc-orphans`) | DB revoked + material_purged_at 列を source of truth、reconciliation が idempotent に purge。crash-window test で commit 後 crash を再現。「revoked=削除済」表示は material_purged_at non-NULL で初めて真 |
 | 誤 revoke (terminal、rollback 不能) | approval gate | `taskhub secret revoke` を DESTRUCTIVE approval gate 化、rollback=再登録 |
 
 ## rollback 手順
 
 1. **loopback bind**: 現状維持のため rollback 不要。誤った ports 撤回混入は `test_compose_loopback_binding.py` が CI で阻止。
 2. **revoke material 削除**: revoked は terminal で rollback 不能 → rollback = `SecretRegistrationService.register` で **再登録 (新 version active)**。
-3. 削除途中 crash (DB revoked / material 残存): orphan material GC で reconciliation (DB revoked 維持)。
-4. 検証: restore preflight `verify_target_binding_consistency` が loopback で PASS、再登録した secret_ref の redeem 成功。
+3. 削除途中 crash (DB revoked / material 残存): `secret gc-orphans` reconciliation (`status='revoked' AND material_purged_at IS NULL` を idempotent purge) で収束、DB revoked 維持。
+4. material_purge_tracking migration の downgrade は `material_purged_at` / `purge_attempts` 列を additive 削除 (lossless)。
+5. 検証: restore preflight `verify_target_binding_consistency` が loopback で PASS、再登録した secret_ref の redeem 成功、crash-window test で reconciliation 収束。
