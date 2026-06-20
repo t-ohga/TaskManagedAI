@@ -132,7 +132,7 @@ Vitest、pytest、Playwright、contract test、state machine test、Eval fixture
 
 ## 9. SecretBroker Test
 
-- `secret_ref` URI は `secret://sops/<scope>/<name>#<version>` のみ許可。
+- `secret_ref` URI は `secret://<backend>/<scope>/<name>#<version>` (backend=`sops`|`local`、ADR-00058) を許可、未知 backend は fail-closed。
 - raw secret を DB、log、artifact、AI prompt、runner env に保存しない。
 - capability token TTL は 5-30 分。
 - token 生値は DB に保存せず hash のみ。

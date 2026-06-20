@@ -117,7 +117,7 @@ TaskManagedAI の実装・レビューで常時守る基本制約。
 
 - DB に raw secret を保存しない。
 - DB には `secret_ref` URI と metadata のみ保存する。
-- `secret_ref` 形式は `secret://sops/<scope>/<name>#<version>`。
+- `secret_ref` 形式は `secret://<backend>/<scope>/<name>#<version>` (backend=`sops`|`local`、ADR-00058 で `local` を additive 追加、`sops` 後方互換、単一定数 `SECRET_URI_PATTERN` 集約)。
 - AI、runner、artifact export に secret 値を渡さない。
 - SecretBroker は secret 値を返す API ではなく、operation を broker-mediated に実行する境界。
 - capability token は TTL 5-30 分、one-time redeem、hash 保存のみ。

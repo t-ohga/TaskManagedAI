@@ -93,7 +93,7 @@ color: blue
 ### 6. SecretBroker
 
 - raw secret を DB、AI prompt、runner env、artifact、audit に保存していないか。
-- `secret_ref` は `secret://sops/<scope>/<name>#<version>` の opaque reference として扱われるか。
+- `secret_ref` は `secret://<backend>/<scope>/<name>#<version>` (backend=`sops`|`local`、ADR-00058) の opaque reference として扱われるか。
 - capability token は TTL 5-30 分、one-time、hash 保存のみか。
 - redeem が check -> execute -> mark used ではなく atomic claim UPDATE か。
 - actor / run / OperationContext fingerprint / operation が同一 claim で binding されるか。

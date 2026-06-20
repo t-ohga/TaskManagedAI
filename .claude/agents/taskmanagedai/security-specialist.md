@@ -86,7 +86,7 @@ P0 は個人運用でも、AI-native な実行環境として deny-by-default、
 
 - SecretBroker は secret 値を返す API ではなく broker-mediated operation 境界か。
 - DB に raw secret を保存せず、`secret_ref` URI と metadata のみか。
-- `secret_ref` は `secret://sops/<scope>/<name>#<version>` 形式か。
+- `secret_ref` は `secret://<backend>/<scope>/<name>#<version>` (backend=`sops`|`local`、ADR-00058) 形式か。
 - capability token は TTL 5-30 分、one-time、hash 保存のみか。
 - issue 時に broker が canonical OperationContext を組み立て、expected fingerprint を server-owned に計算するか。
 - redeem 時に broker が OperationContext fingerprint を再計算し、atomic claim UPDATE に渡すか。
