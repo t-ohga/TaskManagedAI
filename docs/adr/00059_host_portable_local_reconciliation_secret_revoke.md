@@ -28,7 +28,7 @@ ADR Gate Criteria #8 (破壊的操作: host-portable reconciliation + secret rev
   - 大元計画 §0: deploy = local Mac first。VPS 本番は後フェーズ D-1 に分離。worker は host worker (ADR-00058)。
   - **実コード事実 (Phase 0 設計で確認)**: 現状 `docker-compose.yml` は既に `127.0.0.1:5432:5432` / `127.0.0.1:6379:6379` の explicit loopback bind を維持。restore preflight `verify_target_binding_consistency` (taskhub_restore_orchestrator.py) が **この explicit loopback binding を必須要求**。
   - **過去の地雷**: SP-001-5 Pack が目標とした internal-only / ports 撤回 / nc reject は restore/rollback recovery を破壊し、過去 adversarial R1 で実害発生、R2 で revert 済 (memory: operation-bugfix-campaign 教訓)。
-  - SecretBroker 不変条件: revoke は `secret_refs.status` の terminal 化。rotation.py は status / timestamp のみ操作 (raw material は別管理)。`deprecated -> revoked` 必須遷移 (active から直接 revoke 不可)。
+  - **SecretBroker 不変条件 (canonical = `secretbroker-boundary.md §5` / `secretbroker-contract.md`)**: revoke は `secret_refs.status` の terminal 化。許可遷移は **`pending->revoked` / `active->revoked` / `deprecated->revoked`** の 3 経路 (rule §5 が明記、**active からの直接 revoke は許容**)。`rotation.py.revoke()` は **rotation フロー専用**の `deprecated->revoked` ステップ (rotation の「revoke old version」) であり canonical の全許可遷移ではない。本 ADR の直接 `secret revoke` は rule §5 準拠 (active 含む) の **新 revoke 経路**で実装し、rotation.py.revoke() は不変。rotation.py は status/timestamp のみ操作 (raw material は別管理)。
 
 ## 選択肢
 
@@ -43,39 +43,39 @@ ADR Gate Criteria #8 (破壊的操作: host-portable reconciliation + secret rev
 
 | 選択肢 | 概要 | 利点 | 欠点 / リスク |
 |--------|------|------|---------------|
-| A: revoked 確定後に store 物理削除 (採用) | `deprecated->revoked` 既存遷移後、別 step で store material 削除、削除失敗は orphan GC | 既存 state machine 遵守、material を eventually-consistent 扱い、status を source of truth | revoke は terminal で rollback 不能 (rollback=再登録)、DB tx と store (tx 外) の非 atomicity を GC で吸収 |
-| B: rotation.py に material 配置/削除を統合 | revoke と material 削除を 1 フロー | 一見シンプル | rotation.py の status-only invariant 破壊、DB tx と store 書込の atomicity が境界跨ぎ、active→revoked 直行は既存遷移違反 |
+| A: revoked 確定後に store 物理削除 (採用) | rule §5 許可遷移 (active/deprecated/pending → revoked) で revoke 後、別 step で store material 削除、durable reconciliation で収束 | canonical rule §5 遵守 (active→revoked 許容)、material を eventually-consistent 扱い、`status='revoked' AND material_purged_at IS NULL` を source of truth | revoke は terminal で rollback 不能 (rollback=再登録)、DB tx と store (tx 外) の非 atomicity を reconciliation で吸収 |
+| B: rotation.py に material 配置/削除を統合 | revoke と material 削除を 1 フロー | 一見シンプル | rotation.py の status-only invariant 破壊、DB tx と store 書込の atomicity が境界跨ぎ、rotation 専用メソッドを直接 revoke へ流用は責務混在 |
 
 ## 採用案
 
 - 採用: **(1) 案A loopback bind 維持** + **(2) 案A revoked 後 store 物理削除** (user 承認済 2026-06-20)。
 - 理由:
   - (1) 現状すでに loopback が正しい契約 (restore preflight 依存)。ports 撤回は過去 R2 で revert 済の地雷。tension は実装変更でなく本 ADR + local-first runbook での正本化で解消。VPS internal-only は restore orchestrator の docker compose exec 専用化 + 実 host drill を前提に D-1 へ分離。
-  - (2) rotation.py の status-only invariant と `deprecated->revoked` 遷移を遵守。material 削除は status 確定後の別 step とし、削除失敗は orphan material GC で reconciliation (status を source of truth、eventually-consistent)。
+  - (2) canonical rule §5 (`active`/`deprecated`/`pending` → `revoked`) を遵守し、直接 `secret revoke` は **rule 準拠の新 revoke 経路** (rotation.py.revoke() は rotation 専用 deprecated→revoked で不変、責務分離)。material 削除は status 確定後の別 step、削除失敗は durable reconciliation (`status='revoked' AND material_purged_at IS NULL`) で収束 (source of truth = DB status + material_purged_at flag、eventually-consistent)。
 - 実装 Sprint: PLAN-10 Phase 0。
 - 実装対象ファイル:
   - `docs/deploy/host-setup.md` (新規 or 追記、Mac local-first runbook + loopback bind の正本化記述)
   - `tests/deploy/test_compose_loopback_binding.py` (新規、ports 撤回の CI regression guard)
   - `backend/app/services/secrets/secret_registration.py` (revoke step: `deprecated->revoked` 後に `LocalSecretStore.delete()` を別 step)
   - `backend/app/services/secrets/material_reconciliation.py` (新規、**durable orphan-material reconciliation**: `secret_refs.status='revoked'` を source of truth として走査し store 側 material 残存を検出 → idempotent 削除。secret_refs に `material_purged_at timestamptz NULL` + `purge_attempts int` 列を additive 追加し「revoked だが material 未 purge」を durable に検出・再試行可能にする)
-  - `migrations/versions/00NN_secret_ref_material_purge_tracking.py` (新規、`material_purged_at` / `purge_attempts` additive 列 + downgrade lossless)
+  - `migrations/versions/00NN_secret_ref_material_purge_tracking.py` (新規、`material_purged_at` / `purge_attempts` additive 列。**downgrade は条件付き**: `status='revoked' AND material_purged_at IS NULL` 0 件を preflight してから列削除、未 purge 残存時は fail-fast で orphan 検出 source of truth を保護)
   - `scripts/taskhub_admin.py` (`secret revoke` subcommand、DESTRUCTIVE_SUBCOMMANDS approval gate + `secret gc-orphans` reconciliation subcommand)
   - `docs/sprints/SP-001-5_host_portable_amendment.md` (Review 欄に local 決着を記録、status 更新)
 - 実装ガイダンス:
   - loopback bind は現状維持 = 実装変更なし。`test_compose_loopback_binding.py` で `127.0.0.1:5432/6379` の explicit bind を assert し誤った ports 撤回を CI で阻止。ADR-00021 §12.2 (DB/Redis internal-only 目標) は VPS/production 目標として retain (local override と scope 分離、矛盾でない)。
-  - revoke: `SecretRotationService` で `deprecated->revoked` 遷移を commit。**この時点で material は残存しうる (DB commit と store delete の間で crash しても、revoked は durable に「未 purge」)**。続いて `material_reconciliation` が `store.delete()` を試み、成功時のみ `material_purged_at=now()` を set。失敗時は `purge_attempts++` + 失敗理由を audit に記録し DB revoked + material_purged_at NULL のまま (= 再試行 source of truth として残す)。material 操作は rotation.py の外 (status-only invariant を壊さない)。
+  - revoke: 直接 `secret revoke` は **rule §5 準拠の新 revoke 経路** (`active`/`deprecated`/`pending` → `revoked` を許容、approval gate が安全弁) で status 遷移を commit。rotation.py.revoke() (rotation 専用 deprecated→revoked) は流用せず不変 (責務分離)。**この時点で material は残存しうる (DB commit と store delete の間で crash しても、revoked は durable に「未 purge」)**。続いて `material_reconciliation` が `store.delete()` を試み、成功時のみ `material_purged_at=now()` を set。失敗時は `purge_attempts++` + 失敗理由を audit に記録し DB revoked + material_purged_at NULL のまま (= 再試行 source of truth として残す)。material 操作は rotation.py の外 (status-only invariant を壊さない)。
   - **crash-safety**: DB revoked commit 後の crash / store delete 失敗いずれも、`status='revoked' AND material_purged_at IS NULL` を走査する `secret gc-orphans` (idempotent、定期 or 手動) が material を確実に purge し material_purged_at を set する。「revoked = secret-at-rest 削除済」の監査表示は **material_purged_at が non-NULL になって初めて真**とし、revoked かつ未 purge の乖離を可視化する。
   - `taskhub secret revoke` は破壊的 subcommand として approval gate を適用 (誤 revoke 前段防御)。
 - テスト指針:
   - `tests/deploy/test_compose_loopback_binding.py`: docker-compose の `127.0.0.1:5432/6379` explicit bind を assert (regression guard)。
-  - revoke: `deprecated->revoked` 遷移 + store.delete + `material_purged_at` set、active から直接 revoke は reject (既存遷移遵守)、再登録 (rollback) で新 version active。
+  - revoke: rule §5 許可遷移を test 固定 — `active->revoked` (直接 revoke、approval gate 経由) / `deprecated->revoked` / `pending->revoked` が成功し store.delete + `material_purged_at` set、`revoked->*` (terminal から再遷移) は reject。再登録 (rollback) で新 version active。
   - **crash-window test (finding-4)**: ① DB revoked commit 後・store.delete 前に crash を模擬 (store.delete を例外注入) → DB は revoked + `material_purged_at IS NULL` + `purge_attempts` 増加、material は store に残存。② `secret gc-orphans` を再実行 → material が purge され `material_purged_at` set (idempotent、2 回目は no-op)。③ `status='revoked' AND material_purged_at IS NULL` が reconciliation で全件検出されること。
   - restore preflight `verify_target_binding_consistency` が loopback bind で PASS する smoke。
 
 ## 却下案
 
 - (1) B (今 internal-only 化): restore orchestrator 大規模書換 + 実 host restore drill 必須で Phase 0 scope を大幅超過。過去 R2 で revert 済の実害地雷。VPS 本番化は D-1 で restore orchestrator 改修と共に行うのが正しい → 却下 (D-1 へ分離)。
-- (2) B (rotation.py に material 統合): status-only invariant 破壊 + DB tx と store の atomicity 境界跨ぎ + active→revoked 直行が既存遷移違反 → 却下。
+- (2) B (rotation.py に material 統合): status-only invariant 破壊 + DB tx と store の atomicity 境界跨ぎ + rotation 専用メソッド (deprecated→revoked) を直接 revoke へ流用すると責務混在 → 却下 (直接 revoke は rule §5 準拠の新経路で実装)。
 
 ## リスク
 
@@ -91,5 +91,5 @@ ADR Gate Criteria #8 (破壊的操作: host-portable reconciliation + secret rev
 1. **loopback bind**: 現状維持のため rollback 不要。誤った ports 撤回混入は `test_compose_loopback_binding.py` が CI で阻止。
 2. **revoke material 削除**: revoked は terminal で rollback 不能 → rollback = `SecretRegistrationService.register` で **再登録 (新 version active)**。
 3. 削除途中 crash (DB revoked / material 残存): `secret gc-orphans` reconciliation (`status='revoked' AND material_purged_at IS NULL` を idempotent purge) で収束、DB revoked 維持。
-4. material_purge_tracking migration の downgrade は `material_purged_at` / `purge_attempts` 列を additive 削除 (lossless)。
-5. 検証: restore preflight `verify_target_binding_consistency` が loopback で PASS、再登録した secret_ref の redeem 成功、crash-window test で reconciliation 収束。
+4. **material_purge_tracking migration の downgrade (finding-1 反映)**: 列削除は orphan 検出 source of truth を消すため **無条件 lossless にしない**。downgrade は `status='revoked' AND material_purged_at IS NULL` が 0 件であることを **preflight で要求** (未 purge の revoked が残る場合は fail-fast し `secret gc-orphans` 実行を促す)。0 件確認後にのみ `material_purged_at` / `purge_attempts` 列を削除。これにより crash-window 状態 (revoked + material 残存) を downgrade で取りこぼさない。
+5. 検証: restore preflight `verify_target_binding_consistency` が loopback で PASS、再登録した secret_ref の redeem 成功、crash-window test で reconciliation 収束、**downgrade preflight test (未 purge revoked が残る状態で downgrade を fail-fast、gc-orphans 後に downgrade 成功)**。
