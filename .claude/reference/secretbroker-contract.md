@@ -35,7 +35,7 @@ secret://sops/p0/tailscale-auth-key#v1
 secret://local/project/github-token#v1
 ```
 
-- `sops` = SOPS+age (P0 標準)、`local` = LocalSecretStore (OS keychain / 暗号化ファイル、ADR-00058、SOPS 移行は D-4)。
+- `sops` = SOPS+age (既存・後方互換 backend)、`local` = LocalSecretStore (OS keychain / 暗号化ファイル、ADR-00058)。**Phase 0 default = `local`、SOPS 移行は D-4**。
 - 例は placeholder。
 - 実 token / key は書かない。
 - URI は opaque reference。

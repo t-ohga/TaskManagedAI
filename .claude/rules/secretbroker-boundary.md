@@ -33,7 +33,7 @@ secret://sops/repo/github-app-private-key#v3
 secret://local/project/github-token#v1
 ```
 
-- `sops` backend: SOPS + age (P0 標準、DD-06)。`local` backend: LocalSecretStore (OS keychain / 暗号化ファイル、ADR-00058、local Mac first。SOPS への移行は D-4)。
+- `sops` backend: SOPS + age (既存・後方互換 backend、DD-06)。`local` backend: LocalSecretStore (OS keychain / 暗号化ファイル、ADR-00058)。**Phase 0 (local Mac first) の default は `local`、SOPS+age 移行は D-4**。
 - 実 token / key 値は文書に書かない。
 - `#<version>` は rotation のため必須。
 - Domain model は `secret_ref` を opaque reference として扱う。
