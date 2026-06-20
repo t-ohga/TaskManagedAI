@@ -394,6 +394,10 @@ class SecretRotationService:
             .values(status="active", updated_at=timestamp)
         )
         if cast("Any", new_result).rowcount != 1:
+            # Codex R4-F2: old は既に deprecated 化済。new promote が 0 行 (stale status /
+            # material_state != present) の場合、rollback しないと caller commit で「old deprecated /
+            # new 非 active = active 不在」になり atomic claim 違反。同 transaction を rollback する。
+            await self.session.rollback()
             return RotationDrillResult(
                 timestamp=timestamp_iso,
                 operation="promote",
@@ -404,7 +408,7 @@ class SecretRotationService:
                 transitions=(),
                 plan_or_log=(
                     "concurrent status change detected (new no longer pending); "
-                    "atomic claim failed"
+                    "atomic claim failed; rolled back old demotion"
                 ),
                 error_message="concurrent_new_status_change",
             )

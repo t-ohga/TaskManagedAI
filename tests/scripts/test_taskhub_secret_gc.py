@@ -45,6 +45,14 @@ def test_secret_gc_orphans_accepts_overrides() -> None:
     assert args.database_url == "postgresql+asyncpg://x/y"
 
 
+@pytest.mark.parametrize("bad", ["0", "-1", "-300", "abc", "1.5"])
+def test_secret_gc_orphans_rejects_non_positive_grace(bad: str) -> None:
+    """Codex R4-F1: 0 / 負値 / 非整数 grace は parse error (in-flight tombstone 防止)。"""
+    parser = _build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["secret-gc-orphans", "--tenant-id", "1", "--writing-grace-seconds", bad])
+
+
 def test_run_gc_orphans_is_importable() -> None:
     # helper が import 可能で callable (実行は DB 必要、S4 で e2e)。
     assert callable(run_gc_orphans)

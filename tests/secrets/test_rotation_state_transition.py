@@ -42,6 +42,7 @@ def _build_mock_session(*, default_rowcount: int = 1) -> tuple[MagicMock, AsyncM
     execute_result = MagicMock()
     execute_result.rowcount = default_rowcount
     session.execute = AsyncMock(return_value=execute_result)
+    session.rollback = AsyncMock(return_value=None)  # Codex R4-F2: promote 失敗時 rollback 検証用
     return session, session.scalar
 
 
@@ -308,6 +309,36 @@ async def test_promote_unverified_material_rejected() -> None:
     )
     assert result.success is False
     assert result.error_message == "invalid_new_material_state"
+
+
+@pytest.mark.asyncio
+async def test_promote_new_failure_rolls_back_old_demotion() -> None:
+    """Codex R4-F2 (HIGH): old demote 成功後に new promote が 0 行なら old demotion を rollback する。
+
+    rollback しないと caller commit で「old deprecated / new 非 active = active 不在」になり atomic
+    claim 違反。old rowcount=1 / new rowcount=0 で session.rollback が呼ばれることを固定する。
+    """
+    svc, session = _build_evaluator()
+    old_id = uuid4()
+    new_id = uuid4()
+    session.scalar = AsyncMock(
+        side_effect=[
+            _mock_secret_ref(secret_ref_id=old_id, status="active"),
+            _mock_secret_ref(secret_ref_id=new_id, status="pending", rotated_from_id=old_id),
+        ]
+    )
+    old_result = MagicMock()
+    old_result.rowcount = 1  # old active → deprecated 成功
+    new_result = MagicMock()
+    new_result.rowcount = 0  # new promote が stale で 0 行
+    session.execute = AsyncMock(side_effect=[old_result, new_result])
+
+    result = await svc.promote(
+        tenant_id=_TENANT_ID, old_secret_ref_id=old_id, new_secret_ref_id=new_id
+    )
+    assert result.success is False
+    assert result.error_message == "concurrent_new_status_change"
+    session.rollback.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -1359,6 +1359,21 @@ def _cmd_active_registry(args: argparse.Namespace) -> int:
     return 1  # skeleton mode
 
 
+def _positive_int(value: str) -> int:
+    """argparse type: 正の整数のみ許可する (Codex R4-F1)。
+
+    gc-orphans の writing-grace は 0 / 負値だと cutoff が現在以降になり、in-flight の pending+writing
+    registration/rotation まで tombstone する破壊的動作になるため、parse 時に fail-fast reject する。
+    """
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"must be a positive integer (> 0), got {parsed}")
+    return parsed
+
+
 def _cmd_secret_gc_orphans(args: argparse.Namespace) -> int:
     """`taskhub secret-gc-orphans --tenant-id N` (ADR-00059 batch-1 revoke backstop)。
 
@@ -1807,9 +1822,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub_secret_gc.add_argument(
         "--writing-grace-seconds",
-        type=int,
+        type=_positive_int,  # Codex R4-F1: 0/負値は cutoff が未来になり in-flight を tombstone する
         default=300,
-        help="grace before tombstoning create/rotate writing-orphans (default 300)",
+        help="grace (positive int) before tombstoning create/rotate writing-orphans (default 300)",
     )
     sub_secret_gc.set_defaults(func=_cmd_secret_gc_orphans)
 
