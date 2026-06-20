@@ -1099,6 +1099,137 @@ async def test_rotate_present_promotion_requires_old_active(
         await session.rollback()
 
 
+async def _insert_local_rotation_pair(
+    session: AsyncSession,
+    *,
+    old_id: UUID,
+    new_id: UUID,
+    old_status: str,
+    old_material_state: str,
+) -> None:
+    """local rotation pair (old + new pending+present rotated_from old) を insert する。"""
+    await session.execute(
+        text(
+            """
+            insert into secret_refs
+              (id, tenant_id, secret_uri, scope, name, version, status, runner_injectable,
+               allowed_consumers, allowed_operations, owner_actor_id, rotated_from_id, metadata,
+               deprecated_at, revoked_at, material_state)
+            values
+              (:old, 1, 'secret://local/project/rot-test#v1', 'project', 'rot-test', 'v1',
+                :old_status, false, '["api:provider_adapter"]'::jsonb, '["provider.call"]'::jsonb,
+                :actor, null, '{"rls_ready": true}'::jsonb,
+                case when :old_status in ('deprecated','revoked') then now() else null end,
+                case when :old_status = 'revoked' then now() else null end, :old_ms),
+              (:new, 1, 'secret://local/project/rot-test#v2', 'project', 'rot-test', 'v2',
+                'pending', false, '["api:provider_adapter"]'::jsonb, '["provider.call"]'::jsonb,
+                :actor, :old, '{"rls_ready": true}'::jsonb, null, null, 'present')
+            """
+        ),
+        {
+            "old": old_id,
+            "new": new_id,
+            "actor": TENANT_ONE_ACTOR_ID,
+            "old_status": old_status,
+            "old_ms": old_material_state,
+        },
+    )
+
+
+# gc-orphans の post-present rotation tombstone を mirror する SQL (Codex R9-F1)。
+_STALE_ROTATION_TOMBSTONE_SQL = text(
+    """
+    update secret_refs as nw
+       set status = 'revoked', material_state = 'purging', revoked_at = now()
+     where nw.tenant_id = :tenant_id
+       and nw.status = 'pending'
+       and nw.material_state = 'present'
+       and nw.rotated_from_id is not null
+       and nw.secret_uri like 'secret://local/%'
+       and not exists (
+         select 1 from secret_refs as od
+          where od.tenant_id = nw.tenant_id
+            and od.id = nw.rotated_from_id
+            and od.status = 'active'
+            and od.material_state = 'present'
+       )
+    """
+)
+
+
+@pytest.mark.asyncio
+async def test_gc_tombstones_post_present_rotation_orphan_when_old_not_active(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R9-F1: old が active+present でない pending+present rotation candidate を tombstone。
+
+    present 化 commit 後 promote 前に old が並行 revoke/demote されると new は永久 promote 不能な
+    pending+present orphan になる。gc-orphans が rotated_from の old が active+present でない local
+    pending+present row を revoked+purging へ tombstone することを SQL レベルで固定する。
+    """
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        # old は deprecated (post-present に demote された) → new は promote 不能 orphan。
+        await _insert_local_rotation_pair(
+            session,
+            old_id=SECRET_REF_ONE_ID,
+            new_id=SECRET_REF_TWO_ID,
+            old_status="deprecated",
+            old_material_state="present",
+        )
+        await session.commit()
+
+        res = await session.execute(_STALE_ROTATION_TOMBSTONE_SQL, {"tenant_id": 1})
+        assert res.rowcount == 1
+        row = await session.execute(
+            text("select status, material_state from secret_refs where id = :id"),
+            {"id": SECRET_REF_TWO_ID},
+        )
+        assert row.one() == ("revoked", "purging")
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_gc_preserves_rotation_candidate_when_old_active(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R9-F1 の対: old が active+present な legit rotation candidate は tombstone しない。"""
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        # old は active+present → new は legit な promote 待ち candidate (tombstone してはならない)。
+        await _insert_local_rotation_pair(
+            session,
+            old_id=SECRET_REF_ONE_ID,
+            new_id=SECRET_REF_TWO_ID,
+            old_status="active",
+            old_material_state="present",
+        )
+        await session.commit()
+
+        res = await session.execute(_STALE_ROTATION_TOMBSTONE_SQL, {"tenant_id": 1})
+        assert res.rowcount == 0
+        row = await session.execute(
+            text("select status, material_state from secret_refs where id = :id"),
+            {"id": SECRET_REF_TWO_ID},
+        )
+        assert row.one() == ("pending", "present")
+        await session.rollback()
+
+
 @pytest.mark.asyncio
 async def test_secret_refs_reject_allowed_consumers_root_object(
     session_factory: async_sessionmaker[AsyncSession],

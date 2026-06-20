@@ -25,8 +25,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import ColumnElement, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from backend.app.db.app_role import (
     assert_tenant_context,
@@ -93,8 +94,13 @@ class MaterialReconciliationService:
         report = ReconciliationReport()
         # (1) writing-orphan を revoked+purging へ tombstone する (DB owner を残す)。row を delete すると
         #     grace 超過後に resume した late writer が owner なし orphan material を生む (Codex F2)。
+        # (1.5) post-present orphan (Codex R9-F1): present 化後 promote 前に old が並行 revoke/demote され
+        #     て promote 不能になった pending+present rotation candidate を tombstone する。
         # (2) 続けて revoke-orphan (tombstone 済 + 通常 revoked) の material を idempotent に purge する。
         await self._tombstone_writing_orphans(tenant_id, writing_grace_seconds, report)
+        await self._tombstone_stale_rotation_candidates(
+            tenant_id, writing_grace_seconds, report
+        )
         await self._purge_revoke_orphans(tenant_id, report)
         return report
 
@@ -196,6 +202,81 @@ class MaterialReconciliationService:
                 await self.session.commit()
             else:
                 # 競合で状態が変わっていた (register/rotate 完了等) → no-op。
+                await self.session.rollback()
+
+    def _old_not_promotable(self, tenant_id: int) -> ColumnElement[bool]:
+        """rotated_from old が **active+present でない** ことを表す相関 NOT EXISTS (SecretRef に相関)。
+
+        promote_rotated は old=active を必須とするため、old が active+present でない pending+present
+        rotation candidate は **永久に promote 不能**。本式は select / update の両方で SecretRef (= new 行)
+        の ``rotated_from_id`` に相関する。
+        """
+        old_ref = aliased(SecretRef)
+        old_active = (
+            select(old_ref.id)
+            .where(
+                old_ref.tenant_id == tenant_id,
+                old_ref.id == SecretRef.rotated_from_id,
+                old_ref.status == "active",
+                old_ref.material_state == "present",
+            )
+            .exists()
+        )
+        return ~old_active
+
+    async def _tombstone_stale_rotation_candidates(
+        self, tenant_id: int, grace_seconds: int, report: ReconciliationReport
+    ) -> None:
+        # post-present orphan (Codex R9-F1): rotate() は new を pending+present で残し promote_rotated を
+        # 待つが、present 化 commit 後 promote 前に old が並行 revoke/rollback/promote されると、old が
+        # active+present でなくなり new は永久 promote 不能な pending+present orphan になる (R8-F1 の atomic
+        # claim は present 化時点しか塞げない READ COMMITTED の post-present window)。reservation/lease 方式
+        # (multi-host D-1) ではなく、既存 gc-orphans を延長して回収する Phase 0 invariant (ADR-00059 A-6e)。
+        # grace 経過後、rotated_from が active+present でない local pending+present row を revoked+purging へ
+        # tombstone する (in-flight rotate→promote と race しないよう grace + tombstone 時 NOT EXISTS re-check)。
+        cutoff = datetime.now(UTC) - timedelta(seconds=grace_seconds)
+        rows = await self.session.execute(
+            select(SecretRef.id).where(
+                SecretRef.tenant_id == tenant_id,
+                SecretRef.status == "pending",
+                SecretRef.material_state == "present",
+                SecretRef.rotated_from_id.is_not(None),
+                SecretRef.updated_at < cutoff,
+                SecretRef.secret_uri.like(f"{_LOCAL_URI_PREFIX}%"),
+                self._old_not_promotable(tenant_id),
+            )
+        )
+        ids = [row[0] for row in rows.all()]
+        for secret_ref_id in ids:
+            # tombstone 時に NOT EXISTS を再評価 (SELECT→UPDATE 間に promote_rotated が走った場合は old を
+            # active 化するため re-check が EXISTS となり 0 行 = legit promote を pre-empt しない)。
+            result = await self.session.execute(
+                update(SecretRef)
+                .where(
+                    SecretRef.tenant_id == tenant_id,
+                    SecretRef.id == secret_ref_id,
+                    SecretRef.status == "pending",
+                    SecretRef.material_state == "present",
+                    SecretRef.rotated_from_id.is_not(None),
+                    self._old_not_promotable(tenant_id),
+                )
+                .values(
+                    status="revoked",
+                    material_state="purging",
+                    revoked_at=datetime.now(UTC),
+                )
+            )
+            if cast("Any", result).rowcount == 1:
+                await self._audit(
+                    tenant_id=tenant_id,
+                    event_type="secret_material_orphan_tombstoned",
+                    secret_ref_id=secret_ref_id,
+                    reason="gc_orphans_stale_rotation_tombstoned",
+                )
+                report.rolled_back.append(str(secret_ref_id))
+                await self.session.commit()
+            else:
+                # 競合で promote 完了 or 状態変化 → no-op。
                 await self.session.rollback()
 
 
