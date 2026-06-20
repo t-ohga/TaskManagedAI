@@ -8,9 +8,13 @@ authors:
 related_sprints:
   - "SP-001-5_host_portable_amendment"
   - "PLAN-10 (大元計画 Phase 0)"
-supersedes: null
+supersedes: "ADR-00006 (partial amendment: secret_ref URI を backend=sops|local へ拡張 + storage backend に local 追加。atomic claim / capability token / raw 非保存 / OperationContext fingerprint の中核 invariant は不変・継承)"
 superseded_by: null
 ---
+
+> **正本更新 (supersede scope)**: 本 ADR は ADR-00006 (秘密管理方式) の **secret_ref URI format と secret storage backend の固定** を partial に amend する (中核 invariant は継承)。既存設計コーパスへの影響:
+> - **active harness 正本 (本 ADR で同期済、5+source)**: `.claude/rules/secretbroker-boundary.md §2/§4` / `.claude/reference/secretbroker-contract.md §2/§4/§13` / `.claude/rules/core.md` / `.claude/reference/testing.md` / `.claude/agents/taskmanagedai/{code-reviewer,security-specialist}.md` / `docs/基本設計/06_秘密管理設計.md (DD-06)` を backend=`sops|local` (Phase 0 default=`local`、SOPS=D-4) へ更新済。
+> - **historical/design 正本 (本 ADR が supersede、個別編集不要)**: PRD-00 / DD-00 / DD-01 / DD-02 / DD-05 / ADR-00006 / ADR-00036 / SP-000 / 計画(仮) 等が示す `secret://sops/<scope>/<name>#<version>` は **`sops` backend の有効な例**として残る (sops は引き続き有効な backend)。「P0 標準は SOPS のみ」を排他的に読む箇所は本 ADR の backend=`sops|local` 決定が優先する。SECRET_URI_PATTERN を runtime の唯一の source of truth とする。
 
 ADR Gate Criteria #6 (Secrets 管理方式) + #2 (DB schema: secret_uri CHECK 拡張 + 5+source 整合 + migration 両方向) に該当。大元計画 (PLAN-10) Phase 0 の中核。実行エンジン = CLI 主 (claude / codex をサブスク認証で headless subprocess 実行) という確定方針に対し、CLI サブスク credential をどう供給するか、raw secret 非保存境界を破らずに正式決定する。**user 確認ゲート: 案C hybrid / host worker / keyring+fallback を user 承認済 (2026-06-20)**。
 

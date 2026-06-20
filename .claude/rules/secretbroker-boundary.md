@@ -71,6 +71,9 @@ DB 保存可:
 - `created_at`
 - `deprecated_at`
 - `revoked_at`
+- `material_state` (non-secret lifecycle: `writing`/`present`/`purging`/`purged`、ADR-00058/00059 crash-safe source of truth)
+- `material_purged_at` (non-secret: revoke 後 material purge 完了時刻、NULL=未 purge)
+- `purge_attempts` (non-secret: purge 再試行回数、reconciliation)
 - non-secret metadata
 
 DB 保存禁止:

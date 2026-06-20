@@ -11,8 +11,10 @@ related_sprints:
   - "SP-002_core_data_model"
   - "SP-004_agent_runtime"
 supersedes: null
-superseded_by: null
+superseded_by: "ADR-00058 (partial: secret_ref URI を backend=sops|local へ拡張 + storage backend に local 追加、Phase 0 default=local。atomic claim / capability token / raw 非保存 / OperationContext fingerprint の中核 invariant は本 ADR から継承・不変)"
 ---
+
+> **2026-06-20 partial amendment (ADR-00058)**: 本 ADR が固定した `secret_ref` URI `secret://sops/<scope>/<name>#<version>` と「P0 標準 = SOPS+age」は、ADR-00058 で **backend=`sops|local`** へ additive 拡張された (Phase 0 local Mac first の default=`local`、SOPS+age 移行は後フェーズ D-4)。`sops` backend は引き続き有効。本 ADR の atomic claim redeem / capability token / raw 非保存 / OperationContext fingerprint の中核 invariant は ADR-00058 でも不変・継承。以下本文中の `secret://sops/...` は `sops` backend の例として読む。
 
 最終更新: 2026-05-09 (Sprint 4 着手前 ADR Gate で accepted 化、SP-002 で secret_refs/secret_capability_tokens schema 実装済、SP-004 で SecretBroker issue/redeem 本実装の前提)
 
