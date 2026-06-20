@@ -228,6 +228,31 @@ R2-F2/R3-F2 で導入した「purged 行も全件走査する backstop delete」
   invariant を absence 検証不能時に偽証しない。DB-gated regression test 追加 (purged 行 + delete 失敗 →
   purging+NULL+purge_attempts++ + purge_failed 報告)。
 
+### A-6g. Codex adversarial R11 findings adopt (1 件 CRITICAL、LocalSecretStore backend drift fail-closed)
+
+R10-F1 の撤回ロジックより手前で false-purged が再発する根本経路を封鎖 (CRITICAL×1、R3 以来初の CRITICAL):
+
+- **R11-F1 (CRITICAL)**: `LocalSecretStore` の物理 backend (keyring/file) は `_detect_keyring()` の
+  **runtime 検出**で決まり、material に束縛されていなかった。`TASKHUB_DISABLE_KEYRING` / keyring import
+  不在 / probe 例外で silent に file mode へ fallback するため、keyring mode で登録した material を後続の
+  revoke/gc が file mode で実行すると `_file_delete()` が対象不在で **no-op 成功** → caller が
+  `material_state='purged'` / `material_purged_at` を set できる (逆方向も同様)。R1/R2 の「keyring delete
+  failure を伝播」対策を、**delete が成功扱いになることで迂回**する別経路で、material が片方の store に
+  残ったまま inventory / downgrade preflight / gc report が clean を示す false-purged になる。単一 host
+  でも env / Keychain availability の変化で起きるため D-1 へ defer 不可、P0 で封鎖。
+  - **設計判断**: R11 提示の 2 案 — (A) secret_ref に per-material backend を永続化 (新 column = migration /
+    service 横断 / store signature 変更)、(B) deployment-wide に backend を固定し drift 時 fail-closed —
+    のうち **(B) を採用**。Phase 0 は単一 deployment (local Mac first) であり、(B) は LocalSecretStore に
+    自己完結 (schema / service 非変更) で低リスク。実装: `base_dir/backend.marker` (non-secret) に初回
+    store で物理 backend を pin し、store/resolve/delete の全入口で runtime backend と marker の drift を
+    検出して `LocalSecretStoreError` を上げる (fail-closed)。drift 時 delete は raise → caller (revoke の
+    `_best_effort_purge` / gc の `_purge_revoke_orphans`) が purged 化せず再試行 (R10-F1 撤回と連動)。
+  - test: keyring↔file drift で delete/resolve が fail-closed (material は元 backend に残存) + marker 記録 +
+    consistent reopen 不破壊。
+  - 残リスク: 正当な backend 移行 (Mac→Linux 等) は marker drift で全 IO fail-closed になる → operator が
+    material を新 backend へ移行し marker 更新する運用手順が必要 (silent false-purge より安全側、Phase 0
+    accepted、runbook は S3/S4)。
+
 ### A-6. 残リスク (Phase 0 accepted)
 
 R2-F2 + R3-F1 で late-writer 永久 orphan + 実行経路欠如は解消。gc 実行間隔の間は再作成 material が一時的に

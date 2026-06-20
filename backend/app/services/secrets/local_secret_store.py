@@ -64,6 +64,13 @@ _PROBE_ACCOUNT: Final = "probe"
 _SECURE_FILE_MODE: Final = 0o600
 _SECURE_DIR_MODE: Final = 0o700
 
+# deployment の物理 backend (keyring|file) を pin する non-secret marker (Codex R11-F1)。
+# runtime 検出 backend が marker と drift したら fail-closed (別 backend の no-op 削除で false-purged
+# になるのを防ぐ)。base_dir 直下に置き、両 mode で共有する。
+_BACKEND_MARKER_NAME: Final = "backend.marker"
+_BACKEND_KEYRING: Final = "keyring"
+_BACKEND_FILE: Final = "file"
+
 
 class LocalSecretStoreError(Exception):
     """LocalSecretStore の一般エラー (raw material を message に含めない)。"""
@@ -103,6 +110,8 @@ class LocalSecretStore:
 
     def store(self, tenant_id: int, secret_ref_id: UUID, raw: bytes) -> None:
         """material を idempotent に書き込む (既存は上書き)。raw は bytes。"""
+        self._assert_backend_consistent()
+        self._record_backend()
         if self._use_keyring:
             self._keyring_set(tenant_id, secret_ref_id, raw)
             return
@@ -110,12 +119,19 @@ class LocalSecretStore:
 
     def resolve(self, tenant_id: int, secret_ref_id: UUID) -> bytes:
         """material を返す。不在は LocalSecretMaterialNotFound。broker 内部専用。"""
+        self._assert_backend_consistent()
         if self._use_keyring:
             return self._keyring_get(tenant_id, secret_ref_id)
         return self._file_resolve(tenant_id, secret_ref_id)
 
     def delete(self, tenant_id: int, secret_ref_id: UUID) -> None:
-        """material を idempotent に削除する (不在でも例外を出さない)。"""
+        """material を idempotent に削除する (不在でも例外を出さない)。
+
+        backend drift 時は fail-closed (Codex R11-F1): 登録時と別 backend で実行すると、対象が別 store に
+        残ったまま no-op 成功し caller が material_purged_at を偽証する。drift を検出したら例外を上げ、
+        caller (revoke/gc) が purged 化せず再試行できるようにする。
+        """
+        self._assert_backend_consistent()
         if self._use_keyring:
             self._keyring_delete(tenant_id, secret_ref_id)
             return
@@ -305,6 +321,44 @@ class LocalSecretStore:
             raise LocalSecretStorePermissionError(
                 f"insecure permissions {oct(mode)} on {path.name} (expected 0o600)"
             )
+
+    # ---- backend custody (drift fail-closed、Codex R11-F1) ----
+
+    def _current_backend(self) -> str:
+        return _BACKEND_KEYRING if self._use_keyring else _BACKEND_FILE
+
+    def _backend_marker_path(self) -> Path:
+        return self._base_dir / _BACKEND_MARKER_NAME
+
+    def _assert_backend_consistent(self) -> None:
+        """runtime 検出 backend が記録済 marker と一致するか確認する (不一致は fail-closed)。
+
+        material は keyring か file の一方にしか無いが、backend は runtime 検出で silent fallback する
+        (TASKHUB_DISABLE_KEYRING / keyring import 不在 / probe 例外)。登録時と別 backend で delete/resolve
+        すると対象が別 store に残ったまま no-op になり、delete が成功扱い → material_purged_at 偽証
+        (false-purged、Codex R11-F1)。marker と現在 backend の drift を全 IO の入口で検出し例外化する。
+        marker 未記録 (初回 store 前 / 何も保存していない) は drift 判定せず通す。
+        """
+        marker = self._backend_marker_path()
+        if marker.is_symlink():
+            raise LocalSecretStorePermissionError("backend marker must not be a symlink")
+        if not marker.is_file():
+            return
+        recorded = marker.read_text(encoding="ascii").strip()
+        current = self._current_backend()
+        if recorded != current:
+            raise LocalSecretStoreError(
+                f"secret material backend drift detected "
+                f"(recorded={recorded!r}, current={current!r}); refusing to operate to avoid "
+                "false-purged material. restore the original backend or migrate material first"
+            )
+
+    def _record_backend(self) -> None:
+        """初回 store で deployment の物理 backend を marker に pin する (既存なら no-op)。"""
+        marker = self._backend_marker_path()
+        if marker.is_file():
+            return
+        self._write_secure_file(marker, self._current_backend().encode("ascii"))
 
     # ---- keyring detection ----
 

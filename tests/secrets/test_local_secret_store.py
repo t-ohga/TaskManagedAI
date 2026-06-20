@@ -222,6 +222,87 @@ def test_keyring_password_delete_error_then_gone_is_idempotent(
     store.delete(1, uuid4())  # 例外なし (再 get で不在確認)
 
 
+class _FakeKeyringStore:
+    """dict-backed keyring (store/get/delete 可能)。backend drift test 用。"""
+
+    def __init__(self) -> None:
+        self._d: dict[tuple[str, str], str] = {}
+
+    def set_password(self, service: str, account: str, value: str) -> None:
+        self._d[(service, account)] = value
+
+    def get_password(self, service: str, account: str) -> str | None:
+        return self._d.get((service, account))
+
+    def delete_password(self, service: str, account: str) -> None:
+        self._d.pop((service, account), None)
+
+
+def test_backend_marker_recorded_on_first_store(tmp_path: Path) -> None:
+    """Codex R11-F1: 初回 store で deployment backend が marker に pin される。"""
+    store = _store(tmp_path)
+    store.store(1, uuid4(), _RAW)
+    marker = tmp_path / "backend.marker"
+    assert marker.is_file()
+    assert marker.read_text(encoding="ascii").strip() == "file"
+    assert oct(marker.stat().st_mode & 0o777) == "0o600"
+
+
+def test_backend_drift_keyring_to_file_delete_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex R11-F1 (CRITICAL): keyring 登録 material を file mode で delete すると fail-closed。
+
+    silent fallback (keyring locked/disabled) で file mode に落ちると、_file_delete が対象不在で
+    no-op 成功し caller が material_purged_at を偽証する (false-purged)。drift を検出し例外化する。
+    """
+    import backend.app.services.secrets.local_secret_store as lss
+
+    tid, sid = 1, uuid4()
+    monkeypatch.setattr(lss, "_keyring", _FakeKeyringStore())
+    kstore = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True)
+    kstore.store(tid, sid, _RAW)  # marker=keyring、material は keyring に存在
+
+    fstore = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=False)
+    with pytest.raises(lss.LocalSecretStoreError):
+        fstore.delete(tid, sid)
+    # material は keyring に残存 = false-purged になっていない。
+    assert kstore.resolve(tid, sid) == _RAW
+
+
+def test_backend_drift_file_to_keyring_delete_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex R11-F1: file 登録 material を keyring mode で delete すると fail-closed。"""
+    import backend.app.services.secrets.local_secret_store as lss
+
+    tid, sid = 1, uuid4()
+    fstore = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=False)
+    fstore.store(tid, sid, _RAW)  # marker=file、material は file に存在
+
+    monkeypatch.setattr(lss, "_keyring", _FakeKeyringStore())
+    kstore = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True)
+    with pytest.raises(lss.LocalSecretStoreError):
+        kstore.delete(tid, sid)
+    # material は file に残存。
+    assert fstore.resolve(tid, sid) == _RAW
+
+
+def test_backend_drift_resolve_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex R11-F1: drift 時の resolve は NotFound でなく drift error (fail-closed)。"""
+    import backend.app.services.secrets.local_secret_store as lss
+
+    tid, sid = 1, uuid4()
+    monkeypatch.setattr(lss, "_keyring", _FakeKeyringStore())
+    lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True).store(tid, sid, _RAW)
+
+    fstore = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=False)
+    with pytest.raises(lss.LocalSecretStoreError):
+        fstore.resolve(tid, sid)
+
+
 def test_symlink_material_file_rejected(tmp_path: Path) -> None:
     store = _store(tmp_path)
     tid, sid = 1, uuid4()
