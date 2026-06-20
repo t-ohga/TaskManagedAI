@@ -630,6 +630,10 @@ class SecretRotationService:
             .values(status="active", deprecated_at=None, updated_at=timestamp)
         )
         if cast("Any", deprecated_restore).rowcount != 1:
+            # Codex R5-F2: current active は既に demote 済。restore target が concurrent revoke 等で
+            # 0 行になった場合、rollback しないと caller commit で「active 不在」になり atomic claim 違反
+            # (DB unique index は「高々 1 active」しか守らず「少なくとも 1 active」は守らない)。
+            await self.session.rollback()
             return RotationDrillResult(
                 timestamp=timestamp_iso,
                 operation="rollback",
@@ -640,7 +644,7 @@ class SecretRotationService:
                 transitions=(),
                 plan_or_log=(
                     "rollback target status changed concurrently (revoked or other); "
-                    "atomic claim failed"
+                    "atomic claim failed; rolled back current active demotion"
                 ),
                 error_message="concurrent_rollback_target_change",
             )

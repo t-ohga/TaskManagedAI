@@ -485,6 +485,38 @@ async def test_rollback_revoked_target_rejected() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rollback_restore_failure_rolls_back_active_demotion() -> None:
+    """Codex R5-F2 (HIGH): active demote 成功後に restore target が 0 行なら active demotion を rollback。
+
+    rollback しないと caller commit で「active 不在」になり atomic claim 違反 (DB unique index は
+    高々 1 active しか守らない)。active_demote=1 / deprecated_restore=0 で session.rollback を固定する。
+    """
+    svc, session = _build_evaluator()
+    deprecated_id = uuid4()
+    active_id = uuid4()
+    session.scalar = AsyncMock(
+        side_effect=[
+            _mock_secret_ref(secret_ref_id=deprecated_id, status="deprecated"),
+            _mock_secret_ref(secret_ref_id=active_id, status="active"),
+        ]
+    )
+    active_demote = MagicMock()
+    active_demote.rowcount = 1  # current active → deprecated 成功
+    deprecated_restore = MagicMock()
+    deprecated_restore.rowcount = 0  # restore target が concurrent 変更で 0 行
+    session.execute = AsyncMock(side_effect=[active_demote, deprecated_restore])
+
+    result = await svc.rollback(
+        tenant_id=_TENANT_ID,
+        deprecated_secret_ref_id=deprecated_id,
+        currently_active_secret_ref_id=active_id,
+    )
+    assert result.success is False
+    assert result.error_message == "concurrent_rollback_target_change"
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_dry_run_promote_plan() -> None:
     """dry_run mode: plan output、実 DB update なし."""
 

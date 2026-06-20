@@ -82,6 +82,13 @@ class MaterialReconciliationService:
         tenant_id: int,
         writing_grace_seconds: int = _DEFAULT_WRITING_GRACE_SECONDS,
     ) -> ReconciliationReport:
+        # service 入口で正の整数を強制 (Codex R5-F1): CLI validator だけでは run_gc_orphans() や本 method を
+        # 直接呼ぶ経路を保護できない。0/負値は cutoff が現在以降になり in-flight の pending+writing を
+        # tombstone する破壊的動作のため fail-closed reject。bool は int subclass だが grace としては不正。
+        if isinstance(writing_grace_seconds, bool) or not isinstance(writing_grace_seconds, int):
+            raise ValueError("writing_grace_seconds must be an int")
+        if writing_grace_seconds <= 0:
+            raise ValueError("writing_grace_seconds must be a positive int (> 0)")
         await self._ensure_tenant_context(tenant_id)
         report = ReconciliationReport()
         # (1) writing-orphan を revoked+purging へ tombstone する (DB owner を残す)。row を delete すると
