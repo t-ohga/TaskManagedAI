@@ -39,7 +39,7 @@ DoD:
 | `02_データモデル.md` | tenant / project invariant、actors、AgentRun、SecretBroker |
 | `03_AIオーケストレーション設計.md` | AgentRun 16 状態、ContextSnapshot 10 カラム |
 | `04_セキュリティ_権限_監査設計.md` | Provider Matrix、policy、approval、Hard Gates |
-| `06_秘密管理設計.md` | SOPS + age、SecretBroker、atomic claim |
+| `06_秘密管理設計.md` | secret backend (local/sops、ADR-00058)、SecretBroker、atomic claim |
 
 DoD:
 
