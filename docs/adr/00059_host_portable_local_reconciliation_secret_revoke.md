@@ -1,8 +1,9 @@
 ---
 id: "ADR-00059"
 title: "SP-001-5 host-portable の local 決着 (DB/Redis loopback bind 維持) + secret revoke material 物理削除の破壊的操作"
-status: "proposed"
+status: "accepted"
 date: "2026-06-20"
+accepted_at: "2026-06-20"
 authors:
   - "Claude (autonomous, user 承認 scope: 大元計画 Phase 0 + ADR Gate 8 決定 user 確認済)"
 related_sprints:
@@ -16,7 +17,7 @@ ADR Gate Criteria #8 (破壊的操作: host-portable reconciliation + secret rev
 
 最終更新: 2026-06-20
 
-> **status: proposed**。Phase 0 詳細設計 workflow で実コード照合の結果、SP-001-5 の tension は「実装変更でなく正本化で解消」と判明 (現状すでに loopback bind が正しい契約、ports 撤回は過去 adversarial R1 で実害・R2 で revert 済の地雷)。実装着手直前に codex-plan-review R1 minimum + 採否判定 を経て accepted へ昇格 (sprint-pack-adr-gate §12.4)。
+> **status: accepted (2026-06-20)**。codex adversarial plan-review R1-R20 (ADR-00058 と共通 branch、計 33 HIGH + 1 MEDIUM 全 adopt、R20 approve / SHIP-READY) + §12.4 gate + user 承認 (loopback 維持 / revoke material 削除) をもって accepted 昇格。Phase 0 詳細設計 workflow で実コード照合の結果、SP-001-5 の tension は「実装変更でなく正本化で解消」と判明 (現状すでに loopback bind が正しい契約、ports 撤回は過去 adversarial R1 で実害・R2 で revert 済の地雷)。実装着手直前に codex-plan-review R1 minimum + 採否判定 を経て accepted へ昇格 (sprint-pack-adr-gate §12.4)。
 
 ## 背景
 
