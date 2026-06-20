@@ -45,6 +45,21 @@ class CompositeSecretResolver:
             raise CompositeResolverError("secret_uri rejected (unknown format)") from exc
 
         if backend == "local":
+            # fail-closed material gate (Codex R6-F2): 本 resolver は SecretMaterialResolver として
+            # broker を経由しない直接利用 (RepoProxy / webhook) からも呼ばれる。broker の issue/redeem
+            # gate を常に通るとは限らないため、resolver boundary でも status active/deprecated かつ
+            # material_state='present' を必須化する (writing/purging/purged の未検証・部分書込 material を
+            # resolve させない、broker gate の resolver 版)。
+            status = getattr(secret_ref, "status", None)
+            material_state = getattr(secret_ref, "material_state", None)
+            if status not in ("active", "deprecated"):
+                raise CompositeResolverError(
+                    f"local secret_ref not resolvable for status {status!r}"
+                )
+            if material_state != "present":
+                raise CompositeResolverError(
+                    f"local material_state not present (got {material_state!r})"
+                )
             # LocalSecretStore は sync IO。event loop を塞がないよう to_thread で実行。
             return await asyncio.to_thread(
                 self._local_store.resolve,

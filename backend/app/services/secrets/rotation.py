@@ -594,6 +594,57 @@ class SecretRotationService:
                 error_message="invalid_current_status",
             )
 
+        # Codex R6-F1: rollback も promote と同じ identity + material_state gate を要求する。
+        # 検証なしだと無関係 id ペアで本来の active を deprecated 化 + 無関係 secret を active 化でき、
+        # deprecated+writing の未検証 material も active 化できる (promote の false-present 防止を迂回)。
+        # 以下 3 precheck は UPDATE 前のため失敗時 rollback 不要 (まだ何も変更していない)。
+        if active_ref.scope != deprecated_ref.scope or active_ref.name != deprecated_ref.name:
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="rollback",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(currently_active_secret_ref_id),
+                new_secret_ref_id=str(deprecated_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    f"current/target scope/name mismatch: "
+                    f"current={active_ref.scope}/{active_ref.name} "
+                    f"target={deprecated_ref.scope}/{deprecated_ref.name}"
+                ),
+                error_message="scope_name_mismatch",
+            )
+        if active_ref.rotated_from_id != deprecated_secret_ref_id:
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="rollback",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(currently_active_secret_ref_id),
+                new_secret_ref_id=str(deprecated_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    f"current active.rotated_from_id must point to rollback target: "
+                    f"got {active_ref.rotated_from_id}, expected {deprecated_secret_ref_id}"
+                ),
+                error_message="rotated_from_id_mismatch",
+            )
+        if getattr(deprecated_ref, "material_state", "present") != "present":
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="rollback",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(currently_active_secret_ref_id),
+                new_secret_ref_id=str(deprecated_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    f"rollback target must have material_state=present, got "
+                    f"{getattr(deprecated_ref, 'material_state', None)}"
+                ),
+                error_message="invalid_target_material_state",
+            )
+
         # F-PR48-003 + F-PR48-004 P1 atomic claim: expected status WHERE + row count.
         # 旧 active を deprecated に降格 (must currently be active)
         active_demote = await self.session.execute(
@@ -626,6 +677,7 @@ class SecretRotationService:
                 SecretRef.tenant_id == tenant_id,
                 SecretRef.id == deprecated_secret_ref_id,
                 SecretRef.status == "deprecated",  # revoked からの復元防止
+                SecretRef.material_state == "present",  # Codex R6-F1: 未検証 material を active 化しない
             )
             .values(status="active", deprecated_at=None, updated_at=timestamp)
         )

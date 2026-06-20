@@ -18,8 +18,21 @@ from backend.app.services.secrets.resolver_dispatch import (
 )
 
 
-def _secret_ref(uri: str, tenant_id: int = 1, secret_ref_id=None):  # noqa: ANN001, ANN202
-    return SimpleNamespace(secret_uri=uri, tenant_id=tenant_id, id=secret_ref_id or uuid4())
+def _secret_ref(  # noqa: ANN202
+    uri: str,
+    tenant_id: int = 1,
+    secret_ref_id=None,  # noqa: ANN001
+    *,
+    status: str = "active",
+    material_state: str = "present",
+):
+    return SimpleNamespace(
+        secret_uri=uri,
+        tenant_id=tenant_id,
+        id=secret_ref_id or uuid4(),
+        status=status,
+        material_state=material_state,
+    )
 
 
 class _FakeSopsResolver:
@@ -64,3 +77,56 @@ async def test_unknown_backend_fail_closed(tmp_path: Path) -> None:
     ref = _secret_ref("secret://vault/project/foo#v1")
     with pytest.raises(CompositeResolverError):
         await resolver.resolve_secret_material(ref)
+
+
+@pytest.mark.parametrize("material_state", ["writing", "purging", "purged"])
+async def test_local_non_present_material_fail_closed(
+    tmp_path: Path, material_state: str
+) -> None:
+    """Codex R6-F2: local の material_state が present 以外なら fail-closed (broker 非経由でも)。"""
+    store = LocalSecretStore(base_dir=tmp_path, use_keyring=False)
+    sid = uuid4()
+    store.store(1, sid, b"unverified-material")
+    resolver = CompositeSecretResolver(local_store=store)
+    ref = _secret_ref(
+        "secret://local/project/openai#v1",
+        tenant_id=1,
+        secret_ref_id=sid,
+        material_state=material_state,
+    )
+    with pytest.raises(CompositeResolverError):
+        await resolver.resolve_secret_material(ref)
+
+
+@pytest.mark.parametrize("status", ["pending", "revoked"])
+async def test_local_non_resolvable_status_fail_closed(
+    tmp_path: Path, status: str
+) -> None:
+    """Codex R6-F2: local の status が active/deprecated 以外なら fail-closed。"""
+    store = LocalSecretStore(base_dir=tmp_path, use_keyring=False)
+    sid = uuid4()
+    store.store(1, sid, b"material")
+    resolver = CompositeSecretResolver(local_store=store)
+    ref = _secret_ref(
+        "secret://local/project/openai#v1",
+        tenant_id=1,
+        secret_ref_id=sid,
+        status=status,
+    )
+    with pytest.raises(CompositeResolverError):
+        await resolver.resolve_secret_material(ref)
+
+
+async def test_local_deprecated_present_resolvable(tmp_path: Path) -> None:
+    """deprecated + present は rotation read のため resolve 可 (status gate の境界)。"""
+    store = LocalSecretStore(base_dir=tmp_path, use_keyring=False)
+    sid = uuid4()
+    store.store(1, sid, b"old-version-material")
+    resolver = CompositeSecretResolver(local_store=store)
+    ref = _secret_ref(
+        "secret://local/project/openai#v1",
+        tenant_id=1,
+        secret_ref_id=sid,
+        status="deprecated",
+    )
+    assert await resolver.resolve_secret_material(ref) == b"old-version-material"
