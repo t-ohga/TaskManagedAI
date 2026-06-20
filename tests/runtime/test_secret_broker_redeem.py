@@ -164,10 +164,12 @@ def _secret_ref(
     *,
     name: str = "provider-openai",
     version: str = "v1",
+    material_state: str = "present",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=SECRET_REF_ID,
         status=status,
+        material_state=material_state,
         scope="project",
         name=name,
         version=version,
@@ -442,7 +444,8 @@ async def _setup_integration_secret_ref(session: AsyncSession) -> None:
               allowed_consumers,
               allowed_operations,
               owner_actor_id,
-              metadata
+              metadata,
+              material_state
             )
             values (
               :secret_ref_id,
@@ -456,7 +459,8 @@ async def _setup_integration_secret_ref(session: AsyncSession) -> None:
               cast(:allowed_consumers as jsonb),
               cast(:allowed_operations as jsonb),
               :actor_id,
-              '{"rls_ready": true}'::jsonb
+              '{"rls_ready": true}'::jsonb,
+              'present'
             )
             """
         ),

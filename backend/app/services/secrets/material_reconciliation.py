@@ -1,0 +1,188 @@
+"""MaterialReconciliationService: broker-owned (local) material の durable orphan reconciliation。
+
+``secret gc-orphans`` の本体 (idempotent、定期 or 手動)。2 種の orphan を収束させる:
+
+1. **revoke orphan** (``status='revoked' AND material_purged_at IS NULL`` の local row): revoke は DB
+   commit と store delete の境界跨ぎのため、DB revoked 後に crash すると material が store に残存する。
+   本 reconciliation が ``LocalSecretStore.delete()`` を idempotent に試み、成功時のみ
+   ``material_state='purged'`` + ``material_purged_at=now()`` を set する。「revoked=削除済」表示は
+   material_purged_at non-NULL で初めて真 (ADR-00059)。
+
+2. **create/rotate orphan** (``material_state='writing'`` の local row): register/rotate は pending+
+   writing row を commit してから store 書込→present 昇格する。途中 crash すると pending+writing row が
+   残る。grace period 経過後 (in-flight register と race しない) に store の partial material を削除し
+   pending+writing row を rollback (破棄) する (ADR-00058 finding-2)。
+
+material 操作は ``rotation.py`` の外 (status-only invariant を壊さない)。本 service は broker-owned
+**local** backend のみ対象 (sops material は外部管理)。
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from typing import Any, cast
+from uuid import UUID
+
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.db.app_role import (
+    assert_tenant_context,
+    get_tenant_context,
+    set_tenant_context,
+)
+from backend.app.db.models.secret_ref import SecretRef
+from backend.app.repositories.audit_event import AuditEventRepository
+from backend.app.services.secrets.local_secret_store import LocalSecretStore
+
+logger = logging.getLogger(__name__)
+
+_LOCAL_URI_PREFIX = "secret://local/"
+_DEFAULT_WRITING_GRACE_SECONDS = 300
+
+
+@dataclass
+class ReconciliationReport:
+    purged: list[str] = field(default_factory=list)
+    purge_failed: list[str] = field(default_factory=list)
+    rolled_back: list[str] = field(default_factory=list)
+
+    @property
+    def total_actions(self) -> int:
+        return len(self.purged) + len(self.purge_failed) + len(self.rolled_back)
+
+
+class MaterialReconciliationService:
+    """local material の revoke-orphan purge + create/rotate-orphan rollback (idempotent)。"""
+
+    def __init__(self, session: AsyncSession, store: LocalSecretStore) -> None:
+        self.session = session
+        self.store = store
+
+    async def _ensure_tenant_context(self, tenant_id: int) -> None:
+        current = await get_tenant_context(self.session)
+        if current is None:
+            await set_tenant_context(self.session, tenant_id)
+            return
+        await assert_tenant_context(self.session, tenant_id)
+
+    async def _audit(self, *, tenant_id: int, event_type: str, secret_ref_id: UUID, reason: str) -> None:
+        repo = AuditEventRepository(self.session)
+        await repo.append(
+            tenant_id=tenant_id,
+            event_type=event_type,
+            payload={"secret_ref_id": str(secret_ref_id), "reason_code": reason},
+        )
+
+    async def gc_orphans(
+        self,
+        *,
+        tenant_id: int,
+        writing_grace_seconds: int = _DEFAULT_WRITING_GRACE_SECONDS,
+    ) -> ReconciliationReport:
+        await self._ensure_tenant_context(tenant_id)
+        report = ReconciliationReport()
+        await self._purge_revoke_orphans(tenant_id, report)
+        await self._rollback_writing_orphans(tenant_id, writing_grace_seconds, report)
+        return report
+
+    async def _purge_revoke_orphans(self, tenant_id: int, report: ReconciliationReport) -> None:
+        rows = await self.session.execute(
+            select(SecretRef.id).where(
+                SecretRef.tenant_id == tenant_id,
+                SecretRef.status == "revoked",
+                SecretRef.material_purged_at.is_(None),
+                SecretRef.secret_uri.like(f"{_LOCAL_URI_PREFIX}%"),
+            )
+        )
+        ids = [row[0] for row in rows.all()]
+        for secret_ref_id in ids:
+            try:
+                self.store.delete(tenant_id, secret_ref_id)
+            except Exception:  # noqa: BLE001 - 失敗は durable に記録し次回再試行
+                logger.warning(
+                    "gc-orphans purge failed",
+                    extra={"tenant_id": tenant_id, "secret_ref_id": str(secret_ref_id)},
+                )
+                await self.session.execute(
+                    update(SecretRef)
+                    .where(SecretRef.tenant_id == tenant_id, SecretRef.id == secret_ref_id)
+                    .values(purge_attempts=SecretRef.purge_attempts + 1)
+                )
+                await self.session.commit()
+                report.purge_failed.append(str(secret_ref_id))
+                continue
+            result = await self.session.execute(
+                update(SecretRef)
+                .where(
+                    SecretRef.tenant_id == tenant_id,
+                    SecretRef.id == secret_ref_id,
+                    SecretRef.status == "revoked",
+                    SecretRef.material_purged_at.is_(None),
+                )
+                .values(material_state="purged", material_purged_at=datetime.now(UTC))
+            )
+            if cast("Any", result).rowcount == 1:
+                await self._audit(
+                    tenant_id=tenant_id,
+                    event_type="secret_material_purged",
+                    secret_ref_id=secret_ref_id,
+                    reason="gc_orphans_purged",
+                )
+                report.purged.append(str(secret_ref_id))
+            await self.session.commit()
+
+    async def _rollback_writing_orphans(
+        self, tenant_id: int, writing_grace_seconds: int, report: ReconciliationReport
+    ) -> None:
+        cutoff = datetime.now(UTC) - timedelta(seconds=writing_grace_seconds)
+        rows = await self.session.execute(
+            select(SecretRef.id).where(
+                SecretRef.tenant_id == tenant_id,
+                SecretRef.material_state == "writing",
+                SecretRef.status == "pending",
+                SecretRef.updated_at < cutoff,
+                SecretRef.secret_uri.like(f"{_LOCAL_URI_PREFIX}%"),
+            )
+        )
+        ids = [row[0] for row in rows.all()]
+        for secret_ref_id in ids:
+            # partial material を削除 (idempotent) してから pending+writing row を破棄。
+            try:
+                self.store.delete(tenant_id, secret_ref_id)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "gc-orphans writing-rollback store delete failed",
+                    extra={"tenant_id": tenant_id, "secret_ref_id": str(secret_ref_id)},
+                )
+                report.purge_failed.append(str(secret_ref_id))
+                continue
+            # audit を先に append (row 破棄後は scope/name 参照不可、同 transaction)。
+            await self._audit(
+                tenant_id=tenant_id,
+                event_type="secret_material_orphan_rolled_back",
+                secret_ref_id=secret_ref_id,
+                reason="gc_orphans_writing_rollback",
+            )
+            result = await self.session.execute(
+                delete(SecretRef).where(
+                    SecretRef.tenant_id == tenant_id,
+                    SecretRef.id == secret_ref_id,
+                    SecretRef.status == "pending",
+                    SecretRef.material_state == "writing",
+                )
+            )
+            if cast("Any", result).rowcount == 1:
+                report.rolled_back.append(str(secret_ref_id))
+                await self.session.commit()
+            else:
+                # 競合で状態が変わっていた (register 完了等) → audit を含め rollback。
+                await self.session.rollback()
+
+
+__all__ = [
+    "MaterialReconciliationService",
+    "ReconciliationReport",
+]

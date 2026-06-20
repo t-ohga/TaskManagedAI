@@ -211,6 +211,7 @@ def test_allowed_consumers_and_operations_are_required_for_issue() -> None:
         (),
         {
             "status": "active",
+            "material_state": "present",
             "allowed_operations": ["repo.push"],
             "allowed_consumers": [str(ACTOR_ID)],
         },

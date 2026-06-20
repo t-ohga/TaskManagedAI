@@ -36,6 +36,7 @@ TaskManagedAI の外部 AI/agent framework に対する **「参考にする pat
 | **OpenHands** | open platform for cloud coding agents | skills + micro-agents + sandbox + GitHub/GitLab/Slack/API 連携 | OpenHands runtime、独自 sandbox container | runner_mutation_gateway 境界 (TaskManagedAI Sprint 7 で実装) | 自前 Docker isolated runner + forbidden path / dangerous command で代替 |
 | **TaskingAI** | unified model/tool API | plugin + async high concurrency + OpenAI-compatible API | TaskingAI runtime、独自 plugin store | Provider Compliance Matrix の bypass | ProviderAdapter (SP-005 完了済) + Provider Compliance Matrix で代替 |
 | **Foundational Crypto (non-AI)** | cryptographic primitives | HMAC / SHA-256 / AES via `cryptography` PyPI package | N/A (stdlib-level dependency) | N/A | SOPS + age + SecretBroker で使用。pattern 参照ではなく dependency として管理 |
+| **OS Keyring / Secret Storage (non-AI)** | OS-level secret storage | macOS Keychain / Secret Service 経由の credential 保存 via `keyring` PyPI package | N/A (OS keychain backend) | N/A | ADR-00058 LocalSecretStore で使用 (Phase 0)。keyring 不在環境は cryptography Fernet 暗号化ファイルに fallback。pattern 参照ではなく dependency として管理 |
 
 ## 4. 採用判定の枠組み
 

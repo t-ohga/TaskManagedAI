@@ -47,6 +47,7 @@ IssueDenyReason = Literal[
     "ttl_out_of_bounds",
     "shadow_run_mutation_forbidden",
     "run_required_for_repo_mutation",
+    "material_not_present",
 ]
 RedeemDenyReason = Literal[
     "not_found",
@@ -63,6 +64,7 @@ RedeemDenyReason = Literal[
     "name_mismatch",
     "version_mismatch",
     "consumer_mismatch",
+    "material_not_present",
 ]
 
 T = TypeVar("T")
@@ -488,6 +490,10 @@ class SecretBroker:
     ) -> None:
         if secret_ref.status != "active":
             raise BrokerIssueDenied("secret_ref_not_active")
+        # material lifecycle gate (ADR-00058 finding-2): store 未完了 (writing) / purge 中・済
+        # (purging/purged) の row から token を発行しない (false-present 防止)。
+        if secret_ref.material_state != "present":
+            raise BrokerIssueDenied("material_not_present")
         if requested_operation not in secret_ref.allowed_operations:
             raise BrokerIssueDenied("operation_mismatch")
         if not _actor_allowed(actor_id, secret_ref.allowed_consumers):
@@ -576,6 +582,16 @@ class SecretBroker:
         if secret_ref.status != "active":
             return BrokerRedeemDenied(
                 reason_code="secret_ref_revoked",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=claim.capability_id,
+                secret_ref_id=claim.secret_ref_id,
+            )
+        # material lifecycle gate (ADR-00058 finding-2): redeem 時の secret_ref 再検証でも
+        # material_state='present' を必須化 (writing/purging/purged は material_not_present で deny)。
+        if secret_ref.material_state != "present":
+            return BrokerRedeemDenied(
+                reason_code="material_not_present",
                 requested_operation=requested_operation,
                 computed_fingerprint=computed_fingerprint,
                 capability_id=claim.capability_id,

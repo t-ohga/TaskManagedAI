@@ -569,11 +569,11 @@ async def _insert_secret_ref(
                 insert into secret_refs (
                   id, tenant_id, secret_uri, scope, name, version, status,
                   runner_injectable, allowed_consumers, allowed_operations,
-                  owner_actor_id, metadata
+                  owner_actor_id, metadata, material_state
                 ) values (
                   :id, :tenant, :uri, 'project', :name, 'v1', 'active', false,
                   cast(:consumers as jsonb), cast(:operations as jsonb),
-                  :owner, '{"rls_ready": true}'::jsonb
+                  :owner, '{"rls_ready": true}'::jsonb, 'present'
                 )
                 """
             ),

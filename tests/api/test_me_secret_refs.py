@@ -103,6 +103,10 @@ EXPECTED_ITEM_FIELDS = {
     "updated_at",
     "deprecated_at",
     "revoked_at",
+    # broker-owned material lifecycle (ADR-00058 finding-2 / ADR-00059)。非 secret な運用 metadata。
+    "material_state",
+    "material_purged_at",
+    "purge_attempts",
 }
 _RAW_SECRET_PATTERN = re.compile(
     r"(secret://|sk-[A-Za-z0-9_-]{8,}|api[_-]?key|bearer\s|-----BEGIN)",
@@ -139,6 +143,9 @@ def test_to_secret_ref_item_excludes_forbidden_metadata() -> None:
         updated_at=now,
         deprecated_at=None,
         revoked_at=None,
+        material_state="present",
+        material_purged_at=None,
+        purge_attempts=0,
     )
 
     item = _to_secret_ref_item(fake)  # type: ignore[arg-type]
@@ -181,6 +188,9 @@ def test_to_secret_ref_item_rotated_false_when_no_predecessor() -> None:
         updated_at=now,
         deprecated_at=None,
         revoked_at=None,
+        material_state="present",
+        material_purged_at=None,
+        purge_attempts=0,
     )
     item = _to_secret_ref_item(fake)  # type: ignore[arg-type]
     assert item.rotated is False
