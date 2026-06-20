@@ -12,7 +12,7 @@
 | `03_AIオーケストレーション設計.md` | AgentRun / ContextSnapshot / Output Validator / Input Trust Layer / BudgetGuard |
 | `04_セキュリティ_権限_監査設計.md` | Policy/Approval action class、Provider Compliance Matrix、ZDR enforcement、audit |
 | `05_ネットワーク境界設計.md` | Tailscale Serve、device approval、CT log 対策、grants |
-| `06_秘密管理設計.md` | SOPS + age + SecretBroker、`secret_ref` URI、capability token |
+| `06_秘密管理設計.md` | SecretBroker (backend=local/sops、ADR-00058)、`secret_ref` URI、capability token |
 | `07_可観測性設計.md` | OTel + Prom + Loki + Grafana、structured logs、error taxonomy、SLO |
 
 ## 上位資料への参照

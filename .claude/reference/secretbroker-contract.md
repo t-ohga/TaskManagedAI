@@ -7,7 +7,7 @@ raw secret 禁止を P0 の安全境界として固定する。
 
 | 項目 | Contract |
 |---|---|
-| secret storage | SOPS + age、DB は `secret_ref` のみ |
+| secret storage | backend = SOPS+age \| LocalSecretStore (OS keychain / 暗号化ファイル)、DB は `secret_ref` (backend metadata) のみ。Phase 0 = LocalSecretStore (`local`) backend 先行、SOPS 移行は D-4 (ADR-00058) |
 | raw secret DB 保存 | 禁止 |
 | AI への secret 値渡し | 禁止 |
 | runner env secret 注入 | 禁止 |
@@ -21,8 +21,10 @@ raw secret 禁止を P0 の安全境界として固定する。
 ## 2. `secret_ref` Format
 
 ```text
-secret://sops/<scope>/<name>#<version>
+secret://<backend>/<scope>/<name>#<version>
 ```
+
+`<backend>` = `sops` | `local` (ADR-00058 で `local` を additive 追加、`sops` 後方互換)。regex は単一定数 `SECRET_URI_PATTERN` 集約 (5+source 整合)、未知 backend fail-closed。
 
 例:
 
@@ -30,12 +32,14 @@ secret://sops/<scope>/<name>#<version>
 secret://sops/project/provider-openai#v1
 secret://sops/repo/github-app-private-key#v3
 secret://sops/p0/tailscale-auth-key#v1
+secret://local/project/github-token#v1
 ```
 
+- `sops` = SOPS+age (既存・後方互換 backend)、`local` = LocalSecretStore (OS keychain / 暗号化ファイル、ADR-00058)。**Phase 0 default = `local`、SOPS 移行は D-4**。
 - 例は placeholder。
 - 実 token / key は書かない。
 - URI は opaque reference。
-- SecretBroker だけが URI を解釈する。
+- SecretBroker / CompositeSecretResolver (backend dispatch) だけが URI を解釈する。
 - `#<version>` は必須。
 - version は rotation の単位。
 
@@ -64,6 +68,9 @@ secret://sops/p0/tailscale-auth-key#v1
 | `allowed_operations` | yes | operation allowlist |
 | `owner_actor_id` | yes | owner |
 | `rotated_from_id` | yes | prior version |
+| `material_state` | yes | non-secret lifecycle: `writing`/`present`/`purging`/`purged` (ADR-00058/00059 crash-safe source of truth) |
+| `material_purged_at` | yes | non-secret: revoke 後の material purge 完了時刻 (NULL=未 purge) |
+| `purge_attempts` | yes | non-secret: purge 再試行回数 (reconciliation) |
 | raw secret value | no | 禁止 |
 
 必須 invariant:
@@ -155,7 +162,8 @@ operation-specific `target`:
 3. SecretBroker が `secret_ref` metadata を確認。
 4. `allowed_consumers` に caller があるか確認。
 5. `allowed_operations` に operation があるか確認。
-6. status が発行可能か確認。
+6. status が発行可能か確認 (`active`、rotation.verify は `pending` も可)。
+6b. `material_state='present'` を確認 (`writing`/`purging`/`purged` は false-present として deny、ADR-00058/00059)。
 7. TTL が 5-30 分内か確認。
 8. raw token を生成。
 9. **broker が canonical OperationContext を組み立てて fingerprint を計算**（caller-supplied 値ではなく server 側計算）。
@@ -169,6 +177,7 @@ operation-specific `target`:
 |---|---|
 | `secret_ref_missing` | URI / metadata 不在 |
 | `secret_ref_not_active` | status 不正 |
+| `material_not_present` | `material_state != 'present'` (writing/purging/purged = store material 未完了/削除中、ADR-00058/00059) |
 | `consumer_not_allowed` | caller 不許可 |
 | `operation_not_allowed` | operation 不許可 |
 | `ttl_out_of_range` | TTL 5-30 分外 |
@@ -217,6 +226,7 @@ returning id, secret_ref_id, allowed_operations, scope_constraint;
 6. 1 row -> claim success。
 7. **同一 transaction 内で `secret_refs` を `for update` lock + 再検証**:
    - `status='active'`（rotation.verify は `pending` も可）
+   - `material_state='present'`（writing/purging/purged は `material_not_present` で deny、ADR-00058/00059)
    - `caller ∈ allowed_consumers`
    - `requested_operation ∈ allowed_operations`
    - `scope` が capability token の `scope_constraint` と一致
@@ -281,19 +291,22 @@ returning id, secret_ref_id, allowed_operations, scope_constraint;
 
 ## 13. Rotation
 
-手順:
+backend (`sops` | `local`) ごとに material 配置手順が異なる。`secret_refs` の status 遷移と `material_state` lifecycle (ADR-00058/00059、`local` backend) は共通。
 
-1. SOPS file に新 version を追加。
-2. `secret_refs` に `pending` version を登録。
-3. SecretBroker dry-run verify。
-4. policy / provider / RepoProxy の参照先を新 version に切替。
-5. smoke test。
-6. 新 version を `active`。
-7. 旧 version を `deprecated`。
-8. capability token TTL expiration を待つ。
-9. 旧 version を `revoked`。
-10. `config_changed` と rotation audit event。
-11. Sprint Review に記録。
+**`local` backend (Phase 0 default、ADR-00058)** — create/rotate の crash-safe material lifecycle:
+
+1. `secret_refs` に `pending` + `material_state='writing'` で row を commit (DB が material owner の source of truth)。
+2. LocalSecretStore へ raw material を書込 (material key = `tenant_id + secret_ref_id` 束縛、cross-tenant 同名衝突防止)。
+3. row を `material_state='present'` へ。
+4. SecretBroker dry-run verify → policy / provider / RepoProxy の参照先切替 → smoke test。
+5. 新 version を `active`、旧 version を `deprecated`。
+6. capability token TTL expiration を待つ。
+7. 旧 version を `revoked` (rule §5: active/deprecated/pending → revoked、ADR-00059 の新 revoke 経路)。
+8. revoked 確定後に material 削除 (`material_state='purging'` → `LocalSecretStore.delete()` → `material_state='purged'` + `material_purged_at`)。
+9. crash/失敗は `material_state` (`writing`/`present`/`purging`/`purged`) + `secret gc-orphans` reconciliation で収束 (idempotent、`tenant_id+secret_ref_id` で識別)。
+10. `config_changed` と rotation audit event (raw なし)。Sprint Review に記録。
+
+**`sops` backend (D-4 移行先)**: 上記 2/8 の material 配置/削除を SOPS file の version 追加 / SOPS version switch に置換 (status / material_state lifecycle は共通)。
 
 ## 14. Rotation Drill
 

@@ -11,8 +11,10 @@ related_sprints:
   - "SP-002_core_data_model"
   - "SP-004_agent_runtime"
 supersedes: null
-superseded_by: null
+superseded_by: "ADR-00058 (partial: secret_ref URI を backend=sops|local へ拡張 + storage backend に local 追加、Phase 0 default=local。atomic claim / capability token / raw 非保存 / OperationContext fingerprint の中核 invariant は本 ADR から継承・不変)"
 ---
+
+> **2026-06-20 partial amendment (ADR-00058)**: 本 ADR が固定した `secret_ref` URI `secret://sops/<scope>/<name>#<version>` と「P0 標準 = SOPS+age」は、ADR-00058 で **backend=`sops|local`** へ additive 拡張された (Phase 0 local Mac first の default=`local`、SOPS+age 移行は後フェーズ D-4)。`sops` backend は引き続き有効。本 ADR の atomic claim redeem / capability token / raw 非保存 / OperationContext fingerprint の中核 invariant は ADR-00058 でも不変・継承。以下本文中の `secret://sops/...` は `sops` backend の例として読む。
 
 最終更新: 2026-05-09 (Sprint 4 着手前 ADR Gate で accepted 化、SP-002 で secret_refs/secret_capability_tokens schema 実装済、SP-004 で SecretBroker issue/redeem 本実装の前提)
 
@@ -40,7 +42,7 @@ superseded_by: null
   - `backend/app/models/secret.py`
   - `migrations/versions/*_secret_broker.py`
 - 実装ガイダンス:
-  - `secret_ref` は `secret://sops/<scope>/<name>#<version>` に固定し、domain model は opaque reference として扱う。
+  - `secret_ref` は `secret://<backend>/<scope>/<name>#<version>` (backend=`local`|`sops`、ADR-00058 で additive 拡張、本 ADR 当時は sops のみ) を基準とし、domain model は opaque reference として扱う。
   - capability token は TTL 5-30 分、one-time redeem、token hash only storage、`issued_to_actor_id` / `issued_run_id` / `expected_request_fingerprint` binding を必須にする。
   - **token 発行前検証**: `requested_operation` が `secret_refs.allowed_operations` に含まれること、caller が `secret_refs.allowed_consumers` に含まれること、`secret_refs.status='active'` (rotation.verify 専用は `pending` も許可) を SQL レベルで確認。
   - **OperationContext canonical schema**: broker が以下の必須 field を validated request から組み立てて fingerprint を計算する: `tenant_id`, `actor_id`, `run_id`, `secret_ref_id`, `requested_operation`, `target` (operation-specific canonical 構造)、`payload_hash` (provider.call / repo.push 等の SHA-256)、`approval_id`, `policy_version`, `provider_compliance_matrix_version`。NFC UTF-8 + JCS canonical JSON + SHA-256 で fingerprint。

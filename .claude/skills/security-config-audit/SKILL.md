@@ -92,7 +92,7 @@ WARN:
 
 ```bash
 rg -n "(API_KEY|TOKEN|SECRET|PRIVATE_KEY|PASSWORD|AUTH_KEY|AGE|SOPS|GITHUB).*=" .env.example .env.*.example config docker-compose*.yml tailscale docs 2>/dev/null
-rg -n "secret_ref|secret://sops|runner_injectable|raw_secret|secret_value|private_key" config docker-compose*.yml .env.example docs 2>/dev/null
+rg -n "secret_ref|secret://(sops|local)|secret://|runner_injectable|raw_secret|secret_value|private_key" config docker-compose*.yml .env.example docs 2>/dev/null
 ```
 
 BLOCK:
