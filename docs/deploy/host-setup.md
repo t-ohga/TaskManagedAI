@@ -54,13 +54,13 @@ base compose (`internal: true`、production 境界) + dev override (`internal: f
 docker worker を上げると二重稼働になる)。
 
 **重要 (compose interpolation)**: base compose は `${TASKMANAGEDAI_ENVIRONMENT:?}` /
-`${TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET:?}` を **shell env から** 要求する。`--env-file .env.local` は
-container 側 `env_file` には効くが **compose interpolation には効かない**ため、`.env.local` を shell に
-load してから `up` する (未 load だと interpolation エラーで停止する)。
+`${TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET:?}` を interpolation で要求する。interpolation source は precedence 順に
+**shell env > `--env-file` > cwd `.env`**。COOKIE_SECRET 等は **`--env-file .env.local`** が供給するので、`.env.local` に
+無い `TASKMANAGEDAI_ENVIRONMENT` のみ shell に export すればよい (`.env.local` を `source` する必要はない。compose
+env-file は bash 構文保証が無く `source` は破損/実行リスクがある)。
 
 ```bash
-# compose interpolation 用に .env.local を shell へ export (COOKIE_SECRET 等) + ENVIRONMENT を設定。
-set -a; source .env.local; set +a
+# .env.local に無い ENVIRONMENT のみ shell に設定 (COOKIE_SECRET 等は下記 --env-file が interpolation 供給)。
 export TASKMANAGEDAI_ENVIRONMENT="${TASKMANAGEDAI_ENVIRONMENT:-development}"
 # worker は除外 (§6 で host 起動)。postgres/redis/api/frontend のみ。
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local \
