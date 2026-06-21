@@ -277,6 +277,9 @@ class LocalSecretStore:
             raise LocalSecretMaterialNotFound(
                 f"material not found for tenant={tenant_id} secret_ref={secret_ref_id}"
             )
+        # ciphertext file が store() 後に group/world-readable へ chmod / 復元された場合は fail-closed
+        # (Codex F2、master.key と同じ 0o600 契約)。insecure at-rest material を decrypt せず拒否する。
+        self._assert_secure_file_mode(path)
         token = path.read_bytes()
         try:
             return self._fernet().decrypt(token)
@@ -289,6 +292,13 @@ class LocalSecretStore:
 
     def _file_delete(self, tenant_id: int, secret_ref_id: UUID) -> None:
         path = self._material_path(tenant_id, secret_ref_id)
+        # symlink を unlink すると symlink だけ消え target ciphertext が残るのに caller が purged 化する
+        # false-purged を防ぐ (Codex F3、resolve の symlink reject と対称)。fail-closed で purge 失敗 →
+        # caller (revoke/gc) が material_purged_at を立てず再試行 (symlink は改ざん indicator)。
+        if path.is_symlink():
+            raise LocalSecretStorePermissionError(
+                "material file must not be a symlink (refuse purge to avoid false-purged)"
+            )
         try:
             path.unlink()
         except FileNotFoundError:

@@ -792,6 +792,63 @@ async def test_redeem_with_composite_resolver_object_custody_failure_denied(
     assert all(e["event_type"] != "secret_capability_redeemed" for e in _FakeAuditRepo.events)
 
 
+def test_resolver_accepts_pending_flag_introspection() -> None:
+    """Codex F4: allow_pending_verify kwarg のサポートを signature introspect で判定する。"""
+
+    async def kwarg_resolver(sr: object, *, allow_pending_verify: bool = False) -> bytes:
+        return b""
+
+    async def one_arg_resolver(sr: object) -> bytes:
+        return b""
+
+    async def kwargs_resolver(sr: object, **kw: object) -> bytes:
+        return b""
+
+    assert broker_module._resolver_accepts_pending_flag(kwarg_resolver) is True
+    assert broker_module._resolver_accepts_pending_flag(one_arg_resolver) is False
+    assert broker_module._resolver_accepts_pending_flag(kwargs_resolver) is True
+
+
+@pytest.mark.asyncio
+async def test_redeem_with_one_arg_resolver_no_typeerror() -> None:
+    """Codex F4: 旧 1-arg resolver (allow_pending_verify 非対応) を注入しても atomic claim 後に TypeError
+    500 にならず 1-arg で resolve される (custody bypass を起こさない)。"""
+    session = _FakeSession(token=_token(), secret_ref=_secret_ref())
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["provider.call"],
+        scope_constraint=_scope_constraint(),
+    )
+    resolved: list[UUID] = []
+
+    async def one_arg_resolver(secret_ref: object) -> bytes:  # 旧 contract (kwarg なし)
+        resolved.append(secret_ref.id)  # type: ignore[attr-defined]
+        return b"material"
+
+    async def operation(context: broker_module.BrokerOperationContext) -> str:
+        return "ok"
+
+    result = await SecretBroker(
+        session=session,  # type: ignore[arg-type]
+        secret_resolver=one_arg_resolver,
+    ).redeem_capability_token(
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="provider.call",
+        target=_target(),
+        payload={"messages": ["hello"]},
+        policy_version="policy-v1",
+        provider_compliance_matrix_version="pcm-v1",
+        operation=operation,
+    )
+
+    assert isinstance(result, BrokerRedeemResult)
+    assert resolved == [SECRET_REF_ID]
+
+
 async def _reset_integration_tables(session: AsyncSession) -> None:
     await session.execute(
         text(

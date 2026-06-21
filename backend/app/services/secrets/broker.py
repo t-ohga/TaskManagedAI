@@ -821,9 +821,20 @@ class SecretBroker:
                 version=secret_ref.version,
             )
         # rotation verify 専用 op の pending+present のみ resolver の status gate を緩める (Codex R18-F1)。
-        return await _maybe_await(
-            self.secret_resolver(secret_ref, allow_pending_verify=allow_pending_verify)
-        )
+        # 旧 1-arg resolver (Callable[[SecretRef], ...]) が注入された場合、allow_pending_verify kwarg を
+        # 渡すと atomic claim 後に TypeError が起き custody catch (_RESOLVER_CUSTODY_ERRORS) を bypass して
+        # 500 + denied/revoke skip になる (Codex F4)。signature を introspect し kwarg 非対応 resolver は
+        # 1-arg で呼ぶ。ただし rotation verify (allow_pending_verify=True) を honor できない 1-arg resolver は
+        # CompositeResolverError で fail-closed (caller が denied+revoke へ落とす、TypeError 500 を回避)。
+        if _resolver_accepts_pending_flag(self.secret_resolver):
+            return await _maybe_await(
+                self.secret_resolver(secret_ref, allow_pending_verify=allow_pending_verify)
+            )
+        if allow_pending_verify:
+            raise CompositeResolverError(
+                "injected resolver does not support allow_pending_verify (rotation verify gate)"
+            )
+        return await _maybe_await(self.secret_resolver(secret_ref))
 
     async def _mark_claimed_token_used(self, tenant_id: int, capability_id: UUID) -> None:
         await self.session.execute(
@@ -1015,6 +1026,22 @@ async def _maybe_await[T](value: T | Awaitable[T]) -> T:
     if inspect.isawaitable(value):
         return await value
     return value
+
+
+def _resolver_accepts_pending_flag(resolver: SecretResolver) -> bool:
+    """resolver が allow_pending_verify kwarg を受けるか introspect する (Codex F4)。
+
+    旧 1-arg resolver (Callable[[SecretRef], ...]) に kwarg を渡すと atomic claim 後 TypeError → custody
+    catch を bypass する。signature を見て、明示 param か **kwargs があれば True。introspect 不能な callable
+    は False (1-arg 扱いで安全側)。
+    """
+    try:
+        params = inspect.signature(resolver).parameters
+    except (TypeError, ValueError):  # signature 取得不能な callable は 1-arg 扱い
+        return False
+    if "allow_pending_verify" in params:
+        return True
+    return any(p.kind == p.VAR_KEYWORD for p in params.values())
 
 
 __all__ = [

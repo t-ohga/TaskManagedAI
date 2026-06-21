@@ -501,6 +501,27 @@ R23-F1 の recovery 判定が tenant-scoped だった cross-tenant 穴を封鎖 
   - test: no-DB unit (`_assert_marker_init_safe` の fresh-init/initialized/recovery) を deployment-wide メソッド
     へ更新 + DB-gated repo test (`any_local_secret_refs_exist` が sops-only→False / 別 tenant の local row→True)。
 
+### A-6u. Codex PR #352 auto-review findings adopt (3 件、local backend at-rest + custody bypass)
+
+PR #352 で Codex GitHub auto-review が指摘した 3 件を adopt (F1=0050 rev id は CI fix 済で stale、F2/F3/F4 採用):
+
+- **F2 (P2→P1、`local_secret_store._file_resolve` ciphertext mode 検証)**: file backend (Phase 0 default、
+  ADR-00058) の ciphertext が store() 後に group/world-readable へ chmod / 復元された場合、master.key と同じ
+  0o600 契約を検証せず decrypt していた → insecure at-rest material を受理。fix: read_bytes 前に
+  `_assert_secure_file_mode(path)` を呼び、mode != 0o600 を fail-closed (resolve の R19-F1 wrap 経由で
+  broker custody-deny)。
+- **F3 (P1、`local_secret_store._file_delete` symlink reject、false-purged)**: material file が symlink に
+  差し替えられた場合、delete が symlink だけ unlink し target ciphertext が残るのに caller が
+  material_purged_at を立てる false-purged。fix: unlink 前に `path.is_symlink()` を reject (resolve の symlink
+  reject と対称)。caller (revoke/gc) は purge 失敗として再試行。
+- **F4 (P2→P1、`broker._resolve_secret` 1-arg resolver の TypeError custody bypass)**: 旧 1-arg resolver
+  注入時、redeem が atomic claim 後に allow_pending_verify kwarg 付きで呼び TypeError → `_RESOLVER_CUSTODY_ERRORS`
+  非該当で 500 + denied/revoke skip。fix: `_resolver_accepts_pending_flag` で signature introspect し kwarg
+  非対応 resolver は 1-arg で呼ぶ。rotation verify を honor できない 1-arg resolver は CompositeResolverError で
+  fail-closed (500 回避)。
+- test (no-DB): F2 insecure-mode → resolve fail-closed / F3 symlink → delete fail-closed + target 非削除 /
+  F4 introspection + 1-arg resolver redeem が TypeError なく成功。
+
 ### A-6. 残リスク (Phase 0 accepted)
 
 R2-F2 + R3-F1 で late-writer 永久 orphan + 実行経路欠如は解消。gc 実行間隔の間は再作成 material が一時的に

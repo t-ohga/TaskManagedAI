@@ -422,6 +422,44 @@ def test_master_key_creation_uses_existing_key_no_overwrite(tmp_path: Path) -> N
     assert store.resolve(tid, sid) == _RAW  # winner key で復号可能 (material loss なし)
 
 
+def test_resolve_insecure_ciphertext_mode_rejected(tmp_path: Path) -> None:
+    """Codex F2: store() 後に group/world-readable へ chmod された ciphertext は decrypt 前に fail-closed。"""
+    from backend.app.services.secrets.local_secret_store import LocalSecretStoreError
+
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root permission semantics differ for chmod-based mode test")
+    store = _store(tmp_path)
+    tid, sid = 1, uuid4()
+    store.store(tid, sid, _RAW)
+    enc = tmp_path / "secrets.d" / str(tid) / f"{sid}.enc"
+    os.chmod(enc, 0o644)  # noqa: S103 - insecure mode を意図的に作り fail-closed を検証
+    try:
+        with pytest.raises(LocalSecretStoreError):
+            _store(tmp_path).resolve(tid, sid)
+    finally:
+        os.chmod(enc, 0o600)
+
+
+def test_delete_symlink_material_rejected_no_false_purge(tmp_path: Path) -> None:
+    """Codex F3: material file が symlink に差し替えられた場合 delete は fail-closed (target 非削除)。
+
+    symlink を unlink すると target ciphertext が残るのに purged 化される false-purged を防ぐ。
+    """
+    from backend.app.services.secrets.local_secret_store import LocalSecretStoreError
+
+    store = _store(tmp_path)
+    tid, sid = 1, uuid4()
+    store.store(tid, sid, _RAW)
+    enc = tmp_path / "secrets.d" / str(tid) / f"{sid}.enc"
+    target = tmp_path / "elsewhere.enc"
+    target.write_bytes(b"real-ciphertext")
+    enc.unlink()
+    enc.symlink_to(target)
+    with pytest.raises(LocalSecretStoreError):
+        store.delete(tid, sid)
+    assert target.exists()  # target ciphertext は削除されていない (false-purge していない)
+
+
 def test_resolve_corrupt_master_key_normalized_to_store_error(tmp_path: Path) -> None:
     """Codex R19-F1: 破損 master.key (Fernet 構築 ValueError) は LocalSecretStoreError へ正規化される。
 
