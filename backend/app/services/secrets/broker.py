@@ -101,6 +101,27 @@ def _secret_target_matches(target: Mapping[str, Any], secret_ref: SecretRef) -> 
         "version"
     ) == secret_ref.version
 
+
+# rotation verify 専用 operation: 新 version material を promote 前に `pending` + `material_state='present'`
+# の状態で検証/読取するため、status='active' のみの gate を緩め pending を許可する (Codex R17-F1、
+# secretbroker-boundary §5/§7/§9 「rotation verify 専用 operation だけ pending を許可」に準拠)。
+# pending 許可は material_state='present' 必須 + R16-F2 の target↔secret_ref 同一性が併せて担保する。
+_ROTATION_PENDING_VERIFY_OPERATIONS: frozenset[str] = frozenset(
+    {"rotation.read_new", "secret.verify"}
+)
+
+
+def _secret_ref_status_allowed(
+    status: str, requested_operation: RequestedOperation
+) -> bool:
+    """secret_ref.status が当該 operation で許可されるか (active 常時 / pending は rotation verify のみ)。"""
+    if status == "active":
+        return True
+    return (
+        status == "pending"
+        and requested_operation in _ROTATION_PENDING_VERIFY_OPERATIONS
+    )
+
 # SP-029 (ADR-00055 §設計制約 3、Codex R1 F-2): shadow run は repo mutation の
 # capability token を発行できない (downstream の repo write / PR open / merge を
 # transitively 封鎖)。provider.call は shadow でも通常経路で許可される (§7)、
@@ -576,10 +597,12 @@ class SecretBroker:
         actor_id: UUID,
         requested_operation: RequestedOperation,
     ) -> None:
-        if secret_ref.status != "active":
+        # status='active' が通常。rotation verify 専用 operation のみ pending を許可する (Codex R17-F1、
+        # 新 version material を promote 前に検証する rotate→verify→promote flow、boundary §5/§7/§9)。
+        if not _secret_ref_status_allowed(secret_ref.status, requested_operation):
             raise BrokerIssueDenied("secret_ref_not_active")
         # material lifecycle gate (ADR-00058 finding-2): store 未完了 (writing) / purge 中・済
-        # (purging/purged) の row から token を発行しない (false-present 防止)。
+        # (purging/purged) の row から token を発行しない (false-present 防止)。pending verify も present 必須。
         if secret_ref.material_state != "present":
             raise BrokerIssueDenied("material_not_present")
         if requested_operation not in secret_ref.allowed_operations:
@@ -667,7 +690,8 @@ class SecretBroker:
                 capability_id=claim.capability_id,
                 secret_ref_id=claim.secret_ref_id,
             )
-        if secret_ref.status != "active":
+        # active が通常。rotation verify 専用 operation のみ pending を許可 (Codex R17-F1、issue gate と mirror)。
+        if not _secret_ref_status_allowed(secret_ref.status, requested_operation):
             return BrokerRedeemDenied(
                 reason_code="secret_ref_revoked",
                 requested_operation=requested_operation,

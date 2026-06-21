@@ -23,6 +23,7 @@ from backend.app.repositories.secret_capability_token import ClaimResult
 from backend.app.services.secrets import broker as broker_module
 from backend.app.services.secrets.broker import (
     BrokerIssueDenied,
+    BrokerIssueResult,
     BrokerRedeemDenied,
     BrokerRedeemResult,
     SecretBroker,
@@ -77,6 +78,13 @@ class _FakeSession:
         self.token = token
         self.secret_ref = secret_ref
         self.updated_statuses: list[str] = []
+        self.added: list[object] = []
+
+    def add(self, obj: object) -> None:
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        return None
 
     async def scalar(self, statement: object) -> object | None:
         statement_text = str(statement)
@@ -594,6 +602,132 @@ async def test_redeem_secret_op_accepts_matching_target() -> None:
     )
     assert isinstance(result, BrokerRedeemResult)
     assert _FakeAuditRepo.events[-1]["event_type"] == "secret_capability_redeemed"
+
+
+def _pending_secret_ref(
+    *,
+    material_state: str = "present",
+    allowed_operations: list[str] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=SECRET_REF_ID,
+        status="pending",
+        material_state=material_state,
+        scope="project",
+        name="provider-openai",
+        version="v1",
+        allowed_consumers=[str(ACTOR_ID)],
+        allowed_operations=allowed_operations or ["secret.verify"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_issue_secret_verify_allows_pending_present() -> None:
+    """Codex R17-F1: rotation verify 専用 op (secret.verify) は pending+present の新 material に発行可。
+
+    rotate→verify→promote flow を成立させる (broker が pending を全 deny すると安全な検証経路が詰まる)。
+    """
+    session = _FakeSession(token=None, secret_ref=_pending_secret_ref())
+    result = await SecretBroker(session=session).issue_capability_token(  # type: ignore[arg-type]
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        secret_ref_id=SECRET_REF_ID,
+        requested_operation="secret.verify",
+        target={"secret_ref_id": str(SECRET_REF_ID), "version": "v1"},
+        policy_version="policy-v1",
+    )
+    assert isinstance(result, BrokerIssueResult)
+
+
+@pytest.mark.asyncio
+async def test_issue_rejects_pending_for_non_verify_op() -> None:
+    """Codex R17-F1: rotation verify 以外の op は pending を許可しない (secret_ref_not_active)。"""
+    session = _FakeSession(
+        token=None,
+        secret_ref=_pending_secret_ref(allowed_operations=["provider.call"]),
+    )
+    with pytest.raises(BrokerIssueDenied) as exc_info:
+        await SecretBroker(session=session).issue_capability_token(  # type: ignore[arg-type]
+            tenant_id=TENANT_ID,
+            actor_id=ACTOR_ID,
+            run_id=RUN_ID,
+            secret_ref_id=SECRET_REF_ID,
+            requested_operation="provider.call",
+            target=_target(),
+            policy_version="policy-v1",
+        )
+    assert exc_info.value.reason_code == "secret_ref_not_active"
+
+
+@pytest.mark.asyncio
+async def test_issue_rejects_pending_not_present() -> None:
+    """Codex R17-F1: pending verify でも material_state != present は material_not_present で deny。"""
+    session = _FakeSession(
+        token=None, secret_ref=_pending_secret_ref(material_state="writing")
+    )
+    with pytest.raises(BrokerIssueDenied) as exc_info:
+        await SecretBroker(session=session).issue_capability_token(  # type: ignore[arg-type]
+            tenant_id=TENANT_ID,
+            actor_id=ACTOR_ID,
+            run_id=RUN_ID,
+            secret_ref_id=SECRET_REF_ID,
+            requested_operation="secret.verify",
+            target={"secret_ref_id": str(SECRET_REF_ID), "version": "v1"},
+            policy_version="policy-v1",
+        )
+    assert exc_info.value.reason_code == "material_not_present"
+
+
+@pytest.mark.asyncio
+async def test_redeem_rotation_read_new_allows_pending_present() -> None:
+    """Codex R17-F1: redeem 側 gate も rotation.read_new を pending+present で許可する (issue と mirror)。"""
+    session = _FakeSession(
+        token=_token(),
+        secret_ref=_pending_secret_ref(allowed_operations=["rotation.read_new"]),
+    )
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["rotation.read_new"],
+        scope_constraint=_scope_constraint(),
+    )
+    result = await SecretBroker(session=session).redeem_capability_token(  # type: ignore[arg-type]
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="rotation.read_new",
+        target={"secret_ref_id": str(SECRET_REF_ID), "version": "v1"},
+        policy_version="policy-v1",
+    )
+    assert isinstance(result, BrokerRedeemResult)
+
+
+@pytest.mark.asyncio
+async def test_redeem_rejects_pending_for_non_verify_op() -> None:
+    """Codex R17-F1: redeem 側も rotation verify 以外の op (rotation.read_old) は pending を許可しない。"""
+    session = _FakeSession(
+        token=_token(),
+        secret_ref=_pending_secret_ref(allowed_operations=["rotation.read_old"]),
+    )
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["rotation.read_old"],
+        scope_constraint=_scope_constraint(),
+    )
+    result = await SecretBroker(session=session).redeem_capability_token(  # type: ignore[arg-type]
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="rotation.read_old",
+        target={"secret_ref_id": str(SECRET_REF_ID), "version": "v1"},
+        policy_version="policy-v1",
+    )
+    assert isinstance(result, BrokerRedeemDenied)
+    assert result.reason_code == "secret_ref_revoked"
 
 
 async def _reset_integration_tables(session: AsyncSession) -> None:

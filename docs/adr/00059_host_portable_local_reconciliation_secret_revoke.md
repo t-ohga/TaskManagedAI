@@ -369,6 +369,23 @@ R16 の 2 件は **本 batch (S1+S2 material lifecycle) の regression ではな
   - **follow-up**: SecretBroker redeem transaction boundary / capability token terminal-state guarantee ADR
     (新規)。本 batch では着手しない。
 
+### A-6m. Codex adversarial R17 findings adopt (1 件 HIGH、pending new material の rotation verify 経路復旧)
+
+R16-F2 で target substitution を塞いだ結果露呈した material-lifecycle 矛盾を解消 (HIGH×1、R16-F1 とは別):
+
+- **R17-F1 (HIGH)**: 本 batch の rotation 設計 (S1) は新 version material を promote 前に `pending` +
+  `material_state='present'` で残し `secret.verify`/dry-run/smoke で検証する。しかし broker の status gate
+  (issue `_validate_secret_ref_for_issue` + claim `_validate_secret_ref_after_claim`) が **non-active を全 deny**
+  していたため、pending new material を `rotation.read_new` / `secret.verify` で検証する token を発行/redeem
+  できなかった。R16-F2 で「active old を発行しつつ target を pending new に向ける」substitution workaround も
+  封じたため、安全な rotate→verify→promote 経路が完全に詰まる (durable pending row が index 占有、または
+  未検証 material を out-of-band promote)。secretbroker-boundary §5/§7/§9 の「rotation verify 専用 operation
+  だけ pending を許可」に broker が未準拠だった矛盾。fix: `_secret_ref_status_allowed` で **`rotation.read_new`
+  / `secret.verify` のみ `pending` を許可** (`material_state='present'` 必須 + R16-F2 の target↔secret_ref
+  同一性が併せて担保)、issue / claim 両 gate で mirror。それ以外の operation は従来どおり active のみ。
+  - test (no-DB): secret.verify pending+present issue 許可 / rotation.read_new pending+present redeem 許可 /
+    pending+非 verify op (provider.call issue / rotation.read_old redeem) 拒否 / pending+not-present 拒否。
+
 ### A-6. 残リスク (Phase 0 accepted)
 
 R2-F2 + R3-F1 で late-writer 永久 orphan + 実行経路欠如は解消。gc 実行間隔の間は再作成 material が一時的に
