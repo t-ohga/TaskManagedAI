@@ -76,6 +76,9 @@ class EmergencyStopClearResponse(BaseModel):
     generation: int
     cleared_at: datetime
     resumed_run_count: int
+    # P2-5: active-scope 違反 (soft-deleted ticket / archived project) で復元せず blocked のまま
+    # 残した run の件数 (operator に skip を可視化)。
+    skipped_run_count: int
 
 
 @router.post("/emergency-stop", response_model=EmergencyStopEngageResponse)
@@ -150,6 +153,7 @@ async def clear_emergency_stop_endpoint(
         generation=result.generation,
         cleared_at=result.cleared_at,
         resumed_run_count=result.resumed_run_count,
+        skipped_run_count=result.skipped_run_count,
     )
 
 

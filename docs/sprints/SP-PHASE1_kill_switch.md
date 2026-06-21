@@ -138,6 +138,11 @@ SP-035 受け入れ条件「human がいつでも Superintendent + 全 agent を
 - **host crash 中の registry stale**: managed_agents の stale row (process 死亡だが DB 残存) は supervisor heartbeat + reconciliation で収束 (Phase 4 supervisor loop で本格化、Phase 1 は基本 GC)。
 - **Redis 障害**: pub/sub 不達でも DB latch poll が権威 fallback (fail-closed)。Redis 障害単独で kill 不能にならない。
 - **UI defer**: B6 で UI が間に合わない場合 CLI で操作可 (must_ship は CLI)。
+- **B3 merge 時点の coverage 限界 (PR #361 Codex auto-review P1-1 / P1-3、honest)**: B3 (#361 merged) 時点で kill switch の新規活動 deny は **`spawn_agent_managed` 経路 (P1-2 で advisory lock hold 化済) + block-source run のみ** covered。**未 cover (fail-open) の 2 経路は後続 batch で閉じる**:
+  - **P1-1 → B4 + B5**: MCP `superintendent_agent_start` は legacy `spawn_agent` (sessionless) を呼び latch 非経由 → engage 後も MCP から新 process 起動可。**B4 (MCP→managed spawn 移行) + B5 (MCP mutating bridge latch gate)** で閉じる。B3 interim は WARN log のみ (behavior 不変)。
+  - **P1-3 → B5a/B5b**: `bridge_run_create` / `bridge_delegation_accept` 等の run create/advance choke point が latch checker 非経由。queued/gathering_context run は block-source allowlist 外で engage に触られず、bridge 経由の新規 AI 活動を deny しない。**B5a (run_create/dispatch/agent_start/autonomy/provider preflight の latch gate) + B5b (MCP mutating bridge centralize)** で閉じる (本 Pack §実装チケット B5a/B5b に既設計、本残リスクは B3 merge 時点の coverage を明示)。
+  - 完全な「全 mutating choke point で新規活動 deny + in-flight subprocess kill」は **B4 + B5 完了で達成**。B3 は latch 永続化 / operator gate / endpoint / managed spawn 経路 / block-source resume (active-scope recheck 込み、P2-5) を安全に提供する段階。
+- **B3 PR #361 Codex P2 fix 反映済 (follow-up `fix/pr361-codex-emergency-stop`)**: P1-2 (spawn が advisory lock 保持) / P2-6 (operator reason secret scan を DB 境界前) / P2-5 (resume が active-scope recheck、non-actionable run は blocked 維持 + skipped_run_count) / P2-4 (clear が `emergency_stop_cleared` を必ず audit、resume 0 件でも消えない) を fix。P1-1 / P1-3 は上記の通り B4/B5 へ honest defer。
 
 ## 次スプリント候補
 
