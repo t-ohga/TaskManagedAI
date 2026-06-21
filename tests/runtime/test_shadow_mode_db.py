@@ -1055,7 +1055,12 @@ async def test_migration_0048_is_reversible(
     ticket_id = await _create_ticket(session_factory)
     await _insert_run(session_factory, run_mode="shadow", ticket_id=ticket_id)
 
-    await asyncio.to_thread(_run_alembic, settings.database_url, "-1", downgrade=True)
+    # 0048 (run_mode 追加) の down_revision まで絶対 target で downgrade する (SP-PHASE0)。相対 "-1" は
+    # head が 0048 である前提だが、後続 migration (0049/0050) が 0048 の上に積まれた今は head から 1 段
+    # では 0048 に届かず run_mode 列が残るため、0048 を確実に reverse する絶対 revision を指定する。
+    await asyncio.to_thread(
+        _run_alembic, settings.database_url, "0047_webhook_reason_not_null", downgrade=True
+    )
     engine = create_engine(settings.database_url)
     try:
         async with engine.connect() as conn:
