@@ -41,6 +41,7 @@ from backend.app.services.superintendent.agent_spawner import (
 from backend.app.services.superintendent.emergency_stop import (
     EmergencyStopEngagedError,
     EmergencyStopService,
+    EmergencyStopServiceError,
     NotEngagedError,
     StaleGenerationError,
 )
@@ -174,14 +175,16 @@ async def _make_run(
     run_id: UUID | None = None,
     run_mode: str = "production",
     pre_stop_status: str | None = None,
+    ticket_id: UUID | None = None,
 ) -> UUID:
     rid = run_id or uuid4()
     blocked_reason = "runtime_blocked" if status == "blocked" else None
     await session.execute(
         text(
             "insert into agent_runs "
-            "(id, tenant_id, project_id, status, blocked_reason, run_mode, pre_stop_status) "
-            "values (:r, :t, :p, :s, :br, :rm, :pre)"
+            "(id, tenant_id, project_id, status, blocked_reason, run_mode, "
+            "pre_stop_status, ticket_id) "
+            "values (:r, :t, :p, :s, :br, :rm, :pre, :tk)"
         ),
         {
             "r": rid,
@@ -191,10 +194,57 @@ async def _make_run(
             "br": blocked_reason,
             "rm": run_mode,
             "pre": pre_stop_status,
+            "tk": ticket_id,
         },
     )
     await session.commit()
     return rid
+
+
+async def _make_ticket(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    project_id: UUID,
+    slug: str,
+    soft_deleted: bool = False,
+) -> UUID:
+    """active-scope test 用 ticket (soft_deleted=True で deleted_at を set)。"""
+    tid = uuid4()
+    await session.execute(
+        text(
+            "insert into tickets "
+            "(id, tenant_id, project_id, slug, title, status, created_by_actor_id, "
+            "metadata, deleted_at) "
+            "values (:i, :t, :p, :slug, :title, 'open', :a, "
+            "'{\"rls_ready\": true}'::jsonb, :del)"
+        ),
+        {
+            "i": tid,
+            "t": tenant_id,
+            "p": project_id,
+            "slug": slug,
+            "title": f"ticket-{slug}",
+            "a": ACTOR_OWNER_1 if tenant_id == 1 else ACTOR_OWNER_2,
+            "del": "now()" if soft_deleted else None,
+        },
+    )
+    if soft_deleted:
+        # bind 後に soft-delete (deleted_at param 経路を確実にする)。
+        await session.execute(
+            text("update tickets set deleted_at = now() where id = :i"),
+            {"i": tid},
+        )
+    await session.commit()
+    return tid
+
+
+async def _archive_project(session: AsyncSession, *, project_id: UUID) -> None:
+    await session.execute(
+        text("update projects set status = 'archived' where id = :p"),
+        {"p": project_id},
+    )
+    await session.commit()
 
 
 async def _run_status(session: AsyncSession, run_id: UUID) -> tuple[str, str | None, str | None]:
@@ -930,3 +980,256 @@ async def test_bypass_guard_rejects_unrelated_model_mutation(
             await session.commit()  # reject されない
     finally:
         detach_db_mutation_gate(sync_class, listener)
+
+
+# --------------------------------------------------------------------------- #
+# P2-6: operator reason secret scan before DB boundary
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_engage_rejects_reason_with_raw_secret_before_db(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """P2-6: raw token を含む reason は latch row flush の **前** に reject され DB 境界を越えない。"""
+    async with session_factory() as session:
+        await _reset(session)
+        await _seed(session)
+
+    async with session_factory() as session:
+        service = EmergencyStopService(session)
+        with pytest.raises(EmergencyStopServiceError, match="secret pattern"):
+            await service.engage(
+                tenant_id=1,
+                operator_actor_id=ACTOR_OWNER_1,
+                reason="stop now sk-proj-ABCDEFGHIJKLMNOP1234567890 leaked",
+            )
+        await session.rollback()
+
+    # latch row が **作られていない** (rejected input が DB へ flush されていない)。
+    async with session_factory() as session:
+        count = (
+            await session.execute(
+                text("select count(*) from superintendent_emergency_stops where tenant_id = 1")
+            )
+        ).scalar_one()
+        assert count == 0
+        assert await EmergencyStopService(session).is_engaged(1) is False
+
+
+# --------------------------------------------------------------------------- #
+# P2-5: resume rechecks active-scope (soft-deleted ticket / archived project)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_resume_skips_non_actionable_runs(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """P2-5: engaged 中に ticket soft-delete / project archive された run は復元せず blocked のまま。
+
+    - actionable run (active ticket bound) は resume される。
+    - soft-deleted ticket bound run は skip (blocked のまま、skipped に計上)。
+    - archived project の run も skip。
+    """
+    async with session_factory() as session:
+        await _reset(session)
+        await _seed(session)
+        active_ticket = await _make_ticket(
+            session, tenant_id=1, project_id=PROJECT_1, slug="active-t"
+        )
+        del_ticket = await _make_ticket(
+            session, tenant_id=1, project_id=PROJECT_1, slug="del-t"
+        )
+        r_actionable = await _make_run(
+            session, tenant_id=1, project_id=PROJECT_1, status="running",
+            ticket_id=active_ticket,
+        )
+        r_deleted = await _make_run(
+            session, tenant_id=1, project_id=PROJECT_1, status="running",
+            ticket_id=del_ticket,
+        )
+
+    # engage: 両 run を block。
+    async with session_factory() as session:
+        service = EmergencyStopService(session)
+        engaged = await service.engage(tenant_id=1, operator_actor_id=ACTOR_OWNER_1)
+        await session.commit()
+    assert engaged.blocked_run_count == 2
+
+    # engaged 中に del_ticket を soft-delete (active-scope を破壊)。
+    async with session_factory() as session:
+        await session.execute(
+            text("update tickets set deleted_at = now() where id = :i"),
+            {"i": del_ticket},
+        )
+        await session.commit()
+
+    # clear: actionable は resume、non-actionable は skip。
+    async with session_factory() as session:
+        service = EmergencyStopService(session)
+        cleared = await service.clear(
+            tenant_id=1,
+            operator_actor_id=ACTOR_OWNER_1,
+            expected_generation=engaged.generation,
+        )
+        await session.commit()
+    assert cleared.resumed_run_count == 1
+    assert cleared.skipped_run_count == 1
+
+    async with session_factory() as session:
+        # actionable run は running へ復元。
+        st_a, _, pre_a = await _run_status(session, r_actionable)
+        assert st_a == "running"
+        assert pre_a is None
+        # non-actionable run は blocked のまま (pre_stop_status 保持、resume されていない)。
+        st_d, br_d, pre_d = await _run_status(session, r_deleted)
+        assert st_d == "blocked"
+        assert br_d == "runtime_blocked"
+        assert pre_d == "running"
+
+
+@pytest.mark.asyncio
+async def test_resume_skips_runs_in_archived_project(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """P2-5: engaged 中に project が archived になった run (ticket-less) も復元 skip。"""
+    async with session_factory() as session:
+        await _reset(session)
+        await _seed(session)
+        run_id = await _make_run(
+            session, tenant_id=1, project_id=PROJECT_1, status="waiting_approval"
+        )
+
+    async with session_factory() as session:
+        service = EmergencyStopService(session)
+        engaged = await service.engage(tenant_id=1, operator_actor_id=ACTOR_OWNER_1)
+        await session.commit()
+    assert engaged.blocked_run_count == 1
+
+    async with session_factory() as session:
+        await _archive_project(session, project_id=PROJECT_1)
+
+    async with session_factory() as session:
+        service = EmergencyStopService(session)
+        cleared = await service.clear(
+            tenant_id=1, operator_actor_id=ACTOR_OWNER_1,
+            expected_generation=engaged.generation,
+        )
+        await session.commit()
+    assert cleared.resumed_run_count == 0
+    assert cleared.skipped_run_count == 1
+
+    async with session_factory() as session:
+        st, br, pre = await _run_status(session, run_id)
+        assert st == "blocked"  # archived project の run は復元されない
+        assert pre == "waiting_approval"
+
+
+# --------------------------------------------------------------------------- #
+# P2-4: clear always audits (emergency_stop_cleared) even with 0 resumed runs
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_clear_audits_even_with_zero_resumed_runs(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """P2-4: resume が 0 件でも latch clear が emergency_stop_cleared で監査に残る。"""
+    async with session_factory() as session:
+        await _reset(session)
+        await _seed(session)
+        # active run 無しで engage (block 0 件)。
+        service = EmergencyStopService(session)
+        engaged = await service.engage(tenant_id=1, operator_actor_id=ACTOR_OWNER_1)
+        await session.commit()
+    assert engaged.blocked_run_count == 0
+
+    # clear (resume 0 件)。
+    async with session_factory() as session:
+        service = EmergencyStopService(session)
+        cleared = await service.clear(
+            tenant_id=1, operator_actor_id=ACTOR_OWNER_1,
+            expected_generation=engaged.generation,
+        )
+        await session.commit()
+    assert cleared.resumed_run_count == 0
+
+    # clear audit (emergency_stop_cleared) が残っている (resume 0 件でも消えない)。
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "select event_payload::text from audit_events "
+                    "where tenant_id = 1 order by created_at"
+                )
+            )
+        ).all()
+    blob = " ".join(r[0] for r in rows)
+    assert "emergency_stop_cleared" in blob
+    # engage の emergency_stop_engaged audit + clear の emergency_stop_cleared audit (2 件)。
+    assert "emergency_stop_engaged" in blob
+
+
+# --------------------------------------------------------------------------- #
+# P1-2: spawn holds advisory lock → engage serialized with spawn
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_spawn_holds_advisory_lock_serializing_engage(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """P1-2: spawn が advisory lock を保持し、engage は spawn の commit まで待つ (TOCTOU race 排除)。
+
+    spawn session が ``acquire_emergency_stop_lock`` を取得して保持中、別 session の engage は同一
+    lock key を待つ。spawn が commit して lock を解放するまで engage の latch row 作成は進めない。
+    spawn 完了後に engage すれば latch が立ち、以後の spawn latch check が deny する (A-1 直列化)。
+    """
+    from backend.app.services.superintendent.emergency_stop import (
+        acquire_emergency_stop_lock,
+    )
+
+    async with session_factory() as session:
+        await _reset(session)
+        await _seed(session)
+
+    engage_started = asyncio.Event()
+    engage_completed = asyncio.Event()
+    spawn_committed = asyncio.Event()
+    order: list[str] = []
+
+    async def _spawn_lock_holder() -> None:
+        # spawn の critical section を模す: lock 取得 → 保持 → (engage の待機を観測) → commit。
+        async with session_factory() as session:
+            await session.execute(
+                text("select set_config('app.tenant_id', '1', true)")
+            )
+            await acquire_emergency_stop_lock(session, 1)
+            order.append("spawn_lock_acquired")
+            engage_started.set()  # engage を起動してよい
+            # engage が lock 待ちで block していることを観測するため少し待つ。
+            await asyncio.sleep(0.3)
+            order.append("spawn_commit")
+            await session.commit()  # lock 解放
+            spawn_committed.set()
+
+    async def _engage_waiter() -> None:
+        await engage_started.wait()
+        async with session_factory() as session:
+            service = EmergencyStopService(session)
+            # spawn が lock を保持中なので、この engage は lock 待ちで block する。
+            await service.engage(tenant_id=1, operator_actor_id=ACTOR_OWNER_1)
+            order.append("engage_done")
+            await session.commit()
+            engage_completed.set()
+
+    await asyncio.gather(_spawn_lock_holder(), _engage_waiter())
+    assert engage_completed.is_set()
+    # engage は spawn の commit (lock 解放) より **後** に完了する (直列化された)。
+    assert order.index("spawn_commit") < order.index("engage_done")
+
+    # engage 後は latch が立ち、spawn latch check は deny する (A-1 直列化の効果)。
+    async with session_factory() as session:
+        with pytest.raises(EmergencyStopEngagedError):
+            await _assert_not_emergency_stopped(1, session)

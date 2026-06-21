@@ -56,6 +56,29 @@ _BLOCK_SOURCE_STATUSES: tuple[AgentRunStatus, ...] = (
 )
 
 
+def _emergency_stop_lock_key(tenant_id: int) -> str:
+    """tenant-scoped emergency-stop advisory lock の canonical key (A-7、codebase 形式統一)。
+
+    engage / clear / spawn の全 critical section がこの同一 key を使い ``pg_advisory_xact_lock``
+    で直列化する (P1-2: spawn も同 lock を取得して engage と serialize される)。
+    """
+    return f"superintendent-emergency-stop:{tenant_id}"
+
+
+async def acquire_emergency_stop_lock(session: AsyncSession, tenant_id: int) -> None:
+    """tenant-scoped emergency-stop advisory lock を **caller の transaction で** 取得する (P1-2/A-1/A-7)。
+
+    ``pg_advisory_xact_lock`` は transaction-scoped (commit/rollback で解放)。spawn path
+    (``spawn_agent_managed``) はこの lock を latch check の前に取得し、process 起動 → mark_running →
+    caller commit まで保持する。engage / clear は同一 key の lock を取るため、engage は spawn の commit
+    まで待ち、spawn は engage 完了後の latch を必ず観測する (TOCTOU race を排除)。
+    """
+    await session.execute(
+        sa.text("select pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+        {"lock_key": _emergency_stop_lock_key(tenant_id)},
+    )
+
+
 class EmergencyStopEngagedError(RuntimeError):
     """emergency-stop latch が engaged のため新規活動を deny した (fail-closed)。
 
@@ -97,6 +120,9 @@ class EngageResult:
 class ClearResult:
     cleared: bool
     resumed_run_count: int
+    #: P2-5: active-scope 違反 (soft-deleted ticket / archived project) で復元せず blocked のまま
+    #: 残した run の件数。
+    skipped_run_count: int
     generation: int
     cleared_at: datetime
 
@@ -126,10 +152,32 @@ class EmergencyStopService:
     # --- advisory lock (A-7、codebase 既存形式 hashtextextended 統一) ---
 
     async def _acquire_tenant_lock(self, tenant_id: int) -> None:
-        await self._session.execute(
-            sa.text("select pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
-            {"lock_key": f"superintendent-emergency-stop:{tenant_id}"},
+        # P1-2: spawn path と同一 canonical key の lock を共有し engage↔spawn を直列化する。
+        await acquire_emergency_stop_lock(self._session, tenant_id)
+
+    # --- operator-supplied reason の secret scan (P2-6、DB 境界前) ---
+
+    @staticmethod
+    def _assert_reason_no_raw_secret(reason: str | None) -> None:
+        """operator reason を **DB に触れる前** に broad secret scanner で検証する (P2-6)。
+
+        reason は operator free-text のため、user 自由入力共通の broad scanner
+        (``assert_no_secret_in_text``、modern provider token / canary も捕捉) を適用する。
+        hit したら ``EmergencyStopServiceError`` を raise し、rejected input が latch row として
+        flush され PostgreSQL へ送信される前に fail-closed reject する (audit 後段 scan より前倒し)。
+        """
+        if reason is None:
+            return
+        from backend.app.services.security.secret_text_scan import (
+            assert_no_secret_in_text,
         )
+
+        try:
+            assert_no_secret_in_text(reason, field="operator_reason")
+        except ValueError as exc:
+            raise EmergencyStopServiceError(
+                "emergency-stop reason rejected: forbidden secret pattern detected."
+            ) from exc
 
     # --- operator gate (engage/clear 共通、A-10 owner gate と整合) ---
 
@@ -209,6 +257,10 @@ class EmergencyStopService:
         - commit は caller (advisory lock を block まで保持)。host-freeze gate を bypass (A-3)。
         """
         await ensure_tenant_context(self._session, tenant_id)
+        # P2-6: operator-supplied reason は latch row 構築 / flush の **前** に secret scan する。
+        # _emit_audit の後段 scan だと、latch row (reason 列) が先に flush され rejected な raw token が
+        # DB 境界を越えてしまう (rollback しても PostgreSQL へ送信済)。DB へ触れる前に fail-closed reject。
+        self._assert_reason_no_raw_secret(reason)
         mark_emergency_stop_bypass(self._session)  # A-3: freeze gate bypass。
         await self._assert_human_operator(tenant_id=tenant_id, actor_id=operator_actor_id)
         await self._acquire_tenant_lock(tenant_id)
@@ -375,24 +427,29 @@ class EmergencyStopService:
         latch.cleared_by_actor_id = operator_actor_id
         await self._session.flush()
 
-        resumed_run_count = await self._resume_blocked_runs(
+        resumed_run_count, skipped_run_count = await self._resume_blocked_runs(
             tenant_id=tenant_id,
             operator_actor_id=operator_actor_id,
             generation=latch.generation,
             now=resolved_now,
         )
 
+        # P2-4: latch clear 自体の audit decision (per-run の emergency_stop_resumed event とは別)。
+        # resume が 0 件でも latch clear が監査に残るよう、latch-level の clear audit を必ず emit する。
+        # skipped_run_count (P2-5: active-scope 違反で復元せず blocked のまま残した run) も記録する。
         await self._emit_audit(
             tenant_id=tenant_id,
             actor_id=operator_actor_id,
-            reason_code="emergency_stop_resumed",
+            reason_code="emergency_stop_cleared",
             generation=latch.generation,
             run_count=resumed_run_count,
             reason=None,
+            skipped_run_count=skipped_run_count,
         )
         return ClearResult(
             cleared=True,
             resumed_run_count=resumed_run_count,
+            skipped_run_count=skipped_run_count,
             generation=latch.generation,
             cleared_at=resolved_now,
         )
@@ -404,20 +461,42 @@ class EmergencyStopService:
         operator_actor_id: UUID,
         generation: int,
         now: datetime,
-    ) -> int:
-        """emergency-stop で block された run を pre_stop_status へ復元する (B-3/A-5)。
+    ) -> tuple[int, int]:
+        """emergency-stop で block された run を pre_stop_status へ復元する (B-3/A-5/P2-5)。
 
         emergency-stop block の識別: status='blocked' + blocked_reason='runtime_blocked' +
         pre_stop_status IS NOT NULL。pre_stop_status へ run の実 run_mode で ``validate_transition``
         復元し (shadow confinement guard 保全、LOW-3)、``emergency_stop_resumed`` event を append、
         pre_stop_status を NULL に戻す。
 
+        P2-5: resume 前に run の ticket/project が **active-scope** か recheck する。emergency-stop
+        engaged 中に ticket が soft-delete / project が archive された run は、既存 MCP bridge の
+        ``_assert_run_ticket_actionable`` active-scope guard を bypass して復元してしまうため、
+        **復元せず blocked のまま残す** (skip)。skip した run は restore せず status は blocked を維持し、
+        latch-level audit の ``skipped_run_count`` に計上する (per-run の resume event は出さない)。
+
         resume event の ``idempotency_key`` も engage と同じく generation 混入で **cycle ごとに unique**
         (deterministic、engage 側 HIGH fix と一貫。timestamp に依存しない)。
+
+        Returns:
+            (resumed_count, skipped_non_actionable_count)
         """
+        from backend.app.repositories.ticket import (
+            ProjectArchivedError,
+            ProjectNotFoundError,
+            TicketNotActionableError,
+            TicketRepository,
+        )
+
         rows = (
             await self._session.execute(
-                sa.select(AgentRun.id, AgentRun.pre_stop_status, AgentRun.run_mode)
+                sa.select(
+                    AgentRun.id,
+                    AgentRun.pre_stop_status,
+                    AgentRun.run_mode,
+                    AgentRun.project_id,
+                    AgentRun.ticket_id,
+                )
                 .where(
                     AgentRun.tenant_id == tenant_id,
                     AgentRun.status == "blocked",
@@ -428,10 +507,31 @@ class EmergencyStopService:
             )
         ).all()
 
+        ticket_repo = TicketRepository(self._session)
         resumed = 0
-        for run_id, pre_stop_status, run_mode in rows:
+        skipped = 0
+        for run_id, pre_stop_status, run_mode, project_id, ticket_id in rows:
             target: AgentRunStatus = pre_stop_status
             mode: RunMode = run_mode
+
+            # P2-5: active-scope recheck。non-actionable (soft-deleted ticket / archived project) は
+            # 復元せず blocked のまま残す (MCP bridge active-scope guard と整合、削除/凍結 work を
+            # resume 経由で再露出しない)。run-mutation 側 ``_assert_run_ticket_actionable`` と同 semantics。
+            try:
+                if ticket_id is not None:
+                    await ticket_repo.assert_ticket_actionable(
+                        tenant_id, project_id, str(ticket_id)
+                    )
+                else:
+                    await ticket_repo.assert_project_active(tenant_id, project_id)
+            except (
+                TicketNotActionableError,
+                ProjectArchivedError,
+                ProjectNotFoundError,
+            ):
+                skipped += 1
+                continue
+
             # blocked -> pre_stop_status の復元 edge を run の実 run_mode で検証 (gate skip 防止 +
             # shadow confinement guard 保全、LOW-3)。
             validate_transition("blocked", target, run_mode=mode)
@@ -465,7 +565,7 @@ class EmergencyStopService:
                 idempotency_key=f"emergency-stop-resume:{run_id}:{generation}",
             )
             resumed += 1
-        return resumed
+        return resumed, skipped
 
     # --- audit ---
 
@@ -478,12 +578,14 @@ class EmergencyStopService:
         generation: int,
         run_count: int,
         reason: str | None,
+        skipped_run_count: int | None = None,
     ) -> None:
         """emergency-stop decision を audit_events に append (raw secret / pid / token 非含)。
 
         payload は actor / tenant / generation / run_count / reason_code のみ。reason (operator 入力)
-        は free-text のため AuditEvent の JSONB を insert する前に raw secret scan で防御する。
-        pid / lease token 等 supervision metadata は audit に出さない (B4 で kill 時も同方針)。
+        は free-text のため、engage では DB 境界前に既に scan 済 (P2-6) だが、audit JSONB insert 前にも
+        defense-in-depth で再 scan する。pid / lease token 等 supervision metadata は audit に出さない。
+        ``skipped_run_count`` は P2-5 で復元 skip した run 件数 (clear audit のみ)。
         """
         payload: dict[str, object] = {
             "rls_ready": True,
@@ -491,6 +593,8 @@ class EmergencyStopService:
             "generation": generation,
             "run_count": run_count,
         }
+        if skipped_run_count is not None:
+            payload["skipped_run_count"] = skipped_run_count
         if reason is not None:
             payload["operator_reason"] = reason
         # raw secret / token / pid を audit に残さない (AgentRunEvent と同 scanner)。
@@ -516,4 +620,5 @@ __all__ = [
     "EngageResult",
     "NotEngagedError",
     "StaleGenerationError",
+    "acquire_emergency_stop_lock",
 ]

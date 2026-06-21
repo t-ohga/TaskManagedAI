@@ -259,8 +259,28 @@ async def spawn_agent(
     """legacy process-only spawn (cross-process registry を持たない、B4 で managed 経路へ移行)。
 
     DB-backed registry / latch ordering は ``spawn_agent_managed`` (A-1) を使う。本関数は MCP server
-    の現行 caller が DB session を持たないため互換用に残す (cross-process kill の正本にはならない)。
+    の現行 caller (``superintendent_agent_start``) が DB session を持たないため互換用に残す
+    (cross-process kill の正本にはならない)。
+
+    **Codex P1-1 fail-open (honest limit、B4/B5 で閉じる)**: 本 legacy path は **session を持たず
+    emergency-stop latch を確認できない** ため、engage 後でも本経路 (MCP ``superintendent_agent_start``)
+    から新 process が起動し得る (fail-open)。これは ADR-00048 §B/A-9 の B3 coverage 外であり、
+    **B4 (MCP→``spawn_agent_managed`` 移行) + B5 (MCP mutating bridge latch gate)** で閉じる。それまで
+    kill switch の新規活動 deny coverage は ``spawn_agent_managed`` 経路 + block-source run のみ。
+    本 fix では behavior は変えず (sessionless 即 deny は MCP agent_start を無条件に壊し B3 scope 外)、
+    bypass を観測可能にする WARN を残し ADR/Sprint Pack 残リスクに honest 明記する。
     """
+    logger.warning(
+        "agent_spawn_legacy_path_bypasses_emergency_stop_latch",
+        extra={
+            "agent_id": str(agent_id),
+            "provider": provider,
+            "note": (
+                "legacy spawn_agent has no DB session; emergency-stop latch not checked "
+                "(fail-open). Closed by B4 (managed spawn) + B5 (MCP bridge latch gate)."
+            ),
+        },
+    )
     proc = await _start_subprocess(provider, project_dir)
     agent = SpawnedAgent(
         agent_id=agent_id,
@@ -303,9 +323,22 @@ async def spawn_agent_managed(
     呼出側は advisory lock + 同一 transaction を本関数の前後で保持し commit する (A-1 §3、commit で
     lock 解放 → lock 外 child 起動の窓を塞ぐ)。本関数は commit しない (transaction 境界は caller)。
     """
+    # 遅延 import (起動順依存を避ける、_assert_not_emergency_stopped と同方針)。
+    from backend.app.services.superintendent.emergency_stop import (
+        acquire_emergency_stop_lock,
+    )
+
     resolved_host = host_id or default_host_id()
 
-    # (1) latch check (B3 fail-closed 本体)。engaged tenant は register 前に abort する (A-1 §1)。
+    # (0) P1-2/A-1: emergency-stop advisory lock を **同一 transaction で** 取得し、latch check →
+    # register_spawning → process 起動 → mark_running → caller commit まで保持する。engage / clear は
+    # 同一 key (``superintendent-emergency-stop:<tenant>``) の lock を取るため、本 lock 保持中は engage が
+    # 待たされ、spawn は engage 完了後の latch を必ず観測する (TOCTOU race を排除)。read-only latch check
+    # だけでは lock を取得せず engage が割り込めるため (Codex P1-2)、ここで明示取得する。
+    await acquire_emergency_stop_lock(session, tenant_id)
+
+    # (1) latch check (B3 fail-closed 本体)。lock 保持下で latch を読むため、engage との race なし。
+    # engaged tenant は register 前に abort する (A-1 §1)。
     await _assert_not_emergency_stopped(tenant_id, session)
 
     # (2) process 起動前に spawning 行を pre-register。

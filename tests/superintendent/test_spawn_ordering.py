@@ -55,15 +55,21 @@ def _clear_active_agents() -> Any:
 def _noop_latch(monkeypatch: pytest.MonkeyPatch) -> Any:
     """spawn ordering test は latch 挙動でなく **ordering** を検証する (B3 latch query は別 test)。
 
-    B3 で ``_assert_not_emergency_stopped`` が DB latch query を行うようになったため、fake
-    ``session=object()`` を渡す ordering test では latch を no-op に固定する。``latch_check_called_first``
-    test は自前で再 monkeypatch して呼出順を観測する。
+    B3 で ``_assert_not_emergency_stopped`` が DB latch query を行い、P1-2 で
+    ``spawn_agent_managed`` が ``acquire_emergency_stop_lock`` で advisory lock を取得するように
+    なったため、fake ``session=object()`` を渡す ordering test では両者を no-op に固定する。
+    ``latch_check_called_first`` test は自前で latch checker を再 monkeypatch して呼出順を観測する。
     """
+    from backend.app.services.superintendent import emergency_stop as es_module
 
     async def _noop(tenant_id: int, session: Any = None) -> None:
         return None
 
+    async def _noop_lock(session: Any, tenant_id: int) -> None:
+        return None
+
     monkeypatch.setattr(agent_spawner, "_assert_not_emergency_stopped", _noop)
+    monkeypatch.setattr(es_module, "acquire_emergency_stop_lock", _noop_lock)
 
 
 @pytest.mark.asyncio
