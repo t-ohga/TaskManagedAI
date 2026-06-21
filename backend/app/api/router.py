@@ -23,6 +23,7 @@ from backend.app.api import (
     research_advanced,
     research_tasks,
     source_trust,
+    superintendent,
     tags,
     tickets,
     webhook_events,
@@ -53,3 +54,4 @@ api_router.include_router(memory.router)
 api_router.include_router(me.router)
 api_router.include_router(onboarding.router)
 api_router.include_router(audit.router)
+api_router.include_router(superintendent.router)

@@ -21,6 +21,7 @@ from pathlib import Path
 
 from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from scripts import taskhub_active_registry_gate as gate_helper
@@ -57,6 +58,77 @@ class ActiveRegistryGateRejectedCommit(IntegrityError):
 
 
 _DML_EXECUTED_KEY: str = "_active_registry_dml_executed"
+
+# ADR-00048 §A-3: emergency-stop engage/clear の DB 書込は **host-freeze DML mutation gate に
+# 阻まれてはならない** (安全機能 = 全停止が host freeze 状態に左右されない)。emergency-stop service
+# が commit する session に本 flag を立て、gate の before_commit listener は flag 検出時に bypass する。
+# managed_agents supervision (cross-process kill) とは別責務 (A-3): freeze gate は host-fleet DML
+# mutation gate であり、emergency-stop は安全弁。安全弁の書込が freeze で詰むのは fail-open の逆 = 危険。
+_EMERGENCY_STOP_BYPASS_KEY: str = "_emergency_stop_gate_bypass"
+
+
+# ADR-00048 §A-3 (LOW-2): bypass の blast radius を構造的に閉じる。bypass-flagged session の
+# ORM-tracked mutation は emergency-stop 関連 model のみ許可し、無関係 model 混入なら fail-closed で
+# reject する (whole-commit scope のまま無制限に exempt しない)。
+#
+# 限界 (honest): emergency-stop service の AgentRun status reset / AgentRunEvent append は
+# statement-based DML (`execute(update/insert)`) で session.new/dirty/deleted に現れないため、本 guard は
+# ORM-tracked instance (session.add した SuperintendentEmergencyStop / AuditEvent) のみを検査する。
+# statement-based DML は freeze gate からも bypass されるが、emergency-stop service の tenant-scoped な
+# AgentRun/AgentRunEvent 限定 update であり、本 guard は「無関係な ORM model を session.add した状態で
+# bypass commit する」誤用を構造的に弾く目的 (主防御は service 単独使用 + per-request fresh session)。
+_EMERGENCY_STOP_BYPASS_ALLOWED_MODELS: frozenset[str] = frozenset(
+    {
+        "SuperintendentEmergencyStop",
+        "AuditEvent",
+        "AgentRun",
+        "AgentRunEvent",
+    }
+)
+
+
+class EmergencyStopBypassScopeViolation(IntegrityError):
+    """A-3 bypass session に emergency-stop 無関係の ORM mutation が混入した (fail-closed)。
+
+    ``IntegrityError`` を継承し既存 SQLAlchemy rollback handling に乗せる (gate reject と同様)。
+    """
+
+    def __init__(self, model_name: str) -> None:
+        message = (
+            "emergency-stop gate bypass rejected: unrelated ORM mutation in bypassed "
+            f"commit (model={model_name})"
+        )
+        super().__init__(message, None, Exception("emergency_stop_bypass_scope_violation"))
+
+
+def mark_emergency_stop_bypass(session: AsyncSession | Session) -> None:
+    """ADR-00048 §A-3: 本 session の commit を active-registry freeze gate から exempt する。
+
+    emergency-stop engage/clear の service が呼ぶ。本 flag を立てた session の commit は
+    ``before_commit`` listener (sync ``Session`` を受け取る) で gate 評価を skip する (freeze 状態でも
+    emergency-stop の latch 書込 / run block-resume を必ず永続化する)。本 flag は emergency-stop service
+    のみが立てる (一般 mutation 経路からは到達しない private helper)。
+
+    LOW-2: bypass は **whole-commit scope** だが、``before_commit`` で bypass-flagged session の
+    ORM-tracked instance を allowlist (``_EMERGENCY_STOP_BYPASS_ALLOWED_MODELS``) に照合し、無関係
+    model 混入なら ``EmergencyStopBypassScopeViolation`` で fail-closed reject する (blast radius を閉じる)。
+
+    ``AsyncSession`` の場合は内部の sync ``Session`` (``before_commit`` listener が見るのと同一 instance)
+    の ``info`` dict に flag を立てる (両者は同じ dict を共有する)。
+    """
+    sync_session = session.sync_session if isinstance(session, AsyncSession) else session
+    sync_session.info[_EMERGENCY_STOP_BYPASS_KEY] = True
+
+
+def _assert_emergency_stop_bypass_scope(session: Session) -> None:
+    """bypass-flagged commit の ORM-tracked mutation が emergency-stop 関連 model のみか確認 (LOW-2)。
+
+    無関係 model が session.new/dirty/deleted に乗っていれば fail-closed で reject する。
+    """
+    for instance in (*session.new, *session.dirty, *session.deleted):
+        model_name = type(instance).__name__
+        if model_name not in _EMERGENCY_STOP_BYPASS_ALLOWED_MODELS:
+            raise EmergencyStopBypassScopeViolation(model_name)
 
 
 def _session_has_mutations(session: Session) -> bool:
@@ -128,14 +200,23 @@ def _on_before_flush(
 
 
 def _on_after_commit_or_rollback(session: Session) -> None:
-    """commit / rollback 後に DML flag を clear (次の transaction に持ち越さない)。"""
+    """commit / rollback 後に DML / emergency-stop bypass flag を clear (次 transaction へ持ち越さない)。"""
     session.info.pop(_DML_EXECUTED_KEY, None)
+    session.info.pop(_EMERGENCY_STOP_BYPASS_KEY, None)
 
 
 def _build_before_commit_listener(
     cfg: DbGateConfig,
 ) -> Callable[[Session], None]:
     def _on_before_commit(session: Session) -> None:
+        # ADR-00048 §A-3: emergency-stop engage/clear は host-freeze gate を bypass する
+        # (安全弁の書込が freeze 状態に左右されない)。mutation 検出より前に評価し、bypass された
+        # commit は freeze gate を走らせない。ただし LOW-2: bypass session の ORM-tracked mutation が
+        # emergency-stop 関連 model のみであることを assert し、無関係 model 混入なら fail-closed reject
+        # (blast radius を構造的に閉じる)。
+        if session.info.get(_EMERGENCY_STOP_BYPASS_KEY, False):
+            _assert_emergency_stop_bypass_scope(session)
+            return
         if not _session_has_mutations(session):
             return
         outcome = gate_helper.evaluate_gate(
