@@ -447,7 +447,8 @@ async def test_secret_constraints_match_secretbroker_boundary(
             constraint_name="secret_capability_tokens_ck_used_at_status",
         )
 
-    assert "secret://sops" in secret_uri_check
+    # ADR-00058: URI backend は (sops|local) の 2 種 (additive、SECRET_URI_PATTERN 単一定数)。
+    assert "secret://(sops|local)" in secret_uri_check
     for scope in ("p0", "workspace", "project", "repo", "agent_run", "provider"):
         assert scope in secret_uri_check
     assert "[a-z0-9_-]+#v[0-9]+" in secret_uri_check
