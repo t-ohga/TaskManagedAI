@@ -69,6 +69,10 @@ EXPECTED_SHADOW_FORBIDDEN_TRANSITIONS = {
     "policy_linted": frozenset({"diff_ready"}),
     "diff_ready": frozenset({"waiting_approval"}),
     "waiting_approval": frozenset({"running"}),
+    # SP-PHASE1 B1 (adversarial MEDIUM fix): emergency-stop resume edges
+    # blocked->policy_linted / blocked->diff_ready are production-only; shadow runs
+    # are confined out of the side-effect pipeline (SP-029/ADR-00055).
+    "blocked": frozenset({"policy_linted", "diff_ready"}),
 }
 
 
