@@ -37,6 +37,14 @@ SMOKE_FRONTEND_PORT="13900"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# compose interpolation env (user 実機検証 2026-06-21 + Codex PR #355 F1/F2 反映)。
+# - compose の `${VAR:?}` interpolation source は precedence 順に: shell env > `--env-file` > cwd `.env`。
+#   よって COOKIE_SECRET 等は **`--env-file .env.local`** が供給する (下記 _compose で渡す)。
+# - `.env.local` を bash `source` しない (compose env-file は bash 構文保証が無く、`VAR: VAL` / 未 quote backtick 等で
+#   破損/実行され得る、Codex F1)。.env.local に無い `TASKMANAGEDAI_ENVIRONMENT` のみ shell default を補う。
+ENV_FILE="${ENV_FILE:-.env.local}"
+export TASKMANAGEDAI_ENVIRONMENT="${TASKMANAGEDAI_ENVIRONMENT:-development}"
+
 # 注意: base compose は loopback bind 127.0.0.1:8000/3900 を固定する。smoke 用 port override は
 # docker-compose.smoke override で行う想定 (本 helper は project 名 + down -v の安全則を主眼とし、
 # port override file が無い環境では base port にフォールバックする = 実運用 stack を起動していない時のみ実行)。
@@ -45,9 +53,13 @@ SMOKE_OVERRIDE="docker-compose.smoke.yml"
 if [[ -f "$SMOKE_OVERRIDE" ]]; then
   COMPOSE_FILES+=(-f "$SMOKE_OVERRIDE")
 fi
+# `--env-file` は compose の interpolation source (COOKIE_SECRET 等) かつ container env_file の供給元。
+# .env.local が無い場合 (例: cleanup 後の down) は付けない (down は placeholder で interpolation を通す、下記)。
+COMPOSE_ENV_FILE_ARGS=()
+[[ -f "$ENV_FILE" ]] && COMPOSE_ENV_FILE_ARGS=(--env-file "$ENV_FILE")
 
 _compose() {
-  docker compose -p "$PROJECT" "${COMPOSE_FILES[@]}" "$@"
+  docker compose "${COMPOSE_ENV_FILE_ARGS[@]}" -p "$PROJECT" "${COMPOSE_FILES[@]}" "$@"
 }
 
 _up() {
@@ -77,11 +89,20 @@ _down() {
   _compose down -v --remove-orphans
 }
 
+# teardown は startup secret 不要 (Codex F2): down 経路は compose ファイル parse で ${COOKIE_SECRET:?} を
+# interpolation するが、.env.local が既に削除されていても cleanup できるよう無害な placeholder を補う
+# (shell > --env-file precedence のため up では設定しない = .env.local の正値を上書きしない)。
+_ensure_down_interpolation_defaults() {
+  export TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET="${TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET:-smoke_teardown_placeholder_not_a_secret}"
+  export TASKMANAGEDAI_DEV_LOGIN_TOKEN="${TASKMANAGEDAI_DEV_LOGIN_TOKEN:-}"
+}
+
 case "${1:-all}" in
   up) _up ;;
-  down) _down ;;
+  down) _ensure_down_interpolation_defaults; _down ;;
   all)
-    trap _down EXIT
+    # up 失敗で .env.local が無い等でも EXIT trap の teardown が interpolation で止まらないよう default を補う。
+    trap '_ensure_down_interpolation_defaults; _down' EXIT
     _up
     echo "[smoke] OK (up + healthz green); auto down on exit"
     ;;

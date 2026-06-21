@@ -53,8 +53,15 @@ base compose (`internal: true`、production 境界) + dev override (`internal: f
 起動 service は **明示列挙**し、`worker` は起動しない (Phase 0 既定で worker は §6 で host 起動するため、
 docker worker を上げると二重稼働になる)。
 
+**重要 (compose interpolation)**: base compose は `${TASKMANAGEDAI_ENVIRONMENT:?}` /
+`${TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET:?}` を interpolation で要求する。interpolation source は precedence 順に
+**shell env > `--env-file` > cwd `.env`**。COOKIE_SECRET 等は **`--env-file .env.local`** が供給するので、`.env.local` に
+無い `TASKMANAGEDAI_ENVIRONMENT` のみ shell に export すればよい (`.env.local` を `source` する必要はない。compose
+env-file は bash 構文保証が無く `source` は破損/実行リスクがある)。
+
 ```bash
-export TASKMANAGEDAI_ENVIRONMENT=development
+# .env.local に無い ENVIRONMENT のみ shell に設定 (COOKIE_SECRET 等は下記 --env-file が interpolation 供給)。
+export TASKMANAGEDAI_ENVIRONMENT="${TASKMANAGEDAI_ENVIRONMENT:-development}"
 # worker は除外 (§6 で host 起動)。postgres/redis/api/frontend のみ。
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local \
   up -d --build postgres redis api frontend
@@ -78,15 +85,37 @@ bash scripts/alembic_wrapper.sh heads
 
 到達確認は CLI でも可能 (§8 の `taskhub status --local` の `alembic_up_to_date: true`)。
 
-## 4. seed (initial default actor + dogfooding fixtures)
+## 4. seed (initial default actor)
+
+**必須**: fresh DB は `actors` が空で、dev login / dashboard が `actor not found` (HTTP 401) で失敗する。
+先に **base seed runner** で `human:default` actor + tenant/workspace/project 等を作る。
+
+**注意 (user 実機検証 2026-06-21 で確定した 2 点)**:
+- container 内 `/app` は root owned のため、**`uv run` をそのまま実行すると `taskmanagedai.egg-info: Permission denied` で失敗**する。**`uv run --no-sync`** で sync を抑止する (egg-info 書込を回避)。
+- `exec` は **`-T`** を付ける (非 TTY、CI/script 経路で安全)。
 
 ```bash
-# dry-run で内容確認 → apply
+# fresh DB の必須 base seed (human:default actor + tenant/workspace/project/repository/ticket 等)。
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local \
-  exec api uv run python -m backend.app.cli.dogfooding_seed --dry-run
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.local \
-  exec api uv run python -m backend.app.cli.dogfooding_seed --apply
+  exec -T api uv run --no-sync python -m backend.app.seeds.runner
+# expected: exit 0。確認: dev login → dashboard が 401 にならない (§7 の実ブラウザ確認)。
 ```
+
+### 4b. dogfooding fixtures (任意)
+
+dogfooding 用 ticket/sprint fixtures を入れる場合のみ。**`backend.app.cli.dogfooding_seed` は `docs/sprints/` を
+読むが container には同 dir が無い** (image に含めていない) ため、**container exec では 0 件になる**。投入するなら
+`docs/sprints/` のある **host 側** から、loopback DB を指して実行する (host に uv 環境 + DB 接続 env が必要):
+
+```bash
+# host から (docs/sprints/ がある repo dir)。compose-internal host でなく loopback DB を指す。
+TASKMANAGEDAI_DATABASE_URL="postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai" \
+  uv run python -m backend.app.cli.dogfooding_seed --dry-run   # 内容確認
+TASKMANAGEDAI_DATABASE_URL="postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai" \
+  uv run python -m backend.app.cli.dogfooding_seed --apply
+```
+
+詳細は `docs/deploy/dogfooding-seed-sop.md`。Phase 0 起動確認 (login/dashboard) には §4 の base seed のみで十分。
 
 詳細は `docs/deploy/dogfooding-seed-sop.md`。
 
