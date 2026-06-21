@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.app.config import Settings, get_settings
 from backend.app.db.session import create_engine
+from backend.app.repositories.secret_ref import SecretRefRepository
 from backend.app.services.secrets.local_secret_store import LocalSecretStore
 from backend.app.services.secrets.material_reconciliation import (
     MaterialReconciliationService,
@@ -1232,6 +1233,55 @@ async def test_gc_preserves_rotation_candidate_when_old_active(
             {"id": SECRET_REF_TWO_ID},
         )
         assert row.one() == ("pending", "present")
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_any_local_secret_refs_exist_is_deployment_wide(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R24-F1: any_local_secret_refs_exist は deployment-wide (全 tenant) かつ local backend のみ。
+
+    marker は deployment-scoped 単一ファイルのため、marker-loss-recovery 判定は tenant を跨いで local row を
+    検出する必要がある (tenant A の local + tenant B の fresh register で false-purged にしない)。
+    """
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        repo = SecretRefRepository(session)
+
+        # sops のみ → False (local backend のみ検出)。
+        await _insert_secret_ref(
+            session,
+            id=SECRET_REF_ONE_ID,
+            scope="project",
+            name="sops-only",
+            version="v1",
+            secret_uri="secret://sops/project/sops-only#v1",
+            material_state="present",
+        )
+        await session.commit()
+        assert await repo.any_local_secret_refs_exist() is False
+
+        # tenant 1 に local row を 1 件入れる → tenant 2 context でも True (deployment-wide)。
+        await _insert_secret_ref(
+            session,
+            id=SECRET_REF_TWO_ID,
+            scope="project",
+            name="local-one",
+            version="v1",
+            status="pending",
+            secret_uri="secret://local/project/local-one#v1",
+            material_state="writing",
+        )
+        await session.commit()
+        assert await repo.any_local_secret_refs_exist() is True
         await session.rollback()
 
 

@@ -182,33 +182,34 @@ async def test_rotate_rejects_old_material_not_present() -> None:
 
 
 async def test_marker_init_safe_allows_fresh_first_store() -> None:
-    """marker 不在 + local secret_ref 無 = fresh first-store → 通過 (marker 作成 OK)。"""
+    """marker 不在 + local secret_ref 無 (deployment-wide) = fresh first-store → 通過 (marker 作成 OK)。"""
     service = SecretRegistrationService(session=MagicMock(), store=MagicMock())
     service.store.is_initialized.return_value = False
     repo = MagicMock()
-    repo.has_local_secret_refs = AsyncMock(return_value=False)
-    await service._assert_marker_init_safe(repo, tenant_id=1)  # 例外なし
-    repo.has_local_secret_refs.assert_awaited_once_with(1)
+    repo.any_local_secret_refs_exist = AsyncMock(return_value=False)
+    await service._assert_marker_init_safe(repo)  # 例外なし
+    repo.any_local_secret_refs_exist.assert_awaited_once_with()
 
 
 async def test_marker_init_safe_allows_when_already_initialized() -> None:
-    """marker 存在時は has_local_secret_refs を見ず通過 (ensure_initialized が drift verify)。"""
+    """marker 存在時は存在チェックを見ず通過 (ensure_initialized が drift verify)。"""
     service = SecretRegistrationService(session=MagicMock(), store=MagicMock())
     service.store.is_initialized.return_value = True
     repo = MagicMock()
-    repo.has_local_secret_refs = AsyncMock(return_value=True)
-    await service._assert_marker_init_safe(repo, tenant_id=1)  # 例外なし
-    repo.has_local_secret_refs.assert_not_awaited()
+    repo.any_local_secret_refs_exist = AsyncMock(return_value=True)
+    await service._assert_marker_init_safe(repo)  # 例外なし
+    repo.any_local_secret_refs_exist.assert_not_awaited()
 
 
 async def test_marker_init_safe_refuses_marker_loss_recovery() -> None:
-    """Codex R23-F1: marker 不在 + local secret_ref 存在 = marker-loss recovery → refuse (false-purged 防止)。"""
+    """Codex R23-F1/R24-F1: marker 不在 + local secret_ref 存在 (deployment-wide) = marker-loss recovery →
+    refuse (cross-tenant false-purged 防止)。"""
     service = SecretRegistrationService(session=MagicMock(), store=MagicMock())
     service.store.is_initialized.return_value = False
     repo = MagicMock()
-    repo.has_local_secret_refs = AsyncMock(return_value=True)
+    repo.any_local_secret_refs_exist = AsyncMock(return_value=True)
     with pytest.raises(SecretRegistrationError):
-        await service._assert_marker_init_safe(repo, tenant_id=1)
+        await service._assert_marker_init_safe(repo)
 
 
 async def test_rotate_rejects_empty_allowlists() -> None:

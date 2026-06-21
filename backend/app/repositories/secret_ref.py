@@ -96,19 +96,20 @@ class SecretRefRepository(BaseRepository[SecretRef]):
         )
         return list(result.scalars().all())
 
-    async def has_local_secret_refs(self, tenant_id: int) -> bool:
-        """tenant に local backend の secret_ref が 1 件以上存在するか (Codex R23-F1)。
+    async def any_local_secret_refs_exist(self) -> bool:
+        """**deployment 全体** (全 tenant) に local backend の secret_ref が 1 件以上存在するか (Codex R24-F1)。
 
         SecretRegistrationService が backend marker の fresh first-init と marker-loss-recovery を区別する
-        ために使う (local row が既にあるのに marker が無い = recovery、新規 marker 再 pin を refuse する)。
+        ために使う。``backend.marker`` は base_dir 直下の **deployment-scoped 単一ファイル**であり tenant 固有
+        ではないため、recovery 判定も deployment-wide でなければならない (tenant-scoped だと、tenant A の
+        local material + marker 喪失下で tenant B の fresh register が marker を別 backend に再 pin し、tenant A
+        material を false-purged にする、R24-F1)。これは marker invariant のための **意図的な全 tenant 存在
+        チェック** (read-only、tenant データは返さず存在有無のみ)。P0 は RLS 無効のため tenant filter 無しの
+        SELECT が deployment 全体を走査する。
         """
-        await self._ensure_tenant_context(tenant_id)
         found = await self.session.scalar(
             select(SecretRef.id)
-            .where(
-                SecretRef.tenant_id == tenant_id,
-                SecretRef.secret_uri.like("secret://local/%"),
-            )
+            .where(SecretRef.secret_uri.like("secret://local/%"))
             .limit(1)
         )
         return found is not None

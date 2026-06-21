@@ -136,8 +136,8 @@ class SecretRegistrationService:
 
         repo = SecretRefRepository(self.session)
         # marker fresh-init / marker-loss-recovery 判定は create_metadata (新 local row flush) の前に行う
-        # (Codex R23-F1): 新 row 後だと has_local_secret_refs が常に True になり fresh-init も refuse する。
-        await self._assert_marker_init_safe(repo, tenant_id)
+        # (Codex R23-F1/R24-F1): 新 row 後だと存在チェックが常に True になり fresh-init も refuse する。
+        await self._assert_marker_init_safe(repo)
         row = await repo.create_metadata(
             tenant_id=tenant_id,
             backend=backend,
@@ -247,9 +247,9 @@ class SecretRegistrationService:
             )
 
         repo = SecretRefRepository(self.session)
-        # marker-loss-recovery refuse (Codex R23-F1)。rotate は old local material が前提のため、marker 不在は
-        # 常に recovery (operator action 要)。create_metadata の前 (新 row flush 前) に判定する。
-        await self._assert_marker_init_safe(repo, tenant_id)
+        # marker-loss-recovery refuse (Codex R23-F1/R24-F1)。rotate は old local material が前提のため、marker
+        # 不在は常に recovery (operator action 要)。create_metadata の前 (新 row flush 前) に判定する。
+        await self._assert_marker_init_safe(repo)
         row = await repo.create_metadata(
             tenant_id=tenant_id,
             backend="local",
@@ -506,23 +506,27 @@ class SecretRegistrationService:
                 extra={"tenant_id": tenant_id, "secret_ref_id": str(secret_ref_id)},
             )
 
-    async def _assert_marker_init_safe(
-        self, repo: SecretRefRepository, tenant_id: int
-    ) -> None:
-        """backend marker の fresh first-init と marker-loss-recovery を区別する (Codex R23-F1)。
+    async def _assert_marker_init_safe(self, repo: SecretRefRepository) -> None:
+        """backend marker の fresh first-init と marker-loss-recovery を区別する (Codex R23-F1 / R24-F1)。
 
         marker 不在を ``ensure_initialized()`` が無条件に現在 backend で再 pin すると、keyring 一時無効時に
         ``file`` を新 marker として書き、以後 delete が旧 keyring material を no-op で purged 化する
         false-purged になる。**local secret_ref が既に存在するのに marker が無い場合 = marker-loss recovery**
         として refuse し、operator が元 backend を復元/検証してからの登録を要求する。marker 存在時は
         ``ensure_initialized()`` が drift を verify する。fresh first-store (marker 無 + local row 無) のみ通す。
+
+        ``backend.marker`` は base_dir 直下の **deployment-scoped 単一ファイル**のため、存在チェックも
+        **deployment-wide (全 tenant)** にする (Codex R24-F1)。tenant-scoped だと、tenant A の local material +
+        marker 喪失下で tenant B の fresh register が marker を別 backend へ再 pin し A material を false-purged
+        にする cross-tenant 経路が残る。
         """
         if self.store.is_initialized():
             return
-        if await repo.has_local_secret_refs(tenant_id):
+        if await repo.any_local_secret_refs_exist():
             raise SecretRegistrationError(
-                "backend marker missing but local secret_refs already exist (marker-loss recovery); "
-                "restore/verify the original backend before registering new local material"
+                "backend marker missing but local secret_refs already exist deployment-wide "
+                "(marker-loss recovery); restore/verify the original backend before registering "
+                "new local material"
             )
 
     @staticmethod
