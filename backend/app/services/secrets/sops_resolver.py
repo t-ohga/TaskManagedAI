@@ -76,9 +76,11 @@ class SopsSubprocessResolver:
             age_key_file or self._resolve_age_key_file_from_env()
         )
 
-    async def resolve_secret_material(self, secret_ref: SecretRef) -> bytes:
+    async def resolve_secret_material(
+        self, secret_ref: SecretRef, *, allow_pending_verify: bool = False
+    ) -> bytes:
         self._validate_uri_scheme(secret_ref.secret_uri)
-        self._validate_status(secret_ref)
+        self._validate_status(secret_ref, allow_pending_verify=allow_pending_verify)
         file_path = self._resolve_file_path(secret_ref)
         self._validate_containment(file_path)
         self._validate_no_symlink_components(file_path)
@@ -100,8 +102,15 @@ class SopsSubprocessResolver:
                 f"URI scheme rejected: sops resolver does not handle backend {backend!r}"
             )
 
-    def _validate_status(self, secret_ref: SecretRef) -> None:
-        if secret_ref.status in ("revoked", "pending"):
+    def _validate_status(
+        self, secret_ref: SecretRef, *, allow_pending_verify: bool = False
+    ) -> None:
+        # revoked は常時 deny。pending は broker 経由の rotation verify (allow_pending_verify=True) のみ
+        # 許可し、direct/webhook 利用は default False で従来どおり拒否する (Codex R18-F1)。
+        denied_statuses: tuple[str, ...] = ("revoked", "pending")
+        if allow_pending_verify:
+            denied_statuses = ("revoked",)
+        if secret_ref.status in denied_statuses:
             raise SopsStatusDeniedError(
                 f"secret_ref status={secret_ref.status} denied for direct resolve"
             )

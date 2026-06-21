@@ -25,7 +25,12 @@ GITHUB_WEBHOOK_SECRET_OPERATION = "secret.verify"  # noqa: S105 - operation id o
 class SecretMaterialResolver(Protocol):
     """Resolve raw secret bytes for a SecretRef outside database storage."""
 
-    async def resolve_secret_material(self, secret_ref: SecretRef) -> bytes | str: ...
+    async def resolve_secret_material(
+        self, secret_ref: SecretRef, *, allow_pending_verify: bool = False
+    ) -> bytes | str:
+        # allow_pending_verify=True は broker 経由の rotation verify 専用 (Codex R18-F1)。direct/webhook
+        # 利用は default False で pending を拒否し fail-closed を維持する。
+        ...
 
 
 class RedisSetClient(Protocol):

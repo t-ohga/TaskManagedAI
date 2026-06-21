@@ -386,6 +386,25 @@ R16-F2 で target substitution を塞いだ結果露呈した material-lifecycle
   - test (no-DB): secret.verify pending+present issue 許可 / rotation.read_new pending+present redeem 許可 /
     pending+非 verify op (provider.call issue / rotation.read_old redeem) 拒否 / pending+not-present 拒否。
 
+### A-6n. Codex adversarial R18 findings adopt (1 件 HIGH、resolver gate を broker pending-verify と整合)
+
+R17-F1 (broker gate) が resolver gate と未整合だった穴を解消 (HIGH×1):
+
+- **R18-F1 (HIGH)**: R17-F1 は broker の status gate のみ pending を開けたが、redeem は claim 後に必ず
+  `_resolve_secret()` を呼ぶ。実 resolver (`CompositeSecretResolver` local 分岐の R6-F2 gate / 
+  `SopsSubprocessResolver._validate_status`) が pending を拒否するため、pending+present の新 material は
+  broker gate を通って token claim 後に `CompositeResolverError` → `material_not_present` deny で終わり、
+  rotate→verify→promote の安全経路が本番構成で詰まる。R17-F1 test は `secret_resolver=None` (SecretHandle
+  fallback) のみ通り実 resolver の矛盾を検出できていなかった。fix: resolver 契約に
+  `allow_pending_verify: bool = False` (keyword) を追加 (SecretMaterialResolver Protocol /
+  CompositeSecretResolver / SopsSubprocessResolver / broker SecretResolver 型)。broker は rotation verify
+  専用 op の pending+present に対してのみ `allow_pending_verify=True` を resolver へ渡し、**direct / webhook
+  経路は default False で従来どおり pending を拒否** (R6-F2 の direct-use fail-closed を維持)。
+  - test (no-DB): local pending+present は flag 無しで拒否 / flag 有りで resolve / sops へ flag forward。
+  - **note**: R16-F2 / R17-F1 / R18-F1 が整合する rotation-verify-via-broker-token 経路は現状 production
+    caller ゼロ (`issue_capability_token` 未配線、webhook は resolver 直接) の forward-looking hardening。
+    broker issue/claim gate + resolver gate (local/sops) の 4 gate が pending-verify で整合済。
+
 ### A-6. 残リスク (Phase 0 accepted)
 
 R2-F2 + R3-F1 で late-writer 永久 orphan + 実行経路欠如は解消。gc 実行間隔の間は再作成 material が一時的に

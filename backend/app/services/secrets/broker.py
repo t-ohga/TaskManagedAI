@@ -189,7 +189,10 @@ class BrokerIssueDenied(ValueError):
         self.reason_code = reason_code
 
 
-SecretResolver = Callable[[SecretRef], object | Awaitable[object]]
+# resolver は (secret_ref, *, allow_pending_verify=False) を受ける (Codex R18-F1)。broker は rotation
+# verify 専用 op の pending+present に対してのみ allow_pending_verify=True を渡し、direct/webhook 経路は
+# default False で fail-closed を維持する。Callable[..., ...] で kwarg を許容する。
+SecretResolver = Callable[..., object | Awaitable[object]]
 OperationCallback = Callable[[BrokerOperationContext], T | Awaitable[T]]
 
 MultiAgentSecretDenyReason = Literal[
@@ -473,8 +476,16 @@ class SecretBroker:
         # R15-F1)。operation path (例: GitHubAppAdapter→HttpxGitHubTransport が installation token を再
         # resolve) で raise すると、atomic claim 済 token を消費したまま例外伝播し denied audit + token
         # revoke を bypass する (500 + token_used 誤分類)。両 path を同一 helper で denied 化する。
+        # rotation verify 専用 op の pending+present は resolver の status gate を緩める (Codex R18-F1)。
+        # broker gate (R17-F1) と resolver gate (R6-F2) の整合: broker 経由 verify のみ pending を resolve 可。
+        allow_pending_verify = (
+            requested_operation in _ROTATION_PENDING_VERIFY_OPERATIONS
+            and secret_ref.status == "pending"
+        )
         try:
-            resolved_secret = await self._resolve_secret(secret_ref)
+            resolved_secret = await self._resolve_secret(
+                secret_ref, allow_pending_verify=allow_pending_verify
+            )
         except _RESOLVER_CUSTODY_ERRORS:
             return await self._deny_after_claim_custody_failure(
                 tenant_id=tenant_id,
@@ -799,7 +810,9 @@ class SecretBroker:
         await self._audit_redeem_denied(tenant_id, actor_id, denied, run_id)
         return denied
 
-    async def _resolve_secret(self, secret_ref: SecretRef) -> object:
+    async def _resolve_secret(
+        self, secret_ref: SecretRef, *, allow_pending_verify: bool = False
+    ) -> object:
         if self.secret_resolver is None:
             return SecretHandle(
                 secret_ref_id=secret_ref.id,
@@ -807,7 +820,10 @@ class SecretBroker:
                 name=secret_ref.name,
                 version=secret_ref.version,
             )
-        return await _maybe_await(self.secret_resolver(secret_ref))
+        # rotation verify 専用 op の pending+present のみ resolver の status gate を緩める (Codex R18-F1)。
+        return await _maybe_await(
+            self.secret_resolver(secret_ref, allow_pending_verify=allow_pending_verify)
+        )
 
     async def _mark_claimed_token_used(self, tenant_id: int, capability_id: UUID) -> None:
         await self.session.execute(

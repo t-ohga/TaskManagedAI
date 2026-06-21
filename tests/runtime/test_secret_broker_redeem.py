@@ -423,7 +423,9 @@ async def test_resolver_custody_failure_after_claim_denies_and_revokes() -> None
         op_called = True
         return "should-not-run"
 
-    async def failing_resolver(secret_ref: object) -> bytes:
+    async def failing_resolver(
+        secret_ref: object, *, allow_pending_verify: bool = False
+    ) -> bytes:
         raise LocalSecretStoreError("backend marker missing (simulated custody failure)")
 
     result = await SecretBroker(

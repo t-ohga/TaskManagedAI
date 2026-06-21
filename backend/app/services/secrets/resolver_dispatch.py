@@ -38,7 +38,9 @@ class CompositeSecretResolver:
         self._local_store = local_store
         self._sops_resolver = sops_resolver
 
-    async def resolve_secret_material(self, secret_ref: SecretRef) -> bytes:
+    async def resolve_secret_material(
+        self, secret_ref: SecretRef, *, allow_pending_verify: bool = False
+    ) -> bytes:
         try:
             backend = secret_uri_backend(secret_ref.secret_uri)
         except SecretUriError as exc:
@@ -50,9 +52,15 @@ class CompositeSecretResolver:
             # gate を常に通るとは限らないため、resolver boundary でも status active/deprecated かつ
             # material_state='present' を必須化する (writing/purging/purged の未検証・部分書込 material を
             # resolve させない、broker gate の resolver 版)。
+            # ただし broker 経由の rotation verify (allow_pending_verify=True) のみ pending+present を
+            # 許可する (Codex R18-F1、R17-F1 の broker gate と整合)。direct/webhook は default False で
+            # 従来どおり pending を拒否し fail-closed を維持する。
             status = getattr(secret_ref, "status", None)
             material_state = getattr(secret_ref, "material_state", None)
-            if status not in ("active", "deprecated"):
+            allowed_statuses: tuple[str, ...] = ("active", "deprecated")
+            if allow_pending_verify:
+                allowed_statuses = ("active", "deprecated", "pending")
+            if status not in allowed_statuses:
                 raise CompositeResolverError(
                     f"local secret_ref not resolvable for status {status!r}"
                 )
@@ -69,7 +77,9 @@ class CompositeSecretResolver:
         if backend == "sops":
             if self._sops_resolver is None:
                 raise CompositeResolverError("sops backend resolver is not configured")
-            material = await self._sops_resolver.resolve_secret_material(secret_ref)
+            material = await self._sops_resolver.resolve_secret_material(
+                secret_ref, allow_pending_verify=allow_pending_verify
+            )
             return material if isinstance(material, bytes) else material.encode()
         # parse が fail-closed のため到達しないが defense-in-depth。
         raise CompositeResolverError(f"unknown secret backend: {backend!r}")
