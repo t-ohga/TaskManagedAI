@@ -38,6 +38,7 @@ from backend.app.middleware.dev_actor import (
     DEV_SESSION_COOKIE_NAME,
     create_signed_session_cookie,
 )
+from backend.app.seeds.initial import DEFAULT_ACTOR_ID
 
 _DEFAULT_DATABASE_URL = (
     "postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test"
@@ -46,7 +47,10 @@ _DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/1"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COOKIE_SECRET = "test-cookie-secret-for-emergency-stop-gate"
 
-ACTOR_OWNER_ID = UUID("00000000-0000-4000-8000-0000000c5001")
+# canonical human:default の id を使う (seed_initial と同一 PK)。custom id だと
+# seed_initial の on_conflict(id) を擦り抜け、後続 test の seed_initial が
+# (tenant_id, actor_id)='human:default' で衝突する (test pollution、full suite で発覚)。
+ACTOR_OWNER_ID = DEFAULT_ACTOR_ID
 ACTOR_OTHER_HUMAN_ID = UUID("00000000-0000-4000-8000-0000000c5002")
 ACTOR_SERVICE_ID = UUID("00000000-0000-4000-8000-0000000c5003")
 ACTOR_AGENT_ID = UUID("00000000-0000-4000-8000-0000000c5004")
