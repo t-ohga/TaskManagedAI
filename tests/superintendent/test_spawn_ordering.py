@@ -51,6 +51,21 @@ def _clear_active_agents() -> Any:
     agent_spawner._active_agents.clear()
 
 
+@pytest.fixture(autouse=True)
+def _noop_latch(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """spawn ordering test は latch 挙動でなく **ordering** を検証する (B3 latch query は別 test)。
+
+    B3 で ``_assert_not_emergency_stopped`` が DB latch query を行うようになったため、fake
+    ``session=object()`` を渡す ordering test では latch を no-op に固定する。``latch_check_called_first``
+    test は自前で再 monkeypatch して呼出順を観測する。
+    """
+
+    async def _noop(tenant_id: int, session: Any = None) -> None:
+        return None
+
+    monkeypatch.setattr(agent_spawner, "_assert_not_emergency_stopped", _noop)
+
+
 @pytest.mark.asyncio
 async def test_spawn_managed_orders_register_then_process_then_running(
     monkeypatch: pytest.MonkeyPatch,
@@ -217,7 +232,7 @@ async def test_spawn_managed_latch_check_called_first(
     registry = _RecordingRegistry()
     seq: list[str] = []
 
-    async def _latch(tenant_id: int) -> None:
+    async def _latch(tenant_id: int, session: Any = None) -> None:
         seq.append("latch_check")
 
     async def _fake_start(provider: str, project_dir: str) -> _FakeProc:

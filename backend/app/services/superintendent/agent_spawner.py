@@ -47,17 +47,33 @@ def default_host_id() -> str:
     return os.environ.get("TASKMANAGEDAI_SUPERVISOR_HOST_ID") or socket.gethostname()
 
 
-async def _assert_not_emergency_stopped(tenant_id: int) -> None:
-    """emergency-stop latch check の **no-op stub** (SP-PHASE1 B2、ADR-00048 §A-1)。
+async def _assert_not_emergency_stopped(
+    tenant_id: int, session: AsyncSession | None = None
+) -> None:
+    """emergency-stop latch の fail-closed check (SP-PHASE1 B3、ADR-00048 §B/A-1)。
 
-    B3 (emergency-stop latch + service) が本体を実装する: advisory lock 下で
-    ``superintendent_emergency_stops`` latch を fail-closed check し、engaged なら
-    ``EmergencyStopEngagedError`` を raise して spawn を abort する。
+    spawn 冒頭で呼ばれ、当該 tenant の emergency-stop latch が engaged なら
+    ``EmergencyStopEngagedError`` を raise して spawn を abort する (latch 設定後の新規活動 deny)。
 
-    B2 時点では latch table が無いため常に allow (no-op)。本 stub は spawn 冒頭の latch-check hook を
-    呼ぶ場所を確立し、A-1 の advisory lock + ordering 構造を先に用意する目的で存在する。
+    A-1 ordering: 本 check は ``spawn_agent_managed`` の advisory lock + 同一 transaction 内で
+    register_spawning より前に呼ばれるため、engage との race は同 advisory lock
+    (``superintendent-emergency-stop:<tenant>``、emergency_stop service と共有) で線形化される
+    (claim が必ず engaged latch を見る)。
+
+    ``session`` は spawn 経路から渡される (DB latch query 用)。後方互換のため ``None`` 許容
+    (session が無ければ latch を確認できないため no-op = legacy spawn 経路。managed 経路は必ず渡す)。
+    本 helper は B5 の他 choke point からも共有利用できる。
     """
-    _ = tenant_id  # B3 で latch query に使う。
+    if session is None:
+        return None
+    # 遅延 import (service が本 module を import しないため循環なしだが、起動順依存を避ける)。
+    from backend.app.services.superintendent.emergency_stop import (
+        EmergencyStopEngagedError,
+        EmergencyStopService,
+    )
+
+    if await EmergencyStopService(session).is_engaged(tenant_id):
+        raise EmergencyStopEngagedError(tenant_id)
     return None
 
 
@@ -289,8 +305,8 @@ async def spawn_agent_managed(
     """
     resolved_host = host_id or default_host_id()
 
-    # (1) latch check (B2 は no-op stub、B3 で fail-closed 本体)。
-    await _assert_not_emergency_stopped(tenant_id)
+    # (1) latch check (B3 fail-closed 本体)。engaged tenant は register 前に abort する (A-1 §1)。
+    await _assert_not_emergency_stopped(tenant_id, session)
 
     # (2) process 起動前に spawning 行を pre-register。
     managed_id = await registry.register_spawning(
