@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import logging
 import re
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
@@ -30,6 +31,20 @@ from backend.app.repositories.secret_capability_token import (
     ClaimResult,
     SecretCapabilityTokenRepository,
 )
+from backend.app.services.secrets.local_secret_store import LocalSecretStoreError
+from backend.app.services.secrets.resolver_dispatch import CompositeResolverError
+from backend.app.services.secrets.sops_resolver import SopsResolverError
+
+logger = logging.getLogger(__name__)
+
+# atomic claim 後の secret resolve で fail-closed に raise する custody/resolver 系例外 (Codex R14-F2)。
+# LocalSecretStore (marker 不在 / backend drift / permission / decrypt 失敗) /
+# CompositeSecretResolver (local material gate / 未知 backend) / SopsSubprocessResolver。
+_RESOLVER_CUSTODY_ERRORS: tuple[type[Exception], ...] = (
+    CompositeResolverError,
+    LocalSecretStoreError,
+    SopsResolverError,
+)
 
 IssueDenyReason = Literal[
     "secret_ref_not_found",
@@ -47,6 +62,8 @@ IssueDenyReason = Literal[
     "ttl_out_of_bounds",
     "shadow_run_mutation_forbidden",
     "run_required_for_repo_mutation",
+    "material_not_present",
+    "secret_target_mismatch",
 ]
 RedeemDenyReason = Literal[
     "not_found",
@@ -63,10 +80,47 @@ RedeemDenyReason = Literal[
     "name_mismatch",
     "version_mismatch",
     "consumer_mismatch",
+    "material_not_present",
+    "secret_target_mismatch",
 ]
 
 T = TypeVar("T")
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+
+# secret 自己参照 operation (target = {secret_ref_id, version})。target を caller 入力として信用せず、
+# 実 secret_ref と target.secret_ref_id / version の同一性を issue / claim 両方で強制する (Codex R16-F2)。
+# 怠ると secret A の token を発行しつつ target に secret B を入れ、B の approval で通す substitution が可能。
+_SECRET_SELF_TARGET_OPERATIONS: frozenset[str] = frozenset(
+    {"secret.verify", "rotation.read_old", "rotation.read_new"}
+)
+
+
+def _secret_target_matches(target: Mapping[str, Any], secret_ref: SecretRef) -> bool:
+    """secret 自己参照 operation の target が実 secret_ref と一致するか (R16-F2)。"""
+    return str(target.get("secret_ref_id")) == str(secret_ref.id) and target.get(
+        "version"
+    ) == secret_ref.version
+
+
+# rotation verify 専用 operation: 新 version material を promote 前に `pending` + `material_state='present'`
+# の状態で検証/読取するため、status='active' のみの gate を緩め pending を許可する (Codex R17-F1、
+# secretbroker-boundary §5/§7/§9 「rotation verify 専用 operation だけ pending を許可」に準拠)。
+# pending 許可は material_state='present' 必須 + R16-F2 の target↔secret_ref 同一性が併せて担保する。
+_ROTATION_PENDING_VERIFY_OPERATIONS: frozenset[str] = frozenset(
+    {"rotation.read_new", "secret.verify"}
+)
+
+
+def _secret_ref_status_allowed(
+    status: str, requested_operation: RequestedOperation
+) -> bool:
+    """secret_ref.status が当該 operation で許可されるか (active 常時 / pending は rotation verify のみ)。"""
+    if status == "active":
+        return True
+    return (
+        status == "pending"
+        and requested_operation in _ROTATION_PENDING_VERIFY_OPERATIONS
+    )
 
 # SP-029 (ADR-00055 §設計制約 3、Codex R1 F-2): shadow run は repo mutation の
 # capability token を発行できない (downstream の repo write / PR open / merge を
@@ -135,7 +189,10 @@ class BrokerIssueDenied(ValueError):
         self.reason_code = reason_code
 
 
-SecretResolver = Callable[[SecretRef], object | Awaitable[object]]
+# resolver は (secret_ref, *, allow_pending_verify=False) を受ける (Codex R18-F1)。broker は rotation
+# verify 専用 op の pending+present に対してのみ allow_pending_verify=True を渡し、direct/webhook 経路は
+# default False で fail-closed を維持する。Callable[..., ...] で kwarg を許容する。
+SecretResolver = Callable[..., object | Awaitable[object]]
 OperationCallback = Callable[[BrokerOperationContext], T | Awaitable[T]]
 
 MultiAgentSecretDenyReason = Literal[
@@ -219,6 +276,15 @@ class SecretBroker:
             actor_id=actor_id,
             requested_operation=requested_operation,
         )
+        # secret 自己参照 operation は target を caller 入力として信用せず、実 secret_ref と
+        # target.secret_ref_id / version の同一性を強制する (Codex R16-F2)。approval は target から
+        # 導出した resource_ref で照合されるため、approval 照合の前に target↔secret_ref を固定する
+        # (secret A を発行しつつ target/approval を secret B に向ける substitution を封じる)。
+        if (
+            requested_operation in _SECRET_SELF_TARGET_OPERATIONS
+            and not _secret_target_matches(target, secret_ref)
+        ):
+            raise BrokerIssueDenied("secret_target_mismatch")
         await self._validate_approval(
             tenant_id=tenant_id,
             approval_id=approval_id,
@@ -388,7 +454,49 @@ class SecretBroker:
 
         if secret_ref is None:
             raise RuntimeError("SecretBroker invariant violated: secret_ref missing after claim.")
-        resolved_secret = await self._resolve_secret(secret_ref)
+        # secret 自己参照 operation の target↔secret_ref 同一性を claim 後にも再検証する (Codex R16-F2、
+        # defense-in-depth)。fingerprint 一致は redeem-target == issue-target を保証するが、issue 前の
+        # 旧 token / 将来の経路差に備え、resolve 済 secret_ref と target.secret_ref_id / version を再固定する。
+        if (
+            requested_operation in _SECRET_SELF_TARGET_OPERATIONS
+            and not _secret_target_matches(target, secret_ref)
+        ):
+            denied = BrokerRedeemDenied(
+                reason_code="secret_target_mismatch",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=capability_id,
+                secret_ref_id=secret_ref_id,
+            )
+            await self._mark_claimed_token_revoked(tenant_id, capability_id)
+            await self._audit_redeem_denied(tenant_id, actor_id, denied, run_id)
+            return denied
+        # custody/resolver fail-closed (marker 不在 / backend drift / permission / decrypt 失敗 /
+        # material gate) は **pre-resolve と operation 内の再 resolve の両方**で起き得る (Codex R14-F2 +
+        # R15-F1)。operation path (例: GitHubAppAdapter→HttpxGitHubTransport が installation token を再
+        # resolve) で raise すると、atomic claim 済 token を消費したまま例外伝播し denied audit + token
+        # revoke を bypass する (500 + token_used 誤分類)。両 path を同一 helper で denied 化する。
+        # rotation verify 専用 op の pending+present は resolver の status gate を緩める (Codex R18-F1)。
+        # broker gate (R17-F1) と resolver gate (R6-F2) の整合: broker 経由 verify のみ pending を resolve 可。
+        allow_pending_verify = (
+            requested_operation in _ROTATION_PENDING_VERIFY_OPERATIONS
+            and secret_ref.status == "pending"
+        )
+        try:
+            resolved_secret = await self._resolve_secret(
+                secret_ref, allow_pending_verify=allow_pending_verify
+            )
+        except _RESOLVER_CUSTODY_ERRORS:
+            return await self._deny_after_claim_custody_failure(
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                run_id=run_id,
+                capability_id=capability_id,
+                secret_ref_id=secret_ref_id,
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                stage="resolve",
+            )
         del resolved_secret
 
         result: T | None = None
@@ -407,7 +515,21 @@ class SecretBroker:
                     version=secret_ref.version,
                 ),
             )
-            result = await _maybe_await(operation(context))
+            # 非 custody な operation 失敗 (provider 5xx / GitHub API error 等) は従来どおり伝播させ token は
+            # 消費済扱い (boundary §9)。custody/resolver 失敗 (operation 内再 resolve) のみ denied 化する。
+            try:
+                result = await _maybe_await(operation(context))
+            except _RESOLVER_CUSTODY_ERRORS:
+                return await self._deny_after_claim_custody_failure(
+                    tenant_id=tenant_id,
+                    actor_id=actor_id,
+                    run_id=run_id,
+                    capability_id=capability_id,
+                    secret_ref_id=secret_ref_id,
+                    requested_operation=requested_operation,
+                    computed_fingerprint=computed_fingerprint,
+                    stage="operation",
+                )
 
         await self._mark_claimed_token_used(tenant_id, capability_id)
         await AuditEventRepository(self.session).append(
@@ -486,8 +608,14 @@ class SecretBroker:
         actor_id: UUID,
         requested_operation: RequestedOperation,
     ) -> None:
-        if secret_ref.status != "active":
+        # status='active' が通常。rotation verify 専用 operation のみ pending を許可する (Codex R17-F1、
+        # 新 version material を promote 前に検証する rotate→verify→promote flow、boundary §5/§7/§9)。
+        if not _secret_ref_status_allowed(secret_ref.status, requested_operation):
             raise BrokerIssueDenied("secret_ref_not_active")
+        # material lifecycle gate (ADR-00058 finding-2): store 未完了 (writing) / purge 中・済
+        # (purging/purged) の row から token を発行しない (false-present 防止)。pending verify も present 必須。
+        if secret_ref.material_state != "present":
+            raise BrokerIssueDenied("material_not_present")
         if requested_operation not in secret_ref.allowed_operations:
             raise BrokerIssueDenied("operation_mismatch")
         if not _actor_allowed(actor_id, secret_ref.allowed_consumers):
@@ -573,9 +701,20 @@ class SecretBroker:
                 capability_id=claim.capability_id,
                 secret_ref_id=claim.secret_ref_id,
             )
-        if secret_ref.status != "active":
+        # active が通常。rotation verify 専用 operation のみ pending を許可 (Codex R17-F1、issue gate と mirror)。
+        if not _secret_ref_status_allowed(secret_ref.status, requested_operation):
             return BrokerRedeemDenied(
                 reason_code="secret_ref_revoked",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=claim.capability_id,
+                secret_ref_id=claim.secret_ref_id,
+            )
+        # material lifecycle gate (ADR-00058 finding-2): redeem 時の secret_ref 再検証でも
+        # material_state='present' を必須化 (writing/purging/purged は material_not_present で deny)。
+        if secret_ref.material_state != "present":
+            return BrokerRedeemDenied(
+                reason_code="material_not_present",
                 requested_operation=requested_operation,
                 computed_fingerprint=computed_fingerprint,
                 capability_id=claim.capability_id,
@@ -633,13 +772,67 @@ class SecretBroker:
             )
         return None
 
-    async def _resolve_secret(self, secret_ref: SecretRef) -> object:
+    async def _deny_after_claim_custody_failure(
+        self,
+        *,
+        tenant_id: int,
+        actor_id: UUID,
+        run_id: UUID | None,
+        capability_id: UUID,
+        secret_ref_id: UUID,
+        requested_operation: RequestedOperation,
+        computed_fingerprint: str | None,
+        stage: str,
+    ) -> BrokerRedeemDenied:
+        """atomic claim 後の custody/resolver 失敗を fail-closed deny にする (Codex R14-F2 / R15-F1)。
+
+        claimed token を revoke + ``secret_capability_denied`` audit にして
+        ``BrokerRedeemDenied(material_not_present)`` を返す。raw secret / 例外詳細は audit / response に
+        出さず reason_code と stage (resolve / operation) のみ残す。
+        """
+        logger.warning(
+            "secret custody resolve failed after atomic claim; denying redeem fail-closed",
+            extra={
+                "tenant_id": tenant_id,
+                "capability_id": str(capability_id),
+                "secret_ref_id": str(secret_ref_id),
+                "stage": stage,
+            },
+        )
+        denied = BrokerRedeemDenied(
+            reason_code="material_not_present",
+            requested_operation=requested_operation,
+            computed_fingerprint=computed_fingerprint,
+            capability_id=capability_id,
+            secret_ref_id=secret_ref_id,
+        )
+        await self._mark_claimed_token_revoked(tenant_id, capability_id)
+        await self._audit_redeem_denied(tenant_id, actor_id, denied, run_id)
+        return denied
+
+    async def _resolve_secret(
+        self, secret_ref: SecretRef, *, allow_pending_verify: bool = False
+    ) -> object:
         if self.secret_resolver is None:
             return SecretHandle(
                 secret_ref_id=secret_ref.id,
                 scope=secret_ref.scope,
                 name=secret_ref.name,
                 version=secret_ref.version,
+            )
+        # rotation verify 専用 op の pending+present のみ resolver の status gate を緩める (Codex R18-F1)。
+        # 旧 1-arg resolver (Callable[[SecretRef], ...]) が注入された場合、allow_pending_verify kwarg を
+        # 渡すと atomic claim 後に TypeError が起き custody catch (_RESOLVER_CUSTODY_ERRORS) を bypass して
+        # 500 + denied/revoke skip になる (Codex F4)。signature を introspect し kwarg 非対応 resolver は
+        # 1-arg で呼ぶ。ただし rotation verify (allow_pending_verify=True) を honor できない 1-arg resolver は
+        # CompositeResolverError で fail-closed (caller が denied+revoke へ落とす、TypeError 500 を回避)。
+        if _resolver_accepts_pending_flag(self.secret_resolver):
+            return await _maybe_await(
+                self.secret_resolver(secret_ref, allow_pending_verify=allow_pending_verify)
+            )
+        if allow_pending_verify:
+            raise CompositeResolverError(
+                "injected resolver does not support allow_pending_verify (rotation verify gate)"
             )
         return await _maybe_await(self.secret_resolver(secret_ref))
 
@@ -833,6 +1026,22 @@ async def _maybe_await[T](value: T | Awaitable[T]) -> T:
     if inspect.isawaitable(value):
         return await value
     return value
+
+
+def _resolver_accepts_pending_flag(resolver: SecretResolver) -> bool:
+    """resolver が allow_pending_verify kwarg を受けるか introspect する (Codex F4)。
+
+    旧 1-arg resolver (Callable[[SecretRef], ...]) に kwarg を渡すと atomic claim 後 TypeError → custody
+    catch を bypass する。signature を見て、明示 param か **kwargs があれば True。introspect 不能な callable
+    は False (1-arg 扱いで安全側)。
+    """
+    try:
+        params = inspect.signature(resolver).parameters
+    except (TypeError, ValueError):  # signature 取得不能な callable は 1-arg 扱い
+        return False
+    if "allow_pending_verify" in params:
+        return True
+    return any(p.kind == p.VAR_KEYWORD for p in params.values())
 
 
 __all__ = [

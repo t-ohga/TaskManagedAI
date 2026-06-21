@@ -42,6 +42,7 @@ def _build_mock_session(*, default_rowcount: int = 1) -> tuple[MagicMock, AsyncM
     execute_result = MagicMock()
     execute_result.rowcount = default_rowcount
     session.execute = AsyncMock(return_value=execute_result)
+    session.rollback = AsyncMock(return_value=None)  # Codex R4-F2: promote 失敗時 rollback 検証用
     return session, session.scalar
 
 
@@ -54,8 +55,13 @@ def _mock_secret_ref(
     name: str = "provider-openai",
     rotated_from_id: UUID | None = None,
     metadata_: dict | None = None,
+    material_state: str = "present",
 ) -> MagicMock:
-    """Codex F-PR48-001/002 P1/P2 adopt: scope/name/rotated_from_id/metadata_ も mock 化."""
+    """Codex F-PR48-001/002 P1/P2 adopt: scope/name/rotated_from_id/metadata_ も mock 化。
+
+    material_state は SP-PHASE0 (Codex F3) で追加。MagicMock は属性を auto-vivify するため、
+    promote の material_state gate が誤発火しないよう明示設定する (default present)。
+    """
 
     ref = MagicMock()
     ref.id = secret_ref_id
@@ -65,6 +71,7 @@ def _mock_secret_ref(
     ref.name = name
     ref.rotated_from_id = rotated_from_id
     ref.metadata_ = metadata_ if metadata_ is not None else {}
+    ref.material_state = material_state
     return ref
 
 
@@ -276,6 +283,65 @@ async def test_promote_rotated_from_id_mismatch_rejected() -> None:
 
 
 @pytest.mark.asyncio
+async def test_promote_unverified_material_rejected() -> None:
+    """SP-PHASE0 Codex F3 (HIGH): new の material_state が present 以外 (writing) なら promote reject.
+
+    legacy rotation.promote が status のみで false-present (material_state=writing) row を active 化
+    する穴を塞ぐ (未検証 material を active にしない、ADR-00058 finding-2)。
+    """
+
+    svc, session = _build_evaluator()
+    old_id = uuid4()
+    new_id = uuid4()
+    session.scalar = AsyncMock(
+        side_effect=[
+            _mock_secret_ref(secret_ref_id=old_id, status="active"),
+            _mock_secret_ref(
+                secret_ref_id=new_id,
+                status="pending",
+                rotated_from_id=old_id,
+                material_state="writing",  # store 未完了 = 未検証 material
+            ),
+        ]
+    )
+    result = await svc.promote(
+        tenant_id=_TENANT_ID, old_secret_ref_id=old_id, new_secret_ref_id=new_id
+    )
+    assert result.success is False
+    assert result.error_message == "invalid_new_material_state"
+
+
+@pytest.mark.asyncio
+async def test_promote_new_failure_rolls_back_old_demotion() -> None:
+    """Codex R4-F2 (HIGH): old demote 成功後に new promote が 0 行なら old demotion を rollback する。
+
+    rollback しないと caller commit で「old deprecated / new 非 active = active 不在」になり atomic
+    claim 違反。old rowcount=1 / new rowcount=0 で session.rollback が呼ばれることを固定する。
+    """
+    svc, session = _build_evaluator()
+    old_id = uuid4()
+    new_id = uuid4()
+    session.scalar = AsyncMock(
+        side_effect=[
+            _mock_secret_ref(secret_ref_id=old_id, status="active"),
+            _mock_secret_ref(secret_ref_id=new_id, status="pending", rotated_from_id=old_id),
+        ]
+    )
+    old_result = MagicMock()
+    old_result.rowcount = 1  # old active → deprecated 成功
+    new_result = MagicMock()
+    new_result.rowcount = 0  # new promote が stale で 0 行
+    session.execute = AsyncMock(side_effect=[old_result, new_result])
+
+    result = await svc.promote(
+        tenant_id=_TENANT_ID, old_secret_ref_id=old_id, new_secret_ref_id=new_id
+    )
+    assert result.success is False
+    assert result.error_message == "concurrent_new_status_change"
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_promote_concurrent_old_status_change_rejected() -> None:
     """Codex F-PR48-004 P1: 旧 active が concurrent 変更で rowcount=0 → atomic claim fail."""
 
@@ -380,7 +446,10 @@ async def test_rollback_deprecated_to_active() -> None:
     session.scalar = AsyncMock(
         side_effect=[
             _mock_secret_ref(secret_ref_id=deprecated_id, status="deprecated"),
-            _mock_secret_ref(secret_ref_id=active_id, status="active"),
+            # current active は rollback 対象 (deprecated) から rotate された pair (R6-F1 identity)。
+            _mock_secret_ref(
+                secret_ref_id=active_id, status="active", rotated_from_id=deprecated_id
+            ),
         ]
     )
 
@@ -416,6 +485,97 @@ async def test_rollback_revoked_target_rejected() -> None:
     )
     assert result.success is False
     assert result.error_message == "invalid_rollback_target_status"
+
+
+@pytest.mark.asyncio
+async def test_rollback_unrelated_pair_rejected() -> None:
+    """Codex R6-F1 (HIGH): current active が rollback 対象から rotate された pair でないと reject。
+
+    無関係 id ペアで本来の active を deprecated 化 + 無関係 secret を active 化する経路を塞ぐ。
+    """
+    svc, session = _build_evaluator()
+    deprecated_id = uuid4()
+    active_id = uuid4()
+    unrelated_id = uuid4()
+    session.scalar = AsyncMock(
+        side_effect=[
+            _mock_secret_ref(secret_ref_id=deprecated_id, status="deprecated"),
+            _mock_secret_ref(
+                secret_ref_id=active_id, status="active", rotated_from_id=unrelated_id
+            ),
+        ]
+    )
+    result = await svc.rollback(
+        tenant_id=_TENANT_ID,
+        deprecated_secret_ref_id=deprecated_id,
+        currently_active_secret_ref_id=active_id,
+    )
+    assert result.success is False
+    assert result.error_message == "rotated_from_id_mismatch"
+    session.execute.assert_not_awaited()  # UPDATE 前に reject (何も変更しない)
+
+
+@pytest.mark.asyncio
+async def test_rollback_unverified_target_material_rejected() -> None:
+    """Codex R6-F1 (HIGH): rollback 対象の material_state が present 以外 (writing) なら reject。
+
+    promote 側の false-present 防止を rollback 経路で迂回させない。
+    """
+    svc, session = _build_evaluator()
+    deprecated_id = uuid4()
+    active_id = uuid4()
+    session.scalar = AsyncMock(
+        side_effect=[
+            _mock_secret_ref(
+                secret_ref_id=deprecated_id, status="deprecated", material_state="writing"
+            ),
+            _mock_secret_ref(
+                secret_ref_id=active_id, status="active", rotated_from_id=deprecated_id
+            ),
+        ]
+    )
+    result = await svc.rollback(
+        tenant_id=_TENANT_ID,
+        deprecated_secret_ref_id=deprecated_id,
+        currently_active_secret_ref_id=active_id,
+    )
+    assert result.success is False
+    assert result.error_message == "invalid_target_material_state"
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rollback_restore_failure_rolls_back_active_demotion() -> None:
+    """Codex R5-F2 (HIGH): active demote 成功後に restore target が 0 行なら active demotion を rollback。
+
+    rollback しないと caller commit で「active 不在」になり atomic claim 違反 (DB unique index は
+    高々 1 active しか守らない)。active_demote=1 / deprecated_restore=0 で session.rollback を固定する。
+    """
+    svc, session = _build_evaluator()
+    deprecated_id = uuid4()
+    active_id = uuid4()
+    session.scalar = AsyncMock(
+        side_effect=[
+            _mock_secret_ref(secret_ref_id=deprecated_id, status="deprecated"),
+            _mock_secret_ref(
+                secret_ref_id=active_id, status="active", rotated_from_id=deprecated_id
+            ),
+        ]
+    )
+    active_demote = MagicMock()
+    active_demote.rowcount = 1  # current active → deprecated 成功
+    deprecated_restore = MagicMock()
+    deprecated_restore.rowcount = 0  # restore target が concurrent 変更で 0 行
+    session.execute = AsyncMock(side_effect=[active_demote, deprecated_restore])
+
+    result = await svc.rollback(
+        tenant_id=_TENANT_ID,
+        deprecated_secret_ref_id=deprecated_id,
+        currently_active_secret_ref_id=active_id,
+    )
+    assert result.success is False
+    assert result.error_message == "concurrent_rollback_target_change"
+    session.rollback.assert_awaited_once()
 
 
 @pytest.mark.asyncio

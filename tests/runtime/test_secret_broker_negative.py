@@ -186,7 +186,8 @@ async def _insert_secret_ref(
               allowed_consumers,
               allowed_operations,
               owner_actor_id,
-              metadata
+              metadata,
+              material_state
             )
             values (
               :id,
@@ -200,7 +201,8 @@ async def _insert_secret_ref(
               cast(:allowed_consumers as jsonb),
               cast(:allowed_operations as jsonb),
               :owner_actor_id,
-              '{"rls_ready": true}'::jsonb
+              '{"rls_ready": true}'::jsonb,
+              'present'
             )
             """
         ),

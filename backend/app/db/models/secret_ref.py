@@ -17,9 +17,13 @@ from backend.app.db.models.base import (
     UpdatedAtMixin,
     rls_ready_metadata,
 )
+from backend.app.services.secrets.uri_pattern import SECRET_URI_PATTERN
 
 SecretRefScope = Literal["p0", "workspace", "project", "repo", "agent_run", "provider"]
 SecretRefStatus = Literal["pending", "active", "deprecated", "revoked"]
+# broker-owned material (local backend) の crash-safe lifecycle (ADR-00058 finding-2 / ADR-00059)。
+# sops backend の material は外部 (SOPS file) 管理で本 lifecycle の対象外。
+SecretMaterialState = Literal["writing", "present", "purging", "purged"]
 
 PROHIBITED_METADATA_KEYS_JSONPATH = (
     "'strict $.** ? (@.type() == \"object\")."
@@ -37,11 +41,16 @@ class SecretRef(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
     __tablename__ = "secret_refs"
     __table_args__ = (
         sa.CheckConstraint(
-            "secret_uri ~ '^secret://sops/(p0|workspace|project|repo|agent_run|provider)/[a-z0-9_-]+#v[0-9]+$'",
+            # SECRET_URI_PATTERN (uri_pattern.py) を runtime source として import (5+source 整合)。
+            # migration 0049 は revision 固定 literal を hardcode し、drift guard test が両者一致を強制。
+            f"secret_uri ~ '{SECRET_URI_PATTERN}'",
             name="secret_refs_ck_secret_uri_format",
         ),
         sa.CheckConstraint(
-            "secret_uri = 'secret://sops/' || scope || '/' || name || '#' || version",
+            # backend は sops|local の 2 値 (additive、ADR-00058)。URI と (scope,name,version) の
+            # drift を防ぐ exact components match。backend を column に持たず両 backend を OR で許容。
+            "secret_uri = 'secret://sops/' || scope || '/' || name || '#' || version "
+            "OR secret_uri = 'secret://local/' || scope || '/' || name || '#' || version",
             name="secret_refs_ck_secret_uri_components_match",
         ),
         sa.CheckConstraint(
@@ -91,6 +100,35 @@ class SecretRef(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         sa.CheckConstraint(
             "(revoked_at is null) or (status = 'revoked')",
             name="secret_refs_ck_revoked_at",
+        ),
+        sa.CheckConstraint(
+            "material_state in ('writing','present','purging','purged')",
+            name="secret_refs_ck_material_state",
+        ),
+        sa.CheckConstraint(
+            "purge_attempts >= 0",
+            name="secret_refs_ck_purge_attempts_nonneg",
+        ),
+        # material_purged_at non-NULL ⟺ material_state='purged' (「secret-at-rest 削除済」表示は
+        # material_purged_at non-NULL で初めて真、ADR-00059)。
+        sa.CheckConstraint(
+            "(material_purged_at is null and material_state <> 'purged') "
+            "or (material_purged_at is not null and material_state = 'purged')",
+            name="secret_refs_ck_material_purged_at_state",
+        ),
+        # purging / purged は revoke 後にのみ発生 (broker-owned material の purge は revoke を前提)。
+        sa.CheckConstraint(
+            "material_state not in ('purging','purged') or status = 'revoked'",
+            name="secret_refs_ck_material_purge_requires_revoked",
+        ),
+        # transient material states (writing/purging) は broker-owned (local) material 専用 (Codex R7-F2)。
+        # sops material は外部管理で本 lifecycle 対象外 → sops 行は present/purged のみ。default 'writing'
+        # の sops 直接登録 (operational SQL / D-4) が material_state 省略で silent に broker-unusable になる
+        # のを insert 時に fail-closed (use 時の material_not_present 無言 deny を loud な登録失敗へ前倒し)。
+        sa.CheckConstraint(
+            "material_state not in ('writing','purging') "
+            "or secret_uri like 'secret://local/%'",
+            name="secret_refs_ck_transient_material_local_only",
         ),
         sa.ForeignKeyConstraint(
             ["tenant_id"],
@@ -189,7 +227,33 @@ class SecretRef(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         sa.DateTime(timezone=True),
         nullable=True,
     )
+    # broker-owned (local backend) material の crash-safe lifecycle (ADR-00058 finding-2 / ADR-00059)。
+    # default 'writing' = store 未完了 row が false-present にならない安全側 (token issue/redeem は
+    # material_state='present' を必須化、boundary §7/§9)。sops backend は外部管理で本 lifecycle 対象外。
+    material_state: Mapped[SecretMaterialState] = mapped_column(
+        sa.Text,
+        nullable=False,
+        default="writing",
+        server_default=sa.text("'writing'"),
+    )
+    # 「secret-at-rest 削除済」の durable source of truth。non-NULL で初めて purge 完了 (ADR-00059)。
+    material_purged_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=True,
+    )
+    # gc-orphans reconciliation の再試行回数 (durable tracking)。
+    purge_attempts: Mapped[int] = mapped_column(
+        sa.Integer,
+        nullable=False,
+        default=0,
+        server_default=sa.text("0"),
+    )
 
 
-__all__ = ["SecretRef", "SecretRefScope", "SecretRefStatus"]
+__all__ = [
+    "SecretMaterialState",
+    "SecretRef",
+    "SecretRefScope",
+    "SecretRefStatus",
+]
 

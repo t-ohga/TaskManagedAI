@@ -5,6 +5,7 @@ import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
@@ -17,6 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.app.config import Settings, get_settings
 from backend.app.db.session import create_engine
+from backend.app.repositories.secret_ref import SecretRefRepository
+from backend.app.services.secrets.local_secret_store import LocalSecretStore
+from backend.app.services.secrets.material_reconciliation import (
+    MaterialReconciliationService,
+)
 
 _DEFAULT_DATABASE_URL = (
     "postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test"
@@ -252,7 +258,10 @@ async def _insert_secret_ref(
     allowed_consumers: str = '["api:provider_adapter"]',
     allowed_operations: str = '["provider.call"]',
     metadata: str = '{"rls_ready": true}',
+    material_state: str = "present",
 ) -> None:
+    # default secret_uri は sops backend のため material_state は 'present' を default にする
+    # (sops 行は writing/purging を取れない、secret_refs_ck_transient_material_local_only)。
     await session.execute(
         text(
             """
@@ -268,7 +277,8 @@ async def _insert_secret_ref(
               allowed_consumers,
               allowed_operations,
               owner_actor_id,
-              metadata
+              metadata,
+              material_state
             )
             values (
               :id,
@@ -282,7 +292,8 @@ async def _insert_secret_ref(
               cast(:allowed_consumers as jsonb),
               cast(:allowed_operations as jsonb),
               :owner_actor_id,
-              cast(:metadata as jsonb)
+              cast(:metadata as jsonb),
+              :material_state
             )
             """
         ),
@@ -299,6 +310,7 @@ async def _insert_secret_ref(
             "allowed_operations": allowed_operations,
             "owner_actor_id": owner_actor_id,
             "metadata": metadata,
+            "material_state": material_state,
         },
     )
 
@@ -927,6 +939,474 @@ async def test_secret_refs_reject_active_with_empty_allowlist(
             sqlstate="23514",
             constraint_name="secret_refs_ck_active_allowlist_nonempty",
         )
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_secret_refs_reject_sops_writing_material(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R7-F2: sops 行の transient material (writing) を insert 時に fail-closed。
+
+    sops material は外部管理で writing/purging を取らない。default server-default 'writing' で
+    material_state を省略した sops 直接登録が **silent に broker-unusable** になるのを、登録失敗
+    (loud) へ前倒しする。
+    """
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        await session.commit()
+
+        with pytest.raises(IntegrityError) as exc_info:
+            await _insert_secret_ref(
+                session,
+                id=SECRET_REF_ONE_ID,
+                # default secret_uri = sops backend。material_state='writing' は local 専用。
+                material_state="writing",
+            )
+            await session.commit()
+
+        _assert_integrity_error(
+            exc_info.value,
+            sqlstate="23514",
+            constraint_name="secret_refs_ck_transient_material_local_only",
+        )
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_secret_refs_accept_local_writing_material(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R7-F2 の対: local backend は transient material (pending+writing) を許容する。
+
+    crash-safe registration の中間状態 (row commit → store 書込 → present) を壊さないことを担保。
+    """
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        await session.commit()
+
+        await _insert_secret_ref(
+            session,
+            id=SECRET_REF_ONE_ID,
+            secret_uri="secret://local/project/provider-openai#v1",
+            status="pending",
+            material_state="writing",
+        )
+        await session.commit()
+
+        row = await session.execute(
+            text(
+                "select material_state from secret_refs where id = :id"
+            ),
+            {"id": SECRET_REF_ONE_ID},
+        )
+        assert row.scalar_one() == "writing"
+
+
+@pytest.mark.asyncio
+async def test_rotate_present_promotion_requires_old_active(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R8-F1: present 化 UPDATE は old が現在も active+present のときだけ 1 行成立する。
+
+    rotate() の precondition gate は fetch 時の stale precheck に過ぎず、precheck→present 化 UPDATE
+    の間に別操作が old を deprecate/revoke すると pending+present orphan が残り得た。present 化を old
+    の active+present に atomic 条件付け (非相関 EXISTS) することで、old が active でない間は 0 行 →
+    new は pending+writing のまま (gc-orphans が tombstone) で orphan を作らないことを担保する。
+    """
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        # old は local deprecated+present (precheck 後に並行 deprecate された状態を模擬)。
+        await _insert_secret_ref(
+            session,
+            id=SECRET_REF_ONE_ID,
+            scope="project",
+            name="rot-test",
+            version="v1",
+            status="deprecated",
+            secret_uri="secret://local/project/rot-test#v1",
+            material_state="present",
+        )
+        # new は local pending+writing (present 化待ち)。
+        await _insert_secret_ref(
+            session,
+            id=SECRET_REF_TWO_ID,
+            scope="project",
+            name="rot-test",
+            version="v2",
+            status="pending",
+            secret_uri="secret://local/project/rot-test#v2",
+            material_state="writing",
+        )
+        await session.commit()
+
+        # service の present 化 UPDATE を mirror (old active+present の非相関 EXISTS 条件付き)。
+        promote_sql = text(
+            """
+            update secret_refs as nw
+               set material_state = 'present'
+             where nw.tenant_id = :tenant_id
+               and nw.id = :new_id
+               and nw.status = 'pending'
+               and nw.material_state = 'writing'
+               and exists (
+                 select 1 from secret_refs as od
+                  where od.tenant_id = :tenant_id
+                    and od.id = :old_id
+                    and od.status = 'active'
+                    and od.material_state = 'present'
+               )
+            """
+        )
+        params = {"tenant_id": 1, "new_id": SECRET_REF_TWO_ID, "old_id": SECRET_REF_ONE_ID}
+
+        # (1) old が deprecated の間は 0 行 → new は writing のまま (orphan を作らない)。
+        res = await session.execute(promote_sql, params)
+        assert res.rowcount == 0
+        still = await session.execute(
+            text("select material_state from secret_refs where id = :id"),
+            {"id": SECRET_REF_TWO_ID},
+        )
+        assert still.scalar_one() == "writing"
+
+        # (2) old を active+present に戻すと present 化が 1 行成立する (happy path 不破壊)。
+        await session.execute(
+            text("update secret_refs set status = 'active' where id = :id"),
+            {"id": SECRET_REF_ONE_ID},
+        )
+        res2 = await session.execute(promote_sql, params)
+        assert res2.rowcount == 1
+        promoted = await session.execute(
+            text("select status, material_state from secret_refs where id = :id"),
+            {"id": SECRET_REF_TWO_ID},
+        )
+        assert promoted.one() == ("pending", "present")  # status は pending のまま
+        await session.rollback()
+
+
+async def _insert_local_rotation_pair(
+    session: AsyncSession,
+    *,
+    old_id: UUID,
+    new_id: UUID,
+    old_status: str,
+    old_material_state: str,
+) -> None:
+    """local rotation pair (old + new pending+present rotated_from old) を insert する。"""
+    await session.execute(
+        text(
+            """
+            insert into secret_refs
+              (id, tenant_id, secret_uri, scope, name, version, status, runner_injectable,
+               allowed_consumers, allowed_operations, owner_actor_id, rotated_from_id, metadata,
+               deprecated_at, revoked_at, material_state)
+            values
+              (:old, 1, 'secret://local/project/rot-test#v1', 'project', 'rot-test', 'v1',
+                :old_status, false, '["api:provider_adapter"]'::jsonb, '["provider.call"]'::jsonb,
+                :actor, null, '{"rls_ready": true}'::jsonb,
+                case when :old_status in ('deprecated','revoked') then now() else null end,
+                case when :old_status = 'revoked' then now() else null end, :old_ms),
+              (:new, 1, 'secret://local/project/rot-test#v2', 'project', 'rot-test', 'v2',
+                'pending', false, '["api:provider_adapter"]'::jsonb, '["provider.call"]'::jsonb,
+                :actor, :old, '{"rls_ready": true}'::jsonb, null, null, 'present')
+            """
+        ),
+        {
+            "old": old_id,
+            "new": new_id,
+            "actor": TENANT_ONE_ACTOR_ID,
+            "old_status": old_status,
+            "old_ms": old_material_state,
+        },
+    )
+
+
+# gc-orphans の post-present rotation tombstone を mirror する SQL (Codex R9-F1)。
+_STALE_ROTATION_TOMBSTONE_SQL = text(
+    """
+    update secret_refs as nw
+       set status = 'revoked', material_state = 'purging', revoked_at = now()
+     where nw.tenant_id = :tenant_id
+       and nw.status = 'pending'
+       and nw.material_state = 'present'
+       and nw.rotated_from_id is not null
+       and nw.secret_uri like 'secret://local/%'
+       and not exists (
+         select 1 from secret_refs as od
+          where od.tenant_id = nw.tenant_id
+            and od.id = nw.rotated_from_id
+            and od.status = 'active'
+            and od.material_state = 'present'
+       )
+    """
+)
+
+
+@pytest.mark.asyncio
+async def test_gc_tombstones_post_present_rotation_orphan_when_old_not_active(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R9-F1: old が active+present でない pending+present rotation candidate を tombstone。
+
+    present 化 commit 後 promote 前に old が並行 revoke/demote されると new は永久 promote 不能な
+    pending+present orphan になる。gc-orphans が rotated_from の old が active+present でない local
+    pending+present row を revoked+purging へ tombstone することを SQL レベルで固定する。
+    """
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        # old は deprecated (post-present に demote された) → new は promote 不能 orphan。
+        await _insert_local_rotation_pair(
+            session,
+            old_id=SECRET_REF_ONE_ID,
+            new_id=SECRET_REF_TWO_ID,
+            old_status="deprecated",
+            old_material_state="present",
+        )
+        await session.commit()
+
+        res = await session.execute(_STALE_ROTATION_TOMBSTONE_SQL, {"tenant_id": 1})
+        assert res.rowcount == 1
+        row = await session.execute(
+            text("select status, material_state from secret_refs where id = :id"),
+            {"id": SECRET_REF_TWO_ID},
+        )
+        assert row.one() == ("revoked", "purging")
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_gc_preserves_rotation_candidate_when_old_active(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R9-F1 の対: old が active+present な legit rotation candidate は tombstone しない。"""
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        # old は active+present → new は legit な promote 待ち candidate (tombstone してはならない)。
+        await _insert_local_rotation_pair(
+            session,
+            old_id=SECRET_REF_ONE_ID,
+            new_id=SECRET_REF_TWO_ID,
+            old_status="active",
+            old_material_state="present",
+        )
+        await session.commit()
+
+        res = await session.execute(_STALE_ROTATION_TOMBSTONE_SQL, {"tenant_id": 1})
+        assert res.rowcount == 0
+        row = await session.execute(
+            text("select status, material_state from secret_refs where id = :id"),
+            {"id": SECRET_REF_TWO_ID},
+        )
+        assert row.one() == ("pending", "present")
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_any_local_secret_refs_exist_is_deployment_wide(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R24-F1: any_local_secret_refs_exist は deployment-wide (全 tenant) かつ local backend のみ。
+
+    marker は deployment-scoped 単一ファイルのため、marker-loss-recovery 判定は tenant を跨いで local row を
+    検出する必要がある (tenant A の local + tenant B の fresh register で false-purged にしない)。
+    """
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        repo = SecretRefRepository(session)
+
+        # sops のみ → False (local backend のみ検出)。
+        await _insert_secret_ref(
+            session,
+            id=SECRET_REF_ONE_ID,
+            scope="project",
+            name="sops-only",
+            version="v1",
+            secret_uri="secret://sops/project/sops-only#v1",
+            material_state="present",
+        )
+        await session.commit()
+        assert await repo.any_local_secret_refs_exist() is False
+
+        # tenant 1 に local row を 1 件入れる → tenant 2 context でも True (deployment-wide)。
+        await _insert_secret_ref(
+            session,
+            id=SECRET_REF_TWO_ID,
+            scope="project",
+            name="local-one",
+            version="v1",
+            status="pending",
+            secret_uri="secret://local/project/local-one#v1",
+            material_state="writing",
+        )
+        await session.commit()
+        assert await repo.any_local_secret_refs_exist() is True
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_gc_converges_for_writing_orphan_with_pinned_marker(
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    """Codex R14-F1: register が DB row commit 前に backend marker を pin するため、store 書込前 crash の
+    writing-orphan も gc が delete (marker 必須・fail-closed) で収束する (永久 purge_failed にならない)。
+    """
+    store = LocalSecretStore(base_dir=tmp_path, use_keyring=False)
+    store.ensure_initialized()  # register が DB commit 前に marker を pin したのを模擬
+
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        # store 書込前 crash を模擬: local pending+writing row のみ (material file 無し)。
+        # updated_at は **INSERT 時に過去化**する (raw INSERT)。secret_refs には BEFORE UPDATE トリガ
+        # secret_refs_set_updated_at (NEW.updated_at = now()) があり、UPDATE 経由の backdate は now() に
+        # 上書きされて grace 超過にならない (gc が writing-orphan を stale 判定できない)。トリガは BEFORE
+        # UPDATE のみで INSERT では発火しないため、INSERT 時に updated_at=now()-1h を直接書けば stale になる。
+        await session.execute(
+            text(
+                """
+                insert into secret_refs
+                  (id, tenant_id, secret_uri, scope, name, version, status, runner_injectable,
+                   allowed_consumers, allowed_operations, owner_actor_id, metadata,
+                   material_state, updated_at)
+                values
+                  (:id, 1, 'secret://local/project/wo-test#v1', 'project', 'wo-test', 'v1',
+                   'pending', false, '["api:provider_adapter"]'::jsonb, '["provider.call"]'::jsonb,
+                   :actor, '{"rls_ready": true}'::jsonb, 'writing', now() - interval '1 hour')
+                """
+            ),
+            {"id": SECRET_REF_ONE_ID, "actor": TENANT_ONE_ACTOR_ID},
+        )
+        await session.commit()
+
+        # 実 LocalSecretStore (marker present、material file 無し → delete は idempotent no-op success)。
+        report = await MaterialReconciliationService(session, store).gc_orphans(
+            tenant_id=1, writing_grace_seconds=1
+        )
+
+        assert str(SECRET_REF_ONE_ID) not in report.purge_failed
+        row = await session.execute(
+            text(
+                "select status, material_state, material_purged_at "
+                "from secret_refs where id = :id"
+            ),
+            {"id": SECRET_REF_ONE_ID},
+        )
+        status, material_state, purged_at = row.one()
+        # writing→revoked+purging→purged に収束 (marker present で delete が fail-closed しない)。
+        assert status == "revoked"
+        assert material_state == "purged"
+        assert purged_at is not None
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_gc_backstop_delete_failure_reverts_false_purged(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Codex R10-F1: purged 確定行で backstop delete が失敗したら purged を撤回し fail-closed 化。
+
+    late-writer が material を再作成し store.delete も失敗した場合、material 存在を absence 検証
+    できない。material_state='purged' / material_purged_at non-null を維持すると DB / inventory が
+    「secret-at-rest 削除済」と言い続ける fail-open になる。gc は purging + material_purged_at=NULL へ
+    撤回し (次回 gc 再試行)、purge_failed で報告することを担保する。
+    """
+    async with session_factory() as session:
+        await _reset_secret_tables(session)
+        await _insert_tenant(session, 1, "tenant-one")
+        await _insert_actor(
+            session,
+            tenant_id=1,
+            actor_id=TENANT_ONE_ACTOR_ID,
+            stable_actor_id="human:tenant-one",
+        )
+        # local revoked + purged (material_purged_at 確定済) の行。late-writer が material を再作成した状態。
+        await session.execute(
+            text(
+                """
+                insert into secret_refs
+                  (id, tenant_id, secret_uri, scope, name, version, status, runner_injectable,
+                   allowed_consumers, allowed_operations, owner_actor_id, metadata,
+                   revoked_at, material_state, material_purged_at, purge_attempts)
+                values
+                  (:id, 1, 'secret://local/project/purged-x#v1', 'project', 'purged-x', 'v1',
+                    'revoked', false, '["api:provider_adapter"]'::jsonb, '["provider.call"]'::jsonb,
+                    :actor, '{"rls_ready": true}'::jsonb, now(), 'purged', now(), 0)
+                """
+            ),
+            {"id": SECRET_REF_ONE_ID, "actor": TENANT_ONE_ACTOR_ID},
+        )
+        await session.commit()
+
+        # store.delete が失敗する (再作成 material を消せない) reconciliation を実行。
+        store = MagicMock()
+        store.delete.side_effect = RuntimeError("simulated delete failure")
+        svc = MaterialReconciliationService(session, store)
+        report = await svc.gc_orphans(tenant_id=1, writing_grace_seconds=1)
+
+        assert str(SECRET_REF_ONE_ID) in report.purge_failed
+        assert str(SECRET_REF_ONE_ID) not in report.purged
+        row = await session.execute(
+            text(
+                "select status, material_state, material_purged_at, purge_attempts "
+                "from secret_refs where id = :id"
+            ),
+            {"id": SECRET_REF_ONE_ID},
+        )
+        status, material_state, purged_at, attempts = row.one()
+        assert status == "revoked"
+        # false-purged 撤回: purging + material_purged_at=NULL (fail-closed、未 purge と認識)。
+        assert material_state == "purging"
+        assert purged_at is None
+        assert attempts == 1
         await session.rollback()
 
 

@@ -7,7 +7,7 @@ import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -22,10 +22,17 @@ from backend.app.db.session import create_engine
 from backend.app.repositories.secret_capability_token import ClaimResult
 from backend.app.services.secrets import broker as broker_module
 from backend.app.services.secrets.broker import (
+    BrokerIssueDenied,
+    BrokerIssueResult,
     BrokerRedeemDenied,
     BrokerRedeemResult,
     SecretBroker,
 )
+from backend.app.services.secrets.local_secret_store import (
+    LocalSecretStore,
+    LocalSecretStoreError,
+)
+from backend.app.services.secrets.resolver_dispatch import CompositeSecretResolver
 
 TENANT_ID = 1
 ACTOR_ID = UUID("00000000-0000-4000-8000-000000004701")
@@ -75,6 +82,13 @@ class _FakeSession:
         self.token = token
         self.secret_ref = secret_ref
         self.updated_statuses: list[str] = []
+        self.added: list[object] = []
+
+    def add(self, obj: object) -> None:
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        return None
 
     async def scalar(self, statement: object) -> object | None:
         statement_text = str(statement)
@@ -164,10 +178,12 @@ def _secret_ref(
     *,
     name: str = "provider-openai",
     version: str = "v1",
+    material_state: str = "present",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=SECRET_REF_ID,
         status=status,
+        material_state=material_state,
         scope="project",
         name=name,
         version=version,
@@ -389,6 +405,450 @@ async def test_secret_ref_revoked_after_claim_denies_without_operation() -> None
     assert called is False
 
 
+@pytest.mark.asyncio
+async def test_resolver_custody_failure_after_claim_denies_and_revokes() -> None:
+    """Codex R14-F2: atomic claim 後の resolver custody 失敗を fail-closed deny にする。
+
+    LocalSecretStore は marker 不在 / backend drift / permission / decrypt 失敗で raise するように
+    なった。これが claim 済 token を消費したまま例外伝播すると、secret_capability_denied audit と token
+    revoke を bypass し 500 + token_used 誤分類になる。broker は例外を捕捉し denied + revoke + audit する。
+    """
+    session = _FakeSession(token=_token(), secret_ref=_secret_ref())  # active + present
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["provider.call"],
+        scope_constraint=_scope_constraint(),
+    )
+    op_called = False
+
+    async def operation(context: broker_module.BrokerOperationContext) -> str:
+        nonlocal op_called
+        op_called = True
+        return "should-not-run"
+
+    async def failing_resolver(
+        secret_ref: object, *, allow_pending_verify: bool = False
+    ) -> bytes:
+        raise LocalSecretStoreError("backend marker missing (simulated custody failure)")
+
+    result = await SecretBroker(
+        session=session,  # type: ignore[arg-type]
+        secret_resolver=failing_resolver,
+    ).redeem_capability_token(
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="provider.call",
+        target=_target(),
+        payload={"messages": ["hello"]},
+        policy_version="policy-v1",
+        provider_compliance_matrix_version="pcm-v1",
+        operation=operation,
+    )
+
+    assert isinstance(result, BrokerRedeemDenied)
+    assert result.reason_code == "material_not_present"
+    assert op_called is False  # custody 失敗で broker-mediated operation は実行されない
+    # token は burn されず denied audit が残る (redeemed audit は出ない)。
+    assert any(e["event_type"] == "secret_capability_denied" for e in _FakeAuditRepo.events)
+    assert all(e["event_type"] != "secret_capability_redeemed" for e in _FakeAuditRepo.events)
+
+
+@pytest.mark.asyncio
+async def test_operation_custody_failure_after_claim_denies_and_revokes() -> None:
+    """Codex R15-F1: operation 内の再 resolve (例: RepoProxy transport が installation token を再 resolve)
+    が custody 失敗で raise した場合も、pre-resolve と同じく denied + token revoke + denied audit にする。
+
+    operation を try 外に置くと、custody 失敗が claim 済 token を消費したまま例外伝播し 500 + token_used
+    誤分類になる。非 custody な operation 失敗 (provider/GitHub error) のみ従来どおり伝播させる。
+    """
+    session = _FakeSession(token=_token(), secret_ref=_secret_ref())  # active + present
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["provider.call"],
+        scope_constraint=_scope_constraint(),
+    )
+
+    async def operation(context: broker_module.BrokerOperationContext) -> str:
+        # operation 内で material 再 resolve が custody 失敗するのを模擬。
+        raise LocalSecretStoreError("backend drift during operation (simulated)")
+
+    result = await SecretBroker(session=session).redeem_capability_token(  # type: ignore[arg-type]
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="provider.call",
+        target=_target(),
+        payload={"messages": ["hello"]},
+        policy_version="policy-v1",
+        provider_compliance_matrix_version="pcm-v1",
+        operation=operation,
+    )
+
+    assert isinstance(result, BrokerRedeemDenied)
+    assert result.reason_code == "material_not_present"
+    assert any(e["event_type"] == "secret_capability_denied" for e in _FakeAuditRepo.events)
+    assert all(e["event_type"] != "secret_capability_redeemed" for e in _FakeAuditRepo.events)
+
+
+@pytest.mark.asyncio
+async def test_non_custody_operation_failure_propagates() -> None:
+    """Codex R15-F1 の対: 非 custody な operation 失敗 (provider/GitHub error) は従来どおり伝播する
+    (custody 失敗のみ denied 化、通常の operation 失敗は token 消費済で例外伝播)。"""
+    session = _FakeSession(token=_token(), secret_ref=_secret_ref())
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["provider.call"],
+        scope_constraint=_scope_constraint(),
+    )
+
+    async def operation(context: broker_module.BrokerOperationContext) -> str:
+        raise RuntimeError("provider 5xx (simulated non-custody failure)")
+
+    with pytest.raises(RuntimeError):
+        await SecretBroker(session=session).redeem_capability_token(  # type: ignore[arg-type]
+            tenant_id=TENANT_ID,
+            actor_id=ACTOR_ID,
+            run_id=RUN_ID,
+            raw_token=RAW_TOKEN,
+            requested_operation="provider.call",
+            target=_target(),
+            payload={"messages": ["hello"]},
+            policy_version="policy-v1",
+            provider_compliance_matrix_version="pcm-v1",
+            operation=operation,
+        )
+
+
+_OTHER_SECRET_REF_ID = UUID("00000000-0000-4000-8000-0000000049ff")
+
+
+def _secret_verify_ref() -> SimpleNamespace:
+    return SimpleNamespace(
+        id=SECRET_REF_ID,
+        status="active",
+        material_state="present",
+        scope="project",
+        name="provider-openai",
+        version="v1",
+        allowed_consumers=[str(ACTOR_ID)],
+        allowed_operations=["secret.verify"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_issue_secret_op_rejects_target_secret_ref_mismatch() -> None:
+    """Codex R16-F2: secret.verify の issue は target.secret_ref_id が実 secret_ref と不一致なら deny。
+
+    secret A を発行しつつ target に secret B を入れ B の approval で通す substitution を、approval 照合の
+    前に target↔secret_ref 同一性で封じる。
+    """
+    session = _FakeSession(token=None, secret_ref=_secret_verify_ref())
+    with pytest.raises(BrokerIssueDenied) as exc_info:
+        await SecretBroker(session=session).issue_capability_token(  # type: ignore[arg-type]
+            tenant_id=TENANT_ID,
+            actor_id=ACTOR_ID,
+            run_id=RUN_ID,
+            secret_ref_id=SECRET_REF_ID,
+            requested_operation="secret.verify",
+            target={"secret_ref_id": str(_OTHER_SECRET_REF_ID), "version": "v1"},
+            policy_version="policy-v1",
+        )
+    assert exc_info.value.reason_code == "secret_target_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_redeem_secret_op_rejects_target_secret_ref_mismatch() -> None:
+    """Codex R16-F2 (claim-side defense-in-depth): redeem も target↔secret_ref 不一致を deny + revoke。"""
+    session = _FakeSession(token=_token(), secret_ref=_secret_verify_ref())
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["secret.verify"],
+        scope_constraint=_scope_constraint(),
+    )
+    result = await SecretBroker(session=session).redeem_capability_token(  # type: ignore[arg-type]
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="secret.verify",
+        target={"secret_ref_id": str(_OTHER_SECRET_REF_ID), "version": "v1"},
+        policy_version="policy-v1",
+    )
+    assert isinstance(result, BrokerRedeemDenied)
+    assert result.reason_code == "secret_target_mismatch"
+    assert any(e["event_type"] == "secret_capability_denied" for e in _FakeAuditRepo.events)
+    assert all(e["event_type"] != "secret_capability_redeemed" for e in _FakeAuditRepo.events)
+
+
+@pytest.mark.asyncio
+async def test_redeem_secret_op_accepts_matching_target() -> None:
+    """Codex R16-F2 の対: target が実 secret_ref と一致すれば redeem は成功する (正常経路不破壊)。"""
+    session = _FakeSession(token=_token(), secret_ref=_secret_verify_ref())
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["secret.verify"],
+        scope_constraint=_scope_constraint(),
+    )
+    result = await SecretBroker(session=session).redeem_capability_token(  # type: ignore[arg-type]
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="secret.verify",
+        target={"secret_ref_id": str(SECRET_REF_ID), "version": "v1"},
+        policy_version="policy-v1",
+    )
+    assert isinstance(result, BrokerRedeemResult)
+    assert _FakeAuditRepo.events[-1]["event_type"] == "secret_capability_redeemed"
+
+
+def _pending_secret_ref(
+    *,
+    material_state: str = "present",
+    allowed_operations: list[str] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=SECRET_REF_ID,
+        status="pending",
+        material_state=material_state,
+        scope="project",
+        name="provider-openai",
+        version="v1",
+        allowed_consumers=[str(ACTOR_ID)],
+        allowed_operations=allowed_operations or ["secret.verify"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_issue_secret_verify_allows_pending_present() -> None:
+    """Codex R17-F1: rotation verify 専用 op (secret.verify) は pending+present の新 material に発行可。
+
+    rotate→verify→promote flow を成立させる (broker が pending を全 deny すると安全な検証経路が詰まる)。
+    """
+    session = _FakeSession(token=None, secret_ref=_pending_secret_ref())
+    result = await SecretBroker(session=session).issue_capability_token(  # type: ignore[arg-type]
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        secret_ref_id=SECRET_REF_ID,
+        requested_operation="secret.verify",
+        target={"secret_ref_id": str(SECRET_REF_ID), "version": "v1"},
+        policy_version="policy-v1",
+    )
+    assert isinstance(result, BrokerIssueResult)
+
+
+@pytest.mark.asyncio
+async def test_issue_rejects_pending_for_non_verify_op() -> None:
+    """Codex R17-F1: rotation verify 以外の op は pending を許可しない (secret_ref_not_active)。"""
+    session = _FakeSession(
+        token=None,
+        secret_ref=_pending_secret_ref(allowed_operations=["provider.call"]),
+    )
+    with pytest.raises(BrokerIssueDenied) as exc_info:
+        await SecretBroker(session=session).issue_capability_token(  # type: ignore[arg-type]
+            tenant_id=TENANT_ID,
+            actor_id=ACTOR_ID,
+            run_id=RUN_ID,
+            secret_ref_id=SECRET_REF_ID,
+            requested_operation="provider.call",
+            target=_target(),
+            policy_version="policy-v1",
+        )
+    assert exc_info.value.reason_code == "secret_ref_not_active"
+
+
+@pytest.mark.asyncio
+async def test_issue_rejects_pending_not_present() -> None:
+    """Codex R17-F1: pending verify でも material_state != present は material_not_present で deny。"""
+    session = _FakeSession(
+        token=None, secret_ref=_pending_secret_ref(material_state="writing")
+    )
+    with pytest.raises(BrokerIssueDenied) as exc_info:
+        await SecretBroker(session=session).issue_capability_token(  # type: ignore[arg-type]
+            tenant_id=TENANT_ID,
+            actor_id=ACTOR_ID,
+            run_id=RUN_ID,
+            secret_ref_id=SECRET_REF_ID,
+            requested_operation="secret.verify",
+            target={"secret_ref_id": str(SECRET_REF_ID), "version": "v1"},
+            policy_version="policy-v1",
+        )
+    assert exc_info.value.reason_code == "material_not_present"
+
+
+@pytest.mark.asyncio
+async def test_redeem_rotation_read_new_allows_pending_present() -> None:
+    """Codex R17-F1: redeem 側 gate も rotation.read_new を pending+present で許可する (issue と mirror)。"""
+    session = _FakeSession(
+        token=_token(),
+        secret_ref=_pending_secret_ref(allowed_operations=["rotation.read_new"]),
+    )
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["rotation.read_new"],
+        scope_constraint=_scope_constraint(),
+    )
+    result = await SecretBroker(session=session).redeem_capability_token(  # type: ignore[arg-type]
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="rotation.read_new",
+        target={"secret_ref_id": str(SECRET_REF_ID), "version": "v1"},
+        policy_version="policy-v1",
+    )
+    assert isinstance(result, BrokerRedeemResult)
+
+
+@pytest.mark.asyncio
+async def test_redeem_rejects_pending_for_non_verify_op() -> None:
+    """Codex R17-F1: redeem 側も rotation verify 以外の op (rotation.read_old) は pending を許可しない。"""
+    session = _FakeSession(
+        token=_token(),
+        secret_ref=_pending_secret_ref(allowed_operations=["rotation.read_old"]),
+    )
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["rotation.read_old"],
+        scope_constraint=_scope_constraint(),
+    )
+    result = await SecretBroker(session=session).redeem_capability_token(  # type: ignore[arg-type]
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="rotation.read_old",
+        target={"secret_ref_id": str(SECRET_REF_ID), "version": "v1"},
+        policy_version="policy-v1",
+    )
+    assert isinstance(result, BrokerRedeemDenied)
+    assert result.reason_code == "secret_ref_revoked"
+
+
+@pytest.mark.asyncio
+async def test_redeem_with_composite_resolver_object_custody_failure_denied(
+    tmp_path: Path,
+) -> None:
+    """Codex R22-F1: CompositeSecretResolver **オブジェクト自体**を secret_resolver に配線しても TypeError に
+    ならず、local custody 失敗が BrokerRedeemDenied(material_not_present) + denied audit + token revoke に落ちる。
+
+    broker は resolver を callable として呼ぶ。resolver に __call__ を追加したことで object-level 配線が成立し、
+    custody 失敗 (material 不在) が raw 例外で 500 になるのを防ぐ。
+    """
+    # 実 LocalSecretStore (marker は store で初期化)。redeem 対象 id は未保存 → resolve で NotFound。
+    store = LocalSecretStore(base_dir=tmp_path, use_keyring=False)
+    store.store(1, uuid4(), b"unrelated")  # marker pin
+    composite = CompositeSecretResolver(local_store=store)
+
+    secret_ref = SimpleNamespace(
+        id=SECRET_REF_ID,  # store に未保存 → custody NotFound
+        tenant_id=TENANT_ID,
+        status="active",
+        material_state="present",
+        scope="project",
+        name="provider-openai",
+        version="v1",
+        secret_uri="secret://local/project/provider-openai#v1",
+        allowed_consumers=[str(ACTOR_ID)],
+        allowed_operations=["provider.call"],
+    )
+    session = _FakeSession(token=_token(), secret_ref=secret_ref)
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["provider.call"],
+        scope_constraint=_scope_constraint(),
+    )
+
+    result = await SecretBroker(
+        session=session,  # type: ignore[arg-type]
+        secret_resolver=composite,  # オブジェクト自体を配線 (bound method ではない)
+    ).redeem_capability_token(
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="provider.call",
+        target=_target(),
+        payload={"messages": ["hello"]},
+        policy_version="policy-v1",
+        provider_compliance_matrix_version="pcm-v1",
+    )
+
+    assert isinstance(result, BrokerRedeemDenied)
+    assert result.reason_code == "material_not_present"
+    assert any(e["event_type"] == "secret_capability_denied" for e in _FakeAuditRepo.events)
+    assert all(e["event_type"] != "secret_capability_redeemed" for e in _FakeAuditRepo.events)
+
+
+def test_resolver_accepts_pending_flag_introspection() -> None:
+    """Codex F4: allow_pending_verify kwarg のサポートを signature introspect で判定する。"""
+
+    async def kwarg_resolver(sr: object, *, allow_pending_verify: bool = False) -> bytes:
+        return b""
+
+    async def one_arg_resolver(sr: object) -> bytes:
+        return b""
+
+    async def kwargs_resolver(sr: object, **kw: object) -> bytes:
+        return b""
+
+    assert broker_module._resolver_accepts_pending_flag(kwarg_resolver) is True
+    assert broker_module._resolver_accepts_pending_flag(one_arg_resolver) is False
+    assert broker_module._resolver_accepts_pending_flag(kwargs_resolver) is True
+
+
+@pytest.mark.asyncio
+async def test_redeem_with_one_arg_resolver_no_typeerror() -> None:
+    """Codex F4: 旧 1-arg resolver (allow_pending_verify 非対応) を注入しても atomic claim 後に TypeError
+    500 にならず 1-arg で resolve される (custody bypass を起こさない)。"""
+    session = _FakeSession(token=_token(), secret_ref=_secret_ref())
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["provider.call"],
+        scope_constraint=_scope_constraint(),
+    )
+    resolved: list[UUID] = []
+
+    async def one_arg_resolver(secret_ref: object) -> bytes:  # 旧 contract (kwarg なし)
+        resolved.append(secret_ref.id)  # type: ignore[attr-defined]
+        return b"material"
+
+    async def operation(context: broker_module.BrokerOperationContext) -> str:
+        return "ok"
+
+    result = await SecretBroker(
+        session=session,  # type: ignore[arg-type]
+        secret_resolver=one_arg_resolver,
+    ).redeem_capability_token(
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="provider.call",
+        target=_target(),
+        payload={"messages": ["hello"]},
+        policy_version="policy-v1",
+        provider_compliance_matrix_version="pcm-v1",
+        operation=operation,
+    )
+
+    assert isinstance(result, BrokerRedeemResult)
+    assert resolved == [SECRET_REF_ID]
+
+
 async def _reset_integration_tables(session: AsyncSession) -> None:
     await session.execute(
         text(
@@ -442,7 +902,8 @@ async def _setup_integration_secret_ref(session: AsyncSession) -> None:
               allowed_consumers,
               allowed_operations,
               owner_actor_id,
-              metadata
+              metadata,
+              material_state
             )
             values (
               :secret_ref_id,
@@ -456,7 +917,8 @@ async def _setup_integration_secret_ref(session: AsyncSession) -> None:
               cast(:allowed_consumers as jsonb),
               cast(:allowed_operations as jsonb),
               :actor_id,
-              '{"rls_ready": true}'::jsonb
+              '{"rls_ready": true}'::jsonb,
+              'present'
             )
             """
         ),

@@ -18,9 +18,9 @@ from pathlib import Path
 from typing import Final
 
 from backend.app.db.models.secret_ref import SecretRef
-
-_SOPS_URI_PATTERN: Final = re.compile(
-    r"\Asecret://sops/(?P<scope>[a-z0-9_]+)/(?P<name>[a-z0-9_-]+)#(?P<version>v\d+)\Z"
+from backend.app.services.secrets.uri_pattern import (
+    SecretUriError,
+    parse_secret_uri,
 )
 
 _RAW_MATERIAL_CANARY_PATTERNS: Final = (
@@ -76,33 +76,76 @@ class SopsSubprocessResolver:
             age_key_file or self._resolve_age_key_file_from_env()
         )
 
-    async def resolve_secret_material(self, secret_ref: SecretRef) -> bytes:
-        self._validate_uri_scheme(secret_ref.secret_uri)
-        self._validate_status(secret_ref)
-        file_path = self._resolve_file_path(secret_ref)
-        self._validate_containment(file_path)
-        self._validate_no_symlink_components(file_path)
-        return await self._decrypt(file_path, secret_ref)
+    async def __call__(
+        self, secret_ref: SecretRef, *, allow_pending_verify: bool = False
+    ) -> bytes:
+        # broker は secret_resolver を callable として呼ぶ (Codex R22-F1)。resolver オブジェクト自体を
+        # 配線しても TypeError にならず resolve_secret_material へ委譲し、custody 例外正規化を通す。
+        return await self.resolve_secret_material(
+            secret_ref, allow_pending_verify=allow_pending_verify
+        )
+
+    async def resolve_secret_material(
+        self, secret_ref: SecretRef, *, allow_pending_verify: bool = False
+    ) -> bytes:
+        # custody 例外正規化 (Codex R21-F1、LocalSecretStore R19/R20 の SOPS 対称版): path precheck
+        # (Path.resolve() の symlink-loop/permission/TOCTOU、is_file 等) の raw OSError/RuntimeError/
+        # ValueError/UnicodeError を **SopsResolverError へ正規化**する。broker redeem の custody-error catch
+        # (_RESOLVER_CUSTODY_ERRORS) が確実に拾い token revoke + denied audit + material_not_present へ
+        # 落ちる (raw 例外が漏れて 500/transaction 境界依存になるのを防ぐ)。SopsResolverError 系
+        # (UriScheme/PathTraversal/StatusDenied) はそのまま伝播。raw secret は message に含めない。
+        try:
+            self._validate_uri_scheme(secret_ref.secret_uri)
+            self._validate_status(secret_ref, allow_pending_verify=allow_pending_verify)
+            file_path = self._resolve_file_path(secret_ref)
+            self._validate_containment(file_path)
+            self._validate_no_symlink_components(file_path)
+            return await self._decrypt(file_path, secret_ref)
+        except SopsResolverError:
+            raise
+        except (OSError, RuntimeError, ValueError, UnicodeError) as exc:
+            raise SopsResolverError("sops resolve failed (path/custody error)") from exc
 
     def _validate_uri_scheme(self, uri: str) -> None:
-        if _SOPS_URI_PATTERN.fullmatch(uri) is None:
+        # canonical grammar (uri_pattern.SECRET_URI_PATTERN) を単一 source として検証する
+        # (Codex R7-F3): 独立 regex を持つと scope enum が drift し、DB CHECK が弾く非 canonical scope
+        # (例: secret://sops/cluster/...) を resolver boundary だけが受理してしまう (cross-source-enum
+        # -integrity §1 違反)。backend は sops のみ許可する。
+        try:
+            backend, _, _, _ = parse_secret_uri(uri)
+        except SecretUriError as exc:
             raise SopsUriSchemeError(
                 "URI scheme rejected: expected secret://sops/<scope>/<name>#<version>"
+            ) from exc
+        if backend != "sops":
+            raise SopsUriSchemeError(
+                f"URI scheme rejected: sops resolver does not handle backend {backend!r}"
             )
 
-    def _validate_status(self, secret_ref: SecretRef) -> None:
-        if secret_ref.status in ("revoked", "pending"):
+    def _validate_status(
+        self, secret_ref: SecretRef, *, allow_pending_verify: bool = False
+    ) -> None:
+        # revoked は常時 deny。pending は broker 経由の rotation verify (allow_pending_verify=True) のみ
+        # 許可し、direct/webhook 利用は default False で従来どおり拒否する (Codex R18-F1)。
+        denied_statuses: tuple[str, ...] = ("revoked", "pending")
+        if allow_pending_verify:
+            denied_statuses = ("revoked",)
+        if secret_ref.status in denied_statuses:
             raise SopsStatusDeniedError(
                 f"secret_ref status={secret_ref.status} denied for direct resolve"
             )
 
     def _resolve_file_path(self, secret_ref: SecretRef) -> Path:
-        match = _SOPS_URI_PATTERN.fullmatch(secret_ref.secret_uri)
-        if not match:
-            raise SopsUriSchemeError("URI parse failed")
-        scope = match.group("scope")
-        name = match.group("name")
-        version = match.group("version")
+        # canonical parse から component を取得 (Codex R7-F3、独立 regex を持たない)。scope は
+        # SECRET_SCOPES enum、name は [a-z0-9_-]+、version は v[0-9]+ に限定され path traversal 不可。
+        try:
+            backend, scope, name, version = parse_secret_uri(secret_ref.secret_uri)
+        except SecretUriError as exc:
+            raise SopsUriSchemeError("URI parse failed") from exc
+        if backend != "sops":
+            raise SopsUriSchemeError(
+                f"sops resolver does not handle backend {backend!r}"
+            )
         lexical_path = self._sops_dir / scope / f"{name}.{version}.enc.yaml"
         self._validate_no_symlink_components(lexical_path)
         if lexical_path.is_symlink():
@@ -158,6 +201,11 @@ class SopsSubprocessResolver:
             raise SopsResolverError(
                 f"sops binary not found at {self._sops_binary}"
             ) from None
+        except OSError as exc:
+            # subprocess spawn の PermissionError (binary 非実行) 等 backend 例外を SopsResolverError へ
+            # 正規化する (Codex R19-F1)。broker custody-error catch が拾えるよう raw OSError を漏らさない。
+            await self._kill_process(proc)
+            raise SopsResolverError(f"sops decrypt subprocess failed (errno={exc.errno})") from exc
 
         if proc.returncode != 0:
             sanitized_stderr = self._sanitize_stderr(

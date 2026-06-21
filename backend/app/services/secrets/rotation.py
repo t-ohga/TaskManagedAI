@@ -338,6 +338,25 @@ class SecretRotationService:
                 error_message="rotated_from_id_mismatch",
             )
 
+        # material lifecycle gate (Codex F3 HIGH / ADR-00058 finding-2): 未検証 material (writing) /
+        # purge 中・済 (purging/purged) の row を active 化しない。0050 以降 material_state 未設定 insert は
+        # 'writing' default のため、status のみで promote すると false-present row が active 化しうる。
+        if getattr(new_ref, "material_state", "present") != "present":
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="promote",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(old_secret_ref_id),
+                new_secret_ref_id=str(new_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    f"new must have material_state=present, got "
+                    f"{getattr(new_ref, 'material_state', None)}"
+                ),
+                error_message="invalid_new_material_state",
+            )
+
         # Atomic claim UPDATE (F-PR48-004 P1): expected status を WHERE に含める,
         # row count を verify (concurrent transition で stale row update 防止).
         old_result = await self.session.execute(
@@ -370,10 +389,15 @@ class SecretRotationService:
                 SecretRef.tenant_id == tenant_id,
                 SecretRef.id == new_secret_ref_id,
                 SecretRef.status == "pending",  # expected status
+                SecretRef.material_state == "present",  # Codex F3: 未検証 material を active 化しない
             )
             .values(status="active", updated_at=timestamp)
         )
         if cast("Any", new_result).rowcount != 1:
+            # Codex R4-F2: old は既に deprecated 化済。new promote が 0 行 (stale status /
+            # material_state != present) の場合、rollback しないと caller commit で「old deprecated /
+            # new 非 active = active 不在」になり atomic claim 違反。同 transaction を rollback する。
+            await self.session.rollback()
             return RotationDrillResult(
                 timestamp=timestamp_iso,
                 operation="promote",
@@ -384,7 +408,7 @@ class SecretRotationService:
                 transitions=(),
                 plan_or_log=(
                     "concurrent status change detected (new no longer pending); "
-                    "atomic claim failed"
+                    "atomic claim failed; rolled back old demotion"
                 ),
                 error_message="concurrent_new_status_change",
             )
@@ -570,6 +594,57 @@ class SecretRotationService:
                 error_message="invalid_current_status",
             )
 
+        # Codex R6-F1: rollback も promote と同じ identity + material_state gate を要求する。
+        # 検証なしだと無関係 id ペアで本来の active を deprecated 化 + 無関係 secret を active 化でき、
+        # deprecated+writing の未検証 material も active 化できる (promote の false-present 防止を迂回)。
+        # 以下 3 precheck は UPDATE 前のため失敗時 rollback 不要 (まだ何も変更していない)。
+        if active_ref.scope != deprecated_ref.scope or active_ref.name != deprecated_ref.name:
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="rollback",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(currently_active_secret_ref_id),
+                new_secret_ref_id=str(deprecated_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    f"current/target scope/name mismatch: "
+                    f"current={active_ref.scope}/{active_ref.name} "
+                    f"target={deprecated_ref.scope}/{deprecated_ref.name}"
+                ),
+                error_message="scope_name_mismatch",
+            )
+        if active_ref.rotated_from_id != deprecated_secret_ref_id:
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="rollback",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(currently_active_secret_ref_id),
+                new_secret_ref_id=str(deprecated_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    f"current active.rotated_from_id must point to rollback target: "
+                    f"got {active_ref.rotated_from_id}, expected {deprecated_secret_ref_id}"
+                ),
+                error_message="rotated_from_id_mismatch",
+            )
+        if getattr(deprecated_ref, "material_state", "present") != "present":
+            return RotationDrillResult(
+                timestamp=timestamp_iso,
+                operation="rollback",
+                dry_run=False,
+                success=False,
+                old_secret_ref_id=str(currently_active_secret_ref_id),
+                new_secret_ref_id=str(deprecated_secret_ref_id),
+                transitions=(),
+                plan_or_log=(
+                    f"rollback target must have material_state=present, got "
+                    f"{getattr(deprecated_ref, 'material_state', None)}"
+                ),
+                error_message="invalid_target_material_state",
+            )
+
         # F-PR48-003 + F-PR48-004 P1 atomic claim: expected status WHERE + row count.
         # 旧 active を deprecated に降格 (must currently be active)
         active_demote = await self.session.execute(
@@ -602,10 +677,15 @@ class SecretRotationService:
                 SecretRef.tenant_id == tenant_id,
                 SecretRef.id == deprecated_secret_ref_id,
                 SecretRef.status == "deprecated",  # revoked からの復元防止
+                SecretRef.material_state == "present",  # Codex R6-F1: 未検証 material を active 化しない
             )
             .values(status="active", deprecated_at=None, updated_at=timestamp)
         )
         if cast("Any", deprecated_restore).rowcount != 1:
+            # Codex R5-F2: current active は既に demote 済。restore target が concurrent revoke 等で
+            # 0 行になった場合、rollback しないと caller commit で「active 不在」になり atomic claim 違反
+            # (DB unique index は「高々 1 active」しか守らず「少なくとも 1 active」は守らない)。
+            await self.session.rollback()
             return RotationDrillResult(
                 timestamp=timestamp_iso,
                 operation="rollback",
@@ -616,7 +696,7 @@ class SecretRotationService:
                 transitions=(),
                 plan_or_log=(
                     "rollback target status changed concurrently (revoked or other); "
-                    "atomic claim failed"
+                    "atomic claim failed; rolled back current active demotion"
                 ),
                 error_message="concurrent_rollback_target_change",
             )

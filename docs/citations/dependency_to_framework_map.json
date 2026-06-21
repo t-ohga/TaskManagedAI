@@ -18,6 +18,7 @@
     {"dependency_name": "dify-client", "ecosystem": "pypi", "framework_canonical": "Dify"},
     {"dependency_name": "openhands-ai", "ecosystem": "pypi", "framework_canonical": "OpenHands"},
     {"dependency_name": "taskingai", "ecosystem": "pypi", "framework_canonical": "TaskingAI"},
-    {"dependency_name": "cryptography", "ecosystem": "pypi", "framework_canonical": "Foundational Crypto (non-AI)"}
+    {"dependency_name": "cryptography", "ecosystem": "pypi", "framework_canonical": "Foundational Crypto (non-AI)"},
+    {"dependency_name": "keyring", "ecosystem": "pypi", "framework_canonical": "OS Keyring / Secret Storage (non-AI)"}
   ]
 }

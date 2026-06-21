@@ -35,7 +35,12 @@ from backend.app.config import get_settings
 from backend.app.db.models.actor import Actor
 from backend.app.db.models.audit_event import AuditEvent
 from backend.app.db.models.project import Project, ProjectStatus
-from backend.app.db.models.secret_ref import SecretRef, SecretRefScope, SecretRefStatus
+from backend.app.db.models.secret_ref import (
+    SecretMaterialState,
+    SecretRef,
+    SecretRefScope,
+    SecretRefStatus,
+)
 from backend.app.db.models.ticket import Ticket
 from backend.app.domain.policy.autonomy_level import AutonomyLevel
 from backend.app.domain.reminders import (
@@ -796,6 +801,11 @@ class SecretRefListItem(BaseModel):
     updated_at: datetime
     deprecated_at: datetime | None
     revoked_at: datetime | None
+    # broker-owned material lifecycle (ADR-00058 finding-2 / ADR-00059)。非 secret な運用 metadata。
+    # 「revoked=削除済」表示は material_purged_at non-NULL で初めて真。
+    material_state: SecretMaterialState
+    material_purged_at: datetime | None
+    purge_attempts: int
 
 
 class SecretRefListResponse(BaseModel):
@@ -816,6 +826,9 @@ def _to_secret_ref_item(secret_ref: SecretRef) -> SecretRefListItem:
         updated_at=secret_ref.updated_at,
         deprecated_at=secret_ref.deprecated_at,
         revoked_at=secret_ref.revoked_at,
+        material_state=secret_ref.material_state,
+        material_purged_at=secret_ref.material_purged_at,
+        purge_attempts=secret_ref.purge_attempts,
     )
 
 

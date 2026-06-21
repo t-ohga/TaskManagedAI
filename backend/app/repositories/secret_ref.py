@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-from uuid import UUID
+from typing import Any
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.db.models.secret_ref import SecretRef, SecretRefScope, SecretRefStatus
+from backend.app.db.models.secret_ref import (
+    SecretMaterialState,
+    SecretRef,
+    SecretRefScope,
+    SecretRefStatus,
+)
 from backend.app.repositories.base import BaseRepository
+from backend.app.services.secrets.uri_pattern import build_secret_uri
 
 
 class SecretRefRepository(BaseRepository[SecretRef]):
@@ -15,6 +22,49 @@ class SecretRefRepository(BaseRepository[SecretRef]):
 
     async def get(self, tenant_id: int, id: UUID) -> SecretRef | None:
         return await super().get(tenant_id=tenant_id, id=id)
+
+    async def create_metadata(
+        self,
+        *,
+        tenant_id: int,
+        backend: str,
+        scope: SecretRefScope,
+        name: str,
+        version: str,
+        status: SecretRefStatus,
+        owner_actor_id: UUID,
+        allowed_consumers: list[str],
+        allowed_operations: list[str],
+        metadata: dict[str, Any] | None = None,
+        material_state: SecretMaterialState = "writing",
+        rotated_from_id: UUID | None = None,
+    ) -> SecretRef:
+        """metadata-only の secret_ref row を insert する (server-owned URI 組立)。
+
+        secret_uri は ``build_secret_uri`` で構造化 component から server が組み立てる (caller が任意
+        URI 文字列を渡さない、components_match CHECK と整合)。raw secret は受け取らない・保存しない。
+        commit は caller (crash-safe lifecycle を所有する SecretRegistrationService) が制御する。
+        """
+        await self._ensure_tenant_context(tenant_id)
+        secret_uri = build_secret_uri(backend, scope, name, version)
+        row = SecretRef(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            secret_uri=secret_uri,
+            scope=scope,
+            name=name,
+            version=version,
+            status=status,
+            owner_actor_id=owner_actor_id,
+            allowed_consumers=list(allowed_consumers),
+            allowed_operations=list(allowed_operations),
+            metadata_={"rls_ready": True, **(metadata or {})},
+            material_state=material_state,
+            rotated_from_id=rotated_from_id,
+        )
+        self.session.add(row)
+        await self.session.flush()
+        return row
 
     async def list_all(self, tenant_id: int) -> list[SecretRef]:
         """tenant 内の全 secret_refs を安定順序 (scope, name, version) で返す。
@@ -45,6 +95,24 @@ class SecretRefRepository(BaseRepository[SecretRef]):
             .order_by(SecretRef.created_at, SecretRef.id)
         )
         return list(result.scalars().all())
+
+    async def any_local_secret_refs_exist(self) -> bool:
+        """**deployment 全体** (全 tenant) に local backend の secret_ref が 1 件以上存在するか (Codex R24-F1)。
+
+        SecretRegistrationService が backend marker の fresh first-init と marker-loss-recovery を区別する
+        ために使う。``backend.marker`` は base_dir 直下の **deployment-scoped 単一ファイル**であり tenant 固有
+        ではないため、recovery 判定も deployment-wide でなければならない (tenant-scoped だと、tenant A の
+        local material + marker 喪失下で tenant B の fresh register が marker を別 backend に再 pin し、tenant A
+        material を false-purged にする、R24-F1)。これは marker invariant のための **意図的な全 tenant 存在
+        チェック** (read-only、tenant データは返さず存在有無のみ)。P0 は RLS 無効のため tenant filter 無しの
+        SELECT が deployment 全体を走査する。
+        """
+        found = await self.session.scalar(
+            select(SecretRef.id)
+            .where(SecretRef.secret_uri.like("secret://local/%"))
+            .limit(1)
+        )
+        return found is not None
 
     async def assert_active(
         self,

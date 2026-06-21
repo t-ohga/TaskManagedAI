@@ -94,3 +94,437 @@ ADR Gate Criteria #8 (破壊的操作: host-portable reconciliation + secret rev
 3. 削除途中 crash (DB revoked / material 残存): `secret gc-orphans` reconciliation (`status='revoked' AND material_purged_at IS NULL` を idempotent purge) で収束、DB revoked 維持。
 4. **material_lifecycle migration (0050) の downgrade (finding R8/R19 反映)**: `material_state` / `material_purged_at` / `purge_attempts` 列削除は in-flight material の source of truth を消すため **無条件 lossless にしない**。downgrade は **(a) `status='revoked' AND material_purged_at IS NULL` が 0 件、(b) `material_state IN ('writing','purging')` が 0 件、(c) `secret_uri LIKE 'secret://local/%'` の row が 0 件 (local backend material が残っていない、sops へ migrate 済 or revoked+purged 済)** の **3 条件すべて**を **preflight で要求**。これにより full rollback (0050 downgrade → 0049 downgrade) の順序で、local row が残ったまま lifecycle source of truth (material_state 等) だけが先に消える skew を防ぐ (0049 の `secret://local/%` 拒否 preflight と整合、0050 が先に fail-fast)。未収束時は fail-fast し `secret gc-orphans` / local→sops migrate を促す。3 条件 0 件確認後にのみ 3 列を削除。
 5. 検証: restore preflight `verify_target_binding_consistency` が loopback で PASS、再登録した secret_ref の redeem 成功、crash-window test (revoke + create/rotate 双方) で reconciliation 収束、**downgrade preflight test (未 purge revoked / material_state writing/purging / `secret://local/%` row のいずれかが残る状態で 0050 downgrade を fail-fast、解消後に downgrade 成功)**、**full rollback regression test (local present row がある状態で 0050→0049 downgrade が lifecycle 列削除前に停止)**。
+
+## 実装 amendment (2026-06-20、SP-PHASE0 batch-1、§12.3 drift 解消 + Codex adversarial R1 adopt)
+
+実装着手時に確定した詳細を本 ADR に追記する (proposed への戻しは不可、accepted のまま amend)。
+
+### A-1. material lifecycle の対象 = broker-owned (local) material
+
+`material_state` / `material_purged_at` / `purge_attempts` は **broker-owned material、すなわち `local`
+backend** を統治する。`sops` backend の material は外部 (SOPS file) 管理で本 lifecycle の対象外。
+これに伴い:
+
+- **migration 0050 backfill**: 既存 row は 非 revoked→`present` / **revoked→`purged` + `material_purged_at=COALESCE(revoked_at, now())`**。pre-0050 の revoked row は broker-owned local material を持たない (local backend は本 Phase 新設) ため「既に purge 済 (broker-owned material 無し)」が honest。
+- **runtime revoke**: `local` は `material_state='purging'` + `material_purged_at NULL` (gc-orphans 対象)、**非 local (sops) は `material_purged_at=now()` を即 set** (broker-owned material 無し)。
+- 結果、**`material_purged_at IS NULL` を「local revoked + purge 待ち」のみが真**とする globally-consistent 不変条件が成立し、downgrade condition (a) (`revoked AND material_purged_at IS NULL`=0) が既存 sops revoked row で deadlock しない。当初本文の「revoked 行は material_purged_at NULL のまま backfill」は **新規 runtime local revoke** を指し、pre-0050 既存 revoked row の backfill には適用しない (上記が正)。
+
+### A-2. Codex adversarial R1 findings adopt (4 件、CRITICAL×2 + HIGH×2)
+
+- **F1 (CRITICAL)**: `LocalSecretStore.delete` の keyring 失敗を成功扱いしない。不在のみ idempotent no-op、locked / permission-denied 等は伝播し caller が `purge_attempts++` + `material_purged_at NULL` で再試行 (material 残留のまま purged 化を防止)。
+- **F2 (CRITICAL)**: `gc-orphans` の writing-orphan は **row を delete せず `revoked`+`purging` に tombstone** (DB owner を残す)。grace 超過後に resume した late writer の promote (WHERE pending+writing) は 0 rows となり、material は revoke-orphan purge 経路が durable に削除。register/rotate も promote 失敗時に best-effort `store.delete` で自分の material を cleanup (durable backstop = gc-orphans)。row 消滅により owner なし orphan material が残る経路を排除。
+- **F3 (HIGH)**: legacy `SecretRotationService.promote` にも `material_state='present'` gate を追加 (precheck + conditional UPDATE WHERE)。status のみで false-present (writing) row を active 化する穴を塞ぐ。
+- **F4 (HIGH)**: file backend は write (`os.replace`) / delete (`unlink`) 後に **parent dir を fsync** し crash-safety を確保 (power-loss で DB `present`/`purged` と store の乖離を防ぐ)。
+
+### A-4. Codex adversarial R2 findings adopt (4 件、CRITICAL×2 + HIGH×2、R1 fix の残穴)
+
+- **R2-F1 (CRITICAL)**: keyring `_keyring_delete` の `PasswordDeleteError` は「不在」と「delete failure」を区別できないため、**再 get で不在を確認できた時のみ idempotent success**、値が残る / 再 get 失敗は `LocalSecretStoreError` として伝播 (material 残留を purged 化しない)。
+- **R2-F2 (CRITICAL)**: `_purge_revoke_orphans` は local revoked 行を **全件 (purged 含む) 走査し `store.delete` を idempotent backstop** として実行。tombstone+purged 確定後に late writer が material を再作成し cleanup 前に crash しても、次回 gc が再削除し永久 orphan を防ぐ。これにより A-3 の残リスクを **解消** (purged は「最後に purge した時刻」、gc が継続的に absence を enforce)。
+- **R2-F3 (HIGH)**: migration 0050 downgrade **condition (a) を local backend に scope** (`AND secret_uri LIKE 'secret://local/%'`)。material lifecycle は broker-owned (local) 統治で sops の purged_at は適用外のため、legacy `SecretRotationService.revoke` (status-only) が残す sops revoked 行 (purged_at NULL は sops では正常) で downgrade が deadlock するのを防ぐ。
+- **R2-F4 (HIGH)**: `_fsync_dir` は EINVAL / ENOTSUP (dir fsync 非対応 FS) のみ degraded 許容し、それ以外の durability failure (EIO / ENOSPC / EACCES) は `LocalSecretStorePermissionError` で伝播 (DB を present/purged に進めない)。
+
+### A-5. Codex adversarial R3 findings adopt (2 件、CRITICAL×1 + HIGH×1、運用完全性)
+
+- **R3-F1 (CRITICAL)**: `MaterialReconciliationService.gc_orphans` を runtime から invokable にする
+  **`taskhub secret-gc-orphans --tenant-id N` CLI** を batch-1 に追加 (`scripts/taskhub_secret_gc.py` +
+  `scripts/taskhub_admin.py`)。これにより revoke 失敗時の durable convergence (再実行で material 削除に
+  収束) が実際に実行可能となり「durable convergence」主張が真になる。raw secret 非出力、purge_failed
+  残存時 exit 1。user 向け secret 管理 CLI (init/status/create/rotate/revoke) は S3 が担当 (本 CLI は
+  revoke backstop に限定)。
+- **R3-F2 (HIGH)**: `_purge_revoke_orphans` の backstop delete 失敗を **already_purged 行含め全件**
+  `report.purge_failed` + `purge_attempts++` に記録 (purged tombstone の late-writer 再作成 material が
+  消せない場合に GC が clean を誤報告しない)。
+
+### A-6b. Codex adversarial R4-R6 findings adopt (mirror gate 網羅)
+
+R3 で CRITICAL 解消後、R4-R6 は「promote / broker に入れた gate の未カバー mirror 経路」を順次封鎖
+(全 HIGH、CRITICAL=0 継続):
+
+- **R4-F1 (HIGH)**: `taskhub secret-gc-orphans --writing-grace-seconds` に正整数 validator。
+- **R4-F2 (HIGH)**: `rotation.promote` の new promote 失敗時に old demote を `session.rollback()`。
+- **R5-F1 (HIGH)**: grace 正整数強制を `gc_orphans()` service 入口へ移動 (直接 Python API も保護、bool 拒否)。
+- **R5-F2 (HIGH)**: `rotation.rollback()` の deprecated_restore 失敗時にも `session.rollback()`。
+- **R6-F1 (HIGH)**: `rotation.rollback()` に identity + material_state gate (scope/name 一致 +
+  `active.rotated_from_id == target` + target `material_state='present'`、UPDATE WHERE にも反映)。
+  promote の F-PR48-002 + false-present 防止の rollback 版欠落を封鎖。
+- **R6-F2 (HIGH)**: `CompositeSecretResolver` の local 分岐に status active/deprecated +
+  `material_state='present'` fail-closed gate。broker を経由しない直接利用 (RepoProxy/webhook、
+  `DbWebhookSecretResolver` は注入 resolver へ委譲) でも未検証 material を resolve させない。
+
+### A-6c. Codex adversarial R7 findings adopt (3 件、rotate precondition + sops material 整合 + resolver canonical)
+
+R6 で mirror gate 網羅後、R7 は「register と rotate の非対称」「local default が sops に与える副作用」
+「resolver の独立 grammar」という残穴を封鎖 (HIGH×2 + MEDIUM×1、CRITICAL=0 継続):
+
+- **R7-F1 (HIGH)**: `SecretRegistrationService.rotate()` に write 前 precondition gate を追加 (old が
+  `status='active'` + `material_state='present'` + new allowlists 非空)。`promote_rotated` は old=active
+  を必須とするため、非 active / 未 present の old から rotate すると、新 row が **永久 promote 不能な
+  pending+present orphan** になり (gc-orphans は pending+writing のみ tombstone)、material at-rest 保持
+  + (tenant,scope,name) pending≤1 index を占有していた。register の allowlist guard と対称化。
+- **R7-F2 (HIGH)**: migration 0050 / ORM に CHECK `secret_refs_ck_transient_material_local_only`
+  (`material_state in ('writing','purging')` ⟹ `secret_uri like 'secret://local/%'`) を追加。default
+  server-default `'writing'` は local の false-present 防止に必要だが、sops の直接登録 (operational SQL
+  / D-4) が material_state を省略すると default `'writing'` で **silent に broker-unusable**
+  (issue/redeem の `material_state='present'` gate が `material_not_present` で deny) になっていた。
+  transient state を local 専用に限定し、use 時の無言 deny を **insert 時の fail-closed** へ前倒し。
+  operational SQL (`docs/操作手順/github-app-registration.md`) と DB test fixture も `present` 明示へ更新。
+- **R7-F3 (MEDIUM)**: `SopsSubprocessResolver` の独立 URI regex (`scope=[a-z0-9_]+`) を撤去し
+  `uri_pattern.parse_secret_uri` / `SECRET_SCOPES` へ集約 (backend は sops のみ許可)。canonical 集約前は
+  DB CHECK が弾く非 canonical scope (例 `secret://sops/cluster/...`) を resolver boundary だけが受理し、
+  注入 resolver 直接利用で cross-source-enum-integrity §1 が破れていた。
+
+### A-6d. Codex adversarial R8 findings adopt (1 件、rotate present 化の atomic claim 化)
+
+R7-F1 の precondition gate が **fetch 時点の stale precheck** に過ぎない TOCTOU を封鎖 (HIGH×1、CRITICAL=0 継続):
+
+- **R8-F1 (HIGH)**: `rotate()` の present 化 UPDATE を **old が現在も active+present であること** に
+  atomic 条件付けした (非相関 EXISTS、`old.status='active' AND old.material_state='present'`)。R7-F1 の
+  precheck (fetch 時) から present 化 UPDATE までの間に別操作が old を promote/revoke/deprecate すると、
+  UPDATE が new の status/material_state しか見ないため new が pending+present として残り、promote_rotated
+  (old=active 必須) が永久失敗 + gc-orphans (pending+writing のみ tombstone) でも回収されない durable
+  orphan + pending≤1 index 占有になっていた。EXISTS 不一致時は UPDATE が 0 行 → new は pending+writing の
+  まま (gc-orphans が tombstone) + material best-effort cleanup + conflict 返却。DB-gated SQL invariant
+  test 追加 (old deprecated→0 行/writing 維持、old active→1 行/present)。並行 service レベル e2e は S4。
+
+### A-6e. Codex adversarial R9 findings adopt (1 件、post-present orphan を gc-orphans 延長で回収)
+
+R8-F1 の atomic claim が present 化時点しか塞げない post-present window を封鎖 (HIGH×1、CRITICAL=0 継続):
+
+- **R9-F1 (HIGH)**: present 化 commit 後 `promote_rotated` 前の window で old が並行 revoke/rollback/promote
+  されると、old が active+present でなくなり new は永久 promote 不能な pending+present orphan になる
+  (R8-F1 の EXISTS は present 化時点の非 locking check で、READ COMMITTED の post-present window は塞げ
+  ない)。**設計判断**: R9 提示の 2 案 — (A) rotate 中に old を `rotating`/lease で予約し revoke/rollback
+  /promote が拒否する reservation 方式、(B) gc-orphans を延長して stale pending+present を回収する方式 —
+  のうち **(B) を Phase 0 invariant として採用**。理由: 本 ADR の core 設計が「material lifecycle +
+  gc-orphans reconciliation で eventual-consistent 収束」(A-1/A-3) であり、新 status enum / column / lock
+  を導入する reservation 方式 (5+source enum 拡張 = ADR Gate、write-path guard 多数、lease expiry 管理) は
+  Phase 0 には重く multi-host (D-1) 向き。(B) は確立済 reconciliation の additive 延長で低リスク・整合的。
+  - 実装: `MaterialReconciliationService._tombstone_stale_rotation_candidates` を `gc_orphans` の
+    tombstone-writing と purge の間に追加。grace 経過後、`rotated_from` の old が active+present でない
+    local pending+present row を **相関 NOT EXISTS** で検出し revoked+purging へ tombstone (続く
+    `_purge_revoke_orphans` が material を idempotent purge)。in-flight rotate→promote と race しないよう
+    grace + tombstone 時 NOT EXISTS re-check (SELECT→UPDATE 間に promote が走れば old active 化で 0 行 =
+    legit promote を pre-empt しない)。promote_rotated は old=active 必須のため、old が active でない new は
+    どのみち promote 不能 → tombstone は legit candidate を巻き込まない。
+  - test: DB-gated SQL invariant test (old deprecated→1 行 tombstone/revoked+purging、old active→0 行/preserve)。
+    並行 service レベル e2e (present 化後 old 並行 revoke → gc 回収) は S4。
+  - 残リスク: gc 実行間隔の間は stale pending+present が一時残存 (broker gate で issue/redeem 不可、次回 gc で
+    回収)。eventually-consistent 収束は Phase 0 accepted (A-6 と同方針)。
+
+### A-6f. Codex adversarial R10 findings adopt (1 件、backstop delete 失敗時の false-purged 撤回)
+
+R2-F2/R3-F2 で導入した「purged 行も全件走査する backstop delete」の delete 失敗時 fail-open を封鎖
+(HIGH×1、CRITICAL=0 継続):
+
+- **R10-F1 (HIGH)**: `_purge_revoke_orphans` は purged 確定済 local revoked 行も走査し、late-writer が
+  再作成した material を backstop delete する。しかし **delete 失敗時** は purge_attempts++ と report 追記
+  のみで `material_state='purged'` / `material_purged_at` non-null を維持していた。late-writer 再作成 +
+  delete 失敗のシナリオでは **material が実在するのに DB source of truth と `/api/v1/me` inventory が
+  「secret-at-rest 削除済」と言い続ける false-purged (fail-open)** になる (purge_attempts は履歴回数で
+  absence 検証状態を表さない)。fix: already-purged 行の delete 失敗時は **`material_state='purging'` +
+  `material_purged_at=NULL` へ撤回** (purge_attempts++ と併せ)。これにより inventory / 0050 downgrade
+  preflight (condition (a): `revoked AND material_purged_at IS NULL AND local`) が「未 purge」と認識し
+  fail-closed、次回 gc が再 delete を試行する。material_purged_at non-null = durable 削除済 (A-1/A-3) の
+  invariant を absence 検証不能時に偽証しない。DB-gated regression test 追加 (purged 行 + delete 失敗 →
+  purging+NULL+purge_attempts++ + purge_failed 報告)。
+
+### A-6g. Codex adversarial R11 findings adopt (1 件 CRITICAL、LocalSecretStore backend drift fail-closed)
+
+R10-F1 の撤回ロジックより手前で false-purged が再発する根本経路を封鎖 (CRITICAL×1、R3 以来初の CRITICAL):
+
+- **R11-F1 (CRITICAL)**: `LocalSecretStore` の物理 backend (keyring/file) は `_detect_keyring()` の
+  **runtime 検出**で決まり、material に束縛されていなかった。`TASKHUB_DISABLE_KEYRING` / keyring import
+  不在 / probe 例外で silent に file mode へ fallback するため、keyring mode で登録した material を後続の
+  revoke/gc が file mode で実行すると `_file_delete()` が対象不在で **no-op 成功** → caller が
+  `material_state='purged'` / `material_purged_at` を set できる (逆方向も同様)。R1/R2 の「keyring delete
+  failure を伝播」対策を、**delete が成功扱いになることで迂回**する別経路で、material が片方の store に
+  残ったまま inventory / downgrade preflight / gc report が clean を示す false-purged になる。単一 host
+  でも env / Keychain availability の変化で起きるため D-1 へ defer 不可、P0 で封鎖。
+  - **設計判断**: R11 提示の 2 案 — (A) secret_ref に per-material backend を永続化 (新 column = migration /
+    service 横断 / store signature 変更)、(B) deployment-wide に backend を固定し drift 時 fail-closed —
+    のうち **(B) を採用**。Phase 0 は単一 deployment (local Mac first) であり、(B) は LocalSecretStore に
+    自己完結 (schema / service 非変更) で低リスク。実装: `base_dir/backend.marker` (non-secret) に初回
+    store で物理 backend を pin し、store/resolve/delete の全入口で runtime backend と marker の drift を
+    検出して `LocalSecretStoreError` を上げる (fail-closed)。drift 時 delete は raise → caller (revoke の
+    `_best_effort_purge` / gc の `_purge_revoke_orphans`) が purged 化せず再試行 (R10-F1 撤回と連動)。
+  - test: keyring↔file drift で delete/resolve が fail-closed (material は元 backend に残存) + marker 記録 +
+    consistent reopen 不破壊。
+  - 残リスク: 正当な backend 移行 (Mac→Linux 等) は marker drift で全 IO fail-closed になる → operator が
+    material を新 backend へ移行し marker 更新する運用手順が必要 (silent false-purge より安全側、Phase 0
+    accepted、runbook は S3/S4)。
+
+### A-6h. Codex adversarial R12 findings adopt (1 件 CRITICAL、marker absence / init-race の fail-open 封鎖)
+
+R11-F1 の marker が「不在時 fail-open」「初期化 race」という残穴を持つことを封鎖 (CRITICAL×1):
+
+- **R12-F1 (CRITICAL)**: R11 の `_assert_backend_consistent()` は marker 不在を「未初期化=空 deployment=
+  安全」として success を返していた。material が既に存在する状況 (marker 削除 / `TASKHUB_SECRETS_HOME`
+  変更 / marker 無しの restore / marker を dir で置換) では、file-mode store が keyring-owned material に
+  対し `delete()` を呼んで `_file_delete()` が no-op 成功 → revoke/gc が `material_state='purged'` に進む
+  false-purged が再発する。加えて concurrent first-store で 2 process が同時に marker 不在を観測し、
+  `_record_backend()` の非排他 overwrite で loser が別 backend に material を書くと marker と乖離する。
+  これは R11 が閉じたはずの false-purged class が marker absence / 初期化 race へ移っただけ。単一 host
+  でも起きるため P0 で封鎖 (D-1 defer 不可)。
+  - fix (R12 推奨を全採用):
+    1. **marker 不在を resolve()/delete() で fail-closed** (`require_marker=True`)。authoritative backend
+       を確定できない以上、現在 backend の no-op 成功 / 誤 not-found を許さず例外を上げ、caller が purged
+       化せず再試行する (R10-F1 撤回と連動)。
+    2. **store() の marker pin を atomic 化** (`O_CREAT|O_EXCL`)。既存なら re-read して現在 backend と
+       一致を verify してから material を書く。first-store race の loser は EEXIST → re-read で winner の
+       backend を読み、自分と異なれば drift で fail-closed (別 backend へ material を書かない)。
+    3. **非正規 / insecure marker を reject** (symlink / 非通常ファイル / group・other writable)。
+  - test: marker 削除後の delete/resolve fail-closed (material 残存) / 非正規 (dir) marker reject /
+    world-writable marker reject / pin 済と別 backend での store reject (keyring に material が入らない)。
+    既存 keyring delete test は marker=keyring を事前 pin して「初期化済 deployment での delete 挙動」を
+    検証するよう更新 (marker 不在 fail-closed と区別)。
+  - 残リスク: A-6g と同様、正当な backend 移行は marker 更新 (operator init / reconcile) を要する。
+    upgrade / restore で marker を欠いた既存 deployment は明示初期化が必要 (silent false-purge より安全側、
+    runbook は S3/S4)。
+
+### A-6i. Codex adversarial R13 findings adopt (2 件 CRITICAL、first-store race-safety)
+
+R11/R12 で backend-authority を pin した後に残った **first-store concurrency race** 2 件を封鎖 (CRITICAL×2):
+
+- **R13-F1 (CRITICAL)**: `_load_or_create_master_key` が非 atomic だった。`_write_secure_file` は共有 temp
+  名 (`.{name}.tmp`) + `O_TRUNC` で、concurrent first-store で 2 process が別 Fernet key を生成し一方が
+  `master.key` を上書きすると、上書き前 key で暗号化済 material が復号不能 (false-present / material loss、
+  restart 後に別 key を読む)。fix: master key 生成を `_atomic_publish` (unique temp→`os.link` で atomic
+  create-if-absent) 経由にし、winner / loser とも **同一の最終 key** を返す (loser は winner の完成 file を
+  読む)。`_write_secure_file` も共有 temp を `tempfile.mkstemp` の per-call unique temp へ変更。
+- **R13-F2 (CRITICAL)**: R12 の `_ensure_marker_pinned` の `FileExistsError` 分岐は `raced is not None and
+  raced != current` でのみ raise し、**marker が O_EXCL 後〜re-read 前に削除されると `raced is None` で
+  success を返し**、marker 無しで material を書いてしまう (registration は present で commit、後続
+  resolve/delete は marker 不在で fail-closed → active material が stranded、purge 収束も block)。fix:
+  marker 作成を `_atomic_publish` に統一し、loser は winner の完成 marker を読む。**winner の backend が
+  current と一致しない / 読めない場合は必ず fail-closed** (`final != current → raise`)。publish 後に marker
+  を再読し content / mode を verify してから material 書込を許す (final-verify)。
+  - test: `_atomic_publish` の loser-returns-existing (上書きなし) / master.key 既存時は上書きせず既存 key で
+    material 復号可能 (R13-F1) / pin 済と別 backend の store reject (R13-F2、drift)。
+  - 残リスク: `os.link` 非対応 FS では create-if-absent が OSError → fail-closed (Phase 0 target の APFS /
+    ext4 は link 対応)。concurrent first-store の loser は (同一 backend なら) winner 値で成功、別 backend
+    なら fail-closed → caller retry (rare、recoverable、material loss / false-purge なし)。
+
+### A-6j. Codex adversarial R14 findings adopt (2 件 HIGH、新 fail-closed 挙動の統合整合)
+
+LocalSecretStore の fail-closed 化 (R11-R13) が caller 側に与える 2 つの P0-reachable 不整合を封鎖 (HIGH×2):
+
+- **R14-F1 (HIGH)**: `register()` / `rotate()` は pending+writing の DB owner row を `store.store()`
+  (= marker pin) **より前**に commit する。fresh base_dir で「row commit 後 / store() 前」に crash すると
+  marker 不在のまま row が残り、後続 gc の `delete()` (marker 必須・fail-closed) が永久に purge_failed →
+  `material_purged_at=NULL` のまま収束不能 (ADR-00058 create-crash convergence 違反)。fix:
+  `LocalSecretStore.ensure_initialized()` を公開し、register/rotate が **DB row commit の前**に呼んで
+  marker を先に pin する。test: pinned marker 下で store 前 crash の writing-orphan が gc で revoked→
+  purging→purged に収束 (DB-gated)。
+- **R14-F2 (HIGH)**: `redeem_capability_token()` は atomic claim 後 `_resolve_secret()` を try なしで呼ぶ。
+  LocalSecretStore / CompositeSecretResolver が新たに raise する custody/resolver 失敗 (marker 不在 /
+  drift / permission / decrypt / material gate) が **claim 済 token を消費したまま例外伝播**すると、
+  `secret_capability_denied` audit と token revoke を bypass し 500 + token_used 誤分類になる (custody
+  失敗を隠蔽)。fix: `_resolve_secret()` を custody/resolver 例外 (`CompositeResolverError` /
+  `LocalSecretStoreError` / `SopsResolverError`) で捕捉し、claimed token revoke + `secret_capability_denied`
+  audit + `BrokerRedeemDenied(material_not_present)` を返す (raw secret / 例外詳細は出さず reason_code のみ)。
+  test: claim 後に raise する resolver を注入し denied + operation 未実行 + denied audit + redeemed audit
+  なしを検証 (no-DB)。
+
+### A-6k. Codex adversarial R15 findings adopt (1 件 HIGH、operation path の custody 失敗封鎖)
+
+R14-F2 が pre-resolve のみ保護していた穴を operation path へ拡張 (HIGH×1、Phase-0-reachable):
+
+- **R15-F1 (HIGH)**: `redeem_capability_token()` の R14-F2 custody 捕捉は `_resolve_secret()` のみで、
+  `operation(context)` は try 外だった。Phase 0 GitHub path は `GitHubAppAdapter` → broker `operation` →
+  `HttpxGitHubTransport.create_draft_pr()` が **installation token を再 resolve** する。そこで resolver が
+  custody 失敗 (SOPS timeout / age key 欠落 / LocalSecretStore drift) すると、claim 済 token を消費したまま
+  例外伝播し、R14-F2 の denied audit + token revoke を bypass (500 + token_used 誤分類)。fix: pre-resolve と
+  operation の両 path を共有 helper `_deny_after_claim_custody_failure` で denied 化 (token revoke +
+  `secret_capability_denied` audit + `BrokerRedeemDenied(material_not_present)`、stage=resolve/operation を
+  log)。**非 custody な operation 失敗 (provider 5xx / GitHub API error 等) は従来どおり伝播**させ token は
+  消費済扱い (boundary §9) — custody/resolver 例外型 (`CompositeResolverError` / `LocalSecretStoreError` /
+  `SopsResolverError`) のみ denied 化する。
+  - test: operation が `LocalSecretStoreError` を raise → denied + revoke + denied audit + redeemed audit
+    なし / 非 custody (`RuntimeError`) は伝播 (no-DB)。
+
+### A-6l. Codex adversarial R16 findings (1 件 HIGH 採用 / 1 件 HIGH defer、ともに pre-existing SecretBroker)
+
+R16 の 2 件は **本 batch (S1+S2 material lifecycle) の regression ではなく pre-existing SecretBroker 経路**
+(R16-F1 = redeem transaction 境界、R16-F2 = rotation.read_* approval target、いずれも broker.py の既存 commit
+由来)。broker.py に触れた diff の深掘り監査で表面化。user 判断 (2026-06-21) で **F2 採用 + F1 defer**:
+
+- **R16-F2 (HIGH、採用)**: `secret.verify` / `rotation.read_old` / `rotation.read_new` の approval/target は
+  caller-supplied `target` を信用し、実 `secret_ref.id` / `version` との同一性を検証していなかった。secret A の
+  token を発行しつつ target に secret B を入れ、B の approval で通すと fingerprint は不整合 target に自己整合し
+  redeem でき、operation には secret A の handle が渡る (approval/audit の対象すり替え)。fix (server-owned-
+  boundary §1 準拠): secret 自己参照 3 operation で `target.secret_ref_id == secret_ref.id AND target.version ==
+  secret_ref.version` を **issue (approval 照合前) と claim (post-claim) の両方で強制** (不一致は
+  `secret_target_mismatch` deny、claim 側は token revoke + denied audit)。現状 production caller は無く
+  (webhook は resolver 直接 resolve、`issue_capability_token` の caller ゼロ) forward-looking hardening。
+  test: issue/redeem の target substitution deny + match pass (no-DB)。
+- **R16-F1 (HIGH、defer → follow-up ADR)**: `redeem_capability_token` の `operation(context)` が **非 custody
+  例外**を投げると `_mark_claimed_token_used()` に到達せず、外部 session が rollback すれば atomic claim ごと
+  巻き戻り token が `issued` に戻って **再 redeem 可能** (外部副作用後でも)、commit すれば `redeeming` のまま
+  非終端 = 状態真実性違反。これは **redeem の transaction 契約 (commit-before-side-effect / at-most-once /
+  exactly-once semantics) の再設計**を要し、ADR Gate (API 契約 + secret access boundary) に該当するため、本
+  batch (material lifecycle) のスコープ外として **専用 ADR + follow-up sprint へ defer** (user 承認 2026-06-21)。
+  - **残リスク (defer 期間中)**: 非 custody operation 失敗時、redeem token の終端状態が caller transaction 境界
+    依存。P0 単一 operator では実害は限定的だが、broker redeem を operation 付きで使う前に follow-up で
+    transaction 境界を確定する。custody/resolver 失敗は R14-F2/R15-F1 で既に denied 化済 (本 defer の対象外)。
+  - **follow-up**: SecretBroker redeem transaction boundary / capability token terminal-state guarantee ADR
+    (新規)。本 batch では着手しない。
+
+### A-6m. Codex adversarial R17 findings adopt (1 件 HIGH、pending new material の rotation verify 経路復旧)
+
+R16-F2 で target substitution を塞いだ結果露呈した material-lifecycle 矛盾を解消 (HIGH×1、R16-F1 とは別):
+
+- **R17-F1 (HIGH)**: 本 batch の rotation 設計 (S1) は新 version material を promote 前に `pending` +
+  `material_state='present'` で残し `secret.verify`/dry-run/smoke で検証する。しかし broker の status gate
+  (issue `_validate_secret_ref_for_issue` + claim `_validate_secret_ref_after_claim`) が **non-active を全 deny**
+  していたため、pending new material を `rotation.read_new` / `secret.verify` で検証する token を発行/redeem
+  できなかった。R16-F2 で「active old を発行しつつ target を pending new に向ける」substitution workaround も
+  封じたため、安全な rotate→verify→promote 経路が完全に詰まる (durable pending row が index 占有、または
+  未検証 material を out-of-band promote)。secretbroker-boundary §5/§7/§9 の「rotation verify 専用 operation
+  だけ pending を許可」に broker が未準拠だった矛盾。fix: `_secret_ref_status_allowed` で **`rotation.read_new`
+  / `secret.verify` のみ `pending` を許可** (`material_state='present'` 必須 + R16-F2 の target↔secret_ref
+  同一性が併せて担保)、issue / claim 両 gate で mirror。それ以外の operation は従来どおり active のみ。
+  - test (no-DB): secret.verify pending+present issue 許可 / rotation.read_new pending+present redeem 許可 /
+    pending+非 verify op (provider.call issue / rotation.read_old redeem) 拒否 / pending+not-present 拒否。
+
+### A-6n. Codex adversarial R18 findings adopt (1 件 HIGH、resolver gate を broker pending-verify と整合)
+
+R17-F1 (broker gate) が resolver gate と未整合だった穴を解消 (HIGH×1):
+
+- **R18-F1 (HIGH)**: R17-F1 は broker の status gate のみ pending を開けたが、redeem は claim 後に必ず
+  `_resolve_secret()` を呼ぶ。実 resolver (`CompositeSecretResolver` local 分岐の R6-F2 gate / 
+  `SopsSubprocessResolver._validate_status`) が pending を拒否するため、pending+present の新 material は
+  broker gate を通って token claim 後に `CompositeResolverError` → `material_not_present` deny で終わり、
+  rotate→verify→promote の安全経路が本番構成で詰まる。R17-F1 test は `secret_resolver=None` (SecretHandle
+  fallback) のみ通り実 resolver の矛盾を検出できていなかった。fix: resolver 契約に
+  `allow_pending_verify: bool = False` (keyword) を追加 (SecretMaterialResolver Protocol /
+  CompositeSecretResolver / SopsSubprocessResolver / broker SecretResolver 型)。broker は rotation verify
+  専用 op の pending+present に対してのみ `allow_pending_verify=True` を resolver へ渡し、**direct / webhook
+  経路は default False で従来どおり pending を拒否** (R6-F2 の direct-use fail-closed を維持)。
+  - test (no-DB): local pending+present は flag 無しで拒否 / flag 有りで resolve / sops へ flag forward。
+  - **note**: R16-F2 / R17-F1 / R18-F1 が整合する rotation-verify-via-broker-token 経路は現状 production
+    caller ゼロ (`issue_capability_token` 未配線、webhook は resolver 直接) の forward-looking hardening。
+    broker issue/claim gate + resolver gate (local/sops) の 4 gate が pending-verify で整合済。
+
+### A-6o. Codex adversarial R19 findings adopt (1 件 HIGH、custody resolve 例外の fail-closed 正規化)
+
+R18-F1 で pending-verify 4 gate 整合確認 (clean) 後に残った custody fail-closed 漏れを封鎖 (HIGH×1):
+
+- **R19-F1 (HIGH)**: broker は atomic claim 後の resolver/custody 失敗を `_RESOLVER_CUSTODY_ERRORS`
+  (`CompositeResolverError` / `LocalSecretStoreError` / `SopsResolverError`) に限り捕捉し token revoke +
+  denied audit へ落とす (R14-F2/R15-F1)。しかし `LocalSecretStore` の resolve 経路は file `read_bytes()` の
+  `PermissionError`、破損 master.key による `Fernet()` 構築 `ValueError`、keyring 値の base64 decode 例外を
+  `LocalSecretStoreError` に正規化しておらず、これらが raw のまま broker へ上がると denied 経路を bypass し
+  claim 済 token が 500/rollback 依存状態に戻る (R16-F1 の非 custody operation 例外とは別の material custody
+  fail-closed 漏れ)。fix: `LocalSecretStore.resolve()` を try で包み **任意の backend/corruption/permission
+  例外を `LocalSecretStoreError` へ正規化** (`LocalSecretMaterialNotFound` は not-found として正しく伝播、
+  raw secret 非露出)。keyring 値は `base64.b64decode(..., validate=True)` で strict 検証。`SopsSubprocessResolver._decrypt`
+  も subprocess `OSError`/`PermissionError` を `SopsResolverError` へ正規化。
+  - test (no-DB): 破損 master.key / chmod 000 ciphertext (root skip) / 破損 keyring 値 → resolve が
+    `LocalSecretStoreError` を上げる (raw exception を漏らさず broker custody-deny へ確実に落ちる)。
+
+### A-6p. Codex adversarial R20 findings adopt (1 件 HIGH、marker pre-check の custody 正規化漏れ封鎖)
+
+R19-F1 の custody 正規化が `resolve()` の marker pre-check を含んでいなかった残穴を封鎖 (HIGH×1):
+
+- **R20-F1 (HIGH)**: R19-F1 の正規化 wrap は `resolve()` の `_assert_backend_consistent(require_marker=True)`
+  の **後**に始まる。pre-check が呼ぶ `_read_marker_backend()` の `marker.read_text(encoding="ascii")` で
+  破損/非ASCII marker の `UnicodeDecodeError`、読取不能 marker の `PermissionError`/`OSError` が try 外で raw
+  伝播し、broker redeem (atomic claim 後) で `_RESOLVER_CUSTODY_ERRORS` に拾われず 500 になり token revoke +
+  denied audit + material_not_present を bypass する。fix (R20 推奨 b、source-level): `_read_marker_backend()`
+  自体で stat/read/ascii-decode の `OSError`/`ValueError`/`UnicodeDecodeError` を
+  `LocalSecretStorePermissionError` (= LocalSecretStoreError 系) へ正規化。本 method は resolve/delete の
+  `_assert_backend_consistent` と store の `_ensure_marker_pinned` 両方から呼ばれるため、全 custody 経路が
+  fail-closed になる。
+  - test (no-DB): 非ASCII で破損させた backend.marker → resolve が LocalSecretStoreError を上げる。
+
+### A-6q. Codex adversarial R21 findings adopt (1 件 HIGH、SOPS resolve の custody 例外正規化を対称化)
+
+R19/R20 で LocalSecretStore resolve を正規化した後、SOPS 側の対称欠落を封鎖 (HIGH×1):
+
+- **R21-F1 (HIGH)**: `SopsSubprocessResolver.resolve_secret_material()` は `_decrypt()` 内の subprocess
+  `OSError` (R19) のみ正規化し、public resolve 全体は未 wrap だった。`_resolve_file_path()` の
+  `lexical_path.resolve()` (symlink-loop / permission / TOCTOU → `RuntimeError`/`OSError`) や `_decrypt()` 冒頭の
+  `Path.is_file()` 等 path precheck の raw `OSError` が `SopsResolverError` に正規化されず、broker の
+  `_RESOLVER_CUSTODY_ERRORS` を bypass して 500 / transaction 境界依存になる (LocalSecretStore は R19/R20 で
+  source/body 両方正規化済だが SOPS は非対称)。fix: `resolve_secret_material()` 全体を top-level guard で包み
+  `except SopsResolverError: raise` の後に path/custody 系 `OSError`/`RuntimeError`/`ValueError`/`UnicodeError`
+  を `SopsResolverError` へ変換 (raw secret 非露出)。これで local / sops 両 backend の custody read 例外が
+  broker custody-deny (token revoke + denied audit + material_not_present) へ確実に落ちる。
+  - test (no-DB): `_resolve_file_path` が raw OSError を投げる状況を monkeypatch → resolve が SopsResolverError。
+
+### A-6r. Codex adversarial R22 findings adopt (1 件 HIGH、resolver object-level wiring の custody bypass 封鎖)
+
+custody 例外正規化 (R19-R21) 完成後に残った resolver wiring contract mismatch を封鎖 (HIGH×1):
+
+- **R22-F1 (HIGH)**: broker は `secret_resolver` を **callable** として `self.secret_resolver(secret_ref, ...)`
+  で呼ぶが、`CompositeSecretResolver` / `SopsSubprocessResolver` は `resolve_secret_material()` を公開し
+  `__call__` 未実装。advertised な object-level wiring (composite オブジェクト自体を配線) すると `TypeError`
+  (object not callable) が atomic claim 後に raw 伝播し、`_RESOLVER_CUSTODY_ERRORS` を bypass して denied
+  audit + token revoke を回避する。production は bound method 配線で動くが、contract が loose Callable のまま
+  で bound-method-only 契約を証明する test も無い。fix (R22 推奨): 両 resolver に `__call__` を追加し
+  `resolve_secret_material` へ委譲 (object / bound-method 両 wiring が成立、test fake の関数も Callable のまま)。
+  - test (no-DB): `secret_resolver=CompositeSecretResolver(...)` (オブジェクト配線) + local custody 失敗
+    (material 不在) → `BrokerRedeemDenied(material_not_present)` + denied audit + redeemed audit なし
+    (TypeError でなく custody-deny に落ちる)。
+
+### A-6s. Codex adversarial R23 findings adopt (1 件 HIGH、marker-loss-recovery false-purged 封鎖)
+
+R12/R20 の marker 系譜の最後の穴 (marker 喪失後の誤再 pin) を封鎖 (HIGH×1):
+
+- **R23-F1 (HIGH)**: `_ensure_marker_pinned()` は `recorded is None` を fresh first-store とみなし現在 runtime
+  backend で marker を publish する。これは material が未だ無い時のみ安全。marker-loss-recovery (marker 削除済
+  だが keyring に material 実在) では、resolve/delete は marker 不在で fail-closed するが、後続 register/rotate が
+  `ensure_initialized()` を呼ぶと marker を再生成できる。keyring が一時無効/不可な瞬間だと `file` を新 marker と
+  して書き、以後 delete が旧 keyring material を no-op で purged 化する false-purged 経路が残る (fresh-init と
+  marker-loss-recovery を区別する DB row 存在チェックが無かった)。fix: store は DB 非保持のため **service レベル
+  preflight** `SecretRegistrationService._assert_marker_init_safe` を register/rotate の create_metadata 前
+  (新 row flush 前) に追加。`LocalSecretStore.is_initialized()` (marker 有無) が False かつ
+  `SecretRefRepository.has_local_secret_refs(tenant_id)` が True (local row 既存) = marker-loss-recovery として
+  refuse し、operator が元 backend を復元/検証してからの登録を要求する。fresh first-store (marker 無 + local row
+  無) のみ marker 作成を許可。rotate は old local material が前提のため marker 不在は常に recovery → refuse。
+  - test (no-DB): `_assert_marker_init_safe` が fresh-init 通過 / initialized 通過 / marker-loss-recovery refuse。
+  - 残リスク: marker-loss-recovery の operator 復元手順 (元 backend 確認 → marker 再 pin) は runbook (S3/S4)。
+
+### A-6t. Codex adversarial R24 findings adopt (1 件 HIGH、marker-loss-recovery 判定を deployment-wide 化)
+
+R23-F1 の recovery 判定が tenant-scoped だった cross-tenant 穴を封鎖 (HIGH×1):
+
+- **R24-F1 (HIGH)**: R23-F1 の `_assert_marker_init_safe` は `has_local_secret_refs(tenant_id)` (tenant-scoped)
+  で判定していたが、`backend.marker` は base_dir 直下の **deployment-scoped 単一ファイル**で tenant 固有では
+  ない。tenant A が keyring local material 保持 + marker 喪失 + file fallback の状況で、**tenant B の fresh
+  register** は `has_local_secret_refs(B)=False` で marker 再 pin を許し、`file` marker を書く → 以後 tenant A
+  の revoke/gc が file backend で no-op delete し A material を false-purged にする cross-tenant 経路が残る。
+  fix: 判定を deployment-wide にする。`SecretRefRepository.any_local_secret_refs_exist()` (tenant filter 無し、
+  local backend のみ、read-only 存在チェック、P0 RLS 無効で deployment 全体走査) へ置換し、`_assert_marker_init_safe`
+  の signature から tenant_id を除去。marker invariant のための意図的な全 tenant 存在チェック (tenant データは
+  返さず有無のみ)。
+  - test: no-DB unit (`_assert_marker_init_safe` の fresh-init/initialized/recovery) を deployment-wide メソッド
+    へ更新 + DB-gated repo test (`any_local_secret_refs_exist` が sops-only→False / 別 tenant の local row→True)。
+
+### A-6u. Codex PR #352 auto-review findings adopt (3 件、local backend at-rest + custody bypass)
+
+PR #352 で Codex GitHub auto-review が指摘した 3 件を adopt (F1=0050 rev id は CI fix 済で stale、F2/F3/F4 採用):
+
+- **F2 (P2→P1、`local_secret_store._file_resolve` ciphertext mode 検証)**: file backend (Phase 0 default、
+  ADR-00058) の ciphertext が store() 後に group/world-readable へ chmod / 復元された場合、master.key と同じ
+  0o600 契約を検証せず decrypt していた → insecure at-rest material を受理。fix: read_bytes 前に
+  `_assert_secure_file_mode(path)` を呼び、mode != 0o600 を fail-closed (resolve の R19-F1 wrap 経由で
+  broker custody-deny)。
+- **F3 (P1、`local_secret_store._file_delete` symlink reject、false-purged)**: material file が symlink に
+  差し替えられた場合、delete が symlink だけ unlink し target ciphertext が残るのに caller が
+  material_purged_at を立てる false-purged。fix: unlink 前に `path.is_symlink()` を reject (resolve の symlink
+  reject と対称)。caller (revoke/gc) は purge 失敗として再試行。
+- **F4 (P2→P1、`broker._resolve_secret` 1-arg resolver の TypeError custody bypass)**: 旧 1-arg resolver
+  注入時、redeem が atomic claim 後に allow_pending_verify kwarg 付きで呼び TypeError → `_RESOLVER_CUSTODY_ERRORS`
+  非該当で 500 + denied/revoke skip。fix: `_resolver_accepts_pending_flag` で signature introspect し kwarg
+  非対応 resolver は 1-arg で呼ぶ。rotation verify を honor できない 1-arg resolver は CompositeResolverError で
+  fail-closed (500 回避)。
+- test (no-DB): F2 insecure-mode → resolve fail-closed / F3 symlink → delete fail-closed + target 非削除 /
+  F4 introspection + 1-arg resolver redeem が TypeError なく成功。
+
+### A-6. 残リスク (Phase 0 accepted)
+
+R2-F2 + R3-F1 で late-writer 永久 orphan + 実行経路欠如は解消。gc 実行間隔の間は再作成 material が一時的に
+残る (encrypted-at-rest・broker gate で redeem 不可、次回 `taskhub secret-gc-orphans` で除去) — operator
+or 定期実行での drain を前提とした eventually-consistent 収束は Phase 0 accepted。定期 scheduler 化と
+O(local revoked 行) 再走査の lease/epoch bound は D-1 (multi-host) で検討。

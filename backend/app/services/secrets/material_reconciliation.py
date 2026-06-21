@@ -1,0 +1,300 @@
+"""MaterialReconciliationService: broker-owned (local) material の durable orphan reconciliation。
+
+``secret gc-orphans`` の本体 (idempotent、定期 or 手動)。2 種の orphan を収束させる:
+
+1. **revoke orphan** (``status='revoked' AND material_purged_at IS NULL`` の local row): revoke は DB
+   commit と store delete の境界跨ぎのため、DB revoked 後に crash すると material が store に残存する。
+   本 reconciliation が ``LocalSecretStore.delete()`` を idempotent に試み、成功時のみ
+   ``material_state='purged'`` + ``material_purged_at=now()`` を set する。「revoked=削除済」表示は
+   material_purged_at non-NULL で初めて真 (ADR-00059)。
+
+2. **create/rotate orphan** (``material_state='writing'`` の local row): register/rotate は pending+
+   writing row を commit してから store 書込→present 昇格する。途中 crash すると pending+writing row が
+   残る。grace period 経過後 (in-flight register と race しない) に store の partial material を削除し
+   pending+writing row を rollback (破棄) する (ADR-00058 finding-2)。
+
+material 操作は ``rotation.py`` の外 (status-only invariant を壊さない)。本 service は broker-owned
+**local** backend のみ対象 (sops material は外部管理)。
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from typing import Any, cast
+from uuid import UUID
+
+from sqlalchemy import ColumnElement, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+
+from backend.app.db.app_role import (
+    assert_tenant_context,
+    get_tenant_context,
+    set_tenant_context,
+)
+from backend.app.db.models.secret_ref import SecretRef
+from backend.app.repositories.audit_event import AuditEventRepository
+from backend.app.services.secrets.local_secret_store import LocalSecretStore
+
+logger = logging.getLogger(__name__)
+
+_LOCAL_URI_PREFIX = "secret://local/"
+_DEFAULT_WRITING_GRACE_SECONDS = 300
+
+
+@dataclass
+class ReconciliationReport:
+    purged: list[str] = field(default_factory=list)
+    purge_failed: list[str] = field(default_factory=list)
+    rolled_back: list[str] = field(default_factory=list)
+
+    @property
+    def total_actions(self) -> int:
+        return len(self.purged) + len(self.purge_failed) + len(self.rolled_back)
+
+
+class MaterialReconciliationService:
+    """local material の revoke-orphan purge + create/rotate-orphan rollback (idempotent)。"""
+
+    def __init__(self, session: AsyncSession, store: LocalSecretStore) -> None:
+        self.session = session
+        self.store = store
+
+    async def _ensure_tenant_context(self, tenant_id: int) -> None:
+        current = await get_tenant_context(self.session)
+        if current is None:
+            await set_tenant_context(self.session, tenant_id)
+            return
+        await assert_tenant_context(self.session, tenant_id)
+
+    async def _audit(self, *, tenant_id: int, event_type: str, secret_ref_id: UUID, reason: str) -> None:
+        repo = AuditEventRepository(self.session)
+        await repo.append(
+            tenant_id=tenant_id,
+            event_type=event_type,
+            payload={"secret_ref_id": str(secret_ref_id), "reason_code": reason},
+        )
+
+    async def gc_orphans(
+        self,
+        *,
+        tenant_id: int,
+        writing_grace_seconds: int = _DEFAULT_WRITING_GRACE_SECONDS,
+    ) -> ReconciliationReport:
+        # service 入口で正の整数を強制 (Codex R5-F1): CLI validator だけでは run_gc_orphans() や本 method を
+        # 直接呼ぶ経路を保護できない。0/負値は cutoff が現在以降になり in-flight の pending+writing を
+        # tombstone する破壊的動作のため fail-closed reject。bool は int subclass だが grace としては不正。
+        if isinstance(writing_grace_seconds, bool) or not isinstance(writing_grace_seconds, int):
+            raise ValueError("writing_grace_seconds must be an int")
+        if writing_grace_seconds <= 0:
+            raise ValueError("writing_grace_seconds must be a positive int (> 0)")
+        await self._ensure_tenant_context(tenant_id)
+        report = ReconciliationReport()
+        # (1) writing-orphan を revoked+purging へ tombstone する (DB owner を残す)。row を delete すると
+        #     grace 超過後に resume した late writer が owner なし orphan material を生む (Codex F2)。
+        # (1.5) post-present orphan (Codex R9-F1): present 化後 promote 前に old が並行 revoke/demote され
+        #     て promote 不能になった pending+present rotation candidate を tombstone する。
+        # (2) 続けて revoke-orphan (tombstone 済 + 通常 revoked) の material を idempotent に purge する。
+        await self._tombstone_writing_orphans(tenant_id, writing_grace_seconds, report)
+        await self._tombstone_stale_rotation_candidates(
+            tenant_id, writing_grace_seconds, report
+        )
+        await self._purge_revoke_orphans(tenant_id, report)
+        return report
+
+    async def _purge_revoke_orphans(self, tenant_id: int, report: ReconciliationReport) -> None:
+        # local revoked 行を **全件** (purged 含む) 走査し store.delete を idempotent backstop として
+        # 実行する (Codex R2-F2): tombstone+purged 確定後に late writer が store.store で material を
+        # 再作成し cleanup 前に crash した場合でも、次回 gc が再削除し永久 orphan を防ぐ。
+        rows = await self.session.execute(
+            select(SecretRef.id, SecretRef.material_purged_at).where(
+                SecretRef.tenant_id == tenant_id,
+                SecretRef.status == "revoked",
+                SecretRef.secret_uri.like(f"{_LOCAL_URI_PREFIX}%"),
+            )
+        )
+        records = rows.all()
+        for secret_ref_id, purged_at in records:
+            already_purged = purged_at is not None
+            try:
+                self.store.delete(tenant_id, secret_ref_id)
+            except Exception:  # noqa: BLE001 - 失敗は durable に記録し次回再試行
+                logger.warning(
+                    "gc-orphans purge failed",
+                    extra={"tenant_id": tenant_id, "secret_ref_id": str(secret_ref_id)},
+                )
+                # already_purged 含め **全失敗を durable に記録** (Codex R3-F2): purged 行の backstop
+                # delete 失敗 (late-writer 再作成 material が消せない) を report に出さないと、operator が
+                # clean 収束と residual material を区別できない。purge_attempts++ で再試行 signal を残す。
+                values: dict[str, Any] = {"purge_attempts": SecretRef.purge_attempts + 1}
+                if already_purged:
+                    # false-purged 撤回 (Codex R10-F1): purged 確定行で late-writer が material を再作成し
+                    # backstop delete も失敗した = material 存在を absence 検証できない。ここで material_state
+                    # ='purged' / material_purged_at non-null を維持すると、DB source of truth と /me inventory
+                    # が「secret-at-rest 削除済」と言い続ける fail-open になる (material は実在)。purging +
+                    # material_purged_at=NULL へ撤回し fail-closed 化する (inventory/downgrade preflight が
+                    # 未 purge と認識、次回 gc が再 delete を試行)。
+                    values["material_state"] = "purging"
+                    values["material_purged_at"] = None
+                await self.session.execute(
+                    update(SecretRef)
+                    .where(
+                        SecretRef.tenant_id == tenant_id,
+                        SecretRef.id == secret_ref_id,
+                        SecretRef.status == "revoked",
+                    )
+                    .values(**values)
+                )
+                await self.session.commit()
+                report.purge_failed.append(str(secret_ref_id))
+                continue
+            if already_purged:
+                # 既に purged 確定済 + backstop delete 成功 → 再作成 material を除去済。状態変更なし。
+                continue
+            result = await self.session.execute(
+                update(SecretRef)
+                .where(
+                    SecretRef.tenant_id == tenant_id,
+                    SecretRef.id == secret_ref_id,
+                    SecretRef.status == "revoked",
+                    SecretRef.material_purged_at.is_(None),
+                )
+                .values(material_state="purged", material_purged_at=datetime.now(UTC))
+            )
+            if cast("Any", result).rowcount == 1:
+                await self._audit(
+                    tenant_id=tenant_id,
+                    event_type="secret_material_purged",
+                    secret_ref_id=secret_ref_id,
+                    reason="gc_orphans_purged",
+                )
+                report.purged.append(str(secret_ref_id))
+            await self.session.commit()
+
+    async def _tombstone_writing_orphans(
+        self, tenant_id: int, writing_grace_seconds: int, report: ReconciliationReport
+    ) -> None:
+        cutoff = datetime.now(UTC) - timedelta(seconds=writing_grace_seconds)
+        rows = await self.session.execute(
+            select(SecretRef.id).where(
+                SecretRef.tenant_id == tenant_id,
+                SecretRef.material_state == "writing",
+                SecretRef.status == "pending",
+                SecretRef.updated_at < cutoff,
+                SecretRef.secret_uri.like(f"{_LOCAL_URI_PREFIX}%"),
+            )
+        )
+        ids = [row[0] for row in rows.all()]
+        for secret_ref_id in ids:
+            # row を delete せず revoked+purging に tombstone する。DB owner を残すことで late writer の
+            # promote (WHERE pending+writing) は 0 rows となり、material は revoke-orphan purge 経路が
+            # durable に削除する (Codex F2: row 消滅だと owner なし orphan material が残る)。
+            result = await self.session.execute(
+                update(SecretRef)
+                .where(
+                    SecretRef.tenant_id == tenant_id,
+                    SecretRef.id == secret_ref_id,
+                    SecretRef.status == "pending",
+                    SecretRef.material_state == "writing",
+                )
+                .values(
+                    status="revoked",
+                    material_state="purging",
+                    revoked_at=datetime.now(UTC),
+                )
+            )
+            if cast("Any", result).rowcount == 1:
+                await self._audit(
+                    tenant_id=tenant_id,
+                    event_type="secret_material_orphan_tombstoned",
+                    secret_ref_id=secret_ref_id,
+                    reason="gc_orphans_writing_tombstoned",
+                )
+                report.rolled_back.append(str(secret_ref_id))
+                await self.session.commit()
+            else:
+                # 競合で状態が変わっていた (register/rotate 完了等) → no-op。
+                await self.session.rollback()
+
+    def _old_not_promotable(self, tenant_id: int) -> ColumnElement[bool]:
+        """rotated_from old が **active+present でない** ことを表す相関 NOT EXISTS (SecretRef に相関)。
+
+        promote_rotated は old=active を必須とするため、old が active+present でない pending+present
+        rotation candidate は **永久に promote 不能**。本式は select / update の両方で SecretRef (= new 行)
+        の ``rotated_from_id`` に相関する。
+        """
+        old_ref = aliased(SecretRef)
+        old_active = (
+            select(old_ref.id)
+            .where(
+                old_ref.tenant_id == tenant_id,
+                old_ref.id == SecretRef.rotated_from_id,
+                old_ref.status == "active",
+                old_ref.material_state == "present",
+            )
+            .exists()
+        )
+        return ~old_active
+
+    async def _tombstone_stale_rotation_candidates(
+        self, tenant_id: int, grace_seconds: int, report: ReconciliationReport
+    ) -> None:
+        # post-present orphan (Codex R9-F1): rotate() は new を pending+present で残し promote_rotated を
+        # 待つが、present 化 commit 後 promote 前に old が並行 revoke/rollback/promote されると、old が
+        # active+present でなくなり new は永久 promote 不能な pending+present orphan になる (R8-F1 の atomic
+        # claim は present 化時点しか塞げない READ COMMITTED の post-present window)。reservation/lease 方式
+        # (multi-host D-1) ではなく、既存 gc-orphans を延長して回収する Phase 0 invariant (ADR-00059 A-6e)。
+        # grace 経過後、rotated_from が active+present でない local pending+present row を revoked+purging へ
+        # tombstone する (in-flight rotate→promote と race しないよう grace + tombstone 時 NOT EXISTS re-check)。
+        cutoff = datetime.now(UTC) - timedelta(seconds=grace_seconds)
+        rows = await self.session.execute(
+            select(SecretRef.id).where(
+                SecretRef.tenant_id == tenant_id,
+                SecretRef.status == "pending",
+                SecretRef.material_state == "present",
+                SecretRef.rotated_from_id.is_not(None),
+                SecretRef.updated_at < cutoff,
+                SecretRef.secret_uri.like(f"{_LOCAL_URI_PREFIX}%"),
+                self._old_not_promotable(tenant_id),
+            )
+        )
+        ids = [row[0] for row in rows.all()]
+        for secret_ref_id in ids:
+            # tombstone 時に NOT EXISTS を再評価 (SELECT→UPDATE 間に promote_rotated が走った場合は old を
+            # active 化するため re-check が EXISTS となり 0 行 = legit promote を pre-empt しない)。
+            result = await self.session.execute(
+                update(SecretRef)
+                .where(
+                    SecretRef.tenant_id == tenant_id,
+                    SecretRef.id == secret_ref_id,
+                    SecretRef.status == "pending",
+                    SecretRef.material_state == "present",
+                    SecretRef.rotated_from_id.is_not(None),
+                    self._old_not_promotable(tenant_id),
+                )
+                .values(
+                    status="revoked",
+                    material_state="purging",
+                    revoked_at=datetime.now(UTC),
+                )
+            )
+            if cast("Any", result).rowcount == 1:
+                await self._audit(
+                    tenant_id=tenant_id,
+                    event_type="secret_material_orphan_tombstoned",
+                    secret_ref_id=secret_ref_id,
+                    reason="gc_orphans_stale_rotation_tombstoned",
+                )
+                report.rolled_back.append(str(secret_ref_id))
+                await self.session.commit()
+            else:
+                # 競合で promote 完了 or 状態変化 → no-op。
+                await self.session.rollback()
+
+
+__all__ = [
+    "MaterialReconciliationService",
+    "ReconciliationReport",
+]
