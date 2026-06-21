@@ -100,7 +100,9 @@ AUTOMATION_ENV_VARS = (
 DESTRUCTIVE_SUBCOMMANDS = frozenset(
     # F-PR78-005 adopt: restore-rollback は skeleton mode 中の rollback path、restore_claim 不要
     # (real I/O は SP022-T02 Phase 4 carry-over、本 batch では skeleton 維持)
-    {"backup", "restore", "restore-rollback", "migrate", "freeze", "thaw", "age-rotate"},
+    # SP-PHASE0 S3 (ADR-00059): secret-revoke は status を terminal (revoked) へ遷移させ material
+    # purge を起動する destructive lifecycle op のため gate 対象 (Sprint Pack must_ship)。
+    {"backup", "restore", "restore-rollback", "migrate", "freeze", "thaw", "age-rotate", "secret-revoke"},
 )
 
 DRILL_KIND_ALLOWED_SUBCOMMANDS: dict[str, frozenset[str]] = {
@@ -112,6 +114,10 @@ DRILL_KIND_ALLOWED_SUBCOMMANDS: dict[str, frozenset[str]] = {
     "age_rotate": frozenset({"age-rotate"}),
     "freeze_only": frozenset({"freeze"}),
     "thaw_only": frozenset({"thaw"}),
+    # SP-PHASE0 S3 (ADR-00059): secret-revoke を signed approval で gate する場合の drill_kind。
+    # claim を持たない (backup/restore のような runtime binding fingerprint は secret-revoke には
+    # 不要、secret_ref_id + tenant scope は CLI 引数 + DB lookup で確定)。
+    "secret_revoke": frozenset({"secret-revoke"}),
 }
 
 # SP022-T02 Phase 2 / T08 batch 2: backup_claim (R2-F-001 adopt)
@@ -226,6 +232,8 @@ ReasonCode = Literal[
     "taskhub_signed_approval_restore_rollback_claim_required",
     "taskhub_signed_approval_restore_rollback_claim_mismatch",
     "taskhub_signed_approval_restore_rollback_allow_unsigned_skeleton_rejected",
+    # SP-PHASE0 S3 (Workflow review HIGH adopt): secret-revoke は real-I/O destructive。escape を物理 deny。
+    "taskhub_signed_approval_secret_revoke_allow_unsigned_skeleton_rejected",
     # SP-012 Batch A: approval keyring + signed manifest + dual-trust (ADR-00029、
     # `.claude/plans/sp012-split-brain-keyring.md` §3.A canonical)
     # base 6 件 (Phase 1 ADV R1 で確定):
@@ -1039,6 +1047,11 @@ def require_approval_for_destructive(
     # SP022-T02 Phase 4 (R1 F-002 adopt): restore-rollback も同 pattern
     if subcommand == "restore-rollback" and allow_unsigned_manual_skeleton:
         return False, "taskhub_signed_approval_restore_rollback_allow_unsigned_skeleton_rejected", extras
+    # SP-PHASE0 S3 (Workflow review HIGH adopt): secret-revoke は real-I/O destructive (status='revoked' へ実
+    # DB write + best-effort material purge、rollback=再登録) なので backup/restore と同列に escape を物理 deny。
+    # skeleton 専用 escape を real-I/O destructive で許すと signed approval gate を完全 bypass できる非対称を封鎖。
+    if subcommand == "secret-revoke" and allow_unsigned_manual_skeleton:
+        return False, "taskhub_signed_approval_secret_revoke_allow_unsigned_skeleton_rejected", extras
 
     automation = detect_automation_context()
     extras["automation_env_hits"] = automation["env_hits"]
