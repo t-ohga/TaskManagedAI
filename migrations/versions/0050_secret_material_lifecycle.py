@@ -1,6 +1,6 @@
 """ADR-00058 finding-2 / ADR-00059: secret_refs material lifecycle 列 (crash-safe source of truth)。
 
-Revision ID: 0050_secret_ref_material_lifecycle
+Revision ID: 0050_secret_material_lifecycle
 Revises: 0049_secret_uri_local_backend
 Create Date: 2026-06-20 00:00:01.000000
 
@@ -44,7 +44,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0050_secret_ref_material_lifecycle"
+revision: str = "0050_secret_material_lifecycle"
 down_revision: str | None = "0049_secret_uri_local_backend"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
