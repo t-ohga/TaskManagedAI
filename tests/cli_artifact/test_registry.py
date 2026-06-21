@@ -28,7 +28,8 @@ def test_shipped_registry_loads() -> None:
         / "cli_registry.toml"
     )
     registry = load_cli_agent_registry(path)
-    assert registry.schema_version == "1.0.0"
+    # SP-PHASE0 S3 (ADR-00058): credential_supply_mode additive field で 1.0.0 -> 1.1.0。
+    assert registry.schema_version == "1.1.0"
     assert "codex" in registry.names()
     entry = registry.get("codex")
     # Codex SP6B1 R2 F-SP6B1-R2-004: binary_path MUST be absolute to defeat
@@ -38,6 +39,10 @@ def test_shipped_registry_loads() -> None:
     assert entry.max_payload_data_class == "internal"
     assert "OPENAI_API_KEY" not in entry.env_passthrough
     assert "PATH" in entry.env_passthrough
+    # SP-PHASE0 S3 (ADR-00058): codex/claude CLI サブスク credential は host-ambient 分類。
+    assert entry.credential_supply_mode == "host_ambient"
+    assert "claude" in registry.names()
+    assert registry.get("claude").credential_supply_mode == "host_ambient"
 
 
 # --- positive ---------------------------------------------------------------

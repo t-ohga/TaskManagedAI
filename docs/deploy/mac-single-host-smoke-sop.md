@@ -24,7 +24,7 @@ Layer A 結果は `docs/deploy/smoke-evidence/2026-05-22-layer-A.md` (本 PR で
 |---|---|
 | Mac OS | Darwin (macOS) 13+ 推奨 |
 | Docker Desktop | running (compose v2 利用可) |
-| port 自由 | 5432 (postgres) / 6379 (redis) / 8000 (api) / 3000 (frontend) が空いている |
+| port 自由 | 5432 (postgres) / 6379 (redis) / 8000 (api) / 3900 (frontend) が空いている |
 | disk 空き | ≥ 5 GB (docker image + volume + backup archive 用) |
 | TaskManagedAI repo | `~/repo/TaskManagedAI` (本実装の cwd) |
 | age (key 暗号化) | `brew install age` |
@@ -168,10 +168,12 @@ fi
 # 出力 tail 表示 (確認用、exit code は ALEMBIC_EXIT 経由で既に判定済)
 tail -10 /tmp/taskhub-alembic-upgrade.log
 
-# expected: 18 migrations apply 成功、ALEMBIC_EXIT=0
+# expected: 全 migration apply 成功、ALEMBIC_EXIT=0 (固定 revision 数は記載しない)
 
 bash scripts/alembic_wrapper.sh current
-# expected: 0018_eval_dataset_versions (head)
+# expected: current revision == repo の最新 head (固定 revision id を hardcode しない、SP-PHASE0 S3)。
+# DB current と repo head の一致確認は `bash scripts/alembic_wrapper.sh heads` と突合するか、
+# `uv run python scripts/taskhub_admin.py status --local` の alembic_up_to_date=true で行う。
 ```
 
 **所要**: 1-2 min
@@ -213,7 +215,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.l
 - [ ] B-1 `.env.local` 正常編集、TASKMANAGEDAI_ENVIRONMENT=development 設定済
 - [ ] B-2 docker compose build 全 service exit 0
 - [ ] B-3 5 service (api / worker / postgres / redis / frontend) 全件 healthy
-- [ ] B-4 alembic upgrade head 成功、`0018_eval_dataset_versions` が current head
+- [ ] B-4 alembic upgrade head 成功、`alembic current` == repo の最新 head (固定 revision id は記載しない、SP-PHASE0 S3)
 - [ ] B-5 /healthz 200 OK + frontend HTML + redis PONG + postgres v16.x
 
 完了したら以下を記録:

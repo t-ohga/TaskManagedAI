@@ -33,6 +33,18 @@ _ALLOWED_PLACEHOLDERS: frozenset[str] = frozenset(
     }
 )
 
+# SP-PHASE0 S3 (ADR-00058): CLI サブスク credential 供給経路の分類 (additive metadata)。
+# - "host_ambient": CLI が self-rotating OAuth を所有・refresh、host worker が ~/.claude / ~/.codex
+#   を直読 (SecretBroker 非経由)。SecretRegistrationService が broker-managed 登録を reject する。
+# - "broker_managed": static API key を in-process provider.call で broker 内部消費 (Phase 2)。
+# None = credential 供給を持たない (read-only artifact 生成のみ)。
+_ALLOWED_CREDENTIAL_SUPPLY_MODES: frozenset[str] = frozenset(
+    {
+        "host_ambient",
+        "broker_managed",
+    }
+)
+
 # subprocess を spawn する際に **絶対に渡してはいけない** ENV var.
 # env_passthrough にあっても本 list の名前は drop する (defense-in-depth)。
 _FORBIDDEN_ENV_NAMES: frozenset[str] = frozenset(
@@ -69,6 +81,8 @@ class AgentRegistryEntry:
     max_stderr_bytes: int
     max_payload_data_class: PayloadDataClass
     cwd_allowlist: tuple[str, ...]
+    # SP-PHASE0 S3 (ADR-00058): host_ambient | broker_managed | None (additive、未設定後方互換)。
+    credential_supply_mode: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -130,6 +144,16 @@ class AgentRegistryEntry:
             raise ValueError(
                 f"agent {self.name!r}: stdin_source must be empty or one of "
                 f"{sorted(_ALLOWED_PLACEHOLDERS)} (got {self.stdin_source!r})"
+            )
+        # SP-PHASE0 S3: credential_supply_mode は allowlist enum (未設定 None は許容)。
+        if (
+            self.credential_supply_mode is not None
+            and self.credential_supply_mode not in _ALLOWED_CREDENTIAL_SUPPLY_MODES
+        ):
+            raise ValueError(
+                f"agent {self.name!r}: credential_supply_mode must be None or one of "
+                f"{sorted(_ALLOWED_CREDENTIAL_SUPPLY_MODES)} "
+                f"(got {self.credential_supply_mode!r})"
             )
         # ENV passthrough から forbidden secret を除外
         leaked = self.env_passthrough & _FORBIDDEN_ENV_NAMES
@@ -201,6 +225,11 @@ def load_cli_agent_registry(path: Path | str) -> CliAgentRegistry:
             ),
             cwd_allowlist=tuple(
                 str(p) for p in raw_agent.get("cwd_allowlist", [])
+            ),
+            credential_supply_mode=(
+                str(raw_agent["credential_supply_mode"])
+                if raw_agent.get("credential_supply_mode") is not None
+                else None
             ),
         )
         if entry.name in entries:

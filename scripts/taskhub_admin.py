@@ -42,11 +42,13 @@ Exit code:
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import sys
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 # R2-F-001 adopt: dual import (direct-script `python scripts/taskhub_admin.py` と
 # console_script `uv run taskhub` の両方で動かす)
@@ -112,7 +114,27 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
     ADR-00021 §3 line 151 で host migration drill の step 4 (target host で
     `taskhub init`) として明示、新 host 初回 setup の起点 CLI.
+
+    SP-PHASE0 S3: `--local` で local-host の起動準備状態を real に確認する (exit 0 + 実値、
+    docker compose dev + host worker 起動後の preflight)。固定 migration head は記載しない。
+    既存 `--host`/`--tailnet` skeleton path (host migration drill step 4) は不変。
     """
+    if getattr(args, "local", False):
+        try:
+            from scripts.taskhub_local_status import collect_local_status
+        except ModuleNotFoundError:  # pragma: no cover - sys.path fallback
+            repo_root = Path(__file__).resolve().parent.parent
+            if str(repo_root) not in sys.path:
+                sys.path.insert(0, str(repo_root))
+            from scripts.taskhub_local_status import collect_local_status  # noqa: E402
+        summary = collect_local_status(database_url=getattr(args, "database_url", None))
+        summary["next_step"] = (
+            "run 'alembic upgrade head' if alembic_up_to_date is false, "
+            "then seed + start host worker"
+        )
+        print(json.dumps(summary, sort_keys=True))  # noqa: T201
+        return 0
+
     if not args.host:
         print("ERROR: --host <name> is required", file=sys.stderr)  # noqa: T201
         return 2
@@ -1148,6 +1170,20 @@ def _cmd_status(args: argparse.Namespace) -> int:
     prevention (`--remote <old-host>` で旧 host service down 確認) を追加
     (Codex R4 F-PR63-008 adopt).
     """
+    # SP-PHASE0 S3: `--local` minimal-but-real local-host status (exit 0 + 実値、固定 head 非記載)。
+    # 既存 skeleton / --remote / --age-safety / --mac-preflight path は不変。
+    if getattr(args, "local", False):
+        try:
+            from scripts.taskhub_local_status import collect_local_status
+        except ModuleNotFoundError:  # pragma: no cover - sys.path fallback
+            repo_root = Path(__file__).resolve().parent.parent
+            if str(repo_root) not in sys.path:
+                sys.path.insert(0, str(repo_root))
+            from scripts.taskhub_local_status import collect_local_status  # noqa: E402
+        summary = collect_local_status(database_url=getattr(args, "database_url", None))
+        print(json.dumps(summary, sort_keys=True))  # noqa: T201
+        return 0
+
     # SP022-T02 Phase 4 (R1 F-006/F-007/F-016 + R2 F-001/F-003 + ADV R1 全 adopt):
     # --remote real I/O (host-specific signed config + SSH Tailscale + state machine)
     if args.remote:
@@ -1397,6 +1433,209 @@ def _cmd_secret_gc_orphans(args: argparse.Namespace) -> int:
     print(json.dumps(result, sort_keys=True))  # noqa: T201
     # purge_failed が残る = material 残存 (keyring locked / fsync failure 等) → operator に exit 1 で通知。
     return 1 if result.get("purge_failed") else 0
+
+
+# --- SP-PHASE0 S3: secret create / rotate / revoke (ADR-00058/00059) ---
+
+
+def _read_secret_material(args: argparse.Namespace) -> bytes | None:
+    """raw secret material を **getpass (interactive) or stdin** から読む。argv は物理排除。
+
+    raw material を argv flag で受けると ``ps`` / shell history / process listing で world-visible に
+    なるため、本 CLI には ``--material`` 引数を一切定義しない (argv 物理排除、secretbroker-boundary §1)。
+
+    - ``--material-stdin``: ``sys.stdin`` から読む (1 行目の改行を strip、自動化 / pipe 経路)。
+    - それ以外: ``getpass.getpass()`` で TTY echo なし入力 (interactive)。
+
+    raw material は本関数の戻り値 (bytes) としてのみ返し、log / print しない。空入力は ``None``。
+    """
+    if getattr(args, "material_stdin", False):
+        # stdin から 1 行読み、末尾改行のみ strip (途中の空白 / 改行は material の一部として保持)。
+        raw_line = sys.stdin.readline()
+        if raw_line.endswith("\n"):
+            raw_line = raw_line[:-1]
+        if raw_line.endswith("\r"):
+            raw_line = raw_line[:-1]
+        material = raw_line.encode("utf-8")
+    else:
+        # TTY echo なしの interactive 入力。prompt は stderr 相当 (getpass はデフォルトで /dev/tty)。
+        material = getpass.getpass("secret material (input hidden): ").encode("utf-8")
+    if not material:
+        return None
+    return material
+
+
+def _parse_csv_list(value: str | None) -> list[str]:
+    """comma-separated string を strip 済 non-empty list に変換する (allowed_consumers/operations)。"""
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _cmd_secret_create(args: argparse.Namespace) -> int:
+    """`taskhub secret-create` (SP-PHASE0 S3、ADR-00058)。
+
+    新 local secret_ref を crash-safe に登録し active 昇格する。raw material は getpass/stdin から
+    読み取り argv には出さない。成功時は非機密 metadata (secret_uri / status) のみ出力、material は echo しない。
+    """
+    consumers = _parse_csv_list(args.allowed_consumers)
+    operations = _parse_csv_list(args.allowed_operations)
+    if not consumers or not operations:
+        print(  # noqa: T201
+            "ERROR: --allowed-consumers and --allowed-operations are required "
+            "(comma-separated, non-empty)",
+            file=sys.stderr,
+        )
+        return 2
+    material = _read_secret_material(args)
+    if material is None:
+        print("ERROR: empty secret material rejected", file=sys.stderr)  # noqa: T201
+        return 2
+
+    try:
+        from scripts.taskhub_secret_lifecycle import create_secret
+    except ModuleNotFoundError:  # pragma: no cover - sys.path fallback
+        repo_root = Path(__file__).resolve().parent.parent
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from scripts.taskhub_secret_lifecycle import create_secret  # noqa: E402
+
+    try:
+        result = create_secret(
+            tenant_id=args.tenant_id,
+            scope=args.scope,
+            name=args.name,
+            version=args.version,
+            raw_material=material,
+            allowed_consumers=consumers,
+            allowed_operations=operations,
+            database_url=getattr(args, "database_url", None),
+        )
+    except Exception as exc:  # noqa: BLE001 - error message に raw material を含めない
+        print(  # noqa: T201
+            f"ERROR: secret create failed: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        # 関数 scope の material を best-effort で解放 (GC 任せにせず参照を切る)。
+        material = None  # noqa: F841
+    print(json.dumps(result, sort_keys=True))  # noqa: T201
+    return 0
+
+
+def _cmd_secret_rotate(args: argparse.Namespace) -> int:
+    """`taskhub secret-rotate` (SP-PHASE0 S3、ADR-00058)。
+
+    既存 local secret_ref を rotate し新 version を pending+present で配置する (active 化しない)。
+    raw material は getpass/stdin から読み取り argv には出さない。
+    """
+    consumers = _parse_csv_list(args.allowed_consumers)
+    operations = _parse_csv_list(args.allowed_operations)
+    if not consumers or not operations:
+        print(  # noqa: T201
+            "ERROR: --allowed-consumers and --allowed-operations are required "
+            "(comma-separated, non-empty)",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        old_id = UUID(args.old_secret_ref_id)
+    except ValueError:
+        print(  # noqa: T201
+            f"ERROR: --old-secret-ref-id is not a valid UUID: {args.old_secret_ref_id!r}",
+            file=sys.stderr,
+        )
+        return 2
+    material = _read_secret_material(args)
+    if material is None:
+        print("ERROR: empty secret material rejected", file=sys.stderr)  # noqa: T201
+        return 2
+
+    try:
+        from scripts.taskhub_secret_lifecycle import rotate_secret
+    except ModuleNotFoundError:  # pragma: no cover - sys.path fallback
+        repo_root = Path(__file__).resolve().parent.parent
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from scripts.taskhub_secret_lifecycle import rotate_secret  # noqa: E402
+
+    try:
+        result = rotate_secret(
+            tenant_id=args.tenant_id,
+            old_secret_ref_id=old_id,
+            new_version=args.new_version,
+            raw_material=material,
+            allowed_consumers=consumers,
+            allowed_operations=operations,
+            database_url=getattr(args, "database_url", None),
+        )
+    except Exception as exc:  # noqa: BLE001 - error message に raw material を含めない
+        print(  # noqa: T201
+            f"ERROR: secret rotate failed: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        material = None  # noqa: F841
+    print(json.dumps(result, sort_keys=True))  # noqa: T201
+    return 0
+
+
+def _cmd_secret_revoke(args: argparse.Namespace) -> int:
+    """`taskhub secret-revoke` (SP-PHASE0 S3、ADR-00059)。
+
+    DESTRUCTIVE: status を terminal (revoked) へ遷移させ material purge を起動するため、他 destructive
+    subcommand と同じ signed approval gate (default deny) を通す。material 削除は best-effort purge +
+    ``secret-gc-orphans`` reconciliation で durable に収束する (rule §5、rotation.py.revoke は流用しない)。
+    """
+    # SP-PHASE0 S3 (Workflow review HIGH adopt): backup/restore と同様 real-I/O destructive のため
+    # --allow-unsigned-manual-skeleton を early reject (二重防御。gate 内でも物理 deny 済だが error を明確化)。
+    if getattr(args, "allow_unsigned_manual_skeleton", False):
+        print(  # noqa: T201
+            "ERROR: --allow-unsigned-manual-skeleton is rejected for secret-revoke subcommand "
+            "(real I/O requires signed approval, no skeleton escape allowed)",
+            file=sys.stderr,
+        )
+        return 2
+    allowed, reason_code = _run_approval_gate("secret-revoke", args)
+    if not allowed:
+        print(  # noqa: T201
+            f"ERROR: signed approval gate denied (reason={reason_code})",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        secret_ref_id = UUID(args.secret_ref_id)
+    except ValueError:
+        print(  # noqa: T201
+            f"ERROR: --secret-ref-id is not a valid UUID: {args.secret_ref_id!r}",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        from scripts.taskhub_secret_lifecycle import revoke_secret
+    except ModuleNotFoundError:  # pragma: no cover - sys.path fallback
+        repo_root = Path(__file__).resolve().parent.parent
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from scripts.taskhub_secret_lifecycle import revoke_secret  # noqa: E402
+
+    try:
+        result = revoke_secret(
+            tenant_id=args.tenant_id,
+            secret_ref_id=secret_ref_id,
+            database_url=getattr(args, "database_url", None),
+        )
+    except Exception as exc:  # noqa: BLE001 - error message に raw secret を含めない
+        print(  # noqa: T201
+            f"ERROR: secret revoke failed: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    print(json.dumps(result, sort_keys=True))  # noqa: T201
+    return 0
 
 
 def _cmd_age_rotate(args: argparse.Namespace) -> int:
@@ -1685,14 +1924,28 @@ def _build_parser() -> argparse.ArgumentParser:
     sub_init.add_argument(
         "--host",
         type=str,
-        required=True,
-        help="host name to bootstrap",
+        default=None,
+        help="host name to bootstrap (required unless --local)",
     )
     sub_init.add_argument(
         "--tailnet",
         type=str,
-        required=True,
-        help="closed-network tailnet domain (e.g. tail-xxxxx.ts.net)",
+        default=None,
+        help="closed-network tailnet domain (e.g. tail-xxxxx.ts.net、required unless --local)",
+    )
+    sub_init.add_argument(
+        "--local",
+        action="store_true",
+        help=(
+            "minimal-but-real local-host preflight (exit 0 + real values: env / DB "
+            "reachability / alembic head expected vs in-DB、SP-PHASE0 S3)"
+        ),
+    )
+    sub_init.add_argument(
+        "--database-url",
+        type=str,
+        default=None,
+        help="SQLAlchemy URL override for --local preflight (None=Settings.database_url)",
     )
     sub_init.set_defaults(func=_cmd_init)
 
@@ -1828,6 +2081,109 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub_secret_gc.set_defaults(func=_cmd_secret_gc_orphans)
 
+    # --- SP-PHASE0 S3: secret-create / secret-rotate / secret-revoke (ADR-00058/00059) ---
+    _SCOPE_CHOICES = ["p0", "workspace", "project", "repo", "agent_run", "provider"]
+
+    sub_secret_create = subparsers.add_parser(
+        "secret-create",
+        help=(
+            "register a new local secret_ref (material via getpass/stdin, NEVER argv、"
+            "ADR-00058 SP-PHASE0 S3)"
+        ),
+    )
+    sub_secret_create.add_argument(
+        "--tenant-id", type=int, required=True, help="tenant id (tenant scoped)",
+    )
+    sub_secret_create.add_argument(
+        "--scope", type=str, required=True, choices=_SCOPE_CHOICES,
+        help="secret_ref scope",
+    )
+    sub_secret_create.add_argument(
+        "--name", type=str, required=True,
+        help="secret name (lowercase [a-z0-9_-]+, e.g. github-token)",
+    )
+    sub_secret_create.add_argument(
+        "--version", type=str, default="v1",
+        help="secret version (v[0-9]+, default v1)",
+    )
+    sub_secret_create.add_argument(
+        "--allowed-consumers", type=str, required=True,
+        help="comma-separated allowed consumer identifiers (non-empty)",
+    )
+    sub_secret_create.add_argument(
+        "--allowed-operations", type=str, required=True,
+        help="comma-separated allowed operations (e.g. provider.call,repo.push)",
+    )
+    sub_secret_create.add_argument(
+        "--material-stdin", action="store_true",
+        help=(
+            "read raw secret material from stdin (1 line) instead of getpass interactive. "
+            "raw material is NEVER accepted via an argv flag (ps/world-visible)"
+        ),
+    )
+    sub_secret_create.add_argument(
+        "--database-url", type=str, default=None,
+        help="SQLAlchemy URL (None=Settings.database_url)",
+    )
+    sub_secret_create.set_defaults(func=_cmd_secret_create)
+
+    sub_secret_rotate = subparsers.add_parser(
+        "secret-rotate",
+        help=(
+            "rotate an existing local secret_ref (new version, material via getpass/stdin, "
+            "NEVER argv、ADR-00058 SP-PHASE0 S3)"
+        ),
+    )
+    sub_secret_rotate.add_argument(
+        "--tenant-id", type=int, required=True, help="tenant id (tenant scoped)",
+    )
+    sub_secret_rotate.add_argument(
+        "--old-secret-ref-id", type=str, required=True,
+        help="UUID of the active secret_ref to rotate from",
+    )
+    sub_secret_rotate.add_argument(
+        "--new-version", type=str, required=True,
+        help="new secret version (v[0-9]+, must differ from old)",
+    )
+    sub_secret_rotate.add_argument(
+        "--allowed-consumers", type=str, required=True,
+        help="comma-separated allowed consumer identifiers (non-empty)",
+    )
+    sub_secret_rotate.add_argument(
+        "--allowed-operations", type=str, required=True,
+        help="comma-separated allowed operations",
+    )
+    sub_secret_rotate.add_argument(
+        "--material-stdin", action="store_true",
+        help="read raw secret material from stdin (1 line) instead of getpass interactive",
+    )
+    sub_secret_rotate.add_argument(
+        "--database-url", type=str, default=None,
+        help="SQLAlchemy URL (None=Settings.database_url)",
+    )
+    sub_secret_rotate.set_defaults(func=_cmd_secret_rotate)
+
+    sub_secret_revoke = subparsers.add_parser(
+        "secret-revoke",
+        help=(
+            "revoke a secret_ref (DESTRUCTIVE, signed approval gate; rule §5 "
+            "active/deprecated/pending→revoked、ADR-00059 SP-PHASE0 S3)"
+        ),
+    )
+    sub_secret_revoke.add_argument(
+        "--tenant-id", type=int, required=True, help="tenant id (tenant scoped)",
+    )
+    sub_secret_revoke.add_argument(
+        "--secret-ref-id", type=str, required=True,
+        help="UUID of the secret_ref to revoke",
+    )
+    sub_secret_revoke.add_argument(
+        "--database-url", type=str, default=None,
+        help="SQLAlchemy URL (None=Settings.database_url)",
+    )
+    sub_secret_revoke.set_defaults(func=_cmd_secret_revoke)
+    _add_signed_approval_args(sub_secret_revoke)
+
     sub_migrate = subparsers.add_parser(
         "migrate",
         help="migrate data to another host (one-shot host migration)",
@@ -1873,6 +2229,20 @@ def _build_parser() -> argparse.ArgumentParser:
             "verify remote host service down (split-brain check) "
             "per ADR-00021 §285"
         ),
+    )
+    sub_status.add_argument(
+        "--local",
+        action="store_true",
+        help=(
+            "minimal-but-real local-host status (exit 0 + real values: env / DB "
+            "reachability / alembic head expected vs in-DB、SP-PHASE0 S3、固定 head 非記載)"
+        ),
+    )
+    sub_status.add_argument(
+        "--database-url",
+        type=str,
+        default=None,
+        help="SQLAlchemy URL override for --local status (None=Settings.database_url)",
     )
     sub_status.set_defaults(func=_cmd_status)
 

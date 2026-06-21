@@ -1,3 +1,24 @@
+# SP-PHASE0 S3 (ADR-00058/00059) — dev credential supply 境界 (local Mac first):
+#
+# 1. DB / Redis credentials: base docker-compose.yml の `env_file: .env.local` から供給。
+#    `.env.local` は **gitignored** で、commit する `.env.example` 等には raw 値ではなく
+#    placeholder / SOPS-ref コメントのみを置く (raw secret 非保存、SecretBroker rules)。
+#    本 dev override は env を追加せず base の供給経路をそのまま使う。
+#
+# 2. broker-managed provider API key (static): raw env では渡さない。`secret_ref`
+#    (`secret://local/...`) を DB metadata で参照し、in-process SecretBroker が capability
+#    token redeem + LocalSecretStore resolve で **broker 内部のみ**消費する (subprocess env/argv/
+#    temp-file に raw を出さない、in-process `provider.call` は ADR-00058 Phase 2 で本格配線)。
+#    LocalSecretStore の base dir は `TASKHUB_SECRETS_HOME` env (未設定なら ~/.taskhub/secrets)。
+#
+# 3. CLI サブスク credential (claude/codex の self-rotating OAuth): **host-ambient** (config/
+#    cli_registry.toml の credential_supply_mode="host_ambient")。OAuth refresh を自然に動かすため
+#    worker は **docker 外・host で起動** するのが Phase 0 既定 (host worker が ~/.claude / ~/.codex を
+#    直読、broker 非経由)。下の docker `worker` service は broker-managed / 非 CLI 経路向け。
+#    raw token を docker worker env に注入しない (cli_registry env_passthrough も secret 名を物理 drop)。
+#
+# loopback bind は不変: base compose の `127.0.0.1:5432/6379/8000/3900` を維持 (0.0.0.0 へ変更しない、
+# ADR-00059、restore preflight verify_target_binding_consistency と整合)。
 services:
   api:
     volumes:

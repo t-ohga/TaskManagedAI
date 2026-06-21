@@ -15,8 +15,20 @@
 # Sprint 6 batch 1 は registry skeleton + 1 agent (codex CLI、read-only sandbox
 # 前提) を入れる。batch 2 以降で agent 数を増やす場合は ADR-00003 §B
 # rollback を見直し、本 file の version を上げる。
+#
+# SP-PHASE0 S3 (ADR-00058、credential supply 境界): CLI サブスク credential の供給経路を
+# additive field `credential_supply_mode` で明示分類する (schema_version 1.0.0 -> 1.1.0)。
+# - `host_ambient`: CLI サブスク credential (claude/codex の self-rotating OAuth)。CLI 本体が
+#   OAuth を所有・refresh し、host worker が `~/.claude` / `~/.codex` を **直読** する (SecretBroker
+#   非経由)。broker-managed store へ登録すると refresh で即 stale になり全 run 失敗するため、
+#   SecretRegistrationService._reject_self_rotating が self_rotating / host_ambient metadata を
+#   broker-managed 登録で reject する (案B 罠の構造防止、ADR-00058)。raw token は本 file に書かない。
+# - `broker_managed` (将来): static API key。in-process `provider.call` (ProviderAdapter HTTP) で
+#   broker 内部消費、subprocess env/argv/temp-file に raw を出さない (Phase 2 実装)。
+# `credential_supply_mode` 未設定 = credential 供給を持たない (read-only artifact 生成のみ、後方互換)。
+# raw secret / token は本 file に **一切書かない** (env_passthrough も loader が secret 名を物理 drop)。
 
-schema_version = "1.0.0"
+schema_version = "1.1.0"
 
 [[agents]]
 name = "codex"
@@ -26,6 +38,9 @@ name = "codex"
 # 実装するまで本 file は **Mac 開発機 (`t-ohga-mac`) 専用** の値を保持する。
 # host-portable 化は ADR-00021 / Sprint 6 batch 2 以降で扱う。
 binary_path = "/opt/homebrew/bin/codex"
+# SP-PHASE0 S3 (ADR-00058): codex CLI サブスク credential は host-ambient (CLI が CODEX_HOME=~/.codex
+# の OAuth を所有・refresh、host worker が直読、broker 非経由)。raw token は本 file に出さない。
+credential_supply_mode = "host_ambient"
 # argv_template は placeholder のみ。launcher が placeholder を resolve する。
 # 許可済 placeholder:
 #   {prompt_file}: CLI 入力 prompt の絶対パス (read-only)
@@ -69,4 +84,37 @@ max_payload_data_class = "internal"
 # 後の prefix match) でなければ deny。同時に prompt_file / output_file / stream_file
 # も本 list 配下に限定 (AC-HARD-05 forbidden path enforcement の launcher 境界実装、
 # server-owned-boundary §1 で path containment を server 側で強制)。
+cwd_allowlist = ["/Users/tohga/repo/TaskManagedAI"]
+
+[[agents]]
+name = "claude"
+# SP-PHASE0 S3 (ADR-00058): claude CLI サブスク credential も host-ambient (CLI が ~/.claude の
+# OAuth を所有・refresh、host worker が直読、broker 非経由)。codex と同じく Mac (homebrew) 絶対 path
+# (host-portable 化は ADR-00021 / 後フェーズ)。実行エンジンは大元計画 Phase 2 (CLIAgentAdapter) で
+# 本格配線、Phase 0 は host-ambient 分類の確定のみ (subprocess launch は既存 codex と同 boundary)。
+binary_path = "/opt/homebrew/bin/claude"
+credential_supply_mode = "host_ambient"
+# argv_template は placeholder のみ。read-only / headless (`-p`) で起動 (大元計画 Phase 2 で確定)。
+argv_template = [
+  "-p",
+  "--output-format",
+  "stream-json",
+  "{prompt_file}",
+]
+stdin_source = ""
+# 許可済 ENV var のみ pass-through。OAuth は CLI が ~/.claude から自前で読むため env に token を
+# 入れない (loader が secret 名を物理 drop、SecretBroker rules)。
+env_passthrough = [
+  "HOME",
+  "PATH",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM",
+]
+timeout_seconds = 1800
+max_stdout_bytes = 1048576
+max_stderr_bytes = 524288
+# CLI agent の最大 payload data class (codex と同 invariant、confidential / pii は deny)。
+max_payload_data_class = "internal"
 cwd_allowlist = ["/Users/tohga/repo/TaskManagedAI"]
