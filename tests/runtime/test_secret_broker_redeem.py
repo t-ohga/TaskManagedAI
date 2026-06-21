@@ -7,7 +7,7 @@ import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -28,7 +28,11 @@ from backend.app.services.secrets.broker import (
     BrokerRedeemResult,
     SecretBroker,
 )
-from backend.app.services.secrets.local_secret_store import LocalSecretStoreError
+from backend.app.services.secrets.local_secret_store import (
+    LocalSecretStore,
+    LocalSecretStoreError,
+)
+from backend.app.services.secrets.resolver_dispatch import CompositeSecretResolver
 
 TENANT_ID = 1
 ACTOR_ID = UUID("00000000-0000-4000-8000-000000004701")
@@ -730,6 +734,62 @@ async def test_redeem_rejects_pending_for_non_verify_op() -> None:
     )
     assert isinstance(result, BrokerRedeemDenied)
     assert result.reason_code == "secret_ref_revoked"
+
+
+@pytest.mark.asyncio
+async def test_redeem_with_composite_resolver_object_custody_failure_denied(
+    tmp_path: Path,
+) -> None:
+    """Codex R22-F1: CompositeSecretResolver **オブジェクト自体**を secret_resolver に配線しても TypeError に
+    ならず、local custody 失敗が BrokerRedeemDenied(material_not_present) + denied audit + token revoke に落ちる。
+
+    broker は resolver を callable として呼ぶ。resolver に __call__ を追加したことで object-level 配線が成立し、
+    custody 失敗 (material 不在) が raw 例外で 500 になるのを防ぐ。
+    """
+    # 実 LocalSecretStore (marker は store で初期化)。redeem 対象 id は未保存 → resolve で NotFound。
+    store = LocalSecretStore(base_dir=tmp_path, use_keyring=False)
+    store.store(1, uuid4(), b"unrelated")  # marker pin
+    composite = CompositeSecretResolver(local_store=store)
+
+    secret_ref = SimpleNamespace(
+        id=SECRET_REF_ID,  # store に未保存 → custody NotFound
+        tenant_id=TENANT_ID,
+        status="active",
+        material_state="present",
+        scope="project",
+        name="provider-openai",
+        version="v1",
+        secret_uri="secret://local/project/provider-openai#v1",
+        allowed_consumers=[str(ACTOR_ID)],
+        allowed_operations=["provider.call"],
+    )
+    session = _FakeSession(token=_token(), secret_ref=secret_ref)
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["provider.call"],
+        scope_constraint=_scope_constraint(),
+    )
+
+    result = await SecretBroker(
+        session=session,  # type: ignore[arg-type]
+        secret_resolver=composite,  # オブジェクト自体を配線 (bound method ではない)
+    ).redeem_capability_token(
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="provider.call",
+        target=_target(),
+        payload={"messages": ["hello"]},
+        policy_version="policy-v1",
+        provider_compliance_matrix_version="pcm-v1",
+    )
+
+    assert isinstance(result, BrokerRedeemDenied)
+    assert result.reason_code == "material_not_present"
+    assert any(e["event_type"] == "secret_capability_denied" for e in _FakeAuditRepo.events)
+    assert all(e["event_type"] != "secret_capability_redeemed" for e in _FakeAuditRepo.events)
 
 
 async def _reset_integration_tables(session: AsyncSession) -> None:

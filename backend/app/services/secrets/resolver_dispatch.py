@@ -38,6 +38,15 @@ class CompositeSecretResolver:
         self._local_store = local_store
         self._sops_resolver = sops_resolver
 
+    async def __call__(
+        self, secret_ref: SecretRef, *, allow_pending_verify: bool = False
+    ) -> bytes:
+        # broker は secret_resolver を callable として呼ぶ (Codex R22-F1)。resolver オブジェクト自体を
+        # 配線しても TypeError にならず resolve_secret_material へ委譲し、custody 例外正規化を通す。
+        return await self.resolve_secret_material(
+            secret_ref, allow_pending_verify=allow_pending_verify
+        )
+
     async def resolve_secret_material(
         self, secret_ref: SecretRef, *, allow_pending_verify: bool = False
     ) -> bytes:
