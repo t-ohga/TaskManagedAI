@@ -63,6 +63,7 @@ IssueDenyReason = Literal[
     "shadow_run_mutation_forbidden",
     "run_required_for_repo_mutation",
     "material_not_present",
+    "secret_target_mismatch",
 ]
 RedeemDenyReason = Literal[
     "not_found",
@@ -80,10 +81,25 @@ RedeemDenyReason = Literal[
     "version_mismatch",
     "consumer_mismatch",
     "material_not_present",
+    "secret_target_mismatch",
 ]
 
 T = TypeVar("T")
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+
+# secret 自己参照 operation (target = {secret_ref_id, version})。target を caller 入力として信用せず、
+# 実 secret_ref と target.secret_ref_id / version の同一性を issue / claim 両方で強制する (Codex R16-F2)。
+# 怠ると secret A の token を発行しつつ target に secret B を入れ、B の approval で通す substitution が可能。
+_SECRET_SELF_TARGET_OPERATIONS: frozenset[str] = frozenset(
+    {"secret.verify", "rotation.read_old", "rotation.read_new"}
+)
+
+
+def _secret_target_matches(target: Mapping[str, Any], secret_ref: SecretRef) -> bool:
+    """secret 自己参照 operation の target が実 secret_ref と一致するか (R16-F2)。"""
+    return str(target.get("secret_ref_id")) == str(secret_ref.id) and target.get(
+        "version"
+    ) == secret_ref.version
 
 # SP-029 (ADR-00055 §設計制約 3、Codex R1 F-2): shadow run は repo mutation の
 # capability token を発行できない (downstream の repo write / PR open / merge を
@@ -236,6 +252,15 @@ class SecretBroker:
             actor_id=actor_id,
             requested_operation=requested_operation,
         )
+        # secret 自己参照 operation は target を caller 入力として信用せず、実 secret_ref と
+        # target.secret_ref_id / version の同一性を強制する (Codex R16-F2)。approval は target から
+        # 導出した resource_ref で照合されるため、approval 照合の前に target↔secret_ref を固定する
+        # (secret A を発行しつつ target/approval を secret B に向ける substitution を封じる)。
+        if (
+            requested_operation in _SECRET_SELF_TARGET_OPERATIONS
+            and not _secret_target_matches(target, secret_ref)
+        ):
+            raise BrokerIssueDenied("secret_target_mismatch")
         await self._validate_approval(
             tenant_id=tenant_id,
             approval_id=approval_id,
@@ -405,6 +430,23 @@ class SecretBroker:
 
         if secret_ref is None:
             raise RuntimeError("SecretBroker invariant violated: secret_ref missing after claim.")
+        # secret 自己参照 operation の target↔secret_ref 同一性を claim 後にも再検証する (Codex R16-F2、
+        # defense-in-depth)。fingerprint 一致は redeem-target == issue-target を保証するが、issue 前の
+        # 旧 token / 将来の経路差に備え、resolve 済 secret_ref と target.secret_ref_id / version を再固定する。
+        if (
+            requested_operation in _SECRET_SELF_TARGET_OPERATIONS
+            and not _secret_target_matches(target, secret_ref)
+        ):
+            denied = BrokerRedeemDenied(
+                reason_code="secret_target_mismatch",
+                requested_operation=requested_operation,
+                computed_fingerprint=computed_fingerprint,
+                capability_id=capability_id,
+                secret_ref_id=secret_ref_id,
+            )
+            await self._mark_claimed_token_revoked(tenant_id, capability_id)
+            await self._audit_redeem_denied(tenant_id, actor_id, denied, run_id)
+            return denied
         # custody/resolver fail-closed (marker 不在 / backend drift / permission / decrypt 失敗 /
         # material gate) は **pre-resolve と operation 内の再 resolve の両方**で起き得る (Codex R14-F2 +
         # R15-F1)。operation path (例: GitHubAppAdapter→HttpxGitHubTransport が installation token を再

@@ -342,6 +342,33 @@ R14-F2 が pre-resolve のみ保護していた穴を operation path へ拡張 (
   - test: operation が `LocalSecretStoreError` を raise → denied + revoke + denied audit + redeemed audit
     なし / 非 custody (`RuntimeError`) は伝播 (no-DB)。
 
+### A-6l. Codex adversarial R16 findings (1 件 HIGH 採用 / 1 件 HIGH defer、ともに pre-existing SecretBroker)
+
+R16 の 2 件は **本 batch (S1+S2 material lifecycle) の regression ではなく pre-existing SecretBroker 経路**
+(R16-F1 = redeem transaction 境界、R16-F2 = rotation.read_* approval target、いずれも broker.py の既存 commit
+由来)。broker.py に触れた diff の深掘り監査で表面化。user 判断 (2026-06-21) で **F2 採用 + F1 defer**:
+
+- **R16-F2 (HIGH、採用)**: `secret.verify` / `rotation.read_old` / `rotation.read_new` の approval/target は
+  caller-supplied `target` を信用し、実 `secret_ref.id` / `version` との同一性を検証していなかった。secret A の
+  token を発行しつつ target に secret B を入れ、B の approval で通すと fingerprint は不整合 target に自己整合し
+  redeem でき、operation には secret A の handle が渡る (approval/audit の対象すり替え)。fix (server-owned-
+  boundary §1 準拠): secret 自己参照 3 operation で `target.secret_ref_id == secret_ref.id AND target.version ==
+  secret_ref.version` を **issue (approval 照合前) と claim (post-claim) の両方で強制** (不一致は
+  `secret_target_mismatch` deny、claim 側は token revoke + denied audit)。現状 production caller は無く
+  (webhook は resolver 直接 resolve、`issue_capability_token` の caller ゼロ) forward-looking hardening。
+  test: issue/redeem の target substitution deny + match pass (no-DB)。
+- **R16-F1 (HIGH、defer → follow-up ADR)**: `redeem_capability_token` の `operation(context)` が **非 custody
+  例外**を投げると `_mark_claimed_token_used()` に到達せず、外部 session が rollback すれば atomic claim ごと
+  巻き戻り token が `issued` に戻って **再 redeem 可能** (外部副作用後でも)、commit すれば `redeeming` のまま
+  非終端 = 状態真実性違反。これは **redeem の transaction 契約 (commit-before-side-effect / at-most-once /
+  exactly-once semantics) の再設計**を要し、ADR Gate (API 契約 + secret access boundary) に該当するため、本
+  batch (material lifecycle) のスコープ外として **専用 ADR + follow-up sprint へ defer** (user 承認 2026-06-21)。
+  - **残リスク (defer 期間中)**: 非 custody operation 失敗時、redeem token の終端状態が caller transaction 境界
+    依存。P0 単一 operator では実害は限定的だが、broker redeem を operation 付きで使う前に follow-up で
+    transaction 境界を確定する。custody/resolver 失敗は R14-F2/R15-F1 で既に denied 化済 (本 defer の対象外)。
+  - **follow-up**: SecretBroker redeem transaction boundary / capability token terminal-state guarantee ADR
+    (新規)。本 batch では着手しない。
+
 ### A-6. 残リスク (Phase 0 accepted)
 
 R2-F2 + R3-F1 で late-writer 永久 orphan + 実行経路欠如は解消。gc 実行間隔の間は再作成 material が一時的に

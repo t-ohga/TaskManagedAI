@@ -22,6 +22,7 @@ from backend.app.db.session import create_engine
 from backend.app.repositories.secret_capability_token import ClaimResult
 from backend.app.services.secrets import broker as broker_module
 from backend.app.services.secrets.broker import (
+    BrokerIssueDenied,
     BrokerRedeemDenied,
     BrokerRedeemResult,
     SecretBroker,
@@ -508,6 +509,91 @@ async def test_non_custody_operation_failure_propagates() -> None:
             provider_compliance_matrix_version="pcm-v1",
             operation=operation,
         )
+
+
+_OTHER_SECRET_REF_ID = UUID("00000000-0000-4000-8000-0000000049ff")
+
+
+def _secret_verify_ref() -> SimpleNamespace:
+    return SimpleNamespace(
+        id=SECRET_REF_ID,
+        status="active",
+        material_state="present",
+        scope="project",
+        name="provider-openai",
+        version="v1",
+        allowed_consumers=[str(ACTOR_ID)],
+        allowed_operations=["secret.verify"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_issue_secret_op_rejects_target_secret_ref_mismatch() -> None:
+    """Codex R16-F2: secret.verify の issue は target.secret_ref_id が実 secret_ref と不一致なら deny。
+
+    secret A を発行しつつ target に secret B を入れ B の approval で通す substitution を、approval 照合の
+    前に target↔secret_ref 同一性で封じる。
+    """
+    session = _FakeSession(token=None, secret_ref=_secret_verify_ref())
+    with pytest.raises(BrokerIssueDenied) as exc_info:
+        await SecretBroker(session=session).issue_capability_token(  # type: ignore[arg-type]
+            tenant_id=TENANT_ID,
+            actor_id=ACTOR_ID,
+            run_id=RUN_ID,
+            secret_ref_id=SECRET_REF_ID,
+            requested_operation="secret.verify",
+            target={"secret_ref_id": str(_OTHER_SECRET_REF_ID), "version": "v1"},
+            policy_version="policy-v1",
+        )
+    assert exc_info.value.reason_code == "secret_target_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_redeem_secret_op_rejects_target_secret_ref_mismatch() -> None:
+    """Codex R16-F2 (claim-side defense-in-depth): redeem も target↔secret_ref 不一致を deny + revoke。"""
+    session = _FakeSession(token=_token(), secret_ref=_secret_verify_ref())
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["secret.verify"],
+        scope_constraint=_scope_constraint(),
+    )
+    result = await SecretBroker(session=session).redeem_capability_token(  # type: ignore[arg-type]
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="secret.verify",
+        target={"secret_ref_id": str(_OTHER_SECRET_REF_ID), "version": "v1"},
+        policy_version="policy-v1",
+    )
+    assert isinstance(result, BrokerRedeemDenied)
+    assert result.reason_code == "secret_target_mismatch"
+    assert any(e["event_type"] == "secret_capability_denied" for e in _FakeAuditRepo.events)
+    assert all(e["event_type"] != "secret_capability_redeemed" for e in _FakeAuditRepo.events)
+
+
+@pytest.mark.asyncio
+async def test_redeem_secret_op_accepts_matching_target() -> None:
+    """Codex R16-F2 の対: target が実 secret_ref と一致すれば redeem は成功する (正常経路不破壊)。"""
+    session = _FakeSession(token=_token(), secret_ref=_secret_verify_ref())
+    _FakeTokenRepo.claim = ClaimResult.success(
+        capability_id=CAPABILITY_ID,
+        secret_ref_id=SECRET_REF_ID,
+        allowed_operations=["secret.verify"],
+        scope_constraint=_scope_constraint(),
+    )
+    result = await SecretBroker(session=session).redeem_capability_token(  # type: ignore[arg-type]
+        tenant_id=TENANT_ID,
+        actor_id=ACTOR_ID,
+        run_id=RUN_ID,
+        raw_token=RAW_TOKEN,
+        requested_operation="secret.verify",
+        target={"secret_ref_id": str(SECRET_REF_ID), "version": "v1"},
+        policy_version="policy-v1",
+    )
+    assert isinstance(result, BrokerRedeemResult)
+    assert _FakeAuditRepo.events[-1]["event_type"] == "secret_capability_redeemed"
 
 
 async def _reset_integration_tables(session: AsyncSession) -> None:
