@@ -1,14 +1,14 @@
 ---
 id: "SP-PHASE1_kill_switch"
 type: "heavy"
-status: "draft"
+status: "in_progress"
 sprint_no: 1
 created_at: "2026-06-21"
-updated_at: "2026-06-21"
+updated_at: "2026-06-22"
 target_days: 8
 max_days: 14
-planned_adr_refs:
-  - "ADR-00048 (Superintendent emergency stop、proposed→accepted、本 Sprint 実装着手直前に昇格)"
+adr_refs:
+  - "[ADR-00048](../adr/00048_superintendent_emergency_stop.md) (Superintendent emergency stop、accepted 2026-06-22、R4 plan-review 20 findings 反映)"
 related_sprints:
   - "SP-PHASE0_local_bootstrap (completed、Phase 0 基盤)"
   - "SP-035_superintendent_agent (partial_skeleton、kill switch acceptance gap の元 Pack)"
@@ -74,8 +74,10 @@ SP-035 受け入れ条件「human がいつでも Superintendent + 全 agent を
 | **B2** DB-backed managed_agents registry | `managed_agents` table + ORM + migration (tenant_id NOT NULL + 複合 FK, host/process_group_id/pid/supervisor_id/state、additive lossless) + registry service。in-process dict→DB-backed 置換、active_registry_gate 共存明記。spawn 時 DB 登録 + supervisor loop skeleton + Redis pub/sub channel skeleton | #2, #9 | ADR-00048 |
 | **B3** emergency-stop latch + service + operator gate + endpoint | `superintendent_emergency_stops` table + ORM + migration。emergency_stop service (engage/clear/is_engaged + advisory lock 直列化 + pre_stop_status capture) + `require_emergency_stop_operator` (authenticated+human+owner) + FastAPI endpoint (engage/clear/status) | #1, #2, #3 | B1, B2 |
 | **B4** cross-process kill wiring (hybrid supervisor) | 各 host process が DB latch poll (権威) + Redis pub/sub wake → 登録 subprocess SIGKILL。**must-ship: MCP process が spawn した agent を FastAPI endpoint から supervisor 経由で kill 実証** | #9 | B2, B3 |
-| **B5** 全 choke point latch gate + provider CAS | run_create/dispatch/agent_start/register/autonomy allow/provider preflight + **worker driver atomic claim point** + **MCP mutating bridge centralize** (deny allowlist) に fail-closed latch check。provider postflight generation CAS。reason_code `emergency_stop_engaged` 5+source | #3, #5 | B3 |
-| **B6** budget API + UI/CLI + exit verification | budget 書込 API + global_kill_switch engage (既存 endpoint 所在確認) + 停止導線 UI (engage/clear/status 可視化) + CLI (tm superintendent engage/clear/status) + Phase 1 full exit verification | #3 | B1-B5 |
+| **B5a** core choke point latch gate | run_create/dispatch/agent_start/register/autonomy allow に fail-closed latch check (新規活動 deny の核) + **worker driver claim point latch-check helper `assert_not_emergency_stopped(tenant_id)` を interface contract として提供 + contract test** (実 driver は Phase 2、A-9)。reason_code `emergency_stop_engaged` 5+source (独立 application reason_code、blocked_reason/Provider 13 に混ぜない、A-6) | #3, #5 | B3 |
+| **B5b** MCP mutating bridge centralize | api_bridge.py の mutating bridge を centralize し deny allowlist (B-2)。engaged 中 deny / cleared 後 allow の網羅 negative test | #5 | B5a |
+| **B5c** provider postflight generation CAS | provider response 後 `record_provider_usage`/artifact/status の前に execute_provider_step transaction で generation CAS + status check、mismatch は discard/quarantine (A-4)。同期 execute の in-flight 1 call honest limit 明記 | #3 | B5a |
+| **B6** budget API + UI/CLI + exit verification | budget 書込 API + global_kill_switch engage (latch と OR 評価、A-8) + 停止導線 UI (engage/clear/status 可視化) + CLI (tm superintendent engage/clear/status) + Phase 1 full exit verification | #3 | B1-B5c |
 
 ## must_ship / defer_if_over_budget
 
@@ -83,7 +85,9 @@ SP-035 受け入れ条件「human がいつでも Superintendent + 全 agent を
 |---|---|---|
 | DB-backed managed_agents registry + cross-process kill 実証 | ✅ | ❌ (Phase 1 の核心) |
 | 永続 emergency-stop latch + 全 mutating choke point fail-closed deny | ✅ | ❌ |
-| worker driver atomic claim point latch 貫通 (claim→provider 窓なし) | ✅ | ❌ (安全弁先行原則) |
+| worker driver claim point latch **interface contract + helper + contract test** (実 driver は Phase 2、ADR A-9) | ✅ | ❌ (安全弁先行原則。SP-004-5 driver 未マージのため Phase 1 は契約予約 + stub/contract test、実駆動 deny は Phase 2 で検証) |
+| spawn↔DB ordering 固定 (pre-register state=spawning→process→running、起動失敗 compensating terminalize、ADR A-1) | ✅ | ❌ (unkillable orphan 防止、R4-CRITICAL-1) |
+| supervisor restart 後 killpg(pgid) で kill 到達 + pid/boot_id 再利用防御 (ADR A-2) | ✅ | ❌ (R4-HIGH-3) |
 | provider postflight generation CAS | ✅ | ❌ |
 | human-only operator gate (authenticated+human+owner) fail-closed | ✅ | ❌ |
 | state machine (H) 改訂 + 5+source 整合 | ✅ | ❌ |
@@ -96,8 +100,9 @@ SP-035 受け入れ条件「human がいつでも Superintendent + 全 agent を
 
 1. **cross-tenant 非干渉**: tenant 1 の emergency-stop で tenant 2 の agent process / run が一切影響を受けない (negative test 全 deny)。
 2. **post-stop 新規 deny**: latch engaged 後、run 作成 / dispatch / agent_start / autonomy allow / provider preflight + **worker driver atomic claim** が全 `emergency_stop_engaged` deny。clear 後は再 allow。
-3. **claim→provider 窓なし**: 既 enqueue 済 driver job が engage 後に claim を取って provider を呼ぶ窓が無い (claim point で latch を必ず見る)。
-4. **cross-process kill 実証**: MCP / worker subprocess を FastAPI endpoint から supervisor 経由で kill できる (in-process dict 跨ぎを克服)。
+3. **claim→provider 窓なし (interface contract、ADR A-9)**: `assert_not_emergency_stopped(tenant_id)` helper を提供し、worker driver の atomic claim point (queued→gathering_context) が claim 確定 transaction 内で本 helper を呼ぶ契約を **contract test / stub driver で latch を見ることを検証**。実 driver 駆動の deny は Phase 2 (SP-004-5/ADR-00057) で確認 (driver 未マージのため Phase 1 は契約予約)。
+4. **cross-process kill 実証**: MCP / worker subprocess を FastAPI endpoint から supervisor 経由で kill できる (in-process dict 跨ぎを克服)。**supervisor restart (in-process handle 喪失) 後も DB の process_group_id から killpg で kill 到達** (ADR A-2)。
+4b. **spawn race 非干渉 (ADR A-1、R4-CRITICAL-1)**: engage が spawn の最中 (DB pre-register 済 / pid 未確定) に割り込んでも当該 process が provider に到達しない (mid-spawn negative race test)。spawn 失敗時 pre-register 行が terminal 化し orphan が残らない。
 5. **operator gate fail-closed**: unauthenticated / 同 tenant 別 human / non-human (agent/service/provider/github_app) は全 403、kill/engage が実行されない。
 6. **concurrent engage vs claim race**: advisory lock で claim が必ず latch を見る (start が latch check 通過→engage 割り込み→spawn 残存 が起きない)。
 7. **provider CAS**: engage 後の stale provider response が usage/artifact/status を進めない (generation mismatch で discard/quarantine)。
@@ -146,6 +151,13 @@ SP-035 受け入れ条件「human がいつでも Superintendent + 全 agent を
 - ADR-00027 (Superintendent Agent / SP-035 正本)。
 - ADR-00036 (DB から actor_type resolve owner/human gate 先例)。
 - master plan 拡張 (managed_agents registry 置換 / worker driver claim latch / budget API) が ADR-00048 scope を超える分は **ADR-00048 update で吸収** (plan-review で判断)。
+
+## R4 plan-review 反映 (2026-06-22)
+
+実装着手前の Workflow plan-review が **20 findings (CRITICAL 2 + HIGH 4 + MEDIUM 11 + LOW 3) を捕捉、全 adopt**。設計確定は **ADR-00048 §Amendment (R4) A-1〜A-10** に集約:
+- A-1 spawn↔DB ordering 固定 (unkillable orphan 防止) / A-2 supervisor restart killpg + pid 再利用防御 / A-3 registry 二重化防止 (active_registry_gate 責務分離 + engage は freeze gate bypass) / A-4 provider CAS 配置 (execute_provider_step) + 同期 execute honest limit / A-5 state machine (H) 具体化 (ALLOWED_TRANSITIONS + EVENT_TYPE_FOR_TRANSITION、pre_stop_status 専用列) / A-6 emergency_stop_engaged は独立 reason_code / A-7 advisory lock key 統一 (hashtextextended) / A-8 budget global_kill_switch と OR 共存 / **A-9 worker driver claim point は interface contract (SP-004-5 未マージのため Phase 1 は契約予約、実駆動は Phase 2)** / A-10 AC-HARD trace + operator role。
+- **AC-HARD trace**: cross-tenant 非干渉 → AC-HARD-03 / latch 迂回 → AC-HARD-07 / `emergency_stop_engaged` を 23 invariant fixture loader に追加。
+- B5 を **B5a (core choke point + worker driver contract) / B5b (MCP bridge centralize) / B5c (provider CAS)** に分割 (R4-LOW-20)。
 
 ## Review
 
