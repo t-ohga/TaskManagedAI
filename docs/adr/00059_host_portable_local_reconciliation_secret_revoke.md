@@ -405,6 +405,23 @@ R17-F1 (broker gate) が resolver gate と未整合だった穴を解消 (HIGH×
     caller ゼロ (`issue_capability_token` 未配線、webhook は resolver 直接) の forward-looking hardening。
     broker issue/claim gate + resolver gate (local/sops) の 4 gate が pending-verify で整合済。
 
+### A-6o. Codex adversarial R19 findings adopt (1 件 HIGH、custody resolve 例外の fail-closed 正規化)
+
+R18-F1 で pending-verify 4 gate 整合確認 (clean) 後に残った custody fail-closed 漏れを封鎖 (HIGH×1):
+
+- **R19-F1 (HIGH)**: broker は atomic claim 後の resolver/custody 失敗を `_RESOLVER_CUSTODY_ERRORS`
+  (`CompositeResolverError` / `LocalSecretStoreError` / `SopsResolverError`) に限り捕捉し token revoke +
+  denied audit へ落とす (R14-F2/R15-F1)。しかし `LocalSecretStore` の resolve 経路は file `read_bytes()` の
+  `PermissionError`、破損 master.key による `Fernet()` 構築 `ValueError`、keyring 値の base64 decode 例外を
+  `LocalSecretStoreError` に正規化しておらず、これらが raw のまま broker へ上がると denied 経路を bypass し
+  claim 済 token が 500/rollback 依存状態に戻る (R16-F1 の非 custody operation 例外とは別の material custody
+  fail-closed 漏れ)。fix: `LocalSecretStore.resolve()` を try で包み **任意の backend/corruption/permission
+  例外を `LocalSecretStoreError` へ正規化** (`LocalSecretMaterialNotFound` は not-found として正しく伝播、
+  raw secret 非露出)。keyring 値は `base64.b64decode(..., validate=True)` で strict 検証。`SopsSubprocessResolver._decrypt`
+  も subprocess `OSError`/`PermissionError` を `SopsResolverError` へ正規化。
+  - test (no-DB): 破損 master.key / chmod 000 ciphertext (root skip) / 破損 keyring 値 → resolve が
+    `LocalSecretStoreError` を上げる (raw exception を漏らさず broker custody-deny へ確実に落ちる)。
+
 ### A-6. 残リスク (Phase 0 accepted)
 
 R2-F2 + R3-F1 で late-writer 永久 orphan + 実行経路欠如は解消。gc 実行間隔の間は再作成 material が一時的に

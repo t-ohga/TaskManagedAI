@@ -181,6 +181,11 @@ class SopsSubprocessResolver:
             raise SopsResolverError(
                 f"sops binary not found at {self._sops_binary}"
             ) from None
+        except OSError as exc:
+            # subprocess spawn の PermissionError (binary 非実行) 等 backend 例外を SopsResolverError へ
+            # 正規化する (Codex R19-F1)。broker custody-error catch が拾えるよう raw OSError を漏らさない。
+            await self._kill_process(proc)
+            raise SopsResolverError(f"sops decrypt subprocess failed (errno={exc.errno})") from exc
 
         if proc.returncode != 0:
             sanitized_stderr = self._sanitize_stderr(

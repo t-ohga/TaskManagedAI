@@ -138,11 +138,26 @@ class LocalSecretStore:
 
         marker 不在 / drift は fail-closed (Codex R11/R12-F1): authoritative backend を確定できない状態で
         現在 backend を読むと、別 backend の material を見落として誤った not-found を返す危険があるため。
+
+        custody 例外正規化 (Codex R19-F1): file read の PermissionError、破損 master.key による
+        ``Fernet()`` 構築 ``ValueError``、keyring 値の base64 decode 失敗など、backend/corruption/permission
+        例外を **すべて ``LocalSecretStoreError`` 系へ正規化**する。これにより broker redeem の custody-error
+        catch (``_RESOLVER_CUSTODY_ERRORS``) が確実に拾い、token revoke + denied audit + material_not_present
+        へ落ちる (raw exception が broker へ漏れて denied 経路を bypass し 500/rollback 依存になるのを防ぐ)。
+        ``LocalSecretMaterialNotFound`` (= not-found) はそのまま伝播 (custody error として正しく扱われる)。
+        raw secret は message に含めない。
         """
         self._assert_backend_consistent(require_marker=True)
-        if self._use_keyring:
-            return self._keyring_get(tenant_id, secret_ref_id)
-        return self._file_resolve(tenant_id, secret_ref_id)
+        try:
+            if self._use_keyring:
+                return self._keyring_get(tenant_id, secret_ref_id)
+            return self._file_resolve(tenant_id, secret_ref_id)
+        except LocalSecretStoreError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 任意 backend/corruption/permission 例外を custody error 化
+            raise LocalSecretStoreError(
+                "local material resolve failed (backend/corruption/permission error)"
+            ) from exc
 
     def delete(self, tenant_id: int, secret_ref_id: UUID) -> None:
         """material を idempotent に削除する (不在でも例外を出さない)。
@@ -196,7 +211,9 @@ class LocalSecretStore:
             raise LocalSecretMaterialNotFound(
                 f"material not found for tenant={tenant_id} secret_ref={secret_ref_id}"
             )
-        return base64.b64decode(encoded)
+        # 破損 keyring 値は base64 strict 検証で検出 (Codex R19-F1)。binascii.Error は resolve() の
+        # custody 正規化 wrap が LocalSecretStoreError へ落とす (raw 値非露出)。
+        return base64.b64decode(encoded, validate=True)
 
     def _keyring_delete(self, tenant_id: int, secret_ref_id: UUID) -> None:
         kr = _require_keyring()

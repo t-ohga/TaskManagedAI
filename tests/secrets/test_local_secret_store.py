@@ -422,6 +422,60 @@ def test_master_key_creation_uses_existing_key_no_overwrite(tmp_path: Path) -> N
     assert store.resolve(tid, sid) == _RAW  # winner key で復号可能 (material loss なし)
 
 
+def test_resolve_corrupt_master_key_normalized_to_store_error(tmp_path: Path) -> None:
+    """Codex R19-F1: 破損 master.key (Fernet 構築 ValueError) は LocalSecretStoreError へ正規化される。
+
+    raw ValueError が broker へ漏れると custody-error catch (token revoke + denied audit) を bypass する。
+    """
+    from backend.app.services.secrets.local_secret_store import LocalSecretStoreError
+
+    store = _store(tmp_path)
+    tid, sid = 1, uuid4()
+    store.store(tid, sid, _RAW)
+    # master.key を Fernet 不正な値で上書き (構築時 ValueError)。
+    master = tmp_path / "keyring.d" / "master.key"
+    fd = os.open(str(master), os.O_TRUNC | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(b"not-a-valid-fernet-key")
+    with pytest.raises(LocalSecretStoreError):
+        _store(tmp_path).resolve(tid, sid)
+
+
+def test_resolve_unreadable_ciphertext_normalized_to_store_error(tmp_path: Path) -> None:
+    """Codex R19-F1: ciphertext の PermissionError (chmod 000) も LocalSecretStoreError へ正規化される。"""
+    from backend.app.services.secrets.local_secret_store import LocalSecretStoreError
+
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root bypasses file permissions; chmod 000 does not raise PermissionError")
+    store = _store(tmp_path)
+    tid, sid = 1, uuid4()
+    store.store(tid, sid, _RAW)
+    enc = tmp_path / "secrets.d" / str(tid) / f"{sid}.enc"
+    os.chmod(enc, 0o000)
+    try:
+        with pytest.raises(LocalSecretStoreError):
+            store.resolve(tid, sid)
+    finally:
+        os.chmod(enc, 0o600)  # cleanup (tmp_path 削除のため)
+
+
+def test_resolve_corrupt_keyring_value_normalized_to_store_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex R19-F1: keyring 値の base64 decode 失敗も LocalSecretStoreError へ正規化される。"""
+    import backend.app.services.secrets.local_secret_store as lss
+
+    class _CorruptKeyring:
+        def get_password(self, service: str, account: str) -> str:
+            return "!!! not base64 !!!"
+
+    monkeypatch.setattr(lss, "_keyring", _CorruptKeyring())
+    _write_keyring_marker(tmp_path)
+    store = lss.LocalSecretStore(base_dir=tmp_path, use_keyring=True)
+    with pytest.raises(lss.LocalSecretStoreError):
+        store.resolve(1, uuid4())
+
+
 def test_symlink_material_file_rejected(tmp_path: Path) -> None:
     store = _store(tmp_path)
     tid, sid = 1, uuid4()
