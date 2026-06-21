@@ -1,10 +1,10 @@
 ---
 id: "SP-PHASE0_local_bootstrap"
 type: "heavy"
-status: "ready"
+status: "in_progress"
 sprint_no: 0
 created_at: "2026-06-20"
-updated_at: "2026-06-20"
+updated_at: "2026-06-21"
 target_days: 4
 max_days: 7
 adr_refs:
@@ -154,3 +154,39 @@ local Mac で TaskManagedAI を起動し使い始められる土台を作る。�
 - adversarial loop の主要 adopt: 設計核 (host-ambient CLI / API key in-process provider.call / URI backend additive / revoke rule §5 / loopback) → cross-source 同期 (canonical DD-00/01/02/05/06 + active harness rules/reference/agents + CLAUDE.md + PLAN-10 + ADR supersede) → 深い correctness (material_state false-present gate / credential-file 読取境界 accepted HIGH risk + Phase2 gate / Fernet key custody / create-rotate 分離 / full rollback skew 防止)。
 - status: draft → **ready** (実装着手可)。
 - **実装は別 gate**: 各 stream 実装後に codex-quality-loop mode=code で R{N} findings_zero (CRITICAL=0/HIGH≤2)。本 Review は plan gate の記録、実装後に各 stream の PR / review round / 採否判定 / exit 達成状況を追記。
+
+### Implementation gate (2026-06-21、batch-1〜3)
+
+実装は 3 batch で完遂。各 batch は **codex adversarial loop または Workflow 並列レビュー + Codex PR auto-review** の二重検証を経て merge。
+
+- **batch-1 = S1 + S2 (PR #352、squash 99113ab)**: secret tooling core + material lifecycle migrations。
+  - 内容: `uri_pattern` 単一定数 / `LocalSecretStore` (keyring + Fernet file fallback) / `CompositeSecretResolver` /
+    `SecretRegistrationService` (register/rotate/promote_rotated/revoke) / `MaterialReconciliationService` (gc-orphans) /
+    migration 0049 (URI backend CHECK) + 0050 (material_state/material_purged_at/purge_attempts + downgrade preflight)。
+  - 検証: **codex adversarial R1-R24 (26 findings adopt、CRITICAL 4=R11-R13 = LocalSecretStore custody race、R13 以降
+    CRITICAL ゼロ)** + Codex PR auto-review (F1-F4)。CI 8 checks green、no-DB 4983 + DB-gated 195 (実 Postgres)。
+  - **defer**: R16-F1 (redeem transaction 境界) → **ADR-00060 (proposed、本 batch-3 で起票)**。
+- **batch-2 = S3 (PR #353、squash 394e364)**: deploy / taskhub CLI。
+  - 内容: `taskhub secret-create/rotate/revoke` (getpass/stdin のみ、`--material` argv 物理排除) + signed approval
+    DESTRUCTIVE gate (default-deny + escape 物理 deny) / `init/status --local` (alembic head runtime、loopback DSN、
+    DB URL redaction) / `cli_registry.toml` host-ambient 分類 (codex) / `host-setup.md` runbook + mac-smoke drift fix。
+  - 検証: **Workflow 並列 adversarial review (5 dimension、confirmed 5 findings)** + Codex PR auto-review (6 findings)。
+    HIGH (secret-revoke が escape flag で approval gate bypass) を封鎖。adopt: HIGH/MEDIUM/LOW + F5 (status loopback DSN) +
+    F2/F3/F4/F6 (claude launchable は Phase 2 へ延期)。CI 8 checks green、no-DB 5009。
+  - **defer**: Codex F1 (secret-revoke approval が tenant/secret_ref 非束縛 = replay 可) → SecretRevokeApprovalClaim
+    (backup/restore と同型の signed-claim) は **S4/Phase 2 hardening へ defer** (Workflow verifier も Phase-0-acceptable
+    判定、core gate (default-deny + escape 物理 deny) は ship 済、P0 実リスク低 = signed approval は user 鍵要・single-host)。
+- **batch-3 = S4 (本 batch、PR #354)**: verification + 正本化。
+  - DB-gated 検証 test **34 件 / 6 file** (`tests/deploy/test_compose_loopback_binding.py` + `tests/secrets/test_{host_ambient_cli_supply,e2e_secret_resolve_db,false_present_negative_db,crash_window_cross_tenant_db,revoke_crash_downgrade_preflight_db}.py` + `_db_harness.py`/`conftest.py`) + docker smoke 補助 script (`scripts/sp_phase0_docker_smoke.sh`、operator-run)。
+  - 検証カバレッジ: loopback binding regression guard (3 compose file の全 published port = 127.0.0.1) / e2e create→issue→redeem→LocalStore resolve (broker 内部のみ、SecretHandle-only、actor/run/fingerprint/operation mismatch deny、assert_no_raw_secret) / false-present negative (material_state 未書込→material_not_present deny) / create-rotate crash-window + cross-tenant material identity / revoke crash-window + migration 0050 downgrade preflight / host-ambient CLI 供給 (worker env 非常駐、self-rotating broker-managed reject)。
+  - R16-F1 follow-up **ADR-00060** (proposed) 起票 + 本 §Review + SP-001-5 §Review note。
+  - 検証: **Workflow 並列 review (3 dimension、confirmed 5 LOW、全 adopt = regression guard / anti-gaming / docs honesty 強化)** + Codex PR auto-review。DB-gated **223 passed** (pg 実走、secret subsystem 全 regression 含む) / no-DB **5025 passed** / mypy / ruff green。**production bug ゼロ** (S1-S3 が end-to-end で正しいことを確認)。
+
+### Implementation exit (2026-06-21)
+
+- **S1-S4 実装 + 自動検証 (CI + ローカル実 Postgres) 完了**。Hard gate (raw secret 非保存 / false-present / atomic claim / cross-tenant material identity / loopback / deny-by-default approval) を DB-gated test で機械検証。
+- **status: ready → in_progress 維持** (実装 deliverable は完遂したが、下記 completion gate 2 件が残るため `completed` にはしない。over-claim 回避、Codex PR #354 F1 adopt)。
+- **completion gate (残、completed 化の条件)**:
+  1. **keyring 依存の framework intake (ADR-00020)**: batch-1 で keyring を `docs/citations/dependency_to_framework_map.json` に登録済だが、**ADR-00020 (Framework Intake Checklist) は現在 `proposed`**。新規依存 (keyring) の supply-chain intake (license=MIT 確認 / attribution / SBOM / security posture) を ADR-00020 で正式 intake し proposed→accepted (sprint-pack-adr-gate §12.4 = codex-plan-review R1 + 採否判定 経由) するまで Phase 0 を completed 扱いにしない (downstream gate が intake skip するのを防ぐ)。**follow-up gate**。
+  2. **host-setup.md clean Mac 実機 runbook walkthrough**: Sprint Pack §119 の通り **user 実施** (CI/ローカルは config/DB レイヤを機械検証するが、実機の docker daemon + OAuth refresh + clean-Mac 再現性は operator 検証)。下記 user handoff 参照。
+- **defer / follow-up (tracked)**: ① R16-F1 redeem transaction 境界 → ADR-00060 (proposed、Phase 2 着手 gate)。② secret-revoke approval target-binding (SecretRevokeApprovalClaim) → S4/Phase 2 hardening。③ claude launchable agent entry → Phase 2 (CLIAgentAdapter)。④ keyring intake → ADR-00020 accept (上記 gate 1)。⑤ SP-001-5 は in_progress 維持 (host-setup 実機検証 + DB/Redis internal-only vs restore 契約 reconciliation が host-phase の user/ADR 決定事項)。

@@ -180,6 +180,8 @@ $ git log --oneline docs/sprints/SP-001_project_foundation.md
 
 → digest pinning (multi-arch 検証付) は満たすが、host-setup.md 雛形 + `taskhub init→up→status` smoke + 実機検証 + committed lock file/CI test + 下記 🔴 reconciliation が残るため **`completed` にはせず `in_progress` 維持**。
 
+(2026-06-21 SP-PHASE0 batch-2/3 連携 note) PLAN-10 Phase 0 で **host-setup.md (Mac runbook、`docs/deploy/host-setup.md`、PR #353)** が着地し、`taskhub init/status --local` (alembic head runtime / loopback DSN) + `taskhub secret-create/rotate/revoke` が実装された。loopback bind 正本化は **SP-PHASE0 S4 の `test_compose_loopback_binding` regression guard test** (本 batch-3) で機械検証する (compose host_ip が全て 127.0.0.1、ports 撤回 = restore 契約破壊の地雷を CI で防止)。**ただし `completed` には依然しない**: ① host-setup.md の **clean Mac 実機検証は user 実施** (別途依頼) ② committed lock file / 上記 🔴 DB/Redis internal-only vs restore 契約 reconciliation は未決 (host-phase の user/ADR 決定事項) のため `in_progress` 維持 (over-claim 警戒、SP-PHASE0 §127)。
+
 ### 🔴 DEFERRED: 未解決の設計 contradiction (host-phase で要 user/ADR 決定)
 
 > ⚠️ **本 Pack の internal-only DB/Redis 系 acceptance は出荷済み restore 契約と矛盾しており DEFERRED。実装者は受け入れ条件の「127.0.0.1 publish 撤回 / `nc` reject / host port で listen しない」を額面通り実装してはならない (ports 削除 = restore/rollback recovery 破壊)。**
