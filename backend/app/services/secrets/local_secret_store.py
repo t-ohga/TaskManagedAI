@@ -109,6 +109,14 @@ class LocalSecretStore:
     def uses_keyring(self) -> bool:
         return self._use_keyring
 
+    def is_initialized(self) -> bool:
+        """backend marker が pin 済か (= 既に first-store 済の deployment か、Codex R23-F1)。
+
+        service が fresh first-init と marker-loss-recovery を区別するために使う。破損 / insecure marker は
+        ``_read_marker_backend`` が fail-closed (LocalSecretStorePermissionError) するため、ここでも伝播する。
+        """
+        return self._read_marker_backend() is not None
+
     def ensure_initialized(self) -> None:
         """material 書込より前に backend marker を durable に pin する (Codex R14-F1)。
 

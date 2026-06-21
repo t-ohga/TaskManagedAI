@@ -96,6 +96,23 @@ class SecretRefRepository(BaseRepository[SecretRef]):
         )
         return list(result.scalars().all())
 
+    async def has_local_secret_refs(self, tenant_id: int) -> bool:
+        """tenant に local backend の secret_ref が 1 件以上存在するか (Codex R23-F1)。
+
+        SecretRegistrationService が backend marker の fresh first-init と marker-loss-recovery を区別する
+        ために使う (local row が既にあるのに marker が無い = recovery、新規 marker 再 pin を refuse する)。
+        """
+        await self._ensure_tenant_context(tenant_id)
+        found = await self.session.scalar(
+            select(SecretRef.id)
+            .where(
+                SecretRef.tenant_id == tenant_id,
+                SecretRef.secret_uri.like("secret://local/%"),
+            )
+            .limit(1)
+        )
+        return found is not None
+
     async def assert_active(
         self,
         tenant_id: int,

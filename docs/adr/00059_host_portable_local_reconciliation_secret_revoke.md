@@ -467,6 +467,24 @@ custody 例外正規化 (R19-R21) 完成後に残った resolver wiring contract
     (material 不在) → `BrokerRedeemDenied(material_not_present)` + denied audit + redeemed audit なし
     (TypeError でなく custody-deny に落ちる)。
 
+### A-6s. Codex adversarial R23 findings adopt (1 件 HIGH、marker-loss-recovery false-purged 封鎖)
+
+R12/R20 の marker 系譜の最後の穴 (marker 喪失後の誤再 pin) を封鎖 (HIGH×1):
+
+- **R23-F1 (HIGH)**: `_ensure_marker_pinned()` は `recorded is None` を fresh first-store とみなし現在 runtime
+  backend で marker を publish する。これは material が未だ無い時のみ安全。marker-loss-recovery (marker 削除済
+  だが keyring に material 実在) では、resolve/delete は marker 不在で fail-closed するが、後続 register/rotate が
+  `ensure_initialized()` を呼ぶと marker を再生成できる。keyring が一時無効/不可な瞬間だと `file` を新 marker と
+  して書き、以後 delete が旧 keyring material を no-op で purged 化する false-purged 経路が残る (fresh-init と
+  marker-loss-recovery を区別する DB row 存在チェックが無かった)。fix: store は DB 非保持のため **service レベル
+  preflight** `SecretRegistrationService._assert_marker_init_safe` を register/rotate の create_metadata 前
+  (新 row flush 前) に追加。`LocalSecretStore.is_initialized()` (marker 有無) が False かつ
+  `SecretRefRepository.has_local_secret_refs(tenant_id)` が True (local row 既存) = marker-loss-recovery として
+  refuse し、operator が元 backend を復元/検証してからの登録を要求する。fresh first-store (marker 無 + local row
+  無) のみ marker 作成を許可。rotate は old local material が前提のため marker 不在は常に recovery → refuse。
+  - test (no-DB): `_assert_marker_init_safe` が fresh-init 通過 / initialized 通過 / marker-loss-recovery refuse。
+  - 残リスク: marker-loss-recovery の operator 復元手順 (元 backend 確認 → marker 再 pin) は runbook (S3/S4)。
+
 ### A-6. 残リスク (Phase 0 accepted)
 
 R2-F2 + R3-F1 で late-writer 永久 orphan + 実行経路欠如は解消。gc 実行間隔の間は再作成 material が一時的に
