@@ -38,6 +38,13 @@ class AgentRun(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             "or (status <> 'blocked' and blocked_reason is null)",
             name="agent_runs_ck_blocked_reason_consistency",
         ),
+        # SP-PHASE1 B2 (ADR-00048 §A-5): emergency-stop block source / resume 復元先 subset
+        # (4-layer 防御の DB/ORM 層、status 全 16 値ではなく block 可能な 4 状態に限定)。
+        sa.CheckConstraint(
+            "pre_stop_status is null or pre_stop_status in "
+            "('running','policy_linted','diff_ready','waiting_approval')",
+            name="agent_runs_ck_pre_stop_status",
+        ),
         sa.CheckConstraint(
             "role_scope is null or role_scope in ('global','project')",
             name="agent_runs_ck_role_scope",
@@ -117,6 +124,10 @@ class AgentRun(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         server_default=sa.text("'queued'"),
     )
     blocked_reason: Mapped[BlockedReason | None] = mapped_column(sa.Text, nullable=True)
+    # SP-PHASE1 B2 (ADR-00048 §Amendment A-5): emergency-stop block 時に block 前の status を
+    # 保存し、clear / resume で復元する (一律 running に戻さず gate skip を防ぐ、B-3)。
+    # nullable additive 列。B3 emergency-stop resume が依存。
+    pre_stop_status: Mapped[AgentRunStatus | None] = mapped_column(sa.Text, nullable=True)
     # SP-029 shadow mode (ADR-00055): production / shadow の直交次元 (additive、16 status 不変)。
     run_mode: Mapped[RunMode] = mapped_column(
         sa.Text,
