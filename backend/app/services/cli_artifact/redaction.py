@@ -101,6 +101,35 @@ class RedactionResult:
     prohibited_key_hits: tuple[str, ...] = field(default_factory=tuple)
 
 
+def normalize_for_scan(text: str) -> str:
+    """De-obfuscate text so credential scan / redaction see the SAME bytes.
+
+    SP-PHASE0 gate C (Codex adversarial HIGH, normalization-mismatch fix):
+    strips ANSI escapes + residual ``\\x1b`` + C0/C1 control chars + Unicode
+    category Cc (Control) / Cf (Format) carpet-bomb (preserving ``\\t`` / ``\\n``
+    / ``\\r``). An attacker can inject a single invisible char (U+200B ZWSP,
+    ANSI ``\\x1b[0m``, C1 ``\\x85``) inside a credential so a raw-text scan
+    misses it while the redactor later strips the char and reassembles the
+    token. By normalizing **before** both the canary scan and the regex
+    redaction, the two layers cannot diverge: whatever the scan sees is exactly
+    what redaction sees, so an obfuscated credential is detected (and withheld)
+    rather than reassembled past a narrower pattern set.
+    """
+
+    text = _ANSI_ESCAPE_RE.sub("", text)
+    # residual bare ESC が regex を抜けた場合の defense-in-depth。
+    text = text.replace("\x1b", "")
+    # C0 / C1 control strip (tab / LF / CR は保持)。
+    text = _CONTROL_CHAR_RE.sub("", text)
+    # Unicode Category Cc (Control) + Cf (Format) を per-char carpet-bomb
+    # (新 Unicode version の format char も自動 strip、tab / LF / CR のみ保持)。
+    return "".join(
+        c
+        for c in text
+        if c in {"\t", "\n", "\r"} or unicodedata.category(c) not in {"Cc", "Cf"}
+    )
+
+
 def redact_stream(
     raw_bytes: bytes,
     *,
@@ -135,31 +164,13 @@ def redact_stream(
     # さない)
     decoded = _NON_UTF8_REGEX.sub(_NON_UTF8_MARKER, decoded)
 
-    # ANSI escape strip (Codex SP6B2 R2-001 / R3-001): `api_key\x1b[0m=value`
-    # や `api_key\x1b]0;=value` のような混入で word boundary が崩れる経路を
-    # 消す。closed / unterminated 両方 line-end まで strip し、secret が
-    # raw のまま残らない fail-closed 化。
-    decoded = _ANSI_ESCAPE_RE.sub("", decoded)
-
-    # Codex SP6B2 R3-001 (CRITICAL) adopt: 残留 `\x1b` (もし regex を抜けた
-    # ものがあれば) を空に置換。defense-in-depth。
-    decoded = decoded.replace("\x1b", "")
-
-    # Codex SP6B2 R4-001 (CRITICAL) adopt: C0 / C1 control strip。
-    # `\x09` (tab) / `\x0a` (LF) / `\x0d` (CR) は保持。`api_key\x80=value`
-    # のような C1 混入で `\b<key>\b` boundary が崩れる経路を消す。
-    decoded = _CONTROL_CHAR_RE.sub("", decoded)
-
-    # Codex SP6B2 R7-001 (HIGH) adopt: Unicode Category Cc (Control) + Cf
-    # (Format) を **per-char** で全 strip (carpet-bomb)。新 Unicode version
-    # で format char が追加されても自動的に strip 対象になる。tab / LF / CR
-    # のみ保持。一覧 patch は range-by-range で塞ぐと無限後手なので、
-    # category-based fallback を defense-in-depth として実行。
-    decoded = "".join(
-        c
-        for c in decoded
-        if c in {"\t", "\n", "\r"} or unicodedata.category(c) not in {"Cc", "Cf"}
-    )
+    # ANSI escape / 残留 \x1b / C0・C1 control / Unicode Cc・Cf を strip
+    # (`api_key\x1b[0m=value` / `api_key\x80=value` / U+200B 混入で word
+    # boundary が崩れる経路を消す、fail-closed)。**canary scan と同一の
+    # ``normalize_for_scan`` を共有**することで、scan が見るテキストと redaction
+    # が見るテキストが構造的に一致し、obfuscated credential が scan を擦り抜けて
+    # redact で再構成される normalization-mismatch bypass を塞ぐ (gate C HIGH)。
+    decoded = normalize_for_scan(decoded)
 
     # Codex SP6B2 R1 F-001 (CRITICAL) adopt: prohibited key の **値** も
     # redact する。free-form text 内の ``key=value`` / ``key: value`` の
@@ -213,6 +224,32 @@ def redact_stream(
             return _REDACTION_MARKER.format(kind=_kind)
 
         redacted = regex.sub(_repl, redacted)
+        if count > 0:
+            hits[kind] = count
+
+    # SP-PHASE0 gate C (credential backstop, defense-in-depth): fold the
+    # launcher-local credential canary patterns (JWT / codex_refresh_token /
+    # anthropic OAuth / credential key-name echo / credential-file path echo)
+    # into the redactor as a true backstop. The shared ``_RAW_SECRET_PATTERNS``
+    # / ``_SECRET_TEXT_PATTERNS`` sets are intentionally NOT modified (their
+    # exact-set drift guards must stay green); these credential patterns live in
+    # ``credential_canary`` and are applied here (post-normalization) so a
+    # reassembled credential is redacted even if some future path reaches
+    # redaction without the canary scan having withheld it. Lazy import breaks
+    # the canary→redaction import cycle.
+    from backend.app.services.cli_artifact.credential_canary import (  # noqa: PLC0415
+        _CREDENTIAL_TOKEN_PATTERNS,
+    )
+
+    for kind, regex in _CREDENTIAL_TOKEN_PATTERNS:
+        count = 0
+
+        def _cred_repl(_match: re.Match[str], _kind: str = kind) -> str:
+            nonlocal count
+            count += 1
+            return _REDACTION_MARKER.format(kind=_kind)
+
+        redacted = regex.sub(_cred_repl, redacted)
         if count > 0:
             hits[kind] = count
 

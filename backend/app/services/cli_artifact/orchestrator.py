@@ -65,6 +65,9 @@ from backend.app.services.cli_artifact.cancel_propagation import (
     CancelKey,
     CancelRegistry,
 )
+from backend.app.services.cli_artifact.credential_canary import (
+    scan_for_credential_exfiltration,
+)
 from backend.app.services.cli_artifact.exit_mapping import (
     CliExitOutcome,
     CliProcessCompletedPayload,
@@ -73,6 +76,7 @@ from backend.app.services.cli_artifact.exit_mapping import (
     map_launcher_result,
 )
 from backend.app.services.cli_artifact.launcher import (
+    LauncherDenyReason,
     LauncherError,
     LauncherResult,
     LauncherRunRequest,
@@ -114,6 +118,10 @@ class CliInvocationOutcome:
     exit_mapping: ExitMappingDecision | None
     completed_event_payload: CliProcessCompletedPayload | None
     cancelled_via_registry: bool
+    # SP-PHASE0 gate C (control 1): credential exfiltration canary hit 種別
+    # (raw 値非含、launcher が ``CREDENTIAL_EXFILTRATION`` を raise した場合のみ
+    # 非空)。caller (AgentRuntime) が audit event に hit 種別だけ記録する。
+    credential_canary_hit_kinds: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -157,8 +165,10 @@ class CliInvocationOrchestrator:
         # caller / GC が cleanup 担当)
         if self.cancel_registry.is_cancelled(cancel_key):
             self.cancel_registry.unregister(cancel_key)
-            stdout_redaction, stderr_redaction = _drain_artifact_streams(
-                workdir, entry
+            # subprocess 未起動で output 空のため canary hit は通常ないが、同 helper
+            # 経由で uniform に scan する (空→hit なし、無害)。
+            stdout_redaction, stderr_redaction, canary_hits = (
+                _drain_artifact_streams(workdir, entry)
             )
             return CliInvocationOutcome(
                 workdir=workdir,
@@ -169,6 +179,7 @@ class CliInvocationOrchestrator:
                 exit_mapping=None,
                 completed_event_payload=None,
                 cancelled_via_registry=True,
+                credential_canary_hit_kinds=canary_hits,
             )
 
         launcher_request = LauncherRunRequest(
@@ -214,8 +225,16 @@ class CliInvocationOrchestrator:
             # stream を read + redaction し、partial CLI output を audit へ
             # 流す。これにより cancel 前の subprocess 出力が観測 (audit)
             # から完全消失する経路を塞ぐ。
-            stdout_redaction, stderr_redaction = _drain_artifact_streams(
-                workdir, entry
+            #
+            # SP-PHASE0 gate C (Codex adversarial HIGH sibling-path fix): cancel
+            # path は launcher の canary scan を通らない (CancelledError が scan
+            # より前に raise される) ため、malicious CLI が cancel race 中に
+            # credential を output_file (--output-last-message) へ echo していると
+            # narrow ``redact_stream`` で raw が survive する経路があった。
+            # ``_drain_artifact_streams`` 自体に canary scan を組み込んだことで、
+            # hit があれば withheld placeholder を返し fail-closed になる。
+            stdout_redaction, stderr_redaction, canary_hits = (
+                _drain_artifact_streams(workdir, entry)
             )
             return CliInvocationOutcome(
                 workdir=workdir,
@@ -226,29 +245,67 @@ class CliInvocationOrchestrator:
                 exit_mapping=None,
                 completed_event_payload=None,
                 cancelled_via_registry=True,
+                credential_canary_hit_kinds=canary_hits,
             )
 
         exc = launch_task.exception()
         if exc is not None:
             if isinstance(exc, LauncherError):
+                hit_kinds = tuple(
+                    sorted({h.pattern_kind for h in exc.canary_hits})
+                )
+                if exc.reason is LauncherDenyReason.CREDENTIAL_EXFILTRATION:
+                    # SP-PHASE0 gate C (Codex adversarial HIGH 2 fix, true
+                    # fail-closed): the captured output contains a credential.
+                    # **Do NOT re-read + re-redact the raw artifact files** — the
+                    # redaction pipeline uses the narrower ``_RAW_SECRET_PATTERNS``
+                    # (no JWT / codex_refresh_token / key-name canary) so the raw
+                    # credential would survive redaction and land in
+                    # ``redacted_text`` + ``content_hash`` → persisted by the
+                    # caller (AC-HARD-02 violation). Instead emit fixed
+                    # ``[withheld: credential_exfiltration]`` placeholders with
+                    # hit-kind metadata only. The raw artifact files on disk are
+                    # the caller's responsibility to quarantine / not persist.
+                    withheld = _withheld_redaction()
+                    return CliInvocationOutcome(
+                        workdir=workdir,
+                        launcher_result=None,
+                        launcher_error_reason=exc.reason.value,
+                        stdout_redaction=withheld,
+                        stderr_redaction=withheld,
+                        exit_mapping=None,
+                        completed_event_payload=None,
+                        cancelled_via_registry=cancelled_via_registry,
+                        credential_canary_hit_kinds=hit_kinds,
+                    )
+                # Other pre/post-launch denies (registry deny, binary not found,
+                # path forbidden, etc.) did not arise from a malicious agent
+                # echoing a credential, so reading + redacting partial output for
+                # the audit trail is safe. ``_drain_artifact_streams`` now also
+                # canary-scans (defense-in-depth) and withholds on any hit.
+                stdout_redaction, stderr_redaction, drain_hits = (
+                    _drain_artifact_streams(workdir, entry)
+                )
+                merged_hits = tuple(sorted(set(hit_kinds) | set(drain_hits)))
                 return CliInvocationOutcome(
                     workdir=workdir,
                     launcher_result=None,
                     launcher_error_reason=exc.reason.value,
-                    stdout_redaction=None,
-                    stderr_redaction=None,
+                    stdout_redaction=stdout_redaction,
+                    stderr_redaction=stderr_redaction,
                     exit_mapping=None,
                     completed_event_payload=None,
                     cancelled_via_registry=cancelled_via_registry,
+                    credential_canary_hit_kinds=merged_hits,
                 )
             raise exc
 
         launcher_result: LauncherResult = launch_task.result()
-        stdout_redaction = _read_and_redact(
+        stdout_redaction, _stdout_hits = _read_and_redact(
             Path(workdir.output_file),
             max_bytes=self.registry.get(request.agent_name).max_stdout_bytes,
         )
-        stderr_redaction = _read_and_redact(
+        stderr_redaction, _stderr_hits = _read_and_redact(
             Path(workdir.stream_file),
             max_bytes=self.registry.get(request.agent_name).max_stderr_bytes,
         )
@@ -270,6 +327,11 @@ class CliInvocationOrchestrator:
             outcome=exit_mapping.outcome,
         )
 
+        # SP-PHASE0 gate C defense-in-depth: success path で launcher の canary
+        # scan は既に先に CREDENTIAL_EXFILTRATION を raise しているため通常
+        # unreachable だが、drain helper の scan が hit したら hit-kind を surface
+        # する (二重防御で漏れを残さない)。
+        success_hits = tuple(sorted(set(_stdout_hits) | set(_stderr_hits)))
         return CliInvocationOutcome(
             workdir=workdir,
             launcher_result=launcher_result,
@@ -279,6 +341,7 @@ class CliInvocationOrchestrator:
             exit_mapping=exit_mapping,
             completed_event_payload=completed_event_payload,
             cancelled_via_registry=cancelled_via_registry,
+            credential_canary_hit_kinds=success_hits,
         )
 
 
@@ -289,6 +352,33 @@ _EMPTY_WORKDIR = PerRunWorkdir(
     stream_file="",
     launch_id="",
 )
+
+
+# SP-PHASE0 gate C (Codex adversarial HIGH 2): credential exfiltration 検出時の
+# fail-closed placeholder。raw artifact を再読込・再 redact せず固定文字列のみ emit
+# する (narrower redactor で raw credential が survive する経路を物理削除)。
+_CREDENTIAL_WITHHELD_TEXT = "[withheld: credential_exfiltration]"
+
+
+def _withheld_redaction() -> RedactionResult:
+    """credential exfiltration 時の固定 placeholder ``RedactionResult``。
+
+    raw artifact 内容を一切含まず、``[withheld: credential_exfiltration]`` の
+    content + その SHA-256 hash のみ。caller (AgentRuntime) が artifact /
+    AgentRunEvent に永続化しても raw credential は出ない (AC-HARD-02)。
+    """
+
+    import hashlib  # noqa: PLC0415
+
+    digest = hashlib.sha256(_CREDENTIAL_WITHHELD_TEXT.encode("utf-8")).hexdigest()
+    return RedactionResult(
+        redacted_text=_CREDENTIAL_WITHHELD_TEXT,
+        redacted_content_hash=digest,
+        raw_bytes_length=0,
+        truncated=False,
+        hits=(),
+        prohibited_key_hits=(),
+    )
 
 
 def _base_dir_inside_allowlist(
@@ -316,32 +406,57 @@ def _base_dir_inside_allowlist(
 def _drain_artifact_streams(
     workdir: PerRunWorkdir,
     entry: object,
-) -> tuple[RedactionResult, RedactionResult]:
-    """workdir の output / stream を read + redaction する."""
+) -> tuple[RedactionResult, RedactionResult, tuple[str, ...]]:
+    """workdir の output / stream を read + redaction する.
+
+    SP-PHASE0 gate C (Codex adversarial HIGH sibling-path fix, uniform
+    defense-in-depth): each drained stream is **first** scanned for credential
+    exfiltration with the full credential canary (JWT / codex_refresh_token /
+    anthropic OAuth / JSON key-name / path-echo + broad scanner). On a hit the
+    stream is returned as a ``[withheld: credential_exfiltration]`` placeholder
+    instead of running ``redact_stream`` — whose narrower ``_RAW_SECRET_PATTERNS``
+    would let the raw credential survive into ``redacted_text`` + ``content_hash``
+    → persisted by the caller (AC-HARD-02). This closes **all** drain paths
+    (cancel-during-launch / cancelled-before-launch / any future caller), not just
+    the launcher's own post-completion scan.
+
+    Returns ``(stdout_redaction, stderr_redaction, credential_canary_hit_kinds)``.
+    """
 
     # entry は AgentRegistryEntry だが循環 import 防止のため object 受け取り
     max_stdout = int(getattr(entry, "max_stdout_bytes", 1024 * 1024))
     max_stderr = int(getattr(entry, "max_stderr_bytes", 512 * 1024))
+    hit_kinds: set[str] = set()
     if workdir.output_file:
-        stdout_redaction = _read_and_redact(
+        stdout_redaction, out_hits = _read_and_redact(
             Path(workdir.output_file), max_bytes=max_stdout
         )
+        hit_kinds.update(out_hits)
     else:
         stdout_redaction = redact_stream(b"", max_bytes=max_stdout)
     if workdir.stream_file:
-        stderr_redaction = _read_and_redact(
+        stderr_redaction, err_hits = _read_and_redact(
             Path(workdir.stream_file), max_bytes=max_stderr
         )
+        hit_kinds.update(err_hits)
     else:
         stderr_redaction = redact_stream(b"", max_bytes=max_stderr)
-    return stdout_redaction, stderr_redaction
+    return stdout_redaction, stderr_redaction, tuple(sorted(hit_kinds))
 
 
-def _read_and_redact(path: Path, *, max_bytes: int) -> RedactionResult:
-    """File から bytes を読み redaction pipeline に通す。
+def _read_and_redact(
+    path: Path, *, max_bytes: int
+) -> tuple[RedactionResult, tuple[str, ...]]:
+    """File から bytes を読み credential canary scan → redaction pipeline に通す。
 
     O_RDONLY|O_NOFOLLOW で open し、parent-swap race を狭める。max_bytes
     超過は redaction pipeline が truncate を記録。
+
+    SP-PHASE0 gate C (uniform fail-closed): raw bytes を decode (errors="replace"
+    で raw 非再放出) して credential canary scan を先に通す。hit があれば narrow
+    ``redact_stream`` を呼ばず ``_withheld_redaction()`` placeholder を返す (raw
+    credential が redacted_text / content_hash に残る経路を物理削除)。戻り値の
+    hit_kinds は raw 値非含 (pattern_kind のみ)。
     """
 
     import os  # noqa: PLC0415
@@ -356,7 +471,14 @@ def _read_and_redact(path: Path, *, max_bytes: int) -> RedactionResult:
             raw = fp.read(max_bytes + 1)  # +1 で truncation を確実に検出
     except OSError:
         raw = b""
-    return redact_stream(raw, max_bytes=max_bytes)
+    # decode は raw bytes を保持しない (errors="replace")。canary scan は redaction
+    # より前に行い、hit があれば narrow redact 結果を返さない。
+    decoded = raw.decode("utf-8", errors="replace")
+    canary = scan_for_credential_exfiltration(decoded)
+    if canary.hit:
+        hit_kinds = tuple(sorted({h.pattern_kind for h in canary.hits}))
+        return _withheld_redaction(), hit_kinds
+    return redact_stream(raw, max_bytes=max_bytes), ()
 
 
 __all__ = [
