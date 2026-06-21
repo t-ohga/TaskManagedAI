@@ -47,7 +47,7 @@ SP-035 受け入れ条件「human がいつでも Superintendent + 全 agent を
 - agent registry は **process-global dict** (`_active_agents`)、cross-process kill 不能。
 - `superintendent_emergency_stops` / `managed_agents` table **未作成**。
 - **Redis pub/sub infra は workers/main.py に存在** (`RedisPubSubConnection`) → hybrid supervisor の wake channel に活用。
-- shadow driver (SP-029) / worker driver (SP-004-5) 存在 → latch を claim point に貫通。
+- shadow driver (SP-029) は merged だが、**worker driver (SP-004-5/ADR-00057) は未マージ** (workers は noop_task のみ、AgentRun claim point は実コードに存在しない)。よって Phase 1 は claim point に latch を「貫通」できず、**latch-check helper + contract/stub test を interface contract として予約** (ADR A-9、実 driver 駆動 deny は Phase 2)。
 
 ## 対象外 (scope_out)
 
@@ -62,16 +62,16 @@ SP-035 受け入れ条件「human がいつでも Superintendent + 全 agent を
 - **cross-process supervisor = hybrid** (user 承認 2026-06-21): **DB latch を source of truth (権威・fail-closed)** とし、**Redis pub/sub を best-effort 低レイテンシ wake signal** とする。supervisor は (1) engage 時 pub/sub で即 wake → SIGKILL、(2) pub/sub 取りこぼし時も DB latch poll (~1-2s) で必ず engage を観測する fallback。**「新規活動 deny」は全 choke point の同期 latch check で即時** (poll 待ちでない)、「in-flight subprocess kill」のみ supervisor 経由。
 - **registry 置換** (ADR Gate #2/#9): `managed_agents` を DB-backed registry の正本とし、in-process `_active_agents` は **process-local cache + supervisor が自 process の subprocess を signal する手段**に降格 (kill の正本ではない)。既存 `active_registry_worker_gate` / `with_active_registry_gate` との関係を ADR-00048 update で明記し**二重化を防ぐ** (managed_agents は agent process supervision、active_registry_gate は DML mutation gate で責務分離)。
 - **latch table**: `superintendent_emergency_stops` (tenant_id, generation bigint, engaged_at/by, cleared_at/by、`(tenant_id) WHERE cleared_at IS NULL` partial unique で active ≤ 1)。
-- **直列化**: `pg_advisory_xact_lock(hashtext('superintendent_emergency_stop'), tenant_id)` を engage/clear/全 side-effecting enforcement point の critical section 入口で取得 (TOCTOU 防止、B-1)。
-- **state machine 改訂 (H)**: enum は不変 (16 status + blocked_reason 3)、`runtime_blocked` の transition source/target を canonical に追記。block source = running/policy_linted/diff_ready/waiting_approval のみ。resume は pre_stop_status 復元表 + generation CAS (一律 running 禁止、B-3)。
-- **provider CAS (G)**: preflight で latch generation 記録 → response 後 同一 tenant lock 下で generation CAS + status check、mismatch は discard/quarantine。
+- **直列化** (ADR A-7): `pg_advisory_xact_lock(hashtextextended('superintendent-emergency-stop:' || tenant_id::text, 0))` の単一 64bit 文字列 key を engage/clear/全 side-effecting enforcement point の critical section 入口で取得 (TOCTOU 防止、B-1。codebase 既存形式統一、int4 切り詰め衝突回避)。**spawn は lock + 同一 transaction を process 起動まで保持** (ADR A-1、commit で lock 解放→lock 外 child 起動の窓を塞ぐ)。
+- **state machine 改訂 (H)**: enum は不変 (16 status + blocked_reason 3)、`runtime_blocked` の transition source/target を canonical に追記。block source = running/policy_linted/diff_ready/waiting_approval のみ。resume は `agent_runs.pre_stop_status` (専用列、B2 で追加) 復元表 + generation CAS (一律 running 禁止、B-3)。
+- **provider CAS (G、ADR A-4)**: preflight (`provider_request_preflight`、tenant/generation を持たない) でなく **`execute_provider_step` の transaction で**、provider response 後 `record_provider_usage`/artifact/status の前に同一 tenant lock 下で generation CAS + status check、mismatch は discard/quarantine。
 
 ## 実装チケット (batch 分解、各 batch = 1 PR + adversarial review)
 
 | batch | 内容 | ADR Gate | depends_on |
 |---|---|---|---|
 | **B1** state machine (H) 改訂 | emergency block source + pre_stop_status resume target + runtime_blocked event を canonical state machine に追記 (5+source: rules/DB CHECK/ORM/Literal/Pydantic/test EXPECTED/frontend)。**単独 PR 隔離**、enum 不変・transition のみ。drift test + resume transition test | #2 (state machine) | ADR-00048 accepted |
-| **B2** DB-backed managed_agents registry | `managed_agents` table + ORM + migration (tenant_id NOT NULL + 複合 FK, host/process_group_id/pid/supervisor_id/state、additive lossless) + registry service。in-process dict→DB-backed 置換、active_registry_gate 共存明記。spawn 時 DB 登録 + supervisor loop skeleton + Redis pub/sub channel skeleton | #2, #9 | ADR-00048 |
+| **B2** DB-backed managed_agents registry + schema | `managed_agents` table + ORM + migration (tenant_id NOT NULL + 複合 FK, host_id/process_group_id/pid/supervisor_id/state/**started_at/boot_id** (pid/pgid 再利用防御 A-2)、additive lossless) + **`agent_runs.pre_stop_status` 専用列 additive** (A-5、B3 resume が依存) + registry service。spawn ordering A-1 (lock 保持 + state=spawning→running)。in-process dict→DB-backed 置換、active_registry_gate 責務分離明記 (A-3)。supervisor loop skeleton + Redis pub/sub channel skeleton | #2, #9 | ADR-00048 |
 | **B3** emergency-stop latch + service + operator gate + endpoint | `superintendent_emergency_stops` table + ORM + migration。emergency_stop service (engage/clear/is_engaged + advisory lock 直列化 + pre_stop_status capture) + `require_emergency_stop_operator` (authenticated+human+owner) + FastAPI endpoint (engage/clear/status) | #1, #2, #3 | B1, B2 |
 | **B4** cross-process kill wiring (hybrid supervisor) | 各 host process が DB latch poll (権威) + Redis pub/sub wake → 登録 subprocess SIGKILL。**must-ship: MCP process が spawn した agent を FastAPI endpoint から supervisor 経由で kill 実証** | #9 | B2, B3 |
 | **B5a** core choke point latch gate | run_create/dispatch/agent_start/register/autonomy allow に fail-closed latch check (新規活動 deny の核) + **worker driver claim point latch-check helper `assert_not_emergency_stopped(tenant_id)` を interface contract として提供 + contract test** (実 driver は Phase 2、A-9)。reason_code `emergency_stop_engaged` 5+source (独立 application reason_code、blocked_reason/Provider 13 に混ぜない、A-6) | #3, #5 | B3 |
@@ -98,7 +98,7 @@ SP-035 受け入れ条件「human がいつでも Superintendent + 全 agent を
 
 ## 受け入れ条件 (exit、観測可能)
 
-1. **cross-tenant 非干渉**: tenant 1 の emergency-stop で tenant 2 の agent process / run が一切影響を受けない (negative test 全 deny)。
+1. **cross-tenant 非干渉**: tenant 1 の emergency-stop で tenant 2 の agent process / run が一切影響を受けない。**tenant 2 の新規活動 (run 作成/spawn/provider) は engage 中も allow され、tenant 2 の既存 subprocess は kill されない** (tenant 1 のみ deny/kill。test は「tenant 1 deny + tenant 2 allow」で isolation regression を捕捉、Codex PR #358 adopt)。
 2. **post-stop 新規 deny**: latch engaged 後、run 作成 / dispatch / agent_start / autonomy allow / provider preflight + **worker driver atomic claim** が全 `emergency_stop_engaged` deny。clear 後は再 allow。
 3. **claim→provider 窓なし (interface contract、ADR A-9)**: `assert_not_emergency_stopped(tenant_id)` helper を提供し、worker driver の atomic claim point (queued→gathering_context) が claim 確定 transaction 内で本 helper を呼ぶ契約を **contract test / stub driver で latch を見ることを検証**。実 driver 駆動の deny は Phase 2 (SP-004-5/ADR-00057) で確認 (driver 未マージのため Phase 1 は契約予約)。
 4. **cross-process kill 実証**: MCP / worker subprocess を FastAPI endpoint から supervisor 経由で kill できる (in-process dict 跨ぎを克服)。**supervisor restart (in-process handle 喪失) 後も DB の process_group_id から killpg で kill 到達** (ADR A-2)。
@@ -109,7 +109,7 @@ SP-035 受け入れ条件「human がいつでも Superintendent + 全 agent を
 8. **state machine**: block は running/policy_linted/diff_ready/waiting_approval のみ、それ以外は latch で新規活動を止める (不正 transition history を作らない)。resume は pre_stop_status 復元 (gate skip しない) + generation CAS (stale clear reject)。
 9. **冪等性**: 二重 engage は no-op + 同一 latch、agent 不在 engage は stopped_agent_count=0。
 10. **audit**: `assert_no_raw_secret` で raw secret / token / pid が audit payload に出ない。
-11. ADR-00048 accepted + UI/CLI から engage/clear/status 操作可。
+11. ADR-00048 accepted + **CLI (tm superintendent engage/clear/status) から engage/clear/status 操作可** (must-ship)。**UI は best-effort/deferable** (CLI で代替可、UI 未完でも Sprint close 可、Codex PR #358 adopt)。
 
 ## 検証手順
 
@@ -158,6 +158,12 @@ SP-035 受け入れ条件「human がいつでも Superintendent + 全 agent を
 - A-1 spawn↔DB ordering 固定 (unkillable orphan 防止) / A-2 supervisor restart killpg + pid 再利用防御 / A-3 registry 二重化防止 (active_registry_gate 責務分離 + engage は freeze gate bypass) / A-4 provider CAS 配置 (execute_provider_step) + 同期 execute honest limit / A-5 state machine (H) 具体化 (ALLOWED_TRANSITIONS + EVENT_TYPE_FOR_TRANSITION、pre_stop_status 専用列) / A-6 emergency_stop_engaged は独立 reason_code / A-7 advisory lock key 統一 (hashtextextended) / A-8 budget global_kill_switch と OR 共存 / **A-9 worker driver claim point は interface contract (SP-004-5 未マージのため Phase 1 は契約予約、実駆動は Phase 2)** / A-10 AC-HARD trace + operator role。
 - **AC-HARD trace**: cross-tenant 非干渉 → AC-HARD-03 / latch 迂回 → AC-HARD-07 / `emergency_stop_engaged` を 23 invariant fixture loader に追加。
 - B5 を **B5a (core choke point + worker driver contract) / B5b (MCP bridge centralize) / B5c (provider CAS)** に分割 (R4-LOW-20)。
+
+### Codex PR #358 auto-review 反映 (二重検証、9 adopt + 1 reject)
+
+Workflow plan-review (20) と独立に Codex auto-review が **R4 amendment と Sprint Pack body の内部不整合 11 件**を捕捉:
+- **adopt (9)**: ① A-1 補強 = **spawn の advisory lock を process 起動まで保持** (commit で lock 解放→lock 外 child 起動の窓、Codex P1) ② 背景の worker driver 記述を「未マージ・契約予約」に修正 ③ A-4 honest limit を「in-flight **全** call」に修正 (1 call でない) ④ 設計判断の advisory lock key を A-7 (hashtextextended) に統一 ⑤ provider CAS を preflight でなく `execute_provider_step` に修正 (A-4 整合) ⑥ B2 schema に `started_at`/`boot_id` 追加 (A-2 pid 再利用防御) ⑦ `agent_runs.pre_stop_status` 専用列を B2 に追加 (B3 resume 依存、A-5) ⑧ exit #11 を CLI-only must-ship + UI best-effort ⑨ exit #1 cross-tenant を「tenant 1 deny + tenant 2 **allow**」に修正 (isolation regression 捕捉)。
+- **reject (1)**: 「accepted_at 2026-06-22 は future-date」→ **本日が 2026-06-22** のため誤検知 (Codex の date context lag)。
 
 ## Review
 
