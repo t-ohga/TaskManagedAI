@@ -437,6 +437,21 @@ R19-F1 の custody 正規化が `resolve()` の marker pre-check を含んでい
   fail-closed になる。
   - test (no-DB): 非ASCII で破損させた backend.marker → resolve が LocalSecretStoreError を上げる。
 
+### A-6q. Codex adversarial R21 findings adopt (1 件 HIGH、SOPS resolve の custody 例外正規化を対称化)
+
+R19/R20 で LocalSecretStore resolve を正規化した後、SOPS 側の対称欠落を封鎖 (HIGH×1):
+
+- **R21-F1 (HIGH)**: `SopsSubprocessResolver.resolve_secret_material()` は `_decrypt()` 内の subprocess
+  `OSError` (R19) のみ正規化し、public resolve 全体は未 wrap だった。`_resolve_file_path()` の
+  `lexical_path.resolve()` (symlink-loop / permission / TOCTOU → `RuntimeError`/`OSError`) や `_decrypt()` 冒頭の
+  `Path.is_file()` 等 path precheck の raw `OSError` が `SopsResolverError` に正規化されず、broker の
+  `_RESOLVER_CUSTODY_ERRORS` を bypass して 500 / transaction 境界依存になる (LocalSecretStore は R19/R20 で
+  source/body 両方正規化済だが SOPS は非対称)。fix: `resolve_secret_material()` 全体を top-level guard で包み
+  `except SopsResolverError: raise` の後に path/custody 系 `OSError`/`RuntimeError`/`ValueError`/`UnicodeError`
+  を `SopsResolverError` へ変換 (raw secret 非露出)。これで local / sops 両 backend の custody read 例外が
+  broker custody-deny (token revoke + denied audit + material_not_present) へ確実に落ちる。
+  - test (no-DB): `_resolve_file_path` が raw OSError を投げる状況を monkeypatch → resolve が SopsResolverError。
+
 ### A-6. 残リスク (Phase 0 accepted)
 
 R2-F2 + R3-F1 で late-writer 永久 orphan + 実行経路欠如は解消。gc 実行間隔の間は再作成 material が一時的に

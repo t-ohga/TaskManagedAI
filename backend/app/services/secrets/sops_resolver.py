@@ -79,12 +79,23 @@ class SopsSubprocessResolver:
     async def resolve_secret_material(
         self, secret_ref: SecretRef, *, allow_pending_verify: bool = False
     ) -> bytes:
-        self._validate_uri_scheme(secret_ref.secret_uri)
-        self._validate_status(secret_ref, allow_pending_verify=allow_pending_verify)
-        file_path = self._resolve_file_path(secret_ref)
-        self._validate_containment(file_path)
-        self._validate_no_symlink_components(file_path)
-        return await self._decrypt(file_path, secret_ref)
+        # custody 例外正規化 (Codex R21-F1、LocalSecretStore R19/R20 の SOPS 対称版): path precheck
+        # (Path.resolve() の symlink-loop/permission/TOCTOU、is_file 等) の raw OSError/RuntimeError/
+        # ValueError/UnicodeError を **SopsResolverError へ正規化**する。broker redeem の custody-error catch
+        # (_RESOLVER_CUSTODY_ERRORS) が確実に拾い token revoke + denied audit + material_not_present へ
+        # 落ちる (raw 例外が漏れて 500/transaction 境界依存になるのを防ぐ)。SopsResolverError 系
+        # (UriScheme/PathTraversal/StatusDenied) はそのまま伝播。raw secret は message に含めない。
+        try:
+            self._validate_uri_scheme(secret_ref.secret_uri)
+            self._validate_status(secret_ref, allow_pending_verify=allow_pending_verify)
+            file_path = self._resolve_file_path(secret_ref)
+            self._validate_containment(file_path)
+            self._validate_no_symlink_components(file_path)
+            return await self._decrypt(file_path, secret_ref)
+        except SopsResolverError:
+            raise
+        except (OSError, RuntimeError, ValueError, UnicodeError) as exc:
+            raise SopsResolverError("sops resolve failed (path/custody error)") from exc
 
     def _validate_uri_scheme(self, uri: str) -> None:
         # canonical grammar (uri_pattern.SECRET_URI_PATTERN) を単一 source として検証する

@@ -89,6 +89,25 @@ class TestUriSchemeReject:
             await resolver.resolve_secret_material(ref)
 
 
+class TestCustodyExceptionNormalization:
+    @pytest.mark.asyncio
+    async def test_path_precheck_oserror_normalized_to_resolver_error(
+        self, resolver: SopsSubprocessResolver, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex R21-F1: path precheck の raw OSError は SopsResolverError へ正規化される。
+
+        raw OSError が broker の custody-error catch を bypass して 500/transaction 依存になるのを防ぐ。
+        """
+
+        def _raise_oserror(secret_ref: object) -> Path:
+            raise OSError("simulated symlink-loop/permission during Path.resolve()")
+
+        monkeypatch.setattr(resolver, "_resolve_file_path", _raise_oserror)
+        ref = _make_secret_ref()
+        with pytest.raises(SopsResolverError):
+            await resolver.resolve_secret_material(ref)
+
+
 class TestPathTraversalDeny:
     @pytest.mark.asyncio
     async def test_path_traversal_via_symlink(
