@@ -422,6 +422,21 @@ R18-F1 で pending-verify 4 gate 整合確認 (clean) 後に残った custody fa
   - test (no-DB): 破損 master.key / chmod 000 ciphertext (root skip) / 破損 keyring 値 → resolve が
     `LocalSecretStoreError` を上げる (raw exception を漏らさず broker custody-deny へ確実に落ちる)。
 
+### A-6p. Codex adversarial R20 findings adopt (1 件 HIGH、marker pre-check の custody 正規化漏れ封鎖)
+
+R19-F1 の custody 正規化が `resolve()` の marker pre-check を含んでいなかった残穴を封鎖 (HIGH×1):
+
+- **R20-F1 (HIGH)**: R19-F1 の正規化 wrap は `resolve()` の `_assert_backend_consistent(require_marker=True)`
+  の **後**に始まる。pre-check が呼ぶ `_read_marker_backend()` の `marker.read_text(encoding="ascii")` で
+  破損/非ASCII marker の `UnicodeDecodeError`、読取不能 marker の `PermissionError`/`OSError` が try 外で raw
+  伝播し、broker redeem (atomic claim 後) で `_RESOLVER_CUSTODY_ERRORS` に拾われず 500 になり token revoke +
+  denied audit + material_not_present を bypass する。fix (R20 推奨 b、source-level): `_read_marker_backend()`
+  自体で stat/read/ascii-decode の `OSError`/`ValueError`/`UnicodeDecodeError` を
+  `LocalSecretStorePermissionError` (= LocalSecretStoreError 系) へ正規化。本 method は resolve/delete の
+  `_assert_backend_consistent` と store の `_ensure_marker_pinned` 両方から呼ばれるため、全 custody 経路が
+  fail-closed になる。
+  - test (no-DB): 非ASCII で破損させた backend.marker → resolve が LocalSecretStoreError を上げる。
+
 ### A-6. 残リスク (Phase 0 accepted)
 
 R2-F2 + R3-F1 で late-writer 永久 orphan + 実行経路欠如は解消。gc 実行間隔の間は再作成 material が一時的に

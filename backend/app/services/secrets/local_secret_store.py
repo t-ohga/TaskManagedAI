@@ -406,26 +406,40 @@ class LocalSecretStore:
         return self._base_dir / _BACKEND_MARKER_NAME
 
     def _read_marker_backend(self) -> str | None:
-        """marker から pin 済 backend を返す (不在は None)。非正規 / insecure marker は fail-closed。
+        """marker から pin 済 backend を返す (不在は None)。非正規 / insecure / 破損 marker は fail-closed。
 
         symlink / 非通常ファイル (dir 等) / group・other writable な marker は改ざん経路のため reject
         (Codex R12-F1 "reject non-regular or insecure marker files")。
+
+        marker の stat / read / ascii decode で生じる ``OSError`` (PermissionError 等) / ``UnicodeDecodeError``
+        / ``ValueError`` (破損・非ASCII・読取不能 marker) を **`LocalSecretStorePermissionError` へ正規化**する
+        (Codex R20-F1)。本 method は `_assert_backend_consistent` (resolve/delete の custody 前段) と
+        `_ensure_marker_pinned` (store) から呼ばれるため、raw 例外が broker の custody-error catch
+        (`_RESOLVER_CUSTODY_ERRORS`、R14-F2/R15-F1) を bypass して 500/rollback 依存になるのを防ぐ。
         """
         marker = self._backend_marker_path()
-        if marker.is_symlink():
-            raise LocalSecretStorePermissionError("backend marker must not be a symlink")
-        if not marker.exists():
-            return None
-        if not marker.is_file():
+        try:
+            if marker.is_symlink():
+                raise LocalSecretStorePermissionError("backend marker must not be a symlink")
+            if not marker.exists():
+                return None
+            if not marker.is_file():
+                raise LocalSecretStorePermissionError(
+                    "backend marker must be a regular file (non-regular marker rejected)"
+                )
+            mode = marker.stat().st_mode & 0o777
+            if mode & 0o022:  # group/other writable = 改ざん可能
+                raise LocalSecretStorePermissionError(
+                    f"insecure backend marker permissions {oct(mode)} (group/other writable)"
+                )
+            return marker.read_text(encoding="ascii").strip()
+        except LocalSecretStorePermissionError:
+            raise
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            # 破損 / 非ASCII / 読取不能 marker を custody error へ正規化 (raw 例外を漏らさない)。
             raise LocalSecretStorePermissionError(
-                "backend marker must be a regular file (non-regular marker rejected)"
-            )
-        mode = marker.stat().st_mode & 0o777
-        if mode & 0o022:  # group/other writable = 改ざん可能
-            raise LocalSecretStorePermissionError(
-                f"insecure backend marker permissions {oct(mode)} (group/other writable)"
-            )
-        return marker.read_text(encoding="ascii").strip()
+                "backend marker unreadable or corrupted"
+            ) from exc
 
     def _assert_backend_consistent(self, *, require_marker: bool) -> None:
         """runtime 検出 backend が pin 済 marker と一致するか確認する (不一致 / 不在は fail-closed)。

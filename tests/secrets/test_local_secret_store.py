@@ -476,6 +476,26 @@ def test_resolve_corrupt_keyring_value_normalized_to_store_error(
         store.resolve(1, uuid4())
 
 
+def test_resolve_corrupt_marker_normalized_to_store_error(tmp_path: Path) -> None:
+    """Codex R20-F1: 破損/非ASCII backend.marker は LocalSecretStoreError 系へ正規化される。
+
+    marker pre-check (_read_marker_backend の ascii decode) の raw UnicodeDecodeError/OSError が broker の
+    custody-error catch (R14-F2/R15-F1) を bypass して 500/rollback 依存になるのを防ぐ。
+    """
+    from backend.app.services.secrets.local_secret_store import LocalSecretStoreError
+
+    store = _store(tmp_path)
+    tid, sid = 1, uuid4()
+    store.store(tid, sid, _RAW)
+    # marker を非 ASCII バイトで破損させる (ascii decode で UnicodeDecodeError)。
+    marker = tmp_path / "backend.marker"
+    fd = os.open(str(marker), os.O_TRUNC | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(b"\xff\xfe\x00corrupt")
+    with pytest.raises(LocalSecretStoreError):
+        _store(tmp_path).resolve(tid, sid)
+
+
 def test_symlink_material_file_rejected(tmp_path: Path) -> None:
     store = _store(tmp_path)
     tid, sid = 1, uuid4()
