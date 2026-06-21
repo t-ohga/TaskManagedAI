@@ -35,6 +35,12 @@ class ManagedAgentRecord(TenantIdMixin, CreatedAtMixin, UpdatedAtMixin, Base):
             "state in ('spawning','running','stopped','failed')",
             name="managed_agents_ck_state",
         ),
+        # B4 adversarial HIGH-2: 0/負 pgid を構造的に排除 (killpg(0) = supervisor self-kill 防止)。
+        # supervisor ``_killpg`` guard + migration 0054 DB CHECK と合わせ 4-layer 防御。
+        sa.CheckConstraint(
+            "process_group_id IS NULL OR process_group_id > 0",
+            name="managed_agents_ck_pgid_positive",
+        ),
         sa.ForeignKeyConstraint(
             ["tenant_id"],
             ["tenants.id"],

@@ -14,7 +14,13 @@ boot_id は OS reboot ごとに変わる安定 id で、死亡 process の pgid 
 from __future__ import annotations
 
 import platform
+import re
 import subprocess  # noqa: S404 — sysctl read-only 呼出のみ (shell=False、固定 argv)
+
+#: macOS ``kern.boottime`` の安定部分 (boot 時刻 sec/usec) のみを抽出する正規表現。
+#: 例: ``{ sec = 1718900000, usec = 123456 } Sat Jun 21 12:00:00 2026``
+#: 末尾の human-readable timestamp は OS / locale 依存で揺れ得るため使わない (M2: kill-miss 防止)。
+_MACOS_BOOTTIME_RE = re.compile(r"sec\s*=\s*(\d+)\D+usec\s*=\s*(\d+)")
 
 
 def _linux_boot_id() -> str | None:
@@ -27,7 +33,13 @@ def _linux_boot_id() -> str | None:
 
 
 def _macos_boot_id() -> str | None:
-    """``kern.boottime`` を安定 id 化する (reboot で変化する boot 時刻 string)。"""
+    """``kern.boottime`` を安定 id 化する (reboot で変化する boot 時刻)。
+
+    **M2 (adversarial review adopt)**: ``sysctl -n kern.boottime`` の出力は末尾に human-readable
+    timestamp を含み OS / locale 依存で揺れ得る。raw string をそのまま boot_id にすると、spawn 時
+    (mark_running) と kill 時で同一 boot でも値が一致せず ``_killable`` が False → **kill-miss
+    (fail-open)** になる。よって安定部分 (boot 時刻の ``sec`` / ``usec``) のみを抽出して boot_id とする。
+    """
     try:
         result = subprocess.run(  # noqa: S603 — 固定 argv, shell=False, no user input
             ["/usr/sbin/sysctl", "-n", "kern.boottime"],
@@ -38,8 +50,15 @@ def _macos_boot_id() -> str | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    value = result.stdout.strip()
-    return value or None
+    raw = result.stdout.strip()
+    if not raw:
+        return None
+    match = _MACOS_BOOTTIME_RE.search(raw)
+    if match is None:
+        # 想定外フォーマット時は boot_id 取得不能扱い (boot 時刻の安定抽出ができないなら照合を無効化、
+        # host scope が主防御。raw string を返すと kill-miss リスクのため返さない)。
+        return None
+    return f"macos-boottime:{match.group(1)}.{match.group(2)}"
 
 
 def get_host_boot_id() -> str | None:

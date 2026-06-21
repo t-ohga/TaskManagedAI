@@ -108,6 +108,12 @@ class SpawnedAgent:
     started_at: datetime | None = None
     stopped_at: datetime | None = None
     exit_code: int | None = None
+    # B4 adversarial P2-1: managed spawn 経由で起動した場合の managed_agents row id。
+    # stop 時に本 id で DB row を mark_terminal(stopped) し、supervisor が死んだ process を
+    # active 扱いし続ける (stale/reused pgid signal) のを防ぐ。legacy spawn / register は None。
+    managed_agent_id: UUID | None = None
+    # P2-1: managed row terminalize に必要な tenant scope (row は tenant-scoped query で更新)。
+    tenant_id: int | None = None
 
 
 _active_agents: dict[UUID, SpawnedAgent] = {}
@@ -256,11 +262,12 @@ async def spawn_agent(
     provider: AgentProvider,
     project_dir: str,
 ) -> SpawnedAgent:
-    """legacy process-only spawn (cross-process registry を持たない、B4 で managed 経路へ移行)。
+    """**DEPRECATED (B4 で MCP caller 移行済)**: legacy process-only spawn (cross-process registry なし)。
 
-    DB-backed registry / latch ordering は ``spawn_agent_managed`` (A-1) を使う。本関数は MCP server
-    の現行 caller (``superintendent_agent_start``) が DB session を持たないため互換用に残す
-    (cross-process kill の正本にはならない)。
+    DB-backed registry / latch ordering は ``spawn_agent_managed`` (A-1) を使う。**B4 で MCP
+    ``superintendent_agent_start`` は ``spawn_agent_managed`` へ移行済 (P1-1 fail-open 解消)**。本関数は
+    cross-process kill の正本にならず、emergency-stop latch を確認しないため **新規 caller は使わない**
+    こと。subprocess plumbing test 互換のため残置 (``_start_subprocess`` を共有)。
 
     **Codex P1-1 fail-open (honest limit、B4/B5 で閉じる)**: 本 legacy path は **session を持たず
     emergency-stop latch を確認できない** ため、engage 後でも本経路 (MCP ``superintendent_agent_start``)
@@ -394,6 +401,9 @@ async def spawn_agent_managed(
         process=proc,
         pid=proc.pid,
         started_at=datetime.now(UTC),
+        # P2-1: stop 時に managed_agents row を terminalize できるよう id / tenant を保持する。
+        managed_agent_id=managed_id,
+        tenant_id=tenant_id,
     )
     # in-process cache = process-local handle (自 process subprocess を signal する手段)。
     # kill の正本は managed_agents (A-3)。
