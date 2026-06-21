@@ -63,9 +63,12 @@ describe("agent run API schemas", () => {
   });
 
   it("preserves the current AgentRunEvent type set", () => {
-    expect(AgentRunEventTypeEnum.options).toHaveLength(37);
+    expect(AgentRunEventTypeEnum.options).toHaveLength(39);
     expect(AgentRunEventTypeEnum.options).toContain("repo_pr_opened");
     expect(AgentRunEventTypeEnum.options).toContain("tool_docs_search_executed");
+    // SP-PHASE1 B1 (ADR-00048 A-5): emergency-stop witnessing events.
+    expect(AgentRunEventTypeEnum.options).toContain("emergency_stop_engaged");
+    expect(AgentRunEventTypeEnum.options).toContain("emergency_stop_resumed");
   });
 
   it("accepts redacted event metadata with payload keys only", () => {

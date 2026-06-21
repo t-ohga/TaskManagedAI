@@ -43,6 +43,9 @@ _EVENT_TYPE_28_MIGRATION = (
 _EVENT_TYPE_37_MIGRATION = (
     _REPO_ROOT / "migrations" / "versions" / "0025_sp014_event_type_37.py"
 )
+_EVENT_TYPE_39_MIGRATION = (
+    _REPO_ROOT / "migrations" / "versions" / "0051_phase1_event_type_39.py"
+)
 
 ACTOR_ID = UUID("00000000-0000-4000-8000-000000005001")
 WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000005002")
@@ -87,6 +90,9 @@ EXPECTED_AGENT_RUN_EVENT_TYPES = (
     "inter_agent_message_consumed_ref",
     "tool_web_fetch_executed",
     "tool_docs_search_executed",
+    # SP-PHASE1 B1 (ADR-00048 A-5): emergency-stop witnessing events (37 -> 39).
+    "emergency_stop_engaged",
+    "emergency_stop_resumed",
 )
 
 
@@ -449,11 +455,13 @@ def test_all_agent_run_event_types_match_literal_and_order() -> None:
 
 
 def test_db_event_type_check_constraint_matches_event_types() -> None:
-    # SP-014 batch 0a (migration 0025) extends the CHECK from 28 -> 37.
+    # SP-PHASE1 B1 (migration 0051) extends the CHECK from 37 -> 39
+    # (emergency_stop_engaged / emergency_stop_resumed). The latest migration's
+    # upgrade CHECK MUST exact-set match the Literal source of truth.
     assert (
         _check_constraint_values_from_migration(
             "agent_run_events_ck_event_type",
-            _EVENT_TYPE_37_MIGRATION,
+            _EVENT_TYPE_39_MIGRATION,
         )
         == set(ALL_AGENT_RUN_EVENT_TYPES)
     )

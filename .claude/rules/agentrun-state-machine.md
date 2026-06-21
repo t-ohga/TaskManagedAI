@@ -98,6 +98,8 @@ queued
 - `waiting_approval -> blocked`
 - `blocked -> waiting_approval`
 - `blocked -> running`
+- `blocked -> policy_linted` (SP-PHASE1 B1: emergency-stop resume の pre_stop_status 復元先)
+- `blocked -> diff_ready` (SP-PHASE1 B1: emergency-stop resume の pre_stop_status 復元先)
 - `blocked -> failed`
 - `provider_incomplete -> running`
 - `provider_incomplete -> failed`
@@ -144,6 +146,10 @@ queued
 | `cli_invocation_started` | Sprint 6 BL-0067: CLI launcher が subprocess spawn 直後 (registry agent_name + redacted argv summary + per-run workdir id) |
 | `cli_process_completed` | Sprint 6 BL-0067: subprocess の exit / timeout / cancelled 後の集約 event (exit_code / signal / duration / timeout_reached / cancelled / stdout_bytes / stderr_bytes / redaction_hit_count) |
 | `cli_decision_recorded` | Sprint 6 BL-0068: cli_result_summary に対する `adopt` / `reject` / `defer` 採否判定 (actor + reason + decided_at + artifact_hash) |
+| `emergency_stop_engaged` | SP-PHASE1 B1 (ADR-00048 §Amendment A-5/A-6): emergency-stop block transition (`running`/`policy_linted`/`diff_ready`/`waiting_approval` -> `blocked`、blocked_reason=`runtime_blocked`) を witness する **P0 event**。汎用 event 再利用は audit semantic を不正確化する (repair_exhausted 前例) ため専用化 (user 承認 2026-06-22) |
+| `emergency_stop_resumed` | SP-PHASE1 B1 (ADR-00048 §Amendment A-5): emergency-stop clear/resume transition (`blocked` -> pre_stop_status: `running`/`policy_linted`/`diff_ready`/`waiting_approval`) を witness する **P0 event** |
+
+> **P0 event_type count (SP-PHASE1 B1)**: 上表の P0 event は 28 → **30** (`emergency_stop_engaged` / `emergency_stop_resumed` 追加)。これらは §6.1 の P0.1 sealed extension (29-37) とは **別位置の P0 event** として追加し、P0 sealed CI guard の `migrations/versions/*event_type_37*` path に抵触しない (migration は `0051_phase1_event_type_39.py`)。frozenset / DB CHECK / ORM / Literal / Pydantic / test EXPECTED / frontend 全体の event_type 総数は 37 → **39**。block transition は status (16) / blocked_reason (3) enum を不変に保ち、`runtime_blocked` を blocked_reason に使う (A-6)。
 
 ### 6.1 P0.1+ 拡張 event_type (28 → 37、ADR-00004 update / Phase H PH-F-006 fix / Sprint 6 batch 2 update)
 

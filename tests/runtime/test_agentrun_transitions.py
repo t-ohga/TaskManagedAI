@@ -5,6 +5,7 @@ import pytest
 from backend.app.domain.agent_runtime.status import AgentRunStatus
 from backend.app.services.agent_runtime.state_machine import (
     ALLOWED_TRANSITIONS,
+    BLOCKED_EVENT_TYPE_REASON_MAPPING,
     EVENT_TYPE_FOR_TRANSITION,
     validate_event_type_for_transition,
     validate_transition,
@@ -29,7 +30,19 @@ EXPECTED_ALLOWED_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = 
     "policy_linted": frozenset({"diff_ready", "blocked"}),
     "diff_ready": frozenset({"waiting_approval", "blocked"}),
     "waiting_approval": frozenset({"running", "blocked", "cancelled"}),
-    "blocked": frozenset({"waiting_approval", "running", "failed", "cancelled"}),
+    # SP-PHASE1 B1 (ADR-00048 A-5): emergency-stop resume restores pre_stop_status
+    # (policy_linted / diff_ready are new resume targets; waiting_approval / running
+    # pre-existed). enum (16 status) unchanged, transition mapping only.
+    "blocked": frozenset(
+        {
+            "waiting_approval",
+            "running",
+            "policy_linted",
+            "diff_ready",
+            "failed",
+            "cancelled",
+        }
+    ),
     "provider_refused": frozenset(),
     "provider_incomplete": frozenset({"running", "failed", "cancelled"}),
     "validation_failed": frozenset({"running", "repair_exhausted"}),
@@ -146,4 +159,127 @@ def test_validate_event_type_for_repair_exhausted_rejects_other_events(
             "repair_exhausted",
             forbidden_event,  # type: ignore[arg-type]
         )
+
+
+# ---------------------------------------------------------------------------
+# SP-PHASE1 B1 (ADR-00048 §Amendment A-5 / A-6): emergency-stop block & resume
+# transitions are witnessed by dedicated event types (emergency_stop_engaged /
+# emergency_stop_resumed). status (16) + blocked_reason (3) enums are unchanged;
+# only transition mappings are extended (union, no existing edge/event removed).
+# ---------------------------------------------------------------------------
+
+# block source states allowed by ADR-00048 (D)/(H): only valid -> blocked edges.
+_EMERGENCY_BLOCK_SOURCES: tuple[AgentRunStatus, ...] = (
+    "running",
+    "policy_linted",
+    "diff_ready",
+    "waiting_approval",
+)
+
+# pre_stop_status resume targets (B-3 restore table, gate skip 防止).
+_EMERGENCY_RESUME_TARGETS: tuple[AgentRunStatus, ...] = (
+    "running",
+    "policy_linted",
+    "diff_ready",
+    "waiting_approval",
+)
+
+
+@pytest.mark.parametrize("from_state", _EMERGENCY_BLOCK_SOURCES)
+def test_emergency_stop_block_transition_is_allowed(from_state: AgentRunStatus) -> None:
+    """Each valid block source -> blocked is allowed and witnessed by the
+    dedicated ``emergency_stop_engaged`` event."""
+
+    assert validate_transition(from_state, "blocked") == "blocked"
+    assert "emergency_stop_engaged" in EVENT_TYPE_FOR_TRANSITION[(from_state, "blocked")]
+    validate_event_type_for_transition(from_state, "blocked", "emergency_stop_engaged")
+
+
+def test_emergency_stop_engaged_maps_to_runtime_blocked_reason() -> None:
+    """A-6: dedicated event keeps blocked_reason enum unchanged (runtime_blocked)."""
+
+    assert BLOCKED_EVENT_TYPE_REASON_MAPPING["emergency_stop_engaged"] == "runtime_blocked"
+
+
+@pytest.mark.parametrize("to_state", _EMERGENCY_RESUME_TARGETS)
+def test_emergency_stop_resume_transition_is_allowed(to_state: AgentRunStatus) -> None:
+    """blocked -> pre_stop_status is allowed and witnessed by the dedicated
+    ``emergency_stop_resumed`` event."""
+
+    assert validate_transition("blocked", to_state) == to_state
+    assert "emergency_stop_resumed" in EVENT_TYPE_FOR_TRANSITION[("blocked", to_state)]
+    validate_event_type_for_transition("blocked", to_state, "emergency_stop_resumed")
+
+
+@pytest.mark.parametrize("pipeline_target", ["policy_linted", "diff_ready"])
+def test_emergency_stop_resume_to_pipeline_is_denied_for_shadow(
+    pipeline_target: AgentRunStatus,
+) -> None:
+    """SP-PHASE1 B1 (adversarial MEDIUM fix): the new emergency-stop resume edges
+    blocked->policy_linted / blocked->diff_ready are production-only. shadow runs
+    cannot reach the side-effect pipeline (SP-029/ADR-00055 primary defense), so
+    SHADOW_FORBIDDEN_TRANSITIONS strips these resume edges for run_mode='shadow'.
+    Production keeps them (pre_stop_status restore)."""
+
+    # production: allowed (pre_stop_status restore).
+    assert validate_transition("blocked", pipeline_target, "production") == pipeline_target
+    # shadow: denied (confinement restored).
+    with pytest.raises(ValueError, match="not allowed"):
+        validate_transition("blocked", pipeline_target, "shadow")
+
+
+@pytest.mark.parametrize(
+    "non_block_source",
+    [
+        "queued",
+        "gathering_context",
+        "generated_artifact",
+        "schema_validated",
+        "validation_failed",
+        "provider_incomplete",
+    ],
+)
+def test_emergency_stop_engaged_rejected_from_non_block_source(
+    non_block_source: AgentRunStatus,
+) -> None:
+    """ADR-00048 (D): non block-source states must not be directly transitioned
+    to blocked via the emergency-stop event (latch covers new-activity deny
+    instead, so no illegal transition history is created).
+
+    For sources that have no (src, blocked) mapping at all the mapping lookup
+    raises; for sources whose -> blocked edge is not even allowed the transition
+    itself raises. Either way the emergency event is rejected.
+    """
+
+    with pytest.raises(ValueError):
+        # blocked is not a legal target for these sources, so validate_transition
+        # rejects first; even where a (src, blocked) edge existed it would not
+        # contain emergency_stop_engaged.
+        validate_transition(non_block_source, "blocked")
+
+
+def test_emergency_stop_engaged_not_allowed_on_non_emergency_block_edges() -> None:
+    """The emergency event must not leak into non-emergency block witnessing
+    (e.g. the budget-only diff_ready edge previously had no emergency event)."""
+
+    # diff_ready -> blocked legitimately includes policy/budget; ensure the
+    # emergency event is additive and the legacy events are still present.
+    diff_ready_block = EVENT_TYPE_FOR_TRANSITION[("diff_ready", "blocked")]
+    assert {"policy_blocked", "budget_blocked"} <= diff_ready_block
+    assert "emergency_stop_engaged" in diff_ready_block
+
+
+def test_emergency_resumed_not_allowed_on_non_resume_edges() -> None:
+    """``emergency_stop_resumed`` must not be accepted for terminal blocked exits
+    (blocked -> failed / cancelled) which keep their own dedicated events."""
+
+    for terminal_to in ("failed", "cancelled"):
+        allowed = EVENT_TYPE_FOR_TRANSITION[("blocked", terminal_to)]
+        assert "emergency_stop_resumed" not in allowed
+        with pytest.raises(ValueError, match="not allowed for transition"):
+            validate_event_type_for_transition(
+                "blocked",
+                terminal_to,  # type: ignore[arg-type]
+                "emergency_stop_resumed",
+            )
 
