@@ -363,6 +363,78 @@ async def test_kill_managed_agents_signal_uses_sigkill(
     assert signals == [signal.SIGKILL]
 
 
+# --- P2-2: latch re-read in kill transaction (clear -> kill TOCTOU) ---
+
+
+class _LatchReadSession:
+    """``kill_managed_agents_on_host`` の latch re-read (``scalar`` の FOR UPDATE select) を模す。
+
+    ``engaged=True`` なら latch id を返し (engaged)、False なら None を返す (cleared)。
+    """
+
+    def __init__(self, *, engaged: bool) -> None:
+        self._engaged = engaged
+        self.scalar_calls = 0
+
+    async def scalar(self, _stmt: Any) -> Any:
+        self.scalar_calls += 1
+        return uuid4() if self._engaged else None
+
+
+@pytest.mark.asyncio
+async def test_kill_skips_when_latch_cleared_in_tx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-2: kill tx 内の latch re-read で cleared 済を観測したら kill を一切しない (clear→kill 遮断)。"""
+    killed_pgids: list[int] = []
+    monkeypatch.setattr(sup.os, "killpg", lambda pgid, _sig: killed_pgids.append(pgid))
+    monkeypatch.setattr(sup, "get_host_boot_id", lambda: BOOT_X)
+
+    registry = _FakeRegistry([_view(pgid=111)])
+    session = _LatchReadSession(engaged=False)  # capture 後・kill 前に clear 済。
+    killed = await sup.kill_managed_agents_on_host(
+        registry=registry, tenant_id=1, host_id=HOST_A, session=session,  # type: ignore[arg-type]
+    )
+    assert killed == []
+    assert killed_pgids == []  # latch cleared → killpg を呼ばない。
+    assert registry.terminalized == []
+    assert session.scalar_calls == 1  # latch re-read は実行された。
+
+
+@pytest.mark.asyncio
+async def test_kill_proceeds_when_latch_still_engaged_in_tx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-2: kill tx 内 latch re-read で engaged 継続を観測したら通常 kill する。"""
+    killed_pgids: list[int] = []
+    monkeypatch.setattr(sup.os, "killpg", lambda pgid, _sig: killed_pgids.append(pgid))
+    monkeypatch.setattr(sup, "get_host_boot_id", lambda: BOOT_X)
+
+    registry = _FakeRegistry([_view(pgid=111)])
+    session = _LatchReadSession(engaged=True)
+    killed = await sup.kill_managed_agents_on_host(
+        registry=registry, tenant_id=1, host_id=HOST_A, session=session,  # type: ignore[arg-type]
+    )
+    assert killed_pgids == [111]
+    assert [v.process_group_id for v in killed] == [111]
+
+
+@pytest.mark.asyncio
+async def test_kill_without_session_skips_latch_reread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """session 未渡し (後方互換) は latch re-read せず従来通り kill する (既存呼出を壊さない)。"""
+    killed_pgids: list[int] = []
+    monkeypatch.setattr(sup.os, "killpg", lambda pgid, _sig: killed_pgids.append(pgid))
+    monkeypatch.setattr(sup, "get_host_boot_id", lambda: BOOT_X)
+    registry = _FakeRegistry([_view(pgid=111)])
+    killed = await sup.kill_managed_agents_on_host(
+        registry=registry, tenant_id=1, host_id=HOST_A  # type: ignore[arg-type]
+    )
+    assert killed_pgids == [111]
+    assert [v.id for v in killed] == [registry._rows[0].id]
+
+
 # --- supervisor_poll_once (tenant scope) ---
 
 
@@ -385,8 +457,12 @@ def _patch_bypass(monkeypatch: pytest.MonkeyPatch) -> list[object]:
 
 
 class _FakeSession:
-    def __init__(self, engaged_tenants: list[int]) -> None:
+    def __init__(
+        self, engaged_tenants: list[int], *, latch_engaged_on_reread: bool = True
+    ) -> None:
         self._engaged = engaged_tenants
+        # P2-2: kill tx 内 latch re-read (scalar FOR UPDATE) の戻り。default は engaged 継続。
+        self._latch_engaged_on_reread = latch_engaged_on_reread
         self.committed = False
 
     async def __aenter__(self) -> _FakeSession:
@@ -404,6 +480,10 @@ class _FakeSession:
                 return engaged
 
         return _Result()
+
+    async def scalar(self, _stmt: Any) -> Any:
+        # P2-2: latch re-read (cleared_at IS NULL FOR UPDATE)。engaged 継続なら id、cleared なら None。
+        return uuid4() if self._latch_engaged_on_reread else None
 
     async def commit(self) -> None:
         self.committed = True
@@ -478,6 +558,30 @@ async def test_poll_once_marks_freeze_gate_bypass_for_kill_session(
     )
     # engaged tenant 1 の kill session で bypass が 1 回 mark された。
     assert len(_patch_bypass) == 1
+
+
+@pytest.mark.asyncio
+async def test_poll_once_skips_kill_when_latch_cleared_between_capture_and_kill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-2: engaged capture 後、kill tx の latch re-read で cleared を観測したら kill しない。"""
+    killed_pgids: list[int] = []
+    monkeypatch.setattr(sup.os, "killpg", lambda pgid, _sig: killed_pgids.append(pgid))
+    monkeypatch.setattr(sup, "get_host_boot_id", lambda: BOOT_X)
+    monkeypatch.setattr(
+        sup, "ManagedAgentRegistry", lambda _session: _FakeRegistry([_view(pgid=111)])
+    )
+
+    def _factory() -> _FakeSession:
+        # _engaged_tenant_ids では tenant 1 を engaged として capture するが、
+        # kill tx の latch re-read (scalar) では cleared (None) を返す → kill skip。
+        return _FakeSession(engaged_tenants=[1], latch_engaged_on_reread=False)
+
+    killed = await sup.supervisor_poll_once(
+        session_factory=_factory, host_id=HOST_A  # type: ignore[arg-type]
+    )
+    assert killed == []
+    assert killed_pgids == []  # latch cleared → kill しない。
 
 
 # --- EmergencyStopSupervisor hybrid loop ---
@@ -600,6 +704,64 @@ async def test_supervisor_loop_redis_subscribe_failure_degrades_to_poll(
     supervisor.stop()
     await asyncio.wait_for(task, timeout=2.0)
     assert len(poll_calls) >= 2
+
+
+class _FailingGetMessagePubSub:
+    """subscribe は成功するが get_message が毎回 raise する pubsub (Redis 断後の P2-4 シナリオ)。"""
+
+    def __init__(self) -> None:
+        self.subscribed: list[str] = []
+        self.get_message_calls = 0
+        self.closed = False
+
+    async def subscribe(self, *channels: str) -> None:
+        self.subscribed.extend(channels)
+
+    async def get_message(
+        self, ignore_subscribe_messages: bool = True, **_: object
+    ) -> object | None:
+        self.get_message_calls += 1
+        raise RuntimeError("redis connection dropped")
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_supervisor_loop_redis_get_message_failure_degrades_no_spin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-4: subscribe 後の get_message 例外で pubsub を破棄し poll-only に degrade (busy-loop しない)。
+
+    Redis 断で get_message が即 raise → pubsub を close + None 化 + poll_interval sleep で pace する。
+    get_message は **1 回だけ** 呼ばれ (degrade 後は呼ばれない)、poll は poll_interval ごとに行われる
+    (spin して DB を hammer しない)。
+    """
+    poll_calls: list[float] = []
+
+    async def _fake_poll_once(*, session_factory: Any, host_id: str) -> list[Any]:
+        poll_calls.append(asyncio.get_event_loop().time())
+        return []
+
+    monkeypatch.setattr(sup, "supervisor_poll_once", _fake_poll_once)
+
+    pubsub = _FailingGetMessagePubSub()
+    supervisor = sup.EmergencyStopSupervisor(
+        session_factory=lambda: None,  # type: ignore[arg-type,return-value]
+        host_id=HOST_A,
+        redis_factory=lambda: _FakeRedis(pubsub),  # type: ignore[arg-type]
+        poll_interval=0.05,
+    )
+    task = asyncio.create_task(supervisor.run())
+    await asyncio.sleep(0.3)
+    supervisor.stop()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    # get_message は degrade 前の 1 回のみ (以降は poll-only に degrade して呼ばれない = spin しない)。
+    assert pubsub.get_message_calls == 1
+    assert pubsub.closed is True
+    # poll は poll_interval (0.05s) で pace される: 0.3s で多くても ~7 回程度 (spin なら数百〜数千回)。
+    assert 2 <= len(poll_calls) <= 15
 
 
 @pytest.mark.asyncio

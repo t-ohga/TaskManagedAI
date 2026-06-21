@@ -353,3 +353,54 @@ async def test_pgid_check_allows_null_and_positive(
     async with session_factory() as session:
         assert await _state_of(session, spawning) == "spawning"
         assert await _state_of(session, running) == "running"
+
+
+@pytest.mark.asyncio
+async def test_kill_skips_when_latch_cleared_real_db(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-2: engage→clear 後の kill tx は latch re-read (FOR UPDATE) で cleared を観測し kill しない。
+
+    engage で latch 作成 → managed row 作成 → clear (latch cleared) → kill_managed_agents_on_host を
+    engaged 当時の前提で呼ぶと、kill tx 内 latch re-read が cleared を観測して **kill skip** する
+    (clear→kill TOCTOU の実 DB serialization)。
+    """
+    killed_pgids: list[int] = []
+    monkeypatch.setattr(sup.os, "killpg", lambda pgid, _sig: killed_pgids.append(pgid))
+    monkeypatch.setattr(sup, "get_host_boot_id", lambda: BOOT_X)
+
+    async with session_factory() as session:
+        await _reset(session)
+        await _seed(session)
+    async with session_factory() as session:
+        mid = await _make_managed(
+            session, tenant_id=1, project_id=PROJECT_1, host_id=HOST_A, pgid=111
+        )
+
+    # engage → generation 取得 → clear (latch cleared_at set)。
+    async with session_factory() as session:
+        result = await EmergencyStopService(session).engage(
+            tenant_id=1, operator_actor_id=ACTOR_OWNER_1
+        )
+        await session.commit()
+    async with session_factory() as session:
+        await EmergencyStopService(session).clear(
+            tenant_id=1,
+            operator_actor_id=ACTOR_OWNER_1,
+            expected_generation=result.generation,
+        )
+        await session.commit()
+
+    # cleared 後に「engaged 当時」の kill を試みる: latch re-read で cleared を観測 → skip。
+    async with session_factory() as session:
+        registry = ManagedAgentRegistry(session)
+        killed = await sup.kill_managed_agents_on_host(
+            registry=registry, tenant_id=1, host_id=HOST_A, session=session
+        )
+        await session.commit()
+
+    assert killed == []
+    assert killed_pgids == []
+    async with session_factory() as session:
+        assert await _state_of(session, mid) == "running"  # cleared → kill されず running 維持。

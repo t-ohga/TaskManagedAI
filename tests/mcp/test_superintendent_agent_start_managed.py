@@ -28,14 +28,19 @@ PROJECT_ID = "00000000-0000-4000-8000-000000000004"
 
 
 class _FakeSession:
-    def __init__(self, *, project_found: bool = True) -> None:
+    def __init__(
+        self, *, project_found: bool = True, project_status: str = "active"
+    ) -> None:
+        # P2-3: agent_start は Project.status を query する。found=False は不存在 (None)、
+        # project_status は active-scope 判定用 (archived なら deny)。
         self._project_found = project_found
+        self._project_status = project_status
         self.committed = False
         self.rolled_back = False
 
     async def scalar(self, _stmt: Any) -> Any:
-        # project existence query。found なら project_id を返す、不存在は None。
-        return uuid4() if self._project_found else None
+        # project status query (P2-3)。found なら status を返す、不存在は None。
+        return self._project_status if self._project_found else None
 
     async def commit(self) -> None:
         self.committed = True
@@ -167,6 +172,40 @@ async def test_agent_start_unknown_project_denied(
 
 
 @pytest.mark.asyncio
+async def test_agent_start_archived_project_denied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-3: archived (非 active) project は active-scope で deny (spawn しない)。"""
+    session = _FakeSession(project_found=True, project_status="archived")
+    _patch_get_db_session(monkeypatch, session)
+
+    spawned: list[Any] = []
+
+    async def _fake_managed(**kwargs: Any) -> SpawnedAgent:
+        spawned.append(kwargs)
+        return SpawnedAgent(agent_id=kwargs["agent_id"], provider="claude", pid=1)
+
+    monkeypatch.setattr(agent_spawner, "spawn_agent_managed", _fake_managed)
+
+    result = await mcp_server.superintendent_agent_start(
+        agent_id=str(uuid4()), provider="claude", project_id=PROJECT_ID
+    )
+    assert result["state"] == "denied"
+    assert result["error"] == "project_not_active"
+    assert spawned == []
+
+
+def test_agent_start_requires_explicit_project_id() -> None:
+    """P2-5: project_id は必須 param (default fallback なし) — 暗黙の default project spawn を防ぐ。"""
+    import inspect
+
+    sig = inspect.signature(mcp_server.superintendent_agent_start)
+    project_param = sig.parameters["project_id"]
+    # default が無い (= required)。以前の hard-coded default project への暗黙 fallback を排除。
+    assert project_param.default is inspect.Parameter.empty
+
+
+@pytest.mark.asyncio
 async def test_agent_start_invalid_provider_rejected_before_db() -> None:
     result = await mcp_server.superintendent_agent_start(
         agent_id=str(uuid4()), provider="evil", project_id=PROJECT_ID
@@ -181,6 +220,81 @@ async def test_agent_start_invalid_uuid_rejected_before_db() -> None:
     )
     assert result["state"] == "failed"
     assert result["error"] == "invalid_uuid"
+
+
+# --- P2-1: superintendent_agent_stop terminalizes managed_agents row ---
+
+
+class _TerminalizeRecordingRegistry:
+    def __init__(self) -> None:
+        self.terminalized: list[tuple[int, Any, str]] = []
+
+    async def mark_terminal(
+        self, *, tenant_id: int, managed_agent_id: Any, state: str
+    ) -> bool:
+        self.terminalized.append((tenant_id, managed_agent_id, state))
+        return True
+
+
+@pytest.mark.asyncio
+async def test_agent_stop_terminalizes_managed_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-1: managed spawn 由来 agent の stop は managed_agents row を mark_terminal(stopped) する。"""
+    managed_id = uuid4()
+    stopped_agent = SpawnedAgent(
+        agent_id=uuid4(),
+        provider="claude",
+        pid=4242,
+        exit_code=0,
+        managed_agent_id=managed_id,
+        tenant_id=1,
+    )
+
+    async def _fake_stop(_aid: Any) -> SpawnedAgent:
+        return stopped_agent
+
+    monkeypatch.setattr(agent_spawner, "stop_agent", _fake_stop)
+
+    fake_session = _FakeSession(project_found=True)
+    _patch_get_db_session(monkeypatch, fake_session)
+    reg = _TerminalizeRecordingRegistry()
+    from backend.app.services.superintendent import managed_agent_registry as reg_mod
+
+    monkeypatch.setattr(reg_mod, "ManagedAgentRegistry", lambda _s: reg)
+
+    result = await mcp_server.superintendent_agent_stop(str(stopped_agent.agent_id))
+    assert result["state"] == "stopped"
+    # P2-1: managed row が stopped へ terminalize された (supervisor が死んだ process を active 扱いしない)。
+    assert reg.terminalized == [(1, managed_id, "stopped")]
+    assert fake_session.committed is True
+
+
+@pytest.mark.asyncio
+async def test_agent_stop_legacy_agent_no_terminalize(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """legacy / register 由来 (managed_agent_id None) は terminalize を試みない (DB に触れない)。"""
+    legacy_agent = SpawnedAgent(agent_id=uuid4(), provider="claude", pid=1, exit_code=0)
+
+    async def _fake_stop(_aid: Any) -> SpawnedAgent:
+        return legacy_agent
+
+    monkeypatch.setattr(agent_spawner, "stop_agent", _fake_stop)
+
+    db_opened: list[int] = []
+    from backend.app.mcp import context as mcp_context
+
+    @asynccontextmanager
+    async def _tracking_ctx() -> AsyncIterator[Any]:
+        db_opened.append(1)
+        yield _FakeSession()
+
+    monkeypatch.setattr(mcp_context, "get_db_session", _tracking_ctx)
+
+    result = await mcp_server.superintendent_agent_stop(str(legacy_agent.agent_id))
+    assert result["state"] == "stopped"
+    assert db_opened == []  # managed_agent_id None → DB session を開かない。
 
 
 class _CommitFailSession(_FakeSession):

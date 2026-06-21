@@ -154,6 +154,14 @@ class _KillOutcome(Enum):
     STILL_ALIVE = "still_alive"  #: EPERM 等 = process は **生存** だが signal 不能 (terminalize 不可、retry)。
 
 
+class _WakeResult(Enum):
+    """``_wait_for_wake_or_timeout`` の結果分類 (P2-4: Redis 断を区別して poll-only degrade させる)。"""
+
+    WOKE = "woke"  #: wake message 受信 → 即 poll。
+    TIMEOUT = "timeout"  #: poll_interval 経過 (通常 pacing) → poll。
+    REDIS_FAILED = "redis_failed"  #: get_message が例外 → pubsub 破棄 + poll-only degrade + sleep。
+
+
 def _killpg(view: ManagedAgentView) -> _KillOutcome:
     """managed_agent row の pgid を SIGKILL する (in-process handle 不要、A-2)。
 
@@ -197,15 +205,38 @@ def _killpg(view: ManagedAgentView) -> _KillOutcome:
         return _KillOutcome.STILL_ALIVE
 
 
+async def _latch_still_engaged_for_update(session: AsyncSession, tenant_id: int) -> bool:
+    """kill transaction 内で latch が **まだ engaged か** を ``FOR UPDATE`` で再読する (P2-2 TOCTOU)。
+
+    engaged tenant を別 session で capture した後・kill 前に ``clear`` が commit すると、その tenant が
+    まだ kill されてしまう (clear 後に spawn された agent も巻き込む)。kill の同一 transaction で latch row
+    を ``FOR UPDATE`` lock しつつ ``cleared_at IS NULL`` を再読すると、clear (= advisory lock + cleared_at
+    書込 + commit) と直列化される: clear が先に commit 済なら cleared_at IS NOT NULL を観測 → kill skip。
+    clear が in-flight なら FOR UPDATE が commit を待ち、その後 cleared を観測 → skip。
+    """
+    row = await session.scalar(
+        sa.select(SuperintendentEmergencyStop.id)
+        .where(
+            SuperintendentEmergencyStop.tenant_id == tenant_id,
+            SuperintendentEmergencyStop.cleared_at.is_(None),
+        )
+        .with_for_update()
+    )
+    return row is not None
+
+
 async def kill_managed_agents_on_host(
     *,
     registry: ManagedAgentRegistry,
     tenant_id: int,
     host_id: str,
+    session: AsyncSession | None = None,
 ) -> list[ManagedAgentView]:
     """当該 host × tenant の active row (state∈{spawning,running}) を列挙し killpg + terminalize する。
 
     手順 (A-2):
+      0. **P2-2: latch re-read** — ``session`` 渡し時は kill transaction 内で ``cleared_at IS NULL`` を
+         ``FOR UPDATE`` 再読し、既に clear 済なら **kill を一切しない** (clear→kill TOCTOU を直列化)。
       1. host × tenant に絞って active 行を列挙 (別 host / 別 tenant は絶対列挙しない)。
       2. 各行に ``_killable`` (host_id scope + boot_id 照合) + ``_started_at_consistent`` (pid 再利用
          防御) を適用。
@@ -227,6 +258,14 @@ async def kill_managed_agents_on_host(
 
     raw pid / pgid は本関数の戻り値や log に raw で出さない (view の id / host のみ)。
     """
+    # P2-2: kill transaction 内で latch を再読し、既に clear 済なら kill しない (clear→kill 窓の遮断)。
+    if session is not None and not await _latch_still_engaged_for_update(session, tenant_id):
+        logger.info(
+            "supervisor_skip_kill_latch_cleared (latch cleared before kill; no kill)",
+            extra={"host_id": host_id, "tenant_id": tenant_id},
+        )
+        return []
+
     boot_id = get_host_boot_id()
     targets = await registry.list_active_on_host(
         host_id=host_id, tenant_id=tenant_id, for_update_skip_locked=True
@@ -325,8 +364,9 @@ async def supervisor_poll_once(
             # MEDIUM-3: supervision write (mark_terminal) を freeze gate から exempt。
             mark_emergency_stop_bypass(session)
             registry = ManagedAgentRegistry(session)
+            # P2-2: 同一 session を渡し、kill tx 内で latch を FOR UPDATE 再読 (clear→kill TOCTOU 遮断)。
             tenant_killed = await kill_managed_agents_on_host(
-                registry=registry, tenant_id=tenant_id, host_id=host_id
+                registry=registry, tenant_id=tenant_id, host_id=host_id, session=session
             )
             await session.commit()
             killed.extend(tenant_killed)
@@ -385,6 +425,12 @@ class EmergencyStopSupervisor:
         """hybrid loop。Redis wake が来れば即 poll、来なくても poll_interval 毎に poll。
 
         Redis pubsub 取得 / subscribe に失敗しても DB poll 専用 loop に degrade する (fail-closed)。
+
+        **P2-4 (adversarial review adopt)**: subscribe 成功後に Redis が断たれ ``get_message`` が即 raise
+        する状況で、handler が即 return すると ``run()`` が即 poll → 即 Redis error を繰り返し **spin して
+        DB を hammer** する (poll_interval を守らない)。よって Redis error 時は **pubsub を破棄して
+        poll-only path に degrade** し、以後は ``poll_interval`` sleep で pace する (DB latch が権威なので
+        poll-only で安全継続)。
         """
         logger.info(
             "supervisor_loop_started",
@@ -395,10 +441,22 @@ class EmergencyStopSupervisor:
             # 起動直後に 1 回 poll (loop 起動前に既に engaged だった latch を回収する)。
             await self._poll()
             while not self._stop.is_set():
-                woke = await self._wait_for_wake_or_timeout(pubsub)
+                result = await self._wait_for_wake_or_timeout(pubsub)
                 if self._stop.is_set():
                     break
-                if woke:
+                if result is _WakeResult.REDIS_FAILED:
+                    # P2-4: Redis 断。pubsub を破棄して poll-only に degrade (busy-loop 回避)。
+                    # 本 iteration では get_message が即 raise しているため、poll_interval sleep で pace
+                    # してから poll する (即 poll で spin しない)。
+                    await self._close_pubsub(pubsub)
+                    pubsub = None
+                    with suppress(TimeoutError, asyncio.TimeoutError):
+                        await asyncio.wait_for(
+                            self._stop.wait(), timeout=self._poll_interval
+                        )
+                    if self._stop.is_set():
+                        break
+                elif result is _WakeResult.WOKE:
                     logger.info(
                         "supervisor_wake_received", extra={"host_id": self._host_id}
                     )
@@ -427,28 +485,30 @@ class EmergencyStopSupervisor:
             )
             return None
 
-    async def _wait_for_wake_or_timeout(self, pubsub: _WakePubSub | None) -> bool:
-        """wake message を ``poll_interval`` まで待つ。message 受信で True、timeout で False。
+    async def _wait_for_wake_or_timeout(self, pubsub: _WakePubSub | None) -> _WakeResult:
+        """wake message を ``poll_interval`` まで待つ。
 
-        pubsub が無い (degraded) 場合は単純な timeout sleep (DB poll 専用)。Redis 障害で get_message が
-        例外を投げても timeout 扱いにして DB poll を継続する (fail-closed)。
+        - pubsub が無い (degraded) 場合は単純な timeout sleep (DB poll 専用) → ``TIMEOUT``。
+        - message 受信 → ``WOKE``。timeout (None) → ``TIMEOUT``。
+        - **P2-4**: ``get_message`` が例外 (Redis 断) → ``REDIS_FAILED`` を返し、caller が pubsub を破棄して
+          poll-only に degrade + poll_interval sleep で pace する (即 poll の busy-loop を避ける)。
         """
         if pubsub is None:
             with suppress(TimeoutError, asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=self._poll_interval)
-            return False
+            return _WakeResult.TIMEOUT
         try:
             message = await pubsub.get_message(
                 ignore_subscribe_messages=True, timeout=self._poll_interval
             )
-        except Exception:  # noqa: BLE001 — Redis 障害は timeout 扱い → DB poll 継続 (fail-closed)。
+        except Exception:  # noqa: BLE001 — Redis 障害は REDIS_FAILED → caller が poll-only に degrade。
             logger.warning(
-                "supervisor_redis_get_message_failed (falling back to DB poll)",
+                "supervisor_redis_get_message_failed (degrading to DB poll-only)",
                 extra={"host_id": self._host_id},
                 exc_info=True,
             )
-            return False
-        return message is not None
+            return _WakeResult.REDIS_FAILED
+        return _WakeResult.WOKE if message is not None else _WakeResult.TIMEOUT
 
     @staticmethod
     async def _close_pubsub(pubsub: _WakePubSub | None) -> None:

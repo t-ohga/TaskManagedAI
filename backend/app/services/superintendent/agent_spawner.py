@@ -108,6 +108,12 @@ class SpawnedAgent:
     started_at: datetime | None = None
     stopped_at: datetime | None = None
     exit_code: int | None = None
+    # B4 adversarial P2-1: managed spawn 経由で起動した場合の managed_agents row id。
+    # stop 時に本 id で DB row を mark_terminal(stopped) し、supervisor が死んだ process を
+    # active 扱いし続ける (stale/reused pgid signal) のを防ぐ。legacy spawn / register は None。
+    managed_agent_id: UUID | None = None
+    # P2-1: managed row terminalize に必要な tenant scope (row は tenant-scoped query で更新)。
+    tenant_id: int | None = None
 
 
 _active_agents: dict[UUID, SpawnedAgent] = {}
@@ -395,6 +401,9 @@ async def spawn_agent_managed(
         process=proc,
         pid=proc.pid,
         started_at=datetime.now(UTC),
+        # P2-1: stop 時に managed_agents row を terminalize できるよう id / tenant を保持する。
+        managed_agent_id=managed_id,
+        tenant_id=tenant_id,
     )
     # in-process cache = process-local handle (自 process subprocess を signal する手段)。
     # kill の正本は managed_agents (A-3)。

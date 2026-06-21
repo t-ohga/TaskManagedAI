@@ -916,8 +916,8 @@ def _kill_spawned_orphan(agent: SpawnedAgent) -> None:
 @mcp.tool()
 async def superintendent_agent_start(
     agent_id: str,
+    project_id: str,
     provider: str = "claude",
-    project_id: str = "00000000-0000-4000-8000-000000000004",
 ) -> dict[str, Any]:
     """Agent プロセスを起動する。Claude Code / Codex を DB-backed managed spawn で subprocess 化。
 
@@ -932,6 +932,11 @@ async def superintendent_agent_start(
       ``EmergencyStopEngagedError`` を raise し、本 tool は ``state='denied'`` を返す。
     - **commit 境界**: ``spawn_agent_managed`` は commit しない (A-1)。本 tool が同一 transaction を
       commit し、advisory lock を spawn 完了まで保持する。
+    - **P2-5: ``project_id`` は必須 (default fallback なし)**。default project への暗黙 fallback を許すと、
+      非 default project に register した agent が ``project_id`` 省略時に wrong project (default) で spawn
+      され managed_agents row が誤 project になる。caller は register と同一 project を明示する。
+    - **P2-3: archived project は deny (active-scope)**。spawn は work-initiation のため、他経路と同様
+      ``status='active'`` を要求する (archived project への subprocess 起動 + child row 作成を防ぐ)。
     """
     import sqlalchemy as sa
 
@@ -963,18 +968,26 @@ async def superintendent_agent_start(
         # sessionless deny: session 取得自体に失敗したら latch 確認不能 → 起動拒否 (fail-closed)。
         async with get_db_session() as session:
             try:
-                # project_id を実在 project へ解決 (cross-tenant/不存在は deny)。
-                project_exists = await session.scalar(
-                    sa.select(Project.id).where(
+                # P2-3: project を実在 + **active** へ解決 (cross-tenant/不存在/archived は deny)。
+                # status を取得し、None=不存在 / 'active' 以外=archived 等を区別する (active-scope)。
+                project_status = await session.scalar(
+                    sa.select(Project.status).where(
                         Project.tenant_id == DEFAULT_TENANT_ID,
                         Project.id == parsed_project_id,
                     )
                 )
-                if project_exists is None:
+                if project_status is None:
                     return {
                         "agent_id": agent_id,
                         "state": "denied",
                         "error": "project_not_found",
+                    }
+                if project_status != "active":
+                    # P2-3: archived 等の非 active project への spawn は deny (work-initiation freeze)。
+                    return {
+                        "agent_id": agent_id,
+                        "state": "denied",
+                        "error": "project_not_active",
                     }
                 registry = ManagedAgentRegistry(session)
                 try:
@@ -1025,15 +1038,41 @@ async def superintendent_agent_start(
 
 @mcp.tool()
 async def superintendent_agent_stop(agent_id: str) -> dict[str, Any]:
-    """Agent プロセスを停止する。"""
+    """Agent プロセスを停止する。
+
+    SP-PHASE1 B4 (adversarial P2-1): managed spawn 経由で起動した agent は、process 停止後に
+    ``managed_agents`` DB row を ``mark_terminal(stopped)`` する。これを怠ると通常 start→stop で row が
+    ``state='running'`` 残留し、supervisor poll / ``list_active_on_host`` が死んだ process を active 扱い
+    して stale / 再利用 pgid を signal し得る (P2-1 fail-open)。terminalize は best-effort で process 停止
+    自体の成功は妨げない。
+    """
     from uuid import UUID
 
+    from backend.app.mcp.context import get_db_session
     from backend.app.services.superintendent.agent_spawner import stop_agent
+    from backend.app.services.superintendent.managed_agent_registry import (
+        ManagedAgentRegistry,
+    )
 
     try:
         agent = await stop_agent(UUID(agent_id))
         if agent is None:
             return {"agent_id": agent_id, "state": "not_found"}
+        # P2-1: managed row を terminalize (managed spawn 由来のみ。legacy / register は None)。
+        if agent.managed_agent_id is not None and agent.tenant_id is not None:
+            try:
+                async with get_db_session() as session:
+                    await ManagedAgentRegistry(session).mark_terminal(
+                        tenant_id=agent.tenant_id,
+                        managed_agent_id=agent.managed_agent_id,
+                        state="stopped",
+                    )
+                    await session.commit()
+            except Exception:  # noqa: BLE001 — terminalize 失敗でも process 停止は成立 (supervisor が回収)
+                logging.getLogger(__name__).warning(
+                    "agent_stop_managed_row_terminalize_failed",
+                    extra={"agent_id": agent_id},
+                )
         return {
             "agent_id": str(agent.agent_id),
             "state": "stopped",
