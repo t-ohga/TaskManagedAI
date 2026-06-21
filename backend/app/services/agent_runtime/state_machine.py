@@ -30,7 +30,20 @@ ALLOWED_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = {
     "policy_linted": frozenset({"diff_ready", "blocked"}),
     "diff_ready": frozenset({"waiting_approval", "blocked"}),
     "waiting_approval": frozenset({"running", "blocked", "cancelled"}),
-    "blocked": frozenset({"waiting_approval", "running", "failed", "cancelled"}),
+    # SP-PHASE1 B1 (ADR-00048 §Amendment A-5): emergency-stop resume は
+    # ``pre_stop_status`` 復元表に従う (一律 running に戻さない、gate skip 防止)。
+    # 復元先 ``policy_linted`` / ``diff_ready`` は新規 edge、``waiting_approval`` /
+    # ``running`` は既存。enum (16 status) は不変、transition mapping のみ追加。
+    "blocked": frozenset(
+        {
+            "waiting_approval",
+            "running",
+            "policy_linted",
+            "diff_ready",
+            "failed",
+            "cancelled",
+        }
+    ),
     "provider_refused": frozenset(),
     "provider_incomplete": frozenset({"running", "failed", "cancelled"}),
     "validation_failed": frozenset({"running", "repair_exhausted"}),
@@ -60,6 +73,15 @@ SHADOW_FORBIDDEN_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = 
     "policy_linted": frozenset({"diff_ready"}),
     "diff_ready": frozenset({"waiting_approval"}),
     "waiting_approval": frozenset({"running"}),
+    # SP-PHASE1 B1 (adversarial MEDIUM fix): emergency-stop resume edges
+    # (blocked->policy_linted / blocked->diff_ready) は production の pre_stop_status
+    # 復元用。shadow run は side-effect pipeline state (policy_linted/diff_ready) に
+    # 到達できない (上記 schema_validated->policy_linted 禁止) ため、shadow run が
+    # emergency-stop block 後にこれら pipeline-entry state へ resume するのは SP-029
+    # (ADR-00055) primary 防御 (transition table で pipeline 到達不能) を破る。blocked
+    # からの pipeline resume edge を shadow で forbid し confinement を回復する
+    # (secondary fail-closed guard = approval choke point の assert_run_id_not_shadow と二重)。
+    "blocked": frozenset({"policy_linted", "diff_ready"}),
 }
 
 EVENT_TYPE_FOR_TRANSITION: Mapping[
@@ -84,12 +106,29 @@ EVENT_TYPE_FOR_TRANSITION: Mapping[
     ("running", "cancelled"): frozenset({"run_cancelled"}),
     ("running", "provider_refused"): frozenset({"provider_responded"}),
     ("running", "provider_incomplete"): frozenset({"provider_responded"}),
+    # SP-PHASE1 B1 (ADR-00048 §Amendment A-5): emergency-stop block は
+    # ``running`` / ``policy_linted`` / ``diff_ready`` / ``waiting_approval`` から
+    # ``blocked`` への遷移を専用 ``emergency_stop_engaged`` event で witness する
+    # (汎用 event に意味を隠さない、repair_exhausted 前例)。blocked_reason は
+    # ``runtime_blocked`` (status/blocked_reason enum は不変、A-6)。既存 event は
+    # 保持し union で追加する。
     ("running", "blocked"): frozenset(
-        {"policy_blocked", "budget_blocked", "runtime_blocked"}
+        {
+            "policy_blocked",
+            "budget_blocked",
+            "runtime_blocked",
+            "emergency_stop_engaged",
+        }
     ),
-    ("policy_linted", "blocked"): frozenset({"policy_blocked"}),
-    ("diff_ready", "blocked"): frozenset({"policy_blocked", "budget_blocked"}),
-    ("waiting_approval", "blocked"): frozenset({"policy_blocked"}),
+    ("policy_linted", "blocked"): frozenset(
+        {"policy_blocked", "emergency_stop_engaged"}
+    ),
+    ("diff_ready", "blocked"): frozenset(
+        {"policy_blocked", "budget_blocked", "emergency_stop_engaged"}
+    ),
+    ("waiting_approval", "blocked"): frozenset(
+        {"policy_blocked", "emergency_stop_engaged"}
+    ),
     ("waiting_approval", "cancelled"): frozenset({"run_cancelled"}),
     ("validation_failed", "running"): frozenset({"repair_retry_scheduled"}),
     # Sprint 5.5 update (SP55-B1-R2-F-001 fix): the terminal repair-exhaustion
@@ -101,8 +140,19 @@ EVENT_TYPE_FOR_TRANSITION: Mapping[
     ("provider_incomplete", "running"): frozenset({"repair_retry_scheduled"}),
     ("provider_incomplete", "failed"): frozenset({"run_failed"}),
     ("provider_incomplete", "cancelled"): frozenset({"run_cancelled"}),
-    ("blocked", "waiting_approval"): frozenset({"approval_requested"}),
-    ("blocked", "running"): frozenset({"approval_decided", "repair_retry_scheduled"}),
+    # SP-PHASE1 B1 (ADR-00048 §Amendment A-5): emergency-stop resume は
+    # ``pre_stop_status`` 復元先への ``blocked`` 遷移を専用 ``emergency_stop_resumed``
+    # event で witness する。``blocked -> running`` / ``blocked -> waiting_approval``
+    # は既存 event を union で保持しつつ追加、``blocked -> policy_linted`` /
+    # ``blocked -> diff_ready`` は新規 edge (resume target 復元、gate skip 防止)。
+    ("blocked", "waiting_approval"): frozenset(
+        {"approval_requested", "emergency_stop_resumed"}
+    ),
+    ("blocked", "running"): frozenset(
+        {"approval_decided", "repair_retry_scheduled", "emergency_stop_resumed"}
+    ),
+    ("blocked", "policy_linted"): frozenset({"emergency_stop_resumed"}),
+    ("blocked", "diff_ready"): frozenset({"emergency_stop_resumed"}),
     ("blocked", "failed"): frozenset({"run_failed"}),
     ("blocked", "cancelled"): frozenset({"run_cancelled"}),
 }
@@ -111,6 +161,9 @@ BLOCKED_EVENT_TYPE_REASON_MAPPING: Mapping[AgentRunEventType, BlockedReason] = {
     "policy_blocked": "policy_blocked",
     "budget_blocked": "budget_blocked",
     "runtime_blocked": "runtime_blocked",
+    # SP-PHASE1 B1 (ADR-00048 A-6): emergency-stop block は dedicated event で
+    # witness するが blocked_reason enum (3 種) は不変 = ``runtime_blocked`` を使う。
+    "emergency_stop_engaged": "runtime_blocked",
 }
 
 

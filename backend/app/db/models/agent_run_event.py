@@ -82,7 +82,8 @@ class AgentRunEvent(TenantIdMixin, Base):
             "'orchestrator_lease_expired','orchestrator_failover_triggered',"
             "'orchestrator_kill_engaged','inter_agent_message_sent_ref',"
             "'inter_agent_message_consumed_ref','tool_web_fetch_executed',"
-            "'tool_docs_search_executed')",
+            "'tool_docs_search_executed','emergency_stop_engaged',"
+            "'emergency_stop_resumed')",
             name="agent_run_events_ck_event_type",
         ),
         sa.CheckConstraint(

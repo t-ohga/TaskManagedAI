@@ -40,6 +40,12 @@ AgentRunEventType = Literal[
     "inter_agent_message_consumed_ref",
     "tool_web_fetch_executed",
     "tool_docs_search_executed",
+    # SP-PHASE1 B1 (ADR-00048 §Amendment A-5, user 承認 2026-06-22): emergency-stop
+    # block / resume の dedicated witnessing event。汎用 event 再利用は audit semantic
+    # を不正確化する (repair_exhausted 前例) ため専用 event_type を 2 つ追加。P0 event
+    # として追加 (P0.1 sealed extension 29-37 とは別位置、sealed guard に抵触しない)。
+    "emergency_stop_engaged",
+    "emergency_stop_resumed",
 ]
 
 ALL_AGENT_RUN_EVENT_TYPES: tuple[AgentRunEventType, ...] = (
@@ -80,6 +86,8 @@ ALL_AGENT_RUN_EVENT_TYPES: tuple[AgentRunEventType, ...] = (
     "inter_agent_message_consumed_ref",
     "tool_web_fetch_executed",
     "tool_docs_search_executed",
+    "emergency_stop_engaged",
+    "emergency_stop_resumed",
 )
 
 __all__ = ["ALL_AGENT_RUN_EVENT_TYPES", "AgentRunEventType"]

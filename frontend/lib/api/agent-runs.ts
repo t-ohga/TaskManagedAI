@@ -46,7 +46,8 @@ export const BlockedReasonEnum = z.enum([
 
 export type BlockedReason = z.infer<typeof BlockedReasonEnum>;
 
-// 22 event_type (Sprint 4 で予約済、Sprint 7 で runner_* + repo_pr_opened)
+// AgentRunEvent type set (39): Sprint 4 で予約済、Sprint 7 で runner_* + repo_pr_opened、
+// P0.1 で orchestrator/inter-agent/tool events、SP-PHASE1 B1 で emergency_stop_* (37 -> 39)。
 export const AgentRunEventTypeEnum = z.enum([
   "run_queued",
   "context_gathered",
@@ -84,7 +85,10 @@ export const AgentRunEventTypeEnum = z.enum([
   "inter_agent_message_sent_ref",
   "inter_agent_message_consumed_ref",
   "tool_web_fetch_executed",
-  "tool_docs_search_executed"
+  "tool_docs_search_executed",
+  // SP-PHASE1 B1 (ADR-00048 A-5): emergency-stop witnessing events (37 -> 39).
+  "emergency_stop_engaged",
+  "emergency_stop_resumed"
 ]);
 
 export type AgentRunEventType = z.infer<typeof AgentRunEventTypeEnum>;
