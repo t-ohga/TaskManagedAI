@@ -83,6 +83,11 @@ _EMERGENCY_STOP_BYPASS_ALLOWED_MODELS: frozenset[str] = frozenset(
         "AuditEvent",
         "AgentRun",
         "AgentRunEvent",
+        # B4 adversarial MEDIUM-3: supervisor poll の mark_terminal (cross-process kill 記録) も
+        # freeze gate から exempt する (supervision は host-freeze と独立した安全機構)。mark_terminal は
+        # statement-based DML (execute(update)) のため通常 ORM-tracked scope guard には現れないが、
+        # ORM-tracked な ManagedAgentRecord mutation を bypass session で行う場合も許可する (defense-in-depth)。
+        "ManagedAgentRecord",
     }
 )
 

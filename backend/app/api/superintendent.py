@@ -25,12 +25,14 @@ from backend.app.api.approval_inbox import get_db_session, get_tenant_id
 from backend.app.api.dependencies.emergency_stop_operator import (
     require_emergency_stop_operator,
 )
+from backend.app.config import get_settings
 from backend.app.services.superintendent.emergency_stop import (
     EmergencyStopService,
     EmergencyStopServiceError,
     NotEngagedError,
     StaleGenerationError,
 )
+from backend.app.services.superintendent.wake_publish import publish_emergency_stop_wake
 
 router = APIRouter(prefix="/api/v1/superintendent", tags=["superintendent"])
 
@@ -107,6 +109,13 @@ async def engage_emergency_stop_endpoint(
             detail=str(exc),
         ) from exc
     await session.commit()
+    # B4 §3: latch row が durably commit された **後** に host supervisor を wake する (best-effort、
+    # 低レイテンシ最適化)。DB latch が権威なので publish 失敗でも各 host の DB poll fallback で kill
+    # される (Redis 単独障害で kill 不能にならない、fail-closed)。rollback 経路では publish しない
+    # (commit 後のみ wake = engage が成立していない latch で supervisor を起こさない)。
+    await publish_emergency_stop_wake(
+        tenant_id=tenant_id, redis_url=get_settings().redis_url
+    )
     return EmergencyStopEngageResponse(
         engaged=result.engaged,
         generation=result.generation,

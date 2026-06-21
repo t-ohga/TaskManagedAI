@@ -177,12 +177,20 @@ class ManagedAgentRegistry:
         return [_to_view(r) for r in rows]
 
     async def list_active_on_host(
-        self, *, host_id: str, tenant_id: int | None = None
+        self,
+        *,
+        host_id: str,
+        tenant_id: int | None = None,
+        for_update_skip_locked: bool = False,
     ) -> list[ManagedAgentView]:
         """host scope の active 行を列挙する (supervisor が自 host の subprocess を kill する対象)。
 
         ``tenant_id`` を渡すと host × tenant に絞る (同 host 上の別 tenant subprocess を巻き込まない、
         A-2 の host scope + tenant scope 二重絞り)。
+
+        ``for_update_skip_locked=True`` (B4 H1): 同一 host で 2 supervisor (MCP / worker) が並走する際、
+        ``FOR UPDATE SKIP LOCKED`` で片方が掴んだ行をもう片方は列挙しない (reused-pgid の二重 signal +
+        audit double-count を防ぐ)。row lock は呼出側 transaction (caller commit) で保持される。
         """
         conditions = [
             ManagedAgentRecord.host_id == host_id,
@@ -190,9 +198,10 @@ class ManagedAgentRegistry:
         ]
         if tenant_id is not None:
             conditions.append(ManagedAgentRecord.tenant_id == tenant_id)
-        rows = await self._session.scalars(
-            sa.select(ManagedAgentRecord).where(*conditions)
-        )
+        stmt = sa.select(ManagedAgentRecord).where(*conditions)
+        if for_update_skip_locked:
+            stmt = stmt.with_for_update(skip_locked=True)
+        rows = await self._session.scalars(stmt)
         return [_to_view(r) for r in rows]
 
 

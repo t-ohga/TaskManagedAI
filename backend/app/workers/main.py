@@ -138,6 +138,14 @@ async def on_startup(ctx: WorkerContext) -> None:
     # 各 job 内で `verify_worker_dequeue(ctx)` を呼ぶことで dequeue 時 gate check。
     configure_worker_gate_from_settings(ctx)
 
+    # SP-PHASE1 B4 §5 (adversarial HIGH-1): emergency-stop supervisor は **worker に配線しない**。
+    # worker は Docker container (= 別 PID namespace) で動き、**managed agent を spawn しない** (spawn は
+    # MCP server host process のみ)。worker supervisor が同一 PID namespace 外の MCP-spawned pgid を
+    # ``killpg`` すると、別 namespace では ProcessLookupError → 「消滅」誤判定 → mark_terminal(stopped) で
+    # 実 process は host で生存 = **fail-open** (以後 host supervisor も stopped row を見ず永久 kill-miss)。
+    # supervisor invariant: **agent を spawn した同一 PID namespace の process でのみ動かす** (host_id 等価が
+    # killpg の唯一の gate、boot_id/started_at は PID namespace 非識別)。MCP server lifespan が配線する。
+
 
 async def on_shutdown(ctx: WorkerContext) -> None:
     task = ctx.pop("cancel_listener_task", None)

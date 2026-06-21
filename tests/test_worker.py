@@ -47,6 +47,13 @@ class FakePubSub:
 
 
 class FakeRedis:
+    """``redis.asyncio.Redis`` 風の最小 fake。
+
+    SP-PHASE1 B4 adversarial HIGH-1: worker は **emergency-stop supervisor を配線しない** (別 PID
+    namespace で fail-open になるため。supervisor は MCP server host process のみ)。よって worker は
+    cancel listener の 1 pubsub のみを作る。
+    """
+
     def __init__(self, pubsub: FakePubSub) -> None:
         self._pubsub = pubsub
 
@@ -101,11 +108,16 @@ async def test_worker_startup_initializes_cancel_pubsub_from_environment(
 
     try:
         assert ctx["cancel_channel"] == "taskmanagedai:test-cancel"
+        # cancel listener は cancel channel のみ subscribe する。
+        # B4 HIGH-1: worker は supervisor を配線しない (wake channel は subscribe しない)。
         assert pubsub.subscribed_channels == ["taskmanagedai:test-cancel"]
         assert pubsub.get_message_kwargs == [
             {"ignore_subscribe_messages": True, "timeout": 1.0}
         ]
         assert isinstance(task, asyncio.Task)
+        # B4 HIGH-1: worker は emergency-stop supervisor を起動しない (別 PID namespace fail-open 防止)。
+        assert "emergency_stop_supervisor" not in ctx
+        assert "emergency_stop_supervisor_task" not in ctx
     finally:
         await on_shutdown(ctx)
 
@@ -113,6 +125,9 @@ async def test_worker_startup_initializes_cancel_pubsub_from_environment(
     assert "cancel_channel" not in ctx
     assert "cancel_pubsub" not in ctx
     assert "cancel_listener_task" not in ctx
+    # B4 HIGH-1: worker は supervisor を配線しないため ctx に supervisor key は存在しない。
+    assert "emergency_stop_supervisor" not in ctx
+    assert "emergency_stop_supervisor_task" not in ctx
 
 
 @pytest.mark.asyncio

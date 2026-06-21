@@ -8,14 +8,49 @@ Security invariants:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-from typing import Any, cast
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from fastmcp import FastMCP
 
+if TYPE_CHECKING:
+    from backend.app.services.superintendent.agent_spawner import SpawnedAgent
+
 # _safe_uuid removed (H-1 fix): callers use UUID() directly with error handling
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _mcp_lifespan(_server: FastMCP) -> AsyncIterator[None]:
+    """SP-PHASE1 B4 §5: MCP server (agent を spawn する host process) に supervisor loop を配線する。
+
+    MCP ``superintendent_agent_start`` が起動した subprocess を、本 process の hybrid supervisor が
+    emergency-stop engage 時に cross-process kill する (A-2「同一 host の supervisor のみ kill」)。
+    Redis wake (即時) + DB latch poll (権威 fallback、Redis 障害でも kill 不能にしない) の hybrid。
+    """
+    from backend.app.services.superintendent.supervisor import (
+        build_default_supervisor,
+        start_supervisor_background_task,
+    )
+
+    supervisor = build_default_supervisor()
+    task = start_supervisor_background_task(supervisor)
+    logger.info("mcp_supervisor_started")
+    try:
+        yield
+    finally:
+        supervisor.stop()
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        logger.info("mcp_supervisor_stopped")
+
 
 mcp = FastMCP(
     "TaskManagedAI",
@@ -24,6 +59,7 @@ mcp = FastMCP(
         "チケット作成、AI 実行管理、承認ワークフロー、監査ログを統合管理します。"
         "approval_decide は human-only です。AI agent は承認要求の作成のみ可能です。"
     ),
+    lifespan=_mcp_lifespan,
 )
 
 
@@ -807,7 +843,15 @@ async def run_cost(
 async def superintendent_agent_register(
     role_id: str, project_id: str, provider: str = "claude"
 ) -> dict[str, Any]:
-    """Agent を登録して role を割り当てる。provider: claude / codex / custom。"""
+    """Agent を登録して role を割り当てる。provider: claude / codex / custom。
+
+    **honest limit (B4 M4、adversarial review)**: 本 ``_register`` は **B4 で managed_agents へ移行して
+    いない** — in-process ``_active_agents`` dict にのみ書き、DB registry row も emergency-stop latch
+    check も無い (process を spawn しない登録 step ではあるが、latch engaged 中の登録を deny しない)。
+    実 subprocess の起動と cross-process kill 配線は ``superintendent_agent_start`` (managed 経路、P1-1
+    解消済) が担う。``_register`` 自体の latch gate は **B5 (MCP mutating bridge latch gate)** で閉じる
+    (``agent_spawner.spawn_agent`` の honest note と同様)。
+    """
     if provider not in ("claude", "codex", "custom"):
         return {"error": "invalid_provider", "valid": ["claude", "codex", "custom"]}
 
@@ -845,20 +889,130 @@ async def superintendent_agent_register(
     }
 
 
-@mcp.tool()
-async def superintendent_agent_start(agent_id: str, provider: str = "claude") -> dict[str, Any]:
-    """Agent プロセスを起動する。Claude Code / Codex を subprocess で spawn。"""
-    from uuid import UUID
+def _kill_spawned_orphan(agent: SpawnedAgent) -> None:
+    """B4 LOW-4: commit 失敗で committed row を失った live subprocess を killpg で始末する。
 
-    from backend.app.services.superintendent.agent_spawner import spawn_agent
+    spawn は成功 (process 起動 + mark_running) したが ``session.commit()`` が freeze gate 等で reject
+    された場合、DB 行は rollback で消えるが live process は残る = supervisor から見えない unkillable
+    orphan。本 helper が起動済 process group を SIGKILL して orphan を残さない (best-effort、既に死亡 /
+    pid 不明は no-op)。``spawn_agent_managed`` 内 compensating path と同 semantics。
+    """
+    import os
+    import signal
+
+    proc = agent.process
+    if proc is None or proc.pid is None or proc.returncode is not None:
+        return
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, OSError):
+        pass
+    logging.getLogger(__name__).error(
+        "agent_start_commit_failed_orphan_killed (live subprocess killed; row rolled back)",
+        extra={"agent_id": str(agent.agent_id)},
+    )
+
+
+@mcp.tool()
+async def superintendent_agent_start(
+    agent_id: str,
+    provider: str = "claude",
+    project_id: str = "00000000-0000-4000-8000-000000000004",
+) -> dict[str, Any]:
+    """Agent プロセスを起動する。Claude Code / Codex を DB-backed managed spawn で subprocess 化。
+
+    SP-PHASE1 B4 (P1-1 fix): legacy ``spawn_agent`` (sessionless、latch 未確認 = fail-open) から
+    ``spawn_agent_managed`` (A-1 ordering + advisory lock + latch fail-closed deny + ``managed_agents``
+    登録) へ移行。これで本経路の agent が (a) emergency-stop latch engaged 中は **deny** (fail-closed)、
+    (b) ``managed_agents`` 登録で cross-process supervisor から kill 可能になる。
+
+    - **sessionless deny (fail-closed)**: DB session を取得できない場合は latch を確認できないため起動を
+      **拒否** する (sessionless = latch 確認不能 = 起動拒否)。
+    - **latch engaged deny**: ``spawn_agent_managed`` 内の latch check が engaged を観測したら
+      ``EmergencyStopEngagedError`` を raise し、本 tool は ``state='denied'`` を返す。
+    - **commit 境界**: ``spawn_agent_managed`` は commit しない (A-1)。本 tool が同一 transaction を
+      commit し、advisory lock を spawn 完了まで保持する。
+    """
+    import sqlalchemy as sa
+
+    from backend.app.db.models.project import Project
+    from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.agent_spawner import (
+        default_host_id,
+        spawn_agent_managed,
+    )
+    from backend.app.services.superintendent.emergency_stop import (
+        EmergencyStopEngagedError,
+    )
+    from backend.app.services.superintendent.managed_agent_registry import (
+        ManagedAgentRegistry,
+    )
+
+    if provider not in ("claude", "codex", "custom"):
+        return {"error": "invalid_provider", "valid": ["claude", "codex", "custom"]}
 
     try:
-        project_dir = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
-        agent = await spawn_agent(
-            agent_id=UUID(agent_id),
-            provider=provider,  # type: ignore[arg-type]
-            project_dir=project_dir,
-        )
+        parsed_agent_id = UUID(agent_id)
+        parsed_project_id = UUID(project_id)
+    except (ValueError, AttributeError):
+        return {"agent_id": agent_id, "state": "failed", "error": "invalid_uuid"}
+
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+
+    try:
+        # sessionless deny: session 取得自体に失敗したら latch 確認不能 → 起動拒否 (fail-closed)。
+        async with get_db_session() as session:
+            try:
+                # project_id を実在 project へ解決 (cross-tenant/不存在は deny)。
+                project_exists = await session.scalar(
+                    sa.select(Project.id).where(
+                        Project.tenant_id == DEFAULT_TENANT_ID,
+                        Project.id == parsed_project_id,
+                    )
+                )
+                if project_exists is None:
+                    return {
+                        "agent_id": agent_id,
+                        "state": "denied",
+                        "error": "project_not_found",
+                    }
+                registry = ManagedAgentRegistry(session)
+                try:
+                    agent = await spawn_agent_managed(
+                        agent_id=parsed_agent_id,
+                        provider=cast(Any, provider),
+                        project_dir=project_dir,
+                        tenant_id=DEFAULT_TENANT_ID,
+                        project_id=parsed_project_id,
+                        registry=registry,
+                        session=session,
+                        host_id=default_host_id(),
+                    )
+                except EmergencyStopEngagedError:
+                    # latch engaged: 新規活動 deny (fail-closed)。rollback して起動しない
+                    # (advisory xact lock も rollback で解放)。
+                    await session.rollback()
+                    return {
+                        "agent_id": agent_id,
+                        "state": "denied",
+                        "error": "emergency_stop_engaged",
+                    }
+                # A-1: spawn 完了 (running) まで保持した advisory lock を commit で解放する。
+                # LOW-4 (adversarial review adopt): commit が freeze gate 等で reject されると、行は
+                # rollback されるが live subprocess は残る (committed row 無しの unkillable orphan)。
+                # commit 失敗時は起動済 live process を killpg で kill してから re-raise する。
+                try:
+                    await session.commit()
+                except BaseException:
+                    _kill_spawned_orphan(agent)
+                    raise
+            except BaseException:
+                # M5 (adversarial review adopt): mid-spawn 例外でも transaction を明示 rollback し、
+                # tenant advisory xact lock を解放する (自己 DoS = 以後の engage/spawn が lock 待ちで
+                # 永久 block するのを防ぐ。session __aexit__ の close-rollback に依存しない)。
+                with suppress(Exception):
+                    await session.rollback()
+                raise
         return {
             "agent_id": str(agent.agent_id),
             "pid": agent.pid,
