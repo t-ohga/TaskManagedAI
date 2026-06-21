@@ -38,6 +38,7 @@ from backend.app.db.models.github_webhook_event import (
     WebhookEventStatus,
     WebhookQuarantineReason,
 )
+from backend.app.db.models.managed_agent import ManagedAgentRecord
 from backend.app.db.models.mcp_idempotency_key import (
     MCP_IDEMPOTENCY_RESOURCE_KINDS,
     MCP_IDEMPOTENCY_TOOL_NAMES,
@@ -87,6 +88,7 @@ __all__ = [
     "GitHubWebhookEvent",
     "MCP_IDEMPOTENCY_RESOURCE_KINDS",
     "MCP_IDEMPOTENCY_TOOL_NAMES",
+    "ManagedAgentRecord",
     "McpIdempotencyKey",
     "McpIdempotencyResourceKind",
     "McpIdempotencyToolName",
