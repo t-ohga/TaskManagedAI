@@ -64,12 +64,38 @@ def _expected_alembic_head() -> str | None:
     return ",".join(sorted(heads)) if heads else None
 
 
+def _to_host_loopback_dsn(url: str) -> str:
+    """compose-internal host (postgres/db) を host から到達可能な 127.0.0.1 へ書換える (Codex F5 adopt)。
+
+    ``status --local`` / ``init --local`` は **host から** 起動準備を確認する。dev の
+    ``settings.database_url`` は compose-internal hostname ``postgres`` を指し host からは解決不能で、
+    healthy な stack でも ``db_reachable=false`` を誤報する。compose-internal host のみ 127.0.0.1 へ書換え、
+    remote / 既に loopback の DSN は温存する。raw password は接続用にそのまま保持 (出力は別途 redact)。
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    if parts.hostname not in ("postgres", "db"):
+        return url
+    user = parts.username or ""
+    pw = f":{parts.password}" if parts.password is not None else ""
+    auth = f"{user}{pw}@" if user or parts.password is not None else ""
+    port = f":{parts.port}" if parts.port is not None else ""
+    netloc = f"{auth}127.0.0.1{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 def collect_local_status(database_url: str | None = None) -> dict[str, Any]:
     """local host の minimal-but-real status を dict で返す (raw secret 非出力)。"""
     from backend.app.config import get_settings
 
     settings = get_settings()
-    resolved_url = database_url if database_url is not None else settings.database_url
+    if database_url is not None:
+        resolved_url = database_url
+    else:
+        # explicit DSN 未指定時は host-local check として compose-internal host を loopback へ書換える。
+        resolved_url = _to_host_loopback_dsn(settings.database_url)
 
     expected_head = _expected_alembic_head()
 

@@ -39,10 +39,11 @@ def test_shipped_registry_loads() -> None:
     assert entry.max_payload_data_class == "internal"
     assert "OPENAI_API_KEY" not in entry.env_passthrough
     assert "PATH" in entry.env_passthrough
-    # SP-PHASE0 S3 (ADR-00058): codex/claude CLI サブスク credential は host-ambient 分類。
+    # SP-PHASE0 S3 (ADR-00058): codex CLI サブスク credential は host-ambient 分類。
+    # claude の launchable entry は Phase 2 (CLIAgentAdapter) で追加 (Codex PR #353 F2/F3/F4/F6 adopt、
+    # Phase 0 では launch argv 不正のため launchable 登録を延期、分類は codex field + コメントで確定)。
     assert entry.credential_supply_mode == "host_ambient"
-    assert "claude" in registry.names()
-    assert registry.get("claude").credential_supply_mode == "host_ambient"
+    assert "claude" not in registry.names()
 
 
 # --- positive ---------------------------------------------------------------

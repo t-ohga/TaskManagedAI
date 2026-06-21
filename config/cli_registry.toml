@@ -86,35 +86,12 @@ max_payload_data_class = "internal"
 # server-owned-boundary §1 で path containment を server 側で強制)。
 cwd_allowlist = ["/Users/tohga/repo/TaskManagedAI"]
 
-[[agents]]
-name = "claude"
-# SP-PHASE0 S3 (ADR-00058): claude CLI サブスク credential も host-ambient (CLI が ~/.claude の
-# OAuth を所有・refresh、host worker が直読、broker 非経由)。codex と同じく Mac (homebrew) 絶対 path
-# (host-portable 化は ADR-00021 / 後フェーズ)。実行エンジンは大元計画 Phase 2 (CLIAgentAdapter) で
-# 本格配線、Phase 0 は host-ambient 分類の確定のみ (subprocess launch は既存 codex と同 boundary)。
-binary_path = "/opt/homebrew/bin/claude"
-credential_supply_mode = "host_ambient"
-# argv_template は placeholder のみ。read-only / headless (`-p`) で起動 (大元計画 Phase 2 で確定)。
-argv_template = [
-  "-p",
-  "--output-format",
-  "stream-json",
-  "{prompt_file}",
-]
-stdin_source = ""
-# 許可済 ENV var のみ pass-through。OAuth は CLI が ~/.claude から自前で読むため env に token を
-# 入れない (loader が secret 名を物理 drop、SecretBroker rules)。
-env_passthrough = [
-  "HOME",
-  "PATH",
-  "LANG",
-  "LC_ALL",
-  "LC_CTYPE",
-  "TERM",
-]
-timeout_seconds = 1800
-max_stdout_bytes = 1048576
-max_stderr_bytes = 524288
-# CLI agent の最大 payload data class (codex と同 invariant、confidential / pii は deny)。
-max_payload_data_class = "internal"
-cwd_allowlist = ["/Users/tohga/repo/TaskManagedAI"]
+# SP-PHASE0 S3 (ADR-00058、Codex PR #353 review F2/F3/F4/F6 adopt):
+# claude CLI サブスク credential も **host-ambient** (CLI が ~/.claude の OAuth を所有・refresh、host worker が
+# 直読、broker 非経由) に分類される。ただし claude を **launchable agent として登録するのは大元計画 Phase 2
+# (CLIAgentAdapter 本体)** に延期する。Phase 0 で launchable entry を入れると以下が未確定 / 不正なまま出荷される
+# ため (Codex review 指摘): (F2) `-p` への prompt は path でなく contents/stdin、(F3) claude は stdout へ
+# stream するため launcher 側で output_file へ永続化する配線が必要、(F4) read-only 強制 (--permission-mode /
+# allowlist)、(F6) backend 起動では session 永続を無効化する。これらは claude CLI 実起動を伴う Phase 2 で
+# 実機検証しつつ確定する。Phase 0 の host-ambient 分類は (1) codex entry の credential_supply_mode="host_ambient"
+# (machine-readable)、(2) 本コメント、で確定し、claude の launchable entry は Phase 2 で追加する。
