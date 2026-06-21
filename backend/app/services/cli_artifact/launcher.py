@@ -32,6 +32,11 @@ from stat import S_ISREG
 from typing import IO
 
 from backend.app.repositories._payload_secret_scan import assert_no_raw_secret
+from backend.app.services.cli_artifact.credential_canary import (
+    CredentialCanaryHit,
+    CredentialCanaryResult,
+    scan_streams_for_credential_exfiltration,
+)
 from backend.app.services.cli_artifact.registry import (
     AgentRegistryEntry,
     CliAgentRegistry,
@@ -93,14 +98,33 @@ class LauncherDenyReason(StrEnum):
     PATH_IS_SYMLINK = "path_is_symlink"
     PATH_FORBIDDEN = "path_forbidden"
     REGISTRY_INVALID = "registry_invalid"
+    # SP-PHASE0 gate C (ADR-00058 §exit must_ship): host-ambient CLI が credential
+    # file (~/.codex/auth.json 等) を stdout / stderr / output / stream artifact へ
+    # exfiltrate した (prompt-injection で `cat <credential>` 等を実行した) ことを
+    # 出力 canary scan が検出した場合の Hard Gate failure。raw 値は残さず hit 種別
+    # のみ audit する (rules/secretbroker-boundary.md §11)。
+    CREDENTIAL_EXFILTRATION = "credential_exfiltration"
 
 
 class LauncherError(Exception):
-    """Launcher refused to spawn the subprocess (pre-launch deny)."""
+    """Launcher refused to spawn the subprocess, or a post-launch Hard Gate
+    failure (e.g. credential exfiltration detected in captured output).
 
-    def __init__(self, reason: LauncherDenyReason, message: str) -> None:
+    ``canary_hits`` carries the credential canary hit metadata (hit 種別 +
+    match count のみ、raw 値非含) for ``CREDENTIAL_EXFILTRATION`` so the caller
+    can record it in the audit event without re-scanning.
+    """
+
+    def __init__(
+        self,
+        reason: LauncherDenyReason,
+        message: str,
+        *,
+        canary_hits: tuple[CredentialCanaryHit, ...] = (),
+    ) -> None:
         super().__init__(message)
         self.reason = reason
+        self.canary_hits = canary_hits
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +285,12 @@ async def launch_cli_agent(
         max_stderr_bytes=entry.max_stderr_bytes,
         stdin_path=stdin_path,
         agent_name=entry.name,
+        # SP-PHASE0 gate C (control 1): output / stream artifact paths are scanned
+        # for credential exfiltration alongside captured stdout/stderr. codex
+        # writes its real response into output_file (--output-last-message), so
+        # a credential echoed there must also be caught.
+        output_file=resolved_paths.output_file,
+        stream_file=resolved_paths.stream_file,
     )
 
 
@@ -324,6 +354,21 @@ def _build_scrubbed_env(entry: AgentRegistryEntry) -> dict[str, str]:
     # Always-on minimal env so the subprocess can locate libc / locale data.
     env.setdefault("PATH", "/usr/bin:/bin")
     env.setdefault("LANG", "C.UTF-8")
+    # SP-PHASE0 gate C (control 2, defense-in-depth, ADR-00058 §exit must_ship):
+    # per-agent 最小 HOME override + credential home env。host-ambient CLI が
+    # prompt-injected な ``cat ~/.ssh/id_rsa`` / ``cat ~/.aws/...`` 等で **他 secret**
+    # を読む blast radius を制限する。HOME を agent 固有最小 dir へ振り、その配下に
+    # 他 secret を同居させないことで、相対 ``~`` 参照の他 secret 読取を構造的に空に
+    # する。agent 自身の credential は ``credential_home_env`` (codex→CODEX_HOME) で
+    # 別 dir を明示供給するため読取は維持される。
+    #
+    # 最小 HOME は ``env_passthrough`` で渡る parent ``HOME`` を **上書き** する
+    # (set 順は本ブロックが最後なので override が効く)。未設定 (後方互換) の場合は
+    # 既存挙動 (parent HOME passthrough) のまま。
+    if entry.minimal_home_dir is not None:
+        env["HOME"] = entry.minimal_home_dir
+    if entry.credential_home_env is not None and entry.credential_home_dir is not None:
+        env[entry.credential_home_env] = entry.credential_home_dir
     # Hint downstream CLI tools that we are running in CI-like mode.
     env["TASKMANAGEDAI_CLI_LAUNCHER"] = entry.name
     return env
@@ -432,6 +477,8 @@ async def _spawn_with_caps(
     max_stderr_bytes: int,
     stdin_path: str | None,
     agent_name: str,
+    output_file: str | None = None,
+    stream_file: str | None = None,
 ) -> LauncherResult:
     loop = asyncio.get_running_loop()
     start = loop.time()
@@ -490,15 +537,27 @@ async def _spawn_with_caps(
     cancelled = False
     stdout_bytes_read = 0
     stderr_bytes_read = 0
+    stdout_captured = b""
+    stderr_captured = b""
     signal_name: str | None = None
 
     async def _drain(
         stream: asyncio.StreamReader | None,
         cap: int,
-    ) -> int:
+    ) -> tuple[int, bytes]:
+        """Drain ``stream`` up to ``cap`` bytes.
+
+        Returns ``(byte_count, captured_bytes)``. SP-PHASE0 gate C: the captured
+        bytes (bounded by ``cap``, so no new DoS surface beyond the existing
+        byte cap) are retained so the post-completion credential canary scan can
+        inspect the actual stdout/stderr content. Bytes beyond ``cap`` are
+        discarded but the pipe is still drained so the subprocess never blocks.
+        """
+
         if stream is None:
-            return 0
+            return 0, b""
         total = 0
+        captured = bytearray()
         while True:
             chunk = await stream.read(64 * 1024)
             if not chunk:
@@ -508,8 +567,10 @@ async def _spawn_with_caps(
                 # We have already saturated the cap; keep draining so the
                 # subprocess never blocks on a full pipe, but discard data.
                 continue
-            total += min(len(chunk), remaining)
-        return total
+            keep = min(len(chunk), remaining)
+            total += keep
+            captured.extend(chunk[:keep])
+        return total, bytes(captured)
 
     stdout_task = asyncio.create_task(_drain(proc.stdout, max_stdout_bytes))
     stderr_task = asyncio.create_task(_drain(proc.stderr, max_stderr_bytes))
@@ -536,8 +597,10 @@ async def _spawn_with_caps(
                     await task
                 except (asyncio.CancelledError, OSError):
                     pass
-        stdout_bytes_read = stdout_task.result() if stdout_task.done() and not stdout_task.cancelled() else 0
-        stderr_bytes_read = stderr_task.result() if stderr_task.done() and not stderr_task.cancelled() else 0
+        if stdout_task.done() and not stdout_task.cancelled():
+            stdout_bytes_read, stdout_captured = stdout_task.result()
+        if stderr_task.done() and not stderr_task.cancelled():
+            stderr_bytes_read, stderr_captured = stderr_task.result()
 
     if exit_code is not None and exit_code < 0:
         # POSIX convention: -N means killed by signal N.
@@ -545,6 +608,31 @@ async def _spawn_with_caps(
             signal_name = signal.Signals(-exit_code).name
         except (ValueError, ImportError):
             signal_name = f"signal_{-exit_code}"
+
+    # SP-PHASE0 gate C (control 1, ADR-00058 §exit must_ship): credential
+    # exfiltration canary scan. After capturing stdout / stderr (+ output /
+    # stream artifact), scan for credential / secret token patterns. A hit means
+    # the (untrusted) prompt drove the CLI to exfiltrate a credential (e.g. via a
+    # prompt-injected ``cat ~/.codex/auth.json``). This is a Hard Gate failure:
+    # raise ``CREDENTIAL_EXFILTRATION`` so the result is treated as a deny, the
+    # raw output is NOT returned (fail-closed), and only the hit 種別 is surfaced
+    # for audit (raw 値非含、rules/secretbroker-boundary.md §11 / AC-HARD-02).
+    canary = _scan_outputs_for_exfiltration(
+        stdout_captured=stdout_captured,
+        stderr_captured=stderr_captured,
+        output_file=output_file,
+        stream_file=stream_file,
+        max_stdout_bytes=max_stdout_bytes,
+        max_stderr_bytes=max_stderr_bytes,
+    )
+    if canary.hit:
+        hit_kinds = sorted({h.pattern_kind for h in canary.hits})
+        raise LauncherError(
+            LauncherDenyReason.CREDENTIAL_EXFILTRATION,
+            f"agent {agent_name!r}: credential exfiltration detected in CLI "
+            f"output (hit kinds: {hit_kinds}); raw output withheld",
+            canary_hits=canary.hits,
+        )
 
     duration = loop.time() - start
     return LauncherResult(
@@ -557,6 +645,60 @@ async def _spawn_with_caps(
         stderr_bytes=stderr_bytes_read,
         signal=signal_name,
     )
+
+
+def _scan_outputs_for_exfiltration(
+    *,
+    stdout_captured: bytes,
+    stderr_captured: bytes,
+    output_file: str | None,
+    stream_file: str | None,
+    max_stdout_bytes: int,
+    max_stderr_bytes: int,
+) -> CredentialCanaryResult:
+    """SP-PHASE0 gate C (control 1): scan captured streams + artifacts.
+
+    Decodes the captured stdout / stderr bytes (errors="replace" so raw bytes
+    are never re-emitted) and reads the output / stream artifact files (bounded
+    by the byte caps, O_NOFOLLOW to avoid a parent-swap symlink), then runs the
+    credential canary scan over all of them. Returns a hit-only result (raw 値
+    非含).
+    """
+
+    streams: list[str] = [
+        stdout_captured.decode("utf-8", errors="replace"),
+        stderr_captured.decode("utf-8", errors="replace"),
+    ]
+    if output_file is not None:
+        streams.append(_read_capped_text(output_file, max_bytes=max_stdout_bytes))
+    if stream_file is not None:
+        streams.append(_read_capped_text(stream_file, max_bytes=max_stderr_bytes))
+    return scan_streams_for_credential_exfiltration(*streams)
+
+
+def _read_capped_text(path: str, *, max_bytes: int) -> str:
+    """Read at most ``max_bytes`` from ``path`` and decode (errors="replace").
+
+    O_NOFOLLOW refuses a final-component symlink swap. Read failures yield an
+    empty string (fail-open on read is acceptable here because the captured
+    stdout/stderr streams are the primary canary surface; the artifact files are
+    a secondary cross-check). Bytes are never returned raw.
+    """
+
+    flags = os.O_RDONLY
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow:
+        flags |= nofollow
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return ""
+    try:
+        with os.fdopen(fd, "rb") as fp:
+            raw = fp.read(max_bytes)
+    except OSError:
+        return ""
+    return raw.decode("utf-8", errors="replace")
 
 
 async def _terminate_with_grace(

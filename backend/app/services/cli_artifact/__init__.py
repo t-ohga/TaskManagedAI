@@ -6,6 +6,12 @@ from backend.app.services.cli_artifact.cancel_propagation import (
     CancelSubscriberDriver,
     RedisCancelDispatcher,
 )
+from backend.app.services.cli_artifact.credential_canary import (
+    CredentialCanaryHit,
+    CredentialCanaryResult,
+    scan_for_credential_exfiltration,
+    scan_streams_for_credential_exfiltration,
+)
 from backend.app.services.cli_artifact.decision import (
     CliDecisionRecord,
     CliDecisionVerdict,
@@ -76,6 +82,8 @@ __all__ = [
     "CliInvocationOutcome",
     "CliInvocationRequest",
     "CliProcessCompletedPayload",
+    "CredentialCanaryHit",
+    "CredentialCanaryResult",
     "DirectExecutionArtifactKind",
     "DirectExecutionViolation",
     "ExitMappingDecision",
@@ -98,6 +106,8 @@ __all__ = [
     "map_launcher_result",
     "record_decision",
     "redact_stream",
+    "scan_for_credential_exfiltration",
+    "scan_streams_for_credential_exfiltration",
     "summary_payload",
     "write_prompt_atomically",
 ]

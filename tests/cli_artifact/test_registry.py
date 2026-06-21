@@ -29,7 +29,8 @@ def test_shipped_registry_loads() -> None:
     )
     registry = load_cli_agent_registry(path)
     # SP-PHASE0 S3 (ADR-00058): credential_supply_mode additive field で 1.0.0 -> 1.1.0。
-    assert registry.schema_version == "1.1.0"
+    # SP-PHASE0 gate C: per-agent 最小 HOME / credential home env additive で 1.1.0 -> 1.2.0。
+    assert registry.schema_version == "1.2.0"
     assert "codex" in registry.names()
     entry = registry.get("codex")
     # Codex SP6B1 R2 F-SP6B1-R2-004: binary_path MUST be absolute to defeat
@@ -281,6 +282,103 @@ def test_entry_rejects_empty_binary_path() -> None:
     kw["binary_path"] = ""
     with pytest.raises(ValueError, match="binary_path must be non-empty"):
         AgentRegistryEntry(**kw)  # type: ignore[arg-type]
+
+
+# --- SP-PHASE0 gate C: per-agent minimal HOME / credential home fields -------
+
+
+def test_entry_accepts_minimal_home_and_credential_home() -> None:
+    """control 2: 最小 HOME + credential home env のペア指定を受け付ける。"""
+
+    kw = _base_kwargs()
+    kw["credential_supply_mode"] = "host_ambient"
+    kw["minimal_home_dir"] = "/run/cli-home/codex"
+    kw["credential_home_env"] = "CODEX_HOME"
+    kw["credential_home_dir"] = "/run/codex-cred"
+    entry = AgentRegistryEntry(**kw)  # type: ignore[arg-type]
+    assert entry.minimal_home_dir == "/run/cli-home/codex"
+    assert entry.credential_home_env == "CODEX_HOME"
+    assert entry.credential_home_dir == "/run/codex-cred"
+
+
+def test_entry_defaults_minimal_home_fields_to_none() -> None:
+    """後方互換: 未設定なら None (既存挙動 = parent HOME passthrough)。"""
+
+    entry = AgentRegistryEntry(**_base_kwargs())  # type: ignore[arg-type]
+    assert entry.minimal_home_dir is None
+    assert entry.credential_home_env is None
+    assert entry.credential_home_dir is None
+
+
+@pytest.mark.parametrize("bad_field", ["minimal_home_dir", "credential_home_dir"])
+def test_entry_rejects_relative_home_dir(bad_field: str) -> None:
+    kw = _base_kwargs()
+    if bad_field == "credential_home_dir":
+        kw["credential_home_env"] = "CODEX_HOME"
+    kw[bad_field] = "relative/home"
+    with pytest.raises(ValueError, match="absolute path"):
+        AgentRegistryEntry(**kw)  # type: ignore[arg-type]
+
+
+def test_entry_rejects_invalid_credential_home_env_name() -> None:
+    kw = _base_kwargs()
+    kw["credential_home_env"] = "codex home"  # lowercase + space, invalid
+    kw["credential_home_dir"] = "/run/codex-cred"
+    with pytest.raises(ValueError, match="ENV var name"):
+        AgentRegistryEntry(**kw)  # type: ignore[arg-type]
+
+
+def test_entry_rejects_credential_home_env_without_dir() -> None:
+    kw = _base_kwargs()
+    kw["credential_home_env"] = "CODEX_HOME"
+    # credential_home_dir 未設定 (片方のみ) は設定ミスとして reject
+    with pytest.raises(ValueError, match="両方"):
+        AgentRegistryEntry(**kw)  # type: ignore[arg-type]
+
+
+def test_entry_rejects_credential_home_dir_without_env() -> None:
+    kw = _base_kwargs()
+    kw["credential_home_dir"] = "/run/codex-cred"
+    with pytest.raises(ValueError, match="両方"):
+        AgentRegistryEntry(**kw)  # type: ignore[arg-type]
+
+
+def test_entry_rejects_secret_bearing_credential_home_env() -> None:
+    """credential_home_env は dir-pointer のみ。secret-bearing var 偽装を reject。"""
+
+    kw = _base_kwargs()
+    kw["credential_home_env"] = "OPENAI_API_KEY"
+    kw["credential_home_dir"] = "/run/codex-cred"
+    with pytest.raises(ValueError, match="secret-bearing"):
+        AgentRegistryEntry(**kw)  # type: ignore[arg-type]
+
+
+def test_load_registry_with_minimal_home_fields(tmp_path: Path) -> None:
+    body = """
+schema_version = "1.2.0"
+
+[[agents]]
+name = "codex"
+binary_path = "/bin/sh"
+argv_template = ["exec", "-"]
+stdin_source = "{prompt_file}"
+env_passthrough = ["PATH", "HOME"]
+timeout_seconds = 600
+max_stdout_bytes = 1024
+max_stderr_bytes = 1024
+max_payload_data_class = "internal"
+cwd_allowlist = ["/tmp"]
+credential_supply_mode = "host_ambient"
+minimal_home_dir = "/run/cli-home/codex"
+credential_home_env = "CODEX_HOME"
+credential_home_dir = "/run/codex-cred"
+"""
+    path = _write_registry(tmp_path, body)
+    registry = load_cli_agent_registry(path)
+    entry = registry.get("codex")
+    assert entry.minimal_home_dir == "/run/cli-home/codex"
+    assert entry.credential_home_env == "CODEX_HOME"
+    assert entry.credential_home_dir == "/run/codex-cred"
 
 
 def test_entry_accepts_absolute_binary_path() -> None:

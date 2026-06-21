@@ -27,8 +27,22 @@
 #   broker 内部消費、subprocess env/argv/temp-file に raw を出さない (Phase 2 実装)。
 # `credential_supply_mode` 未設定 = credential 供給を持たない (read-only artifact 生成のみ、後方互換)。
 # raw secret / token は本 file に **一切書かない** (env_passthrough も loader が secret 名を物理 drop)。
+#
+# SP-PHASE0 gate C (ADR-00058 §exit must_ship、control 2 per-agent 最小 HOME): host_ambient agent の
+# subprocess に渡す **per-agent 最小 HOME** (`minimal_home_dir`) と **credential home env**
+# (`credential_home_env` + `credential_home_dir`) を additive で追加 (schema_version 1.1.0 -> 1.2.0)。
+# - `minimal_home_dir`: subprocess の `HOME` を本 dir へ override し、配下に他 secret を **同居させない**
+#   ことで prompt-injected な `cat ~/.ssh/id_rsa` / `cat ~/.aws/...` の blast radius を最小化する。
+# - `credential_home_env` + `credential_home_dir`: agent 自身の credential dir を ENV (codex は CODEX_HOME)
+#   で明示供給し、agent credential 読取のみ許可する。raw token は本 file に書かない (dir path のみ)。
+# 本 3 field の **shipped codex entry への配線 (実 auth.json を最小 HOME 配下へ配置する運用)** は大元計画
+# Phase 2 (CLIAgentAdapter 本体) の実機検証で確定する (CODEX_HOME を指す最小 HOME の作成・auth 配置・
+# symlink 戦略は実 codex 起動を伴うため Phase 0 で half-configured 出荷しない)。Phase 0 では (1) schema +
+# 検証 + loader、(2) launcher の env 構築ロジック (`_build_scrubbed_env` が HOME を override し credential
+# home env を set する) を unit test で確定し、(3) 出力 canary scan (control 1) で exfiltration を Hard Gate
+# failure 化する。shipped codex entry は本 field 未設定 (後方互換 = 既存の parent HOME passthrough) のまま。
 
-schema_version = "1.1.0"
+schema_version = "1.2.0"
 
 [[agents]]
 name = "codex"

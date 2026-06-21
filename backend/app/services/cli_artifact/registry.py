@@ -14,6 +14,7 @@ Server-owned-boundary §1 invariant:
 
 from __future__ import annotations
 
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -32,6 +33,9 @@ _ALLOWED_PLACEHOLDERS: frozenset[str] = frozenset(
         "{stream_file}",
     }
 )
+
+# SP-PHASE0 gate C (control 2): credential_home_env は POSIX ENV var 名規約。
+_ENV_NAME_RE = re.compile(r"[A-Z_][A-Z0-9_]*")
 
 # SP-PHASE0 S3 (ADR-00058): CLI サブスク credential 供給経路の分類 (additive metadata)。
 # - "host_ambient": CLI が self-rotating OAuth を所有・refresh、host worker が ~/.claude / ~/.codex
@@ -83,6 +87,21 @@ class AgentRegistryEntry:
     cwd_allowlist: tuple[str, ...]
     # SP-PHASE0 S3 (ADR-00058): host_ambient | broker_managed | None (additive、未設定後方互換)。
     credential_supply_mode: str | None = None
+    # SP-PHASE0 gate C (ADR-00058 §exit must_ship、control 2 per-agent 最小 HOME):
+    # host_ambient agent の subprocess に供給する **per-agent 最小 HOME** と
+    # **credential home env** (additive、未設定後方互換)。
+    # - ``minimal_home_dir``: subprocess の ``HOME`` を本 dir へ override する。
+    #   この dir 配下には agent 固有 credential 以外の secret を **同居させない**
+    #   ことで、prompt-injected な ``cat ~/.ssh/id_rsa`` / ``cat ~/.aws/...`` の
+    #   blast radius を最小化する (他 secret が HOME 配下に無い)。
+    # - ``credential_home_env``: agent credential dir を指す ENV var 名 (codex は
+    #   ``CODEX_HOME``)。launcher が ``credential_home_dir`` を本 var へ set する。
+    # - ``credential_home_dir``: agent 自身の credential dir (codex の ``~/.codex``)
+    #   絶対パス。agent 自身の credential 読取は許可、他 secret read は HOME 制限で阻止。
+    # raw secret / token は本 field に書かない (dir path のみ)。
+    minimal_home_dir: str | None = None
+    credential_home_env: str | None = None
+    credential_home_dir: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -154,6 +173,43 @@ class AgentRegistryEntry:
                 f"agent {self.name!r}: credential_supply_mode must be None or one of "
                 f"{sorted(_ALLOWED_CREDENTIAL_SUPPLY_MODES)} "
                 f"(got {self.credential_supply_mode!r})"
+            )
+        # SP-PHASE0 gate C (control 2): per-agent 最小 HOME / credential home の
+        # path field は絶対パス必須 (path containment / symlink reject は launcher
+        # が apply。env name は ENV 規約に沿う識別子)。raw secret 非含 (path のみ)。
+        for field_name, value in (
+            ("minimal_home_dir", self.minimal_home_dir),
+            ("credential_home_dir", self.credential_home_dir),
+        ):
+            if value is not None and not value.startswith("/"):
+                raise ValueError(
+                    f"agent {self.name!r}: {field_name} must be an absolute path "
+                    f"(got {value!r})"
+                )
+        if self.credential_home_env is not None and not _ENV_NAME_RE.fullmatch(
+            self.credential_home_env
+        ):
+            raise ValueError(
+                f"agent {self.name!r}: credential_home_env must be a valid ENV var "
+                f"name [A-Z_][A-Z0-9_]* (got {self.credential_home_env!r})"
+            )
+        # credential_home_env と credential_home_dir はペアで指定する (片方だけは
+        # 設定ミスとして reject、fail-closed)。
+        if (self.credential_home_env is None) != (self.credential_home_dir is None):
+            raise ValueError(
+                f"agent {self.name!r}: credential_home_env と credential_home_dir は "
+                "両方指定するか両方未設定のいずれか (片方のみは設定ミス)"
+            )
+        # credential home env が forbidden secret env 名と衝突しないこと
+        # (defense-in-depth: CODEX_HOME 等の dir-pointer のみ許可、secret-bearing
+        # var を credential home として偽装する経路を塞ぐ)。
+        if (
+            self.credential_home_env is not None
+            and self.credential_home_env in _FORBIDDEN_ENV_NAMES
+        ):
+            raise ValueError(
+                f"agent {self.name!r}: credential_home_env must not be a "
+                f"secret-bearing ENV var ({self.credential_home_env!r})"
             )
         # ENV passthrough から forbidden secret を除外
         leaked = self.env_passthrough & _FORBIDDEN_ENV_NAMES
@@ -229,6 +285,21 @@ def load_cli_agent_registry(path: Path | str) -> CliAgentRegistry:
             credential_supply_mode=(
                 str(raw_agent["credential_supply_mode"])
                 if raw_agent.get("credential_supply_mode") is not None
+                else None
+            ),
+            minimal_home_dir=(
+                str(raw_agent["minimal_home_dir"])
+                if raw_agent.get("minimal_home_dir") is not None
+                else None
+            ),
+            credential_home_env=(
+                str(raw_agent["credential_home_env"])
+                if raw_agent.get("credential_home_env") is not None
+                else None
+            ),
+            credential_home_dir=(
+                str(raw_agent["credential_home_dir"])
+                if raw_agent.get("credential_home_dir") is not None
                 else None
             ),
         )

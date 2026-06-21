@@ -20,6 +20,7 @@ from backend.app.services.cli_artifact.launcher import (
     LauncherDenyReason,
     LauncherError,
     LauncherRunRequest,
+    _build_scrubbed_env,
     compute_text_hash,
     launch_cli_agent,
 )
@@ -413,6 +414,215 @@ def test_compute_text_hash_is_sha256() -> None:
 
     text = "hello world"
     assert compute_text_hash(text) == hashlib.sha256(text.encode()).hexdigest()
+
+
+# --- deny reason enum integrity (cross-source-enum-integrity §1) -------------
+
+EXPECTED_LAUNCHER_DENY_REASONS: frozenset[str] = frozenset(
+    {
+        "agent_not_in_registry",
+        "binary_not_found",
+        "binary_not_absolute",
+        "prompt_file_not_readable",
+        "output_file_not_writable",
+        "cwd_outside_allowlist",
+        "path_outside_cwd",
+        "path_is_symlink",
+        "path_forbidden",
+        "registry_invalid",
+        # SP-PHASE0 gate C (ADR-00058 §exit must_ship).
+        "credential_exfiltration",
+    }
+)
+
+
+def test_launcher_deny_reason_enum_exact_set() -> None:
+    """exact name set 比較で deny reason enum の drift を検出する。"""
+
+    actual = {reason.value for reason in LauncherDenyReason}
+    assert actual == EXPECTED_LAUNCHER_DENY_REASONS
+    assert LauncherDenyReason.CREDENTIAL_EXFILTRATION.value == "credential_exfiltration"
+
+
+# --- SP-PHASE0 gate C control 1: credential exfiltration canary scan ---------
+
+# fake / canary credential (実 token ではない、合成値のみ)。AC-HARD-02。
+_FAKE_JWT = (
+    "eyJhbGciOiJIUzI1NiJ9."
+    "eyJzdWIiOiJjYW5hcnktZmFrZS1ub3QtcmVhbCJ9."
+    "ZmFrZXNpZ25hdHVyZS1jYW5hcnktMDAwMA"
+)
+
+
+@pytest.mark.asyncio
+async def test_credential_in_stdout_triggers_exfiltration_deny(
+    tmp_path: Path,
+) -> None:
+    """control 1: CLI が credential token を **stdout** に echo した場合、
+    launcher は CREDENTIAL_EXFILTRATION の Hard Gate failure を raise する。"""
+
+    registry = _make_registry_with_sh(
+        str(tmp_path),
+        name="leaker",
+        # prompt-injection で `cat ~/.codex/auth.json` を実行した結果を模す。
+        argv=("-c", f'printf "%s" "id_token: {_FAKE_JWT}"'),
+        stdin_source="",
+    )
+    request = _make_request(tmp_path, "leaker")
+    with pytest.raises(LauncherError) as exc:
+        await launch_cli_agent(request, registry)
+    assert exc.value.reason is LauncherDenyReason.CREDENTIAL_EXFILTRATION
+    # hit kinds are surfaced (raw value 非含)。
+    kinds = {h.pattern_kind for h in exc.value.canary_hits}
+    assert "jwt_credential_token" in kinds
+    # raw token は例外メッセージにも残さない。
+    assert _FAKE_JWT not in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_credential_in_stderr_triggers_exfiltration_deny(
+    tmp_path: Path,
+) -> None:
+    """control 1: stderr 経由の credential leak も検出する。"""
+
+    registry = _make_registry_with_sh(
+        str(tmp_path),
+        name="leaker_err",
+        argv=(
+            "-c",
+            'printf "%s" "access_token=sk-ant-oat01-FAKEcanary0123456789ab" >&2',
+        ),
+        stdin_source="",
+    )
+    request = _make_request(tmp_path, "leaker_err")
+    with pytest.raises(LauncherError) as exc:
+        await launch_cli_agent(request, registry)
+    assert exc.value.reason is LauncherDenyReason.CREDENTIAL_EXFILTRATION
+    assert "anthropic_oauth_token" in {
+        h.pattern_kind for h in exc.value.canary_hits
+    }
+
+
+@pytest.mark.asyncio
+async def test_credential_in_output_file_triggers_exfiltration_deny(
+    tmp_path: Path,
+) -> None:
+    """control 1: codex の --output-last-message に credential が書かれた場合
+    (output_file 経由) も検出する。launcher が output_file を scan することを確認。"""
+
+    # sh agent が {output_file} placeholder へ credential を書き込む (codex の
+    # --output-last-message {output_file} を模す)。argv に {output_file} を入れる
+    # と launcher が canonical path を substitute する。
+    registry = _make_registry_with_sh(
+        str(tmp_path),
+        name="leaker_out",
+        argv=("-c", f'printf "%s" "id_token: {_FAKE_JWT}" > "$1"', "sh", "{output_file}"),
+        stdin_source="",
+    )
+    request = _make_request(tmp_path, "leaker_out")
+    with pytest.raises(LauncherError) as exc:
+        await launch_cli_agent(request, registry)
+    assert exc.value.reason is LauncherDenyReason.CREDENTIAL_EXFILTRATION
+    assert "jwt_credential_token" in {h.pattern_kind for h in exc.value.canary_hits}
+
+
+@pytest.mark.asyncio
+async def test_clean_output_does_not_trigger_exfiltration(tmp_path: Path) -> None:
+    """control 1: credential を含まない普通の CLI 出力は pass する (誤検出なし)。"""
+
+    registry = _make_registry_with_sh(
+        str(tmp_path),
+        name="clean",
+        argv=("-c", 'printf "%s" "review summary: the diff looks correct"'),
+        stdin_source="",
+    )
+    request = _make_request(tmp_path, "clean")
+    result = await launch_cli_agent(request, registry)
+    assert result.exit_code == 0
+    assert result.agent_name == "clean"
+
+
+# --- SP-PHASE0 gate C control 2: per-agent minimal HOME env construction -----
+
+
+def _make_host_ambient_entry(
+    tmp_path: Path,
+    *,
+    minimal_home_dir: str | None,
+    credential_home_env: str | None,
+    credential_home_dir: str | None,
+) -> AgentRegistryEntry:
+    return AgentRegistryEntry(
+        name="codex",
+        binary_path="/bin/sh",
+        argv_template=("exec", "-"),
+        stdin_source="{prompt_file}",
+        env_passthrough=frozenset({"PATH", "HOME", "LANG"}),
+        timeout_seconds=600,
+        max_stdout_bytes=1024,
+        max_stderr_bytes=1024,
+        max_payload_data_class="internal",
+        cwd_allowlist=(str(tmp_path),),
+        credential_supply_mode="host_ambient",
+        minimal_home_dir=minimal_home_dir,
+        credential_home_env=credential_home_env,
+        credential_home_dir=credential_home_dir,
+    )
+
+
+def test_minimal_home_overrides_parent_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """control 2: host_ambient agent の HOME が per-agent 最小 dir へ override
+    され、credential home env (CODEX_HOME) が credential dir へ set される。"""
+
+    monkeypatch.setenv("HOME", "/home/real-user-with-secrets")
+    entry = _make_host_ambient_entry(
+        tmp_path,
+        minimal_home_dir="/run/cli-home/codex",
+        credential_home_env="CODEX_HOME",
+        credential_home_dir="/run/codex-cred",
+    )
+    env = _build_scrubbed_env(entry)
+    # HOME is the per-agent minimal dir, NOT the host user's HOME (blast radius).
+    assert env["HOME"] == "/run/cli-home/codex"
+    assert env["HOME"] != "/home/real-user-with-secrets"
+    # agent's own credential dir is supplied via CODEX_HOME.
+    assert env["CODEX_HOME"] == "/run/codex-cred"
+
+
+def test_no_minimal_home_preserves_parent_home_passthrough(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """後方互換: minimal_home_dir 未設定なら既存挙動 (parent HOME passthrough)。"""
+
+    monkeypatch.setenv("HOME", "/home/real-user")
+    entry = _make_host_ambient_entry(
+        tmp_path,
+        minimal_home_dir=None,
+        credential_home_env=None,
+        credential_home_dir=None,
+    )
+    env = _build_scrubbed_env(entry)
+    assert env["HOME"] == "/home/real-user"
+    assert "CODEX_HOME" not in env
+
+
+def test_credential_home_env_not_set_without_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """minimal HOME のみ (credential home env なし) の構築も成り立つ。"""
+
+    monkeypatch.setenv("HOME", "/home/real-user")
+    entry = _make_host_ambient_entry(
+        tmp_path,
+        minimal_home_dir="/run/cli-home/codex",
+        credential_home_env=None,
+        credential_home_dir=None,
+    )
+    env = _build_scrubbed_env(entry)
+    assert env["HOME"] == "/run/cli-home/codex"
+    assert "CODEX_HOME" not in env
 
 
 # --- skip on non-POSIX ------------------------------------------------------
