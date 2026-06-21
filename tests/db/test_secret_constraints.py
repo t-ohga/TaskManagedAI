@@ -1306,20 +1306,24 @@ async def test_gc_converges_for_writing_orphan_with_pinned_marker(
             stable_actor_id="human:tenant-one",
         )
         # store 書込前 crash を模擬: local pending+writing row のみ (material file 無し)。
-        await _insert_secret_ref(
-            session,
-            id=SECRET_REF_ONE_ID,
-            scope="project",
-            name="wo-test",
-            version="v1",
-            status="pending",
-            secret_uri="secret://local/project/wo-test#v1",
-            material_state="writing",
-        )
-        # grace 超過 (writing-orphan tombstone 対象) にするため updated_at を過去化。
+        # updated_at は **INSERT 時に過去化**する (raw INSERT)。secret_refs には BEFORE UPDATE トリガ
+        # secret_refs_set_updated_at (NEW.updated_at = now()) があり、UPDATE 経由の backdate は now() に
+        # 上書きされて grace 超過にならない (gc が writing-orphan を stale 判定できない)。トリガは BEFORE
+        # UPDATE のみで INSERT では発火しないため、INSERT 時に updated_at=now()-1h を直接書けば stale になる。
         await session.execute(
-            text("update secret_refs set updated_at = now() - interval '1 hour' where id = :id"),
-            {"id": SECRET_REF_ONE_ID},
+            text(
+                """
+                insert into secret_refs
+                  (id, tenant_id, secret_uri, scope, name, version, status, runner_injectable,
+                   allowed_consumers, allowed_operations, owner_actor_id, metadata,
+                   material_state, updated_at)
+                values
+                  (:id, 1, 'secret://local/project/wo-test#v1', 'project', 'wo-test', 'v1',
+                   'pending', false, '["api:provider_adapter"]'::jsonb, '["provider.call"]'::jsonb,
+                   :actor, '{"rls_ready": true}'::jsonb, 'writing', now() - interval '1 hour')
+                """
+            ),
+            {"id": SECRET_REF_ONE_ID, "actor": TENANT_ONE_ACTOR_ID},
         )
         await session.commit()
 
