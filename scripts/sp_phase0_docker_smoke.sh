@@ -37,6 +37,25 @@ SMOKE_FRONTEND_PORT="13900"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# compose interpolation 用 env を shell に load する (user 実機検証 2026-06-21 で判明)。
+# compose の `${VAR:?}` interpolation は **shell env or cwd .env** から解決され、`--env-file` (container env_file 用)
+# や `env_file:` directive は interpolation に効かない。そのため bare 実行だと
+# `TASKMANAGEDAI_ENVIRONMENT` / `TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET` 未解決で compose が止まる。
+# .env.local があれば export し (interpolation + 後段 --env-file 両用)、smoke 既定値を補う。
+ENV_FILE="${ENV_FILE:-.env.local}"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+export TASKMANAGEDAI_ENVIRONMENT="${TASKMANAGEDAI_ENVIRONMENT:-development}"
+if [[ -z "${TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET:-}" ]]; then
+  echo "[smoke] ERROR: TASKMANAGEDAI_DEV_LOGIN_COOKIE_SECRET 未設定 (compose interpolation 必須)。" >&2
+  echo "[smoke]   $ENV_FILE に設定するか shell で export してから再実行してください。" >&2
+  exit 2
+fi
+
 # 注意: base compose は loopback bind 127.0.0.1:8000/3900 を固定する。smoke 用 port override は
 # docker-compose.smoke override で行う想定 (本 helper は project 名 + down -v の安全則を主眼とし、
 # port override file が無い環境では base port にフォールバックする = 実運用 stack を起動していない時のみ実行)。
@@ -45,9 +64,12 @@ SMOKE_OVERRIDE="docker-compose.smoke.yml"
 if [[ -f "$SMOKE_OVERRIDE" ]]; then
   COMPOSE_FILES+=(-f "$SMOKE_OVERRIDE")
 fi
+# container env_file 用に --env-file も渡す (.env.local があれば)。interpolation は上記 shell export で解決済。
+COMPOSE_ENV_FILE_ARGS=()
+[[ -f "$ENV_FILE" ]] && COMPOSE_ENV_FILE_ARGS=(--env-file "$ENV_FILE")
 
 _compose() {
-  docker compose -p "$PROJECT" "${COMPOSE_FILES[@]}" "$@"
+  docker compose "${COMPOSE_ENV_FILE_ARGS[@]}" -p "$PROJECT" "${COMPOSE_FILES[@]}" "$@"
 }
 
 _up() {
