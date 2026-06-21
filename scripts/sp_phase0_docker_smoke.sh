@@ -15,6 +15,12 @@
 #     override を別途用意した場合のみ実現する。**本 helper はその override を同梱しておらず、未配置時は
 #     base compose の port (8000/3900/5432/6379) にフォールバックする**。したがって override が無い環境では
 #     **実運用 stack (`taskmanagedai`) を停止してから実行**すること (port 衝突回避。volume は上記の通り常時保護)。
+#   - **bind-mount 非隔離 (要注意、Codex PR #354 F2)**: base compose は api/worker に
+#     `./data/artifacts:/app/data/artifacts` の **host bind mount** を持つ。throwaway project 名 + `down -v` は
+#     **named volume のみ**隔離し、**host bind mount (`./data/artifacts`) は隔離しない** → smoke 実行中の
+#     artifact 書込が実 repo の `./data/artifacts` に残留する。回避するには (a) **throwaway な checkout / 別 dir**
+#     で本 helper を実行する、または (b) `docker-compose.smoke.yml` override で artifact path を temp dir へ
+#     差し替える。実運用 checkout で実行する場合は teardown 後に `./data/artifacts` の smoke 生成物を手動確認/削除。
 #
 # 前提: Docker Desktop running、compose v2、.env.local 等の dev credential が用意済 (SOP §0.1)。
 # 使い方:  bash scripts/sp_phase0_docker_smoke.sh up      # 起動 + /healthz green まで待つ
