@@ -66,7 +66,11 @@ from backend.app.db.models.agent_run_event import AgentRunEvent
 from backend.app.db.models.artifact import Artifact
 from backend.app.db.models.context_snapshot import ContextSnapshot
 from backend.app.domain.agent_runtime.event_type import AgentRunEventType
-from backend.app.domain.agent_runtime.status import AgentRunStatus, BlockedReason
+from backend.app.domain.agent_runtime.status import (
+    TERMINAL_STATES,
+    AgentRunStatus,
+    BlockedReason,
+)
 from backend.app.domain.provider.adapter import ProviderAdapter
 from backend.app.domain.provider.compliance import ComplianceDecision
 from backend.app.domain.provider.request import ProviderRequest
@@ -95,6 +99,9 @@ ProviderStepOutcome = Literal[
     "blocked_budget",
     "blocked_runtime",
     "failed_timeout",
+    # SP-PHASE1 B5c (ADR-00048 §G/A-4): provider response 後の generation CAS で latch engage を検出し
+    # usage/artifact/status を進めず discard/quarantine した。runtime_blocked (emergency_stop) で表現。
+    "discarded_emergency_stop",
 ]
 
 ValidationStepOutcome = Literal[
@@ -224,6 +231,33 @@ class AgentRunOrchestrator:
 
         _assert_run_request_boundary(run, request)
 
+        # SP-PHASE1 B5c (ADR-00048 §G/A-4): emergency-stop latch CAS の preflight。Codex adversarial
+        # P1-2/3/5 で active-only generation 比較の 3 つの穴が判明したため、monotonic generation
+        # history (``max_generation_ever``) + preflight-active-fail に再設計する:
+        #   - P1-2: latch が **既に active** な状態で step 開始すると、active-only 比較では preflight も
+        #     postflight も同 active generation → discard されず provider.execute + usage/status が進行。
+        #     → provider.execute の **前** に active なら即 deny する (新規 provider call をさせない)。
+        #   - P1-3: preflight 後・provider.execute 前に engage → call は launch 済 → postflight で MAX が
+        #     bump (G1 > G0) → discard。
+        #   - P1-5: call 中に engage→clear が起きると active は preflight/postflight 共 None (active-only
+        #     比較は等価で通してしまう穴) だが、cleared 行も MAX に残るため G1 > G0 → discard。
+        #
+        # (a) P1-2: latch が既に active なら provider.execute の **前** に EmergencyStopEngagedError を
+        #     raise し、新規 provider call をさせない (latch 既 active での新規課金を構造的に防ぐ)。lock は
+        #     ここでは取らない (call を通して保持せず engage を高速に保つ、A-4)。同期 in-flight call の中断
+        #     不能性は A-4 honest limit として維持する。
+        if await _read_emergency_stop_generation(self._session, run.tenant_id) is not None:
+            from backend.app.services.superintendent.emergency_stop import (
+                EmergencyStopEngagedError,
+            )
+
+            raise EmergencyStopEngagedError(run.tenant_id)
+        # (b) P1-3/P1-5: monotonic MAX(generation) を snapshot (G0)。provider response 後に再読 (G1) し
+        #     G1 > G0 (call window 中に engage が 1 回でも起きた) なら discard する。
+        preflight_max_generation = await _read_max_emergency_stop_generation(
+            self._session, run.tenant_id
+        )
+
         # SP-029 (ADR-00055 §5、Codex R4 F-2): shadow run は provider 課金前に kill switch +
         # 既存累計 cap を preflight する。usage=None の合法レスポンスでも緊急停止を効かせ、
         # 既に cap 到達済みの shadow run の次 call を課金前に block する (post-execution の
@@ -304,6 +338,82 @@ class AgentRunOrchestrator:
 
         provider_result = self._provider.execute(request)
         target = _resolve_provider_transition_target(provider_result)
+
+        # SP-PHASE1 B5c (ADR-00048 §G/A-4): provider response 後、record_provider_usage / artifact /
+        # status の **前** に latch generation CAS。同一 tenant advisory lock 下で latch state を再読し、
+        # 次のいずれかなら result を discard/quarantine して usage 記録・artifact 永続化・status 進行を
+        # 行わない (runtime_blocked へ confine):
+        #   - **currently active** (postflight で active latch あり) = call 中 or 直後に engage 済。
+        #   - **G1 > G0** (monotonic MAX(generation) が call window 中に増加) = call window 中に engage が
+        #     1 回でも起きた。engage→clear cycle (P1-5、active は両端 None) も MAX bump で捕捉する。
+        # postflight は blocking advisory lock を取らない: monotonic MAX(generation) read が call window 中の
+        # engage を検出でき (lock 不要)、discard transition の double-block は下の graceful re-read (LOW-4) が
+        # 処理する。postflight で lock を保持すると、並行 engage (同一 key の advisory lock を取る) が postflight
+        # transaction の commit まで block され、最悪 deadlock する (engage を高速に保つ A-4 方針にも反する)。
+        postflight_active_generation = await _read_emergency_stop_generation(
+            self._session, run.tenant_id
+        )
+        postflight_max_generation = await _read_max_emergency_stop_generation(
+            self._session, run.tenant_id
+        )
+        # None-safe 比較: max_generation_ever は latch 履歴皆無なら None を返す。None を -1 (実 generation は
+        # 非負なので最小) に正規化し、None>None / None>G の TypeError を避けつつ「call window 中に MAX が
+        # 増加したか」を正しく判定する (None→G = 履歴皆無から engage = -1<G で discard、None→None = 変化なし)。
+        _pre_max = preflight_max_generation if preflight_max_generation is not None else -1
+        _post_max = (
+            postflight_max_generation if postflight_max_generation is not None else -1
+        )
+        if postflight_active_generation is not None or _post_max > _pre_max:
+            # adversarial LOW-4: concurrent engage が既に本 run を blocked へ遷移済の場合、status-guarded
+            # transition (status == from_state) は 0-row → ValueError になる。これは「engage が先に block 済」
+            # = 本来の意図 (=新規進行を止める) が既に達成された benign な状態なので、ungraceful ValueError を
+            # surface させず discard 扱いで graceful return する (二重 block を試みない)。advisory lock 保持下
+            # で DB status を再確認し、active latch 由来の block (blocked/terminal = もはや進行しない) なら
+            # benign、それ以外 (依然 running 等) の予期せぬ 0-row は本物の不整合として re-raise する。
+            try:
+                event = await transition_with_event(
+                    self._session,
+                    run=run,
+                    to_state="blocked",
+                    event_type="runtime_blocked",
+                    payload={
+                        "reason_code": "emergency_stop_engaged",
+                        "provider": request.provider,
+                        "api_or_feature": request.api_or_feature,
+                        "provider_result_kind": provider_result.status,
+                        "preflight_max_generation": preflight_max_generation,
+                        "postflight_max_generation": postflight_max_generation,
+                        "postflight_active_generation": postflight_active_generation,
+                    },
+                    actor_id=actor_id,
+                    blocked_reason="runtime_blocked",
+                    idempotency_key=idempotency_key,
+                )
+            except ValueError:
+                # held lock 下で current DB status を再読 (concurrent engage が block 済か確認)。
+                await self._session.refresh(run)
+                if run.status == "blocked" or run.status in TERMINAL_STATES:
+                    # engage が先に block (or 既に terminal) = 新規進行は止まっており benign。新規 event は
+                    # 積まず (engage 側が emergency_stop event を残す)、usage/artifact/status を進めず discard。
+                    return ProviderStepResult(
+                        outcome="discarded_emergency_stop",
+                        to_state=run.status,
+                        event_type="runtime_blocked",
+                        event=None,
+                        provider_result=provider_result,
+                        compliance_decision=decision,
+                        blocked_reason=run.blocked_reason,
+                    )
+                raise  # 依然 running 等の予期せぬ 0-row は本物の不整合として surface。
+            return ProviderStepResult(
+                outcome="discarded_emergency_stop",
+                to_state="blocked",
+                event_type="runtime_blocked",
+                event=event,
+                provider_result=provider_result,
+                compliance_decision=decision,
+                blocked_reason="runtime_blocked",
+            )
 
         # SP-029 (Codex R7/R9/R13/R14 F-1): shadow run で provider.execute が返った (= 課金可能)
         # のに usage が **検証不能** だと cost/token を正しく計上できず cap を enforce できない。
@@ -698,6 +808,50 @@ def _blocked_budget_result() -> ProviderStepResult:
         compliance_decision=None,
         blocked_reason="budget_blocked",
     )
+
+
+async def _read_emergency_stop_generation(
+    session: AsyncSession, tenant_id: int
+) -> int | None:
+    """active emergency-stop latch の generation を読む (B5c CAS、ADR-00048 §G/A-4)。
+
+    active latch が無ければ ``None``、あれば monotonic generation (bigint) を返す。preflight 時点と
+    provider response 後で本値を比較し、不一致 (None→gen / gen→gen' / gen→None ではない engage) なら
+    engage が割り込んだと判定する。lazy import で循環を避ける (module-level 関数のため test が
+    ``orchestrator._read_emergency_stop_generation`` を monkeypatch できる)。
+    """
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopService
+
+    latch = await EmergencyStopService(session).get_active(tenant_id)
+    return latch.generation if latch is not None else None
+
+
+async def _read_max_emergency_stop_generation(
+    session: AsyncSession, tenant_id: int
+) -> int:
+    """全 latch 行 (cleared 含む) の monotonic MAX(generation) を読む (B5c P1-2/3/5、ADR-00048 §G/A-4)。
+
+    engage 毎に +1、clear で減らない単調非減少値。provider call window の前後で本値を比較し、増加して
+    いれば call window 中に engage が **1 回でも** 起きたと判定する (active-only 比較が見逃す
+    engage→clear cycle (P1-5) や preflight-active 後の race を捕捉)。module-level 関数のため test が
+    ``orchestrator._read_max_emergency_stop_generation`` を monkeypatch できる (lazy import で循環回避)。
+    """
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopService
+
+    return await EmergencyStopService(session).max_generation_ever(tenant_id)
+
+
+async def _acquire_emergency_stop_lock(session: AsyncSession, tenant_id: int) -> None:
+    """B5c CAS の tenant-scoped advisory lock 取得 (transaction-scoped、emergency_stop service と共有)。
+
+    module-level wrapper のため test が ``orchestrator._acquire_emergency_stop_lock`` を monkeypatch
+    できる (本体は emergency_stop の ``acquire_emergency_stop_lock`` へ委譲、lazy import で循環回避)。
+    """
+    from backend.app.services.superintendent.emergency_stop import (
+        acquire_emergency_stop_lock,
+    )
+
+    await acquire_emergency_stop_lock(session, tenant_id)
 
 
 def _assert_run_request_boundary(run: AgentRun, request: ProviderRequest) -> None:

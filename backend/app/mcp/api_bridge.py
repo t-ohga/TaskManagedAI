@@ -39,6 +39,97 @@ from backend.app.services.security.secret_text_scan import assert_no_secret_in_t
 
 MAX_LIMIT = 200
 
+# --------------------------------------------------------------------------- #
+# SP-PHASE1 B5b: MCP mutating bridge emergency-stop latch gate (ADR-00048 §B-2)
+# --------------------------------------------------------------------------- #
+#
+# emergency-stop latch engaged 中、新規 AI 活動 (run create / advance / approval /
+# delegation / ticket comment 等) を **fail-closed deny** する。kill 経路自体 (read /
+# status / list / run_cancel / agent_stop) は engaged 中も allow する (kill を塞がない)。
+#
+# centralize: 個別 tool に latch check を散らさず、各 mutating bridge の冒頭で唯一の gate
+# ``assert_bridge_not_emergency_stopped`` (共有 helper ``assert_not_emergency_stopped`` へ委譲)
+# を呼ぶ。網羅 negative test は本 registry (deny-list / allow-list) を正本にする。
+#
+# **deny-list (engaged 中 deny、emergency_stop_engaged)**: 既存 run を進行・完了・承認 event
+# 追加する mutating tool。kill し損ねた agent / stale client / 再接続 client が engaged 中に
+# 作業を進めるのを防ぐ (B-2 work-advance bypass 防止)。
+MCP_MUTATING_BRIDGE_DENY_LIST: frozenset[str] = frozenset(
+    {
+        "bridge_ticket_create",
+        "bridge_ticket_update",
+        "bridge_ticket_comment",
+        "bridge_ticket_link",
+        "bridge_run_create",
+        "bridge_run_update",
+        "bridge_approval_request_create",
+        "bridge_delegation_create",
+        "bridge_delegation_accept",
+        "bridge_delegation_submit",
+        "bridge_delegation_review",
+        "bridge_notification_resolve",
+        # adversarial HIGH-1 (§B-2): run.cost_usd/tokens を書いて commit する mutating tool。
+        # allow-list の read/status/kill とは異なり、engaged 中に stale/再接続 client が既存 AgentRun の
+        # cost/KPI attribution を進められると §B-2 が防ぐ work-advance bypass になる (run_cancel/delegation
+        # _cancel は kill-aligned で defensible だが、run_cost は kill 根拠を持たない mutating write)。
+        "bridge_run_cost",
+    }
+)
+# **allow-list (engaged 中も通す)**: read-only / status / list / kill 経路。
+# kill switch 自体 (run_cancel / agent_stop) と可視化 (read/list/status) は engaged 中も使えること。
+MCP_BRIDGE_ALLOW_LIST: frozenset[str] = frozenset(
+    {
+        "bridge_ticket_list",
+        "bridge_ticket_show",
+        "bridge_ticket_list_all",
+        "bridge_ticket_search",
+        "bridge_run_show",
+        "bridge_run_list",
+        "bridge_run_cancel",  # kill 経路: engaged 中も停止できる。
+        "bridge_audit_list",
+        "bridge_approval_list",
+        "bridge_approval_show",
+        "bridge_notification_list",
+        "bridge_project_list",
+        "bridge_context_auto",
+        "bridge_delegation_inbox",
+        "bridge_delegation_tree",
+        "bridge_delegation_cancel",  # 取り下げ (進行ではない、kill 整合)。
+        "bridge_workflow_status",
+    }
+)
+
+
+async def assert_bridge_not_emergency_stopped(
+    session: AsyncSession, tenant_id: int
+) -> None:
+    """MCP mutating bridge 共有 latch gate (B5b、ADR-00048 §B-2/A-9)。
+
+    **P1-1 (Codex adversarial、TOCTOU 解消)**: read-only な latch check だけでは
+    「latch を読んでから bridge が AgentRun insert/commit するまでの窓」に engage+commit が割り込み、
+    **engage 後の新規 work を作成**してしまう (spawn が A-1/P1-2 で解消したのと同型の TOCTOU)。
+    よって本 gate は latch check の **前** に spawn / engage / clear と **同一 helper・同一 advisory lock
+    key** (``superintendent-emergency-stop:<tenant>``) の ``acquire_emergency_stop_lock`` を取得する。
+    lock は transaction-scoped (``pg_advisory_xact_lock``) のため、**caller (各 deny-list bridge) の
+    mutation + ``session.commit()`` まで同一 transaction で保持される**。これで engage は bridge の
+    commit まで待たされ、bridge は engage 完了後の latch を必ず観測して deny する (= lock 外で bridge が
+    新規 work を確定する窓が無い。spawn A-1 §3 と同じ線形化保証)。bridge mutation は高速 DB op なので
+    lock 保持中の engage 遅延は許容範囲。
+
+    順序: advisory lock 取得 → latch check (engaged なら ``EmergencyStopEngagedError``) → caller の
+    mutation + commit (commit で lock 解放)。共有 helper ``emergency_stop.assert_not_emergency_stopped``
+    (fail-closed、latch query 失敗も deny) へ委譲する。各 deny-list bridge の冒頭で本 gate を呼び、
+    allow-list bridge は呼ばない (read / kill 経路)。
+    """
+    from backend.app.services.superintendent.emergency_stop import (
+        acquire_emergency_stop_lock,
+        assert_not_emergency_stopped,
+    )
+
+    # P1-1: latch check の前に advisory lock を取得し caller commit まで保持する (TOCTOU 解消)。
+    await acquire_emergency_stop_lock(session, tenant_id)
+    await assert_not_emergency_stopped(session, tenant_id)
+
 
 def _clamp(limit: int, offset: int) -> tuple[int, int]:
     return min(max(1, limit), MAX_LIMIT), max(0, offset)
@@ -157,10 +248,15 @@ async def bridge_ticket_create(
     if idempotency_key is not None and not idempotency_key.strip():
         idempotency_key = None
     # ADR-00049 App F-P3: 巨大 key は unique index の row-size error を誘発するため上限を bridge で拒否。
+    # pure 入力検証 (DB access 前) なので latch gate より前。
     if idempotency_key is not None and len(idempotency_key) > MAX_IDEMPOTENCY_KEY_LENGTH:
         raise ValueError(
             f"idempotency_key exceeds maximum length ({MAX_IDEMPOTENCY_KEY_LENGTH})."
         )
+
+    # B5b: mutating bridge latch gate (engaged 中 deny、fail-closed)。pure 入力検証の後・DB side effect
+    # の前に置く。
+    await assert_bridge_not_emergency_stopped(session, tenant_id)
 
     repo = TicketRepository(session)
 
@@ -267,6 +363,8 @@ async def bridge_ticket_update(
     ticket_id: UUID,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
+    # B5b: mutating bridge latch gate (engaged 中 deny、fail-closed)。
+    await assert_bridge_not_emergency_stopped(session, tenant_id)
     repo = TicketRepository(session)
     ticket = await repo.update_in_project(
         tenant_id=tenant_id,
@@ -441,9 +539,16 @@ async def bridge_run_create(
     ``run_create`` (commit=True) からのみ使われ、``commit=False`` (delegation chain) では非対応
     (delegation は idempotency_key を渡さない)。delegation/dispatch の commit=False 経路は本変更で一切
     変わらない。
+
+    **B5b/P1-3 (ADR-00048 §B-2)**: run/delegation/dispatch の **唯一の AgentRun 作成 chokepoint**。
+    冒頭で emergency-stop latch gate を通すことで、bridge_run_create / superintendent_dispatch の run 作成 /
+    bridge_delegation_create の child run 作成すべてを engaged 中 deny する (B3 P1-3 fail-open を閉じる)。
     """
     from backend.app.db.models.agent_run_event import AgentRunEvent
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
+
+    # B5b/P1-3: AgentRun 作成 chokepoint の latch gate (engaged 中 deny、fail-closed)。
+    await assert_bridge_not_emergency_stopped(session, tenant_id)
 
     resolved_actor_id = actor_id if actor_id is not None else DEFAULT_SUPERINTENDENT_ACTOR_ID
 
@@ -725,6 +830,8 @@ async def bridge_notification_resolve(
     notification_id: UUID,
     actor_id: UUID | None = None,
 ) -> dict[str, Any]:
+    # B5b: mutating bridge latch gate (engaged 中 deny、fail-closed)。
+    await assert_bridge_not_emergency_stopped(session, tenant_id)
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
     from backend.app.repositories.notification_event import NotificationEventRepository
 
@@ -930,6 +1037,8 @@ async def bridge_ticket_comment(
     message: str,
     actor_id: UUID,
 ) -> dict[str, Any]:
+    # B5b: mutating bridge latch gate (engaged 中 deny、fail-closed)。
+    await assert_bridge_not_emergency_stopped(session, tenant_id)
     from backend.app.services.notifications.ticket_comment import (
         create_ticket_comment_event,
     )
@@ -968,6 +1077,8 @@ async def bridge_ticket_link(
     target_ticket_id: UUID,
     relation_type: str,
 ) -> dict[str, Any]:
+    # B5b: mutating bridge latch gate (engaged 中 deny、fail-closed)。
+    await assert_bridge_not_emergency_stopped(session, tenant_id)
     from backend.app.repositories.ticket_relation import TicketRelationRepository
 
     repo = TicketRelationRepository(session)
@@ -1057,6 +1168,8 @@ async def bridge_run_update(
     status: str,
     summary: str = "",
 ) -> dict[str, Any]:
+    # B5b: mutating bridge latch gate (engaged 中の run 進行/完了 event 追加を deny、fail-closed)。
+    await assert_bridge_not_emergency_stopped(session, tenant_id)
     from backend.app.db.models.agent_run_event import AgentRunEvent
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
 
@@ -1152,6 +1265,8 @@ async def bridge_approval_request_create(
     action_class: str,
     requester_actor_id: UUID,
 ) -> dict[str, Any]:
+    # B5b: mutating bridge latch gate (engaged 中 deny、fail-closed)。
+    await assert_bridge_not_emergency_stopped(session, tenant_id)
     from backend.app.repositories.approval_request import ApprovalRequestRepository
 
     # Q-3/Q-4 (ADR-00037 / Codex adversarial R3): 削除済 ticket / archived project への承認要求を拒否
@@ -1196,11 +1311,17 @@ async def bridge_delegation_create(
 
     # Codex R12 F-19: free-form な task_spec に prohibited key / secret 値が入ると DB と MCP response
     # (raw echo) に raw secret が漏れる。store / echo 前に fail-closed で reject する (generic error、
-    # raw value は返さない)。
+    # raw value は返さない)。secret scan は **DB access 前** の pure 入力検証なので latch gate より前に
+    # 置く (raw secret を DB へ到達させない別 invariant を保つ)。
     try:
         _assert_freeform_payload_no_secret(task_spec, path="task_spec")
     except ValueError:
         return {"error": "task_spec_contains_secret"}
+
+    # B5b: mutating bridge latch gate (engaged 中 deny、fail-closed)。pure 入力検証の後・DB side effect
+    # (message INSERT / child run 作成) の前に置く。child run 作成 (bridge_run_create commit=False) も
+    # 内部で gate されるが、bridge 境界で先に deny する。
+    await assert_bridge_not_emergency_stopped(session, tenant_id)
 
     # ADR-00037 R16/R17 (Codex adversarial): parent_run_id の run 自体の actionable 検証は chokepoint の
     # bridge_run_create に集約済 (削除済/不在 parent は TicketNotActionableError を raise)。delegation
@@ -1351,6 +1472,8 @@ async def bridge_delegation_accept(
     run_id: UUID,
     message_id: UUID,
 ) -> dict[str, Any]:
+    # B5b/P1-3: mutating bridge latch gate (engaged 中の delegation advance を deny、fail-closed)。
+    await assert_bridge_not_emergency_stopped(session, tenant_id)
     result = await session.execute(
         select(AgentRun).where(AgentRun.tenant_id == tenant_id, AgentRun.id == run_id)
     )
@@ -1421,6 +1544,8 @@ async def bridge_delegation_submit(
     result_spec: dict[str, Any],
     actor_id: UUID,
 ) -> dict[str, Any]:
+    # B5b: mutating bridge latch gate (engaged 中の work-result 提出を deny、fail-closed)。
+    await assert_bridge_not_emergency_stopped(session, tenant_id)
     import hashlib
     import json as json_mod
     from datetime import UTC, datetime, timedelta
@@ -1529,6 +1654,8 @@ async def bridge_delegation_review(
     quality_score: float,
     findings: str = "",
 ) -> dict[str, Any]:
+    # B5b: mutating bridge latch gate (engaged 中の review/adopt/reject を deny、fail-closed)。
+    await assert_bridge_not_emergency_stopped(session, tenant_id)
     valid_decisions = {"adopt", "reject"}
     if decision not in valid_decisions:
         return {"error": "invalid_decision", "valid": sorted(valid_decisions)}
@@ -1801,6 +1928,11 @@ async def bridge_run_cost(
     # shadow run への run_cost 手動補正は fail-closed で拒否する。
     if run.run_mode == "shadow":
         return {"error": "shadow_run_cost_immutable", "run_id": str(run_id)}
+
+    # adversarial HIGH-1 / B5b (§B-2): mutating bridge latch gate (engaged 中の cost/KPI 進行を deny、
+    # fail-closed)。not_found / _assert_run_ticket_actionable / shadow-immutable の pure check の後・
+    # run.cost_usd write/commit の前に置く (bridge_run_update と同 pattern)。
+    await assert_bridge_not_emergency_stopped(session, tenant_id)
 
     run.cost_usd = Decimal(str(cost_usd))  # float param → Decimal 列 (str 経由で precision-safe 変換)
     run.tokens_input = tokens_input

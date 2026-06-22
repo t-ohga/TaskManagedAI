@@ -50,10 +50,14 @@ def default_host_id() -> str:
 async def _assert_not_emergency_stopped(
     tenant_id: int, session: AsyncSession | None = None
 ) -> None:
-    """emergency-stop latch の fail-closed check (SP-PHASE1 B3、ADR-00048 §B/A-1)。
+    """spawn 経路の emergency-stop latch fail-closed check (SP-PHASE1 B3、ADR-00048 §B/A-1)。
 
     spawn 冒頭で呼ばれ、当該 tenant の emergency-stop latch が engaged なら
     ``EmergencyStopEngagedError`` を raise して spawn を abort する (latch 設定後の新規活動 deny)。
+
+    **B5a (重複定義排除)**: latch check 本体は **共有 helper ``emergency_stop.assert_not_emergency_stopped``**
+    に統一し、本関数はそれへ委譲する thin wrapper (spawn 専用の session-None 許容 = legacy spawn 後方互換)。
+    全 choke point (B5b MCP bridge / B5a register / autonomy / worker driver claim) が同一 helper を使う。
 
     A-1 ordering: 本 check は ``spawn_agent_managed`` の advisory lock + 同一 transaction 内で
     register_spawning より前に呼ばれるため、engage との race は同 advisory lock
@@ -62,18 +66,15 @@ async def _assert_not_emergency_stopped(
 
     ``session`` は spawn 経路から渡される (DB latch query 用)。後方互換のため ``None`` 許容
     (session が無ければ latch を確認できないため no-op = legacy spawn 経路。managed 経路は必ず渡す)。
-    本 helper は B5 の他 choke point からも共有利用できる。
     """
     if session is None:
         return None
     # 遅延 import (service が本 module を import しないため循環なしだが、起動順依存を避ける)。
     from backend.app.services.superintendent.emergency_stop import (
-        EmergencyStopEngagedError,
-        EmergencyStopService,
+        assert_not_emergency_stopped,
     )
 
-    if await EmergencyStopService(session).is_engaged(tenant_id):
-        raise EmergencyStopEngagedError(tenant_id)
+    await assert_not_emergency_stopped(session, tenant_id)
     return None
 
 
@@ -262,42 +263,22 @@ async def spawn_agent(
     provider: AgentProvider,
     project_dir: str,
 ) -> SpawnedAgent:
-    """**DEPRECATED (B4 で MCP caller 移行済)**: legacy process-only spawn (cross-process registry なし)。
+    """**REMOVED / fail-closed (B5 adversarial LOW-2)**: 常に ``RuntimeError`` を raise する。
 
-    DB-backed registry / latch ordering は ``spawn_agent_managed`` (A-1) を使う。**B4 で MCP
-    ``superintendent_agent_start`` は ``spawn_agent_managed`` へ移行済 (P1-1 fail-open 解消)**。本関数は
-    cross-process kill の正本にならず、emergency-stop latch を確認しないため **新規 caller は使わない**
-    こと。subprocess plumbing test 互換のため残置 (``_start_subprocess`` を共有)。
+    legacy process-only spawn (cross-process registry なし・emergency-stop latch 非 check) は B4 で全
+    production caller が ``spawn_agent_managed`` (A-1) へ移行済 (MCP ``superintendent_agent_start``)。
+    本関数を残置すると **session-less = latch 非 check の fail-open 経路**が temptation として残るため、
+    B5 で **fail-closed 化** (呼ばれたら即 raise) し「新規 caller が誤って latch 非 check spawn を使う」
+    経路を物理的に塞ぐ。subprocess plumbing 自体の test は ``_start_subprocess`` を直接対象にする。
 
-    **Codex P1-1 fail-open (honest limit、B4/B5 で閉じる)**: 本 legacy path は **session を持たず
-    emergency-stop latch を確認できない** ため、engage 後でも本経路 (MCP ``superintendent_agent_start``)
-    から新 process が起動し得る (fail-open)。これは ADR-00048 §B/A-9 の B3 coverage 外であり、
-    **B4 (MCP→``spawn_agent_managed`` 移行) + B5 (MCP mutating bridge latch gate)** で閉じる。それまで
-    kill switch の新規活動 deny coverage は ``spawn_agent_managed`` 経路 + block-source run のみ。
-    本 fix では behavior は変えず (sessionless 即 deny は MCP agent_start を無条件に壊し B3 scope 外)、
-    bypass を観測可能にする WARN を残し ADR/Sprint Pack 残リスクに honest 明記する。
+    Raises:
+        RuntimeError: 常に。代わりに ``spawn_agent_managed`` (latch-checked, A-1) を使うこと。
     """
-    logger.warning(
-        "agent_spawn_legacy_path_bypasses_emergency_stop_latch",
-        extra={
-            "agent_id": str(agent_id),
-            "provider": provider,
-            "note": (
-                "legacy spawn_agent has no DB session; emergency-stop latch not checked "
-                "(fail-open). Closed by B4 (managed spawn) + B5 (MCP bridge latch gate)."
-            ),
-        },
+    raise RuntimeError(
+        "spawn_agent is deprecated and disabled (B5, ADR-00048 §A-9): it has no DB session "
+        "so the emergency-stop latch cannot be checked (fail-open). Use spawn_agent_managed "
+        "(latch-checked, A-1 ordering) instead."
     )
-    proc = await _start_subprocess(provider, project_dir)
-    agent = SpawnedAgent(
-        agent_id=agent_id,
-        provider=provider,
-        process=proc,
-        pid=proc.pid,
-        started_at=datetime.now(UTC),
-    )
-    _active_agents[agent_id] = agent
-    return agent
 
 
 async def spawn_agent_managed(

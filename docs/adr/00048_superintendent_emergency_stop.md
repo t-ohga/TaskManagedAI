@@ -347,6 +347,13 @@ supervisor は kill 時 **state∈{spawning, running}** を全対象。managed_a
 - `provider_request_preflight(ProviderRequest)` は tenant/session/latch generation を持たないため **CAS を preflight に置かない**。CAS は **provider response 後、`record_provider_usage` / artifact / status / event append の前**に、driver/orchestrator の transaction 境界 (`execute_provider_step`) で実行: 同一 tenant advisory lock 下で latch generation CAS + status check → mismatch なら usage/artifact/status を **discard/quarantine**。
 - **honest limit (Codex PR #358 adopt、修正)**: 同期 `provider.execute` は engage で中断不能。CAS は engage 後の usage 記録 / artifact 永続化 / status 進行を防ぐが、**engage 時点で既に in-flight な provider call の provider 側課金確定は防げない**。複数 agent/worker が同時に preflight 済みで execute 中なら **その全 in-flight call 分のコストが発生し得る** (1 call ではない。tenant-wide single-flight 制約は本 Sprint scope 外)。新規 provider call は同期 latch check で deny されるため、被害は **engage 時点で既に execute 中の全 call** に限定 (engage 後に新たに開始される call は無い)。本限界を §残リスクに明記。コスト上限を厳密化するなら tenant-wide provider single-flight lease を将来 must-ship 化 (Phase 2+ defer)。
 
+- **A-4 補強 (B5 adversarial P1-2/3/5、monotonic generation history + preflight-active-fail)**: B5 実装時の active-only generation 等価比較 (preflight `get_active().generation` vs postflight `get_active().generation`) には **3 つの穴**が判明した。これを **monotonic generation history (`max_generation_ever`) + preflight-active-fail** に再設計する:
+  - **P1-2 (latch 既 active で step 開始)**: latch が既に active な状態で step に入ると preflight も postflight も同 active generation = 等価で通り、provider.execute + usage/status が進行してしまう。→ **provider.execute の前に latch が currently active なら `EmergencyStopEngagedError` を raise** し、新規 provider call をさせない (latch 既 active での新規課金を構造的に防ぐ)。
+  - **P1-3 (preflight 後・execute 前に engage)**: call は launch 済のため active-only postflight では捉えられる場合もあるが、`max_generation_ever` の `G1 > G0` で確実に discard する。
+  - **P1-5 (call 中に engage→clear)**: active latch は preflight/postflight 共 `None` になり active-only 等価比較は**通してしまう穴**。`max_generation_ever` は cleared 行も MAX に残り engage で +1 されるため `G1 > G0` で discard できる。
+  - 配置: (preflight) ① latch currently active なら provider.execute 前に deny (P1-2)、② `G0 = max_generation_ever(tenant)` を記録。(provider.execute、lock 非保持で engage を高速に保つ)。(postflight) 同一 tenant advisory lock 下で ③ currently active なら、または ④ `G1 = max_generation_ever(tenant) > G0` なら → **discard** (`discarded_emergency_stop`、usage/artifact/status を進めず `runtime_blocked` へ confine)。else 通常記録。
+  - lock は **call を通して保持しない** (postflight でのみ取得) ため engage は高速のまま (A-4 の趣旨を維持)。`max_generation_ever` は当該 tenant の全 latch 行 (cleared 含む) の `MAX(generation)` query (engage 毎に +1 の monotonic、clear で減らない)。同期 in-flight call 自体の中断不能性 (上記 honest limit) は維持しつつ、**結果の commit を防ぐ + latch 既 active なら call させない**。
+
 ### A-5. (H) state machine 改訂の具体化 (R4-HIGH-4 / MEDIUM-15/17)
 
 - emergency block source = `running`/`policy_linted`/`diff_ready`/`waiting_approval` → `blocked` (blocked_reason=`runtime_blocked`)。これらの (from, blocked) edge を `ALLOWED_TRANSITIONS` + `EVENT_TYPE_FOR_TRANSITION` に **具体的 (from→to, event_type)** で追加 (曖昧な「or 再評価」を残さない)。`runtime_blocked` event を使う (新 event_type を増やさない)。
@@ -370,6 +377,14 @@ emergency-stop latch と既存 budget `global_kill_switch` (policy engine 配線
 ### A-9. worker driver atomic claim point は interface contract (R4-CRITICAL-2 / HIGH-6)
 
 **SP-004-5 worker driver (ADR-00057) は未マージ** (workers は noop_task のみ、AgentRun claim point は実コードに存在しない)。よって SP-PHASE1 は claim point に latch を「貫通」できない。→ SP-PHASE1 は **claim point latch check を interface contract として予約**: (1) `assert_not_emergency_stopped(tenant_id)` 等の共有 latch-check helper を提供、(2) 「worker driver の atomic claim point (queued→gathering_context) は claim 確定 transaction 内で本 helper を呼ぶ」ことを **契約 (ADR + contract test)** として固定。Phase 2 (SP-004-5/ADR-00057) の driver 実装時にこの契約を honor する。SP-PHASE1 の exit「claim→provider 窓なし」は **stub driver / contract test で claim point が latch を見ることを検証**し、実 driver 駆動は Phase 2 で確認。
+
+**A-9 補強 (B5 adversarial LOW-3、TOCTOU 再導入防止)**: read-only な latch check (`assert_not_emergency_stopped`) **だけ** を claim point に置くと、**spawn (§A-1) が P1-2 で解消したのと同じ TOCTOU race** を実 driver が再導入し得る (latch を読んでから claim を確定するまでの窓に engage が割り込み、engaged tenant の run を `gathering_context` へ進めてしまう)。よって worker driver claim point の契約は、spawn (`spawn_agent_managed`、A-1 §0) と **同一 helper・同一 advisory lock key** で serialize することを要求する:
+
+1. claim 確定 transaction 内で **まず `acquire_emergency_stop_lock(session, tenant_id)` を取得** する (spawn と同じ `pg_advisory_xact_lock(hashtextextended('superintendent-emergency-stop:' || tenant_id::text, 0))` の transaction-scoped lock、A-7 key 形式)。
+2. lock 保持下で `assert_not_emergency_stopped(session, tenant_id)` を呼ぶ (engaged なら abort、claim しない)。
+3. lock 保持下で claim 確定 SQL (queued→gathering_context の atomic UPDATE) を実行し、caller が commit する (commit で lock 解放)。
+
+engage / clear は同一 key の advisory lock を取るため、claim が先に lock を取れば engage は claim COMMIT 後に `gathering_context` 行を観測して kill でき、engage が先なら claim の latch check が engaged を見て abort する。**lock 外で claim が確定する窓は無い** (spawn A-1 §3 と同じ線形化保証)。本 advisory-lock 要件は worker driver contract test の docstring + `assert_not_emergency_stopped` helper の docstring に明記し、実 driver (Phase 2) が必ず honor する固定契約とする。
 
 ### A-10. AC-HARD trace + operator role (R4-MEDIUM-10 / LOW-18)
 

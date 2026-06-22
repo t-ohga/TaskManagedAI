@@ -925,8 +925,12 @@ class TestAgentSpawnerLifecycle:
     """Codex R6 F-9: spawn は未使用 pipe を DEVNULL、stop は process group を kill。"""
 
     def test_spawn_uses_devnull_pipes(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from uuid import UUID
+        """subprocess plumbing (DEVNULL pipes + start_new_session) を ``_start_subprocess`` で検証する。
 
+        B5 adversarial LOW-2: legacy ``spawn_agent`` は latch-bypass fail-open 経路として fail-closed 化
+        (常に raise) したため、plumbing test は subprocess 起動の実体 ``_start_subprocess`` を直接対象にする
+        (spawn_agent_managed もこの helper を共有するため plumbing 契約は維持される)。
+        """
         from backend.app.services.superintendent import agent_spawner
 
         captured: dict[str, object] = {}
@@ -941,18 +945,24 @@ class TestAgentSpawnerLifecycle:
 
         monkeypatch.setattr(agent_spawner, "_build_agent_command", lambda _p, _d: ["/usr/bin/true"])
         monkeypatch.setattr(agent_spawner.asyncio, "create_subprocess_exec", _fake_exec)
-        try:
+        asyncio.run(agent_spawner._start_subprocess("claude", "/srv/project"))
+        assert captured["stdin"] == asyncio.subprocess.DEVNULL
+        assert captured["stdout"] == asyncio.subprocess.DEVNULL
+        assert captured["stderr"] == asyncio.subprocess.DEVNULL
+        assert captured["start_new_session"] is True
+
+    def test_spawn_agent_is_fail_closed(self) -> None:
+        """B5 adversarial LOW-2: legacy spawn_agent は latch 非 check の fail-open 経路として disabled。"""
+        from uuid import UUID
+
+        from backend.app.services.superintendent import agent_spawner
+
+        with pytest.raises(RuntimeError, match="spawn_agent_managed"):
             asyncio.run(
                 agent_spawner.spawn_agent(
                     UUID("00000000-0000-4000-8000-0000000c0de1"), "claude", "/srv/project"
                 )
             )
-            assert captured["stdin"] == asyncio.subprocess.DEVNULL
-            assert captured["stdout"] == asyncio.subprocess.DEVNULL
-            assert captured["stderr"] == asyncio.subprocess.DEVNULL
-            assert captured["start_new_session"] is True
-        finally:
-            agent_spawner._active_agents.clear()
 
     def test_signal_process_group_targets_group(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import signal as _sig

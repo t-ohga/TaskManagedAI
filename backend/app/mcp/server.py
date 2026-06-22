@@ -347,6 +347,7 @@ async def ticket_create(
 
     from backend.app.mcp.api_bridge import bridge_ticket_create
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     try:
         async with get_db_session() as session:
@@ -380,6 +381,9 @@ async def ticket_create(
                 except Exception:  # noqa: S110
                     logging.getLogger(__name__).debug("Discord notification skipped")
             return result
+    except EmergencyStopEngagedError as e:
+        # P2-4: kill-switch deny を stable application code で返す (generic internal error と区別)。
+        return {"error": e.reason_code, "message": str(e)[:200]}
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
 
@@ -397,6 +401,7 @@ async def ticket_update(
 
     from backend.app.mcp.api_bridge import bridge_ticket_update
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     payload: dict[str, Any] = {}
     if title is not None:
@@ -418,6 +423,8 @@ async def ticket_update(
                 ticket_id=UUID(ticket_id),
                 payload=payload,
             )
+    except EmergencyStopEngagedError as e:
+        return {"error": e.reason_code, "ticket_id": ticket_id}
     except Exception as e:
         return {"error": str(type(e).__name__), "ticket_id": ticket_id}
 
@@ -441,6 +448,7 @@ async def run_create(
     """
     from backend.app.mcp.api_bridge import bridge_run_create
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     try:
         parsed_ticket_id = UUID(ticket_id)
@@ -474,6 +482,8 @@ async def run_create(
                 parent_run_id=parsed_parent,
                 idempotency_key=idempotency_key,
             )
+    except EmergencyStopEngagedError as e:
+        return {"error": e.reason_code, "message": str(e)[:200]}
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
 
@@ -504,6 +514,7 @@ async def ticket_comment(project_id: str, ticket_id: str, message: str) -> dict[
 
     from backend.app.mcp.api_bridge import bridge_ticket_comment
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     try:
         async with get_db_session() as session:
@@ -511,6 +522,8 @@ async def ticket_comment(project_id: str, ticket_id: str, message: str) -> dict[
                 session, tenant_id=DEFAULT_TENANT_ID, project_id=UUID(project_id),
                 ticket_id=UUID(ticket_id), message=message, actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
             )
+    except EmergencyStopEngagedError as e:
+        return {'error': e.reason_code, 'ticket_id': ticket_id}
     except Exception as e:
         return {'error': str(type(e).__name__), 'ticket_id': ticket_id}
 
@@ -525,6 +538,7 @@ async def ticket_link(
 
     from backend.app.mcp.api_bridge import bridge_ticket_link
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     valid_types = {'blocks', 'blocked_by', 'relates_to', 'depends_on', 'duplicates'}
     if relation_type not in valid_types:
@@ -536,6 +550,8 @@ async def ticket_link(
                 source_ticket_id=UUID(source_ticket_id), target_ticket_id=UUID(target_ticket_id),
                 relation_type=relation_type,
             )
+    except EmergencyStopEngagedError as e:
+        return {'error': e.reason_code}
     except Exception as e:
         return {'error': str(type(e).__name__)}
 
@@ -562,6 +578,7 @@ async def run_update(run_id: str, status: str, summary: str = "") -> dict[str, A
     """AgentRun の状態を更新。status: running/completed/failed/blocked/gathering_context/generated_artifact"""
     from backend.app.mcp.api_bridge import bridge_run_update
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     try:
         async with get_db_session() as session:
@@ -578,6 +595,8 @@ async def run_update(run_id: str, status: str, summary: str = "") -> dict[str, A
             return result
     except (ValueError, AttributeError):
         return {"error": "invalid_uuid", "field": "run_id"}
+    except EmergencyStopEngagedError as e:
+        return {"error": e.reason_code, "run_id": run_id}
     except Exception as e:
         return {"error": str(type(e).__name__), "run_id": run_id}
 
@@ -589,6 +608,7 @@ async def approval_request_create(
     """承認リクエストを作成。AI agent は作成のみ可能 (決裁は human-only)。"""
     from backend.app.mcp.api_bridge import bridge_approval_request_create
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     forbidden = {"merge", "deploy", "secret_access", "approval_decide"}
     if action_class in forbidden:
@@ -609,6 +629,8 @@ async def approval_request_create(
             return result
     except (ValueError, AttributeError):
         return {"error": "invalid_uuid"}
+    except EmergencyStopEngagedError as e:
+        return {"error": e.reason_code, "message": str(e)[:200]}
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
 
@@ -624,6 +646,7 @@ async def delegation_create(
 
     from backend.app.mcp.api_bridge import bridge_delegation_create
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     valid_roles = {
         "orchestrator", "dispatcher", "implementer", "reviewer",
@@ -648,6 +671,8 @@ async def delegation_create(
             )
     except (ValueError, AttributeError):
         return {"error": "invalid_uuid"}
+    except EmergencyStopEngagedError as e:
+        return {"error": e.reason_code, "message": str(e)[:200]}
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
 
@@ -675,6 +700,7 @@ async def delegation_accept(run_id: str, message_id: str) -> dict[str, Any]:
     """委譲されたタスクを受諾。run を running に遷移し、メッセージを consumed にする。"""
     from backend.app.mcp.api_bridge import bridge_delegation_accept
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     try:
         async with get_db_session() as session:
@@ -684,6 +710,8 @@ async def delegation_accept(run_id: str, message_id: str) -> dict[str, Any]:
             )
     except (ValueError, AttributeError):
         return {"error": "invalid_uuid"}
+    except EmergencyStopEngagedError as e:
+        return {"error": e.reason_code, "message": str(e)[:200]}
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
 
@@ -699,6 +727,7 @@ async def delegation_submit(
 
     from backend.app.mcp.api_bridge import bridge_delegation_submit
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     try:
         spec = json_mod.loads(result_spec) if isinstance(result_spec, str) else result_spec
@@ -723,6 +752,8 @@ async def delegation_submit(
             return result
     except (ValueError, AttributeError):
         return {"error": "invalid_uuid"}
+    except EmergencyStopEngagedError as e:
+        return {"error": e.reason_code, "message": str(e)[:200]}
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
 
@@ -736,6 +767,7 @@ async def delegation_review(
     """レビュー結果を記録。decision: adopt / reject。quality_score: 0.0-1.0。"""
     from backend.app.mcp.api_bridge import bridge_delegation_review
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     try:
         async with get_db_session() as session:
@@ -746,6 +778,8 @@ async def delegation_review(
             )
     except (ValueError, AttributeError):
         return {"error": "invalid_uuid"}
+    except EmergencyStopEngagedError as e:
+        return {"error": e.reason_code, "message": str(e)[:200]}
     except Exception as e:
         return {"error": str(type(e).__name__), "message": str(e)[:200]}
 
@@ -819,6 +853,7 @@ async def run_cost(
 
     from backend.app.mcp.api_bridge import bridge_run_cost
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     if not math.isfinite(cost_usd) or cost_usd < 0:
         return {"error": "invalid_cost", "message": "cost_usd must be finite and non-negative"}
@@ -833,6 +868,8 @@ async def run_cost(
             )
     except (ValueError, AttributeError):
         return {"error": "invalid_uuid", "field": "run_id"}
+    except EmergencyStopEngagedError as e:
+        return {"error": e.reason_code, "run_id": run_id}
     except Exception as e:
         return {"error": str(type(e).__name__), "run_id": run_id}
 
@@ -845,12 +882,24 @@ async def superintendent_agent_register(
 ) -> dict[str, Any]:
     """Agent を登録して role を割り当てる。provider: claude / codex / custom。
 
-    **honest limit (B4 M4、adversarial review)**: 本 ``_register`` は **B4 で managed_agents へ移行して
-    いない** — in-process ``_active_agents`` dict にのみ書き、DB registry row も emergency-stop latch
-    check も無い (process を spawn しない登録 step ではあるが、latch engaged 中の登録を deny しない)。
+    **B5a (B4 M4 fix)**: 本 ``_register`` は process spawn しない in-process 登録 step だが、
+    emergency-stop latch engaged 中の **新規 agent 登録を deny** する (kill switch の新規活動 deny 完備、
+    B4 M4 defer 分を閉じる)。latch check は DB を読むため session を取得し、共有 helper
+    ``assert_not_emergency_stopped`` を通す。
+
+    **P2-6 (Codex adversarial、TOCTOU 解消)**: latch check の session を ``_active_agents`` 登録の **前**
+    に閉じると、「latch check (engaged なし) → session close → engage → ``_active_agents`` append」の窓で
+    engage 直後でも ``state='registered'`` を返してしまう。よって spawn (A-1) と **同一 helper・同一
+    advisory lock key** の ``acquire_emergency_stop_lock`` を latch check の前に取得し、**lock 保持下で
+    latch check → ``_active_agents`` append → ``session.commit()``** を 1 critical section にまとめる
+    (registration が latch check と同一 lock-held window に入る)。engage は同一 key の lock を取るため、
+    本 critical section 中の engage は待たされ、register は engage 完了後の latch を必ず観測して deny する。
+
+    - **sessionless deny (fail-closed)**: session 取得失敗 = latch 確認不能 → 登録拒否。
+    - **latch engaged deny**: ``EmergencyStopEngagedError`` を ``state='denied'`` 応答へ畳む。
+
     実 subprocess の起動と cross-process kill 配線は ``superintendent_agent_start`` (managed 経路、P1-1
-    解消済) が担う。``_register`` 自体の latch gate は **B5 (MCP mutating bridge latch gate)** で閉じる
-    (``agent_spawner.spawn_agent`` の honest note と同様)。
+    解消済) が担う。``_register`` は DB registry row を作らない (in-process ``_active_agents`` 登録のみ)。
     """
     if provider not in ("claude", "codex", "custom"):
         return {"error": "invalid_provider", "valid": ["claude", "codex", "custom"]}
@@ -858,28 +907,56 @@ async def superintendent_agent_register(
     from datetime import UTC, datetime
     from uuid import UUID, uuid4
 
-    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
-    from backend.app.services.superintendent.lifecycle import ManagedAgent
-
-    agent_id = uuid4()
-    ManagedAgent(
-        agent_id=agent_id,
-        actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
-        role_id=role_id,
-        state="registered",
-        project_id=UUID(project_id),
-        superintendent_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
-        created_at=datetime.now(UTC),
-    )
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
     from backend.app.services.superintendent.agent_spawner import (
         AgentProvider,
         SpawnedAgent,
         _active_agents,
     )
-    # provider は上で {claude,codex,custom} に検証済 → AgentProvider literal への cast は安全。
-    _active_agents[agent_id] = SpawnedAgent(
-        agent_id=agent_id, provider=cast(AgentProvider, provider),
+    from backend.app.services.superintendent.emergency_stop import (
+        EmergencyStopEngagedError,
+        acquire_emergency_stop_lock,
+        assert_not_emergency_stopped,
     )
+    from backend.app.services.superintendent.lifecycle import ManagedAgent
+
+    agent_id = uuid4()
+    # P2-6: lock 保持下で latch check → _active_agents append → commit を 1 critical section に入れる。
+    # sessionless = latch 確認不能 = 登録拒否 (fail-closed、agent_start と同方針)。
+    try:
+        async with get_db_session() as session:
+            # P2-6: spawn と同一 key の advisory lock を latch check の **前** に取得 (TOCTOU 解消)。
+            # lock は transaction-scoped のため下の commit まで保持され registration を覆う。
+            await acquire_emergency_stop_lock(session, DEFAULT_TENANT_ID)
+            try:
+                await assert_not_emergency_stopped(session, DEFAULT_TENANT_ID)
+            except EmergencyStopEngagedError:
+                return {
+                    "role_id": role_id,
+                    "project_id": project_id,
+                    "state": "denied",
+                    "error": "emergency_stop_engaged",
+                }
+            ManagedAgent(
+                agent_id=agent_id,
+                actor_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+                role_id=role_id,
+                state="registered",
+                project_id=UUID(project_id),
+                superintendent_id=DEFAULT_SUPERINTENDENT_ACTOR_ID,
+                created_at=datetime.now(UTC),
+            )
+            # provider は上で {claude,codex,custom} に検証済 → AgentProvider literal への cast は安全。
+            # P2-6: registration を latch check と同一 lock-held critical section 内で行う
+            # (engage 直後の register を確実に deny する)。
+            _active_agents[agent_id] = SpawnedAgent(
+                agent_id=agent_id, provider=cast(AgentProvider, provider),
+            )
+            # commit で advisory lock を解放する (lock-held critical section の終端)。
+            await session.commit()
+    except Exception as e:
+        return {"role_id": role_id, "state": "failed", "error": str(type(e).__name__)}
+
     return {
         "agent_id": str(agent_id),
         "role_id": role_id,
@@ -1113,6 +1190,7 @@ async def superintendent_dispatch(
     from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
     from backend.app.services.superintendent.delegation_policy import POLICY_TEMPLATES
     from backend.app.services.superintendent.dispatch import DispatchRequest, evaluate_dispatch
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     try:
         parsed_agent_id = UUID(agent_id)
@@ -1163,6 +1241,8 @@ async def superintendent_dispatch(
                     "needs_human_approval": False,
                     "action_class": action_class,
                 }
+        except EmergencyStopEngagedError as e:
+            return {"error": e.reason_code, "dispatched": False, "ticket_id": ticket_id}
         except Exception as e:
             return {"error": str(type(e).__name__), "dispatched": False}
 
@@ -1174,6 +1254,8 @@ async def superintendent_dispatch(
                 project_id=UUID(project_id), ticket_id=ticket_id,
                 purpose=f"superintendent dispatch (awaiting approval): {action_class}",
             )
+    except EmergencyStopEngagedError as e:
+        return {"error": e.reason_code, "dispatched": False, "ticket_id": ticket_id}
     except Exception as e:
         # Codex adversarial R4: bridge_run_create の失敗 (guard 例外 ProjectArchivedError /
         # TicketNotActionableError を含む) を成功応答に変換しない。削除済 / archived ticket への
@@ -1202,12 +1284,15 @@ async def notification_resolve(notification_id: str) -> dict[str, Any]:
 
     from backend.app.mcp.api_bridge import bridge_notification_resolve
     from backend.app.mcp.context import DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import EmergencyStopEngagedError
 
     try:
         async with get_db_session() as session:
             return await bridge_notification_resolve(
                 session, tenant_id=DEFAULT_TENANT_ID, notification_id=UUID(notification_id)
             )
+    except EmergencyStopEngagedError as e:
+        return {"error": e.reason_code, "notification_id": notification_id}
     except Exception as e:
         return {"error": str(type(e).__name__), "notification_id": notification_id}
 

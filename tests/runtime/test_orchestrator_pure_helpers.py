@@ -67,6 +67,9 @@ EXPECTED_PROVIDER_STEP_OUTCOMES = (
     "blocked_budget",
     "blocked_runtime",
     "failed_timeout",
+    # SP-PHASE1 B5c (ADR-00048 §G/A-4): provider postflight generation CAS で latch engage を検出し
+    # usage/artifact/status を進めず discard した outcome。
+    "discarded_emergency_stop",
 )
 
 _RUN_ID = UUID("00000000-0000-4000-8000-000000005401")

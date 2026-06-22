@@ -79,6 +79,51 @@ async def acquire_emergency_stop_lock(session: AsyncSession, tenant_id: int) -> 
     )
 
 
+async def assert_not_emergency_stopped(
+    session: AsyncSession, tenant_id: int
+) -> None:
+    """全 mutating choke point 共有の emergency-stop latch fail-closed gate (SP-PHASE1 B5a、ADR §B/A-9)。
+
+    本 helper が **全 choke point の唯一の latch check 経路** であり (B3 の private
+    ``agent_spawner._assert_not_emergency_stopped`` はこれへ委譲)、当該 tenant の emergency-stop latch が
+    engaged なら :class:`EmergencyStopEngagedError` (``reason_code='emergency_stop_engaged'``、A-6 独立
+    application reason_code) を raise して新規活動を deny する。
+
+    呼び出し箇所 (B5a/B5b/B5c):
+    - **spawn** (``spawn_agent_managed`` advisory lock + 同一 transaction 内、B3/A-1)。
+    - **MCP mutating bridge** (``api_bridge`` の run create/advance/approval/delegation/ticket comment、B5b)。
+    - **agent_register** (``superintendent_agent_register``、B4 M4 defer 分、B5a)。
+    - **autonomy allow** (``resolve_autonomy_policy_action_effect`` で global_kill_switch と OR、A-8)。
+    - **worker driver atomic claim point** (queued→gathering_context、claim 確定 transaction 内、A-9)。
+      実 driver は Phase 2 (SP-004-5/ADR-00057) で配線するが、**「claim point は本 helper を呼ぶ」契約**を
+      contract test / stub driver で検証する (本 batch)。
+      **A-9 補強 (B5 adversarial LOW-3、TOCTOU 再導入防止)**: claim point は本 helper (read-only check) **だけ**
+      では不十分。spawn (``spawn_agent_managed``、A-1 §0) と **同一 helper・同一 key** の
+      ``acquire_emergency_stop_lock(session, tenant_id)`` を claim 確定 transaction 内で**先に取得してから**
+      本 helper を呼ぶこと。read-only check のみだと「latch 読取り→claim 確定」の窓に engage が割り込む
+      同種 TOCTOU を再導入する。順序: advisory lock 取得 → 本 helper (latch check) → claim 確定 UPDATE →
+      caller commit (lock 解放)。実 driver (Phase 2) はこの advisory-lock 契約を必ず honor する (ADR §A-9)。
+
+    **fail-closed (A-9 / instincts §14)**: latch query (DB) が PostgreSQL error 等で失敗した場合は
+    **deny 方向** (=新規活動を進めない) に倒す。latch を確認できないまま AI 活動を進めるのは安全弁の
+    fail-open であり、kill switch の本旨に反する。よって latch query 失敗は ``EmergencyStopEngagedError``
+    に畳んで raise する (caller は deny として扱う)。
+
+    Args:
+        session: tenant-scoped DB session (choke point の同一 transaction 内で呼ぶ)。
+        tenant_id: latch を確認する tenant。
+    """
+    try:
+        engaged = await EmergencyStopService(session).is_engaged(tenant_id)
+    except EmergencyStopEngagedError:
+        # 既に latch gate 由来の deny なら素通し (二重畳み込みを避ける)。
+        raise
+    except Exception as exc:  # noqa: BLE001 — latch query 失敗は fail-closed deny に倒す。
+        raise EmergencyStopEngagedError(tenant_id) from exc
+    if engaged:
+        raise EmergencyStopEngagedError(tenant_id)
+
+
 class EmergencyStopEngagedError(RuntimeError):
     """emergency-stop latch が engaged のため新規活動を deny した (fail-closed)。
 
@@ -235,6 +280,24 @@ class EmergencyStopService:
             .where(SuperintendentEmergencyStop.tenant_id == tenant_id)
         )
         return int(result or 0)
+
+    async def max_generation_ever(self, tenant_id: int) -> int:
+        """当該 tenant の **全 latch 行** (cleared 含む) の MAX(generation) を返す (B5c P1-2/3/5)。
+
+        generation は engage 毎に max+1 で monotonic に増え、clear では減らない (cleared 行も残るため
+        MAX は単調非減少)。active latch だけを見る ``get_active(...).generation`` と異なり、本値は
+        **engage→clear cycle が起きても巻き戻らない** ため、provider CAS の「call window 中に engage が
+        1 回でも起きたか」を検出する monotonic generation history として使える:
+
+        - P1-3: preflight (active なし) 後 provider.execute 前に engage → postflight active あり →
+          MAX も bump (G1 > G0) で検出。
+        - P1-5: call 中に engage→clear が起きると active は preflight/postflight 共 None だが MAX は
+          engage で bump 済 (cleared 行に残る) なので G1 > G0 で検出 (active-only 比較が見逃す穴)。
+
+        active latch が一度も無ければ 0。lazy schema 依存はない (latch table 直 query)。
+        """
+        await ensure_tenant_context(self._session, tenant_id)
+        return await self._max_generation(tenant_id)
 
     # --- engage ---
 
@@ -621,4 +684,5 @@ __all__ = [
     "NotEngagedError",
     "StaleGenerationError",
     "acquire_emergency_stop_lock",
+    "assert_not_emergency_stopped",
 ]
