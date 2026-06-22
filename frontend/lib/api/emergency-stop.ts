@@ -80,13 +80,17 @@ export async function clearEmergencyStop(
 
 export const GlobalKillSwitchStatusSchema = z.object({
   engaged: z.boolean(),
-  budget_id: z.string().nullable()
+  budget_id: z.string().nullable(),
+  // B6 P2-4 CAS token: clear が割込み engage を上書きしないための updated_at (budget 不在なら null)。
+  updated_at: z.string().nullable()
 });
 export type GlobalKillSwitchStatus = z.infer<typeof GlobalKillSwitchStatusSchema>;
 
 export const GlobalKillSwitchMutationSchema = z.object({
   engaged: z.boolean(),
-  budget_id: z.string()
+  budget_id: z.string(),
+  // B6 P2-4: mutation 後の最新 CAS token。
+  updated_at: z.string()
 });
 export type GlobalKillSwitchMutationResult = z.infer<
   typeof GlobalKillSwitchMutationSchema
@@ -107,10 +111,17 @@ export async function engageGlobalKillSwitch(): Promise<GlobalKillSwitchMutation
   );
 }
 
-export async function clearGlobalKillSwitch(): Promise<GlobalKillSwitchMutationResult> {
+export async function clearGlobalKillSwitch(
+  expectedUpdatedAt: string
+): Promise<GlobalKillSwitchMutationResult> {
   return fetchBackendJson(
     "/api/v1/budget/global-kill-switch/clear",
     GlobalKillSwitchMutationSchema,
-    { method: "POST", headers: { "content-type": "application/json" } }
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // B6 P2-4 CAS: status GET が返した updated_at を返す。別 engage が割り込んでいれば 409。
+      body: JSON.stringify({ expected_updated_at: expectedUpdatedAt })
+    }
   );
 }

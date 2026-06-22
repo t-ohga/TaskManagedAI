@@ -30,6 +30,8 @@ type EmergencyStopLatchStatus = {
 
 type BudgetKillSwitchStatus = {
   engaged: boolean;
+  // B6 P2-4 CAS token: clear が割込み engage を上書きしないための updated_at (budget 不在なら null)。
+  updatedAt: string | null;
 };
 
 type EmergencyStopPanelProps = {
@@ -140,6 +142,7 @@ export function EmergencyStopPanel({ latch, budgetKillSwitch }: EmergencyStopPan
   const generation = latch?.generation ?? null;
   const budgetEngaged = budgetKillSwitch?.engaged ?? false;
   const budgetUnavailable = budgetKillSwitch === null;
+  const budgetUpdatedAt = budgetKillSwitch?.updatedAt ?? null;
 
   return (
     <div className="grid gap-8">
@@ -306,13 +309,19 @@ export function EmergencyStopPanel({ latch, budgetKillSwitch }: EmergencyStopPan
             className="grid gap-3"
             data-testid="budget-kill-switch-clear-form"
           >
+            {/* B6 P2-4 CAS: 表示した active global budget の updated_at を宣言。別 engage で変われば 409。 */}
+            <input
+              type="hidden"
+              name="expected_updated_at"
+              value={budgetUpdatedAt ?? ""}
+            />
             {!budgetClearConfirming ? (
               <div>
                 <button
                   type="button"
                   onClick={() => setBudgetClearConfirming(true)}
                   className="rounded-md border border-line bg-panel px-4 py-2 text-sm font-medium text-ink shadow-sm hover:bg-canvas disabled:opacity-60"
-                  disabled={anyPending}
+                  disabled={anyPending || budgetUpdatedAt === null}
                 >
                   コスト緊急停止を解除する
                 </button>

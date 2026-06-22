@@ -95,10 +95,14 @@ async function loadEmergencyStopStatus(): Promise<{
 }
 
 // B6 (ADR-00048 §A-8): budget global kill switch (コスト緊急停止) の状態を server fetch。失敗時 null。
-async function loadGlobalKillSwitchStatus(): Promise<{ engaged: boolean } | null> {
+// P2-4 CAS: clear が割込み engage を上書きしないための updated_at token も渡す。
+async function loadGlobalKillSwitchStatus(): Promise<{
+  engaged: boolean;
+  updatedAt: string | null;
+} | null> {
   try {
     const res = await getGlobalKillSwitchStatus();
-    return { engaged: res.engaged };
+    return { engaged: res.engaged, updatedAt: res.updated_at };
   } catch {
     return null;
   }

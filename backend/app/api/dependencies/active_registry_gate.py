@@ -33,11 +33,23 @@ _WRITE_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 # gate exempt paths: health / metrics / auth bootstrap (gate self-loop 防止)。
 # operator が gate 修復のためにこれらの endpoint を叩けないと dead-lock になるため exempt。
+#
+# SP-PHASE1 B6 (ADR-00048 §A-3/§A-8) P2-3 fix: **operator safety-stop path** も exempt する。host-freeze
+# (active-registry gate enabled + frozen) 中は exempt 以外の全 POST が route handler 前に reject される
+# ため、緊急停止 (emergency-stop latch) / コスト緊急停止 (budget global kill switch) の engage/clear/status
+# が freeze 中に届かない = 「安全停止が効かない」fail-open になる。安全弁は host freeze 状態に左右されては
+# ならない (§A-3: DB mutation gate でも emergency-stop は bypass 済)。よって engage/clear/status の operator
+# safety path **のみ** を exempt する (他の budget / superintendent mutating route は exempt しない)。
+# raw secret 非露出は各 endpoint 側 (owner gate + response schema) で担保。
 _GATE_EXEMPT_PATH_PREFIXES: tuple[str, ...] = (
     "/health",
     "/metrics",
     "/api/v1/auth/",
     "/auth/",
+    # emergency-stop latch (human 即時全停止): engage (base) / clear / status。
+    "/api/v1/superintendent/emergency-stop",
+    # budget global kill switch (コスト緊急停止): engage (base) / clear / status。
+    "/api/v1/budget/global-kill-switch",
 )
 
 

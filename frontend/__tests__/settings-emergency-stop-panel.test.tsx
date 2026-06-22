@@ -24,7 +24,7 @@ describe("EmergencyStopPanel (SP-PHASE1 B6 / ADR-00048)", () => {
     render(
       <EmergencyStopPanel
         latch={{ engaged: false, generation: null, engagedAt: null }}
-        budgetKillSwitch={{ engaged: false }}
+        budgetKillSwitch={{ engaged: false, updatedAt: null }}
       />
     );
     expect(screen.getAllByText("稼働中").length).toBeGreaterThan(0);
@@ -41,7 +41,7 @@ describe("EmergencyStopPanel (SP-PHASE1 B6 / ADR-00048)", () => {
     render(
       <EmergencyStopPanel
         latch={{ engaged: true, generation: 3, engagedAt: "2026-06-22T00:00:00+00:00" }}
-        budgetKillSwitch={{ engaged: false }}
+        budgetKillSwitch={{ engaged: false, updatedAt: null }}
       />
     );
     expect(screen.getAllByText("停止中").length).toBeGreaterThan(0);
@@ -59,7 +59,7 @@ describe("EmergencyStopPanel (SP-PHASE1 B6 / ADR-00048)", () => {
     render(
       <EmergencyStopPanel
         latch={{ engaged: false, generation: null, engagedAt: null }}
-        budgetKillSwitch={{ engaged: false }}
+        budgetKillSwitch={{ engaged: false, updatedAt: null }}
       />
     );
     expect(
@@ -76,7 +76,7 @@ describe("EmergencyStopPanel (SP-PHASE1 B6 / ADR-00048)", () => {
     const { container } = render(
       <EmergencyStopPanel
         latch={{ engaged: true, generation: 7, engagedAt: null }}
-        budgetKillSwitch={{ engaged: false }}
+        budgetKillSwitch={{ engaged: false, updatedAt: null }}
       />
     );
     const hidden = container.querySelector<HTMLInputElement>(
@@ -107,7 +107,7 @@ describe("EmergencyStopPanel (SP-PHASE1 B6 / ADR-00048)", () => {
     render(
       <EmergencyStopPanel
         latch={{ engaged: false, generation: null, engagedAt: null }}
-        budgetKillSwitch={{ engaged: true }}
+        budgetKillSwitch={{ engaged: true, updatedAt: "2026-06-22T01:00:00+00:00" }}
       />
     );
     expect(
@@ -116,5 +116,31 @@ describe("EmergencyStopPanel (SP-PHASE1 B6 / ADR-00048)", () => {
     expect(
       screen.queryByRole("button", { name: "コスト緊急停止を有効にする" })
     ).not.toBeInTheDocument();
+  });
+
+  it("submits the budget updated_at as the clear CAS token (P2-4 hidden field)", () => {
+    const { container } = render(
+      <EmergencyStopPanel
+        latch={{ engaged: false, generation: null, engagedAt: null }}
+        budgetKillSwitch={{ engaged: true, updatedAt: "2026-06-22T01:00:00+00:00" }}
+      />
+    );
+    const hidden = container.querySelector<HTMLInputElement>(
+      'input[name="expected_updated_at"]'
+    );
+    expect(hidden).not.toBeNull();
+    expect(hidden?.value).toBe("2026-06-22T01:00:00+00:00");
+  });
+
+  it("disables the budget clear button when the CAS token is missing (P2-4 fail-closed)", () => {
+    render(
+      <EmergencyStopPanel
+        latch={{ engaged: false, generation: null, engagedAt: null }}
+        budgetKillSwitch={{ engaged: true, updatedAt: null }}
+      />
+    );
+    expect(
+      screen.getByRole("button", { name: "コスト緊急停止を解除する" })
+    ).toBeDisabled();
   });
 });

@@ -16,9 +16,10 @@ human + configured owner を fail-closed enforce。MCP には露出しない (AI
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +27,7 @@ from backend.app.api.approval_inbox import get_db_session, get_tenant_id
 from backend.app.api.dependencies.emergency_stop_operator import (
     require_emergency_stop_operator,
 )
-from backend.app.repositories.budget import BudgetRepository
+from backend.app.repositories.budget import BudgetRepository, StaleKillSwitchClearError
 
 router = APIRouter(prefix="/api/v1/budget", tags=["budget"])
 
@@ -36,6 +37,9 @@ class GlobalKillSwitchStatusResponse(BaseModel):
 
     engaged: bool
     budget_id: str | None
+    # B6 P2-4 CAS token: clear が割込み engage を上書きしないための楽観ロック。active global budget の
+    # ``updated_at`` (tz-aware ISO)。budget 不在なら null。clear はこの値を ``expected_updated_at`` で返す。
+    updated_at: datetime | None
 
 
 class GlobalKillSwitchMutationResponse(BaseModel):
@@ -43,6 +47,16 @@ class GlobalKillSwitchMutationResponse(BaseModel):
 
     engaged: bool
     budget_id: str
+    # B6 P2-4: mutation 後の最新 CAS token (engage 直後の clear / 再描画で使える)。
+    updated_at: datetime
+
+
+class GlobalKillSwitchClearRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # B6 P2-4 CAS: clear の基にした active global budget の updated_at。不一致 / budget 不在は 409
+    # (別 engage が割り込んだ stale clear を reject)。
+    expected_updated_at: datetime
 
 
 @router.post("/global-kill-switch", response_model=GlobalKillSwitchMutationResponse)
@@ -65,25 +79,39 @@ async def engage_global_kill_switch_endpoint(
     return GlobalKillSwitchMutationResponse(
         engaged=True,
         budget_id=str(budget.id),
+        updated_at=budget.updated_at,
     )
 
 
 @router.post("/global-kill-switch/clear", response_model=GlobalKillSwitchMutationResponse)
 async def clear_global_kill_switch_endpoint(
+    payload: GlobalKillSwitchClearRequest,
     operator_actor_id: UUID = Depends(require_emergency_stop_operator),  # noqa: B008
     tenant_id: int = Depends(get_tenant_id),  # noqa: B008
     session: AsyncSession = Depends(get_db_session),  # noqa: B008
 ) -> GlobalKillSwitchMutationResponse:
-    """budget global_kill_switch を clear する (human-only)。"""
-    budget = await BudgetRepository(session).set_global_kill_switch(
-        tenant_id=tenant_id,
-        engaged=False,
-        actor_id=operator_actor_id,
-    )
+    """budget global_kill_switch を clear する (human-only、B6 P2-4 CAS = stale clear reject)。
+
+    ``expected_updated_at`` (status GET が返した CAS token) が active global budget の現在値と一致しない、
+    または budget 不在なら 409 (別 engage が割り込んだ stale clear を reject)。
+    """
+    try:
+        budget = await BudgetRepository(session).clear_global_kill_switch(
+            tenant_id=tenant_id,
+            actor_id=operator_actor_id,
+            expected_updated_at=payload.expected_updated_at,
+        )
+    except StaleKillSwitchClearError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     await session.commit()
     return GlobalKillSwitchMutationResponse(
         engaged=False,
         budget_id=str(budget.id),
+        updated_at=budget.updated_at,
     )
 
 
@@ -93,13 +121,16 @@ async def get_global_kill_switch_status_endpoint(
     tenant_id: int = Depends(get_tenant_id),  # noqa: B008
     session: AsyncSession = Depends(get_db_session),  # noqa: B008
 ) -> GlobalKillSwitchStatusResponse:
-    """active global budget の kill switch status を返す (human-only)。"""
+    """active global budget の kill switch status を返す (human-only、CAS token = updated_at 同梱)。"""
     budget = await BudgetRepository(session).get_active_global(tenant_id)
     if budget is None:
-        return GlobalKillSwitchStatusResponse(engaged=False, budget_id=None)
+        return GlobalKillSwitchStatusResponse(
+            engaged=False, budget_id=None, updated_at=None
+        )
     return GlobalKillSwitchStatusResponse(
         engaged=budget.global_kill_switch is True,
         budget_id=str(budget.id),
+        updated_at=budget.updated_at,
     )
 
 

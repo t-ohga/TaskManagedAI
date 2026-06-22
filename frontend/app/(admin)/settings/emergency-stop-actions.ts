@@ -113,8 +113,14 @@ export async function clearEmergencyStopAction(
   }
 }
 
-// budget kill switch は入力 form を持たない (engage/clear のみ)。useActionState の (prevState,
-// formData) signature は固定だが両 param とも未使用のため、after-used unused-vars を抑止する。
+// B6 P2-4 CAS: clear は status GET が返した active global budget の updated_at を宣言する。
+// 別 engage が割り込んで updated_at が進んでいたら backend が 409 (stale clear reject)。
+const BudgetClearFormSchema = z.object({
+  expected_updated_at: z.string().min(1)
+});
+
+// budget kill switch の engage は入力 form を持たない。useActionState の (prevState, formData)
+// signature は固定だが両 param とも未使用のため、unused-vars を抑止する。
 /* eslint-disable @typescript-eslint/no-unused-vars */
 export async function engageGlobalKillSwitchAction(
   _prev: EmergencyStopActionState,
@@ -127,16 +133,25 @@ export async function engageGlobalKillSwitchAction(
     return ownerOrGenericError(error, "コスト緊急停止の有効化に失敗しました。");
   }
 }
+/* eslint-enable @typescript-eslint/no-unused-vars */
 
 export async function clearGlobalKillSwitchAction(
   _prev: EmergencyStopActionState,
-  _formData: FormData
+  formData: FormData
 ): Promise<EmergencyStopActionState> {
+  const parsed = BudgetClearFormSchema.safeParse({
+    expected_updated_at: formData.get("expected_updated_at")
+  });
+  if (!parsed.success) {
+    return {
+      kind: "error",
+      message: "解除に必要な状態トークンが不正です。状態を再読み込みしてください。"
+    };
+  }
   try {
-    await clearGlobalKillSwitch();
+    await clearGlobalKillSwitch(parsed.data.expected_updated_at);
     return { kind: "ok", message: "コスト緊急停止 (グローバルキルスイッチ) を解除しました。" };
   } catch (error: unknown) {
     return ownerOrGenericError(error, "コスト緊急停止の解除に失敗しました。");
   }
 }
-/* eslint-enable @typescript-eslint/no-unused-vars */
