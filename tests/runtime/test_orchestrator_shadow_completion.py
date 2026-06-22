@@ -29,6 +29,28 @@ if TYPE_CHECKING:
 ACTOR_ID = UUID("00000000-0000-4000-8000-0000000029c1")
 
 
+@pytest.fixture(autouse=True)
+def _no_emergency_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SP-PHASE1 B5c: 本 file は shadow logic を DB なし (SimpleNamespace session) で検証する。
+
+    ``execute_provider_step`` 冒頭の emergency-stop 用 DB 読み (``_read_emergency_stop_generation`` /
+    ``acquire_emergency_stop_lock``) は本 file の fake session では動かないため、latch off (generation
+    不変・lock no-op) を stub する。emergency-stop / CAS 経路は専用 test
+    (``test_provider_cas_emergency_stop.py``) で検証する。
+    """
+
+    async def _no_lock(_session: Any, _tenant_id: int) -> None:
+        return None
+
+    async def _no_generation(_session: Any, _tenant_id: int) -> int | None:
+        return None
+
+    monkeypatch.setattr(orchestrator_module, "_acquire_emergency_stop_lock", _no_lock)
+    monkeypatch.setattr(
+        orchestrator_module, "_read_emergency_stop_generation", _no_generation
+    )
+
+
 @pytest.fixture
 def captured_transitions() -> list[dict[str, Any]]:
     return []

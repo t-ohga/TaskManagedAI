@@ -371,6 +371,14 @@ emergency-stop latch と既存 budget `global_kill_switch` (policy engine 配線
 
 **SP-004-5 worker driver (ADR-00057) は未マージ** (workers は noop_task のみ、AgentRun claim point は実コードに存在しない)。よって SP-PHASE1 は claim point に latch を「貫通」できない。→ SP-PHASE1 は **claim point latch check を interface contract として予約**: (1) `assert_not_emergency_stopped(tenant_id)` 等の共有 latch-check helper を提供、(2) 「worker driver の atomic claim point (queued→gathering_context) は claim 確定 transaction 内で本 helper を呼ぶ」ことを **契約 (ADR + contract test)** として固定。Phase 2 (SP-004-5/ADR-00057) の driver 実装時にこの契約を honor する。SP-PHASE1 の exit「claim→provider 窓なし」は **stub driver / contract test で claim point が latch を見ることを検証**し、実 driver 駆動は Phase 2 で確認。
 
+**A-9 補強 (B5 adversarial LOW-3、TOCTOU 再導入防止)**: read-only な latch check (`assert_not_emergency_stopped`) **だけ** を claim point に置くと、**spawn (§A-1) が P1-2 で解消したのと同じ TOCTOU race** を実 driver が再導入し得る (latch を読んでから claim を確定するまでの窓に engage が割り込み、engaged tenant の run を `gathering_context` へ進めてしまう)。よって worker driver claim point の契約は、spawn (`spawn_agent_managed`、A-1 §0) と **同一 helper・同一 advisory lock key** で serialize することを要求する:
+
+1. claim 確定 transaction 内で **まず `acquire_emergency_stop_lock(session, tenant_id)` を取得** する (spawn と同じ `pg_advisory_xact_lock(hashtextextended('superintendent-emergency-stop:' || tenant_id::text, 0))` の transaction-scoped lock、A-7 key 形式)。
+2. lock 保持下で `assert_not_emergency_stopped(session, tenant_id)` を呼ぶ (engaged なら abort、claim しない)。
+3. lock 保持下で claim 確定 SQL (queued→gathering_context の atomic UPDATE) を実行し、caller が commit する (commit で lock 解放)。
+
+engage / clear は同一 key の advisory lock を取るため、claim が先に lock を取れば engage は claim COMMIT 後に `gathering_context` 行を観測して kill でき、engage が先なら claim の latch check が engaged を見て abort する。**lock 外で claim が確定する窓は無い** (spawn A-1 §3 と同じ線形化保証)。本 advisory-lock 要件は worker driver contract test の docstring + `assert_not_emergency_stopped` helper の docstring に明記し、実 driver (Phase 2) が必ず honor する固定契約とする。
+
 ### A-10. AC-HARD trace + operator role (R4-MEDIUM-10 / LOW-18)
 
 - cross-tenant 非干渉 → **AC-HARD-03** negative fixture、MCP/agent 経路の latch 迂回試行 → **AC-HARD-07** (権限昇格拒否) に明示 trace。`emergency_stop_engaged` を eval fixture loader (23 invariant fixture pattern) に追加。

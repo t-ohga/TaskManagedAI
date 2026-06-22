@@ -261,6 +261,14 @@ async def test_async_policy_engine_uses_server_owned_profile_resolution(
         fake_profile_effect_resolver,
     )
 
+    # SP-PHASE1 B5a: profile resolution の単離 test。emergency-stop latch 解決は dummy session では
+    # fail-closed deny になるため、本 test では latch off を stub する (emergency-stop 経路は専用 test
+    # ``test_autonomy_emergency_stop.py`` で検証)。
+    async def _no_emergency_stop(_session: AsyncSession, _tenant_id: int) -> bool:
+        return False
+
+    monkeypatch.setattr(engine, "_resolve_emergency_stop_engaged", _no_emergency_stop)
+
     session = cast(AsyncSession, object())
     decision = await engine.resolve_autonomy_policy_action_effect(
         session,

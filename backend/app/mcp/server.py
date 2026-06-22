@@ -845,12 +845,16 @@ async def superintendent_agent_register(
 ) -> dict[str, Any]:
     """Agent を登録して role を割り当てる。provider: claude / codex / custom。
 
-    **honest limit (B4 M4、adversarial review)**: 本 ``_register`` は **B4 で managed_agents へ移行して
-    いない** — in-process ``_active_agents`` dict にのみ書き、DB registry row も emergency-stop latch
-    check も無い (process を spawn しない登録 step ではあるが、latch engaged 中の登録を deny しない)。
+    **B5a (B4 M4 fix)**: 本 ``_register`` は process spawn しない in-process 登録 step だが、
+    emergency-stop latch engaged 中の **新規 agent 登録を deny** する (kill switch の新規活動 deny 完備、
+    B4 M4 defer 分を閉じる)。latch check は DB を読むため session を取得し、共有 helper
+    ``assert_not_emergency_stopped`` を通す。
+
+    - **sessionless deny (fail-closed)**: session 取得失敗 = latch 確認不能 → 登録拒否。
+    - **latch engaged deny**: ``EmergencyStopEngagedError`` を ``state='denied'`` 応答へ畳む。
+
     実 subprocess の起動と cross-process kill 配線は ``superintendent_agent_start`` (managed 経路、P1-1
-    解消済) が担う。``_register`` 自体の latch gate は **B5 (MCP mutating bridge latch gate)** で閉じる
-    (``agent_spawner.spawn_agent`` の honest note と同様)。
+    解消済) が担う。``_register`` は registry row を作らない (登録のみ) ため latch check のみ追加する。
     """
     if provider not in ("claude", "codex", "custom"):
         return {"error": "invalid_provider", "valid": ["claude", "codex", "custom"]}
@@ -858,8 +862,28 @@ async def superintendent_agent_register(
     from datetime import UTC, datetime
     from uuid import UUID, uuid4
 
-    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID
+    from backend.app.mcp.context import DEFAULT_SUPERINTENDENT_ACTOR_ID, DEFAULT_TENANT_ID, get_db_session
+    from backend.app.services.superintendent.emergency_stop import (
+        EmergencyStopEngagedError,
+        assert_not_emergency_stopped,
+    )
     from backend.app.services.superintendent.lifecycle import ManagedAgent
+
+    # B5a (B4 M4): emergency-stop latch gate (engaged 中の新規 agent 登録を deny、fail-closed)。
+    # sessionless = latch 確認不能 = 登録拒否 (fail-closed、agent_start と同方針)。
+    try:
+        async with get_db_session() as session:
+            try:
+                await assert_not_emergency_stopped(session, DEFAULT_TENANT_ID)
+            except EmergencyStopEngagedError:
+                return {
+                    "role_id": role_id,
+                    "project_id": project_id,
+                    "state": "denied",
+                    "error": "emergency_stop_engaged",
+                }
+    except Exception as e:
+        return {"role_id": role_id, "state": "failed", "error": str(type(e).__name__)}
 
     agent_id = uuid4()
     ManagedAgent(
