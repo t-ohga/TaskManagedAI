@@ -88,6 +88,11 @@ _EMERGENCY_STOP_BYPASS_ALLOWED_MODELS: frozenset[str] = frozenset(
         # statement-based DML (execute(update)) のため通常 ORM-tracked scope guard には現れないが、
         # ORM-tracked な ManagedAgentRecord mutation を bypass session で行う場合も許可する (defense-in-depth)。
         "ManagedAgentRecord",
+        # B6 (ADR-00048 §A-3/§A-8) P2-3 fix: budget global kill switch (コスト緊急停止) も operator
+        # safety stop であり host-freeze 中も engage/clear できなければならない。budget engage/clear は
+        # ORM-tracked な ``Budget`` を mutate する (find-or-create / toggle)。freeze gate bypass session の
+        # scope guard が無関係 model として reject しないよう許可する (emergency-stop latch と同思想)。
+        "Budget",
     }
 )
 

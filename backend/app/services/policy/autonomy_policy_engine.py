@@ -106,12 +106,20 @@ async def resolve_autonomy_policy_action_effect(
     # deny する。budget global_kill_switch と **別目的で OR 評価** (latch=human 即時全停止)。latch query は
     # fail-closed (DB error 等で確認不能 → engaged 扱いで deny、kill switch fail-open を防ぐ)。
     emergency_stop_engaged = await _resolve_emergency_stop_engaged(session, tenant_id)
+    # SP-PHASE1 B6 (ADR-00048 §A-8) P2-1 fix: budget `global_kill_switch` を **server 側で resolve** し
+    # autonomy choke point の OR に実際に効かせる。これまで本 flag を渡す caller が repo 全体に存在せず、
+    # operator が budget kill switch を engage しても policy engine 経由 (runtime BudgetGuard でない) の
+    # auto-allow が継続する endpoint contract 違反があった。caller が明示渡しした値とも OR する
+    # (pure evaluator の unit test / 明示 caller を維持)。resolve は fail-closed (DB error → engaged 扱い)。
+    budget_kill_switch_engaged = global_kill_switch_enabled or (
+        await _resolve_budget_kill_switch_engaged(session, tenant_id)
+    )
     return evaluate_autonomy_policy_engine_decision(
         profile_resolution=profile_resolution,
         profile_effect=profile_effect,
         low_risk_input=low_risk_input,
         emergency_stop_engaged=emergency_stop_engaged,
-        global_kill_switch_enabled=global_kill_switch_enabled,
+        global_kill_switch_enabled=budget_kill_switch_engaged,
         budget_result=budget_result,
         provider_decision=provider_decision,
         tool_network_decision=tool_network_decision,
@@ -136,6 +144,25 @@ async def _resolve_emergency_stop_engaged(
     except EmergencyStopEngagedError:
         return True
     return False
+
+
+async def _resolve_budget_kill_switch_engaged(
+    session: AsyncSession, tenant_id: int
+) -> bool:
+    """budget global_kill_switch (コスト緊急停止) を fail-closed で解決する (B6 P2-1、A-8)。
+
+    active な global budget の ``global_kill_switch`` flag を読む。flag が True なら engaged (= deny)。
+    budget query が失敗した場合は **fail-closed で engaged 扱い** に倒す (latch と同じ kill-switch 方針、
+    instincts §14 / A-9 と整合。kill switch を確認できないまま auto-allow を進めるのは安全弁の fail-open)。
+    active global budget 不在 / flag None / False は ``False`` (= 通常評価へ)。
+    """
+    from backend.app.repositories.budget import BudgetRepository
+
+    try:
+        budget = await BudgetRepository(session).get_active_global(tenant_id)
+    except Exception:  # noqa: BLE001 — budget query 失敗は fail-closed deny に倒す。
+        return True
+    return bool(budget is not None and budget.global_kill_switch is True)
 
 
 def evaluate_autonomy_policy_engine_decision(

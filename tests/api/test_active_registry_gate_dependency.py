@@ -364,6 +364,74 @@ def test_middleware_exempts_health_metrics_auth(tmp_path: Path) -> None:
         assert client.post("/api/write").status_code == 503
 
 
+def test_middleware_exempts_operator_safety_stop_paths(tmp_path: Path) -> None:
+    """SP-PHASE1 B6 P2-3 (ADR-00048 §A-3/§A-8): operator safety-stop path は host-freeze 中も到達可能。
+
+    host frozen (gate fail) でも emergency-stop (latch) engage/clear/status と budget global kill switch
+    engage/clear/status の **safety path のみ** が middleware で exempt され route handler に到達する。
+    他の budget / superintendent mutating route は exempt されず 503。
+    """
+    config_dir, priv, fp = _setup_fleet_and_active(tmp_path)
+    # 完全 gate fail 条件 (active marker 削除 = host frozen 相当の write 凍結)。
+    (
+        config_dir / gate_helper.ACTIVE_REGISTRY_DIRNAME / gate_helper.ACTIVE_MARKER_FILENAME
+    ).unlink()
+    pub_bytes = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+
+    def resolver(query_fp: str) -> bytes | None:
+        return pub_bytes if query_fp == fp else None
+
+    app = FastAPI()
+    configure_active_registry_gate(
+        app.state,
+        config_dir=config_dir,
+        host_id="host-target",
+        public_key_resolver=resolver,
+    )
+    install_active_registry_gate_middleware(app)
+
+    # safety-stop paths (engage base / clear / status)。
+    @app.post("/api/v1/superintendent/emergency-stop")
+    async def _es_engage() -> dict[str, str]:
+        return {"status": "engaged"}
+
+    @app.post("/api/v1/superintendent/emergency-stop/clear")
+    async def _es_clear() -> dict[str, str]:
+        return {"status": "cleared"}
+
+    @app.post("/api/v1/budget/global-kill-switch")
+    async def _ks_engage() -> dict[str, str]:
+        return {"status": "engaged"}
+
+    @app.post("/api/v1/budget/global-kill-switch/clear")
+    async def _ks_clear() -> dict[str, str]:
+        return {"status": "cleared"}
+
+    # 非 safety mutating route (exempt されてはならない)。
+    @app.post("/api/v1/superintendent/dispatch")
+    async def _other_super() -> dict[str, str]:
+        return {"status": "dispatched"}
+
+    @app.post("/api/v1/budget/limits")
+    async def _other_budget() -> dict[str, str]:
+        return {"status": "updated"}
+
+    with TestClient(app) as client:
+        # safety-stop path は freeze 中も到達 → 200 (middleware bypass)。
+        assert client.post("/api/v1/superintendent/emergency-stop").status_code == 200
+        assert (
+            client.post("/api/v1/superintendent/emergency-stop/clear").status_code == 200
+        )
+        assert client.post("/api/v1/budget/global-kill-switch").status_code == 200
+        assert client.post("/api/v1/budget/global-kill-switch/clear").status_code == 200
+        # 非 safety mutating route は freeze gate で reject (一般 write 凍結を壊さない)。
+        assert client.post("/api/v1/superintendent/dispatch").status_code == 503
+        assert client.post("/api/v1/budget/limits").status_code == 503
+
+
 def test_configure_active_registry_gate_is_idempotent(tmp_path: Path) -> None:
     """同じ config を複数回 attach しても safe (idempotent)."""
     config_dir, priv, fp = _setup_fleet_and_active(tmp_path)

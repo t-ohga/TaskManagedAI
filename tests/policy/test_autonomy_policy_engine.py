@@ -269,6 +269,15 @@ async def test_async_policy_engine_uses_server_owned_profile_resolution(
 
     monkeypatch.setattr(engine, "_resolve_emergency_stop_engaged", _no_emergency_stop)
 
+    # SP-PHASE1 B6 P2-1: budget kill switch 解決も dummy session では fail-closed deny になるため off を
+    # stub する (budget kill switch → autonomy deny の経路は DB-gated test で検証)。
+    async def _no_budget_kill_switch(_session: AsyncSession, _tenant_id: int) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        engine, "_resolve_budget_kill_switch_engaged", _no_budget_kill_switch
+    )
+
     session = cast(AsyncSession, object())
     decision = await engine.resolve_autonomy_policy_action_effect(
         session,
