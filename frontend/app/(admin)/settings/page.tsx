@@ -23,6 +23,10 @@ import {
 } from "@/lib/api/session";
 import { listTickets } from "@/lib/api/tickets";
 import {
+  getEmergencyStopStatus,
+  getGlobalKillSwitchStatus
+} from "@/lib/api/emergency-stop";
+import {
   AdminPageShell,
   KeyboardReadinessStrip,
   Panel,
@@ -32,6 +36,7 @@ import {
 } from "../_components/sprint9-admin-ui";
 import { AppearanceSettings } from "./_components/appearance-settings";
 import { DataManagementPanel } from "./_components/data-management-panel";
+import { EmergencyStopPanel } from "./_components/emergency-stop-panel";
 import { ProjectSettingsForm } from "./_components/project-settings-form";
 import { SecretRefsInventory } from "./_components/secret-refs-inventory";
 
@@ -65,6 +70,35 @@ async function loadActiveTicketCount(projectId: string): Promise<number | null> 
   try {
     const res = await listTickets(projectId, { limit: 1 });
     return res.total;
+  } catch {
+    return null;
+  }
+}
+
+// B6 (ADR-00048): 緊急停止 (latch) の状態を server fetch。owner gate は backend で enforce。
+// 取得失敗時は null (panel は "読み込めませんでした" を表示し操作を出さない、fail-closed)。
+async function loadEmergencyStopStatus(): Promise<{
+  engaged: boolean;
+  generation: number | null;
+  engagedAt: string | null;
+} | null> {
+  try {
+    const res = await getEmergencyStopStatus();
+    return {
+      engaged: res.engaged,
+      generation: res.generation,
+      engagedAt: res.engaged_at
+    };
+  } catch {
+    return null;
+  }
+}
+
+// B6 (ADR-00048 §A-8): budget global kill switch (コスト緊急停止) の状態を server fetch。失敗時 null。
+async function loadGlobalKillSwitchStatus(): Promise<{ engaged: boolean } | null> {
+  try {
+    const res = await getGlobalKillSwitchStatus();
+    return { engaged: res.engaged };
   } catch {
     return null;
   }
@@ -120,6 +154,8 @@ export default async function ProjectSettingsPage() {
   const activeTicketCount = project
     ? await loadActiveTicketCount(project.project_id)
     : null;
+  const emergencyStop = await loadEmergencyStopStatus();
+  const budgetKillSwitch = await loadGlobalKillSwitchStatus();
 
   return (
     <AdminPageShell
@@ -159,6 +195,21 @@ export default async function ProjectSettingsPage() {
           </p>
         )}
       </Panel>
+
+      {/* B6 (ADR-00048): 緊急停止 (kill switch) の operator 導線。破壊的かつ安全弁の操作 UI のため
+          印刷物には出さない (.no-print)。owner gate は backend で enforce。 */}
+      <div className="no-print">
+        <Panel
+          description="人間がいつでも全 AI を即停止できる安全弁。新規 AI 活動の全面拒否と実行中エージェントの停止を行います。owner のみ操作でき、監査に記録されます。"
+          title="緊急停止 (キルスイッチ)"
+          titleId="settings-emergency-stop"
+        >
+          <EmergencyStopPanel
+            latch={emergencyStop}
+            budgetKillSwitch={budgetKillSwitch}
+          />
+        </Panel>
+      </div>
 
       {/* S-1: データ管理は破壊的操作 (アーカイブ / 一括削除・復元・インポート) のみの操作 UI。
           印刷物 (設定スナップショット / 監査出力) には出さない (.no-print)。 */}

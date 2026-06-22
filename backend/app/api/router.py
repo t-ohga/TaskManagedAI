@@ -6,6 +6,7 @@ from backend.app.api import (
     audit,
     auth,
     auth_cli,
+    budget,
     claims,
     conflict_groups,
     domain_trust,
@@ -55,3 +56,4 @@ api_router.include_router(me.router)
 api_router.include_router(onboarding.router)
 api_router.include_router(audit.router)
 api_router.include_router(superintendent.router)
+api_router.include_router(budget.router)

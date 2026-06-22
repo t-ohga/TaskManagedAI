@@ -172,4 +172,93 @@ Workflow plan-review (20) と独立に Codex auto-review が **R4 amendment と 
 
 ## Review
 
-(実装後追記。各 batch の adversarial review round + findings closure + ADR-00048 accepted_at を記録)
+ADR-00048 accepted_at: 2026-06-22。各 batch の実装 + adversarial review round + findings closure は
+project memory (`project_session_2026_06_22_phase1_kill_switch.md`) + 各 batch PR (#359 B1 / #360 B2 /
+#361 B3 + follow-up / B4 / B5a-c) を正本とする。本 Review は **B6 (最終 batch) の実装と Phase 1 full
+exit verification** を記録する。
+
+### B6 changed / added (停止導線 UI + CLI + budget API + exit)
+
+- **CLI (operator 停止導線)**: `backend/app/cli/emergency_stop.py` (新規)。`engage` / `clear` / `status`
+  subcommand。`dogfooding_seed.py` pattern 踏襲で `EmergencyStopService` を **service 直呼び** (HTTP server
+  不要、testable)。human-only 担保 = configured owner (`settings.default_actor_id` の stable id) を DB
+  resolve し `actor_type=='human'` を要求 (非 human / 別 stable id は exit 2 で reject)、service も
+  `_assert_human_operator` で再確認。engage は `--reason` を service の broad secret scanner で検証、engage
+  後に endpoint 同様 best-effort Redis wake publish (DB latch が権威、publish 失敗でも DB poll fallback)。
+  MCP には露出しない。出力に raw secret / token / pid を出さない。
+- **budget global_kill_switch API (A-8)**: `backend/app/api/budget.py` (新規) +
+  `BudgetRepository.get_active_global` / `set_global_kill_switch` (find-or-create + audit
+  `budget_global_kill_switch_updated` + FOR UPDATE 直列化)。`POST /api/v1/budget/global-kill-switch`
+  (engage) / `.../clear` / `GET` (status)。owner gate = `require_emergency_stop_operator` 流用 (A-10、
+  authenticated + human + configured owner)。**OR 配線は B5a で既済** (`autonomy_policy_engine` が
+  emergency-stop latch と budget `global_kill_switch_enabled` を choke point で OR 評価、本 API は budget
+  側 flag の operator surface)。router 登録 (`backend/app/api/router.py`)。
+- **UI (停止導線)**: 設定ページ danger-zone に `EmergencyStopPanel`
+  (`frontend/app/(admin)/settings/_components/emergency-stop-panel.tsx`、client) を `.no-print` で追加。
+  (a) latch status 表示 (engaged / generation / engaged_at)、(b) Engage (reason 任意 → POST)、(c) Clear
+  (generation CAS → POST)、(d) budget kill switch engage/clear。二段階確認 (`useState` confirming flag、
+  alert/confirm の JS dialog 不使用、data-management-panel 踏襲)、engage は赤系 danger UI。server fetch は
+  `lib/api/emergency-stop.ts` (server-only、`client.ts` の cookie session 経由)、server action は
+  `emergency-stop-actions.ts`。**`lib/api` (server fetch) / client component の分離厳守** (client は
+  action + hook のみ import、`next build` 通過で混在なし確認)。owner gate は backend で enforce (403 を
+  user-facing message に写像)。
+- **reconciliation (B4 honest defer)**: 本 batch では stale `spawning` 行 sweep は未実装のまま (B4
+  adversarial M3 で B6 defer と記録されていたが、scope/リスクを鑑み Phase 2 supervisor loop 本格化へ
+  再 defer。残リスク §「host crash 中の registry stale」+ §「B4 stale spawning 行」に既記載、A-1 ordering
+  下の live spawn は kill-miss にならないため安全弁の致命性は無い)。
+
+### Phase 1 full exit verification (受け入れ条件 1-11)
+
+backend で検証可能な部分は DB-gated test (throwaway pg) + 実 CLI 駆動で実走。frontend / 実 process kill
+の手動検証は手順を明記。
+
+| # | exit 条件 | 検証 | 結果 |
+|---|---|---|---|
+| 1 | cross-tenant 非干渉 (tenant 1 deny + tenant 2 allow) | `test_emergency_stop_service.py` (B3) | ✅ DB-gated pass |
+| 2 | post-stop 新規 deny (run作成/dispatch/agent_start/autonomy/provider preflight) + clear 後 allow | B3/B5a `assert_not_emergency_stopped` + `test_autonomy_emergency_stop.py` | ✅ DB-gated pass |
+| 3 | claim→provider 窓なし (interface contract、A-9) | `test_worker_driver_claim_contract.py` (B5a) | ✅ contract/stub test pass (実 driver = Phase 2) |
+| 4 | cross-process kill 実証 + supervisor restart killpg | `test_supervisor.py` / `test_supervisor_db.py` (B4) | ✅ DB-gated pass |
+| 4b | spawn race 非干渉 (mid-spawn engage、A-1) | B2/B3 spawn ordering test | ✅ DB-gated pass |
+| 5 | operator gate fail-closed (unauthenticated/別human/non-human 403) | `test_emergency_stop_operator_gate.py` + **B6 CLI human-only reject** (`test_emergency_stop_cli.py::test_non_human_owner_rejected`) | ✅ DB-gated pass |
+| 6 | concurrent engage vs claim race (advisory lock) | `test_emergency_stop_service.py` 直列化 test (B3) | ✅ DB-gated pass |
+| 7 | provider CAS (engage 後 stale response discard) | `test_provider_cas_emergency_stop.py` (B5c) | ✅ DB-gated pass |
+| 8 | state machine (block source 限定 + pre_stop_status resume) | B1 drift/transition test + B3 service test | ✅ pass |
+| 9 | 冪等性 (二重 engage no-op、agent 不在 engage count=0) | B3 service test + **B6 CLI `already_engaged`** | ✅ pass |
+| 10 | audit assert_no_raw_secret (raw secret/token/pid 非含) | 全 emergency-stop / budget audit test | ✅ pass |
+| 11 | ADR-00048 accepted + **CLI engage/clear/status 操作可** (must-ship) / UI best-effort | **B6 CLI end-to-end 実走** (engage→block 1 run→clear→resume、stale generation reject) + UI panel + vitest | ✅ CLI must-ship 達成、UI 実装済 (browser 検証は operator 委譲) |
+
+**B6 CLI end-to-end 実走 (throwaway pg)**: `status` (未engage) → `engage --reason` (engaged / generation 1 /
+blocked 1 run) → `status` (engaged) → `clear --generation 99` (stale、exit 2、latch 残存) →
+`clear --generation 1` (cleared / resumed 1 run) → `status` (未engage) → DB 上 run が `running` へ復元
+(`pre_stop_status` NULL)。Redis 不在でも engage 成立 (best-effort wake publish 失敗 = DB latch 権威の
+fail-closed 設計を実証)。
+
+### B6 検証結果
+
+- backend: `uv run ruff check backend tests` ✅ / `uv run mypy backend` ✅ (403 files)。
+- no-DB pytest (`tests/cli/ tests/api/test_budget_global_kill_switch.py tests/policy/`): 165 passed /
+  66 skipped (DB-gated は skip)。
+- DB-gated (throwaway pg port 15450、終了後 `docker rm -f`): B6 新規 (CLI 5 + budget API 3) + 既存
+  emergency-stop / supervisor / policy / provider CAS / budget_guard / migration 全 pass (B1-B5 regression
+  なし、計 24 + 139 pass)。
+- frontend: `pnpm typecheck` ✅ / `pnpm lint` (新規ファイル clean、既存の pre-existing error は不変) /
+  `pnpm test` 599 passed (90 files、B6 panel 6 + print-scope guard 更新含む) / `pnpm build` ✅
+  (lib/api↔client 混在の next build 専用失敗なし)。
+
+### Phase 1 → Phase 2 繰り延べ確認 (ADR-00048 A-9)
+
+- **worker driver 実駆動 (SP-004-5/ADR-00057) は Phase 2** に正しく繰り延べ。Phase 1 は claim point latch を
+  **interface contract (`assert_not_emergency_stopped` helper + advisory-lock 契約 + contract/stub test)**
+  として予約済 (exit #3)。SP-004-5 worker driver は未マージ (workers は noop_task のみ) で本 Sprint の前提と
+  整合。実 driver 駆動の deny は Phase 2 で検証する。
+- B4 honest limit (pgid 再利用窓 / psutil 依存 started_at / 同期 in-flight provider call の課金) は残リスクに
+  記載済で Phase 2+ defer 妥当。stale `spawning` sweep は Phase 4 supervisor loop 本格化へ統合 (上記 B6
+  reconciliation 参照)。
+
+### deferred (本 batch で未着手 / 後続)
+
+- UI の実ブラウザ検証 (proxy / owner gate / engage→clear flow の DOM/Network 確認) は operator 委譲
+  (検証手順を作業報告に添付)。
+- stale `spawning` 行 reconciliation = Phase 4 supervisor loop 本格化。
+- tenant-wide provider single-flight lease (engage 時 in-flight 全 call の課金抑止) = Phase 2+ (A-4 honest
+  limit)。

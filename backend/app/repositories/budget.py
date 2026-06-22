@@ -143,6 +143,79 @@ class BudgetRepository(BaseRepository[Budget]):
             )
         return budget
 
+    async def get_active_global(self, tenant_id: int) -> Budget | None:
+        """active な global-level budget row を返す (SP-PHASE1 B6、ADR-00048 §A-8)。
+
+        global budget は ``budgets_uq_global_level_active`` partial unique index で
+        ``level='global' AND active=true`` が最大 1 件。``global_kill_switch`` flag を載せられるのは
+        global budget のみ (``budgets_ck_global_kill_switch_only_global``)。
+        """
+        await self._ensure_tenant_context(tenant_id)
+        budget: Budget | None = await self.session.scalar(
+            sa.select(Budget).where(
+                Budget.tenant_id == tenant_id,
+                Budget.level == "global",
+                Budget.active.is_(True),
+            )
+        )
+        return budget
+
+    async def set_global_kill_switch(
+        self,
+        *,
+        tenant_id: int,
+        engaged: bool,
+        actor_id: UUID,
+    ) -> Budget:
+        """budget global_kill_switch (コスト緊急停止) を engage/clear する (SP-PHASE1 B6、ADR-00048 §A-8)。
+
+        emergency-stop latch (human 即時全停止) とは **別目的** だが、autonomy / budget choke point で
+        OR 評価される (どちらか engaged なら deny。OR 配線は B5a で済、本 API は budget 側 flag の operator
+        surface)。active な global budget が無ければ flag だけ持つ minimal global budget を **find-or-create**
+        し、``global_kill_switch`` を set する。audit (``budget_global_kill_switch_updated``、raw 値なし)。
+
+        並行 engage は同 row の FOR UPDATE で線形化する (toggle の lost update を防ぐ)。冪等: 既に同値なら
+        no-op で row を返す (audit は engage 操作の証跡として常に残す)。
+        """
+        await self._ensure_tenant_context(tenant_id)
+        # FOR UPDATE で active global budget を lock (並行 toggle 直列化)。
+        budget = await self.session.scalar(
+            sa.select(Budget)
+            .where(
+                Budget.tenant_id == tenant_id,
+                Budget.level == "global",
+                Budget.active.is_(True),
+            )
+            .with_for_update()
+        )
+        if budget is None:
+            budget = await super().create(
+                tenant_id=tenant_id,
+                payload={
+                    "level": "global",
+                    "level_id": None,
+                    "active": True,
+                    "global_kill_switch": engaged,
+                },
+            )
+            created = True
+        else:
+            budget.global_kill_switch = engaged
+            await self.session.flush()
+            created = False
+        await AuditEventRepository(self.session).append(
+            tenant_id=tenant_id,
+            event_type="budget_global_kill_switch_updated",
+            actor_id=actor_id,
+            payload={
+                "budget_id": str(budget.id),
+                "level": budget.level,
+                "global_kill_switch": engaged,
+                "created": created,
+            },
+        )
+        return budget
+
     async def delete(self, tenant_id: int, id: UUID) -> NoReturn:
         raise NotImplementedError("Budget rows are disabled with active=false, not deleted.")
 

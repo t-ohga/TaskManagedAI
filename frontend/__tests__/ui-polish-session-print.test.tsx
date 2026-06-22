@@ -168,13 +168,32 @@ describe("I-3 inline anchor tap targets (Codex adversarial R2/R4 regression guar
 describe("settings print scope (Codex adversarial R4 F-MEDIUM regression guard)", () => {
   // 設定スナップショット / 監査出力には現在値を残し、操作 UI (保存ボタン / データ管理の破壊的操作)
   // は印刷物に出さない。
+  // 操作 UI (破壊的データ管理 / 緊急停止 kill switch) は印刷物に出さない。各 .no-print ブロックが
+  // 当該 Panel を直後に含むことを検証する (複数の .no-print ブロックが存在するため、最初の 1 つだけを
+  // 見るのではなく対象 Panel ごとに wrapping を確認する)。
+  function assertWrappedInNoPrint(page: string, marker: string): void {
+    const markerAt = page.indexOf(marker);
+    expect(markerAt).toBeGreaterThanOrEqual(0);
+    // marker の直前に現れる最も近い .no-print 開始タグを探す。
+    const noPrintBefore = page.lastIndexOf('<div className="no-print">', markerAt);
+    expect(noPrintBefore).toBeGreaterThanOrEqual(0);
+    // その .no-print と marker の間に別の .no-print 開始が割り込んでいないこと (= marker が当該
+    // .no-print ブロックに属する)。
+    const intervening = page.indexOf(
+      '<div className="no-print">',
+      noPrintBefore + 1
+    );
+    expect(intervening === -1 || intervening > markerAt).toBe(true);
+  }
+
   it("wraps the destructive DataManagementPanel in .no-print", () => {
     const page = readFileSync(join(process.cwd(), "app/(admin)/settings/page.tsx"), "utf8");
-    const wrapStart = page.indexOf('<div className="no-print">');
-    expect(wrapStart).toBeGreaterThanOrEqual(0);
-    // no-print 直後の Panel ブロックに DataManagementPanel が含まれる。
-    const slice = page.slice(wrapStart, wrapStart + 600);
-    expect(slice).toContain("DataManagementPanel");
+    assertWrappedInNoPrint(page, "<DataManagementPanel");
+  });
+
+  it("wraps the EmergencyStopPanel (kill switch operator UI) in .no-print", () => {
+    const page = readFileSync(join(process.cwd(), "app/(admin)/settings/page.tsx"), "utf8");
+    assertWrappedInNoPrint(page, "<EmergencyStopPanel");
   });
 
   it("marks every project settings save button .no-print", () => {
