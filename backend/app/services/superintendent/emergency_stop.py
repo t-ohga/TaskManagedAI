@@ -281,6 +281,24 @@ class EmergencyStopService:
         )
         return int(result or 0)
 
+    async def max_generation_ever(self, tenant_id: int) -> int:
+        """当該 tenant の **全 latch 行** (cleared 含む) の MAX(generation) を返す (B5c P1-2/3/5)。
+
+        generation は engage 毎に max+1 で monotonic に増え、clear では減らない (cleared 行も残るため
+        MAX は単調非減少)。active latch だけを見る ``get_active(...).generation`` と異なり、本値は
+        **engage→clear cycle が起きても巻き戻らない** ため、provider CAS の「call window 中に engage が
+        1 回でも起きたか」を検出する monotonic generation history として使える:
+
+        - P1-3: preflight (active なし) 後 provider.execute 前に engage → postflight active あり →
+          MAX も bump (G1 > G0) で検出。
+        - P1-5: call 中に engage→clear が起きると active は preflight/postflight 共 None だが MAX は
+          engage で bump 済 (cleared 行に残る) なので G1 > G0 で検出 (active-only 比較が見逃す穴)。
+
+        active latch が一度も無ければ 0。lazy schema 依存はない (latch table 直 query)。
+        """
+        await ensure_tenant_context(self._session, tenant_id)
+        return await self._max_generation(tenant_id)
+
     # --- engage ---
 
     async def engage(

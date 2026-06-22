@@ -49,6 +49,9 @@ def _no_emergency_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         orchestrator_module, "_read_emergency_stop_generation", _no_generation
     )
+    monkeypatch.setattr(
+        orchestrator_module, "_read_max_emergency_stop_generation", _no_generation
+    )
 
 
 @pytest.fixture

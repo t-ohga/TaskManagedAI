@@ -1,16 +1,25 @@
-"""SP-PHASE1 B5c: provider postflight generation CAS (ADR-00048 §G/A-4)。
+"""SP-PHASE1 B5c: provider CAS = monotonic generation history + preflight-active-fail (ADR-00048 §G/A-4)。
 
-``execute_provider_step`` は provider response 後、``record_provider_usage`` / artifact / status の **前** に
-emergency-stop latch generation を再読し、preflight snapshot と不一致 (engage が割り込んだ) なら result を
-discard/quarantine する (usage/artifact/status を進めず ``running -> blocked`` (runtime_blocked) へ confine)。
+``execute_provider_step`` は emergency-stop latch を次の 2 段で CAS する (B5 adversarial P1-2/3/5 で
+active-only 等価比較の 3 つの穴を解消した再設計):
+- **preflight**: (a) latch が **currently active** なら provider.execute の前に ``EmergencyStopEngagedError``
+  を raise (P1-2: latch 既 active での新規 provider call を構造的に防ぐ)。(b) ``max_generation_ever`` (G0)
+  を snapshot。
+- **postflight** (provider response 後、usage/artifact/status の前、同一 tenant advisory lock 下): latch が
+  **currently active** なら、または ``max_generation_ever`` (G1) ``> G0`` なら → **discard** (usage/artifact/
+  status を進めず ``running -> blocked`` (runtime_blocked) へ confine)。else 通常進行。
 
 DB-gated: real DB の ``running`` production run + real latch + real ``transition_with_event`` で CAS branch を
 検証する。compliance gate / provider は stub (CAS branch の単離検証、provider pipeline 全体の再 test は不要)。
 
-- preflight None → postflight engaged (generation 出現) で discard。
-- preflight gen=N → postflight gen=N+1 (engage→clear→engage cycle) で discard。
-- generation 不変 (engage 無し) は通常進行 (generated_artifact)。
+カバーする race:
+- P1-2: latch が step 開始時点で既に active → provider.execute 前に deny (新規 call させない)。
+- P1-3: preflight (active なし、G0) 後・provider.execute 前に engage → postflight active あり / G1>G0 で discard。
+- P1-5: call 中に engage→clear → active は preflight/postflight 共 None だが G1>G0 (cleared 行が MAX に残る)
+  で discard (active-only 等価比較が見逃す穴を monotonic history で捕捉)。
+- generation 不変 (engage 無し) は通常進行 (generated_artifact、usage 記録)。
 - discard 時 usage row が記録されない (課金/artifact/status を進めない)。
+- LOW-4: concurrent engage が既に run を block 済なら benign graceful discard (ungraceful ValueError 抑止)。
 
 TASKHUB_DISABLE_KEYRING=1 + TASKMANAGEDAI_RUN_DB_TESTS=1 + test PostgreSQL。
 """
@@ -42,7 +51,10 @@ from backend.app.domain.provider.request import ProviderRequest
 from backend.app.services.agent_runtime.orchestrator import AgentRunOrchestrator
 from backend.app.services.providers.compliance_gate import ComplianceGate
 from backend.app.services.providers.mock import MockProviderAdapter
-from backend.app.services.superintendent.emergency_stop import EmergencyStopService
+from backend.app.services.superintendent.emergency_stop import (
+    EmergencyStopEngagedError,
+    EmergencyStopService,
+)
 
 _DEFAULT_DATABASE_URL = (
     "postgresql+asyncpg://taskmanagedai:taskmanagedai@127.0.0.1:5432/taskmanagedai_test"
@@ -237,33 +249,84 @@ async def _accumulated_tokens(session: AsyncSession) -> int:
 
 
 @pytest.mark.asyncio
-async def test_cas_discards_when_latch_engaged_during_call(
+async def test_cas_p1_2_denies_when_latch_already_active_at_step_start(
     session_factory: async_sessionmaker[AsyncSession],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """preflight None → postflight engaged で result discard (usage/artifact/status を進めない)。"""
+    """P1-2: latch が step 開始時点で既に active なら provider.execute の **前** に deny する。
+
+    active-only 等価比較 (preflight==postflight==active gen) では discard されず provider call + usage/
+    status が進行してしまう穴。preflight-active-fail で新規 provider call をさせない (新規課金を防ぐ)。
+    """
     async with session_factory() as session:
         await _reset(session)
         await _seed(session)
-        # latch を engage (run はまだ無い = block 0 件)。postflight 再読で active generation が出る。
+        # latch を engage (active のまま)。その **後** に running run を作る (block 対象にしない)。
         await EmergencyStopService(session).engage(
             tenant_id=1, operator_actor_id=ACTOR_OWNER_1
         )
         await session.commit()
-        # engage **後** に running run を作る (engage の block 対象にせず in-flight running を保つ)。
         await _make_running_run(session)
 
-    # preflight snapshot を None に固定し、postflight は real DB (engaged generation) を読ませる。
-    real_read = orchestrator_mod._read_emergency_stop_generation
-    state = {"first": True}
+    async with session_factory() as session:
+        run = await _load_run(session)
+        # latch 既 active → provider.execute 前に EmergencyStopEngagedError (新規 call させない)。
+        with pytest.raises(EmergencyStopEngagedError):
+            await _orchestrator(session).execute_provider_step(
+                run=run, request=_request(), actor_id=ACTOR_OWNER_1
+            )
+        await session.rollback()
 
-    async def _fake_read(session: AsyncSession, tenant_id: int) -> int | None:
-        if state["first"]:
-            state["first"] = False
-            return None  # preflight: 「engage 前」を模す
-        return await real_read(session, tenant_id)  # postflight: real engaged generation
+    async with session_factory() as session:
+        # run は CAS が触らず running のまま (block は engage block-source が別途行う。本 test は
+        # engage 後に run を作っているため engage の block 対象外 = running を維持)。usage は記録なし。
+        run = await _load_run(session)
+        assert run.status == "running"
+        assert await _accumulated_tokens(session) == 0
 
-    monkeypatch.setattr(orchestrator_mod, "_read_emergency_stop_generation", _fake_read)
+
+@pytest.mark.asyncio
+async def test_cas_p1_3_discards_when_engage_during_call(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1-3: preflight (active なし、G0) 後・provider.execute 前に engage → postflight で discard。
+
+    preflight active-check は None (engage 前) を返すので provider.execute へ進み、call window 中の engage
+    で postflight active あり / G1>G0 → discard (usage/artifact/status を進めない)。
+    """
+    async with session_factory() as session:
+        await _reset(session)
+        await _seed(session)
+        await _make_running_run(session)
+
+    # preflight 時点では engage 前 (active None / G0=0)。provider.execute の途中で engage が起きる状況を
+    # 模すため、preflight active-check と G0 read は real (None / 0)、その後 real latch を engage する。
+    real_active = orchestrator_mod._read_emergency_stop_generation
+    real_max = orchestrator_mod._read_max_emergency_stop_generation
+    active_calls = {"n": 0}
+
+    async def _fake_active(session: AsyncSession, tenant_id: int) -> int | None:
+        active_calls["n"] += 1
+        if active_calls["n"] == 1:
+            return None  # preflight active-check: engage 前。
+        return await real_active(session, tenant_id)  # postflight: real engaged active gen。
+
+    max_calls = {"n": 0}
+
+    async def _fake_max(session: AsyncSession, tenant_id: int) -> int:
+        max_calls["n"] += 1
+        if max_calls["n"] == 1:
+            # preflight G0 を読んだ「直後」に engage が割り込む状況を模す (G0=0 を返してから engage)。
+            async with session_factory() as other:
+                await EmergencyStopService(other).engage(
+                    tenant_id=1, operator_actor_id=ACTOR_OWNER_1
+                )
+                await other.commit()
+            return 0  # preflight G0 (engage 前の値)。
+        return await real_max(session, tenant_id)  # postflight G1 (engage 済 = 1)。
+
+    monkeypatch.setattr(orchestrator_mod, "_read_emergency_stop_generation", _fake_active)
+    monkeypatch.setattr(orchestrator_mod, "_read_max_emergency_stop_generation", _fake_max)
 
     async with session_factory() as session:
         run = await _load_run(session)
@@ -280,25 +343,88 @@ async def test_cas_discards_when_latch_engaged_during_call(
         run = await _load_run(session)
         assert run.status == "blocked"
         assert run.blocked_reason == "runtime_blocked"
-        # usage が記録されていない (課金/artifact/status を進めない)。
         assert await _accumulated_tokens(session) == 0
+        # discard の witness event: call window 中の engage が先に本 run を block 済なら engage 側の
+        # ``emergency_stop_engaged`` event が残り、orchestrator の discard は already-blocked graceful path で
+        # event=None (二重 event を積まない)。orchestrator が先に block した場合は ``runtime_blocked``
+        # (reason_code=emergency_stop_engaged)。どちらの経路でも emergency-stop 由来の witness が 1 件残る。
         ev = (
             await session.execute(
                 text(
-                    "select event_payload::text from agent_run_events "
-                    "where run_id = :r and event_type = 'runtime_blocked' order by seq_no desc limit 1"
+                    "select event_type, event_payload::text from agent_run_events "
+                    "where run_id = :r and event_type in ('runtime_blocked', 'emergency_stop_engaged') "
+                    "order by seq_no desc limit 1"
                 ),
                 {"r": RUN_ID},
             )
-        ).scalar_one()
-        assert "emergency_stop_engaged" in ev
+        ).one()
+        assert ev[0] == "emergency_stop_engaged" or "emergency_stop_engaged" in ev[1]
 
 
 @pytest.mark.asyncio
-async def test_cas_allows_when_generation_unchanged(
+async def test_cas_p1_5_discards_on_engage_clear_cycle_during_call(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1-5: call 中に engage→clear が起きると active は両端 None だが G1>G0 で discard する。
+
+    active-only 等価比較 (None==None) は通してしまう穴。monotonic ``max_generation_ever`` は cleared 行を
+    MAX に残すため、engage→clear で G が +1 され G1>G0 → discard できる (cleared 行が history を保持)。
+    """
+    async with session_factory() as session:
+        await _reset(session)
+        await _seed(session)
+        await _make_running_run(session)
+
+    real_active = orchestrator_mod._read_emergency_stop_generation
+    real_max = orchestrator_mod._read_max_emergency_stop_generation
+    max_calls = {"n": 0}
+
+    async def _fake_max(session: AsyncSession, tenant_id: int) -> int:
+        max_calls["n"] += 1
+        if max_calls["n"] == 1:
+            # preflight G0 を読んだ「直後」に engage→clear cycle が割り込む状況を模す。
+            async with session_factory() as other:
+                svc = EmergencyStopService(other)
+                g = await svc.engage(tenant_id=1, operator_actor_id=ACTOR_OWNER_1)
+                await other.commit()
+            async with session_factory() as other:
+                await EmergencyStopService(other).clear(
+                    tenant_id=1,
+                    operator_actor_id=ACTOR_OWNER_1,
+                    expected_generation=g.generation,
+                )
+                await other.commit()
+            return 0  # preflight G0 (cycle 前)。
+        return await real_max(session, tenant_id)  # postflight G1 (cleared 行に gen=1 が残る = 1)。
+
+    monkeypatch.setattr(orchestrator_mod, "_read_emergency_stop_generation", real_active)
+    monkeypatch.setattr(orchestrator_mod, "_read_max_emergency_stop_generation", _fake_max)
+
+    async with session_factory() as session:
+        run = await _load_run(session)
+        result = await _orchestrator(session).execute_provider_step(
+            run=run, request=_request(), actor_id=ACTOR_OWNER_1
+        )
+        await session.commit()
+
+    # postflight active は None (clear 済) だが G1>G0 で discard する (active-only 比較が見逃す穴)。
+    assert result.outcome == "discarded_emergency_stop"
+    assert result.to_state == "blocked"
+    assert result.blocked_reason == "runtime_blocked"
+
+    async with session_factory() as session:
+        run = await _load_run(session)
+        assert run.status == "blocked"
+        # postflight latch は cleared (active None) だが G1>G0 で確実に discard 済。
+        assert await _accumulated_tokens(session) == 0
+
+
+@pytest.mark.asyncio
+async def test_cas_allows_when_no_engage_during_call(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """engage 無し (preflight==postflight==None) は通常進行 (generated_artifact、usage 記録)。"""
+    """engage 無し (preflight active None / G0==G1) は通常進行 (generated_artifact、usage 記録)。"""
     async with session_factory() as session:
         await _reset(session)
         await _seed(session)
@@ -322,58 +448,6 @@ async def test_cas_allows_when_generation_unchanged(
 
 
 @pytest.mark.asyncio
-async def test_cas_discards_on_generation_bump_cycle(
-    session_factory: async_sessionmaker[AsyncSession],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """preflight gen=N → postflight gen=N+1 (engage→clear→engage) でも discard する。"""
-    async with session_factory() as session:
-        await _reset(session)
-        await _seed(session)
-
-    real_read = orchestrator_mod._read_emergency_stop_generation
-    state = {"first": True}
-
-    async def _fake_read(session: AsyncSession, tenant_id: int) -> int | None:
-        if state["first"]:
-            state["first"] = False
-            return 1  # preflight: generation=1 を模す
-        return await real_read(session, tenant_id)  # postflight: real (gen=2)
-
-    monkeypatch.setattr(orchestrator_mod, "_read_emergency_stop_generation", _fake_read)
-
-    # 実 latch を gen=2 にする (engage→clear→engage)。
-    async with session_factory() as session:
-        svc = EmergencyStopService(session)
-        g1 = await svc.engage(tenant_id=1, operator_actor_id=ACTOR_OWNER_1)
-        await session.commit()
-    async with session_factory() as session:
-        await EmergencyStopService(session).clear(
-            tenant_id=1, operator_actor_id=ACTOR_OWNER_1, expected_generation=g1.generation
-        )
-        await session.commit()
-    async with session_factory() as session:
-        g2 = await EmergencyStopService(session).engage(
-            tenant_id=1, operator_actor_id=ACTOR_OWNER_1
-        )
-        await session.commit()
-        # engage 後に running run を作る (block 対象にしない)。
-        await _make_running_run(session)
-    assert g2.generation == 2
-
-    async with session_factory() as session:
-        run = await _load_run(session)
-        result = await _orchestrator(session).execute_provider_step(
-            run=run, request=_request(), actor_id=ACTOR_OWNER_1
-        )
-        await session.commit()
-
-    assert result.outcome == "discarded_emergency_stop"
-    async with session_factory() as session:
-        assert await _accumulated_tokens(session) == 0
-
-
-@pytest.mark.asyncio
 async def test_cas_discards_gracefully_when_run_already_blocked_by_concurrent_engage(
     session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
@@ -388,22 +462,22 @@ async def test_cas_discards_gracefully_when_run_already_blocked_by_concurrent_en
     async with session_factory() as session:
         await _reset(session)
         await _seed(session)
-        # latch engage 後に running run を作る (block 対象にせず in-flight を保つ)。
-        await EmergencyStopService(session).engage(
-            tenant_id=1, operator_actor_id=ACTOR_OWNER_1
-        )
-        await session.commit()
         await _make_running_run(session)
 
-    real_read = orchestrator_mod._read_emergency_stop_generation
-    state = {"first": True}
+    real_active = orchestrator_mod._read_emergency_stop_generation
+    real_max = orchestrator_mod._read_max_emergency_stop_generation
+    max_calls = {"n": 0}
 
-    async def _fake_read(session: AsyncSession, tenant_id: int) -> int | None:
-        if state["first"]:
-            state["first"] = False
-            return None  # preflight: 「engage 前」を模す
-        # postflight: concurrent engage が既に本 run を blocked へ遷移済の状態を模す (別 session で flip)。
+    async def _fake_max(session: AsyncSession, tenant_id: int) -> int:
+        max_calls["n"] += 1
+        if max_calls["n"] == 1:
+            return 0  # preflight G0 (engage 前)。
+        # postflight: concurrent engage が既に本 run を blocked へ遷移済の状態を模す (別 session で flip +
+        # latch engage で G を bump)。
         async with session_factory() as other:
+            await EmergencyStopService(other).engage(
+                tenant_id=1, operator_actor_id=ACTOR_OWNER_1
+            )
             await other.execute(
                 text(
                     "update agent_runs set status = 'blocked', blocked_reason = 'runtime_blocked' "
@@ -412,9 +486,20 @@ async def test_cas_discards_gracefully_when_run_already_blocked_by_concurrent_en
                 {"r": RUN_ID},
             )
             await other.commit()
-        return await real_read(session, tenant_id)  # real engaged generation (preflight None と不一致)
+        return await real_max(session, tenant_id)  # postflight G1 (= 1 > G0)。
 
-    monkeypatch.setattr(orchestrator_mod, "_read_emergency_stop_generation", _fake_read)
+    # preflight active-check は engage 前なので None を返させる (real は flip 後に呼ばれ None でない可能性
+    # があるため、active-check は preflight 1 回目のみ None 固定)。
+    active_calls = {"n": 0}
+
+    async def _fake_active(session: AsyncSession, tenant_id: int) -> int | None:
+        active_calls["n"] += 1
+        if active_calls["n"] == 1:
+            return None  # preflight active-check: engage 前。
+        return await real_active(session, tenant_id)
+
+    monkeypatch.setattr(orchestrator_mod, "_read_emergency_stop_generation", _fake_active)
+    monkeypatch.setattr(orchestrator_mod, "_read_max_emergency_stop_generation", _fake_max)
 
     async with session_factory() as session:
         run = await _load_run(session)

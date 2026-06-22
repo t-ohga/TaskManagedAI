@@ -103,16 +103,31 @@ MCP_BRIDGE_ALLOW_LIST: frozenset[str] = frozenset(
 async def assert_bridge_not_emergency_stopped(
     session: AsyncSession, tenant_id: int
 ) -> None:
-    """MCP mutating bridge 共有 latch gate (B5b、ADR-00048 §B-2)。
+    """MCP mutating bridge 共有 latch gate (B5b、ADR-00048 §B-2/A-9)。
 
-    共有 helper ``emergency_stop.assert_not_emergency_stopped`` (fail-closed、latch query 失敗も deny)
-    へ委譲する。各 deny-list bridge の冒頭で本 gate を呼び、engaged tenant の mutating 経路を
-    ``EmergencyStopEngagedError`` で deny する。allow-list bridge は呼ばない (read / kill 経路)。
+    **P1-1 (Codex adversarial、TOCTOU 解消)**: read-only な latch check だけでは
+    「latch を読んでから bridge が AgentRun insert/commit するまでの窓」に engage+commit が割り込み、
+    **engage 後の新規 work を作成**してしまう (spawn が A-1/P1-2 で解消したのと同型の TOCTOU)。
+    よって本 gate は latch check の **前** に spawn / engage / clear と **同一 helper・同一 advisory lock
+    key** (``superintendent-emergency-stop:<tenant>``) の ``acquire_emergency_stop_lock`` を取得する。
+    lock は transaction-scoped (``pg_advisory_xact_lock``) のため、**caller (各 deny-list bridge) の
+    mutation + ``session.commit()`` まで同一 transaction で保持される**。これで engage は bridge の
+    commit まで待たされ、bridge は engage 完了後の latch を必ず観測して deny する (= lock 外で bridge が
+    新規 work を確定する窓が無い。spawn A-1 §3 と同じ線形化保証)。bridge mutation は高速 DB op なので
+    lock 保持中の engage 遅延は許容範囲。
+
+    順序: advisory lock 取得 → latch check (engaged なら ``EmergencyStopEngagedError``) → caller の
+    mutation + commit (commit で lock 解放)。共有 helper ``emergency_stop.assert_not_emergency_stopped``
+    (fail-closed、latch query 失敗も deny) へ委譲する。各 deny-list bridge の冒頭で本 gate を呼び、
+    allow-list bridge は呼ばない (read / kill 経路)。
     """
     from backend.app.services.superintendent.emergency_stop import (
+        acquire_emergency_stop_lock,
         assert_not_emergency_stopped,
     )
 
+    # P1-1: latch check の前に advisory lock を取得し caller commit まで保持する (TOCTOU 解消)。
+    await acquire_emergency_stop_lock(session, tenant_id)
     await assert_not_emergency_stopped(session, tenant_id)
 
 
