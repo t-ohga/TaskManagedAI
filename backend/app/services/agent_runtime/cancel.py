@@ -18,8 +18,25 @@ from backend.app.services.agent_runtime.event_log import transition_with_event
 
 logger = logging.getLogger(__name__)
 
+# SP-004-5 (ADR-00057 R2-F2): worker driver 導入で cancel entrypoint を本 service に統一する
+# にあたり、driver が取り得る transient state (queued / gathering_context / generated_artifact
+# / schema_validated / validation_failed) からの cancel を許可する。これにより、従来 MCP
+# bridge_run_cancel が status 直接 set で bypass していた経路を本 service 経由に統一しても
+# queued/transient run の cancel が regress しない (state_machine の対応 cancel edge と同集合)。
 _CANCELABLE_STATES = frozenset(
-    {"running", "blocked", "waiting_approval", "provider_incomplete"}
+    {
+        "queued",
+        "gathering_context",
+        "running",
+        "generated_artifact",
+        "schema_validated",
+        "validation_failed",
+        "policy_linted",
+        "diff_ready",
+        "blocked",
+        "waiting_approval",
+        "provider_incomplete",
+    }
 )
 
 

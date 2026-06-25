@@ -16,6 +16,7 @@ from backend.app.workers.active_registry_worker_gate import (
     configure_worker_gate_from_settings,
     with_active_registry_gate,
 )
+from backend.app.workers.agent_run_driver import execute_agent_run
 from backend.app.workers.tasks import noop_task
 
 logger = logging.getLogger(__name__)
@@ -170,7 +171,13 @@ class WorkerSettings:
     # ARQ job-execution try/except で正しく handle され、job が 60s 後再投入される)。
     # `on_job_start` hook での raise は worker loop が認識できず terminate する
     # リスクがあるため使わない (R5 finding)。
-    functions: ClassVar[list[WorkerFunction]] = [with_active_registry_gate(noop_task)]
+    # SP-004-5 (ADR-00057): shadow AgentRun worker driver。queued shadow run を
+    # orchestrator step で end-to-end 駆動する。production run は enqueue されない
+    # (bridge_run_create が shadow のみ enqueue) ため driver 対象外。
+    functions: ClassVar[list[WorkerFunction]] = [
+        with_active_registry_gate(noop_task),
+        with_active_registry_gate(execute_agent_run),
+    ]
     redis_settings: ClassVar[RedisSettings] = redis_settings_from_url(settings.redis_url)
     queue_name: ClassVar[str] = settings.arq_queue_name
     on_startup: ClassVar[Callable[[WorkerContext], Awaitable[None]]] = on_startup

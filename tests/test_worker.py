@@ -68,13 +68,19 @@ def clear_settings_cache() -> Iterator[None]:
     get_settings.cache_clear()
 
 
-def test_worker_settings_exports_noop_task() -> None:
-    # SP-012 §9.10 R10 F-001 + Codex PR #85 R5 F-R5-001 fix: noop_task は
+def test_worker_settings_registers_gated_functions() -> None:
+    # SP-012 §9.10 R10 F-001 + Codex PR #85 R5 F-R5-001 fix: 各 task は
     # `with_active_registry_gate(...)` でラップされる。functools.wraps が
     # `__wrapped__` 属性で元 task を保持するため、それで identity を確認。
-    assert len(WorkerSettings.functions) == 1
-    wrapped = WorkerSettings.functions[0]
-    assert getattr(wrapped, "__wrapped__", None) is noop_task
+    # SP-004-5 (ADR-00057 R2-A3): noop_task に加え shadow worker driver
+    # `execute_agent_run` を登録 (2 件)。
+    from backend.app.workers.agent_run_driver import execute_agent_run
+
+    assert len(WorkerSettings.functions) == 2
+    wrapped_targets = {
+        getattr(fn, "__wrapped__", None) for fn in WorkerSettings.functions
+    }
+    assert wrapped_targets == {noop_task, execute_agent_run}
     assert WorkerSettings.queue_name == "taskmanagedai:jobs"
     assert WorkerSettings.job_timeout == 300
     assert WorkerSettings.max_jobs == 10
